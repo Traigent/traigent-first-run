@@ -50,6 +50,16 @@ def findings(*records: dict[str, object]) -> list[str]:
     return [finding.problem for finding in validate_run_log.validate(text)]
 
 
+def remedies_for(text: str) -> list[tuple[str, str]]:
+    """Every finding in raw log text, as (problem, remedy).
+
+    Takes text rather than records because two of the branches under test are
+    reached only by a line that is not a JSON object at all, which no dict can
+    express.
+    """
+    return [(f.problem, f.remedy) for f in validate_run_log.validate(text)]
+
+
 class TheClosedVocabulariesAreEnforcedTests(unittest.TestCase):
     """A misspelled class used to land silently in a support artifact."""
 
@@ -647,6 +657,200 @@ class TheAppendOnlySequenceIsCheckedTests(unittest.TestCase):
 
     def test_two_identities_do_not_share_a_sequence(self) -> None:
         self.assertEqual(findings(line(), line(ts="20260823T151205Z", stage=7)), [])
+
+
+class NoRemedyAsksForTheLineToBeRewrittenTests(unittest.TestCase):
+    """The remedies told the reader to do the one thing the contract forbids.
+
+    `references/run-safety.md` puts it in bold - the file is append-only, a
+    line once written is never rewritten - and this script's own docstring
+    already agreed that a rejected line is reported, not rewritten. Five
+    remedies said otherwise anyway, and one of them (`a problem clears only
+    after it was recorded as open`) could not be satisfied by any legal action
+    at all, because an appended `open` lands after the `cleared` it would have
+    to precede.
+
+    The validator runs before every stop-and-wait once the record exists, so
+    each of those was printed at every remaining gate for the rest of the run.
+    """
+
+    # One line per branch that rejects the shape of a line the log already
+    # holds. Kept as raw text because two of them are not JSON objects.
+    MALFORMED = (
+        (
+            "missing field",
+            json.dumps({k: v for k, v in line().items() if k != "detail"}),
+        ),
+        ("is not YYYYMMDDTHHMMSSZ", json.dumps(line(ts="2026-08-23 15:12"))),
+        ("line is not a JSON object", json.dumps(["not", "an", "object"])),
+        ("line is not JSON", "{broken"),
+        ("without an open line", json.dumps(line(state="cleared"))),
+    )
+
+    # Every verb that asks for the rejected line itself to change. `add it` is
+    # listed whole: `add` alone is ordinary in a remedy about a later line.
+    REWRITE = re.compile(
+        r"\b(?:rewrite|restamp|amend|edit|correct|delete|replace)\b|^add it$",
+        re.IGNORECASE,
+    )
+
+    def test_the_malformed_line_remedies_say_what_to_report(self) -> None:
+        """The replacement, not only the absence.
+
+        A ban alone is satisfied by emptying the remedy, so each of the five
+        is pinned to the sentence that replaced it.
+
+        The rule they answer to is pinned first, in both of its homes. Without
+        that, deleting the append-only sentence from the reference would leave
+        these five remedies correct about nothing, and this class would go on
+        passing while the reason for it had gone.
+        """
+        reference = " ".join(BASE_REFERENCE.read_text().split())
+        self.assertIn(
+            "The file is append-only: a line, once written, is never rewritten",
+            reference,
+        )
+        self.assertIn(
+            "A rejected line is reported to the user, not rewritten",
+            SCRIPT.read_text(),
+        )
+        for expected_problem, raw in self.MALFORMED:
+            with self.subTest(problem=expected_problem):
+                found = remedies_for(raw)
+                problem, remedy = next(
+                    pair for pair in found if expected_problem in pair[0]
+                )
+                self.assertTrue(
+                    remedy.startswith("report the line as it stands"),
+                    f"{problem!r} still answers with {remedy!r}",
+                )
+
+    def test_no_remedy_the_script_can_print_asks_for_a_rewrite(self) -> None:
+        """The class, not the five instances.
+
+        Asserted over every remedy the script produces on one log that reaches
+        every branch, so a sixth remedy added later with the same reflex fails
+        here rather than shipping.
+        """
+        text = "\n".join(raw for _problem, raw in self.MALFORMED)
+        text += "\n" + "\n".join(
+            json.dumps(record)
+            for record in (
+                line(event="exploded"),
+                line(**{"class": "not-a-class"}),
+                line(stage="5"),
+                line(state="paused"),
+                line(detail="the run stopped at /home/someone/project/agent.py"),
+                {**line(), "extra": 1},
+            )
+        )
+        produced = remedies_for(text)
+        self.assertGreaterEqual(
+            len(produced), 10, "the sweep stopped reaching branches"
+        )
+        for problem, remedy in produced:
+            with self.subTest(problem=problem):
+                self.assertIsNone(
+                    self.REWRITE.search(remedy),
+                    f"{problem!r} asks for the rejected line to be changed",
+                )
+
+    def test_the_orphan_cleared_remedy_states_what_an_append_can_do(self) -> None:
+        """The unsatisfiable one, measured rather than argued.
+
+        Appending the `open` the old remedy asked for leaves the finding
+        exactly where it was, because the append lands after the `cleared`.
+        The remedy now says that, so a reader stops trying.
+        """
+        orphan = json.dumps(line(state="cleared"))
+        before = remedies_for(orphan + "\n")
+        after = remedies_for(
+            orphan + "\n" + json.dumps(line(ts="20260823T151205Z")) + "\n"
+        )
+        self.assertEqual(
+            [p for p, _ in before],
+            [p for p, _ in after],
+            "appending an open line changed the finding, so the remedy was "
+            "satisfiable after all and this fix is wrong",
+        )
+        remedy = next(r for p, r in after if "without an open line" in p)
+        self.assertIn("would land after it, never before it", remedy)
+
+    def test_a_quoted_stage_is_answered_about_the_quotes(self) -> None:
+        """`use 1 to 8` told the writer of `"5"` to do what they had done.
+
+        Five of the six fields take strings and the contract's own table types
+        `class` on the row after `stage` without typing `stage`, so quoting it
+        is the slip the remedy has to name.
+        """
+        _problem, remedy = next(
+            pair
+            for pair in remedies_for(json.dumps(line(stage="5")) + "\n")
+            if "run-record stage" in pair[0]
+        )
+        self.assertEqual(remedy, "use an unquoted integer 1 to 8")
+
+    def test_an_address_is_refused_with_the_reason_the_guidance_gives(self) -> None:
+        """The refusal read as a contradiction of the reference beside it.
+
+        `run-safety.md` tells the reader the registration address is not a
+        credential and is safe to hand over; this script refused a `detail`
+        naming a portal address with `never the instance`, which an address is
+        not an instance of. Both hold - safe to say, still not part of what
+        happened - and the remedy is where they are reconciled.
+
+        The reference half is asserted too: if that sentence ever leaves the
+        guidance, this remedy is answering a question nobody is being asked.
+        """
+        reference = " ".join(BASE_REFERENCE.read_text().split())
+        self.assertIn("is not a credential and is safe to hand over", reference)
+        for detail, label in (
+            (
+                "no portal key was entered; get one at portal.traigent.ai",
+                "a host or address",
+            ),
+            ("the portal refused the account; see https://portal.traigent.ai", "a URL"),
+        ):
+            with self.subTest(detail=detail):
+                # Looked up BY LABEL, not by position. A URL also trips the
+                # absolute-path pattern - `//` satisfies it - so the first
+                # finding on that line is a different carrier with a different
+                # remedy, and taking it would have tested nothing.
+                found = {
+                    problem: remedy
+                    for problem, remedy in remedies_for(
+                        json.dumps(line(detail=detail)) + "\n"
+                    )
+                }
+                remedy = found[f"detail carries {label}"]
+                self.assertEqual(remedy, validate_run_log.ADDRESS_REMEDY)
+                self.assertIn("safe to say to the user", remedy)
+
+    def test_every_addressed_remedy_is_keyed_to_a_carrier_that_exists(self) -> None:
+        """A typo in the map is silent: `.get` hands back the general sentence.
+
+        So the key set is pinned against the labels `LEAKS` actually defines,
+        and the two carriers that need the address sentence are named, rather
+        than only counted.
+        """
+        labels = {label for label, _pattern in validate_run_log.LEAKS}
+        self.assertEqual(
+            set(validate_run_log.LEAK_REMEDIES) - labels,
+            set(),
+            "a remedy is keyed to a carrier no pattern reports",
+        )
+        self.assertEqual(
+            set(validate_run_log.LEAK_REMEDIES), {"a URL", "a host or address"}
+        )
+        # And the carriers that keep the general sentence still get one.
+        for label in labels - set(validate_run_log.LEAK_REMEDIES):
+            with self.subTest(label=label):
+                self.assertEqual(
+                    validate_run_log.LEAK_REMEDIES.get(
+                        label, validate_run_log.LEAK_REMEDY
+                    ),
+                    validate_run_log.LEAK_REMEDY,
+                )
 
 
 class TheFieldsWithNoNegativeCoverageTests(unittest.TestCase):

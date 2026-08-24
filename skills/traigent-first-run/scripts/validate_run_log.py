@@ -101,6 +101,24 @@ TIMESTAMP = re.compile(r"[0-9]{8}T[0-9]{6}Z")
 # The bound is generous: it refuses a paste, not a long sentence.
 DETAIL_LIMIT = 400
 
+# One sentence could not serve every carrier. "Name the class of thing that
+# failed, never the instance" tells the writer of a pasted error body exactly
+# what to do, and tells the writer of a portal address nothing at all: an
+# address is not an instance of a failure, and `references/run-safety.md`
+# separately tells the reader that the registration address is not a credential
+# and is safe to hand over. Both hold at once - it is safe to SAY, and it is
+# still not part of what happened - and the refusal read as a contradiction of
+# that reference while one remedy had to cover both.
+#
+# A dict keyed by label rather than a third element on `LEAKS`: the label is
+# already the only thing the finding says about which pattern fired, so keying
+# the remedy to it cannot drift from what the reader was told, and a carrier
+# with nothing special to say keeps the general sentence by omission.
+LEAK_REMEDY = "name the class of thing that failed, never the instance"
+ADDRESS_REMEDY = (
+    "an address is safe to say to the user and is still not part of what "
+    "happened; name what failed, not where to go next"
+)
 LEAKS: tuple[tuple[str, re.Pattern[str]], ...] = (
     # Requires a boundary before the slash, so `3/5`, `and/or` and `input/output`
     # stay ordinary prose. The Windows branch takes one escaped backslash: two
@@ -163,9 +181,40 @@ LEAKS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ),
 )
 
+# Keyed on the labels above; a label not here keeps `LEAK_REMEDY`. A test pins
+# every key to a label `LEAKS` actually defines, because a typo here is silent:
+# the `.get` default would quietly hand back the general sentence and the
+# carrier this map exists for would go on being unexplainable.
+LEAK_REMEDIES: dict[str, str] = {
+    "a URL": ADDRESS_REMEDY,
+    "a host or address": ADDRESS_REMEDY,
+}
+
 
 class Finding:
-    """One rejected line, named by where it is and what is wrong with it."""
+    """One rejected line, named by where it is and what is wrong with it.
+
+    A remedy says what to REPORT, or what the next appended line should carry.
+    It never says how to change the line that was rejected. The log is
+    append-only - `references/run-safety.md` states it in bold, and the
+    docstring at the top of this file already agreed - so `add it` and
+    `restamp it` asked for the one action the contract forbids, on a file this
+    script opens read-only.
+
+    The orphan-`cleared` remedy was worse than contradictory, it was
+    unsatisfiable: an `open` line appended now lands AFTER the `cleared`, and
+    no legal action puts one before it. Verified by appending one and
+    re-running - the same finding, both times. A remedy nobody can perform,
+    printed before every stop-and-wait for the rest of the run, teaches a
+    reader to stop reading remedies.
+
+    The behaviour is deliberately unchanged: the line is still rejected on
+    every later invocation, because it is still in the file on every later
+    invocation. Going quiet the second time would need memory of what was
+    already reported, and every way to hold that memory either reads the log
+    back as run state - forbidden by the same paragraph - or adds a state file
+    whose failure mode is reporting a clean log that is not clean.
+    """
 
     def __init__(self, line_number: int, problem: str, remedy: str) -> None:
         self.line_number = line_number
@@ -221,7 +270,7 @@ def _check_detail(value: Any, number: int, out: list[Finding]) -> None:
                 Finding(
                     number,
                     f"detail carries {label}",
-                    "name the class of thing that failed, never the instance",
+                    LEAK_REMEDIES.get(label, LEAK_REMEDY),
                 )
             )
 
@@ -230,13 +279,24 @@ def _check_line(record: Any, number: int, out: list[Finding]) -> tuple[str, str]
     """Validate one record; return its identity when the line is well formed."""
     if not isinstance(record, dict):
         out.append(
-            Finding(number, "line is not a JSON object", "write one object per line")
+            Finding(
+                number,
+                "line is not a JSON object",
+                "report the line as it stands; append one JSON object per line",
+            )
         )
         return None
 
     present = set(record)
     for missing in sorted(FIELDS - present):
-        out.append(Finding(number, f"missing field {missing!r}", "add it"))
+        out.append(
+            Finding(
+                number,
+                f"missing field {missing!r}",
+                "report the line as it stands; every appended line carries all "
+                "six fields",
+            )
+        )
     for extra in sorted(present - FIELDS):
         out.append(
             Finding(
@@ -251,7 +311,10 @@ def _check_line(record: Any, number: int, out: list[Finding]) -> tuple[str, str]
     if not TIMESTAMP.fullmatch(str(record["ts"])):
         out.append(
             Finding(
-                number, f"ts {record['ts']!r} is not YYYYMMDDTHHMMSSZ", "restamp it"
+                number,
+                f"ts {record['ts']!r} is not YYYYMMDDTHHMMSSZ",
+                "report the line as it stands; stamp each appended line UTC "
+                "YYYYMMDDTHHMMSSZ",
             )
         )
     event = record["event"]
@@ -267,7 +330,17 @@ def _check_line(record: Any, number: int, out: list[Finding]) -> tuple[str, str]
     stage = record["stage"]
     if not isinstance(stage, int) or isinstance(stage, bool) or not 1 <= stage <= 8:
         out.append(
-            Finding(number, f"stage {stage!r} is not a run-record stage", "use 1 to 8")
+            Finding(
+                number,
+                f"stage {stage!r} is not a run-record stage",
+                # The range alone told the writer of `"stage": "5"` to do what
+                # they had just done: 5 is in 1 to 8, and the refusal was
+                # about the quotes. Five of the six fields take strings and
+                # the contract's table types `class` on the very next row
+                # without typing `stage`, so quoting it is the obvious slip -
+                # and the one thing the old remedy could not name.
+                "use an unquoted integer 1 to 8",
+            )
         )
     state_value = record["state"]
     if not isinstance(state_value, str) or state_value not in STATES:
@@ -304,7 +377,11 @@ def validate(text: str) -> list[Finding]:
             record = json.loads(raw)
         except (ValueError, RecursionError) as error:
             findings.append(
-                Finding(number, f"line is not JSON ({error})", "write one JSON object")
+                Finding(
+                    number,
+                    f"line is not JSON ({error})",
+                    "report the line as it stands; append one JSON object per line",
+                )
             )
             continue
         identity = _check_line(record, number, findings)
@@ -317,7 +394,8 @@ def validate(text: str) -> list[Finding]:
                 Finding(
                     number,
                     "cleared without an open line before it",
-                    "a problem clears only after it was recorded as open",
+                    "report the line as it stands; an open line appended now "
+                    "would land after it, never before it",
                 )
             )
         standing[key] = state

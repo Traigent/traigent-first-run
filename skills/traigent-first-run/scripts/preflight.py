@@ -659,11 +659,22 @@ def check_cost_settings(
         if key_present(file_values.get(name))
     ]
     if persisted:
+        # The remedy is stated as an EXCEPTION, not as a bare instruction,
+        # because the guidance the assistant just followed says to preserve the
+        # values a .env already holds and append only what is missing. A user
+        # who arrived with their own TRAIGENT_RUN_COST_LIMIT therefore met a
+        # FAIL whose fix contradicted the rule that had just been applied to
+        # their file, with nothing anywhere naming these four as the carve-out.
+        # Naming it here rather than in the guidance puts the reconciliation
+        # where the reader hits the conflict, and costs the guidance nothing.
         emit(
             "cost-figures-in-file",
             FAIL,
-            f"{', '.join(persisted)} persisted in .env; remove and supply the approved "
-            "figures per paid process",
+            f"{', '.join(persisted)} persisted in .env; a cost figure in the file "
+            "is the deliberate exception to preserving the values a .env already "
+            "holds - remove or comment it out, and supply the approved figures per "
+            "paid process, because a figure left in the file outlives the approval "
+            "that set it",
         )
 
     approved_in_file = file_values.get("TRAIGENT_COST_APPROVED")
@@ -2540,7 +2551,28 @@ def check_dataset(
         )
         emit_tuning_size(tuning_count, tuning_labelled)
     else:
-        emit("dataset-split", WARN, "no explicit tuning/held-out split was found")
+        # The finding names the scope it searched, because the bare conclusion
+        # was read as a fact about the project and it is not one. A real
+        # walkthrough met this WARN on a project that maintains its two folds
+        # side by side in their own files: the split is real, and this check
+        # could not see it, because a split is only ever visible here as a
+        # `split` label on the rows of the one file `--dataset` named. Naming
+        # what was read turns an apparently wrong finding into an actionable
+        # one - the reader learns their split needs combining, rather than
+        # learning they do not have one.
+        #
+        # The settled phrase is kept and the scope appended to it, not
+        # substituted for it: the wording that names the two splits is pinned
+        # across this script and the scorer, and this finding is one of the
+        # four places a user reads it.
+        emit(
+            "dataset-split",
+            WARN,
+            f"no explicit tuning/held-out split was found: no row of {path} "
+            "carries a split label, and that one file is everything this check "
+            "reads - a split kept in separate files stays invisible here until "
+            "they are combined into one file whose rows carry the label",
+        )
 
     difficulty_values = [
         str(row_metadata_value(row, "difficulty")).casefold().replace("_", "-")

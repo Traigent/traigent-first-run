@@ -113,6 +113,47 @@ class StaticPreflightTests(unittest.TestCase):
             "a clean .env was reported as carrying a persisted figure",
         )
 
+    def test_the_persisted_figure_remedy_names_the_rule_it_excepts(self) -> None:
+        """The remedy contradicted the instruction just applied to that file.
+
+        SKILL.md's authorization table tells the assistant to preserve the
+        values and comments a `.env` already holds and to append only the
+        missing provider key. A user who arrived with their own
+        `TRAIGENT_RUN_COST_LIMIT` therefore met a FAIL on the paid path whose
+        fix was to delete exactly what the assistant had just been told to
+        keep - with nothing in any document naming these figures as the
+        carve-out. The check is right; it was the reconciliation that was
+        missing, and it belongs in the message, where the reader meets the
+        conflict, rather than in prose they must have remembered.
+
+        Asserted in both directions. The rule still stands in SKILL.md, and the
+        remedy still says it is excepting that rule and why. Either half
+        removed alone restores a contradiction nobody is warned about, so this
+        fails when either moves without the other.
+        """
+        skill = (ROOT / "skills" / "traigent-first-run" / "SKILL.md").read_text()
+        self.assertIn(
+            "Preserve existing values and comments, append only",
+            skill,
+            "the rule this remedy excepts is gone, so it now excepts nothing",
+        )
+        for name in (
+            "TRAIGENT_FIRST_RUN_COST_CEILING_USD",
+            "TRAIGENT_FIRST_RUN_COST_SPENT_USD",
+            "TRAIGENT_FIRST_RUN_UNTRACKED_CALL_COST_USD",
+            "TRAIGENT_RUN_COST_LIMIT",
+        ):
+            with self.subTest(name=name):
+                MODULE.RESULTS.clear()
+                MODULE.check_cost_settings({}, {name: "5.00"})
+                detail = next(
+                    item.detail
+                    for item in MODULE.RESULTS
+                    if item.check == "cost-figures-in-file"
+                )
+                self.assertIn("deliberate exception to preserving", detail)
+                self.assertIn("outlives the approval that set it", detail)
+
     def test_sdk_check_accepts_only_the_tested_version(self) -> None:
         with mock.patch.object(
             MODULE, "version", return_value=MODULE.SUPPORTED_TRAIGENT_VERSION
@@ -345,6 +386,40 @@ class StaticPreflightTests(unittest.TestCase):
         self.assertEqual(
             holdout.metrics, {"holdout_rows": 6, "holdout_labelled_rows": 6}
         )
+
+    def test_an_undeclared_split_names_the_file_it_read(self) -> None:
+        """The finding read as a fact about the project, and is not one.
+
+        A real walkthrough scored a project that keeps its two folds in their
+        own files. The split was there; this check reported none, because a
+        split is only ever visible to it as a `split` label on the rows of the
+        one file `--dataset` named. The customer, looking straight at their two
+        folds, was right to read the card as wrong.
+
+        So the finding names its scope. The settled phrase that names the two
+        splits is kept and the scope appended, because that wording is pinned
+        across this script and the scorer; the fix is the sentence after it.
+        """
+        rows = [
+            {key: value for key, value in row.items() if key != "split"}
+            for row in synthetic_rows()
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            dataset = Path(directory) / "opt_fold.jsonl"
+            dataset.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+            MODULE.check_dataset(dataset)
+            split = next(
+                result for result in MODULE.RESULTS if result.check == "dataset-split"
+            )
+            # Read inside the temporary directory, because the path IS the
+            # evidence: asserting it after the cleanup would be asserting
+            # against a name whose file no longer exists, and the assertion
+            # would still pass with the search unnamed.
+            self.assertEqual(split.status, MODULE.WARN)
+            self.assertIn("no explicit tuning/held-out split was found", split.detail)
+            self.assertIn(str(dataset), split.detail)
+            self.assertIn("carries a split label", split.detail)
+            self.assertIn("kept in separate files", split.detail)
 
     def test_tuning_only_dataset_is_not_reported_as_an_undeclared_split(self) -> None:
         rows = synthetic_rows()[:18]

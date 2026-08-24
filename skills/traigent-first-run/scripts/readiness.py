@@ -3881,6 +3881,37 @@ def diversity_subscore(
     )
 
 
+def split_search_scope(facts: DatasetFacts) -> str:
+    """What the no-split finding looked at, appended to it, or nothing.
+
+    Both no-split branches of the power sub-score reported a conclusion and
+    never the search behind it, so "no tuning set and held-out set" read as a
+    statement about the customer's project. A real walkthrough scored a project
+    that keeps its two folds in their own files: the split was there, the score
+    said it was not, and the customer was right to disbelieve the card. The
+    `dataset-absent` cap has always said "provided to this score" for exactly
+    this reason; these two sentences are that rule reaching the rest of the
+    pillar.
+
+    Written once and called from both branches because the tuning-only branch
+    and the no-split-at-all branch make the same claim about the same search,
+    and the way this defect returns is one of them being corrected alone.
+
+    Empty unless a dataset actually reached this score. On the planner account
+    no file was read, so there is no search to describe and describing one
+    would be the invention this exists to remove - which is also why the
+    sentence is additive rather than a rewrite: a score built from facts
+    directly, with no dataset supplied, states exactly what it stated before.
+    """
+    if not facts.dataset_supplied:
+        return ""
+    return (
+        "; a split is visible to this score only as a split label on the rows "
+        "of the one dataset file it was given, so a split kept in separate "
+        "files was not seen"
+    )
+
+
 def score_dataset(
     facts: DatasetFacts,
     evaluator_method: str | None = None,
@@ -4135,6 +4166,7 @@ def score_dataset(
         evidence = (
             f"{facts.tuning_rows} tuning rows and no held-out set, so the "
             f"result would be measured on the same rows the search used; {evidence}"
+            f"{split_search_scope(facts)}"
         )
     else:
         effective = scoreable(rows, labelled)
@@ -4149,6 +4181,7 @@ def score_dataset(
         evidence = (
             "no tuning set and held-out set, so the result would be "
             f"measured on the same rows the search used; {evidence}"
+            f"{split_search_scope(facts)}"
         )
     subs.append(SubScore("power", round(points, 2), 25.0, True, evidence))
     # The whole dataset, on the same scoreable footing the branches above use
@@ -5908,6 +5941,39 @@ def render_card(
             lines.append(f"    {palette.dim}{AGENT_NOT_COVERED}{palette.reset}")
         lines.append("")
     if score.caps:
+        if score.overall < score.weighted_average:
+            # The card printed three pillars and a headline and nothing that
+            # joins them. A reader who saw 76, 64 and 83 weight to a headline of
+            # 65 did the arithmetic, found 74, and concluded the scorer was
+            # broken - reaching that conclusion FROM the cap block, which exists
+            # to prevent exactly it. The durable report has carried this figure
+            # since the first schema ("Weighted average before caps"); the card,
+            # which is what a first-time reader actually sees, had not, so the
+            # one artifact that could answer the question was the one they did
+            # not have open.
+            #
+            # It sits at the top of the cap block rather than beside the
+            # headline because that is where the conflict is met: the reader is
+            # about to be told a limit applies, and this is the number the limit
+            # replaced.
+            #
+            # `score.overall < score.weighted_average` is the whole condition,
+            # and it is not the same question `binds` asks. `binds` says which
+            # cap is the operative one; this says whether ANY of them moved the
+            # number. When none did, the two integers are equal and the line
+            # would restate the headline as though it were a second finding -
+            # so a card carrying only a cap that never bit keeps its silence.
+            #
+            # The block is unreachable with no cap, which is why the check is
+            # nested rather than standing alone: `aggregate` takes
+            # `min(weighted_average, min(ceilings))` with a default ceiling of
+            # 100, so with no cap `overall` IS `weighted_average` and the
+            # comparison can never be true.
+            lines.append(
+                f"  {palette.dim}Pillars weighted to "
+                f"{score.weighted_average}/100; the strictest limit below is "
+                f"what makes this score {score.overall}.{palette.reset}"
+            )
         for cap in score.caps:
             # The label has to carry the difference the status already makes,
             # or the card contradicts its own JSON: an advisory ceiling reported

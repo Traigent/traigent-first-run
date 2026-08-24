@@ -323,6 +323,78 @@ class BandAndAggregationTests(unittest.TestCase):
         self.assertEqual(score.overall, 30)
         self.assertEqual(score.weighted_average, 100)
 
+    def test_the_card_shows_the_pre_cap_figure_when_a_cap_moved_the_score(
+        self,
+    ) -> None:
+        """The card hid its own arithmetic, so the card looked broken.
+
+        Reported from a real walkthrough: pillars of 76, 64 and 83 printed over
+        a headline of 65. Those weight to 74 and a cap pulled it to 65, but only
+        `render_markdown` ever printed the 74 - and the card is what a reader
+        actually has in front of them. So they could check the arithmetic, find
+        it did not reconcile, and conclude the scorer was broken. That is the
+        one conclusion the cap block exists to prevent, reached from inside it.
+
+        Both halves are pinned, because the fix is as much about silence as
+        about the line. It appears when a cap moved the number, carrying BOTH
+        figures so the subtraction is visible; it stays absent when nothing
+        moved, where `overall` and `weighted_average` are the same integer and
+        the line would restate the headline as though it were a second finding.
+        """
+        pillars = [
+            MODULE.Pillar(name="dataset", score=76, confidence=1.0, subscores=()),
+            MODULE.Pillar(name="evaluation", score=64, confidence=1.0, subscores=()),
+            MODULE.Pillar(name="agent", score=83, confidence=1.0, subscores=()),
+        ]
+        moved = MODULE.aggregate(
+            pillars,
+            [MODULE.Cap("dataset-coarse-resolution", 65, "small set", blocks=False)],
+            [],
+            dict(MODULE.DEFAULT_WEIGHTS),
+        )
+        self.assertEqual(moved.weighted_average, 74)
+        self.assertEqual(moved.overall, 65)
+        card = MODULE.render_card(moved, unicode_ok=False, palette=MODULE.PLAIN)
+        self.assertIn("Pillars weighted to 74/100", card)
+        self.assertIn("makes this score 65", card)
+        # The same number the durable report has carried since schema 1. The
+        # two artifacts disagreeing about the arithmetic would be the next
+        # version of this defect, so the pairing is asserted, not assumed.
+        self.assertIn(
+            "Weighted average before caps: 74/100", MODULE.render_markdown(moved)
+        )
+
+        # Where the cap BLOCKS, the cap line prints no ceiling at all - the
+        # label is `FIX BEFORE PAID RUN` - so this line is the only thing on the
+        # card that can say what the headline replaced.
+        blocked = MODULE.aggregate(
+            pillars,
+            [MODULE.Cap("evaluator-invalid", 25, "The evaluator is broken.")],
+            [],
+            dict(MODULE.DEFAULT_WEIGHTS),
+        )
+        blocked_card = MODULE.render_card(
+            blocked, unicode_ok=False, palette=MODULE.PLAIN
+        )
+        self.assertNotIn("LIMITED TO", blocked_card)
+        self.assertIn("Pillars weighted to 74/100", blocked_card)
+        self.assertIn("makes this score 25", blocked_card)
+
+        # And the silence, on a ceiling that is entirely real and simply higher
+        # than the pillars reached.
+        untouched = MODULE.aggregate(
+            pillars,
+            [MODULE.Cap("dataset-coarse-resolution", 89, "small set", blocks=False)],
+            [],
+            dict(MODULE.DEFAULT_WEIGHTS),
+        )
+        self.assertEqual(untouched.overall, untouched.weighted_average)
+        self.assertNotIn(
+            "Pillars weighted to",
+            MODULE.render_card(untouched, unicode_ok=False, palette=MODULE.PLAIN),
+            "a cap that never bit made the card restate its own headline",
+        )
+
 
 class DatasetScoringTests(unittest.TestCase):
     def test_absent_dataset_is_capped_and_blocked(self) -> None:
@@ -1137,6 +1209,56 @@ class DatasetScoringTests(unittest.TestCase):
             "comparison set",
         )
 
+    def test_both_no_split_branches_name_the_search_behind_the_finding(
+        self,
+    ) -> None:
+        """The finding was a claim about the project, and could not be one.
+
+        A real walkthrough scored a project holding its two folds in their own
+        files and reported "no tuning set and held-out set". The split existed;
+        this score never saw it, because a split reaches it only as a `split`
+        label on the rows of the one dataset file it was handed. A customer
+        looking at their own folds reads that sentence as simply false, and
+        nothing on the card told them what had actually been looked at.
+
+        Both branches are checked, because they make the same claim about the
+        same search and the way this returns is one of them being corrected
+        alone. The tuning-only branch is the easy one to forget: it already
+        names a number, so it reads as though it had looked.
+        """
+        for facts in (
+            MODULE.DatasetFacts(
+                exists=True, dataset_supplied=True, rows=140, labelled_rows=140
+            ),
+            MODULE.DatasetFacts(
+                exists=True,
+                dataset_supplied=True,
+                rows=18,
+                labelled_rows=18,
+                tuning_rows=18,
+                tuning_labelled_rows=18,
+            ),
+        ):
+            with self.subTest(tuning_rows=facts.tuning_rows):
+                evidence = self._power_evidence(facts)
+                self.assertIn("a split is visible to this score only as", evidence)
+                self.assertIn("kept in separate files was not seen", evidence)
+
+    def test_a_score_that_read_no_dataset_describes_no_search(self) -> None:
+        """The silence, which is the half that keeps the sentence honest.
+
+        On the planner account no file is read, so there is no search to
+        describe and describing one would be the invention the clause exists to
+        remove. `dataset_supplied` is the same fact `dataset-absent` already
+        turns on, so the two cannot drift into disagreeing about whether
+        anything was read.
+        """
+        evidence = self._power_evidence(
+            MODULE.DatasetFacts(exists=True, rows=140, labelled_rows=140)
+        )
+        self.assertIn("no tuning set and held-out set", evidence)
+        self.assertNotIn("a split is visible to this score", evidence)
+
     def test_tuning_only_dataset_names_its_missing_held_out_set(self) -> None:
         pillar, _ = MODULE.score_dataset(
             MODULE.DatasetFacts(
@@ -1156,6 +1278,10 @@ class DatasetScoringTests(unittest.TestCase):
     def _power(self, facts: object) -> float:
         pillar, _ = MODULE.score_dataset(facts)
         return next(s.value for s in pillar.subscores if s.name == "power")
+
+    def _power_evidence(self, facts: object) -> str:
+        pillar, _ = MODULE.score_dataset(facts)
+        return next(s.evidence for s in pillar.subscores if s.name == "power")
 
 
 class EvaluationScoringTests(unittest.TestCase):
