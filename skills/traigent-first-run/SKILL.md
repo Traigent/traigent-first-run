@@ -115,7 +115,7 @@ approval.
 | Read-only discovery and static validation | Proceed without approval; do not import or execute user code. |
 | Create `traigent-runs/` artifacts; when the project root is inside a Git worktree, add `/traigent-runs/` to the project-root `.gitignore` | Proceed only after inspection and once task intent is anchored; when the Git probe fails, do not create `.gitignore`; preserve source material and provenance. |
 | Create an isolated environment | Proceed only after task intent is anchored and the available standard-library-only component checks have run; do not fetch or install packages as part of environment creation. |
-| Install dependencies in the isolated environment | Proceed only after task intent is anchored and the available standard-library-only component checks have run, and for the exact packages and versions declared for the run, as a package-artifact fetch/install with no provider or Traigent calls, private-data transfer, or user/project code execution. Name the environment's absolute path either way. Into an environment this run created, or one holding nothing but this walkthrough's own pinned set, proceed; into one with other dependents, obtain one confirmation first, because that resolution can move a package the user's other work depends on. A user or environment policy that requires install approval still takes precedence. |
+| Install dependencies in the isolated environment | Proceed only after task intent is anchored and the available standard-library-only component checks have run, and for the exact packages and versions declared for the run, as a package-artifact fetch/install with no provider or Traigent calls, private-data transfer, or user/project code execution. Name the environment's absolute path either way. Into an environment with no other dependents, proceed; never into one that has them, because that resolution can move a package the user's other work depends on. A user or environment policy that requires install approval still takes precedence. |
 | Create or update a minimal `.env` | Proceed only after free checks, and only through `references/run-safety.md`'s ordered handoff, which selects the file. Preserve existing values and comments, append only its missing provider key, and require mode `0600` before opening. Before writing, run that reference's git-tracked-file safety check and its ignore verification; it owns the exact commands and exit-code handling, and stop before secret entry if either check fails. Outside Git, do not create `.gitignore`. Never copy or request a duplicate key. Add or request the Traigent key only after the baseline checkpoint. |
 | Repair a working copy after the user chooses repair | Proceed only within the agreed repair scope, then revalidate from the failed gate. |
 | Change real labels, expected answers, examples, or rubric policy | Show the exact judgment-dependent change and obtain explicit approval. |
@@ -623,14 +623,16 @@ Only after the standard-library-only component checks:
    sources unverified. Reuse a matching credential in place when inheritable; on mismatch, do not call the
    file unsaved. Say: `Agent route: <vendor/model>. Provider credentials: <vendors and sources>.
    Traigent key: <present/absent> (not a provider credential). Preserve this route by adding <key>,
-   or change to <available vendor>?` Recommend preserving unless the user chose the other vendor.
+   or change to <available vendor>?` Drop that closing question where a chain signs the route;
+   otherwise recommend preserving unless the user chose the other vendor.
    A route change requires recipient disclosure and approval; never rewrite a route merely to match
    a key. With no route, use the sole available vendor or ask once. Generated baselines need their
    model ladder; a user-owned baseline requires only its existing route and credential.
 2. Resolve and prepare the environment through `references/run-safety.md`, naming its absolute
-   path before touching it. Reuse the single compatible project-root environment or, when none
-   exists, create the conventional `.venv` with Python 3.11-3.13 without fetching packages.
-   Preserve an incompatible `.venv` and treat `.venv-traigent` as the non-destructive
+   path before touching it. Reuse the single compatible project-root environment with no other
+   dependents or, when none qualifies, create the conventional `.venv` with Python 3.11-3.13
+   without fetching packages.
+   Preserve an incompatible or shared `.venv` and treat `.venv-traigent` as the non-destructive
    implementation detail fallback. The reference owns candidate choice, dependent-environment,
    and activation mechanics.
 3. Install the exact declared dependencies under the narrow authorization above: use the project's

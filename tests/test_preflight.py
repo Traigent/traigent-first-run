@@ -207,6 +207,211 @@ class StaticPreflightTests(unittest.TestCase):
                 self.assertEqual(result.status, MODULE.FAIL)
                 self.assertIn("install traigent==0.26.0", result.detail)
 
+    def _sdk_result(self) -> object:
+        return next(item for item in MODULE.RESULTS if item.check == "sdk-version")
+
+    def test_the_pin_remedy_refuses_an_environment_other_work_depends_on(self) -> None:
+        """`install traigent==0.26.0` had no answer to "where".
+
+        A customer whose project environment already provides an older release
+        read it as the only instruction it can be read as - upgrade the one
+        that is active - and that environment was the one eighty packages of
+        their own work resolve out of. The remedy is now decided from what the
+        environment measurably contains, so the run asks nobody to move a
+        package their working project depends on in order to try this one.
+        """
+        with mock.patch.object(
+            MODULE, "version", return_value="0.23.0"
+        ), mock.patch.object(
+            MODULE, "other_dependents", return_value=["numpy", "torch"]
+        ):
+            MODULE.check_sdk(project_root=Path(tempfile.gettempdir()) / "no-project")
+        result = self._sdk_result()
+        self.assertEqual(result.status, MODULE.FAIL)
+        self.assertIn("install traigent==0.26.0", result.detail)
+        self.assertIn(f"Not {sys.prefix}", result.detail)
+        self.assertIn("2 other distributions", result.detail)
+        self.assertIn("an environment of its own", result.detail)
+        self.assertEqual(result.metrics["other_dependents"], 2)
+        self.assertEqual(result.metrics["environment"], sys.prefix)
+
+    def test_an_environment_of_this_runs_own_still_gets_the_install_in_place(
+        self,
+    ) -> None:
+        """The counterpart, and the reason the clause above is measured.
+
+        An environment holding nothing but this walkthrough's own pins is one
+        the run may reinstall into, and sending that reader off to build a
+        second environment would be a cost with nothing behind it. So the
+        refusal has to be able to be absent, and this is the branch that says
+        it can.
+        """
+        with mock.patch.object(
+            MODULE, "version", return_value="0.23.0"
+        ), mock.patch.object(MODULE, "other_dependents", return_value=[]):
+            MODULE.check_sdk(project_root=Path(tempfile.gettempdir()) / "no-project")
+        result = self._sdk_result()
+        self.assertEqual(result.status, MODULE.FAIL)
+        self.assertIn("install traigent==0.26.0", result.detail)
+        self.assertNotIn("Not ", result.detail)
+        self.assertEqual(result.metrics["other_dependents"], 0)
+
+    def test_the_deferred_pass_says_which_environment_the_pins_may_not_enter(
+        self,
+    ) -> None:
+        """Stage 1 runs this check inside the very environment stage 5 picks.
+
+        The opening gate resolves one compatible project environment and runs
+        here in it, which is the moment the answer is worth having and the one
+        where nothing has been installed yet. It stays a SKIP: the pins being
+        absent before the install is the expected state, and turning it red
+        would make an ordinary first run look broken.
+        """
+        with mock.patch.object(
+            MODULE, "version", side_effect=MODULE.PackageNotFoundError
+        ), mock.patch.object(MODULE, "other_dependents", return_value=["pandas"]):
+            MODULE.check_sdk(defer_missing=True)
+        result = self._sdk_result()
+        self.assertEqual(result.status, MODULE.SKIP)
+        self.assertIn("after installation", result.detail)
+        self.assertIn(f"Not {sys.prefix}", result.detail)
+
+    def test_a_failed_install_is_not_reported_as_a_shared_environment(self) -> None:
+        """The post-install pass, where the same count means something else.
+
+        An environment this run built and installed into holds the pins' own
+        transitive dependencies, so the count is high there for a reason that
+        is not another project. Reading it as one would tell a reader whose
+        install merely failed to go and build a third environment.
+        """
+        with mock.patch.object(
+            MODULE, "version", side_effect=MODULE.PackageNotFoundError
+        ), mock.patch.object(MODULE, "other_dependents", return_value=["httpx"] * 40):
+            MODULE.check_sdk()
+        result = self._sdk_result()
+        self.assertEqual(result.status, MODULE.FAIL)
+        self.assertNotIn("Not ", result.detail)
+
+    def test_a_project_pin_that_would_return_here_is_named_once_read(self) -> None:
+        """Stage 5 installs the project's own exact declarations first.
+
+        A project pinning another release sends the assistant to install the
+        version this check has just refused, and back here again. Only an
+        exact `==` pin is named: a range the tested release satisfies is not a
+        conflict, and calling it one would be this check stating something
+        false about the reader's project.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for pinned, expected in (
+                ("traigent==0.23.0", "pyproject.toml pins `traigent==0.23.0`"),
+                ("traigent[all]==0.23.0", "pyproject.toml pins `traigent==0.23.0`"),
+                ("traigent>=0.20", None),
+                ("traigent==0.26.0", None),
+            ):
+                with self.subTest(pinned=pinned):
+                    MODULE.RESULTS.clear()
+                    (root / "pyproject.toml").write_text(
+                        '[project]\nname = "benchmarks"\n'
+                        f'dependencies = ["{pinned}", "numpy"]\n'
+                    )
+                    with mock.patch.object(
+                        MODULE, "version", return_value="0.23.0"
+                    ), mock.patch.object(MODULE, "other_dependents", return_value=[]):
+                        MODULE.check_sdk(project_root=root)
+                    detail = self._sdk_result().detail
+                    if expected is None:
+                        self.assertNotIn("pins `traigent", detail)
+                        self.assertNotIn(
+                            "project_pins", str(self._sdk_result().metrics)
+                        )
+                    else:
+                        self.assertIn(expected, detail)
+                        self.assertEqual(
+                            self._sdk_result().metrics["project_pins"], "0.23.0"
+                        )
+
+    def test_a_requirements_file_pin_is_read_the_same_way(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "requirements.txt").write_text(
+                "# the team stack\nnumpy==2.1.0\ntraigent==0.23.0  # do not bump\n"
+            )
+            with mock.patch.object(
+                MODULE, "version", return_value="0.23.0"
+            ), mock.patch.object(MODULE, "other_dependents", return_value=[]):
+                MODULE.check_sdk(project_root=root)
+            self.assertIn(
+                "requirements.txt pins `traigent==0.23.0`", self._sdk_result().detail
+            )
+
+    def _chain_result(self):
+        return [item for item in MODULE.RESULTS if item.check == "aws-credential-chain"]
+
+    def test_an_ambient_credential_chain_is_reported_as_a_source(self) -> None:
+        """A route can be fully credentialed with no key name anywhere.
+
+        Bedrock signs through the AWS chain, and the paid wrapper declares it
+        with no environment names for exactly that reason. This gate had only
+        one answer for that customer - no credential is present - which turns
+        stage 5's question into `add <key>` for a route that takes no key, and
+        which the customer has no basis to answer. Presence, never values: a
+        variable is named, a file is named by its path, and nothing is opened.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            (home / ".aws").mkdir()
+            (home / ".aws" / "config").write_text("[default]\nregion = us-east-1\n")
+            with mock.patch.object(MODULE.Path, "home", return_value=home):
+                MODULE.check_keys({"AWS_PROFILE": "team-sandbox"})
+            found = self._chain_result()
+            self.assertEqual(len(found), 1)
+            self.assertEqual(found[0].status, MODULE.PASS)
+            self.assertIn("AWS_PROFILE", found[0].detail)
+            self.assertIn(str(home / ".aws" / "config"), found[0].detail)
+            self.assertIn("no AWS_* key set", found[0].detail)
+            self.assertNotIn("team-sandbox", found[0].detail)
+            self.assertIn(
+                "first live call",
+                found[0].detail,
+                "presence of a source is not proof the chain resolves, and a "
+                "line that reads as proof would send a run at a route that "
+                "has none",
+            )
+
+    def test_a_machine_with_no_chain_source_says_nothing_about_one(self) -> None:
+        """The counterpart. Silence here is what keeps the line meaningful.
+
+        Reporting on every run that no chain source was found would put a
+        Bedrock sentence in front of every customer who has never used AWS,
+        and the honest content of that sentence is nil anyway: an instance
+        role is served over the metadata endpoint and leaves nothing on disk,
+        so absence here was never evidence of an uncredentialed route.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            with mock.patch.object(
+                MODULE.Path, "home", return_value=Path(directory)
+            ), mock.patch.dict(os.environ, {}, clear=True):
+                MODULE.check_keys({})
+            self.assertEqual(self._chain_result(), [])
+            warning = next(
+                item for item in MODULE.RESULTS if item.check == "provider-credentials"
+            )
+            self.assertEqual(warning.status, MODULE.WARN)
+
+    def test_the_relocated_chain_files_are_read_where_they_were_moved_to(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            elsewhere = Path(directory) / "vault" / "aws-credentials"
+            elsewhere.parent.mkdir()
+            elsewhere.write_text("[default]\n")
+            unused = Path(directory) / "home"
+            unused.mkdir()
+            with mock.patch.object(MODULE.Path, "home", return_value=unused):
+                MODULE.check_keys({"AWS_SHARED_CREDENTIALS_FILE": str(elsewhere)})
+            found = self._chain_result()
+            self.assertEqual(len(found), 1)
+            self.assertIn(str(elsewhere), found[0].detail)
+
     def test_provider_credentials_are_inventory_not_route_selection(self) -> None:
         MODULE.check_keys(
             {

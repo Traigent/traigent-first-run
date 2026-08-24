@@ -3301,20 +3301,52 @@ class SkillPackageTests(unittest.TestCase):
             with self.subTest(phrase=phrase):
                 self.assertNotIn(phrase, readme)
 
-    def test_incompatible_environment_recovery_uses_distinct_venv(self) -> None:
+    def test_unusable_environment_recovery_uses_distinct_venv(self) -> None:
+        """The fallback has two triggers, and it used to be written with one.
+
+        `.venv-traigent` existed for an interpreter this run cannot use, and
+        the word governing it was "only" - so the other environment this run
+        cannot use, one another project's work already depends on, had no
+        route to it. What the guide offered there instead was a question:
+        confirm once, then install into it anyway. That asks a first-time user
+        to accept a resolution moving packages their working project resolves,
+        in order to try this one, and no careful answer to it exists. Both
+        documents now reach the same fallback from either trigger, and the
+        confirmation that stood in for a remedy is gone from both.
+
+        `GUIDE.md` is read here too, and the reason is that the first version
+        of this test was not: it asserted over the two documents the fix
+        edited, and the entry document went on promising the user the stop
+        that had just been deleted. A guard scoped to where the author was
+        looking is a guard that confirms the author looked.
+        """
         skill_text = " ".join(SKILL.read_text().casefold().split())
         safety_text = " ".join(RUN_SAFETY.read_text().casefold().split())
+        guide_text = " ".join((ROOT / "GUIDE.md").read_text().casefold().split())
+
+        self.assertNotIn("is confirmed once first", guide_text)
+        self.assertNotIn("environment other work of yours depends on", guide_text)
+        self.assertIn("never installed into", guide_text)
 
         for text in (skill_text, safety_text):
             self.assertIn("conventional `.venv`", text)
             self.assertIn("implementation detail", text)
             self.assertIn("`.venv-traigent`", text)
-        self.assertIn("preserve an incompatible `.venv`", skill_text)
+            self.assertIn("other dependents", text)
+        self.assertIn("preserve an incompatible or shared `.venv`", skill_text)
         self.assertIn(
-            "`.venv` already exists but uses an incompatible interpreter", safety_text
+            "`.venv` exists with an incompatible interpreter or other dependents",
+            safety_text,
         )
         self.assertIn("python3.13 -m venv .venv-traigent", safety_text)
         self.assertNotIn("python3.13 -m venv .venv`", safety_text)
+        # The two spellings the confirmation had, one per document. Named
+        # rather than banning "confirm" outright: both documents confirm other
+        # things - that `sys.prefix` points inside the environment, that a
+        # mailbox owns an address - and a ban wide enough to catch this rule
+        # catches those too and stops meaning anything.
+        self.assertNotIn("obtain one confirmation first", skill_text)
+        self.assertNotIn("name the exact install and confirm once", safety_text)
 
     def test_opening_gate_uses_one_compatible_project_environment(self) -> None:
         """Inventory is actionable when it finds one unambiguous interpreter."""
@@ -18762,6 +18794,41 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
                 "restart a matching run from stage 1",
                 "begin a new record when one already matches",
                 "re-run the opening gate on a matching resumed record",
+            ),
+        ),
+        (
+            # Three documents each carried the confirmation, in three
+            # spellings, and the fourth - the reference - carried a sentence
+            # forbidding the fallback the confirmation stood in for ("Only
+            # when `.venv` already exists but uses an incompatible
+            # interpreter"). That is the shape this registry exists for: no
+            # one of the four was wrong on its own page.
+            #
+            # Settled: an environment other work depends on is not installed
+            # into, and the run takes `.venv-traigent` instead. A confirmation
+            # is not a remedy here - the only thing it can buy is permission
+            # to move a package the user's working project resolves, and a
+            # first-time user has no basis on which to grant it.
+            #
+            # NOT YET COMPLETE, and deliberately not padded to look like it
+            # is: `README.md` still promises the customer "Confirmation before
+            # installing into a virtual environment other work of yours
+            # depends on". That file belongs to another open branch, so its
+            # wording is not in the refused list below and this registry does
+            # not yet cover it. Add it here in the branch that edits it -
+            # otherwise the promise outlives the behaviour in the one document
+            # most people read.
+            "what happens to an environment other work depends on",
+            ("never into one that has them",),
+            (
+                # SKILL's authorization row, run safety's adoption rule, and
+                # the entry document's explanation of the same rule.
+                "obtain one confirmation first",
+                "name the exact install and confirm once",
+                "is confirmed once first",
+                # And the sentence that made the fallback unreachable for any
+                # reason but the interpreter.
+                "only when `.venv` already exists but uses an incompatible interpreter",
             ),
         ),
     )

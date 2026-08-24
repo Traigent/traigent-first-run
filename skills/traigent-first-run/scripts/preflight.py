@@ -21,7 +21,7 @@ import traceback
 from collections import Counter
 from dataclasses import asdict, dataclass
 from fractions import Fraction
-from importlib.metadata import PackageNotFoundError, version
+from importlib.metadata import PackageNotFoundError, distributions, version
 from pathlib import Path
 from typing import Any, Iterable, Sequence
 
@@ -332,6 +332,25 @@ VENDOR_KEYS = {
     "HuggingFace": ("HF_TOKEN", "HUGGINGFACE_API_KEY"),
 }
 BEDROCK_KEYS = ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_REGION")
+# The other way a Bedrock route is credentialed, and the reason `VENDOR_KEYS`
+# above can never settle it. None of these is a key: each names a place the
+# chain goes looking, so their presence is evidence that the route has a source
+# and never evidence of what that source holds.
+AWS_CHAIN_KEYS = (
+    "AWS_PROFILE",
+    "AWS_DEFAULT_PROFILE",
+    "AWS_ROLE_ARN",
+    "AWS_WEB_IDENTITY_TOKEN_FILE",
+    "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI",
+    "AWS_CONTAINER_CREDENTIALS_FULL_URI",
+)
+# The shared files, and the variable that relocates each of them. A profile or
+# an SSO session configured in either one is what carries the customer this
+# gate used to report as having no credential at all.
+AWS_CHAIN_FILES = (
+    ("AWS_SHARED_CREDENTIALS_FILE", Path(".aws") / "credentials"),
+    ("AWS_CONFIG_FILE", Path(".aws") / "config"),
+)
 
 
 @dataclass(frozen=True)
@@ -536,7 +555,136 @@ def check_python() -> None:
         )
 
 
-def check_sdk(*, defer_missing: bool = False) -> None:
+# Everything `assets/requirements-first-run.txt` names at top level, plus what
+# `python -m venv` puts in an empty environment. A distribution outside these
+# is somebody's work, and an environment holding one is not this run's to
+# install into: resolving the tested pins there can move a package that work
+# resolves today. Names rather than pinned versions, because the transitive set
+# the pins really install is not knowable from three lines without a lock file,
+# and a name-level answer errs toward leaving the environment alone.
+FIRST_RUN_TOP_LEVEL = frozenset({"traigent", "litellm", "python-dotenv"})
+ENVIRONMENT_BOOTSTRAP = frozenset({"pip", "setuptools", "wheel", "pkg-resources"})
+
+
+def canonical_distribution_name(name: str) -> str:
+    """PEP 503 normalization, so `python_dotenv` and `python-dotenv` are one."""
+    return re.sub(r"[-_.]+", "-", name).strip().casefold()
+
+
+def other_dependents() -> list[str]:
+    """Distributions in the active environment that this run did not put there.
+
+    Read from installed metadata only - nothing is imported. The list is the
+    evidence behind the remedy `check_sdk` prints, so it is returned rather
+    than counted here: a customer who is told their environment has other
+    dependents can be shown which ones.
+    """
+    names = set()
+    for distribution in distributions():
+        # A path entry can present a distribution whose metadata is missing
+        # entirely - `metadata` is then `None`, which crashed this loop before
+        # a guard existed. Skipping it undercounts by one and can only ever
+        # make the remedy below more permissive, never less, so it is the safe
+        # direction to be wrong in: nothing here is named that was not read.
+        metadata = distribution.metadata
+        raw = metadata.get("Name") if metadata is not None else None
+        if not raw:
+            continue
+        name = canonical_distribution_name(raw)
+        if name in FIRST_RUN_TOP_LEVEL or name in ENVIRONMENT_BOOTSTRAP:
+            continue
+        names.add(name)
+    return sorted(names)
+
+
+# `traigent==0.23.0` and `traigent[extras] == 0.23.0`, and deliberately not
+# `traigent>=0.20`. An EXACT pin is the only form this file can settle without
+# a specifier resolver: `>=0.20` is satisfied by the tested release, so naming
+# it as the wrong version would be a false statement about the project. What
+# is not matched here is simply not spoken about.
+EXACT_PIN = re.compile(
+    r"^\s*(?P<name>[A-Za-z0-9][A-Za-z0-9._-]*)\s*(?:\[[^\]]*\])?\s*=="
+    r"\s*(?P<version>[A-Za-z0-9][A-Za-z0-9.+!_-]*)\s*$"
+)
+
+
+def conflicting_traigent_pin(project_root: Path) -> tuple[str, str] | None:
+    """A project pin naming a release other than the tested one, and its file.
+
+    SKILL stage 5 installs "the project's compatible exact declarations" ahead
+    of the bundled pins, so a project pinning a different release sends the
+    assistant to install the version this gate then refuses. Reading the pin is
+    what lets the refusal name that loop instead of leaving the reader to walk
+    it twice.
+
+    Static reads only: PEP 621 `[project]` metadata and root requirements
+    files. A build backend that computes its dependencies is not consulted,
+    because consulting it means executing the project - so an unreadable or
+    absent declaration returns `None` and this run says nothing about one,
+    which is the honest answer rather than "the project declares nothing".
+    """
+    for path, requirements in project_requirements(project_root):
+        for requirement in requirements:
+            match = EXACT_PIN.match(requirement)
+            if not match:
+                continue
+            if canonical_distribution_name(match.group("name")) != "traigent":
+                continue
+            pinned = match.group("version")
+            if pinned == SUPPORTED_TRAIGENT_VERSION:
+                continue
+            return pinned, path.name
+    return None
+
+
+def project_requirements(project_root: Path) -> Iterable[tuple[Path, list[str]]]:
+    """Requirement strings the project declares, per file, without executing it."""
+    pyproject = project_root / "pyproject.toml"
+    if pyproject.is_file():
+        try:
+            import tomllib
+
+            data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+        except (ImportError, OSError, ValueError):
+            # Unreadable, or Python 3.10 where `tomllib` does not exist and
+            # `check_python` has already failed the run. Say nothing about a
+            # declaration rather than guessing at one.
+            data = {}
+        project = data.get("project")
+        if isinstance(project, dict):
+            declared = list(_string_list(project.get("dependencies")))
+            optional = project.get("optional-dependencies")
+            if isinstance(optional, dict):
+                for group in optional.values():
+                    declared.extend(_string_list(group))
+            yield pyproject, declared
+    for path in sorted(project_root.glob("requirements*.txt")):
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            continue
+        yield path, [
+            line.split("#", 1)[0]
+            for line in lines
+            if line.strip() and not line.lstrip().startswith(("#", "-"))
+        ]
+
+
+def _string_list(value: Any) -> list[str]:
+    return (
+        [item for item in value if isinstance(item, str)]
+        if isinstance(value, list)
+        else []
+    )
+
+
+def check_sdk(*, defer_missing: bool = False, project_root: Path | None = None) -> None:
+    root = Path.cwd() if project_root is None else project_root
+    dependents = other_dependents()
+    # Only ever named alongside a remedy, so an environment that already
+    # satisfies the pin is never described to a reader who has nothing to
+    # decide.
+    metrics = {"environment": sys.prefix, "other_dependents": len(dependents)}
     try:
         installed = version("traigent")
     except PackageNotFoundError:
@@ -544,9 +692,15 @@ def check_sdk(*, defer_missing: bool = False) -> None:
             emit(
                 "sdk-version",
                 SKIP,
-                "traigent is not installed yet; verify it in the isolated environment after installation",
+                "traigent is not installed yet; verify it in the isolated environment after installation"
+                + elsewhere_clause(dependents),
+                metrics,
             )
         else:
+            # The post-install pass. An absent SDK here is a failed install,
+            # not an environment choice, and the environment it failed in may
+            # legitimately hold the pins' own transitive dependencies - so this
+            # branch does not read the count as a shared environment.
             emit(
                 "sdk-version",
                 FAIL,
@@ -554,14 +708,119 @@ def check_sdk(*, defer_missing: bool = False) -> None:
             )
         return
     if installed != SUPPORTED_TRAIGENT_VERSION:
+        conflicting = conflicting_traigent_pin(root)
+        if conflicting is not None:
+            metrics["project_pins"] = conflicting[0]
         emit(
             "sdk-version",
             FAIL,
             f"traigent {installed} is unsupported for this tested first run; "
-            f"install traigent=={SUPPORTED_TRAIGENT_VERSION}",
+            f"install traigent=={SUPPORTED_TRAIGENT_VERSION}"
+            + conflicting_pin_clause(conflicting)
+            + elsewhere_clause(dependents),
+            metrics,
         )
     else:
         emit("sdk-version", PASS, f"traigent {installed}")
+
+
+def conflicting_pin_clause(conflicting: tuple[str, str] | None) -> str:
+    """Close the loop stage 5 would otherwise send a reader around twice.
+
+    "Use the project's compatible exact declarations" is the first thing the
+    stage says, and a project pinning another release makes that instruction
+    point at the version this check has just refused.
+    """
+    if conflicting is None:
+        return ""
+    pinned, filename = conflicting
+    return (
+        f". {filename} pins `traigent=={pinned}`, which is not the tested "
+        "release: installing the project's own pin instead returns here"
+    )
+
+
+def elsewhere_clause(dependents: list[str]) -> str:
+    """Where the tested pin goes when the active environment is not this run's.
+
+    The remedy is the whole of what a reader acts on, and without this clause
+    it reads as "upgrade whatever is active". In an environment another
+    project depends on that is an unacceptable instruction, and it is where a
+    first run stalls: the guide asks someone to move a package their working
+    project resolves, in order to try a product. Which remedy prints is
+    decided here from the environment's measured contents, so the guide's
+    promise that a first run leaves existing work alone is kept by code rather
+    than by a sentence asking the reader to keep it.
+    """
+    if not dependents:
+        return ""
+    return (
+        f". Not {sys.prefix}: it provides {len(dependents)} other "
+        "distributions, so installing the pins there can move a package "
+        "another project depends on. Give this run an environment of its own, "
+        "install the pins in that one, and re-run this check in it"
+    )
+
+
+def aws_chain_sources(env: dict[str, str | None]) -> list[str]:
+    """Named places the AWS credential chain reads, that exist on this machine.
+
+    Presence, never values: a name is reported, a file is reported by its path,
+    and nothing is opened. This is the same inventory rule stage 5 states for
+    every other source, applied to the one route that has no key name to
+    inventory.
+
+    What it cannot see is the reason its silence is not a verdict. An EC2 or
+    ECS instance role is served over the link-local metadata endpoint and
+    leaves nothing on disk, so a fully credentialed run can present exactly the
+    environment an uncredentialed one does. Reaching for it would be a network
+    call, which this command does not make.
+    """
+    found = []
+    for name in AWS_CHAIN_KEYS:
+        if key_present(env.get(name)):
+            found.append(name)
+    for name, default in AWS_CHAIN_FILES:
+        override = env.get(name)
+        if key_present(override):
+            path = Path(override)
+        else:
+            try:
+                path = Path.home() / default
+            except RuntimeError:
+                # No home directory this process can resolve. The shared files
+                # are then unreachable by definition; a relocated one named
+                # above was still read.
+                continue
+        if path.is_file():
+            found.append(str(path))
+    return found
+
+
+def check_aws_credential_chain(env: dict[str, str | None]) -> None:
+    """Report a chain source when there is one, and stay silent when there is not.
+
+    The gate used to have one answer for a Bedrock route - the key is absent -
+    and it was wrong in both directions. A customer whose profile signs every
+    call was told their credential was missing, which turns the stage-5
+    question into `add <key>` for a route that takes no key and cannot answer
+    it; and the guide's own paid wrapper declares that route with no names for
+    exactly this reason. So the chain is a supported route here, and the report
+    says which source makes it one.
+    """
+    sources = aws_chain_sources(env)
+    if not sources:
+        return
+    emit(
+        "aws-credential-chain",
+        PASS,
+        f"the AWS credential chain has a source here ({', '.join(sources)}), so a "
+        "Bedrock route can sign its calls with no AWS_* key set and needs no "
+        "entry in the local environment file. This reads presence only and "
+        "makes no call, so it is the first live call, not this line, that "
+        "proves the chain resolves",
+        {"aws_chain_sources": len(sources)},
+    )
 
 
 def check_keys(env: dict[str, str | None]) -> None:
@@ -598,6 +857,10 @@ def check_keys(env: dict[str, str | None]) -> None:
             f"credential names are available for {', '.join(available)}; "
             "this inventory does not select or change the agent's provider route",
         )
+
+    # After the name inventory, because what it says qualifies that inventory:
+    # a route can be credentialed by something the names above cannot hold.
+    check_aws_credential_chain(env)
 
     traigent_key = env.get("TRAIGENT_API_KEY")
     if not key_present(traigent_key):

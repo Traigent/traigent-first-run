@@ -33,16 +33,16 @@ Nothing in this guide requires sub-agents, which not every supported assistant p
   environment managed outside the root is an external candidate, not an ignored one. More than one
   compatible candidate, or external-only environments, get one question with a recommendation and
   every candidate path.
-  Before adopting an environment with other dependents, name the exact install and confirm once,
-  offering a separate `.venv-traigent`; a run-created environment or one containing only this
-  walkthrough's pinned set proceeds without repeating that question.
+  An environment with other dependents is not this run's to install into; give the run
+  `.venv-traigent` rather than ask a first-time user to risk their working project. One this run
+  created, or holding only this walkthrough's pinned set, has none.
 - Create and then activate the environment before installing: `source .venv/bin/activate` on
   macOS/Linux, `.venv\Scripts\Activate.ps1` on Windows PowerShell (a first run there may need
   `Set-ExecutionPolicy -Scope Process RemoteSigned`). Confirm `sys.prefix` points inside the
   environment before `pip install`, or the install silently lands in global Python and the run
   cannot find `traigent`.
-- Only when `.venv` already exists but uses an incompatible interpreter, preserve it and create
-  `.venv-traigent` with a supported interpreter, for example
+- Where `.venv` exists with an incompatible interpreter or other dependents, preserve it and
+  create `.venv-traigent` with a supported interpreter, for example
   `python3.13 -m venv .venv-traigent`. Keep this fallback name as an implementation detail rather
   than asking the user to choose an environment name.
 - Keep dependency installation as its own action class. It may proceed without another approval
