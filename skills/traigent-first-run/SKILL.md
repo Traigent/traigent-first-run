@@ -1,6 +1,6 @@
 ---
 name: traigent-first-run
-description: Guide a professional first Traigent optimization from any starting point, including projects missing or containing weak agent, evaluation dataset, or evaluation method components. Use when a user asks to try Traigent, get started with Traigent, run a first optimization, optimize an agent for the first time, set up Traigent, or opens the Traigent/traigent-first-run repository. Inspect what already exists, preserve real components, diagnose limitations with concrete evidence, offer repair and revalidation before spending, create only the missing pieces as one coherent system, distinguish demonstration substitutes from production readiness, preserve the user's baseline or generate a credible small sweep, run one broader bounded optimization, and report what the result does and does not prove.
+description: Guide a professional first Traigent optimization for non-executing comparison evaluators, such as classification, extraction, and short-answer QA. Use when a user asks to try Traigent, get started with Traigent, run a first optimization, optimize an agent for the first time, set up Traigent, or opens the Traigent/traigent-first-run repository. Inspect what already exists, preserve real components, diagnose limitations with concrete evidence, offer repair and revalidation before spending, create only the missing pieces as one coherent system, distinguish demonstration substitutes from production readiness, preserve the user's baseline or generate a credible small sweep, run one broader bounded optimization, and report what the result does and does not prove.
 ---
 
 # Traigent Guided First Run
@@ -119,7 +119,7 @@ approval.
 | Create or update a minimal `.env` | Proceed only after free checks, and only through `references/run-safety.md`'s ordered handoff, which selects the file. Preserve existing values and comments, append only its missing provider key, and require mode `0600` before opening. Before writing, run that reference's git-tracked-file safety check and its ignore verification; it owns the exact commands and exit-code handling, and stop before secret entry if either check fails. Outside Git, do not create `.gitignore`. Never copy or request a duplicate key. Add or request the Traigent key only after the baseline checkpoint. |
 | Repair a working copy after the user chooses repair | Proceed only within the agreed repair scope, then revalidate from the failed gate. |
 | Change real labels, expected answers, examples, or rubric policy | Show the exact judgment-dependent change and obtain explicit approval. |
-| Execute an evaluator or mock check | Proceed without provider approval only after inspection proves a non-executing evaluator path is local-only or every mock model call is intercepted, with no external side effects. Any path that executes or imports candidate output as code, shells out with it, or submits it to a code/SQL engine must satisfy the `run-safety.md` execution-evaluator containment contract on every invocation; otherwise do not run it. |
+| Execute an evaluator or mock check | Proceed without provider approval only after inspection proves a non-executing evaluator path is local-only or every mock model call is intercepted, with no external side effects. A path that executes or imports candidate output as code, shells out with it, or submits it to a code/SQL engine is outside this first-run guide: stop before execution and follow `run-safety.md`'s manual-containment route. |
 | Make provider, private-data, connected Traigent, or external calls other than the narrow dependency fetch | Obtain stage-specific approval for recipients/data, scope, runtime, and ceiling: baseline first; connected optimization after its checkpoint. |
 | Perform destructive or production-affecting actions | Obtain separate explicit approval for the exact action. |
 
@@ -481,10 +481,9 @@ Follow this order:
 
    Resolve any `permutation_question` from inspected evidence; ask before paid work only if the
    competing order semantics remain unresolved.
-   On an execution evaluator, a permutation probe distinguished only because rearranged code is
-   caught and scored as invalid carries no evidence about label/value binding; a propagated parse
-   or runtime exception is not a pass. The semantic-coverage review must cover that axis for code
-   tasks.
+   If inspection identifies an execution evaluator, do not use a permutation probe to turn a
+   parse/runtime result into evidence. The scope stop below ends this first-run guide before any
+   evaluator execution.
 2. If unresolved product-grading ambiguity would materially change which output is correct or how
    candidate configurations rank, ask exactly one product-grading question, explain the affected
    decision, then stop and wait. Otherwise record that no ambiguity remains and do not add a generic
@@ -500,11 +499,12 @@ Follow this order:
    the evaluator was created or changed, resolve its method again, then pass that same current
    `--evaluator-method` value to this preflight and the paired readiness invocation in step 5 (or
    omit it from both when no method exists). This heuristic check does not assert SDK compatibility.
-4. Run deterministic calibration only after a `sufficient` semantic-coverage verdict. A
-   non-executing evaluator must have a fully inspected local-only, side-effect-free call path and
-   run in the credential-stripped calibration subprocess. An execution evaluator waits until the
-   sandbox and declared local dependencies in `references/run-safety.md` are available, and every
-   calibration/scored invocation uses that containment; otherwise do not run it.
+4. Before calibration, apply `references/run-safety.md`'s execution-evaluator scope gate. If the
+   inspected call path or static preflight identifies code/SQL execution, record the `containment`
+   stop and end this guide before calibration, environment setup, credentials, provider calls, or
+   paid work. Otherwise, run deterministic calibration only after a `sufficient`
+   semantic-coverage verdict. Its non-executing path must be fully inspected, local-only, and
+   side-effect-free, and runs in the credential-stripped calibration subprocess.
 5. Re-run `scripts/readiness.py` on the fresh preflight JSON plus any applicable calibration
    result. Omit every config-space file found before this run's enhanced search here just as at the
    opening gate. This score is required even when a low score or cap is expected. Record its gate

@@ -3,8 +3,8 @@
 
 Every scorer must return a finite, normalized, higher-is-better score in ``[0,1]``.
 For deterministic calibration the child is credential-stripped, but process separation is not a
-sandbox. A scorer that executes candidate code or SQL must delegate that content to the
-execution-evaluator containment required by ``references/run-safety.md``.
+sandbox. This first-run guide does not calibrate a scorer that executes candidate code or SQL;
+``references/run-safety.md`` routes that work to a separate manual containment review.
 """
 
 from __future__ import annotations
