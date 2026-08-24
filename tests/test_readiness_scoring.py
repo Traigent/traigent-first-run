@@ -1387,11 +1387,13 @@ class EvaluationScoringTests(unittest.TestCase):
             {
                 "check": "evaluator-shape",
                 "status": "PASS",
-                "metrics": {"exists": True, "parses": True},
+                "metrics": {"exists": True, "parses": True, "sha256": "a" * 64},
             }
         ]
-        self.assertEqual(MODULE.evaluator_shape_from_preflight(records), (True, True))
-        self.assertEqual(MODULE.evaluator_shape_from_preflight([]), (False, None))
+        self.assertEqual(
+            MODULE.evaluator_shape_from_preflight(records), (True, True, "a" * 64)
+        )
+        self.assertEqual(MODULE.evaluator_shape_from_preflight([]), (False, None, None))
 
     def test_both_calibration_payload_shapes_parse(self) -> None:
         matrix = MODULE.evaluation_facts_from_calibration(
@@ -1403,6 +1405,297 @@ class EvaluationScoringTests(unittest.TestCase):
         self.assertEqual(len(matrix.checks), 1)
         self.assertEqual(len(single.checks), 1)
         self.assertEqual(matrix.probe_scores, single.probe_scores)
+
+
+class TheCalibrationNamesTheEvaluatorItRanTests(unittest.TestCase):
+    """traigent-first-run#260: a calibration credited to the wrong evaluator.
+
+    Neither side of this score used to say WHICH evaluator it was about. The
+    opening gate reported that a file existed and parsed; the calibration
+    result reported checks and probe scores and nothing identifying what it
+    had run against. So a result left at the guide's conventional path by an
+    interrupted or repeated first run - the guide writes it there with `>` -
+    was credited to whatever evaluator the next run happened to have, and the
+    evaluation pillar reported measurements of a file nobody was scoring.
+
+    Both sides now carry a digest, and this is what the scorer does with the
+    four ways they can line up.
+    """
+
+    READ = "1" * 64
+    CALIBRATED = "2" * 64
+    PASSING_CASE = {"good_passes": True, "bad_fails": True, "non_constant": True}
+    FAILING_CASE = {"good_passes": True, "bad_fails": False, "non_constant": False}
+
+    def _payload(self, digest: str | None, checks: dict[str, bool]) -> dict:
+        payload = {
+            "cases": [{"checks": checks, "scores": {"good": 1.0, "bad": 0.0}}],
+            "passed": all(checks.values()),
+        }
+        if digest is not None:
+            payload["evaluator_sha256"] = digest
+        return payload
+
+    def _calibration_subscore(self, facts) -> object:
+        pillar, _ = MODULE.score_evaluation(facts)
+        return next(sub for sub in pillar.subscores if sub.name == "calibration")
+
+    def _facts(self, *, stamp: str | None, read: str | None, checks=None):
+        return MODULE.evaluation_facts_from_calibration(
+            self._payload(stamp, checks or self.PASSING_CASE),
+            method="exact",
+            task_kind="structured",
+            evaluator_present=True,
+            evaluator_parses=True,
+            evaluator_digest=read,
+        )
+
+    def test_two_digests_that_agree_are_credited_and_say_so(self) -> None:
+        facts = self._facts(stamp=self.READ, read=self.READ)
+        self.assertFalse(facts.calibration_names_other_evaluator)
+        sub = self._calibration_subscore(facts)
+        self.assertTrue(sub.measured)
+        self.assertEqual(sub.value, sub.maximum)
+        self.assertIn("1 calibration case(s)", sub.evidence)
+        self.assertIn(self.READ[: MODULE.DIGEST_DISPLAY_CHARACTERS], sub.evidence)
+
+    def test_a_matching_calibration_scores_exactly_what_it_always_did(self) -> None:
+        """The regression this change must not cause.
+
+        A project whose calibration and evaluator agree has to keep the score
+        it had before either side carried a digest - the comparison is meant
+        to catch a mismatch, not to charge everybody a toll for it.
+        """
+        unstamped = MODULE.evaluation_facts_from_calibration(
+            self._payload(None, self.PASSING_CASE),
+            method="exact",
+            task_kind="structured",
+            evaluator_present=True,
+            evaluator_parses=True,
+        )
+        matched = self._facts(stamp=self.READ, read=self.READ)
+        before, _ = MODULE.score_evaluation(unstamped)
+        after, _ = MODULE.score_evaluation(matched)
+        self.assertEqual(after.score, before.score)
+
+    def test_a_calibration_for_another_evaluator_is_not_credited(self) -> None:
+        facts = self._facts(stamp=self.CALIBRATED, read=self.READ)
+        self.assertTrue(facts.calibration_names_other_evaluator)
+        sub = self._calibration_subscore(facts)
+        self.assertFalse(sub.measured)
+        self.assertEqual(sub.value, 0.0)
+        # Both names, because the reader has to be able to tell which of the
+        # two files on their disk this score is about.
+        self.assertIn(self.CALIBRATED[: MODULE.DIGEST_DISPLAY_CHARACTERS], sub.evidence)
+        self.assertIn(self.READ[: MODULE.DIGEST_DISPLAY_CHARACTERS], sub.evidence)
+        # And not the sentence a run that supplied nothing gets: one WAS
+        # supplied, and reporting otherwise is the class of false line this
+        # pillar has already been corrected for twice.
+        self.assertNotIn("no calibration result was provided", sub.evidence)
+
+    def test_a_foreign_calibrations_checks_do_not_reach_the_facts(self) -> None:
+        """Quarantined at the door, one dropped fact per assertion.
+
+        The checks are asserted on the FACTS and not only on the score,
+        because a fact that survives into the dataclass is a fact a consumer
+        added later can read. The score is where today's defect showed; the
+        dataclass is where tomorrow's would.
+        """
+        facts = self._facts(stamp=self.CALIBRATED, read=self.READ)
+        self.assertEqual(facts.checks, ())
+
+    def test_a_foreign_calibrations_probe_scores_do_not_reach_the_facts(self) -> None:
+        facts = self._facts(stamp=self.CALIBRATED, read=self.READ)
+        self.assertEqual(facts.probe_scores, ())
+
+    def test_a_foreign_calibration_is_not_recorded_as_present(self) -> None:
+        facts = self._facts(stamp=self.CALIBRATED, read=self.READ)
+        self.assertFalse(facts.calibration_present)
+
+    def test_a_foreign_calibration_is_still_recorded_as_supplied(self) -> None:
+        """The one fact the quarantine must NOT drop.
+
+        A payload did arrive. Dropping this would put "no calibration result
+        was provided to this score" on a card where one was - the class of
+        false sentence this pillar has already been corrected for twice - and
+        would additionally re-route a run with no declared method into
+        `evaluator-unresolved`, which is a different customer problem.
+        """
+        facts = self._facts(stamp=self.CALIBRATED, read=self.READ)
+        self.assertTrue(facts.calibration_supplied)
+
+    def test_a_foreign_calibrations_probe_spread_is_not_credited_either(self) -> None:
+        """Every fact in that payload measured the other evaluator, not this one."""
+        facts = self._facts(stamp=self.CALIBRATED, read=self.READ)
+        pillar, _ = MODULE.score_evaluation(facts)
+        spread = next(sub for sub in pillar.subscores if sub.name == "probe-spread")
+        self.assertFalse(spread.measured)
+        self.assertEqual(spread.value, 0.0)
+
+    def test_a_foreign_calibration_cannot_accuse_this_evaluator(self) -> None:
+        """The direction that would look conservative and is not.
+
+        A FAILING calibration of some other evaluator used to raise
+        `evaluator-invalid` here - "the evaluator scores a wrong answer as well
+        as a right one" - about a file nothing had measured. Refusing the
+        credit and keeping the accusation would be the same defect wearing a
+        safer face.
+        """
+        facts = self._facts(
+            stamp=self.CALIBRATED, read=self.READ, checks=self.FAILING_CASE
+        )
+        _, caps = MODULE.score_evaluation(facts)
+        self.assertNotIn("evaluator-invalid", [cap.condition for cap in caps])
+
+    def test_a_foreign_timeout_does_not_cap_this_evaluator(self) -> None:
+        """`timed_out` is a measurement of the run that timed out."""
+        facts = MODULE.evaluation_facts_from_calibration(
+            {
+                "timed_out": True,
+                "cases": [],
+                "passed": False,
+                "evaluator_sha256": self.CALIBRATED,
+            },
+            method="exact",
+            evaluator_present=True,
+            evaluator_parses=True,
+            evaluator_digest=self.READ,
+        )
+        # On the facts first: a timeout that survives the quarantine is a
+        # timeout a later consumer can still read as this evaluator's.
+        self.assertFalse(facts.timed_out)
+        pillar, caps = MODULE.score_evaluation(facts)
+        self.assertNotIn("evaluator-timeout", [cap.condition for cap in caps])
+        sub = next(s for s in pillar.subscores if s.name == "calibration")
+        # The mismatch is what the card says, not "calibration ran but
+        # reported no checks" - which is what the emptied payload would
+        # otherwise read as, and which is false about a payload that ran.
+        self.assertIn(self.CALIBRATED[: MODULE.DIGEST_DISPLAY_CHARACTERS], sub.evidence)
+        self.assertNotIn("reported no checks", sub.evidence)
+
+    def test_a_matching_timeout_still_caps_this_evaluator(self) -> None:
+        """The refusal must be about identity, not about timeouts."""
+        facts = MODULE.evaluation_facts_from_calibration(
+            {
+                "timed_out": True,
+                "cases": [],
+                "passed": False,
+                "evaluator_sha256": self.READ,
+            },
+            method="exact",
+            evaluator_present=True,
+            evaluator_parses=True,
+            evaluator_digest=self.READ,
+        )
+        self.assertTrue(facts.timed_out)
+        _, caps = MODULE.score_evaluation(facts)
+        self.assertIn("evaluator-timeout", [cap.condition for cap in caps])
+
+    def test_a_calibration_that_names_nothing_is_credited_and_disclosed(self) -> None:
+        """The state every calibration file on disk today is in.
+
+        Refusing them all would block every legitimate run in flight for a
+        staleness that is possible rather than shown; trusting them in silence
+        is the defect itself. So the checks are credited and the limit of what
+        was checked is stated where the person who can tell will read it.
+        """
+        facts = self._facts(stamp=None, read=self.READ)
+        self.assertFalse(facts.calibration_names_other_evaluator)
+        sub = self._calibration_subscore(facts)
+        self.assertTrue(sub.measured)
+        self.assertEqual(sub.value, sub.maximum)
+        self.assertIn("does not name the evaluator it ran against", sub.evidence)
+
+    def test_an_opening_gate_that_read_nothing_says_whose_silence_it_was(self) -> None:
+        """The mirror image, and it must not read as the calibration's fault.
+
+        Which side went silent decides who can fix it, so the two sentences
+        are different sentences.
+        """
+        facts = self._facts(stamp=self.CALIBRATED, read=None)
+        self.assertFalse(facts.calibration_names_other_evaluator)
+        sub = self._calibration_subscore(facts)
+        self.assertTrue(sub.measured)
+        self.assertIn("no evaluator was read here", sub.evidence)
+        self.assertIn(self.CALIBRATED[: MODULE.DIGEST_DISPLAY_CHARACTERS], sub.evidence)
+        self.assertNotIn("does not name the evaluator it ran against", sub.evidence)
+
+    def test_one_digest_alone_never_disagrees_with_the_other(self) -> None:
+        """`None` is an unanswered question, never a value that can differ."""
+        for read, stamp in ((self.READ, None), (None, self.CALIBRATED), (None, None)):
+            with self.subTest(read=read, stamp=stamp):
+                facts = MODULE.EvaluationFacts(
+                    present=True,
+                    evaluator_digest=read,
+                    calibration_digest=stamp,
+                )
+                self.assertFalse(facts.calibration_names_other_evaluator)
+
+    def test_a_stamp_that_is_not_a_digest_is_read_as_nothing_said(self) -> None:
+        """`--calibration` takes any JSON, and a bad value must not accuse.
+
+        A non-string compared against a real digest would report a mismatch
+        nothing established - turning an unreadable input into a finding about
+        the customer's project.
+        """
+        for stamp in (17, "", ["a" * 64], None, {"sha256": "a" * 64}):
+            with self.subTest(stamp=stamp):
+                payload = {
+                    "cases": [
+                        {
+                            "checks": self.PASSING_CASE,
+                            "scores": {"good": 1.0, "bad": 0.0},
+                        }
+                    ],
+                    "evaluator_sha256": stamp,
+                }
+                facts = MODULE.evaluation_facts_from_calibration(
+                    payload,
+                    method="exact",
+                    evaluator_present=True,
+                    evaluator_digest=self.READ,
+                )
+                self.assertIsNone(facts.calibration_digest)
+                self.assertFalse(facts.calibration_names_other_evaluator)
+                # Credited, because nothing here established a mismatch.
+                self.assertEqual(len(facts.checks), 1)
+
+    def test_a_preflight_stamp_that_is_not_a_digest_is_read_as_nothing_said(
+        self,
+    ) -> None:
+        """The same guard on the other side, which is a separate read."""
+        for stamp in (17, "", ["a" * 64], None):
+            with self.subTest(stamp=stamp):
+                records = [
+                    {
+                        "check": "evaluator-shape",
+                        "status": "PASS",
+                        "metrics": {"exists": True, "parses": True, "sha256": stamp},
+                    }
+                ]
+                present, parses, digest = MODULE.evaluator_shape_from_preflight(records)
+                self.assertTrue(present)
+                self.assertTrue(parses)
+                self.assertIsNone(digest)
+
+    def test_no_calibration_at_all_says_nothing_about_identity(self) -> None:
+        """The opening card runs here, and it must not gain a new complaint.
+
+        Nothing was supplied, so there is no calibration whose name could be
+        checked, and the line stays the one it has always been.
+        """
+        facts = MODULE.evaluation_facts_from_calibration(
+            None,
+            method="exact",
+            evaluator_present=True,
+            evaluator_parses=True,
+            evaluator_digest=self.READ,
+        )
+        sub = self._calibration_subscore(facts)
+        self.assertFalse(sub.measured)
+        self.assertEqual(
+            sub.evidence, "no calibration result was provided to this score"
+        )
 
 
 # The document the walkthrough's generated wrapper writes: the enhanced space,

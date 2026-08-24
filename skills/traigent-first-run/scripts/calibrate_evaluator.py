@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import contextlib
+import hashlib
 import importlib.util
 import inspect
 import io
@@ -584,6 +585,30 @@ def existing_directory(value: str) -> Path:
     return path
 
 
+def evaluator_source_digest(path: Path) -> str | None:
+    """Name the evaluator's bytes the way the opening gate names them.
+
+    The same computation `preflight.py`'s `evaluator-shape` check performs -
+    sha256 over the DECODED source text - so the two digests are comparable at
+    all. Both sides hash the text rather than the raw bytes on purpose: two
+    checkouts of one evaluator that differ only in line endings are the same
+    evaluator, and a digest that called them different would make
+    `readiness.py` refuse a calibration that is genuinely current.
+
+    `None` when the file could not be read as text, and that stays absent from
+    the payload rather than becoming a placeholder. An omitted stamp means
+    "this run could not say which evaluator it ran"; a placeholder would mean
+    "it ran this one", which nothing here established. The scorer is imported
+    by a child process from the bytes on disk, so a file this cannot decode is
+    not by itself a reason to refuse to calibrate.
+    """
+    try:
+        source = path.read_text()
+    except (OSError, UnicodeDecodeError):
+        return None
+    return hashlib.sha256(source.encode()).hexdigest()
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
@@ -1108,6 +1133,21 @@ def run() -> int:
         print("--scorer must use FILE.py:FUNCTION.", file=sys.stderr)
         return 2
     absolute_scorer = f"{Path(scorer_file).resolve()}:{scorer_name}"
+    # Which evaluator this calibration ran against, recorded in the result.
+    #
+    # The result used to carry nothing that identified it: no digest, no path,
+    # no timestamp of the file it read. So a calibration produced for evaluator
+    # A was indistinguishable from one produced for evaluator B, and the guide
+    # writes this payload to one conventional path with `>` - which means an
+    # interrupted or repeated first run leaves exactly one where the next run
+    # reaches for it. `readiness.py` compares this against the digest the
+    # opening gate reports for the evaluator it read, and declines to credit a
+    # calibration that names a different one (traigent-first-run#260).
+    #
+    # Read here, before the worker starts, because this is the state of the
+    # file the worker is about to import - not the state it may be left in by
+    # the time the run finishes.
+    evaluator_sha256 = evaluator_source_digest(Path(scorer_file))
     # Attached once, here, rather than inside each of the two case-building
     # paths: one expected answer must not be able to acquire two permutations.
     #
@@ -1195,21 +1235,23 @@ def run() -> int:
             # requested, which is a distinction a reader of this payload has no
             # other way to make - so `timeout_scope` states it rather than
             # leaving it to be inferred from an empty list.
-            print(
-                json.dumps(
-                    {
-                        "timed_out": True,
-                        "timeout_scope": "authored-calibration",
-                        "passed": False,
-                        "timeout_seconds": args.timeout,
-                        "kind": args.kind,
-                        "cases_requested": len(cases),
-                        "cases": [],
-                        "detail": message,
-                    },
-                    indent=2,
-                )
-            )
+            timeout_result: dict[str, Any] = {
+                "timed_out": True,
+                "timeout_scope": "authored-calibration",
+                "passed": False,
+                "timeout_seconds": args.timeout,
+                "kind": args.kind,
+                "cases_requested": len(cases),
+                "cases": [],
+                "detail": message,
+            }
+            # Stamped like every other result, because a timeout is a claim
+            # about one particular evaluator too. Its `evaluator-timeout` cap
+            # must not be raised against whatever evaluator a later run happens
+            # to be scoring.
+            if evaluator_sha256 is not None:
+                timeout_result["evaluator_sha256"] = evaluator_sha256
+            print(json.dumps(timeout_result, indent=2))
         return 1
     if process.returncode != 0:
         print(
@@ -1366,6 +1408,11 @@ def run() -> int:
             result["permutation_probe"] = case_results[0]["permutation_probe"]
         if "exception_probes" in case_results[0]:
             result["exception_probes"] = case_results[0]["exception_probes"]
+
+    # One line, both shapes, so a matrix result and a single-case result cannot
+    # disagree about which evaluator produced them.
+    if evaluator_sha256 is not None:
+        result["evaluator_sha256"] = evaluator_sha256
 
     # One list, both shapes, so neither can answer this differently.
     #

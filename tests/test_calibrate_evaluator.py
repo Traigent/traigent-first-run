@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 import contextlib
+import hashlib
 import importlib.util
 import io
 import json
@@ -15,6 +16,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "skills" / "traigent-first-run" / "scripts" / "calibrate_evaluator.py"
+# The opening gate, run beside this script by the one test that pins the two
+# digests to each other. A comparison whose two sides are computed
+# differently is a comparison that reports differences that are not there.
+PREFLIGHT = ROOT / "skills" / "traigent-first-run" / "scripts" / "preflight.py"
 # The reference that owns this stage. Several tests below weld a number in the
 # script to the sentence that discloses it, because a bound the user is never
 # told about is the defect, not the bound.
@@ -2579,6 +2584,269 @@ class PermutationProbeTests(unittest.TestCase):
         # `not None` is True, so a two-state filter would have asked the
         # "does not distinguish" question about a probe that never scored.
         self.assertNotIn("permutation_question", payload)
+
+
+class TheResultNamesTheEvaluatorItCalibratedTests(unittest.TestCase):
+    """traigent-first-run#260: a result that says what it measured.
+
+    The `--json` result recorded nothing identifying the evaluator it ran
+    against - no digest, no path, no timestamp of the file it read. The guide
+    writes that result to one conventional path with `>`, so an interrupted or
+    repeated first run leaves exactly one where the next run reaches for it,
+    and a calibration produced for evaluator A read as current evidence about
+    evaluator B. `evaluator_sha256` is the fact that makes the two
+    distinguishable; `readiness.py` is what compares them.
+    """
+
+    CASES = [
+        {
+            "name": "field extraction",
+            "expected": ["name", "email"],
+            "input_data": {"format": "fields"},
+            "probes": {
+                "good": ["name", "email"],
+                "equivalent_good": ["email", "name"],
+                "partial": ["name"],
+                "bad": ["unrelated"],
+            },
+        },
+        {
+            "name": "second extraction",
+            "expected": ["city", "country"],
+            "input_data": {"format": "fields"},
+            "probes": {
+                "good": ["city", "country"],
+                "equivalent_good": ["country", "city"],
+                "partial": ["city"],
+                "bad": ["unrelated"],
+            },
+        },
+    ]
+
+    SCORER_SOURCE = (
+        "def score(output, expected, input_data=None, metadata=None):\n"
+        "    required = set(expected)\n"
+        "    return len(required & set(output)) / len(required)\n"
+    )
+
+    @staticmethod
+    def _digest_of(text: str) -> str:
+        return hashlib.sha256(text.encode()).hexdigest()
+
+    @staticmethod
+    def _script_module():
+        spec = importlib.util.spec_from_file_location(
+            "first_run_calibrate_identity", SCRIPT
+        )
+        module = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        sys.modules[spec.name] = module
+        spec.loader.exec_module(module)
+        return module
+
+    def _calibrate(
+        self, directory: Path, source: str, cases: list[dict], *extra: str
+    ) -> tuple[subprocess.CompletedProcess, dict]:
+        scorer = directory / "scorer.py"
+        scorer.write_text(source)
+        case_file = directory / "cases.json"
+        case_file.write_text(json.dumps(cases))
+        process = subprocess.run(
+            [
+                sys.executable,
+                str(SCRIPT),
+                "--scorer",
+                f"{scorer}:score",
+                "--cases",
+                f"@{case_file}",
+                "--allow-execution",
+                "--timeout",
+                "20",
+                "--json",
+                *extra,
+            ],
+            capture_output=True,
+            text=True,
+        )
+        self.assertIn(process.returncode, (0, 1), process.stderr[-2000:])
+        return process, json.loads(process.stdout)
+
+    def test_a_matrix_result_names_the_evaluator(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            _, payload = self._calibrate(
+                Path(directory), self.SCORER_SOURCE, self.CASES
+            )
+            # The matrix shape, pinned so the assertion cannot be satisfied by
+            # the flat one drifting into this test.
+            self.assertIn("cases", payload)
+            self.assertTrue(payload["passed"])
+            self.assertEqual(
+                payload["evaluator_sha256"], self._digest_of(self.SCORER_SOURCE)
+            )
+
+    def test_a_failing_calibration_still_names_the_evaluator(self) -> None:
+        """A result nobody is proud of is still a result about one file.
+
+        Worth its own case because the refusal downstream is about identity,
+        not about the verdict: a FAILING calibration of some other evaluator
+        is exactly the payload that must not be allowed to raise
+        `evaluator-invalid` against the evaluator actually being scored.
+        """
+        constant = "def score(output, expected, input_data=None, metadata=None):\n    return 1.0\n"
+        with tempfile.TemporaryDirectory() as directory:
+            _, payload = self._calibrate(Path(directory), constant, self.CASES)
+            self.assertFalse(payload["passed"])
+            self.assertEqual(payload["evaluator_sha256"], self._digest_of(constant))
+
+    def test_a_single_case_result_names_the_evaluator(self) -> None:
+        """The flat shape has its own result dict and would drop it separately."""
+        with tempfile.TemporaryDirectory() as directory:
+            scorer = Path(directory) / "scorer.py"
+            scorer.write_text(self.SCORER_SOURCE)
+            process = subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPT),
+                    "--scorer",
+                    f"{scorer}:score",
+                    "--expected",
+                    json.dumps(["name", "email"]),
+                    "--good",
+                    json.dumps(["name", "email"]),
+                    "--equivalent-good",
+                    json.dumps(["email", "name"]),
+                    "--partial",
+                    json.dumps(["name"]),
+                    "--bad",
+                    json.dumps(["unrelated"]),
+                    "--allow-execution",
+                    "--timeout",
+                    "20",
+                    "--json",
+                ],
+                capture_output=True,
+                text=True,
+            )
+            self.assertIn(process.returncode, (0, 1), process.stderr[-2000:])
+            payload = json.loads(process.stdout)
+            # The flat shape, pinned the same way and for the same reason.
+            self.assertNotIn("cases", payload)
+            self.assertEqual(
+                payload["evaluator_sha256"], self._digest_of(self.SCORER_SOURCE)
+            )
+
+    def test_a_timed_out_result_names_the_evaluator(self) -> None:
+        """A timeout is a claim about one evaluator too.
+
+        Its `evaluator-timeout` cap must not be raised against whatever
+        evaluator a later run happens to be scoring, and the timeout payload
+        is built in its own branch that would keep its old silence.
+        """
+        slow = (
+            "import time\n\n\n"
+            "def score(output, expected, input_data=None, metadata=None):\n"
+            "    time.sleep(30)\n"
+            "    return 1.0\n"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            scorer = Path(directory) / "slow_scorer.py"
+            scorer.write_text(slow)
+            case_file = Path(directory) / "cases.json"
+            case_file.write_text(json.dumps(self.CASES))
+            process = subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPT),
+                    "--scorer",
+                    f"{scorer}:score",
+                    "--cases",
+                    f"@{case_file}",
+                    "--allow-execution",
+                    "--timeout",
+                    "2",
+                    "--json",
+                ],
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(process.returncode, 1, process.stderr[-2000:])
+            payload = json.loads(process.stdout)
+            self.assertTrue(payload["timed_out"])
+            self.assertEqual(payload["evaluator_sha256"], self._digest_of(slow))
+
+    def test_an_evaluator_whose_bytes_cannot_be_decoded_is_not_named(self) -> None:
+        """No text was read, so the helper says so instead of inventing a name.
+
+        Unit-level because the CLI path cannot reach a result here - the child
+        that imports such a file fails first - and because an absent stamp has
+        to keep meaning "could not say", never "read it and it was empty".
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "scorer.py"
+            path.write_bytes(b"\xff\xfe\x00def score():\n")
+            module = self._script_module()
+            self.assertIsNone(module.evaluator_source_digest(path))
+            self.assertIsNone(
+                module.evaluator_source_digest(Path(directory) / "absent.py")
+            )
+
+    def test_the_stamp_agrees_with_what_the_opening_gate_reports(self) -> None:
+        """The contract that makes the comparison mean anything at all.
+
+        Two scripts computing a digest their own way would disagree on any
+        file whose text and bytes differ - a CRLF checkout is enough - and
+        `readiness.py` would then report every legitimate calibration as
+        produced for a different evaluator. Both digests are computed here by
+        running the two real scripts, so a change to either side's computation
+        fails this rather than surfacing as a refusal on somebody's card.
+        """
+        crlf_source = self.SCORER_SOURCE.replace("\n", "\r\n")
+        with tempfile.TemporaryDirectory() as directory:
+            scorer = Path(directory) / "scorer.py"
+            scorer.write_bytes(crlf_source.encode())
+            case_file = Path(directory) / "cases.json"
+            case_file.write_text(json.dumps(self.CASES))
+            calibration = subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPT),
+                    "--scorer",
+                    f"{scorer}:score",
+                    "--cases",
+                    f"@{case_file}",
+                    "--allow-execution",
+                    "--timeout",
+                    "20",
+                    "--json",
+                ],
+                capture_output=True,
+                text=True,
+            )
+            self.assertIn(calibration.returncode, (0, 1), calibration.stderr[-2000:])
+            preflight = subprocess.run(
+                [
+                    sys.executable,
+                    str(PREFLIGHT),
+                    "--evaluator",
+                    str(scorer),
+                    "--defer-missing-sdk",
+                    "--json",
+                ],
+                capture_output=True,
+                text=True,
+            )
+            self.assertIn(preflight.returncode, (0, 1), preflight.stderr[-2000:])
+        stamped = json.loads(calibration.stdout)["evaluator_sha256"]
+        shape = next(
+            record
+            for record in json.loads(preflight.stdout)
+            if record["check"] == "evaluator-shape"
+        )
+        self.assertEqual(stamped, shape["metrics"]["sha256"])
+        # And it is the digest of the DECODED text, not of the bytes on disk -
+        # which is what makes one evaluator checked out twice, with two line
+        # ending conventions, still one evaluator.
+        self.assertEqual(stamped, self._digest_of(self.SCORER_SOURCE))
 
 
 class NoInternalFailureReachesTheUserAsATracebackTests(unittest.TestCase):

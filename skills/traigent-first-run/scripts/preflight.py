@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import hashlib
 import json
 import os
 import re
@@ -1900,6 +1901,32 @@ def check_evaluator(path: Path) -> None:
             {"exists": True, "parses": False},
         )
         return
+    # Which evaluator this check read, named by the digest of the source text
+    # it read. Not a judgement on the file - a name for it, so that an
+    # artifact produced elsewhere can be asked whether it belongs to this
+    # evaluator or to a different one.
+    #
+    # Nothing downstream could ask that before. `calibrate_evaluator.py
+    # --json` now stamps the same digest for the evaluator it calibrated, and
+    # `readiness.py` compares the two, so a results file left behind by an
+    # interrupted or repeated run - which the guide invites, by writing that
+    # file to one conventional path with `>` - can no longer be credited to
+    # whatever evaluator the next run happens to have (traigent-first-run#260).
+    #
+    # The DECODED text is hashed, not the raw bytes, and both sides do the
+    # same. Two checkouts of one evaluator that differ only in line endings
+    # are the same evaluator, and a digest that called them different would
+    # refuse a calibration that is genuinely current - the one failure this
+    # comparison must not have.
+    #
+    # Emitted from the parse-failure arms below as well, deliberately: the
+    # bytes were read there, and "the evaluator was replaced with something
+    # that no longer parses" is precisely a state in which a stale calibration
+    # is still lying around next to it. It is NOT emitted from the two arms
+    # above, where no bytes were obtained at all - an absent digest means
+    # "this check did not read the file", never "read it and found nothing
+    # worth saying".
+    digest = hashlib.sha256(source.encode()).hexdigest()
     try:
         ast.parse(source, filename=str(path))
     except SyntaxError as error:
@@ -1907,7 +1934,7 @@ def check_evaluator(path: Path) -> None:
             "evaluator-shape",
             FAIL,
             f"{path} is not valid Python: {error}",
-            {"exists": True, "parses": False},
+            {"exists": True, "parses": False, "sha256": digest},
         )
         return
     except (MemoryError, RecursionError, ValueError) as error:
@@ -1929,7 +1956,7 @@ def check_evaluator(path: Path) -> None:
             "evaluator-shape",
             FAIL,
             f"{path} could not be parsed: {type(error).__name__}: {error}",
-            {"exists": True, "parses": False},
+            {"exists": True, "parses": False, "sha256": digest},
         )
         return
     emit(
@@ -1937,7 +1964,7 @@ def check_evaluator(path: Path) -> None:
         PASS,
         f"{path} parses as valid Python; this proves nothing about its "
         "scoring behavior, which is not executed here",
-        {"exists": True, "parses": True},
+        {"exists": True, "parses": True, "sha256": digest},
     )
 
 

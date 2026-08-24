@@ -28,6 +28,10 @@ ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = ROOT / "skills" / "traigent-first-run" / "scripts"
 PREFLIGHT = SCRIPTS / "preflight.py"
 READINESS = SCRIPTS / "readiness.py"
+# The third script in the chain. The identity comparison spans all three, so the
+# test that drives it has to run all three - a hand-written calibration payload
+# would prove only that this test can spell the field name.
+CALIBRATE = SCRIPTS / "calibrate_evaluator.py"
 # Imported so a points assertion can name the constant it is about rather than
 # restating its value beside it.
 # Imported so an assertion about the similarity line can name the constant that
@@ -3400,3 +3404,152 @@ class DuplicatedRowsBuyNoResolutionTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TheStaleCalibrationIsVisibleEndToEndTests(unittest.TestCase):
+    """traigent-first-run#260, driven through all three real scripts.
+
+    The defect was a property of the chain, not of any one script: preflight
+    said a file was there, calibration said some checks passed, and nothing
+    connected the two statements to the same file. So it is reproduced the way
+    a user reaches it - calibrate an evaluator, edit the evaluator, re-open the
+    gate with last run's result still sitting where the guide put it - rather
+    than by handing the scorer a payload this test typed itself.
+    """
+
+    EVALUATOR = (
+        "def score(output, expected, input_data=None, metadata=None):\n"
+        "    return float(str(output).casefold() == str(expected).casefold())\n"
+    )
+    REPLACEMENT = (
+        "def score(output, expected, input_data=None, metadata=None):\n"
+        "    return float(str(output).strip() == str(expected).strip())\n"
+    )
+    CASES = [
+        {
+            "name": "billing",
+            "score_mode": "binary",
+            "expected": "billing",
+            "probes": {
+                "good": "billing",
+                "equivalent_good": "BILLING",
+                "partial": "technical",
+                "bad": "cancellation",
+            },
+        },
+        {
+            "name": "cancellation",
+            "score_mode": "binary",
+            "expected": "cancellation",
+            "probes": {
+                "good": "cancellation",
+                "equivalent_good": "CANCELLATION",
+                "partial": "billing",
+                "bad": "technical",
+            },
+        },
+    ]
+
+    def _preflight(self, evaluator: Path) -> Path:
+        process = subprocess.run(
+            [
+                sys.executable,
+                str(PREFLIGHT),
+                "--evaluator",
+                str(evaluator),
+                "--defer-missing-sdk",
+                "--json",
+            ],
+            capture_output=True,
+            text=True,
+        )
+        self.assertIn(process.returncode, (0, 1), process.stderr[-2000:])
+        # Written beside the evaluator and returned, so each gate opening keeps
+        # its own record: the whole point is to score one calibration against
+        # two different readings of the file.
+        path = (
+            evaluator.parent / f"preflight-{len(list(evaluator.parent.iterdir()))}.json"
+        )
+        path.write_text(process.stdout)
+        return path
+
+    def _calibrate(self, evaluator: Path) -> Path:
+        cases = evaluator.parent / "calibration-cases.json"
+        cases.write_text(json.dumps(self.CASES))
+        process = subprocess.run(
+            [
+                sys.executable,
+                str(CALIBRATE),
+                "--scorer",
+                f"{evaluator}:score",
+                "--cases",
+                f"@{cases}",
+                "--allow-execution",
+                "--timeout",
+                "20",
+                "--json",
+            ],
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(process.returncode, 0, process.stderr[-2000:])
+        path = evaluator.parent / "calibration.json"
+        path.write_text(process.stdout)
+        return path
+
+    def _calibration_subscore(self, preflight: Path, calibration: Path) -> dict:
+        process = subprocess.run(
+            [
+                sys.executable,
+                str(READINESS),
+                "--preflight",
+                str(preflight),
+                "--calibration",
+                str(calibration),
+                "--evaluator-method",
+                "exact",
+                "--task-kind",
+                "structured",
+                "--json",
+            ],
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(process.returncode, 0, process.stderr[-2000:])
+        card = json.loads(process.stdout)
+        pillar = next(p for p in card["pillars"] if p["name"] == "evaluation")
+        return next(s for s in pillar["subscores"] if s["name"] == "calibration")
+
+    def test_a_calibration_of_the_evaluator_on_disk_is_credited(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            evaluator = Path(directory) / "evaluator.py"
+            evaluator.write_text(self.EVALUATOR)
+            calibration = self._calibrate(evaluator)
+            preflight = self._preflight(evaluator)
+            sub = self._calibration_subscore(preflight, calibration)
+        self.assertTrue(sub["measured"])
+        self.assertEqual(sub["value"], sub["maximum"])
+        self.assertIn("2 calibration case(s)", sub["evidence"])
+
+    def test_a_calibration_of_the_evaluator_that_was_replaced_is_not(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            evaluator = Path(directory) / "evaluator.py"
+            evaluator.write_text(self.EVALUATOR)
+            calibration = self._calibrate(evaluator)
+            stamp = json.loads(calibration.read_text())["evaluator_sha256"]
+            # The interrupted-or-repeated run: the evaluator moves on and last
+            # run's result stays exactly where the guide wrote it.
+            evaluator.write_text(self.REPLACEMENT)
+            preflight = self._preflight(evaluator)
+            read = next(
+                record
+                for record in json.loads(preflight.read_text())
+                if record["check"] == "evaluator-shape"
+            )["metrics"]["sha256"]
+            sub = self._calibration_subscore(preflight, calibration)
+        self.assertNotEqual(stamp, read)
+        self.assertFalse(sub["measured"])
+        self.assertEqual(sub["value"], 0.0)
+        short = MODULE.DIGEST_DISPLAY_CHARACTERS
+        self.assertIn(stamp[:short], sub["evidence"])
+        self.assertIn(read[:short], sub["evidence"])

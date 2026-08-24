@@ -2029,6 +2029,32 @@ class EvaluationFacts:
     # `None` raises nothing, which is a decision and not an oversight - see
     # `origin_cap`.
     origin: str | None = None
+    # WHICH evaluator each side of this pillar is talking about, so that "the
+    # evaluator was calibrated" can be told apart from "an evaluator was
+    # calibrated" (traigent-first-run#260).
+    #
+    # `evaluator_digest` is what the opening gate read; `calibration_digest`
+    # is what the calibration result says it ran against. Either is `None`
+    # when that side did not say - an older payload, no `--preflight`, a file
+    # whose bytes could not be read - and `None` is emphatically not a value
+    # that can disagree with another. Only two present digests can disagree.
+    evaluator_digest: str | None = None
+    calibration_digest: str | None = None
+
+    @property
+    def calibration_names_other_evaluator(self) -> bool:
+        """Both sides named an evaluator, and they are not the same one.
+
+        The one definition of the mismatch, used by the adapter that refuses
+        to carry a foreign calibration's facts and by the scorer that explains
+        the refusal. Written twice, the two would eventually disagree about
+        which comparison is the real one.
+        """
+        return (
+            self.evaluator_digest is not None
+            and self.calibration_digest is not None
+            and self.evaluator_digest != self.calibration_digest
+        )
 
 
 @dataclass(frozen=True)
@@ -4311,6 +4337,77 @@ def score_dataset(
     return combine("dataset", subs), caps
 
 
+# How much of a digest a card prints. Twelve hex characters are enough for a
+# reader to tell two evaluators apart on the page; the comparison itself always
+# uses the whole digest, so shortening what is PRINTED can never merge two
+# evaluators into one.
+DIGEST_DISPLAY_CHARACTERS = 12
+
+
+def short_digest(digest: str) -> str:
+    """A digest as a card prints it.
+
+    Takes a digest rather than an optional one, and every caller below is
+    inside a branch that has already established there is one. A `None`
+    fallback here would be a word no sentence ever reaches - the branch that
+    has no digest to name says something else entirely.
+    """
+    return digest[:DIGEST_DISPLAY_CHARACTERS]
+
+
+def calibration_identity_note(facts: EvaluationFacts) -> str:
+    """Which evaluator each side of the calibration comparison names.
+
+    Four states, and the middle two are the reason this is not a boolean.
+
+    A calibration and an opening gate that name DIFFERENT evaluators is the
+    defect: the checks measured some other file, and crediting them here
+    reports an evaluation pillar the run has no evidence for. That sentence
+    says so and names both.
+
+    A calibration that names NOTHING is not that. Every calibration result
+    written before the stamp existed is in this state, and so is every one
+    already in flight, so refusing them would turn a working opening gate into
+    a blocked one for a defect that is merely POSSIBLE rather than shown -
+    which is a worse outcome than the one being fixed, and would be paid by
+    every honest run. Trusting it in silence is the other wrong answer, since
+    silence is exactly what let a stale result pass as current. So it is
+    credited, and the limit of what was checked is stated on the card, where
+    the person who can tell whether the file was replaced will read it.
+
+    An opening gate that names nothing is the mirror image and gets the mirror
+    sentence, because whose silence it was decides who can fix it.
+
+    Two digests that agree is the fourth, and it is worth printing rather than
+    leaving as the absence of a complaint: it is the only one of the four that
+    reports a check that actually passed.
+    """
+    if facts.calibration_names_other_evaluator:
+        # Both, always. Which of the two files on the reader's disk this score
+        # is about is the whole question, and naming one of them answers it
+        # only for whoever already knew the other.
+        return (
+            "this calibration was produced for evaluator "
+            f"{short_digest(facts.calibration_digest)}, but the evaluator read "
+            f"here is {short_digest(facts.evaluator_digest)}, so its checks are "
+            "not credited to this score - calibrate the evaluator that is here "
+            "now, and score again with that result"
+        )
+    if facts.calibration_digest is None:
+        return (
+            "the calibration does not name the evaluator it ran against, so "
+            "this score cannot confirm it is the one read here"
+        )
+    if facts.evaluator_digest is None:
+        return (
+            f"the calibration names evaluator {short_digest(facts.calibration_digest)}"
+            ", and no evaluator was read here to check that against"
+        )
+    return (
+        f"produced for the evaluator read here ({short_digest(facts.evaluator_digest)})"
+    )
+
+
 def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
     caps: list[Cap] = []
     subs: list[SubScore] = []
@@ -4405,7 +4502,8 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
                 40.0,
                 True,
                 f"{len(facts.checks)} calibration case(s); weakest case "
-                f"{min(per_case):.0%} of checks passed",
+                f"{min(per_case):.0%} of checks passed; "
+                + calibration_identity_note(facts),
             )
         )
         if gating_failed:
@@ -4433,7 +4531,16 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
         # This module already draws the distinction correctly a hundred lines
         # away - "spread is unverified, not absent". This was the one place it
         # did not.
-        if facts.timed_out:
+        #
+        # The mismatch is asked FIRST because it is the only one of these that
+        # is a statement about the payload rather than about the run. A
+        # calibration for another evaluator reached this score having run, and
+        # having produced checks, and possibly having timed out - so every
+        # other line below would be false about it, and two of them would be
+        # false in the direction that flatters.
+        if facts.calibration_names_other_evaluator:
+            evidence = calibration_identity_note(facts)
+        elif facts.timed_out:
             evidence = "calibration ran but did not finish"
         elif facts.calibration_supplied:
             evidence = "calibration ran but reported no checks"
@@ -6216,20 +6323,39 @@ def _answer_dominance_status(statuses: dict[str, str]) -> str | None:
 
 def evaluator_shape_from_preflight(
     records: Sequence[dict[str, Any]],
-) -> tuple[bool, bool | None]:
+) -> tuple[bool, bool | None, str | None]:
     """Read preflight's static `evaluator-shape` check, if one ran.
 
-    Returns `(present, parses)`. `present` is a measured fact - preflight
-    found a file at the path it was given - not a declaration; `parses` is
-    `None` when no such check ran (not "it failed"), `True` when the file
-    parsed as valid Python, `False` when it did not. preflight never imports
-    or executes the file to produce this (`check_evaluator`, `ast.parse`
-    only), so this stays inside the credential-free opening gate.
+    Returns `(present, parses, digest)`. `present` is a measured fact -
+    preflight found a file at the path it was given - not a declaration;
+    `parses` is `None` when no such check ran (not "it failed"), `True` when
+    the file parsed as valid Python, `False` when it did not. preflight never
+    imports or executes the file to produce any of this (`check_evaluator`,
+    `ast.parse` only), so this stays inside the credential-free opening gate.
+
+    `digest` is the sha256 preflight reports for the source text it read -
+    which evaluator this score is about - and `None` whenever preflight did
+    not read one: no check ran, an older preflight that predates the field, or
+    a file whose bytes could not be obtained. `None` therefore means "not
+    read", never "read and unremarkable", and the caller must treat it as an
+    unanswered question rather than as a mismatch (traigent-first-run#260).
+
+    One read of one record, rather than a second function beside this one:
+    two readers of the same check are two chances to disagree about which
+    record they read.
     """
     shape = _metrics_by_check(records).get("evaluator-shape")
     if not shape:
-        return False, None
-    return bool(shape.get("exists")), shape.get("parses")
+        return False, None, None
+    # Type-checked rather than passed through. `--preflight` accepts any JSON
+    # document a caller hands it, and a non-string here would be compared
+    # against a real digest and silently reported as a different evaluator -
+    # turning an unreadable input into an accusation about the customer's
+    # project.
+    digest = shape.get("sha256")
+    if not isinstance(digest, str) or not digest:
+        digest = None
+    return bool(shape.get("exists")), shape.get("parses"), digest
 
 
 class PreflightInputError(ValueError):
@@ -6774,16 +6900,27 @@ def evaluation_facts_from_calibration(
     task_kind: str | None = None,
     evaluator_present: bool = False,
     evaluator_parses: bool | None = None,
+    evaluator_digest: str | None = None,
     origin: str | None = None,
 ) -> EvaluationFacts:
     """Normalize both shapes `calibrate_evaluator` emits into one fact set.
 
-    `evaluator_present`/`evaluator_parses` come from preflight's static
-    `evaluator-shape` check (`evaluator_shape_from_preflight`, below), not
-    from a declaration - a file preflight found on disk, whether or not this
-    run could honestly declare a method for it. Without either signal,
-    presence still falls back to "a method was declared", the only fact this
-    function used to have (traigent-first-run#133).
+    `evaluator_present`/`evaluator_parses`/`evaluator_digest` come from
+    preflight's static `evaluator-shape` check
+    (`evaluator_shape_from_preflight`, below), not from a declaration - a file
+    preflight found on disk, whether or not this run could honestly declare a
+    method for it. Without either of the first two, presence still falls back
+    to "a method was declared", the only fact this function used to have
+    (traigent-first-run#133).
+
+    A calibration that names a DIFFERENT evaluator contributes no facts at
+    all. It is quarantined here, at the door, rather than sifted downstream:
+    every fact this payload carries - the checks, the probe spread, the
+    timeout - is a measurement of the evaluator it ran against, and there is
+    no half of it that describes the evaluator being scored. Dropping them one
+    consumer at a time would mean a consumer added later silently inherits the
+    defect. The two digests survive the drop, because the score still has to
+    say what happened (traigent-first-run#260).
     """
     if payload is None:
         return EvaluationFacts(
@@ -6792,6 +6929,7 @@ def evaluation_facts_from_calibration(
             task_kind=task_kind,
             parses=evaluator_parses,
             origin=origin,
+            evaluator_digest=evaluator_digest,
         )
     cases = payload.get("cases")
     if not isinstance(cases, list):
@@ -6813,7 +6951,13 @@ def evaluation_facts_from_calibration(
             ]
             if numeric:
                 probes.append(tuple(numeric))
-    return EvaluationFacts(
+    # Type-checked for the same reason the preflight side is: `--calibration`
+    # takes any JSON document, and a non-string stamp compared against a real
+    # digest would report a mismatch nothing established.
+    calibration_digest = payload.get("evaluator_sha256")
+    if not isinstance(calibration_digest, str) or not calibration_digest:
+        calibration_digest = None
+    facts = EvaluationFacts(
         present=True,
         method=method,
         task_kind=task_kind,
@@ -6826,7 +6970,24 @@ def evaluation_facts_from_calibration(
         timed_out=bool(payload.get("timed_out")),
         parses=evaluator_parses,
         origin=origin,
+        evaluator_digest=evaluator_digest,
+        calibration_digest=calibration_digest,
     )
+    if facts.calibration_names_other_evaluator:
+        # `calibration_supplied` deliberately stays true. A payload DID arrive,
+        # and saying otherwise here would put the scorer's "no calibration
+        # result was provided to this score" line on a card where one was - the
+        # exact class of false sentence this pillar has been corrected for
+        # twice. What the run supplied is now a question for `score_evaluation`
+        # to answer honestly, and it has both digests to answer it with.
+        return replace(
+            facts,
+            calibration_present=False,
+            checks=(),
+            probe_scores=(),
+            timed_out=False,
+        )
+    return facts
 
 
 # ---------------------------------------------------------------------------
@@ -8262,8 +8423,8 @@ def run(argv: Sequence[str] | None = None) -> int:
             if args.preflight
             else DatasetFacts(exists=False)
         )
-        evaluator_present, evaluator_parses = evaluator_shape_from_preflight(
-            preflight_records
+        evaluator_present, evaluator_parses, evaluator_digest = (
+            evaluator_shape_from_preflight(preflight_records)
         )
         evaluation_facts = evaluation_facts_from_calibration(
             load_json(args.calibration) if args.calibration else None,
@@ -8271,6 +8432,7 @@ def run(argv: Sequence[str] | None = None) -> int:
             task_kind=args.task_kind,
             evaluator_present=evaluator_present,
             evaluator_parses=evaluator_parses,
+            evaluator_digest=evaluator_digest,
             origin=args.evaluator_origin,
         )
         # `--config-space` first, and the `elif` is the safety property, not a

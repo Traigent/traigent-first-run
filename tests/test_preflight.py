@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import importlib.util
 import io
 import json
@@ -2649,6 +2650,167 @@ class EvaluatorShapeCheckTests(unittest.TestCase):
         shape = next(r for r in records if r["check"] == "evaluator-shape")
         self.assertEqual(shape["status"], MODULE.FAIL)
         self.assertFalse(shape["metrics"]["parses"])
+
+
+class TheShapeCheckNamesTheEvaluatorItReadTests(unittest.TestCase):
+    """traigent-first-run#260: which evaluator did the opening gate read?
+
+    The check could say a file was there and that it parsed, and nothing at
+    all about WHICH file. That silence is half of why a calibration produced
+    for one evaluator was indistinguishable from a calibration produced for
+    another: there was no name on either side to compare. `sha256` is that
+    name, and `readiness.py` compares it against the one
+    `calibrate_evaluator.py` now stamps on its own result.
+    """
+
+    def setUp(self) -> None:
+        MODULE.RESULTS.clear()
+
+    def _shape(self) -> dict:
+        result = next(r for r in MODULE.RESULTS if r.check == "evaluator-shape")
+        return {"status": result.status, **(result.metrics or {})}
+
+    @staticmethod
+    def _digest_of(text: str) -> str:
+        return hashlib.sha256(text.encode()).hexdigest()
+
+    def test_the_stamp_is_the_digest_of_the_source_that_was_parsed(self) -> None:
+        source = "def score(output, expected):\n    return 1.0\n"
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "evaluator.py"
+            path.write_text(source)
+            MODULE.check_evaluator(path)
+            shape = self._shape()
+            self.assertEqual(shape["status"], MODULE.PASS)
+            # Computed here from the bytes on disk rather than compared with a
+            # literal, so the assertion follows the file instead of welding a
+            # hash into this test.
+            self.assertEqual(shape["sha256"], self._digest_of(source))
+
+    def test_the_stamp_is_stable_while_the_evaluator_is(self) -> None:
+        """Two reads of one unchanged file must name the same evaluator.
+
+        The half of the contract a comparison depends on most: if a digest
+        moved between runs, every legitimate calibration would read as
+        produced for a different evaluator and the score would refuse them
+        all.
+        """
+        source = "def score(output, expected):\n    return float(output == expected)\n"
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "evaluator.py"
+            path.write_text(source)
+            MODULE.check_evaluator(path)
+            first = self._shape()["sha256"]
+            MODULE.RESULTS.clear()
+            MODULE.check_evaluator(path)
+            second = self._shape()["sha256"]
+        self.assertEqual(first, second)
+
+    def test_the_stamp_moves_when_the_evaluator_does(self) -> None:
+        """The other half: a replaced evaluator must not keep its old name.
+
+        This is the state the defect lives in - a first run interrupted or
+        repeated, its evaluator rewritten, and last time's calibration still
+        sitting at the conventional results path.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "evaluator.py"
+            path.write_text("def score(output, expected):\n    return 1.0\n")
+            MODULE.check_evaluator(path)
+            before = self._shape()["sha256"]
+            path.write_text("def score(output, expected):\n    return 0.5\n")
+            MODULE.RESULTS.clear()
+            MODULE.check_evaluator(path)
+            after = self._shape()["sha256"]
+        self.assertNotEqual(before, after)
+
+    def test_an_evaluator_that_does_not_parse_is_still_named(self) -> None:
+        """A broken file is still a file, and a stale calibration outlives it.
+
+        Reported from the parse-failure arm on purpose: "the evaluator was
+        replaced with something that no longer parses" is exactly a state in
+        which last run's result is still on disk, and refusing to name the
+        bytes here would leave that comparison unmakeable.
+        """
+        source = "def score(output, expected:\n    return 1.0\n"
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "evaluator.py"
+            path.write_text(source)
+            MODULE.check_evaluator(path)
+            shape = self._shape()
+            self.assertEqual(shape["status"], MODULE.FAIL)
+            self.assertFalse(shape["parses"])
+            self.assertEqual(shape["sha256"], self._digest_of(source))
+
+    def test_a_file_the_parser_refuses_outright_is_still_named(self) -> None:
+        """The second parse-failure arm, which is a different `except`.
+
+        `ast.parse` refuses a ~50 KB chain of unary operators with
+        `MemoryError` rather than `SyntaxError`, so this arm would keep its
+        old silent behaviour if only the `SyntaxError` one were taught to
+        report the digest.
+        """
+        source = "-" * 50_000 + "1\n"
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "evaluator.py"
+            path.write_text(source)
+            MODULE.check_evaluator(path)
+            shape = self._shape()
+            self.assertEqual(shape["status"], MODULE.FAIL)
+            self.assertFalse(shape["parses"])
+            self.assertEqual(shape["sha256"], self._digest_of(source))
+
+    def test_an_absent_evaluator_is_not_named(self) -> None:
+        """No bytes were read, so there is nothing to name.
+
+        An absent stamp has to keep meaning "this check did not read the
+        file". A placeholder - the empty string's digest, say - would be a
+        name that two different absent evaluators share, and the comparison
+        downstream would report them as the same one.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            MODULE.check_evaluator(Path(directory) / "evaluator.py")
+        shape = self._shape()
+        self.assertEqual(shape["status"], MODULE.FAIL)
+        self.assertNotIn("sha256", shape)
+
+    def test_an_evaluator_that_cannot_be_decoded_is_not_named(self) -> None:
+        """The other arm that obtains no bytes: the read itself failed."""
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "evaluator.py"
+            path.write_bytes(b"\xff\xfe\x00def score():\n")
+            MODULE.check_evaluator(path)
+            shape = self._shape()
+            self.assertEqual(shape["status"], MODULE.FAIL)
+            self.assertFalse(shape["parses"])
+            self.assertNotIn("sha256", shape)
+
+    def test_the_stamp_reaches_the_json_a_reader_actually_consumes(self) -> None:
+        """Through the real CLI, because that is the surface readiness reads.
+
+        A metric present on the in-process record and absent from
+        `--json` would be a stamp nobody downstream ever sees.
+        """
+        source = "def score(output, expected):\n    return 1.0\n"
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "evaluator.py"
+            path.write_text(source)
+            process = subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPT),
+                    "--evaluator",
+                    str(path),
+                    "--defer-missing-sdk",
+                    "--json",
+                ],
+                capture_output=True,
+                text=True,
+            )
+            self.assertIn(process.returncode, (0, 1), process.stderr[-2000:])
+            records = json.loads(process.stdout)
+        shape = next(r for r in records if r["check"] == "evaluator-shape")
+        self.assertEqual(shape["metrics"]["sha256"], self._digest_of(source))
 
 
 class NoInternalFailureReachesTheUserAsATracebackTests(unittest.TestCase):
