@@ -301,6 +301,39 @@ REFERENCE_FREE_METHODS = {
     "llm-judge-pairwise",
     "llm-judge-rubric",
 }
+# Every method the paired scorer accepts. Mirrored rather than imported - this
+# script is run standalone and imports nothing from its sibling - and kept
+# equal to it by test_skill_package's parity test, which is the same
+# arrangement REFERENCE_FREE_METHODS above already relies on.
+#
+# Closed, because open was worse than useless here. An unrecognised string
+# silently took the reference-REQUIRING branch, so every input-only row failed
+# normalization and the run reported `100.0% of rows are unusable` naming the
+# user's dataset. A CLI typo was reported as a broken dataset, and the method
+# was never mentioned. The paired scorer has always rejected the same string
+# outright, so the two halves of one documented contract disagreed.
+EVALUATOR_METHODS = (
+    "composite",
+    "embedding",
+    "exact",
+    "execution",
+    "fuzzy",
+    "llm-judge-pairwise",
+    "llm-judge-pointwise",
+    "llm-judge-rubric",
+    "normalized-exact",
+    "numeric-tolerance",
+    "routing",
+    "schema",
+    "set-f1",
+)
+# The tag naming a row's scenario. `coverage` is what the check was written
+# for; `evaluation-and-dataset.md` asks for "a short `coverage`/scenario tag"
+# and then, two lines later, for rows that "represent a distinct scenario", so
+# a reader who names the field `scenario` is following the document. It read
+# only the first and reported "0 distinct coverage/scenario tags" to someone
+# looking at rows that all carry one.
+COVERAGE_TAG_FIELDS = ("coverage", "scenario", "topic")
 COMMON_OUTCOME_FIELDS = (
     "label",
     "category",
@@ -1503,6 +1536,15 @@ def normalized_metadata_label(value: Any) -> str:
     return re.sub(r"[\s_]+", "-", str(value).casefold().strip())
 
 
+def coverage_tag_value(row: dict[str, Any]) -> Any:
+    """The row's scenario tag, under whichever of its names the author used."""
+    for key in COVERAGE_TAG_FIELDS:
+        value = row_metadata_value(row, key)
+        if value:
+            return value
+    return None
+
+
 def row_metadata_value(row: dict[str, Any], key: str) -> Any:
     if key in row:
         return row[key]
@@ -2624,11 +2666,7 @@ def check_dataset(
                 "dataset-difficulty", PASS, "all four difficulty bands are represented"
             )
         scenario_count = len(
-            {
-                str(row_metadata_value(row, "coverage"))
-                for row in rows
-                if row_metadata_value(row, "coverage")
-            }
+            {str(coverage_tag_value(row)) for row in rows if coverage_tag_value(row)}
         )
         if scenario_count < 4:
             emit(
@@ -2673,9 +2711,11 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--evaluator-method",
+        choices=EVALUATOR_METHODS,
         help=(
             "declared method; pointwise, pairwise, and rubric LLM judges allow "
-            "input-only rows, while absent or other values require expected outputs"
+            "input-only rows, while absent or any other listed method requires "
+            "expected outputs"
         ),
     )
     parser.add_argument(

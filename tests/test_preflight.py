@@ -2940,5 +2940,91 @@ class EveryRowCountIsAccountedForTests(unittest.TestCase):
         self.assertEqual(MODULE.row_counts(None), {})
 
 
+class ClosedVocabularyTests(unittest.TestCase):
+    """A CLI typo must be reported as a CLI typo."""
+
+    def setUp(self) -> None:
+        MODULE.RESULTS.clear()
+
+    def test_an_unlisted_evaluator_method_is_refused_not_blamed_on_the_data(
+        self,
+    ) -> None:
+        """The failure it used to produce named the wrong thing entirely.
+
+        An unrecognised method fell to the reference-REQUIRING branch, so
+        every input-only row failed normalization and the card reported
+        `100.0% of rows are unusable`, quoting a missing expected-output
+        field. The method was never mentioned. A user reading that goes and
+        edits a dataset that was correct, and the paired scorer would have
+        rejected the same string with exit 2 all along.
+        """
+        rows = [
+            {"id": f"r{index}", "input": f"question {index} token{index}"}
+            for index in range(4)
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            dataset = Path(directory) / "eval.jsonl"
+            dataset.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+            refused = subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPT),
+                    "--dataset",
+                    str(dataset),
+                    "--evaluator-method",
+                    "llm-judge",
+                ],
+                capture_output=True,
+                text=True,
+            )
+        self.assertEqual(refused.returncode, 2)
+        self.assertIn("invalid choice: 'llm-judge'", refused.stderr)
+        self.assertIn("--evaluator-method", refused.stderr)
+        # And it must not have reached the dataset checks to misreport them.
+        self.assertNotIn("unusable", refused.stdout)
+        self.assertNotIn("dataset-integrity", refused.stdout)
+
+    def test_the_scenario_tag_is_read_under_every_name_the_guidance_uses(
+        self,
+    ) -> None:
+        """The reference asks for "a short `coverage`/scenario tag".
+
+        It then asks, two lines later, for rows that "represent a distinct
+        scenario". A reader who names the field `scenario` is following the
+        document, and the check read only `coverage` - then reported "0
+        distinct coverage/scenario tags" about rows that every one of them
+        carries one. The WARN was false about the user's data.
+        """
+        # The names are written out rather than read from
+        # `COVERAGE_TAG_FIELDS`, because a loop over the constant is satisfied
+        # by shrinking the constant: this test passed with the tuple cut back
+        # to `("coverage",)` until a mutation probe said so.
+        self.assertEqual(
+            tuple(MODULE.COVERAGE_TAG_FIELDS), ("coverage", "scenario", "topic")
+        )
+        expected = None
+        for key in ("coverage", "scenario", "topic"):
+            rows = []
+            for row in synthetic_rows():
+                row = dict(row)
+                row[key] = row.pop("coverage")
+                rows.append(row)
+            MODULE.RESULTS.clear()
+            with tempfile.TemporaryDirectory() as directory:
+                dataset = Path(directory) / "eval.jsonl"
+                dataset.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+                MODULE.check_dataset(dataset)
+            found = {
+                result.check: (result.status, result.detail)
+                for result in MODULE.RESULTS
+            }["dataset-coverage"]
+            with self.subTest(tag=key):
+                self.assertEqual(found[0], MODULE.PASS)
+            expected = expected or found
+            self.assertEqual(
+                found, expected, "the tag's name must not change the verdict"
+            )
+
+
 if __name__ == "__main__":
     unittest.main()

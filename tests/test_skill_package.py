@@ -9292,6 +9292,15 @@ class SkillPackageTests(unittest.TestCase):
             preflight_constant("REFERENCE_FREE_METHODS"),
             set(READINESS.REFERENCE_FREE_METHODS),
         )
+        # The whole vocabulary, not only the reference-free carve-out. The
+        # scorer has always rejected an unlisted method outright; preflight
+        # accepted anything and then blamed the dataset for it, so the two
+        # halves of one documented contract disagreed about what a method is.
+        self.assertEqual(
+            set(preflight_constant("EVALUATOR_METHODS")),
+            set(READINESS.METHOD_PROFILES),
+            "preflight's method vocabulary has drifted from the scorer's",
+        )
         for phrase in (
             "resolved evaluator method as run-scoped validation state",
             "same current `--evaluator-method` value to every paired preflight/readiness invocation",
