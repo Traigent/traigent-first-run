@@ -770,6 +770,18 @@ def filesystem_property(
         name: mounted_inside(table, (anchors or {}).get(name))
         for name in ("workdir", "home")
     }
+    # A project inside the home directory is the ordinary arrangement - it is
+    # where a CI runner checks out, and where most people keep their work - and
+    # a mount of that project is carried by BOTH anchors. Judging it as a home
+    # exposure would refuse the read-only project mount the contract explicitly
+    # admits, which is what happened the first time this ran on a runner whose
+    # checkout sits under `/home/runner`. A row the working directory accounts
+    # for is judged as the working directory; anything else under the home -
+    # `~/.ssh`, a credentials directory - is still a home exposure.
+    project = {(row.device, row.root) for row in carried["workdir"]}
+    carried["home"] = [
+        row for row in carried["home"] if (row.device, row.root) not in project
+    ]
     if carried["home"]:
         where = ", ".join(sorted({row.point for row in carried["home"]}))
         return Property(

@@ -1082,6 +1082,43 @@ class TheMountTableTests(unittest.TestCase):
         filesystem = next(item for item in properties if item.name == "filesystem")
         self.assertEqual(filesystem.verdict, "refuted")
 
+    def test_a_project_inside_the_home_is_judged_as_the_project(self) -> None:
+        """The ordinary arrangement, and the one that broke this on a runner.
+
+        A CI runner checks out under `/home/runner`, and most people keep their
+        work under their home too - so a mount of the project is carried by both
+        anchors, and judging it as a home exposure refuses the read-only project
+        mount the contract explicitly admits. Measured on a runner: two cases
+        failed with "this host's home directory is mounted inside the boundary
+        at /work".
+        """
+        home = ("259:5", "/home/runner")
+        project = ("259:5", "/home/runner/work/repo/repo")
+        report = probe_output(mounts=self.rows(project[1], "/work", "ro,relatime"))
+        properties = verify_sandbox.evaluate(
+            report, TOKEN, MARKER, [], [], {"workdir": project, "home": home}
+        )
+        filesystem = next(item for item in properties if item.name == "filesystem")
+        self.assertEqual(filesystem.verdict, "proven")
+
+    def test_something_else_under_the_home_is_still_a_home_exposure(self) -> None:
+        """The exemption is the project, not everything beneath the home.
+
+        `~/.ssh` mounted read-only is exactly what the contract's "no writable
+        host home or project mount" clause exists to keep out of reach of
+        model-written code, and it must not ride in on the project's exemption.
+        """
+        home = ("259:5", "/home/runner")
+        project = ("259:5", "/home/runner/work/repo/repo")
+        report = probe_output(
+            mounts=self.rows("/home/runner/.ssh", "/s", "ro,relatime")
+        )
+        properties = verify_sandbox.evaluate(
+            report, TOKEN, MARKER, [], [], {"workdir": project, "home": home}
+        )
+        filesystem = next(item for item in properties if item.name == "filesystem")
+        self.assertEqual(filesystem.verdict, "refuted")
+
     def test_a_read_only_project_mount_is_what_the_contract_admits(self) -> None:
         report = probe_output(mounts=self.rows(self.HOST[1], "/work", "ro,relatime"))
         properties = verify_sandbox.evaluate(
