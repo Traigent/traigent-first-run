@@ -79,18 +79,28 @@ REQUIREMENTS = (
 # substrings) plus explicit provider-key names as defense in depth, so the
 # child process never receives a credential regardless of what happens to be
 # exported in the environment running this test.
+# Kept equal to the script by
+# test_calibrate_evaluator.CredentialsDoNotReachTheResultsFileTests, because
+# for as long as nothing compared them this copy drifted narrower than the
+# comment above claims.
 SECRET_MARKERS = (
     "API_KEY",
+    "APIKEY",
     "TOKEN",
     "SECRET",
     "PASSWORD",
+    "PASSPHRASE",
     "CREDENTIAL",
     "PRIVATE_KEY",
     "ACCESS_KEY",
     "AUTHORIZATION",
     "COOKIE",
     "SESSION",
+    "WEBHOOK",
+    "NETRC",
+    "DSN",
 )
+SECRET_NAME_SUFFIXES = ("_KEY", "_PAT", "_PWD")
 PROVIDER_KEY_NAMES = (
     "OPENAI_API_KEY",
     "ANTHROPIC_API_KEY",
@@ -106,7 +116,10 @@ def _credential_stripped_environment(overrides: dict[str, str]) -> dict[str, str
     environment = {
         key: value
         for key, value in os.environ.items()
-        if not any(marker in key.upper() for marker in SECRET_MARKERS)
+        if not (
+            any(marker in key.upper() for marker in SECRET_MARKERS)
+            or key.upper().endswith(SECRET_NAME_SUFFIXES)
+        )
     }
     for name in PROVIDER_KEY_NAMES:
         environment.pop(name, None)

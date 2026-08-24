@@ -2652,5 +2652,133 @@ class NoInternalFailureReachesTheUserAsATracebackTests(unittest.TestCase):
         self.assertNotIn("internal error", process.stderr)
 
 
+class CredentialsDoNotReachTheResultsFileTests(unittest.TestCase):
+    """The calibration writes a JSON artifact the customer keeps and pastes.
+
+    The documented invocation redirects stdout into
+    `traigent-runs/calibration-results.json`, so anything that reaches the
+    payload reaches a file. Both halves below are needed and neither is
+    sufficient: the environment filter reads NAMES, and a child traceback is
+    bounded by no name list.
+    """
+
+    @staticmethod
+    def _module():
+        spec = importlib.util.spec_from_file_location("first_run_calibrate", SCRIPT)
+        module = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        sys.modules[spec.name] = module
+        spec.loader.exec_module(module)
+        return module
+
+    def test_the_name_filter_strips_credentials_and_keeps_the_child_runnable(
+        self,
+    ) -> None:
+        """Both directions, because either one alone is a filter that lies.
+
+        A marker wide enough to catch `GH_PAT` as a substring also catches
+        LD_LIBRARY_PATH, and a child launched without PATH fails in a way
+        that reads as a broken evaluator rather than a broken filter. The
+        survivors are asserted for that reason, not for symmetry.
+        """
+        module = self._module()
+        for name in (
+            "OPENAI_API_KEY",
+            "WATSONX_APIKEY",
+            "AZURE_OPENAI_KEY",
+            "GH_PAT",
+            "MYSQL_PWD",
+            "SSH_KEY_PASSPHRASE",
+            "SENTRY_DSN",
+            "SLACK_WEBHOOK_URL",
+            "NETRC",
+            "AWS_SECRET_ACCESS_KEY",
+        ):
+            with self.subTest(strip=name):
+                self.assertTrue(
+                    module.secret_named(name),
+                    f"{name} holds a credential and must not reach the child",
+                )
+        for name in (
+            "PATH",
+            "LD_LIBRARY_PATH",
+            "PYTHONPATH",
+            "HOME",
+            "AWS_REGION",
+            "OPENAI_API_BASE",
+            "TRAIGENT_BACKEND_URL",
+            "VIRTUAL_ENV",
+            "TMPDIR",
+        ):
+            with self.subTest(keep=name):
+                self.assertFalse(
+                    module.secret_named(name),
+                    f"{name} is not a credential and the child needs it",
+                )
+
+    def test_a_credential_the_name_filter_cannot_see_is_redacted_at_the_sink(
+        self,
+    ) -> None:
+        """The measured leak: a connection string, quoted by a child traceback.
+
+        `DATABASE_URL` advertises nothing, so no name list strips it, and the
+        worker's stderr becomes `detail` verbatim. Measured before this
+        existed, the password reached the results file on a run that exited 0
+        and reported `passed: true` - a silent leak on a SUCCESSFUL run.
+
+        Asserted through `unavailable_supplemental_attempt`, which is the one
+        function every child-output path funnels into, rather than through
+        the helper - a redactor nothing calls is the shape of this defect.
+        """
+        module = self._module()
+        secret = "S3cr3tP4ss"
+        detail = (
+            "Evaluator execution failed: RuntimeError: db connect failed: "
+            f"postgres://appuser:{secret}@db.internal:5432/prod"
+        )
+        attempt = module.unavailable_supplemental_attempt("worker-failed", detail)
+        rendered = json.dumps(attempt)
+        self.assertNotIn(secret, rendered)
+        self.assertIn("postgres://appuser:***@db.internal", rendered)
+        # Still diagnosable: redaction removes the credential, not the cause.
+        self.assertIn("db connect failed", rendered)
+        for token in (
+            "sk-ant-api03-AbCdEfGh12345678xyz",
+            "ghp_1234567890abcdefABCDEF",
+            "AKIAIOSFODNN7EXAMPLE",
+        ):
+            with self.subTest(token=token):
+                leaked = module.unavailable_supplemental_attempt("worker-failed", token)
+                self.assertNotIn(token, json.dumps(leaked))
+        # Ordinary diagnostics must survive, or the artifact stops being useful.
+        plain = "scored 3/5 cases; see http://example.com/docs for the contract"
+        self.assertEqual(
+            module.unavailable_supplemental_attempt("worker-failed", plain)[
+                "unavailable"
+            ]["detail"],
+            plain,
+        )
+
+    def test_the_offline_contract_mirror_still_matches_the_script(self) -> None:
+        """The mirror was a copy nothing compared, and it had already drifted.
+
+        tests/test_offline_socket_contract.py keeps its own copy so its child
+        never receives a credential. Nothing asserted the two were equal, so
+        widening one silently left the other narrower than it claims to be.
+        """
+        module = self._module()
+        mirror = importlib.import_module("test_offline_socket_contract")
+        self.assertEqual(
+            tuple(mirror.SECRET_MARKERS),
+            tuple(module.SECRET_MARKERS),
+            "the offline-contract mirror no longer matches calibrate_evaluator",
+        )
+        self.assertEqual(
+            tuple(mirror.SECRET_NAME_SUFFIXES),
+            tuple(module.SECRET_NAME_SUFFIXES),
+            "the offline-contract mirror is missing the suffix markers",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

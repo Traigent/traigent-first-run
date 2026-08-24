@@ -163,18 +163,68 @@ GOOD_MINIMUM = 0.8
 BAD_MAXIMUM = 0.2
 EQUIVALENCE_TOLERANCE = 0.15
 SEPARATION_MARGIN = 0.05
+# Substring markers, matched against the UPPERCASED variable name. Compound
+# by design: a bare "KEY" or "PAT" would strip PATH and every *_PATH the child
+# needs to run at all, which is why the suffix tuple below exists instead.
+#
+# This list is a filter on NAMES, so it can only ever catch a credential whose
+# variable announces itself. `DATABASE_URL` does not, and a connection string
+# is a credential; that half is handled by `redact_secrets` at the one place
+# child output enters the results file. Neither half is sufficient alone.
 SECRET_MARKERS = (
     "API_KEY",
+    "APIKEY",
     "TOKEN",
     "SECRET",
     "PASSWORD",
+    "PASSPHRASE",
     "CREDENTIAL",
     "PRIVATE_KEY",
     "ACCESS_KEY",
     "AUTHORIZATION",
     "COOKIE",
     "SESSION",
+    "WEBHOOK",
+    "NETRC",
+    "DSN",
 )
+# Anchored at the end of the name, because these are the spellings that are
+# safe as a suffix and ruinous as a substring: `_PAT` matches LD_LIBRARY_PATH
+# anywhere in the name, and `_PWD` matches nothing useful except at the end.
+SECRET_NAME_SUFFIXES = ("_KEY", "_PAT", "_PWD")
+# Credential SHAPES, for values whose variable name gives nothing away.
+_URL_CREDENTIAL = re.compile(
+    r"(?P<head>[a-zA-Z][a-zA-Z0-9+.-]*://[^\s:/@]+:)[^\s@]+(?P<tail>@)"
+)
+_TOKEN_LITERAL = re.compile(
+    r"\b(?:sk-ant-|sk-|sk_|uk_|ghp_|gho_|ghu_|ghs_|github_pat_|xox[baprs]-|AKIA|eyJ)"
+    r"[A-Za-z0-9_\-]{8,}"
+)
+
+
+def secret_named(key: str) -> bool:
+    """Does this variable NAME advertise that it holds a credential?"""
+    upper = key.upper()
+    return any(marker in upper for marker in SECRET_MARKERS) or upper.endswith(
+        SECRET_NAME_SUFFIXES
+    )
+
+
+def redact_secrets(text: str) -> str:
+    """Remove credential-shaped substrings from text bound for the results file.
+
+    The environment filter above is a name filter, and a child traceback is
+    not bounded by any name list: it can quote a connection string, a config
+    file, or an argv the worker was given. Measured before this existed, a
+    `DATABASE_URL` password reached `calibration-results.json` twenty times on
+    a run that exited 0 and reported `passed: true` - the artifact that gets
+    kept and pasted, not the log that gets skimmed.
+
+    Shape-based, so it does not need to know the variable it came from.
+    """
+    return _TOKEN_LITERAL.sub("***", _URL_CREDENTIAL.sub(r"\g<head>***\g<tail>", text))
+
+
 MATRIX_COVERAGE_NOTE = (
     "Distinct names and payloads are structural checks only; calibration relies on "
     "the coding assistant's recorded evidence-backed semantic-coverage review of "
@@ -398,9 +448,7 @@ def subprocess_environment(allow_provider_access: bool) -> dict[str, str]:
         environment = dict(os.environ)
     else:
         environment = {
-            key: value
-            for key, value in os.environ.items()
-            if not any(marker in key.upper() for marker in SECRET_MARKERS)
+            key: value for key, value in os.environ.items() if not secret_named(key)
         }
         environment.update(
             {
@@ -937,7 +985,7 @@ def unavailable_supplemental_attempt(reason: str, detail: str) -> dict[str, Any]
     return {
         "score": None,
         "error": None,
-        "unavailable": {"reason": reason, "detail": detail},
+        "unavailable": {"reason": reason, "detail": redact_secrets(detail)},
     }
 
 
