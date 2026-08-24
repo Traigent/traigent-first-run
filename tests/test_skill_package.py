@@ -6746,11 +6746,13 @@ class SkillPackageTests(unittest.TestCase):
         )
         for phrase in (
             "before calibration, apply `references/run-safety.md`'s execution-evaluator scope gate",
+            "resolved evaluator call path identifies code/sql execution",
             "record the `containment` stop",
             "before calibration, environment setup, credentials, provider calls, or paid work",
         ):
             with self.subTest(stage_four_phrase=phrase):
                 self.assertIn(phrase, stage_four)
+        self.assertNotIn("static preflight identifies code/sql execution", stage_four)
 
         text = RUN_SAFETY.read_text()
         section = text.split("### Execution evaluators are out of scope", 1)[1].split(
@@ -6769,6 +6771,7 @@ class SkillPackageTests(unittest.TestCase):
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, normalized)
+        self.assertNotIn("static preflight identifies", normalized)
 
         calibration = " ".join(
             text.split("### Deterministic calibration and mock plumbing", 1)[1]
@@ -13844,7 +13847,7 @@ class SkillPackageTests(unittest.TestCase):
             "treat its status and results as resume hints",
             "independently verify the target and agent",
             "rerun the cheap read-only/free gates required by the next action",
-            "including evaluator containment and call-path checks",
+            "including execution-evaluator scope and call-path checks",
             "verify a paid artifact before quoting it",
             "never waive a safety precondition",
             "recorded approvals do not",

@@ -275,9 +275,10 @@ validate a sandbox for candidate/model output that is executed as code or SQL. A
 environment, stripped credentials, an ordinary subprocess, a timeout, or mock flags do not make
 that execution safe.
 
-When inspection or static preflight identifies that path, preserve the project, run only read-only
-static inspection that does not import or execute it, record a `stopped` `containment` event, and
-end this guide before calibration, environment setup, credentials, provider calls, or paid work.
+When the resolved evaluator call path identifies that path, preserve the project, run only
+read-only static inspection that does not import or execute it, record a `stopped` `containment`
+event, and end this guide before calibration, environment setup, credentials, provider calls, or
+paid work.
 The next step is a separate manual containment design and review outside this guide; it must decide
 the execution boundary, mounted inputs, credentials, network, limits, cleanup, and SQL data scope.
 Do not describe that manual work as available through this guide or imply that a local subprocess
@@ -596,7 +597,8 @@ After showing the baseline result, give the connected stage a preview and approv
   a judge's are among them, on every scored row of the search as well as these.
 - Bounds and value: runtime, enhanced/spent cost and remaining ceiling; provider/Traigent recipients,
   zero-LLM probe, portal history/direct links, and exclusions. Dataset/configuration insights remain
-  conditional on verified run-scoped SDK artifacts. Repeat applicable evaluator containment.
+  conditional on verified run-scoped SDK artifacts. Repeat applicable execution-evaluator
+  scope/call-path checks.
 
 The enhanced run card's trial line is a ceiling paired with the size of the space it is drawn from, because
 at approval time the user is asking what the worst case is, and a range answers a question they did
