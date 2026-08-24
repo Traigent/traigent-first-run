@@ -7987,7 +7987,9 @@ class SkillPackageTests(unittest.TestCase):
         here instead of turning the prose false in silence.
         """
         text = (SKILL_ROOT / "references" / "sdk-execution.md").read_text()
-        match = re.search(r"no range for an unfamiliar knob, so `(\w+): \[(\d+), (\d+)\]`", text)
+        match = re.search(
+            r"no range for an unfamiliar knob, so `(\w+): \[(\d+), (\d+)\]`", text
+        )
         self.assertIsNotNone(
             match, "the unfamiliar-knob bullet no longer states a worked example"
         )
