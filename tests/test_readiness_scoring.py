@@ -1158,6 +1158,102 @@ class DatasetScoringTests(unittest.TestCase):
         return next(s.value for s in pillar.subscores if s.name == "power")
 
 
+class ASplitTheSearchNeverReachedIsNotASplitThatIsAbsentTests(unittest.TestCase):
+    """The no-split branch used to state a fact it had not established.
+
+    It is reached whenever nothing declared a split to this score, and it said
+    "no tuning set and held-out set" - a claim about the customer's project -
+    on runs whose dataset search had opened one file. A real run showed that
+    line on a project that already kept its own parts on disk, and the run found
+    them minutes later; the user had been told to do work they had done.
+
+    Preflight now reports the parts it read beside the dataset. These tests are
+    what makes the score act on that report rather than repeat the old sentence.
+    """
+
+    NEARBY = ("parts/one.jsonl", "parts/two.jsonl")
+
+    @staticmethod
+    def _power(pillar) -> object:
+        return next(item for item in pillar.subscores if item.name == "power")
+
+    def test_an_unreached_division_withholds_the_comparison_check(self) -> None:
+        pillar, _ = MODULE.score_dataset(
+            MODULE.DatasetFacts(
+                exists=True,
+                rows=100,
+                labelled_rows=100,
+                unread_split_files=self.NEARBY,
+            )
+        )
+        power = self._power(pillar)
+        self.assertFalse(power.measured)
+        self.assertTrue(power.withheld)
+        self.assertEqual(power.value, 0.0)
+        self.assertNotIn("no tuning set and held-out set", power.evidence)
+        for name in self.NEARBY:
+            self.assertIn(name, power.evidence)
+
+    def test_withholding_it_costs_the_score_rather_than_being_free(self) -> None:
+        """A withheld check keeps its weight, so silence cannot pay.
+
+        Without this the finding would be a sentence: the card would name the
+        files and score exactly as it did while claiming they did not exist, and
+        nothing would make finishing the search the cheaper move.
+        """
+        facts = MODULE.DatasetFacts(exists=True, rows=100, labelled_rows=100)
+        settled, _ = MODULE.score_dataset(facts)
+        unsettled, _ = MODULE.score_dataset(
+            replace(facts, unread_split_files=self.NEARBY)
+        )
+        self.assertLess(unsettled.score, settled.score)
+        self.assertLess(unsettled.confidence, settled.confidence)
+        # In the denominator, not dropped from it: renormalizing over what was
+        # measured is how silence starts outscoring an honest answer.
+        self.assertEqual(self._power(unsettled).maximum, 25.0)
+
+    def test_a_declared_split_is_unaffected_by_what_sits_nearby(self) -> None:
+        """The question is settled, so the files it was cut from say nothing."""
+        facts = MODULE.DatasetFacts(
+            exists=True,
+            rows=100,
+            labelled_rows=100,
+            tuning_rows=70,
+            holdout_rows=30,
+            tuning_labelled_rows=70,
+            holdout_labelled_rows=30,
+        )
+        declared, _ = MODULE.score_dataset(facts)
+        beside, _ = MODULE.score_dataset(replace(facts, unread_split_files=self.NEARBY))
+        self.assertEqual(asdict(beside), asdict(declared))
+        self.assertTrue(self._power(beside).measured)
+
+    def test_a_project_with_nothing_nearby_keeps_its_sentence(self) -> None:
+        """Every project that really has no split reads exactly as before."""
+        pillar, _ = MODULE.score_dataset(
+            MODULE.DatasetFacts(exists=True, rows=100, labelled_rows=100)
+        )
+        power = self._power(pillar)
+        self.assertTrue(power.measured)
+        self.assertEqual(power.value, 18.4)
+        self.assertIn("no tuning set and held-out set", power.evidence)
+
+    def test_the_evidence_names_only_as_many_files_as_it_promises(self) -> None:
+        many = tuple(f"parts/{index}.jsonl" for index in range(9))
+        pillar, _ = MODULE.score_dataset(
+            MODULE.DatasetFacts(
+                exists=True, rows=100, labelled_rows=100, unread_split_files=many
+            )
+        )
+        evidence = self._power(pillar).evidence
+        named = [name for name in many if name in evidence]
+        self.assertEqual(len(named), MODULE.UNREAD_SPLIT_FILES_SHOWN)
+        self.assertIn(str(len(many)), evidence)
+        self.assertIn(
+            f"and {len(many) - MODULE.UNREAD_SPLIT_FILES_SHOWN} more", evidence
+        )
+
+
 class EvaluationScoringTests(unittest.TestCase):
     def test_constant_scorer_is_capped_as_invalid(self) -> None:
         facts = MODULE.EvaluationFacts(

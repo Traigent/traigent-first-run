@@ -1899,6 +1899,15 @@ class DatasetFacts:
     # unanswerable question as a clean split is the one reading this field
     # must not admit.
     shared_families: int | None = None
+    # The files preflight's dataset search found holding these rows in disjoint
+    # parts, which this score was not given.
+    #
+    # Empty is "the search ran and found none", which is what every project
+    # without a division on disk reports, and is also what a payload predating
+    # the search reports - the two are indistinguishable here by design, because
+    # the scoring consequence of an unanswered question and of an answered one
+    # with nothing in it is the same: say what the score was given and no more.
+    unread_split_files: tuple[str, ...] = ()
     # The forms preflight read on each side, carried so the cap can name them.
     #
     # A count is a claim the customer cannot check against their own file; the
@@ -3125,6 +3134,29 @@ def _family_forms(value: Any) -> tuple[str, ...]:
     return tuple(form.strip() for form in value)
 
 
+def _unread_split_files(value: Any) -> tuple[str, ...]:
+    """The nearby files preflight read as parts of this dataset, refused if
+    they are not names.
+
+    Same discipline as `_family_forms` above and for the same reason: these
+    strings are printed on the customer's card, so a payload carrying anything
+    other than paths would put a number into a sentence about their own files.
+    Absent is legitimate and means the search found nothing to name.
+    """
+    if value is None:
+        return ()
+    if not isinstance(value, list) or not all(
+        isinstance(name, str) and name.strip() for name in value
+    ):
+        raise PreflightInputError(
+            "dataset-split carries an unusable file list - these are the paths "
+            "the dataset search read as parts of this dataset, so this "
+            "preflight JSON was edited or predates the current preflight.py; "
+            "re-run preflight.py --json from the same version as this script"
+        )
+    return tuple(name.strip() for name in value)
+
+
 def _shared_family_count(value: Any) -> int | None:
     """Read the crossing-family count, refusing a value that is not one.
 
@@ -3881,6 +3913,13 @@ def diversity_subscore(
     )
 
 
+# How many nearby files the power evidence names before it stops listing them,
+# for the reason preflight stops at four: a reader checks a claim about their
+# own tree against examples, and a list long enough to scroll is one nobody
+# reads. The count beside the names carries the rest.
+UNREAD_SPLIT_FILES_SHOWN = 4
+
+
 def score_dataset(
     facts: DatasetFacts,
     evaluator_method: str | None = None,
@@ -3983,6 +4022,10 @@ def score_dataset(
     # Whether the reason nothing is scoreable is already named, and already
     # routed, by the labels cap below. Read by the power ceiling further down.
     unlabelled_capped = False
+    # Set only by the no-split branch below, and read once at the single place
+    # the power sub-score is appended - so the three branches keep one exit and
+    # cannot drift into two different ways of reporting the same check.
+    power_withheld = False
     # Appended to whichever labels line is written, and only ever appended: it
     # is the sub-score named "answers to score against", which is the one the
     # question "is this a sensible answer to this input" belongs to. It changes
@@ -4146,11 +4189,44 @@ def score_dataset(
             evidence = f"{repeats}; {evidence}"
         if scoreable_rows < rows:
             evidence = f"{rows} rows, {labelled} scoreable; {evidence}"
-        evidence = (
-            "no tuning set and held-out set, so the result would be "
-            f"measured on the same rows the search used; {evidence}"
-        )
-    subs.append(SubScore("power", round(points, 2), 25.0, True, evidence))
+        if facts.unread_split_files:
+            # The one branch that used to state an absence it had not
+            # established. It is reached when nothing declared a split to this
+            # score, and it said so as a fact about the project - "no tuning set
+            # and held-out set" - on runs whose search had opened one file. When
+            # preflight's dataset search reports parts of these very rows in
+            # files it was not given, the honest answer is that the question is
+            # unsettled, and the parts are named so the reader can see which
+            # files decide it.
+            #
+            # Withheld rather than scored, because this run could have supplied
+            # the evidence and did not. `SubScore.withheld` keeps the full 25 in
+            # the denominator and earns nothing, so declaring the split can only
+            # improve the card and staying quiet can never beat it - which is
+            # what makes finishing the search the cheaper move rather than a
+            # rule somebody has to remember. The remedy is the one this package
+            # already asks for: hand the split-labelled dataset to this score.
+            power_withheld = True
+            shown = ", ".join(facts.unread_split_files[:UNREAD_SPLIT_FILES_SHOWN])
+            remainder = len(facts.unread_split_files) - UNREAD_SPLIT_FILES_SHOWN
+            if remainder > 0:
+                shown = f"{shown} and {remainder} more"
+            evidence = (
+                f"{len(facts.unread_split_files)} files beside this dataset "
+                "already hold these rows in disjoint parts and were not read by "
+                f"this score ({shown}), so whether a tuning set and a held-out "
+                "set exist here is not settled; score the split-labelled "
+                f"dataset to settle it; {evidence}"
+            )
+        else:
+            evidence = (
+                "no tuning set and held-out set, so the result would be "
+                f"measured on the same rows the search used; {evidence}"
+            )
+    if power_withheld:
+        subs.append(SubScore("power", 0.0, 25.0, False, evidence, withheld=True))
+    else:
+        subs.append(SubScore("power", round(points, 2), 25.0, True, evidence))
     # The whole dataset, on the same scoreable footing the branches above use
     # for their own side of a split. This is what a top-up would add to, and it
     # is deliberately not the number the ceiling reads - see `power_ceiling`.
@@ -6724,6 +6800,9 @@ def dataset_facts_from_preflight(records: Sequence[dict[str, Any]]) -> DatasetFa
         near_duplicate_status=statuses.get("dataset-near-duplicates"),
         answer_dominance_status=_answer_dominance_status(statuses),
         split_overlap=_failed(statuses, "dataset-split"),
+        unread_split_files=_unread_split_files(
+            split_metrics.get("unread_partition_files")
+        ),
         # Read from the metric and not from the status, so a SKIP and a check
         # that never fired reach the same `None`. Both mean the question was
         # not answered, and the check is conditional by construction - see

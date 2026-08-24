@@ -927,6 +927,166 @@ SPLIT_FAMILY_COVERAGE = 0.8
 SPLIT_FAMILY_FORMS_SHOWN = 4
 
 
+# The dataset search reaches past the one file it was handed, because a project
+# that already keeps its rows in parts keeps them in FILES and this check used
+# to look only at a `split` field inside the single file it was given. A run
+# that finds `a_fold.jsonl` and `b_fold.jsonl` beside a benchmark cannot declare
+# them here at all, so the split question was answered "not found" without the
+# files that hold the answer ever being opened - and the score downstream turned
+# that into a statement about the customer's project.
+#
+# Reading files is what this gate is licensed to do, so the fix is to read them.
+# What it must not do is guess: the finding below rests on the ROWS, never on
+# what a file is called. A name-based rule would need a second vocabulary of
+# split words beside the one the row values already use, and two vocabularies
+# for one decision drift apart.
+#
+# How far it reaches and how much it reads. Three ceilings on EFFORT, never on
+# the finding: hitting any one of them ends the sweep with whatever it has, and
+# a sweep that stops early can only make the check say less than it might have.
+#
+# Bounded because the root is a directory this gate did not choose - a dataset
+# at a project root would otherwise put a whole tree behind a static check the
+# user is waiting on. The byte budget is the total across the sweep rather than
+# a per-file limit, so the worst case is one number and not a multiplication.
+SPLIT_SEARCH_MAX_FILES = 40
+SPLIT_SEARCH_MAX_BYTES = 20_000_000
+SPLIT_SEARCH_MAX_DIRECTORIES = 200
+# Directories a project's own data is never in, skipped so the budget above is
+# spent on the tree the user wrote rather than on a virtual environment.
+SPLIT_SEARCH_SKIP_DIRS = frozenset(
+    {
+        "__pycache__",
+        "node_modules",
+        "site-packages",
+        "venv",
+        "env",
+        "build",
+        "dist",
+    }
+)
+# How much of a candidate file has to be rows this score already read before the
+# candidate counts as a part OF this dataset rather than a different dataset
+# that happens to sit nearby.
+#
+# A half, and the tolerance is the point. Requiring every row would refuse the
+# ordinary case where the parts were cut from an earlier revision of the file
+# and a few rows have since been added or edited; requiring one row would call
+# any file sharing a single question a part of this one. At a half the claim
+# stays true as stated - most of this file is rows you just scored.
+SPLIT_SEARCH_SHARED_SHARE = 0.5
+# How many file names the finding prints before it stops listing them, for the
+# reason `SPLIT_FAMILY_FORMS_SHOWN` above stops at four.
+SPLIT_SEARCH_FILES_SHOWN = 4
+
+
+def _candidate_inputs(path: Path, input_field: str, budget: int) -> set[str] | None:
+    """The normalized inputs in one JSONL file, or None if it is not rows.
+
+    Never raises. A file that cannot be read, cannot be parsed, or carries no
+    input at the selected field path is not a finding about the dataset that
+    WAS scored - it is a file this sweep has nothing to say about, and the
+    honest answer is silence rather than a warning about somebody's log file.
+    A file larger than what is left of the byte budget is the same answer for a
+    different reason, and it is the reason the budget can only lose findings.
+    """
+    try:
+        if path.stat().st_size > budget:
+            return None
+        text = path.read_text()
+    except OSError:
+        return None
+    inputs: set[str] = set()
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            return None
+        if not isinstance(row, dict):
+            return None
+        found, value = dataset_field_value(row, input_field)
+        if not found:
+            return None
+        inputs.add(normalized_identity(value))
+    return inputs or None
+
+
+def _dataset_files_near(dataset: Path) -> list[Path]:
+    """Every other JSONL file under the directory holding `dataset`."""
+    try:
+        root = dataset.resolve().parent
+        scored = dataset.resolve()
+    except OSError:
+        return []
+    found: list[Path] = []
+    visited = 0
+    for parent, directories, names in os.walk(root):
+        visited += 1
+        if visited > SPLIT_SEARCH_MAX_DIRECTORIES:
+            return found
+        directories[:] = sorted(
+            name
+            for name in directories
+            if not name.startswith(".") and name not in SPLIT_SEARCH_SKIP_DIRS
+        )
+        for name in sorted(names):
+            if not name.endswith(".jsonl"):
+                continue
+            candidate = Path(parent) / name
+            try:
+                resolved = candidate.resolve()
+            except OSError:
+                continue
+            if resolved == scored:
+                continue
+            found.append(resolved)
+            if len(found) >= SPLIT_SEARCH_MAX_FILES:
+                return found
+    return found
+
+
+def unread_partition_files(
+    dataset: Path, input_field: str, scored_inputs: set[str]
+) -> list[Path]:
+    """Files beside `dataset` that already hold its rows in disjoint parts.
+
+    The question this answers is not "is there a file with a split-ish name" but
+    "has somebody already divided these very rows", and it is answered by
+    comparing inputs. A candidate counts when most of what it holds is rows this
+    score just read; two or more such candidates that share no row between them
+    are a division of this dataset that exists on disk and was never declared
+    here.
+
+    Two is the floor because one part is not a division. A single nearby file
+    holding a fifth of these rows is a slice, a sample, or an older copy, and
+    none of those says how this run would be tuned and checked.
+    """
+    if not scored_inputs:
+        return []
+    parts: list[tuple[Path, set[str]]] = []
+    budget = SPLIT_SEARCH_MAX_BYTES
+    for candidate in _dataset_files_near(dataset):
+        inputs = _candidate_inputs(candidate, input_field, budget)
+        if inputs is None:
+            continue
+        try:
+            budget -= candidate.stat().st_size
+        except OSError:
+            continue
+        if len(inputs & scored_inputs) < SPLIT_SEARCH_SHARED_SHARE * len(inputs):
+            continue
+        parts.append((candidate, inputs))
+    disjoint: list[tuple[Path, set[str]]] = []
+    for candidate, inputs in parts:
+        if all(not inputs & taken for _, taken in disjoint):
+            disjoint.append((candidate, inputs))
+    if len(disjoint) < 2:
+        return []
+    return [candidate for candidate, _ in disjoint]
+
+
 def _form_sample(forms: Iterable[str]) -> list[str]:
     """The named forms a finding carries, ordered and bounded."""
     return sorted(forms)[:SPLIT_FAMILY_FORMS_SHOWN]
@@ -2540,7 +2700,45 @@ def check_dataset(
         )
         emit_tuning_size(tuning_count, tuning_labelled)
     else:
-        emit("dataset-split", WARN, "no explicit tuning/held-out split was found")
+        # "Not found" is only honest once somebody has looked. The sweep below
+        # is what looks: it reads the other JSONL files under this dataset's own
+        # directory and reports the ones that already hold these rows in
+        # disjoint parts. Without it this branch answered a question about the
+        # customer's project from a search that had opened exactly one file.
+        #
+        # It fires only on evidence, so every project that really has no split
+        # keeps the sentence - and the record - it had before.
+        unread = unread_partition_files(
+            path,
+            input_field,
+            {
+                normalized_identity(dataset_field_value(row, input_field)[1])
+                for row in present_rows
+            },
+        )
+        if unread:
+            root = path.resolve().parent
+            named = ", ".join(
+                str(candidate.relative_to(root))
+                for candidate in unread[:SPLIT_SEARCH_FILES_SHOWN]
+            )
+            remainder = len(unread) - SPLIT_SEARCH_FILES_SHOWN
+            if remainder > 0:
+                named = f"{named} and {remainder} more"
+            emit(
+                "dataset-split",
+                WARN,
+                f"{len(unread)} files beside this dataset already hold these "
+                f"rows in disjoint parts and were not read by this score: "
+                f"{named}",
+                {
+                    "unread_partition_files": [
+                        str(candidate.relative_to(root)) for candidate in unread
+                    ]
+                },
+            )
+        else:
+            emit("dataset-split", WARN, "no explicit tuning/held-out split was found")
 
     difficulty_values = [
         str(row_metadata_value(row, "difficulty")).casefold().replace("_", "-")

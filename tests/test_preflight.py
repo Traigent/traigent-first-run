@@ -2856,5 +2856,219 @@ class EveryRowCountIsAccountedForTests(unittest.TestCase):
         self.assertEqual(MODULE.row_counts(None), {})
 
 
+class TheDatasetSearchReachesThePartsAlreadyOnDiskTests(unittest.TestCase):
+    """A split that lives in files, not in a field, used to be invisible here.
+
+    `check_dataset` reads a `split` value off each row of the ONE file it was
+    handed. A project that keeps its parts as separate files declares nothing on
+    any row, so the check reported that no split was found - about a tree whose
+    parts it had never opened. Downstream that became a claim on the customer's
+    card that no such division exists.
+
+    These tests drive the file layout that produces it, and the layouts that
+    look like it and are not.
+    """
+
+    def setUp(self) -> None:
+        MODULE.RESULTS.clear()
+
+    @staticmethod
+    def _row(index: int) -> dict:
+        return {
+            "id": f"row-{index:03d}",
+            "input": f"question {index} token{index}",
+            "output": f"answer {index % 4}",
+            "metadata": {"provenance": "production"},
+        }
+
+    def _write(self, path: Path, indexes: range | list[int]) -> Path:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            "\n".join(json.dumps(self._row(index)) for index in indexes) + "\n"
+        )
+        return path
+
+    def _split_result(self, dataset: Path) -> object:
+        MODULE.check_dataset(dataset)
+        return next(
+            result for result in MODULE.RESULTS if result.check == "dataset-split"
+        )
+
+    def test_two_disjoint_parts_of_these_rows_are_read_and_named(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            dataset = self._write(directory / "benchmark.jsonl", range(60))
+            self._write(directory / "parts" / "one.jsonl", range(0, 20))
+            self._write(directory / "parts" / "two.jsonl", range(30, 50))
+
+            split = self._split_result(dataset)
+
+        self.assertEqual(split.status, MODULE.WARN)
+        self.assertEqual(
+            split.metrics,
+            {"unread_partition_files": ["parts/one.jsonl", "parts/two.jsonl"]},
+        )
+        for name in ("parts/one.jsonl", "parts/two.jsonl"):
+            self.assertIn(name, split.detail)
+        self.assertNotIn("no explicit", split.detail)
+
+    def test_the_parts_are_actually_opened(self) -> None:
+        """The finding is computed from their rows, so editing them moves it.
+
+        A name-matching rule would pass the test above and report the same two
+        files whatever they held. Rewriting one of them to unrelated questions
+        must therefore silence the finding - which is only true if the sweep
+        reads what is inside.
+        """
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            dataset = self._write(directory / "benchmark.jsonl", range(60))
+            self._write(directory / "parts" / "one.jsonl", range(0, 20))
+            second = self._write(directory / "parts" / "two.jsonl", range(30, 50))
+
+            self.assertIn("unread_partition_files", self._split_result(dataset).metrics)
+
+            MODULE.RESULTS.clear()
+            second.write_text(
+                "\n".join(
+                    json.dumps({"input": f"unrelated {index}", "output": "x"})
+                    for index in range(20)
+                )
+                + "\n"
+            )
+            unrelated = self._split_result(dataset)
+
+        self.assertEqual(
+            unrelated.detail, "no explicit tuning/held-out split was found"
+        )
+        self.assertIsNone(unrelated.metrics)
+
+    def test_one_part_alone_is_not_a_division(self) -> None:
+        """One nearby subset is a sample or an old copy, not a split."""
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            dataset = self._write(directory / "benchmark.jsonl", range(60))
+            self._write(directory / "parts" / "one.jsonl", range(0, 20))
+
+            split = self._split_result(dataset)
+
+        self.assertEqual(split.detail, "no explicit tuning/held-out split was found")
+        self.assertIsNone(split.metrics)
+
+    def test_overlapping_neighbours_are_not_a_division(self) -> None:
+        """Parts that share rows do not divide anything, so nothing is claimed."""
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            dataset = self._write(directory / "benchmark.jsonl", range(60))
+            self._write(directory / "parts" / "one.jsonl", range(0, 30))
+            self._write(directory / "parts" / "two.jsonl", range(10, 40))
+
+            split = self._split_result(dataset)
+
+        self.assertEqual(split.detail, "no explicit tuning/held-out split was found")
+        self.assertIsNone(split.metrics)
+
+    def test_a_declared_split_is_answered_from_the_rows_as_before(self) -> None:
+        """The sweep runs only where nothing declared a split on a row.
+
+        A project that hands over a split-labelled file has answered the
+        question, and the files its parts were cut from are then beside the
+        point - reporting them would ask a settled question a second time.
+        """
+        rows = synthetic_rows()
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            dataset = Path(directory) / "labelled.jsonl"
+            dataset.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+            self._write(directory / "parts" / "one.jsonl", range(0, 20))
+            self._write(directory / "parts" / "two.jsonl", range(30, 50))
+
+            split = self._split_result(dataset)
+
+        self.assertEqual(split.status, MODULE.PASS)
+        self.assertEqual(split.metrics, {"kind": "tuning-and-holdout"})
+
+    def test_unreadable_neighbours_are_silence_rather_than_a_finding(self) -> None:
+        """A log file next to a dataset says nothing about the dataset."""
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            dataset = self._write(directory / "benchmark.jsonl", range(60))
+            (directory / "trace.jsonl").write_text("this is not json\n")
+            (directory / "empty.jsonl").write_text("")
+
+            split = self._split_result(dataset)
+
+        self.assertEqual(split.detail, "no explicit tuning/held-out split was found")
+        self.assertIsNone(split.metrics)
+
+    def test_the_file_sweep_is_bounded(self) -> None:
+        """Effort has a ceiling, and reaching it can only make it say less."""
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            dataset = self._write(directory / "benchmark.jsonl", range(60))
+            for index in range(MODULE.SPLIT_SEARCH_MAX_FILES + 10):
+                self._write(directory / "many" / f"part-{index}.jsonl", [index])
+            found = MODULE._dataset_files_near(dataset)
+
+        self.assertEqual(len(found), MODULE.SPLIT_SEARCH_MAX_FILES)
+
+    def test_the_directory_walk_is_bounded(self) -> None:
+        """A dataset at a project root must not put a whole tree behind it.
+
+        The file ceiling above cannot bound this on its own: directories holding
+        nothing this sweep wants are free of it, so a tree of them would be
+        walked to the end while the file count stayed at zero.
+        """
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            dataset = self._write(directory / "benchmark.jsonl", range(60))
+            for index in range(MODULE.SPLIT_SEARCH_MAX_DIRECTORIES + 10):
+                (directory / f"empty-{index:04d}").mkdir()
+            # Sorted last, so the walk reaches it only if it never stopped.
+            self._write(directory / "zzz" / "part.jsonl", range(0, 20))
+            found = MODULE._dataset_files_near(dataset)
+
+        self.assertEqual(found, [])
+
+    def test_a_candidate_larger_than_the_budget_is_not_read(self) -> None:
+        """The byte ceiling can only cost the sweep a finding, never invent one."""
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            dataset = self._write(directory / "benchmark.jsonl", range(60))
+            self._write(directory / "parts" / "one.jsonl", range(0, 20))
+            self._write(directory / "parts" / "two.jsonl", range(30, 50))
+
+            self.assertIn("unread_partition_files", self._split_result(dataset).metrics)
+
+            MODULE.RESULTS.clear()
+            with mock.patch.object(MODULE, "SPLIT_SEARCH_MAX_BYTES", 1):
+                starved = self._split_result(dataset)
+
+        self.assertEqual(starved.detail, "no explicit tuning/held-out split was found")
+        self.assertIsNone(starved.metrics)
+
+    def test_the_budget_is_spent_across_the_sweep_not_per_file(self) -> None:
+        """One number bounds the worst case, so each read has to cost it.
+
+        A per-file reading of the same ceiling multiplies by the file count, and
+        the sweep's whole claim is that its cost is bounded by one figure. This
+        sets a budget that admits the first candidate and not both.
+        """
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            dataset = self._write(directory / "benchmark.jsonl", range(60))
+            first = self._write(directory / "parts" / "one.jsonl", range(0, 20))
+            second = self._write(directory / "parts" / "two.jsonl", range(30, 50))
+            # Room for either one on its own and for neither pair, so the
+            # ceiling can only be met by charging each read against it.
+            room_for_one = max(first.stat().st_size, second.stat().st_size) + 1
+
+            with mock.patch.object(MODULE, "SPLIT_SEARCH_MAX_BYTES", room_for_one):
+                starved = self._split_result(dataset)
+
+        self.assertEqual(starved.detail, "no explicit tuning/held-out split was found")
+        self.assertIsNone(starved.metrics)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -3398,5 +3398,106 @@ class DuplicatedRowsBuyNoResolutionTests(unittest.TestCase):
         self.assertIn("carries no distinct_rows count", process.stderr)
 
 
+class TheOpeningCardDoesNotDenyASplitItNeverOpenedTests(unittest.TestCase):
+    """End to end over a real tree, because the defect was end to end.
+
+    The card said no tuning set and no held-out set existed on a project that
+    kept its own parts in files one directory away. Both halves of the fix have
+    to hold together for that sentence to stop: preflight has to read those
+    files, and the score has to act on what it read.
+    """
+
+    @staticmethod
+    def _rows(indexes) -> list[dict]:
+        return [
+            {
+                "id": f"row-{index:03d}",
+                "input": f"question {index} token{index}",
+                "output": f"answer {index % 4}",
+                "metadata": {"provenance": "production"},
+            }
+            for index in indexes
+        ]
+
+    def _tree(self, directory: Path) -> Path:
+        dataset = _write_jsonl(directory, "benchmark.jsonl", self._rows(range(60)))
+        parts = directory / "parts"
+        parts.mkdir()
+        _write_jsonl(parts, "one.jsonl", self._rows(range(0, 20)))
+        _write_jsonl(parts, "two.jsonl", self._rows(range(30, 50)))
+        return dataset
+
+    def test_the_card_names_the_files_instead_of_denying_the_split(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            score = _score(self._tree(directory))
+
+        power = _dataset_subscore(score, "power")
+        self.assertFalse(power["measured"])
+        self.assertNotIn("no tuning set and held-out set", power["evidence"])
+        for name in ("parts/one.jsonl", "parts/two.jsonl"):
+            self.assertIn(name, power["evidence"])
+
+    def test_declaring_the_split_settles_it_and_scores_higher(self) -> None:
+        """The remedy the evidence line asks for has to actually work.
+
+        A finding whose instruction cannot be carried out is a stall, so this
+        replays the move the guide already prescribes - score the combined,
+        split-labelled dataset - and pins that it both settles the question and
+        pays better than staying quiet.
+        """
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            unsettled = _score(self._tree(directory))
+            labelled = []
+            for label, indexes in (
+                ("tuning", range(0, 20)),
+                ("holdout", range(30, 50)),
+            ):
+                for row in self._rows(indexes):
+                    row["metadata"]["split"] = label
+                    labelled.append(row)
+            settled = _score(_write_jsonl(directory, "scoring-view.jsonl", labelled))
+
+        settled_power = _dataset_subscore(settled, "power")
+        self.assertTrue(settled_power["measured"])
+        self.assertIn("20 to tune on / 20 held back", settled_power["evidence"])
+        unsettled_dataset = next(
+            pillar for pillar in unsettled["pillars"] if pillar["name"] == "dataset"
+        )
+        settled_dataset = next(
+            pillar for pillar in settled["pillars"] if pillar["name"] == "dataset"
+        )
+        self.assertGreater(settled_dataset["score"], unsettled_dataset["score"])
+
+    def test_an_ordinary_project_is_scored_exactly_as_before(self) -> None:
+        """Nearby files that are not parts of this dataset change nothing."""
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            dataset = _write_jsonl(directory, "benchmark.jsonl", self._rows(range(60)))
+            _write_jsonl(
+                directory,
+                "unrelated.jsonl",
+                [{"input": f"other {index}", "output": "x"} for index in range(20)],
+            )
+            score = _score(dataset)
+
+        power = _dataset_subscore(score, "power")
+        self.assertTrue(power["measured"])
+        self.assertIn("no tuning set and held-out set", power["evidence"])
+
+    def test_an_unusable_file_list_is_refused_rather_than_printed(self) -> None:
+        """These paths are printed on the customer's card, so they are checked."""
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            records = _preflight_records(self._tree(directory))
+        for record in records:
+            if record["check"] == "dataset-split":
+                record["metrics"]["unread_partition_files"] = [7]
+        process = _run_readiness(records)
+        self.assertEqual(process.returncode, 2)
+        self.assertIn("unusable file list", process.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()
