@@ -211,6 +211,30 @@ jobs:
         # agrees with it. A boundary case that is known not to hold is the
         # failure this step reports, never a state it tolerates.
         #
+        # And every one of those refusals holds for a case whose body is `pass`.
+        # Bodies rewritten to `self.assertIn(str(IMAGE), self.boundary())` NAME
+        # the image, satisfy the loader, skip nothing, fail nothing and clear
+        # the floor, having entered no boundary at all. Measured on this branch:
+        # `Ran 8 tests in 0.000s`, `OK`, and this step exited 0 with the runtime
+        # never asked for a container. Source: this block run as `bash -e`
+        # through a copy of `tests/test_verify_sandbox.py` carrying that body -
+        # the world `a case starts no container` in
+        # `test_the_boundary_gate_refuses_every_answer_short_of_a_proven_boundary`.
+        #
+        # No rule read off the cases' source separates naming a runtime from
+        # entering one, so the last question is not asked of them. What the
+        # daemon started while each case ran is read off the engine's own event
+        # stream as that case ends, and a case with no `start` of the pinned
+        # image inside its own window fails this step. Counting containers on
+        # the host instead cannot answer it - every boundary command carries
+        # `--rm`, so one that started and exited leaves nothing to count - and a
+        # marker the cases write would be a convention the next case author has
+        # to know about, satisfiable by the same forgery that prompted it. The
+        # daemon's ledger needs no cooperation from a case, and no case writes
+        # it. What it proves is that a container of the pinned image ran while
+        # the case ran, which is not the same as the case's verdict depending on
+        # it: a case that starts one and then asserts nothing still passes here.
+        #
         # None of this reaches a developer without a runtime: the skip stays
         # available and stays loud where it is the honest answer. It is refused
         # HERE, on a runner where a runtime is guaranteed present and a skip can
@@ -221,9 +245,10 @@ jobs:
           import os
           import subprocess
           import sys
+          import time
           import unittest
 
-          FLOOR = 5
+          FLOOR = 8
 
           sys.path.insert(0, "tests")
           import test_verify_sandbox as boundary
@@ -273,7 +298,63 @@ jobs:
                   "that was deliberate, lower FLOOR in the commit that removes them."
               )
 
-          result = unittest.TextTestRunner(verbosity=2, stream=sys.stdout).run(suite)
+          class Ledgered(unittest.TextTestResult):
+              """Each case, and what the daemon started while that case ran.
+
+              The window is the case, so nothing has to be attributed to one
+              afterwards - the reading is taken as the case ends, over the
+              case's own span. Taken once at the end instead, it would also
+              have to survive the engine's replay buffer, which is bounded:
+              measured here on 29.6.1 through 60 `docker run --rm` of the
+              pinned image inside one window, 300 container events were
+              produced and the replay of that window returned 183 of them, so
+              23 of those 60 `start` events had already aged out. Per case the
+              window is a handful of events deep and cannot age out from under
+              a longer class. An eviction would fail this step rather than
+              pass it either way, which is the right direction and still not a
+              reading worth taking.
+              """
+
+              def __init__(self, *arguments, **keywords):
+                  self.entered = {}
+                  self.opened = None
+                  super().__init__(*arguments, **keywords)
+
+              def startTest(self, case):
+                  self.opened = time.time()
+                  super().startTest(case)
+
+              def stopTest(self, case):
+                  super().stopTest(case)
+                  recorded = subprocess.run(
+                      [
+                          "docker",
+                          "system",
+                          "events",
+                          "--since",
+                          f"{self.opened:.9f}",
+                          "--until",
+                          f"{time.time():.9f}",
+                          "--filter",
+                          "type=container",
+                          "--filter",
+                          "event=start",
+                          "--format",
+                          "{{json .}}",
+                      ],
+                      capture_output=True, text=True, check=True,
+                  )
+                  self.entered[case.id()] = [
+                      (json.loads(line).get("Actor") or {})
+                      .get("Attributes", {})
+                      .get("image")
+                      for line in recorded.stdout.splitlines()
+                      if line.strip()
+                  ]
+
+          result = unittest.TextTestRunner(
+              verbosity=2, stream=sys.stdout, resultclass=Ledgered
+          ).run(suite)
           if result.skipped:
               raise SystemExit(
                   "a container runtime IS available on this runner, so a skipped "
@@ -300,9 +381,25 @@ jobs:
                   f"the loader found {loaded} boundary cases and {result.testsRun} "
                   "ran, so the run stopped short of the class it was given"
               )
+
+          hollow = sorted(
+              f"{case} (the daemon started "
+              f"{sorted(images, key=str) if images else 'nothing'})"
+              for case, images in result.entered.items()
+              if boundary.IMAGE not in images
+          )
+          if hollow:
+              raise SystemExit(
+                  "these boundary cases passed without the daemon starting one "
+                  f"container from {boundary.IMAGE} while they ran, so they named "
+                  "a runtime rather than entering one and every other check here "
+                  "agreed with them: " + "; ".join(hollow)
+              )
           print(
               f"{result.testsRun} boundary cases ran against {boundary.IMAGE}, "
-              "none skipped"
+              f"none skipped, "
+              f"{sum(len(images) for images in result.entered.values())} "
+              "containers started"
           )
           PY
 

@@ -49,29 +49,36 @@ Six of those properties are observable from inside, and each is reported as
                   download with - so a real secret hidden under that exact name
                   is not seen either. `SECRET_ALLOWED` is that one name, and
                   says why it is there.
-* `filesystem`  - none of the three host paths this check can name - its own
-                  scratch directory, the working directory, and this host's home
-                  directory - took a write from inside. Home and working
-                  directory are there because the contract names exactly those
-                  two nouns: "no writable host home or project mount". The
-                  verdict is read from this host after the boundary exits, not
-                  from what the probe says about its own writes, so a boundary
-                  that claims it was refused while actually writing still fails.
-                  The reverse direction is not symmetric and is not claimed: a
-                  write the probe reports as succeeding, with no host file
-                  behind it, means the path was shadowed by a filesystem that is
-                  not this host's, and is reported that way rather than as a
-                  contradiction.
-* `privilege`   - the probe holds no effective capabilities, cannot see either
-                  of this check's own processes, and runs with `no_new_privs`
-                  set. The contract's third bullet asks for all three and this
-                  used to read none of them, so `--privileged --pid host`
-                  cleared every other property and was told it had passed.
+* `filesystem`  - the two host directories the contract names, "no writable
+                  host home or project mount", are not REACHABLE from inside,
+                  and took no write. Reachability first, because a write probe
+                  entered as an unprivileged identity cannot tell "the boundary
+                  refused it" from "this identity could never have written here
+                  anyway" - so a marker only this run knows the name of is
+                  planted in each, and looked for at its own absolute path, in
+                  the boundary's working directory, and in its home. The home is
+                  refuted on reach alone: the contract admits required tests and
+                  fixtures read-only plus a scratch directory, and a home is
+                  neither. The working directory is where a project keeps the
+                  tests a scorer needs, so there reach alone is not the finding
+                  and a refused write finally means refused. A directory mounted
+                  at a path this check was never told about is not looked for -
+                  see what it does NOT establish, below.
+* `privilege`   - the probe holds no effective capabilities, none available to
+                  acquire, and runs with `no_new_privs` set; and it cannot see
+                  BOTH of this check's own processes, one being an ordinary
+                  collision. The last two are reported and not refuted on: an
+                  ordinary process on any Linux host carries the full bounding
+                  set and no `no_new_privs`, so a virtual-machine guest - which
+                  the contract admits - reads exactly like a privileged
+                  container from in there.
 * `identity`    - the probe did not run as uid 0.
 
-Everything above except `filesystem` is read from what the probe printed. A
-declared command that fabricates that output is believed; the nonce defeats a
-recorded transcript replayed verbatim and nothing more. That is not the threat
+All six are read from what the probe printed; `filesystem` alone also reads
+this host afterwards, so a boundary that claims a write was refused while
+performing it still fails. A declared command that fabricates its output is
+otherwise believed; the nonce defeats a recorded transcript replayed verbatim
+and nothing more. That is not the threat
 this exists for - the assistant running it is not trying to defeat it - but a
 file called `verify_sandbox` should say which half of its report is a
 measurement of this host and which half is testimony.
@@ -129,12 +136,14 @@ pause for a safe runner.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
 import re
 import secrets
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -232,6 +241,12 @@ LOCATOR_SEGMENTS = frozenset({"URL", "URI", "DSN", "CONN", "CONNECTION"})
 # it: `SENTRY_DSN` carries its own credential, and nothing innocuous is spelled
 # this way.
 LOCATOR_ONLY_SEGMENTS = frozenset({"DSN"})
+# `JWT` was tried and taken back out, and it belongs in the same paragraph as
+# `SESSION` and `TRAIGENT` rather than disappearing without one: it reported
+# `JWT_ISSUER` and `JWT_ALGORITHM`, neither of which is a secret, and it caught
+# nothing another word does not - `JWT_SECRET` under `SECRET`, `JWT_TOKEN` under
+# `TOKEN`. A bare variable called `JWT` is the only thing it would have added,
+# and that is not a shape worth two false reds.
 # Names with no separator in them at all, so no segment rule can reach the word
 # inside. Kept as an exact list rather than a substring test, because the
 # substring direction is what puts `PAT` inside `PATH`.
@@ -259,6 +274,23 @@ ENVIRONMENT_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 # positional parameters rather than interpolated, so a working directory with a
 # quote in it cannot rewrite the probe.
 PROBE = r"""
+elsewhere() {
+  # $1 label, $2 the marker's BASENAME.
+  #
+  # The other half of the question, and the half three rounds missed. Asking
+  # only about the host's own absolute path answers "is this directory mounted
+  # THERE", and the ordinary spelling does not mount it there:
+  # `-v "$HOME:/hosthome:rw"` and `-v "$PWD:/work:rw" -w /work` both hand the
+  # boundary the same directory under a name this check was never told. A file
+  # name nothing else on earth is using does not care where it was mounted.
+  #
+  # Two places, because two are all a probe can look in without walking a
+  # filesystem it does not own: the boundary's own working directory, and the
+  # home its identity was given.
+  if [ -e "./$2" ]; then printf '@%s cwd\n' "$1"
+  elif [ -n "$HOME" ] && [ -e "$HOME/$2" ]; then printf '@%s home\n' "$1"
+  else printf '@%s absent\n' "$1"; fi
+}
 reach() {
   # $1 label, $2 a host file only this check knows the name of, $3 its directory.
   #
@@ -276,6 +308,8 @@ printf '@uid %s\n' "$(id -u 2>/dev/null || echo unknown)"
 if [ -e "$1" ]; then printf '@marker visible\n'; else printf '@marker absent\n'; fi
 reach workdir-reach "$8" "${10}"
 reach home-reach "$9" "${11}"
+elsewhere workdir-elsewhere "${12}"
+elsewhere home-elsewhere "${13}"
 if ( : > "$2" ) 2>/dev/null; then printf '@scratch-write ok\n'; else printf '@scratch-write refused\n'; fi
 if ( : > "$3" ) 2>/dev/null; then printf '@workdir-write ok\n'; else printf '@workdir-write refused\n'; fi
 if ( : > "$5" ) 2>/dev/null; then printf '@home-write ok\n'; else printf '@home-write refused\n'; fi
@@ -304,32 +338,44 @@ ENV_FLAGS = frozenset({"-e", "--env"})
 # then `-eNAME=VALUE`, then `-ie NAME=VALUE` with the operand in the next
 # argument - and each fix taught the parser one more thing the runtime already
 # knew.
+# Only the flags that DESCRIBE CONTAINMENT earn a place, because that is the
+# whole reason the report echoes the command at all. The first version admitted
+# anything that takes a `key=value`, which put four secret-bearing runtime flags
+# on the readable side: `docker run --log-opt splunk-token=...` is a documented
+# spelling whose operand IS a token, and the label, annotation and health-command
+# flags beside it carry whatever the customer put in them - measured, each
+# printed a planted value in full. A flag that describes the boundary is
+# knowable; a flag that carries arbitrary text is not.
 READABLE = frozenset(
     {
         "--mount",
         "--tmpfs",
         "--security-opt",
-        "--storage-opt",
-        "--log-opt",
         "--sysctl",
-        "--label",
-        "--annotation",
         "--ulimit",
         "--device-cgroup-rule",
-        "--health-cmd",
-        "--volume-driver",
     }
 )
 
 
-def blanked_operand(operand: str) -> str:
+def blanked_operand(operand: str) -> str:  # noqa: D401 - reads as a noun phrase
     """A `NAME=VALUE` operand with the value gone, by POSITION not by name.
 
     `NAME` alone is returned untouched: that spelling passes the variable
     through from the surrounding environment and carries no value here.
+
+    Only the first token loses its value. `sh -c 'PYTHONPATH=/app exec ./run.sh'`
+    used to render as `PYTHONPATH=<redacted>` with the script it runs deleted,
+    and `systemd-run -p MemoryMax=1G` swallowed a limit the contract asks the
+    reader to record - a report that erases what it was measuring is not the
+    safer report.
     """
-    name, separator, _ = operand.partition("=")
-    return f"{name}=<redacted>" if separator else operand
+    head, _, tail = operand.partition(" ")
+    name, separator, _ = head.partition("=")
+    if not separator:
+        return operand
+    blanked = f"{name}=<redacted>"
+    return f"{blanked} {tail}" if tail else blanked
 
 
 def redacted_command(command: list[str]) -> list[str]:
@@ -387,9 +433,17 @@ def redacted_command(command: list[str]) -> list[str]:
             if operand:
                 safe.append(f"{head}e{blanked_operand(operand)}")
                 continue
-        name, separator, _ = argument.partition("=")
-        if separator and ENVIRONMENT_NAME.match(name) and previous not in READABLE:
-            safe.append(f"{name}=<redacted>")
+        # Any `key=value` whose flag is not on the readable list, and the key
+        # is NOT held to a variable's shape: `--log-opt splunk-token=...` is a
+        # documented flag whose operand is a token, and a hyphen in the name was
+        # enough to walk it straight through a rule that only knew
+        # `[A-Za-z_][A-Za-z0-9_]*`. What decides is the flag in front of it.
+        if (
+            "=" in argument
+            and not argument.startswith("-")
+            and previous not in READABLE
+        ):
+            safe.append(blanked_operand(argument))
             continue
         safe.append(argument)
         previous = argument
@@ -646,31 +700,51 @@ def filesystem_property(
     # is a file only this run knows the name of, so seeing it settles the
     # question regardless of any permission bit;
     # `tests/test_verify_sandbox.py` reproduces both readings.
-    reach = {name: field(output, name) for name in ("workdir-reach", "home-reach")}
-    for name, noun in (
-        ("workdir-reach", "the working directory"),
-        ("home-reach", "this host's home directory"),
-    ):
-        if reach[name] is None:
-            return Property(
-                "filesystem",
-                UNVERIFIED,
-                f"the probe did not report whether {noun} is reachable inside "
-                "the boundary",
-            )
-        if reach[name] == "opaque":
-            return Property(
-                "filesystem",
-                UNVERIFIED,
-                f"{noun} exists inside the boundary but this identity cannot "
-                "traverse it, so whether it is this host's directory or "
-                "something else mounted over the path was not established",
-            )
+    readings = {
+        name: field(output, name)
+        for name in (
+            "workdir-reach",
+            "home-reach",
+            "workdir-elsewhere",
+            "home-elsewhere",
+        )
+    }
+    missing = [name for name, value in readings.items() if value is None]
+    if missing:
+        return Property(
+            "filesystem",
+            UNVERIFIED,
+            "the probe did not report every reachability reading (missing: "
+            + ", ".join(missing)
+            + ")",
+        )
+    # Reachable AT ITS OWN PATH, or reachable under any other name. The second
+    # is what the ordinary spelling produces and what three rounds of this
+    # property could not see.
+    reached = {
+        "workdir": readings["workdir-reach"] == "visible"
+        or readings["workdir-elsewhere"] != "absent",
+        "home": readings["home-reach"] == "visible"
+        or readings["home-elsewhere"] != "absent",
+    }
+    # A directory this identity cannot enter is not a hazard to it, whatever is
+    # mounted there. Refusing it made the shipped example exit 2 for anyone
+    # invoking as root - `/root` is 0700 inside the image - and for any home
+    # this uid cannot traverse. Said out loud rather than failed closed, and
+    # listed in what this does not establish.
+    unenterable = [
+        noun
+        for name, noun in (
+            ("workdir-reach", "the working directory"),
+            ("home-reach", "this host's home directory"),
+        )
+        if readings[name] == "opaque" and not reached[name.split("-")[0]]
+    ]
     # The home is refuted on reachability alone, read-only or not. The contract
     # permits "required tests and fixtures read-only, plus a bounded disposable
     # scratch directory", and a home directory is neither - model-written code
     # that can read it can read the customer's keys whether or not it can write.
-    if reach["home-reach"] == "visible":
+    if reached["home"]:
         return Property(
             "filesystem",
             REFUTED,
@@ -685,7 +759,7 @@ def filesystem_property(
     # the finding here - but once the marker is visible the directory is known
     # to be traversable, which is what finally makes a refused write mean
     # "refused" rather than "this uid could never have written here anyway".
-    if reach["workdir-reach"] == "visible" and field(output, "workdir-write") == "ok":
+    if reached["workdir"] and field(output, "workdir-write") == "ok":
         return Property(
             "filesystem",
             REFUTED,
@@ -702,7 +776,7 @@ def filesystem_property(
             + ", ".join(missing)
             + ")",
         )
-    if reach["workdir-reach"] == "visible":
+    if reached["workdir"]:
         return Property(
             "filesystem",
             PROVEN,
@@ -726,8 +800,17 @@ def filesystem_property(
     return Property(
         "filesystem",
         PROVEN,
-        f"none of {WRITE_PROBE_NOUNS} took a write from inside; a host path "
-        "this check cannot name may still be mounted writable",
+        f"none of {WRITE_PROBE_NOUNS} is reachable inside the boundary or took "
+        "a write from it"
+        + (
+            "; " + " and ".join(unenterable) + " exists inside but this "
+            "identity cannot enter it, so what is mounted there was not "
+            "identified"
+            if unenterable
+            else ""
+        )
+        + ". A host path this check was never told about is not looked for at "
+        "all",
     )
 
 
@@ -917,6 +1000,35 @@ def evaluate(
     ]
 
 
+def scratch_root() -> str | None:
+    """A temporary directory outside the two trees this check probes.
+
+    `None` means "wherever `tempfile` would have put it", which is the answer
+    whenever that place is already outside them.
+    """
+    try:
+        default = Path(tempfile.gettempdir()).resolve()
+        inside = [Path.cwd().resolve()]
+        try:
+            inside.append(Path.home().resolve())
+        except RuntimeError:
+            pass
+        if not any(default == tree or tree in default.parents for tree in inside):
+            return None
+        for candidate in ("/tmp", "/var/tmp"):
+            somewhere = Path(candidate)
+            if somewhere.is_dir() and not any(
+                somewhere == tree or tree in somewhere.parents for tree in inside
+            ):
+                return candidate
+    except OSError:
+        return None
+    # Nothing outside them was found. Falling back to the default is the honest
+    # move: `entered` may then read a marker of this check's own making, and the
+    # note below says so rather than the check inventing a location.
+    return None
+
+
 def dispose(scratch: Path) -> None:
     """Remove this check's own scratch tree, whatever the boundary did to it.
 
@@ -993,7 +1105,15 @@ def run(argv: list[str] | None = None) -> int:
         parser.error("no boundary command was given after `--`")
 
     token = secrets.token_hex(8)
-    scratch = Path(tempfile.mkdtemp(prefix="verify_sandbox_"))
+    # NOT under the working directory or the home directory, whatever `TMPDIR`
+    # says. The marker `entered` rests on lives in here, and a scratch inside a
+    # tree the customer legitimately mounts read-only makes that marker visible
+    # from a compliant boundary - measured, `TMPDIR=$PWD/tmp` with the project
+    # mounted read-only produced `REFUTED entered: the probe could see ... so it
+    # ran on this host`, which is an affirmatively false diagnosis of the one
+    # property everything else rests on. `TMPDIR` inside a workspace is ordinary
+    # in CI runners and build tools.
+    scratch = Path(tempfile.mkdtemp(prefix="verify_sandbox_", dir=scratch_root()))
     # `mkdtemp` creates mode `0o700` owned by whoever ran this, and every reading
     # taken inside that directory is then answered by a permission bit rather
     # than by the boundary. A boundary running as any other uid - which is what
@@ -1023,15 +1143,19 @@ def run(argv: list[str] | None = None) -> int:
     # reading that did not happen, so the probe is pointed somewhere nothing can
     # create a file and `filesystem` is told the noun went unmeasured.
     unreadable: list[str] = []
-    workdir_marker = Path.cwd() / f".verify_sandbox_host_marker_{token}"
+    workdir_marker = Path.cwd() / f".verify_sandbox_cwd_marker_{token}"
     try:
-        home_directory = Path.home()
+        # Resolved, because a home reached through a symlink is mounted at its
+        # physical path and compared against its logical one otherwise - which
+        # cleared a read-write mount of exactly that home. `Path.cwd()` is
+        # already physical; this makes the pair agree.
+        home_directory = Path.home().resolve()
         home_write = home_directory / f".verify_sandbox_write_probe_{token}"
-        home_marker = home_directory / f".verify_sandbox_host_marker_{token}"
+        home_marker = home_directory / f".verify_sandbox_home_marker_{token}"
     except RuntimeError:
         home_directory = Path("/nonexistent-verify-sandbox")
         home_write = home_directory / token
-        home_marker = home_directory / f"marker-{token}"
+        home_marker = home_directory / f".verify_sandbox_home_marker_{token}"
         unreadable.append("this host's home directory (it could not be located)")
 
     shown = redacted_command(command)
@@ -1089,6 +1213,8 @@ def run(argv: list[str] | None = None) -> int:
             str(home_marker),
             str(Path.cwd()),
             str(home_directory),
+            workdir_marker.name,
+            home_marker.name,
         ]
         try:
             completed = subprocess.run(  # noqa: S603 - the command is the user's
@@ -1198,14 +1324,23 @@ NOT_ESTABLISHED = [
     "and captured-output limits",
     "a fresh or reset sandbox per candidate",
     "descendant-process-tree teardown on completion or limit breach",
-    "whether a host path other than the three named above is mounted writable",
+    "whether a host directory is mounted at a path this check was never told "
+    "about. The two it names are looked for at their own absolute path, in the "
+    'boundary\'s working directory and in its home - `-v "$HOME:/hosthome"` '
+    "hands over the same directory under a name nothing bounded can search for, "
+    "and is not detected. This property narrows the question; it does not "
+    "close it",
     "whether a seccomp filter confines the boundary - the mode is read and "
     "reported, and never refuted on, because a virtual machine legitimately "
     "carries none",
     "whether a secret sits under a variable name this does not recognise, or "
     "under the one name it lets through on purpose",
-    "whether the declared command reported truthfully: only the host-side "
-    "read-back behind `filesystem` is measured here, and the rest is testimony",
+    "whether a credential is mounted as a FILE rather than passed as a "
+    "variable. `credentials` reads the environment and nothing else, so a "
+    "read-only mount of a credentials directory is invisible to it",
+    "whether the declared command reported truthfully. Only one reading is "
+    "taken from this host rather than from the command's own output - whether a "
+    "write landed - and every verdict above rests on the rest being honest",
     "whether a full capability bounding set, or no-new-privileges being unset, "
     "is a container that failed to drop them or a virtual-machine guest where "
     "they are ordinary - identical from inside, so this reports rather than "
@@ -1265,6 +1400,17 @@ def report_internal_error(tool: str, error: BaseException) -> int:
 
 
 def main() -> int:
+    # `finally` does not run on SIGTERM, which is what `timeout`, a cancelled CI
+    # job and most supervisors send - and this check now plants files in the
+    # customer's working directory and home, so the cleanup skipped is one that
+    # leaves real litter behind. Measured: a stray probe file sat in a home
+    # directory for four hours after one such run. Turning it into an exception
+    # gives the `finally` its chance; the exit code stays what the signal meant.
+    def stop(number: int, _frame: object) -> None:
+        raise SystemExit(128 + number)
+
+    with contextlib.suppress(ValueError):  # not the main thread: nothing to do
+        signal.signal(signal.SIGTERM, stop)
     try:
         return run()
     except Exception as error:  # noqa: BLE001 - reported, never swallowed

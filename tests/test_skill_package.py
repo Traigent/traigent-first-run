@@ -650,12 +650,25 @@ def _yaml_next(lines: list[str], index: int) -> int:
 
 
 def _yaml_scalar(text: str) -> object:
+    """One inline value, as the value GitHub reads it as.
+
+    A flow sequence is parsed rather than kept as the text between its
+    brackets. That reads like a detail until you see what the text does to a
+    caller: `types: [labeled]` under `on: pull_request:` became the string
+    `"[labeled]"`, and a string is truthy, has keys nobody asks for, and is
+    invisible to `set(structure["on"])` - so a workflow narrowed to one label
+    satisfied the guard that asks which events it runs on. A value that is a
+    list is a list here.
+    """
     text = text.strip()
     if len(text) > 1 and text[0] in "'\"" and text[-1] == text[0]:
         return text[1:-1]
     comment = re.search(r"(?:^|\s)#", text)
     if comment is not None:
         text = text[: comment.start()].strip()
+    if text.startswith("[") and text.endswith("]"):
+        inside = text[1:-1].strip()
+        return [_yaml_scalar(item) for item in inside.split(",")] if inside else []
     if text in ("true", "false"):
         return text == "true"
     if re.fullmatch(r"-?\d+", text):
@@ -715,9 +728,21 @@ def _yaml_sequence(lines: list[str], index: int, indent: int) -> tuple[list, int
             return items, index
         if not lines[index].lstrip().startswith("- "):
             return items, index
+        written = lines[index].lstrip()[2:]
+        following = _yaml_next(lines, index + 1)
+        deeper = following < len(lines) and _yaml_indent(lines[following]) > indent
+        quoted = written[:1] in ("'", '"')
+        if not deeper and (quoted or not re.match(r"[^\s:]+:(\s|$)", written)):
+            # `- labeled` is an item, not a one-key mapping. This is the same
+            # filter `[labeled]` writes inline, spelled over three lines, and
+            # raising on one of the two forms while parsing the other is how
+            # the two came to answer differently to the same question.
+            items.append(_yaml_scalar(written))
+            index += 1
+            continue
         # `- ` is two columns of indentation once the item's first key is read
         # as a key, which is what makes an item an ordinary mapping below it.
-        lines[index] = " " * (indent + 2) + lines[index].lstrip()[2:]
+        lines[index] = " " * (indent + 2) + written
         item, index = _yaml_mapping(lines, index, indent + 2)
         items.append(item)
 
@@ -768,6 +793,34 @@ def ci_workflow_structure(workflow: Path) -> dict[str, Any]:
     if index < len(lines):
         raise AssertionError(f"line {index + 1} was not parsed: {lines[index]!r}")
     return document
+
+
+def job_needs_chain(structure: dict[str, Any], job: str) -> list[str]:
+    """`job` and every job it waits on, transitively.
+
+    GitHub skips a job whose `needs:` were skipped, and reports the run
+    successful. So a condition on a job three links upstream of the gate skips
+    the gate, and asking only the gate's own job whether it declares one reads
+    the last link of a chain and calls it the chain.
+    """
+    jobs = structure.get("jobs") or {}
+    chain: list[str] = []
+    pending = [job]
+    while pending:
+        name = pending.pop()
+        if name in chain:
+            continue
+        chain.append(name)
+        if name not in jobs:
+            raise AssertionError(
+                f"{name!r} is waited on but not declared by "
+                f"{VALIDATE_WORKFLOW.name}, so the chain cannot be read"
+            )
+        needs = (jobs[name] or {}).get("needs")
+        if needs is None:
+            continue
+        pending += [needs] if isinstance(needs, str) else list(needs)
+    return chain
 
 
 def heredoc_program(script: str) -> str | None:
@@ -908,9 +961,14 @@ def boundary_cases() -> unittest.TestSuite:
     )
 
 
+# A stand-in case does what a real one does: it asks the runtime for a
+# container. The gate reads the daemon's ledger rather than the case's source,
+# so a stand-in that only LOOKS like it entered a boundary would be refused
+# here exactly as the forged real ones are - which is what the two worlds below
+# are for.
 _BOUNDARY_CASE = """
     def test_boundary_property_{index}(self) -> None:
-        pass
+        subprocess.run(["docker", "run", "--rm", IMAGE, "/bin/true"], check=True)
 """
 _BOUNDARY_FLAWS = {
     "a case skips": """
@@ -935,7 +993,72 @@ _BOUNDARY_FLAWS = {
     def test_boundary_property_0(self) -> None:
         pass
 """,
+    # The forgery this branch was reviewed on, transcribed: it names the image,
+    # asserts something true about it, skips nothing, fails nothing, and enters
+    # no boundary.
+    "a case starts no container": """
+    def test_boundary_property_0(self) -> None:
+        self.assertIn(str(IMAGE), ["docker", "run", "--rm", str(IMAGE)])
+""",
+    "a case starts another image": """
+    def test_boundary_property_0(self) -> None:
+        subprocess.run(
+            ["docker", "run", "--rm", "busybox:latest", "/bin/true"], check=True
+        )
+""",
 }
+
+_DOCKER_LEDGER = '''\
+"""A daemon's ledger, not a daemon.
+
+`run` records that a container was asked for and starts nothing. `system
+events` replays what was recorded, in the window it was asked about. The
+engine's event stream is the one surface the gate reads to decide whether a
+case entered a boundary, so it is the one surface stood in for here - and a
+stand-in case that never calls `docker run` leaves this ledger empty, which is
+exactly what the gate would read on a runner.
+"""
+import json
+import sys
+import time
+from pathlib import Path
+
+INSPECT_EXITS = <INSPECT_EXITS>
+PUBLISHED = "<PUBLISHED>"
+RECORD = Path(__file__).with_name("docker_ledger.jsonl")
+
+asked = sys.argv[1:]
+if asked[:2] == ["image", "inspect"]:
+    if INSPECT_EXITS:
+        print("no such image on this host", file=sys.stderr)
+        raise SystemExit(INSPECT_EXITS)
+    print(json.dumps([{"RepoDigests": ["python@" + PUBLISHED]}]))
+    raise SystemExit(0)
+if asked[:1] == ["run"]:
+    named = next((word for word in asked[1:] if not word.startswith("-")), None)
+    with RECORD.open("a") as record:
+        record.write(
+            json.dumps(
+                {
+                    "Type": "container",
+                    "Action": "start",
+                    "Actor": {"Attributes": {"image": named}},
+                    "timeNano": time.time_ns(),
+                }
+            )
+            + "\\n"
+        )
+    raise SystemExit(0)
+if asked[:2] == ["system", "events"]:
+    since = float(asked[asked.index("--since") + 1])
+    until = float(asked[asked.index("--until") + 1])
+    recorded = RECORD.read_text().splitlines() if RECORD.exists() else []
+    for line in recorded:
+        if since <= json.loads(line)["timeNano"] / 1e9 <= until:
+            print(line)
+    raise SystemExit(0)
+raise SystemExit("the ledger was asked for `docker " + " ".join(asked) + "`")
+'''
 
 
 def _boundary_stand_in(
@@ -952,6 +1075,7 @@ def _boundary_stand_in(
     ]
     defined = BOUNDARY_CLASS if shape == "class" else "SomeOtherCasesEntirely"
     source = [
+        "import subprocess",
         "import unittest",
         "",
         f"IMAGE = {image!r}",
@@ -988,7 +1112,12 @@ def run_boundary_gate(
 
     No container runtime is touched, deliberately - the question is what the
     step does with an answer, and a real daemon can only give one answer per
-    machine.
+    machine. `docker` here is a ledger rather than a daemon: it records what
+    `run` was asked for and replays it to `system events`, which is the surface
+    the step reads to decide whether a case entered a boundary. Stubbing that
+    surface is what lets the refusals below be exercised on a machine with no
+    runtime at all; what it cannot do is prove the step works against a real
+    engine, which is why the step is also run verbatim against one.
     """
     reference = ci_workflow_structure(VALIDATE_WORKFLOW)["env"]["PINNED_PYTHON_IMAGE"]
     with tempfile.TemporaryDirectory() as directory:
@@ -999,15 +1128,16 @@ def run_boundary_gate(
         )
         binaries = world / "bin"
         binaries.mkdir()
+        ledger = world / "docker_ledger.py"
+        ledger.write_text(
+            _DOCKER_LEDGER.replace("<INSPECT_EXITS>", str(inspect_exits)).replace(
+                "<PUBLISHED>", published or reference.split("@", 1)[1]
+            )
+        )
         docker = binaries / "docker"
         docker.write_text(
             "#!/bin/sh\n"
-            f"if [ {inspect_exits} -ne 0 ]; then\n"
-            '  echo "no such image on this host" >&2\n'
-            f"  exit {inspect_exits}\n"
-            "fi\n"
-            "printf '%s\\n' "
-            f"""'[{{"RepoDigests": ["python@{published or reference.split("@", 1)[1]}"]}}]'\n"""
+            f'exec {shlex.quote(sys.executable)} {shlex.quote(str(ledger))} "$@"\n'
         )
         docker.chmod(0o755)
         # The runner's `python` is whatever `setup-python` installed; here it is
@@ -10154,16 +10284,75 @@ class SkillPackageTests(unittest.TestCase):
             self.assertIn(phrase, safety)
 
     def test_ci_runs_package_and_format_validation(self) -> None:
-        workflow = (ROOT / ".github" / "workflows" / "validate.yml").read_text()
-        for phrase in (
-            'python-version: "3.12"',
+        """Asked of the parsed steps, because commenting a step out keeps them.
+
+        `# - name: Run package tests` leaves every phrase this used to look for
+        exactly where it was, so the suite, `ruff` and `black` could all be
+        commented out and this stayed green over a workflow that ran none of
+        them. It is the defect the gate's own guard next door was rewritten to
+        fix - a substring is satisfied by a coincidence, and a comment is the
+        cheapest coincidence there is - left standing in the sibling check.
+
+        A step is therefore located by the command it RUNS, its `if:` is read
+        because a step that never executes is a commented-out step spelled
+        differently, and the job is named so that moving one of these into a
+        job nothing waits on is not a way through either.
+        """
+        structure = ci_workflow_structure(VALIDATE_WORKFLOW)
+        steps = (structure["jobs"]["validate"] or {}).get("steps") or []
+        self.assertTrue(steps, "the validate job declares no steps at all")
+        for command in (
             "python -m unittest discover -s tests -v",
             "ruff check .",
             "black --check .",
         ):
-            self.assertIn(phrase, workflow)
-        self.assertIn("ruff==0.15.12", workflow)
-        self.assertIn("black==26.5.1", workflow)
+            with self.subTest(command=command):
+                running = [step for step in steps if step.get("run") == command]
+                self.assertEqual(
+                    len(running),
+                    1,
+                    f"the validate job must run `{command}` in exactly one step "
+                    f"of its own, and {len(running)} do. A commented-out step "
+                    "leaves every word of itself in the file and runs nothing",
+                )
+                self.assertIsNone(
+                    running[0].get("if"),
+                    f"the step running `{command}` declares `if: "
+                    f"{running[0].get('if')}`, which is a commented-out step "
+                    "that still reports a green tick",
+                )
+        pythons = [
+            step
+            for step in steps
+            if isinstance(step.get("uses"), str)
+            and step["uses"].startswith("actions/setup-python@")
+        ]
+        self.assertEqual(
+            len(pythons), 1, f"the validate job sets up Python {len(pythons)} times"
+        )
+        self.assertEqual(
+            (pythons[0].get("with") or {}).get("python-version"),
+            "3.12",
+            "the suite is measured against 3.12 and the workflow must ask for "
+            "that release, not for whatever the runner ships",
+        )
+        installs = [
+            step.get("run")
+            for step in steps
+            if isinstance(step.get("run"), str) and "ruff" in step["run"]
+        ]
+        self.assertEqual(
+            len(installs),
+            2,
+            "exactly two steps may name ruff - the one that installs the pin "
+            f"and the one that runs it - and {len(installs)} do: {installs}",
+        )
+        pinned = next(text for text in installs if "pip install" in text)
+        self.assertIn("ruff==0.15.12", pinned)
+        self.assertIn("black==26.5.1", pinned)
+        workflow = VALIDATE_WORKFLOW.read_text()
+        # Bans, and a ban is honestly asked of the text: it is satisfied by the
+        # wording being gone, which is the whole of what it claims.
         self.assertNotIn("pip install --upgrade ruff black", workflow)
         self.assertNotIn("/home/", workflow)
 
@@ -10197,21 +10386,56 @@ class SkillPackageTests(unittest.TestCase):
             "the boundary gate must run in the job the pull request waits on, "
             f"and it is declared in {job!r}",
         )
-        self.assertGreaterEqual(
-            set(structure["on"] or {}),
-            {"pull_request", "push"},
-            "a gate that runs on neither event guards nothing",
+        events = structure["on"]
+        self.assertIsInstance(
+            events,
+            dict,
+            "`on:` must be a mapping of event names to no filter, and it "
+            f"parsed as {events!r}. A form this file does not use cannot be "
+            "asked which events it runs on, and that question is not one to "
+            "answer by assuming",
         )
+        for event in ("pull_request", "push"):
+            with self.subTest(event=event):
+                self.assertIn(
+                    event,
+                    events,
+                    "a gate that runs on neither event guards nothing",
+                )
+                # The event has to be UNFILTERED, not merely named. `types:
+                # [labeled]` and `branches: [main]` leave the key exactly where
+                # a key check finds it and turn the workflow off for every
+                # event outside the filter - and a pull request this never ran
+                # on is reported as one nothing was found wrong with. Both
+                # spellings are read the same way here, inline or over three
+                # lines, because the parse above no longer keeps one of them as
+                # a string.
+                self.assertIsNone(
+                    events[event],
+                    f"`on: {event}:` declares {events[event]!r}. Any filter - "
+                    "`types:`, `branches:`, `paths:`, in either form - runs "
+                    "this workflow on a subset and leaves every event outside "
+                    "it with a green tick the gate never ran under",
+                )
         self.assertIsNone(
             step.get("if"),
             f"the boundary gate declares `if: {step.get('if')}`, so it is "
             "skipped on the events this workflow actually runs on and the "
             "container cases go back to never running",
         )
-        self.assertIsNone(
-            structure["jobs"][job].get("if"),
-            "a condition on the job is a condition on the gate inside it",
-        )
+        for upstream in job_needs_chain(structure, job):
+            with self.subTest(job=upstream):
+                declared = (structure["jobs"][upstream] or {}).get("if")
+                self.assertIsNone(
+                    declared,
+                    f"job {upstream!r} declares `if: {declared}`. A condition "
+                    "on the job holding the gate is a condition on the gate, "
+                    "and a condition on a job it waits on is the same thing "
+                    "one link up: GitHub skips a job whose `needs:` were "
+                    "skipped and calls the run successful, so an `if:` "
+                    "anywhere on this chain takes the gate down with it and "
+                    "reports nothing",
+                )
         for owner, where in (
             (step, "the boundary gate"),
             (structure["jobs"][job], job),
@@ -10293,6 +10517,13 @@ class SkillPackageTests(unittest.TestCase):
         `skipped=[]`, `failures=[]`, `errors=[]`, `wasSuccessful()` True and
         `testsRun == loaded`, so a decorator one line long turns a refuted
         boundary into a green tick that every other check here agrees with.
+
+        The last two worlds are the one every other check agrees with as well:
+        a case that PASSES, honestly, having entered no boundary. `unittest`
+        has nothing to say about it - it did not skip, fail, error, or fall
+        short of the loader - so the only witness left is the runtime, and the
+        step is refused here unless the daemon recorded a container of the
+        pinned image started while that case was running.
         """
         _, step = boundary_gate_step()
         cases = boundary_cases().countTestCases()
@@ -10307,6 +10538,8 @@ class SkillPackageTests(unittest.TestCase):
             "the image cannot be inspected": {"inspect_exits": 1},
             "the class is gone": {"shape": "gone"},
             "the class is an alias for another one": {"shape": "alias"},
+            "a case started no container": {"flaw": "a case starts no container"},
+            "a case started another image": {"flaw": "a case starts another image"},
         }
         for world, difference in worlds.items():
             with self.subTest(world=world):
@@ -10437,17 +10670,23 @@ class SkillPackageTests(unittest.TestCase):
         )
 
     def test_every_container_boundary_case_drives_the_runtime(self) -> None:
-        """The last way to a green tick with the boundary never entered.
+        """A cheap first word about the cases, and never the last one.
 
-        CI now counts the cases, refuses a skip, refuses an expected failure and
-        checks the class is the real one - and every one of those holds for a
-        case whose body is `pass`. Five cases, no skip, no failure, floor
-        satisfied, tick green, no container started.
+        This asks whether a case NAMES the runtime, which is not whether it
+        entered one, and no rule read off the source can be: `self.assertIn(
+        str(IMAGE), self.boundary())` names both and starts nothing, and so
+        does `self.boundary()` on its own. The rule is kept because it is free,
+        it runs without a runtime, and it says the useful thing about a case
+        whose body is `pass` before anyone waits on CI to hear it.
 
-        So each case has to reach the runtime: name the image, or go through the
-        helper that builds the command around it. Written as a reachability rule
-        rather than a list of today's five, because the next case is added by
-        someone who has not read this.
+        What actually holds the line is in the workflow: the gate replays the
+        engine's event stream over each case's own window and fails a case no
+        container started under. That is a property of the run, so it is
+        asserted where run behaviour is asserted - the two worlds named "a case
+        started no container" and "a case started another image" in
+        `test_the_boundary_gate_refuses_every_answer_short_of_a_proven_boundary`
+        above. If this test is ever the reason a hollow case is caught, it
+        caught the careless one; the deliberate one is caught there.
         """
         hollow: list[str] = []
         for name, body in sorted(boundary_case_bodies().items()):

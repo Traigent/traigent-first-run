@@ -94,9 +94,12 @@ def probe_output(**overrides: object) -> str:
         "scratch-write": "refused",
         "workdir-write": "refused",
         "home-write": "refused",
-        # A compliant boundary has neither directory at its own absolute path.
+        # A compliant boundary has neither directory at its own absolute path,
+        # and neither marker turns up under any other name inside it either.
         "workdir-reach": "no-such-directory",
         "home-reach": "no-such-directory",
+        "workdir-elsewhere": "absent",
+        "home-elsewhere": "absent",
         "host-process": "0",
         "route4": [ROUTE4_HEADER],
         "route6": ROUTE6_LOOPBACK,
@@ -122,6 +125,8 @@ def probe_output(**overrides: object) -> str:
         f"@home-write {parts['home-write']}",
         f"@workdir-reach {parts['workdir-reach']}",
         f"@home-reach {parts['home-reach']}",
+        f"@workdir-elsewhere {parts['workdir-elsewhere']}",
+        f"@home-elsewhere {parts['home-elsewhere']}",
         f"@host-process {parts['host-process']}",
     ]
     for name in ("route4", "route6", "status", "env"):
@@ -163,13 +168,18 @@ def refusal(stderr: str | None) -> str:
     return next(iter(useful or lines), "no error output")
 
 
-def run_script(*arguments: str, cwd: Path | None = None) -> subprocess.CompletedProcess:
+def run_script(
+    *arguments: str,
+    cwd: Path | None = None,
+    environment: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess:
     return subprocess.run(
         [sys.executable, str(SCRIPT), *arguments],
         capture_output=True,
         text=True,
         timeout=300,
         cwd=str(cwd) if cwd else None,
+        env={**os.environ, **(environment or {})} if environment else None,
         check=False,
     )
 
@@ -311,6 +321,19 @@ class ReadingTheProbeTests(unittest.TestCase):
         """
         truncated = probe_output().replace("@end route4\n", "")
         self.assertEqual(verdicts(truncated)["network"], "unverified")
+
+    def test_no_reading_for_the_host_marker_establishes_nothing(self) -> None:
+        """The arm reached when the probe ran but said nothing about the marker.
+
+        Turning it into `proven` cleared all six properties and left the whole
+        suite green, because no case had ever produced that shape.
+        """
+        without = "\n".join(
+            line
+            for line in probe_output().splitlines()
+            if not line.startswith("@marker")
+        )
+        self.assertEqual(verdicts(without), {"entered": "unverified"})
 
     def test_the_host_marker_being_visible_refutes_entry(self) -> None:
         self.assertEqual(verdicts(probe_output(marker="visible"))["entered"], "refuted")
@@ -460,10 +483,38 @@ class ReadingTheProbeTests(unittest.TestCase):
         result = verdicts(probe_output(**{"workdir-reach": "visible"}))
         self.assertEqual(result["filesystem"], "proven")
 
-    def test_a_directory_this_identity_cannot_traverse_settles_nothing(self) -> None:
-        """Present inside, unreadable to the probe: neither mounted nor clean."""
-        result = verdicts(probe_output(home_reach="opaque"))
-        self.assertEqual(result["filesystem"], "unverified")
+    def test_a_directory_this_identity_cannot_enter_is_not_a_hazard_to_it(self) -> None:
+        """Present inside, unenterable by the probe: reported, not refused.
+
+        Failing closed here refused compliant boundaries wholesale - `/root` is
+        0700 in the pinned image, so anyone invoking as root got exit 2, and so
+        did any home this uid cannot traverse. What is mounted there was not
+        identified, which the evidence says and the unreachable list repeats.
+        """
+        properties = verify_sandbox.evaluate(
+            probe_output(home_reach="opaque"), TOKEN, MARKER, [], []
+        )
+        filesystem = next(item for item in properties if item.name == "filesystem")
+        self.assertEqual(filesystem.verdict, "proven")
+        self.assertIn("cannot enter it", filesystem.evidence)
+
+    def test_a_marker_found_under_another_name_is_the_same_directory(self) -> None:
+        """The spelling three rounds of this property could not see.
+
+        `-v "$HOME:/hosthome:rw"` and `-v "$PWD:/work:rw" -w /work` hand the
+        boundary the same directory under a path this check was never told, so
+        asking only about its own absolute path answered a question nobody had.
+        A file name nothing else is using does not care where it was mounted.
+        """
+        self.assertEqual(
+            verdicts(probe_output(home_elsewhere="home"))["filesystem"], "refuted"
+        )
+        self.assertEqual(
+            verdicts(
+                probe_output(**{"workdir-elsewhere": "cwd", "workdir-write": "ok"})
+            )["filesystem"],
+            "refuted",
+        )
 
     def test_a_missing_reachability_reading_is_not_a_clean_one(self) -> None:
         without = "\n".join(
@@ -492,6 +543,101 @@ class ReadingTheProbeTests(unittest.TestCase):
         filesystem = next(item for item in properties if item.name == "filesystem")
         self.assertEqual(filesystem.verdict, "unverified")
         self.assertIn("home-write", filesystem.evidence)
+
+    def test_nothing_this_check_planted_outlives_it(self) -> None:
+        """Four files are written outside the scratch directory now - two write
+        probes and two markers, in the working directory and the home.
+
+        The existing case reads only the working directory, so removing either
+        home unlink left the suite green while leaving real files in the
+        customer's home. Both trees are read here, before and after.
+        """
+        # A home and a working directory of its own. The first version read the
+        # real ones, which made the case a race: any other run of this check on
+        # the machine - and there are several during a suite - could put a file
+        # there inside the window and fail a case about cleanup for a reason
+        # that had nothing to do with cleanup.
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory) / "home"
+            work = Path(directory) / "work"
+            home.mkdir()
+            work.mkdir()
+            result = run_script("--", "true", cwd=work, environment={"HOME": str(home)})
+            self.assertEqual(result.returncode, 2)
+            self.assertEqual(sorted(path.name for path in home.iterdir()), [])
+            self.assertEqual(sorted(path.name for path in work.iterdir()), [])
+
+    def test_the_home_is_named_by_where_it_is_not_by_how_it_was_reached(
+        self,
+    ) -> None:
+        """A home reached through a symlink is mounted at its physical path.
+
+        Comparing the logical one against it cleared a read-write mount of
+        exactly that home, so the probe paths are built from the resolved
+        directory. `env` is the boundary that is not one, so the write lands and
+        the refutation names the path it landed at.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            real = Path(directory) / "real-home"
+            real.mkdir()
+            link = Path(directory) / "reached-by-link"
+            link.symlink_to(real)
+            result = run_script("--json", "--", "env", environment={"HOME": str(link)})
+            payload = json.loads(result.stdout)
+            filesystem = next(
+                item for item in payload["properties"] if item["name"] == "filesystem"
+            )
+            self.assertIn(str(real), filesystem["evidence"])
+            self.assertNotIn(str(link), filesystem["evidence"])
+
+    def test_the_scratch_it_actually_uses_is_outside_those_trees(self) -> None:
+        """The helper being right is not the same as the helper being called.
+
+        Replacing `dir=scratch_root()` with `dir=None` at the one call site left
+        the suite green, because the only case pointed at the function rather
+        than at the run. `env` reports the marker's real path, which is the
+        scratch directory this run actually made.
+        """
+        inside = Path.cwd() / "tmp-for-the-call-site-case"
+        inside.mkdir(exist_ok=True)
+        try:
+            result = run_script(
+                "--json", "--", "env", environment={"TMPDIR": str(inside)}
+            )
+            payload = json.loads(result.stdout)
+            entered = next(
+                item for item in payload["properties"] if item["name"] == "entered"
+            )
+            self.assertNotIn(str(inside), entered["evidence"])
+        finally:
+            for leftover in inside.iterdir():  # pragma: no cover - only on failure
+                shutil.rmtree(leftover, ignore_errors=True)
+            inside.rmdir()
+
+    def test_the_scratch_directory_is_not_inside_the_trees_being_probed(self) -> None:
+        """`entered` rests on a marker, and the marker must not sit in a tree the
+        customer legitimately mounts.
+
+        Measured: `TMPDIR=$PWD/tmp` with the project mounted read-only produced
+        `REFUTED entered: the probe could see ... so it ran on this host` - an
+        affirmatively false diagnosis of the property everything else rests on.
+        `TMPDIR` inside a workspace is ordinary in CI runners and build tools.
+        """
+        inside = Path.cwd() / "tmp-for-the-scratch-root-case"
+        inside.mkdir(exist_ok=True)
+        # `tempfile.tempdir`, not `TMPDIR`: `gettempdir()` caches its answer on
+        # first use, so setting the variable inside a process that has already
+        # made a temporary file changes nothing - and the first version of this
+        # case passed for that reason rather than for the right one.
+        previous = tempfile.tempdir
+        tempfile.tempdir = str(inside)
+        try:
+            chosen = verify_sandbox.scratch_root()
+        finally:
+            tempfile.tempdir = previous
+            inside.rmdir()
+        self.assertIsNotNone(chosen)
+        self.assertFalse(str(chosen).startswith(str(Path.cwd())))
 
     def test_disposal_survives_a_locked_scratch_directory(self) -> None:
         """`rmtree(ignore_errors=True)` cannot remove a mode-0 directory.
@@ -547,8 +693,15 @@ class ReadingTheProbeTests(unittest.TestCase):
         every boundary that puts a tmpfs on `/tmp`, and this check must not
         teach people to remove containment to satisfy it.
         """
-        result = verdicts(probe_output(**{"scratch-write": "ok"}))
-        self.assertEqual(result["filesystem"], "proven")
+        properties = verify_sandbox.evaluate(
+            probe_output(**{"scratch-write": "ok"}), TOKEN, MARKER, [], []
+        )
+        filesystem = next(item for item in properties if item.name == "filesystem")
+        self.assertEqual(filesystem.verdict, "proven")
+        # The blanket clean branch is `proven` too, so asserting the word alone
+        # let both `if shadowed:` and the scratch probe itself be deleted with
+        # the suite still green. This sentence only the shadowed arm writes.
+        self.assertIn("The probe did create a file at", filesystem.evidence)
 
     def test_an_empty_routing_table_is_not_a_disabled_network(self) -> None:
         """Measured: a container on the default bridge, full internet reachable.
@@ -761,14 +914,43 @@ class ReadingTheProbeTests(unittest.TestCase):
         )
         self.assertNotIn("pw-FAKE", " ".join(shown))
 
-    def test_a_flag_that_is_not_an_environment_flag_stays_readable(self) -> None:
-        """Position-based redaction must not blank the rest of the command."""
+    def test_a_flag_that_describes_containment_stays_readable(self) -> None:
+        """The report exists so the reader knows which boundary was measured."""
         self.assertEqual(
             verify_sandbox.redacted_command(
                 ["--security-opt", "seccomp=/etc/p.json", "--mount", "type=bind,src=/a"]
             ),
             ["--security-opt", "seccomp=/etc/p.json", "--mount", "type=bind,src=/a"],
         )
+
+    def test_a_flag_that_carries_arbitrary_text_does_not(self) -> None:
+        """Each of these printed a planted value in full.
+
+        `--log-opt splunk-token=` is a documented flag whose operand IS a token,
+        and a hyphen in the key was enough to walk it past a rule that only knew
+        a variable's shape. What decides is the flag in front of it, not what
+        the key looks like.
+        """
+        for flag, operand in (
+            ("--log-opt", "splunk-token=FAKE-TOKEN-VALUE"),
+            ("--label", "OPENAI_TESTKEY=FAKE-LABEL-VALUE"),
+            ("--annotation", "token=FAKE-ANNOTATION-VALUE"),
+            ("--health-cmd", "PGPASSWORD=FAKE-HEALTH-VALUE pg_isready"),
+        ):
+            with self.subTest(flag=flag):
+                shown = verify_sandbox.redacted_command([flag, operand])
+                self.assertNotIn("FAKE-", " ".join(shown).replace("<redacted>", ""))
+
+    def test_blanking_a_value_does_not_delete_the_command_after_it(self) -> None:
+        """A report that erases what it was measuring is not the safer report.
+
+        `sh -c 'PYTHONPATH=/app exec ./run.sh'` rendered as the blanked variable
+        alone, with the script it runs gone.
+        """
+        shown = verify_sandbox.redacted_command(
+            ["sh", "-c", "PYTHONPATH=/app exec ./run.sh"]
+        )
+        self.assertIn("PYTHONPATH=<redacted> exec ./run.sh", shown)
 
 
 class CredentialNameShapeTests(unittest.TestCase):
@@ -788,6 +970,7 @@ class CredentialNameShapeTests(unittest.TestCase):
             "PGPASSWORD",
             "SSHPASS",
             "MYSQL_PWD",
+            "PGPASSFILE",
             "SESSION_COOKIE",
             "MY_PASSPHRASE",
             "KUBECONFIG",
@@ -995,6 +1178,78 @@ class RealBoundaryTests(unittest.TestCase):
         payload = json.loads(result.stdout)
         self.assertEqual(self.property_of(payload, "entered")["verdict"], "refuted")
         self.assertEqual(result.returncode, 1)
+
+    def test_a_read_only_own_path_mount_is_seen_as_the_unprivileged_uid(self) -> None:
+        """The `reach()` helper, executed, as the identity the example names.
+
+        Every other case that reaches the working directory strips `--user` and
+        chmods the fixture, so the refutation arrives at the `landed` branch and
+        the reachability arms are never consulted - three one-line mutations of
+        the shell helper left the whole suite green while flipping real
+        containers to exit 0. This one keeps the recommended uid, mounts
+        read-only so nothing can land, and asserts the sentence `visible`
+        produces.
+        """
+        result = run_script(
+            "--json",
+            "--",
+            *self.boundary("-v", f"{Path.cwd()}:{Path.cwd()}:ro"),
+        )
+        payload = json.loads(result.stdout)
+        filesystem = self.property_of(payload, "filesystem")
+        # `assertIn("reachable inside the boundary")` was true of BOTH proven
+        # branches - one says the directory is, the other says none of them is -
+        # so five mutations of the shell helper passed under it. The opening
+        # words are what only the reached branch can produce.
+        self.assertTrue(
+            filesystem["evidence"].startswith("the working directory is reachable"),
+            filesystem["evidence"],
+        )
+        self.assertEqual(filesystem["verdict"], "proven")
+
+    def test_a_directory_mounted_under_another_name_is_still_found(self) -> None:
+        """The spelling that cleared at exit 0 for three rounds.
+
+        `-v "$PWD:/work:rw" -w /work` is the same directory under a path this
+        check was never told, and asking only about its own absolute path
+        answered a question nobody had.
+        """
+        result = run_script(
+            "--json",
+            "--",
+            *self.boundary("-v", f"{Path.cwd()}:/work:ro", "-w", "/work"),
+        )
+        payload = json.loads(result.stdout)
+        filesystem = self.property_of(payload, "filesystem")
+        self.assertTrue(
+            filesystem["evidence"].startswith("the working directory is reachable"),
+            filesystem["evidence"],
+        )
+
+    def test_a_directory_it_cannot_enter_is_told_apart_from_one_that_is_absent(
+        self,
+    ) -> None:
+        """The reading no fixture can stand in for, exercised for real.
+
+        "The directory is not there" and "the directory is there and this
+        identity may not enter it" are different facts, and swapping the two
+        arms - or testing for existence where the helper tests for traversal -
+        left the suite green because nothing ever produced the second one. A
+        mode-0700 directory mounted over the working directory's own path, read
+        as the unprivileged uid, is that shape.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            shut = Path(directory) / "shut"
+            shut.mkdir(mode=0o700)
+            result = run_script(
+                "--json",
+                "--",
+                *self.boundary("-v", f"{shut}:{Path.cwd()}:ro", "-w", "/"),
+            )
+            payload = json.loads(result.stdout)
+            filesystem = self.property_of(payload, "filesystem")
+            self.assertIn("cannot enter it", filesystem["evidence"])
+            self.assertEqual(filesystem["verdict"], "proven")
 
     def test_a_writable_host_mount_is_refuted_and_leaves_nothing_behind(self) -> None:
         """Entry is genuine and the boundary still fails, which is the point.

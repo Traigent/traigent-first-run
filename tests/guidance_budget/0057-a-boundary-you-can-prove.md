@@ -24,14 +24,17 @@ checker and lets them declare their own boundary to it.
 Everything that would otherwise be spent here sits in that checker's docstring,
 the arrangement the run-log validator already uses further down this same
 reference. That is what holds the raise to six lines: what each exit means, the
-six properties - five read from inside the boundary and one read back from
-this host afterwards - and the nine things the check cannot reach: resource
-limits, per-candidate disposability, descendant teardown, any host path it was
-never told about, seccomp confinement, a secret under a name it does not
-recognise, a capability bound a virtual-machine guest carries as a matter of
-course, whether the boundary shares a process namespace, and the truthfulness
-of the command's own report. All of it lives where it cannot drift away from
-the code that decides it.
+six properties, all read from what the probe printed and one of them also read
+back from this host afterwards, and the ten things the check cannot reach:
+resource limits, per-candidate disposability, descendant teardown, a host
+directory mounted at a path it was never told about, seccomp confinement, a
+secret under a name it does not recognise, a credential mounted as a file
+rather than passed as a variable, a capability bound a virtual-machine guest
+carries as a matter of course, whether the boundary shares a process namespace,
+and the truthfulness of the command's own report. All of it lives where it
+cannot drift away from the code that decides it - and it drifted once, in the
+round that changed what two of the properties read and left the paragraph
+describing them alone.
 
 One folded field lands in the record template, closing a gap this same file
 opened. It
