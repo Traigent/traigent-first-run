@@ -2800,9 +2800,13 @@ class SkillPackageTests(unittest.TestCase):
     def test_installed_skill_is_self_contained(self) -> None:
         required = {
             "SKILL.md",
+            "LICENSE",
+            "NOTICE",
+            "COMMERCIAL-LICENSE.md",
             "agents/openai.yaml",
             "references/component-creation.md",
             "references/evaluation-and-dataset.md",
+            "references/glossary.md",
             "references/run-safety.md",
             "references/sdk-execution.md",
             "scripts/preflight.py",
@@ -2821,6 +2825,82 @@ class SkillPackageTests(unittest.TestCase):
         for path in SKILL_ROOT.rglob("*"):
             if path.is_file():
                 self.assertNotIn("beginner", path.name.casefold())
+
+    LICENCE_SET = ("LICENSE", "NOTICE", "COMMERCIAL-LICENSE.md")
+
+    def test_the_shipped_licence_is_the_repository_licence(self) -> None:
+        """Two copies of a licence are two licences until something welds them.
+
+        The installer copies `skills/traigent-first-run/` and nothing else, so
+        a licence sitting only at the repository root is absent from exactly
+        what the guide hands out - the surface the licensing change was made
+        for, whose own reasoning was that the reader is told to run
+        `npx skills add`. A copy beside the guidance closes that, and a copy is
+        a drift hazard: the root file takes the next licensing edit, the
+        shipped one keeps the superseded terms, and an installed skill then
+        states terms nobody granted. A wrong licence is worse than an absent
+        one, because it reads as authoritative.
+
+        All three travel as a set. `NOTICE` names `COMMERCIAL-LICENSE.md`, and
+        the reference check above walks shipped `.md` files only - so a shipped
+        `NOTICE` pointing at a file the installer left behind would dangle
+        without failing anything. This is the check that refuses that pairing.
+        """
+        published = {name: (ROOT / name).read_bytes() for name in self.LICENCE_SET}
+        for name in self.LICENCE_SET:
+            with self.subTest(document=name):
+                self.assertIn(
+                    name,
+                    shipped_skill_files(),
+                    "the installer copies what git tracks under the skill "
+                    "directory, so an untracked copy ships nothing at all",
+                )
+        shipped = {name: (SKILL_ROOT / name).read_bytes() for name in self.LICENCE_SET}
+        self.assertEqual(
+            self._licence_drift(shipped, published),
+            [],
+            "a shipped licence document states different terms from the one "
+            "this repository is actually offered under",
+        )
+        # A clean tree proves nothing about a comparison: `assertEqual` reads
+        # identically whether it holds two files or one path written twice, and
+        # that typo is this guard's only realistic way of comparing nothing at
+        # all while staying green. So the comparison itself is driven to the two
+        # failures it exists for, rather than only being run on a corpus that
+        # happens to match - a probe asserting bytes differ from other bytes
+        # would prove the planted edit real and the guard nothing.
+        with self.subTest(direction="one drifted byte is reported"):
+            self.assertEqual(
+                self._licence_drift(
+                    {**shipped, "NOTICE": b"\x00" + published["NOTICE"][1:]},
+                    published,
+                ),
+                ["NOTICE"],
+                "a shipped licence can drift by a byte without this saying so",
+            )
+        with self.subTest(direction="a licence that stopped shipping is reported"):
+            self.assertEqual(
+                self._licence_drift(
+                    {k: v for k, v in shipped.items() if k != "LICENSE"},
+                    published,
+                ),
+                ["LICENSE"],
+                "the terms can stop shipping entirely without this saying so",
+            )
+
+    @staticmethod
+    def _licence_drift(
+        shipped: dict[str, bytes], published: dict[str, bytes]
+    ) -> list[str]:
+        """Every licence document the bundle does not carry verbatim.
+
+        Absent and altered are one finding deliberately. Both leave the reader
+        holding terms this repository did not grant, and splitting them invites
+        a caller that checks one.
+        """
+        return sorted(
+            name for name, body in published.items() if shipped.get(name) != body
+        )
 
     def _tracked_under(self, pathspec: str) -> str:
         listed = subprocess.run(

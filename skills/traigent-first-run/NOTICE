@@ -1,0 +1,22 @@
+Traigent first-run guide
+Copyright 2026 Traigent Ltd
+
+This work is dual-licensed: GNU Affero General Public License v3.0 only
+(AGPL-3.0-only) OR a Traigent commercial license under separate written
+agreement. SPDX: AGPL-3.0-only OR LicenseRef-Traigent-Commercial.
+See LICENSE and COMMERCIAL-LICENSE.md.
+
+These are the same terms the Traigent SDK is offered under, so a project that
+holds a commercial licence for the SDK holds one for this guide.
+
+This NOTICE file is provided for attribution and third-party notice purposes
+only. It does not modify the applicable license terms.
+
+================================================================================
+
+This repository vendors no third-party code. It installs the following at run
+time (each retains its own license, and none is redistributed here):
+
+- Traigent SDK (AGPL-3.0-only OR LicenseRef-Traigent-Commercial) - https://github.com/Traigent/Traigent
+- LiteLLM (MIT License) - https://github.com/BerriAI/litellm
+- python-dotenv (BSD 3-Clause License) - https://github.com/theskumar/python-dotenv
