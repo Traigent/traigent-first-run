@@ -215,10 +215,13 @@ def redact_secrets(text: str) -> str:
 
     The environment filter above is a name filter, and a child traceback is
     not bounded by any name list: it can quote a connection string, a config
-    file, or an argv the worker was given. Measured before this existed, a
-    `DATABASE_URL` password reached `calibration-results.json` twenty times on
-    a run that exited 0 and reported `passed: true` - the artifact that gets
-    kept and pasted, not the log that gets skimmed.
+    file, or an argv the worker was given. Measured through
+    `run_supplemental_attempt`, with a credential-bearing `DATABASE_URL`
+    exported and a scorer that raises: the password came back twenty times in
+    the payload `unavailable_supplemental_attempt` builds, on a run that
+    exited 0 and reported success. That payload is written to the results
+    artifact the customer keeps and pastes; the log a reader might skim had
+    none of them.
 
     Shape-based, so it does not need to know the variable it came from.
     """
