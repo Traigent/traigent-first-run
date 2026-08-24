@@ -2805,6 +2805,7 @@ class SkillPackageTests(unittest.TestCase):
             "references/evaluation-and-dataset.md",
             "references/run-safety.md",
             "references/sdk-execution.md",
+            "scripts/managed_gate.py",
             "scripts/preflight.py",
             "scripts/readiness.py",
             "scripts/calibrate_evaluator.py",
@@ -18851,6 +18852,7 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
             [path.name for path in scripts],
             [
                 "calibrate_evaluator.py",
+                "managed_gate.py",
                 "preflight.py",
                 "readiness.py",
                 "validate_run_log.py",

@@ -765,12 +765,12 @@ account request:
 This checkpoint is a valid place to stop. If the user stops, preserve the local result and report
 the run as baseline-only, not as a completed Traigent optimization.
 
-Now check whether the dataset and evaluator distinguish configurations. If not, stop before the search
-and recommend the evidenced repair before any connected preview. If the baseline is nearly perfect with no
-informative failures, report little or no accuracy headroom and recommend harder realistic cases;
-a ceiling effect remains a hypothesis. An accuracy-only search requires a workflow-demonstration
-label. A cost objective may proceed at equal accuracy only when materially lower cost remains
-possible; report any gain as cost and still flag weak evidence.
+Now check whether the dataset and evaluator distinguish configurations, and on which axes this
+baseline ranked anything: pass its completed trials to `scripts/managed_gate.py`, whose `--help`
+states the document shape, and read the user its axes, its not-measured paragraph and its numbered
+routes. Add no axis, no route and no claim about a configuration it did not read; it is a reading
+and not a second question. Where it finds no measured opportunity, stop before the search and take
+the routes it printed.
 
 Only when this gate supports a measured opportunity, preview the connected step with the final
 reply-ready line and approval rules in `references/run-safety.md`.
