@@ -4353,7 +4353,6 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
     # from "evaluator-absent": nothing needs to be created or selected, an
     # existing file needs to be inspected, repaired, or replaced
     # (traigent-first-run#133).
-    #
     # Every witness that calibration was ever engaged - real checks, a
     # supplied payload, or a payload that timed out before producing checks -
     # excludes this branch, so a run that tried and has something to say
@@ -4531,6 +4530,25 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
                 "evaluator-timeout",
                 EVALUATOR_TIMEOUT_CEILING,
                 "The evaluator did not finish within its timeout.",
+            )
+        )
+    # A method declares intended semantics, not the behavior of the file that
+    # was connected. Before calibration, a constant scorer and even an empty
+    # source file were able to clear every evaluator cap simply by naming
+    # ``--evaluator-method``. The opening gate deliberately never imports the
+    # file, so it cannot establish input-dependence safely; the existing
+    # approved calibration is the first measurement that can. Keep the method
+    # profile as descriptive evidence, but cap the claim until that measurement
+    # speaks. A refused stale calibration is not a measurement of this file.
+    if facts.method is not None and not calibration_engaged:
+        caps.append(
+            Cap(
+                "evaluator-unresolved",
+                EVALUATOR_UNRESOLVED_CEILING,
+                f"An evaluator method ({facts.method}) was declared, but no "
+                "calibration measured the connected evaluator yet, so the "
+                "declaration cannot establish that it distinguishes answers. "
+                "Run the approved calibration before relying on this score.",
             )
         )
     return combine("evaluation", subs), caps

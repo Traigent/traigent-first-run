@@ -1273,6 +1273,34 @@ class EvaluationScoringTests(unittest.TestCase):
         self.assertEqual(cap.action_kind, "repair-evaluator")
         self.assertNotIn("does not parse", cap.reason)
 
+    def test_a_declared_method_without_calibration_is_still_unresolved(self) -> None:
+        """A method name cannot certify the file it is attached to (#304).
+
+        The opening score intentionally does not import evaluators: importing
+        arbitrary customer code can spend, use credentials, or trigger module
+        side effects. That makes a declaration useful metadata but not evidence
+        that the connected scorer reads either answer. Both an empty file and a
+        constant scorer therefore have to remain capped until the existing
+        approved calibration path has actually measured this evaluator.
+
+        This test pins the transition, not a synthetic parser heuristic. A
+        future static check may add facts, but it must not make a declared
+        method alone clear the evaluator cap again.
+        """
+        facts = MODULE.EvaluationFacts(
+            present=True,
+            method="exact",
+            task_kind="closed-label",
+            parses=True,
+        )
+        pillar, caps = MODULE.score_evaluation(facts)
+        conditions = [cap.condition for cap in caps]
+        self.assertIn("evaluator-unresolved", conditions)
+        self.assertNotIn("evaluator-invalid", conditions)
+        cap = next(cap for cap in caps if cap.condition == "evaluator-unresolved")
+        self.assertIn("method (exact) was declared", cap.reason)
+        self.assertIn("no calibration measured", cap.reason)
+
     def test_constant_pass_caught_by_calibration_is_evaluator_invalid_not_unresolved(
         self,
     ) -> None:
