@@ -652,8 +652,9 @@ Only after the standard-library-only component checks:
    `assets/requirements-first-run.txt`. Never use an unversioned `pip install traigent`.
    Keep this unattended step foregrounded, explain the wait, and do not delegate it; the safety
    reference owns the rationale. Then re-run `scripts/preflight.py` in that environment without
-   `--defer-missing-sdk`; `sdk-version: PASS` is required before continuing. On `FAIL`, reinstall
-   the exact pin there and re-run it - nothing else catches a silent or partial install.
+   `--defer-missing-sdk`; `sdk-version: PASS` is required before continuing. On `FAIL`, preserve
+   that environment, report its path and the concrete failure, and stop. Recreate it only on the
+   user's explicit request; nothing else catches a silent or partial install.
 4. Verify capabilities and public signatures from the installed SDK. Use its public dataset
    loader/validator, decorator, and evaluation models; use a public no-execution contract validator
    when available, otherwise finish with safe mock plumbing and do not claim exhaustive static

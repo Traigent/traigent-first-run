@@ -217,8 +217,8 @@ at the production service, and a stray override silently sends a paid run somewh
 see it.
 
 SKILL's opening gate owns pre-stage-5 interpreter selection and the timing of the required opening
-readiness score. The dedicated environment created or safely reused in stage 5 remains
-authoritative for the connected run.
+readiness score. The dedicated environment created in stage 5 remains authoritative for the
+connected run.
 
 Follow SKILL stages 4-7 for ordering; this reference does not define a second flow.
 

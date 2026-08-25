@@ -3402,6 +3402,7 @@ class SkillPackageTests(unittest.TestCase):
         self.assertIn("stop with its path and evidence", safety_text)
         self.assertIn("never reuse it", safety_text)
         self.assertNotIn("choose a new dedicated first-run path", safety_text)
+        self.assertNotIn("safely reused", safety_text)
         self.assertIn("python3.13 -m venv .venv-traigent", safety_text)
         self.assertNotIn(
             "reuse an existing compatible isolated environment", safety_text
@@ -4252,7 +4253,9 @@ class SkillPackageTests(unittest.TestCase):
             "re-run `scripts/preflight.py`",
             "without `--defer-missing-sdk`",
             "`sdk-version: pass` is required before continuing",
-            "reinstall the exact pin",
+            "preserve that environment",
+            "report its path and the concrete failure",
+            "recreate it only on the user's explicit request",
             "verify capabilities and public signatures",
         )
         for phrase in ordered:

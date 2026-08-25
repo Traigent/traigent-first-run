@@ -32,8 +32,9 @@ The assistant performs the technical work and asks only when it needs:
   and before destructive or production-affecting actions.
 
 The run uses a dedicated `.venv-traigent` environment and preserves existing project, shared, and
-dependent environments. If its setup fails, the assistant stops with its path and recommends
-inspection; it removes and recreates that dedicated environment only on your explicit request.
+dependent environments. If that path already exists or its setup fails, the assistant stops with
+its path and recommends inspection; it removes and recreates that dedicated environment only on
+your explicit request.
 
 No existing agent, dataset, or evaluator is required to see the walkthrough. If several credible
 agents are present, the assistant asks which one to optimize; if there is exactly one, it names it
