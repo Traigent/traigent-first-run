@@ -625,24 +625,26 @@ def check_keys(env: dict[str, str | None]) -> None:
 def check_cost_settings(
     env: dict[str, str | None], file_values: dict[str, str | None]
 ) -> None:
+    # The first-run launcher overwrites this legacy SDK variable from the three
+    # approved first-run figures before it imports the SDK.  It never carries
+    # authority for this walkthrough, whether it came from .env or the parent
+    # process.  Validating it as an active cap would invent a protection that
+    # the launcher deliberately replaces.
     raw_cap = env.get("TRAIGENT_RUN_COST_LIMIT")
-    if not key_present(raw_cap):
+    if key_present(raw_cap):
+        emit(
+            "cost-cap",
+            SKIP,
+            "TRAIGENT_RUN_COST_LIMIT is inventory only; each first-run paid process "
+            "derives and sets its own cap from its approved figures",
+        )
+    else:
         emit(
             "cost-cap",
             PASS,
             "no per-optimization cap set here; each paid process derives its own from the "
             "approved figures it is launched with",
         )
-    else:
-        try:
-            cap = float(raw_cap)
-        except (TypeError, ValueError):
-            emit("cost-cap", FAIL, "TRAIGENT_RUN_COST_LIMIT must be a positive number")
-        else:
-            if cap <= 0:
-                emit("cost-cap", FAIL, "TRAIGENT_RUN_COST_LIMIT must be positive")
-            else:
-                emit("cost-cap", PASS, f"custom per-optimization cap: ${cap:.2f}")
 
     # A first run preserves an existing owner-owned .env. The documented wrapper
     # captures its approval figures before loading that file and then derives
@@ -2093,8 +2095,9 @@ def check_dataset(
     emit(
         "dataset-first-run-rows",
         PASS,
-        f"a first run scores {first_run_rows} usable rows per configuration "
-        f"from {len(rows)} usable rows; state that count on the baseline approval",
+        f"proposed first-run subset cap: {first_run_rows} usable rows per "
+        f"configuration from {len(rows)} usable rows; select and record the "
+        "actual row ids before baseline approval",
         {"first_run_rows": first_run_rows, "usable_rows": len(rows)},
     )
 

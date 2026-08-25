@@ -65,12 +65,13 @@ LLM_JUDGE_SECONDS_PER_PROBE = 90
 # person and not about the work.
 #
 # So it CLAMPS, on purpose, and the clamp is the part that must be disclosed
-# rather than hidden. At 75s per probe the derivation stays whole to three cases
-# (12 x 75 = 900) and is cut at four (1200) and five (1500); a judge at 90s
-# stays whole to two (720) and is cut from three (1080). A cut case set gets
-# less per probe than `--help` quotes - 45 seconds each at five cases - so an
-# evaluator that really does take about a minute per call cannot finish a
-# five-case matrix inside this ceiling and will reach the timeout question.
+# rather than hidden. A deterministic case reserves ten possible calls, so at
+# 75s each the ceiling already cuts the two-pair minimum (1500s derived); a
+# judge at 90s stays whole through two pairs (720s) and is cut from three
+# (1080s). A cut case set gets less per probe than `--help` quotes - 45 seconds
+# per judge call at five pairs and 18 seconds per deterministic possible call -
+# so an evaluator that really does take about a minute per call cannot finish a
+# documented matrix inside this ceiling and will reach the timeout question.
 # `references/evaluation-and-dataset.md` states that consequence to the user
 # before the wait starts, and the guidance test welds it to this number.
 #

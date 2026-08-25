@@ -187,9 +187,10 @@ TRAIGENT_FIRST_RUN_SKILL_DIR="/absolute/path/to/the-loaded-skill-directory"
 
 That form is for a calibration that returns in seconds, which a deterministic scorer doing local
 work does. The trigger is the ESTIMATE "When calibration runs long" has you state before the wait
-starts - calls times what one call costs this evaluator - and not the budget: the budget is minutes
-for every calibration at every case count, 600 seconds at the two-pair minimum `--cases` accepts, so
-a reader taking that as the trigger would never use this form at all. Once the estimate is minutes -
+starts - calls times what one call costs this evaluator - and not the budget: the default budget is
+the fifteen-minute (900-second) onboarding ceiling, which already binds for the two-pair deterministic
+minimum `--cases` accepts. A reader must use the estimate, not mistake that ceiling for a promise that
+the work will finish. Once the estimate is minutes -
 a judge, or any evaluator costing about a minute per call - use the detached form in "When
 calibration runs long" instead: this one can be killed from outside before it writes anything, and
 its warnings arrive on a stderr nobody is reading.

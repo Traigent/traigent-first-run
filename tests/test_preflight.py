@@ -100,6 +100,41 @@ class StaticPreflightTests(unittest.TestCase):
                 self.assertIn(name, result.detail)
                 self.assertIn("do not authorize", result.detail)
 
+        # Exercise the actual dotenv merge: a stale, malformed value must be
+        # inventory only, not a preflight failure or an active-run claim.
+        with tempfile.TemporaryDirectory() as directory:
+            env_path = Path(directory) / ".env"
+            env_path.write_text("TRAIGENT_RUN_COST_LIMIT=not-a-number\n")
+            with mock.patch.dict(os.environ, {}, clear=True):
+                effective, file_values = MODULE.read_env(env_path)
+                MODULE.check_cost_settings(effective, file_values)
+        self.assertFalse(
+            any(
+                item.check == "cost-cap" and item.status == MODULE.FAIL
+                for item in MODULE.RESULTS
+            )
+        )
+        persisted_cap = next(
+            item for item in MODULE.RESULTS if item.check == "cost-figures-in-file"
+        )
+        self.assertEqual(persisted_cap.status, MODULE.SKIP)
+
+        # A process value is also inventory only: the launcher overwrites this
+        # legacy SDK variable from the separately approved first-run figures.
+        MODULE.RESULTS.clear()
+        with tempfile.TemporaryDirectory() as directory:
+            env_path = Path(directory) / ".env"
+            env_path.write_text("TRAIGENT_RUN_COST_LIMIT=not-a-number\n")
+            with mock.patch.dict(
+                os.environ, {"TRAIGENT_RUN_COST_LIMIT": "3.75"}, clear=True
+            ):
+                effective, file_values = MODULE.read_env(env_path)
+                MODULE.check_cost_settings(effective, file_values)
+        active_cap = next(item for item in MODULE.RESULTS if item.check == "cost-cap")
+        self.assertEqual(active_cap.status, MODULE.SKIP)
+        self.assertIn("inventory only", active_cap.detail)
+        self.assertNotIn("$3.75", active_cap.detail)
+
         MODULE.RESULTS.clear()
         MODULE.check_cost_settings({}, {})
         self.assertEqual(
@@ -336,6 +371,8 @@ class StaticPreflightTests(unittest.TestCase):
                 self.assertEqual(finding.status, MODULE.PASS)
                 self.assertEqual(finding.metrics["first_run_rows"], expected)
                 self.assertEqual(finding.metrics["usable_rows"], row_count)
+                self.assertIn("proposed first-run subset cap", finding.detail)
+                self.assertIn("actual row ids before baseline approval", finding.detail)
 
     def test_synthetic_dataset_quality_passes(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
