@@ -16,35 +16,32 @@ Use this reference for setup, dry-run, paid execution, portal verification, reco
 
 ### Why the install sits where it does
 
-Stage 4 first establishes that the project is scoreable and stage 5 resolves the target
-environment. Installing earlier can therefore modify the wrong environment or spend time on a
-walkthrough whose task is not yet anchored. After that point, the remaining capability and mock
-checks need the installed SDK, so no useful independent work overlaps the install. Keep this one
-foreground command with its complete resolver diagnostic; explain the wait and do not delegate it.
-Nothing in this guide requires sub-agents, which not every supported assistant provides.
+Stage 4 first establishes that the project is scoreable and stage 5 creates the dedicated
+first-run environment. Installing earlier can therefore modify the wrong environment or spend time
+on a walkthrough whose task is not yet anchored. After that point, the remaining capability and
+mock checks need the installed SDK, so no useful independent work overlaps the install. Keep this
+one foreground command with its complete resolver diagnostic; explain the wait and do not delegate
+it. Nothing in this guide requires sub-agents, which not every supported assistant provides.
 
 ### Rules
 
-- Reuse an existing compatible isolated environment. When none exists, use the conventional
-  `.venv` with Python 3.11-3.13; do not replace the project's interpreter without approval.
-- Resolve every candidate recorded during inventory before touching one, and name the selected
-  environment by absolute path. Prefer the single compatible environment inside the project root.
-  Ignore environments owned by another project or by the assistant's tooling; a current-project
-  environment managed outside the root is an external candidate, not an ignored one. More than one
-  compatible candidate, or external-only environments, get one question with a recommendation and
-  every candidate path.
-  Before adopting an environment with other dependents, name the exact install and confirm once,
-  offering a separate `.venv-traigent`; a run-created environment or one containing only this
-  walkthrough's pinned set proceeds without repeating that question.
-- Create and then activate the environment before installing: `source .venv/bin/activate` on
-  macOS/Linux, `.venv\Scripts\Activate.ps1` on Windows PowerShell (a first run there may need
-  `Set-ExecutionPolicy -Scope Process RemoteSigned`). Confirm `sys.prefix` points inside the
-  environment before `pip install`, or the install silently lands in global Python and the run
-  cannot find `traigent`.
-- Only when `.venv` already exists but uses an incompatible interpreter, preserve it and create
-  `.venv-traigent` with a supported interpreter, for example
-  `python3.13 -m venv .venv-traigent`. Keep this fallback name as an implementation detail rather
-  than asking the user to choose an environment name.
+- Preserve every existing environment, including an otherwise-compatible project environment and
+  every shared or dependent environment. Create the dedicated `.venv-traigent` under the project
+  root with Python 3.11-3.13; do not replace the project's interpreter or install into an existing
+  environment.
+- Name the dedicated environment by absolute path before creating or touching it. If that path
+  already exists, inspect it without changing it. Reuse it only when its recorded first-run
+  provenance shows it contains this walkthrough's pinned set and has no other dependents;
+  otherwise stop and recommend one recovery: choose a new dedicated first-run path, or remove and
+  recreate the existing dedicated environment only on the user's explicit request. Never select an
+  existing project, shared, dependent, external, or assistant-owned environment as a fallback.
+- Create and activate the named dedicated environment before installing. Confirm `sys.prefix`
+  points inside it before `pip install`, or the install silently lands in global Python and the
+  run cannot find `traigent`.
+- Create it with a supported interpreter, for example
+  `python3.13 -m venv .venv-traigent`. If creation, installation, or post-install preflight fails,
+  preserve the dedicated environment, report its absolute path and the concrete failure, and stop.
+  Recommend inspecting it first; remove and recreate it only on the user's explicit request.
 - Keep dependency installation as its own action class. It may proceed without another approval
   only inside that environment, from the exact packages and versions recorded for the top-level
   requirements plus their package-declared dependencies, as a package-artifact-only fetch/install
@@ -221,8 +218,8 @@ at the production service, and a stray override silently sends a paid run somewh
 see it.
 
 SKILL's opening gate owns pre-stage-5 interpreter selection and the timing of the required opening
-readiness score. The environment selected or created in stage 5 remains authoritative for the
-connected run.
+readiness score. The dedicated environment created or safely reused in stage 5 remains
+authoritative for the connected run.
 
 Follow SKILL stages 4-7 for ordering; this reference does not define a second flow.
 
@@ -1097,6 +1094,10 @@ not in that repository, and no `npx skills add` flag beyond `--list` and `--skil
   calibration.
 - Dataset examples that fail under every configuration: inspect gold/reference and evaluator
   policy before blaming the model.
+- Dedicated first-run environment creation, installation, or preflight failure: preserve every
+  existing environment and stop with the dedicated environment's absolute path and the concrete
+  failure. Recommend inspecting it, or remove and recreate only that dedicated environment after
+  explicit user approval; never fall back to a shared or dependent environment.
 
 For generated wrappers, set the process-only SDK results folder to a child of `traigent-runs/`
 before importing Traigent so its local optimization logs and state remain inside the ignored

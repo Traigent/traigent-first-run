@@ -3384,20 +3384,23 @@ class SkillPackageTests(unittest.TestCase):
             with self.subTest(phrase=phrase):
                 self.assertNotIn(phrase, readme)
 
-    def test_incompatible_environment_recovery_uses_distinct_venv(self) -> None:
+    def test_first_run_environment_is_dedicated_and_preserves_existing_environments(
+        self,
+    ) -> None:
         skill_text = " ".join(SKILL.read_text().casefold().split())
         safety_text = " ".join(RUN_SAFETY.read_text().casefold().split())
 
         for text in (skill_text, safety_text):
-            self.assertIn("conventional `.venv`", text)
-            self.assertIn("implementation detail", text)
             self.assertIn("`.venv-traigent`", text)
-        self.assertIn("preserve an incompatible `.venv`", skill_text)
-        self.assertIn(
-            "`.venv` already exists but uses an incompatible interpreter", safety_text
-        )
+            self.assertIn("preserve every existing environment", text)
+            self.assertIn("shared or dependent environment", text)
+            self.assertIn("never fall back", text)
+        self.assertIn("dedicated first-run environment", skill_text)
+        self.assertIn("only on the user's explicit request", safety_text)
         self.assertIn("python3.13 -m venv .venv-traigent", safety_text)
-        self.assertNotIn("python3.13 -m venv .venv`", safety_text)
+        self.assertNotIn(
+            "reuse an existing compatible isolated environment", safety_text
+        )
 
     def test_opening_gate_uses_one_compatible_project_environment(self) -> None:
         """Inventory is actionable when it finds one unambiguous interpreter."""
@@ -3418,9 +3421,8 @@ class SkillPackageTests(unittest.TestCase):
         self.assertIn("skill's opening gate owns", safety)
         self.assertIn("stage 5 remains authoritative", safety)
         self.assertIn("environments outside the project", skill)
-        self.assertIn("external-only environments", safety)
         self.assertIn(
-            "a current-project environment managed outside the root is an external candidate, not an ignored one",
+            "never select an existing project, shared, dependent, external, or assistant-owned environment as a fallback",
             safety,
         )
         joined = f"{skill} {safety}"
@@ -4198,7 +4200,7 @@ class SkillPackageTests(unittest.TestCase):
             self.assertIn(phrase, normalized_local)
 
         ordered_environment_phrases = (
-            "resolve and prepare the environment",
+            "resolve and prepare the dedicated first-run environment",
             "install the exact declared dependencies",
             "verify capabilities and public signatures",
             "run a fresh-process traigent mock plumbing check",
@@ -11757,22 +11759,15 @@ class SkillPackageTests(unittest.TestCase):
             (
                 "the virtual environment this run created",
                 "Create an isolated environment",
-                ("`.venv`",),
-            ),
-            (
-                # Not the environment - the packages. Deleting a run-created
-                # `.venv` undoes this; installing into a reused one, which
-                # SKILL.md authorises behind one confirmation and run-safety.md
-                # says may sit outside the project root, leaves it behind.
-                "the pinned packages in an environment this run did not create",
-                "Install dependencies in the isolated environment",
-                ("an environment this run did not create",),
+                ("`.venv-traigent`",),
             ),
         )
         # Rows that write nothing the close has to hand over: nothing at all,
-        # only inside `traigent-runs/`, or only where the user already decided.
+        # only inside `traigent-runs/`, only where the user already decided,
+        # or only inside the already-disclosed dedicated first-run environment.
         writes_nothing_to_disclose_here = {
             "Read-only discovery and static validation",
+            "Install dependencies in the isolated environment",
             "Repair a working copy after the user chooses repair",
             "Change real labels, expected answers, examples, or rubric policy",
             "Execute an evaluator or mock check",
