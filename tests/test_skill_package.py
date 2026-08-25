@@ -13278,6 +13278,15 @@ class SkillPackageTests(unittest.TestCase):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, opening)
 
+    def test_opening_score_never_reuses_a_calibration_artifact(self) -> None:
+        """#260: a prior or interrupted run cannot inflate the opening card."""
+        skill = SKILL.read_text()
+        opening = skill.split("#### Opening readiness gate", 1)[1].split(
+            "#### Zero-anchor intent gate", 1
+        )[0]
+        self.assertIn("without `--calibration`", opening)
+        self.assertIn("no current-run calibration", opening)
+
     def test_every_dataset_cap_condition_has_a_documented_branch(self) -> None:
         source = (SKILL_ROOT / "scripts" / "readiness.py").read_text()
         # Scanned over the whole module, not one function body: the dataset caps

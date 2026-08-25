@@ -247,8 +247,8 @@ outside the project wait for stage 5; if the sole candidate fails, record why an
 host. Stage 5 remains authoritative for the connected run.
 
 Run the bundled static preflight with `--defer-missing-sdk` over whatever dataset was discovered,
-omitting `--dataset` when none exists, then run `scripts/readiness.py` on that preflight JSON and
-any applicable calibration result. When rows exist, do the row-level sanity check in
+omitting `--dataset` when none exists, then run `scripts/readiness.py` on that preflight JSON
+without `--calibration`: an opening score has no current-run calibration. When rows exist, do the row-level sanity check in
 `references/evaluation-and-dataset.md` here and pass it as `--row-review`: it is your own read, it
 spends nothing, and no generated row competes with it yet. Apply the run-scoped evaluator-method rule above to both
 scripts, and apply the run-scoped task-kind rule to readiness only, and the origin rule with it.
@@ -332,7 +332,7 @@ Read-only preflight and readiness runs are static local validation; they authori
 write.
 
 **Opening invocation contract.** When the opening call supplies measured evidence - its
-`--preflight` JSON, applicable `--calibration`, and any applicable `--agent-knobs` and
+`--preflight` JSON and any applicable `--agent-knobs` and
 `--row-review` documents - do **not** also pass `readiness.py --agent`, `--dataset`, or
 `--evaluation`. Those three flags are fallback declarations for material the score was not given;
 adding them beside measurements supplies two incompatible accounts of the same project, so
@@ -701,9 +701,9 @@ Immediately before the paid baseline, show a short run card with model ids, each
 its explicit values, one plain-language note per knob, and the total combination count. The
 enhanced card waits until after the baseline checkpoint.
 
-Put the baseline estimate, selected row count and ids, and **30-minute target** in the money
-approval. Preflight's first-run count is only a proposal; it cannot know the selected rows. This is
-an estimate, not a wall-clock guarantee. Size the baseline before it starts.
+Put the baseline estimate, selected row count and ids, and **30-minute completion target** in the
+money approval. Preflight's first-run count is only a proposal; it cannot know the selected rows.
+This is an estimate, not a hard wall-clock guarantee. Size the baseline before it starts.
 
 When the SDK exposes trustworthy live progress, report only those values; otherwise report only
 observable phase milestones. Never invent progress or quietly drop validation. A timeout with
