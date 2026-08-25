@@ -13287,6 +13287,16 @@ class SkillPackageTests(unittest.TestCase):
         self.assertIn("without `--calibration`", opening)
         self.assertIn("no current-run calibration", opening)
 
+    def test_source_read_claims_only_the_cap_it_can_clear(self) -> None:
+        """Source-read knobs establish a search space, never wiring or build proof."""
+        skill = SKILL.read_text()
+        component = (SKILL_ROOT / "references" / "component-creation.md").read_text()
+        for document in (skill, component):
+            self.assertIn("clears no wiring cap", document)
+            self.assertNotIn("clears no cap", document)
+        self.assertIn("leaves all four unmeasured", component)
+        self.assertNotIn("earns the check", component)
+
     def test_every_dataset_cap_condition_has_a_documented_branch(self) -> None:
         source = (SKILL_ROOT / "scripts" / "readiness.py").read_text()
         # Scanned over the whole module, not one function body: the dataset caps

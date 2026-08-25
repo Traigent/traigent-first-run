@@ -345,7 +345,7 @@ build path before adding it deliberately to the enhanced configuration space.
 
 A range counts as at least two distinct values and no more; a value list counts as its own length.
 The score says "at least N configurations" because nobody has chosen the sweep yet. It is a read of
-what is reachable and attests nothing about wiring: it clears no cap, and it never substitutes for
+what is reachable and attests nothing about wiring: it clears no wiring cap, and it never substitutes for
 the config-space document the enhanced search emits.
 
 ### The build half
@@ -364,12 +364,12 @@ rather than illustrating one. **Output contract** is whether the answer's shape 
 anywhere - a parser, a schema, a response format, an instruction naming the format, or the source
 itself fixing what comes back (a dict literal, a dataclass, a typed return) - because an answer of
 any shape is one an evaluator has to accept whole. That last form is the one readers miss:
-`return {"model": model, "config": config, "input": input_text}` pins the shape an evaluator reads,
-and earns the check in a stub that calls no model just as it does anywhere else. Pinned and
+`return {"model": model, "config": config, "input": input_text}` records the shape an evaluator reads,
+even in a stub that calls no model. Pinned and
 performed are separate questions and this one asks only the first, so withholding the check from a
 stub answers a question nobody put. **Control flow** is whether the agent ends and on what: no loop
-ends trivially and earns the check, a loop with a bound you can point at
-earns it too, and a loop with neither is one input costing an unbounded number of calls. **Tools**
+ends trivially, a loop with a bound can be recorded, and a loop with neither is one input costing an
+unbounded number of calls. **Tools**
 is whether each declared tool can be found. `"used": false` removes only this wiring check; prompt,
 output-contract, control-flow, and config-space checks remain, with dataset/evaluation in separate
 pillars. Memory/context and provider connectivity are not scored here; run safety handles the latter.

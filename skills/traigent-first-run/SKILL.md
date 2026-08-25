@@ -294,7 +294,8 @@ still needs its reason. Never write a range or an
 option you did not read: an omitted parameter costs a few points, an invented one makes the card
 wrong. Wanting a second option here is the right instinct at the wrong stage - stage 5's enhanced
 run is where settings get added, from a materially larger space than the agent has today, so the
-honest one-option read costs the user nothing they do not get back. It attests nothing about wiring, clears no cap, and writes nothing into the user's project.
+honest one-option read costs the user nothing they do not get back. It attests nothing about wiring,
+clears no wiring cap, and writes nothing into the user's project.
 Every guided run that found an agent does this read - not conditionally, not depending on the
 agent's language or on how the card would look without it - and the flag is left off only where the
 inventory found no agent at all. Where an agent was found and its settings cannot be read out of it,
