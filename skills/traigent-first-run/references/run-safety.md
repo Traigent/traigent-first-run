@@ -30,11 +30,10 @@ it. Nothing in this guide requires sub-agents, which not every supported assista
   root with Python 3.11-3.13; do not replace the project's interpreter or install into an existing
   environment.
 - Name the dedicated environment by absolute path before creating or touching it. If that path
-  already exists, inspect it without changing it. Reuse it only when its recorded first-run
-  provenance shows it contains this walkthrough's pinned set and has no other dependents;
-  otherwise stop with its path and evidence and recommend inspection. Remove and recreate the
-  existing dedicated environment only on the user's explicit request. Never select an existing
-  project, shared, dependent, external, or assistant-owned environment as a fallback.
+  already exists, inspect it without changing it, stop with its path and evidence, and recommend
+  inspection. Remove and recreate the existing dedicated environment only on the user's explicit
+  request. Never reuse it or select an existing project, shared, dependent, external, or
+  assistant-owned environment as a fallback.
 - Create and activate the named dedicated environment before installing. Confirm `sys.prefix`
   points inside it before `pip install`, or the install silently lands in global Python and the
   run cannot find `traigent`.
