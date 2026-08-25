@@ -212,9 +212,12 @@ the default. Say this at the moment the user creates the key, not afterwards: th
 to prevent and expensive to discover, and a key accepted at the start but rejected mid-run
 leaves spend that already happened.
 
-Nothing else belongs in `.env`. Do not add a backend or API URL - the installed SDK already points
-at the production service, and a stray override silently sends a paid run somewhere the user cannot
-see it.
+Preserve existing owner-owned `.env` values. Add only a genuinely missing selected-provider key for
+this run; do not add a backend or API URL. An existing override does not affect the local baseline,
+which runs backend-offline and removes the Traigent key before importing the SDK. At connected-run
+approval, inspect that override and confirm the destination before a run can be recorded there.
+Existing cost figures and approval-looking values are likewise not approval for this run: its wrapper
+receives the approved figures in the paid process and does not take them from `.env`.
 
 SKILL's opening gate owns pre-stage-5 interpreter selection and the timing of the required opening
 readiness score. The dedicated environment created in stage 5 remains authoritative for the

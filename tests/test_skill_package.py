@@ -12880,6 +12880,8 @@ class SkillPackageTests(unittest.TestCase):
         )
 
         with tempfile.TemporaryDirectory() as directory:
+            project_root = Path(directory)
+            (project_root / ".env").write_text("TRAIGENT_API_KEY=uk_preserved\n")
             script = Path(directory) / "traigent-runs" / "walkthrough.py"
             script.parent.mkdir()
             with mock.patch.dict(
@@ -12889,6 +12891,12 @@ class SkillPackageTests(unittest.TestCase):
             ):
                 exec(program, {"__file__": str(script)})  # noqa: S102
                 self.assertEqual(os.environ["TRAIGENT_OFFLINE_MODE"], "true")
+                self.assertNotIn(
+                    "TRAIGENT_API_KEY",
+                    os.environ,
+                    "the baseline must drop a key loaded from the preserved .env "
+                    "before the SDK import",
+                )
 
             # A fresh process starts from its own launch environment; the
             # baseline assignment never mutates the parent shell.

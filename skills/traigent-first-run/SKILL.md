@@ -700,9 +700,10 @@ Immediately before the paid baseline, show a short run card with model ids, each
 its explicit values, one plain-language note per knob, and the total combination count. The
 enhanced card waits until after the baseline checkpoint.
 
-Put the baseline runtime estimate and the default **30-minute completion target** in the same
-approval as the money ceiling. This is an estimate and an up-front sizing target, not a hard
-wall-clock guarantee. Size the baseline to fit before it starts.
+Put the baseline runtime estimate, the usable/scored row count reported by `scripts/preflight.py`,
+and the default **30-minute completion target** in the same approval as the money ceiling. This is
+an estimate and an up-front sizing target, not a hard wall-clock guarantee. Size the baseline to fit
+before it starts.
 
 When the SDK exposes trustworthy live progress, report only those values; otherwise report only
 observable phase milestones. Never invent progress or quietly drop validation. A timeout with
