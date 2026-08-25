@@ -1,6 +1,7 @@
 # 0037 - the omission rule binds the run, not one invocation
 
 follows: 0036
+follows-total-measured: 356_289
 total-ceiling: 357_800
 total-measured: 357_575
 

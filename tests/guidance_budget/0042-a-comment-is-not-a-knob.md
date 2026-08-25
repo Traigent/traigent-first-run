@@ -1,6 +1,7 @@
 # 0042 - a comment is not a knob
 
 follows: 0041
+follows-total-measured: 364_913
 total-ceiling: 366_009
 total-measured: 365_609
 

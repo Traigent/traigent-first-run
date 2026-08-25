@@ -1,6 +1,7 @@
 # 0054 - every name the client accepts
 
 follows: 0053
+follows-total-measured: 418_203
 total-ceiling: 420_603
 total-measured: 420_544
 

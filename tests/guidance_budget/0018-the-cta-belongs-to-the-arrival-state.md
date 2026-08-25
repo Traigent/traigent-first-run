@@ -1,6 +1,8 @@
 # 0018 - the closing recommendation belongs to the state the customer arrived in
 
 follows: 0017
+follows-resident-measured: 65_500
+follows-total-measured: 303_410
 resident-ceiling: 68_000
 resident-measured: 67_898
 total-ceiling: 306_350

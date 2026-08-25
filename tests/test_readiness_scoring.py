@@ -3436,6 +3436,69 @@ class CliTests(unittest.TestCase):
                 self.assertTrue(checks[name]["withheld"])
         self.assertLess(agent["score"], 100)
 
+    def test_opening_build_declarations_are_visible_but_unmeasured(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            read = Path(directory) / "agent-knobs.json"
+            read.write_text(json.dumps(MODULE.AGENT_KNOBS_EXAMPLE))
+            code, output = self._run(["--agent-knobs", str(read), "--json"])
+        self.assertEqual(code, 0)
+        agent = next(p for p in json.loads(output)["pillars"] if p["name"] == "agent")
+        checks = {sub["name"]: sub for sub in agent["subscores"]}
+        for name, _weight in MODULE.AGENT_BUILD_CHECKS:
+            with self.subTest(check=name):
+                self.assertFalse(checks[name]["measured"])
+                self.assertFalse(checks[name]["withheld"])
+                self.assertEqual(checks[name]["value"], 0.0)
+                if checks[name]["applicable"]:
+                    self.assertIn(
+                        "not measured from source-read declarations",
+                        checks[name]["evidence"],
+                    )
+
+    def test_unmeasured_build_declarations_do_not_erase_closing_space_evidence(
+        self,
+    ) -> None:
+        """Build disclosure does not alter the current-run search-space path.
+
+        A current config-space document is independently scored evidence. Its
+        presence cannot turn source-read build declarations into proof, but it
+        must retain its own search-space result.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            read = Path(directory) / "agent-knobs.json"
+            space = Path(directory) / "config-space.json"
+            read.write_text(json.dumps(MODULE.AGENT_KNOBS_EXAMPLE))
+            space.write_text(
+                json.dumps({"knobs": {"model": ["fast", "slow"]}, "wired": ["model"]})
+            )
+            direct_code, direct_output = self._run(
+                ["--config-space", str(space), "--json"]
+            )
+            code, output = self._run(
+                ["--config-space", str(space), "--agent-knobs", str(read), "--json"]
+            )
+        self.assertEqual(direct_code, 0)
+        self.assertEqual(code, 0)
+        direct_agent = next(
+            pillar
+            for pillar in json.loads(direct_output)["pillars"]
+            if pillar["name"] == "agent"
+        )
+        agent = next(p for p in json.loads(output)["pillars"] if p["name"] == "agent")
+        direct_checks = {sub["name"]: sub for sub in direct_agent["subscores"]}
+        checks = {sub["name"]: sub for sub in agent["subscores"]}
+        self.assertEqual(
+            checks["search-space"]["value"], direct_checks["search-space"]["value"]
+        )
+        for name, _weight in MODULE.AGENT_BUILD_CHECKS:
+            with self.subTest(check=name):
+                self.assertFalse(checks[name]["measured"])
+                if checks[name]["applicable"]:
+                    self.assertIn(
+                        "not measured from source-read declarations",
+                        checks[name]["evidence"],
+                    )
+
     def test_malformed_config_space_exits_two(self) -> None:
         """A typo in a hand-authored document is bad input, not a crash.
 

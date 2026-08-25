@@ -1,6 +1,8 @@
 # 0027 - the agent pillar reads the agent
 
 follows: 0026
+follows-resident-measured: 75_702
+follows-total-measured: 332_050
 resident-ceiling: 76_600
 resident-measured: 76_351
 total-ceiling: 338_800

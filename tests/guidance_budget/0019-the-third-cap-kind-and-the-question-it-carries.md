@@ -1,6 +1,8 @@
 # 0019 - the third cap kind, and the question it was invented to ask
 
 follows: 0018
+follows-resident-measured: 67_898
+follows-total-measured: 306_212
 resident-ceiling: 69_050
 resident-measured: 68_964
 total-ceiling: 312_950

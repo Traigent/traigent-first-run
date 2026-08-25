@@ -1,6 +1,7 @@
 # 0013 - exact counts, and the selection rule they feed
 
 follows: 0012
+follows-total-measured: 258_953
 total-ceiling: 273_800
 total-measured: 273_360
 

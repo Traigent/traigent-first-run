@@ -1,6 +1,7 @@
 # 0002 - an internal failure gets its own exit code, and undeclared keys are refused
 
 follows: 0001
+follows-total-measured: 228_407
 total-ceiling: 229_250
 total-measured: 228_996
 

@@ -1,6 +1,8 @@
 # 0015 - the held-out split comes back, and the answer key gets read
 
 follows: 0014
+follows-resident-measured: 64_323
+follows-total-measured: 274_587
 resident-ceiling: 65_750
 resident-measured: 65_500
 total-ceiling: 303_000

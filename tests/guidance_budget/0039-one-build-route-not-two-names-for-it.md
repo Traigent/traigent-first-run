@@ -1,6 +1,8 @@
 # 0039 - one build route, not two names for the same work
 
 follows: 0038
+follows-resident-measured: 78_919
+follows-total-measured: 358_978
 resident-ceiling: 79_200
 resident-measured: 79_093
 total-ceiling: 363_000

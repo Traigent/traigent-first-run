@@ -78,16 +78,10 @@ class StaticPreflightTests(unittest.TestCase):
         self.assertNotIn("SDK default", cost_cap.detail)
         self.assertIn("approved figures it is launched with", cost_cap.detail)
 
-    def test_a_cost_figure_persisted_in_the_file_fails(self) -> None:
-        """The approval is per process; a file outlives it.
-
-        Same mechanism the persisted approval flag already used, extended to
-        the three figures that now govern spending and to the per-optimization
-        limit derived from them. The run reads those names before `.env` is
-        loaded, so one here changes nothing today - it fails because a stale
-        approved total sitting in a file is what a later change to that reading
-        order would silently start enforcing.
-        """
+    def test_a_cost_figure_preserved_in_the_file_does_not_authorize_this_run(
+        self,
+    ) -> None:
+        """A first run preserves owner configuration and supplies approval per process."""
         for name in (
             "TRAIGENT_FIRST_RUN_COST_CEILING_USD",
             "TRAIGENT_FIRST_RUN_COST_SPENT_USD",
@@ -102,8 +96,44 @@ class StaticPreflightTests(unittest.TestCase):
                     for item in MODULE.RESULTS
                     if item.check == "cost-figures-in-file"
                 )
-                self.assertEqual(result.status, MODULE.FAIL)
+                self.assertEqual(result.status, MODULE.SKIP)
                 self.assertIn(name, result.detail)
+                self.assertIn("do not authorize", result.detail)
+
+        # Exercise the actual dotenv merge: a stale, malformed value must be
+        # inventory only, not a preflight failure or an active-run claim.
+        with tempfile.TemporaryDirectory() as directory:
+            env_path = Path(directory) / ".env"
+            env_path.write_text("TRAIGENT_RUN_COST_LIMIT=not-a-number\n")
+            with mock.patch.dict(os.environ, {}, clear=True):
+                effective, file_values = MODULE.read_env(env_path)
+                MODULE.check_cost_settings(effective, file_values)
+        self.assertFalse(
+            any(
+                item.check == "cost-cap" and item.status == MODULE.FAIL
+                for item in MODULE.RESULTS
+            )
+        )
+        persisted_cap = next(
+            item for item in MODULE.RESULTS if item.check == "cost-figures-in-file"
+        )
+        self.assertEqual(persisted_cap.status, MODULE.SKIP)
+
+        # A process value is also inventory only: the launcher overwrites this
+        # legacy SDK variable from the separately approved first-run figures.
+        MODULE.RESULTS.clear()
+        with tempfile.TemporaryDirectory() as directory:
+            env_path = Path(directory) / ".env"
+            env_path.write_text("TRAIGENT_RUN_COST_LIMIT=not-a-number\n")
+            with mock.patch.dict(
+                os.environ, {"TRAIGENT_RUN_COST_LIMIT": "3.75"}, clear=True
+            ):
+                effective, file_values = MODULE.read_env(env_path)
+                MODULE.check_cost_settings(effective, file_values)
+        active_cap = next(item for item in MODULE.RESULTS if item.check == "cost-cap")
+        self.assertEqual(active_cap.status, MODULE.SKIP)
+        self.assertIn("inventory only", active_cap.detail)
+        self.assertNotIn("$3.75", active_cap.detail)
 
         MODULE.RESULTS.clear()
         MODULE.check_cost_settings({}, {})
@@ -300,9 +330,10 @@ class StaticPreflightTests(unittest.TestCase):
                 result = next(
                     item for item in MODULE.RESULTS if item.check == "backend-url"
                 )
-                self.assertEqual(result.status, MODULE.WARN)
+                self.assertEqual(result.status, MODULE.SKIP)
                 for name in expected:
                     self.assertIn(name, result.detail)
+                self.assertIn("connected destination at its approval", result.detail)
 
         MODULE.RESULTS.clear()
         MODULE.check_cost_settings({}, {})
@@ -311,6 +342,37 @@ class StaticPreflightTests(unittest.TestCase):
             [],
             "a clean environment must not warn, or the warning means nothing",
         )
+
+    def test_paid_first_run_rows_are_reported_from_usable_rows(self) -> None:
+        for row_count, expected in ((40, 40), (101, 18)):
+            with self.subTest(row_count=row_count):
+                MODULE.RESULTS.clear()
+                with tempfile.TemporaryDirectory() as directory:
+                    dataset = Path(directory) / "eval.jsonl"
+                    dataset.write_text(
+                        "\n".join(
+                            json.dumps(
+                                {
+                                    "id": str(index),
+                                    "input": f"question {index}",
+                                    "output": f"answer {index}",
+                                }
+                            )
+                            for index in range(row_count)
+                        )
+                        + "\n"
+                    )
+                    MODULE.check_dataset(dataset)
+                finding = next(
+                    item
+                    for item in MODULE.RESULTS
+                    if item.check == "dataset-first-run-rows"
+                )
+                self.assertEqual(finding.status, MODULE.PASS)
+                self.assertEqual(finding.metrics["first_run_rows"], expected)
+                self.assertEqual(finding.metrics["usable_rows"], row_count)
+                self.assertIn("proposed first-run subset cap", finding.detail)
+                self.assertIn("actual row ids before baseline approval", finding.detail)
 
     def test_synthetic_dataset_quality_passes(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

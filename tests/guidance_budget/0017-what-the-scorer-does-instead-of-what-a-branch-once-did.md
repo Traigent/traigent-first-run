@@ -1,6 +1,7 @@
 # 0017 - what the scorer does, instead of what a branch once did
 
 follows: 0015
+follows-total-measured: 302_507
 
 total-ceiling: 303_750
 total-measured: 303_410

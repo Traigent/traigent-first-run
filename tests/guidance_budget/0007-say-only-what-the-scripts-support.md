@@ -1,6 +1,7 @@
 # 0007 - the prose stops asserting numbers the scripts do not produce
 
 follows: 0006
+follows-total-measured: 235_511
 total-ceiling: 237_500
 total-measured: 236_903
 

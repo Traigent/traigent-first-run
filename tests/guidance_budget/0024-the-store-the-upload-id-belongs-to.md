@@ -1,6 +1,7 @@
 # 0024 - the store the upload id belongs to
 
 follows: 0023
+follows-total-measured: 325_095
 total-ceiling: 326_400
 total-measured: 326_112
 

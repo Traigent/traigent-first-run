@@ -187,9 +187,10 @@ TRAIGENT_FIRST_RUN_SKILL_DIR="/absolute/path/to/the-loaded-skill-directory"
 
 That form is for a calibration that returns in seconds, which a deterministic scorer doing local
 work does. The trigger is the ESTIMATE "When calibration runs long" has you state before the wait
-starts - calls times what one call costs this evaluator - and not the budget: the budget is minutes
-for every calibration at every case count, 600 seconds at the two-pair minimum `--cases` accepts, so
-a reader taking that as the trigger would never use this form at all. Once the estimate is minutes -
+starts - calls times what one call costs this evaluator - and not the budget: the default budget is
+the fifteen-minute (900-second) onboarding ceiling, which already binds for the two-pair deterministic
+minimum `--cases` accepts. A reader must use the estimate, not mistake that ceiling for a promise that
+the work will finish. Once the estimate is minutes -
 a judge, or any evaluator costing about a minute per call - use the detached form in "When
 calibration runs long" instead: this one can be killed from outside before it writes anything, and
 its warnings arrive on a stderr nobody is reading.
@@ -228,8 +229,8 @@ questions.
 For deterministic calibration, the helper runs authored probes in a credential-stripped child.
 Each deterministic supplemental attempt gets a fresh child, also stripped of credentials, isolating
 process-local scorer and dependency state from other attempts. This is process separation, not
-sandbox isolation. Its supplemental phase shares the single `--timeout` budget. Follow the
-SKILL stage-4 gate for permitted paths; `run-safety.md` owns execution-evaluator containment.
+sandbox isolation. Its supplemental phase shares the single `--timeout` budget. The stage-4 scope
+gate ends this guide before any evaluator executes candidate code or SQL.
 
 Read `exception_probe_advisory` as an advisory, not a verdict. The probe family exercises common
 `ValueError`, `TypeError`, and runtime-error operations, plus malformed Python and JSON text that
@@ -552,29 +553,31 @@ the pairing and can have got it wrong. Stated once, here.
 ## When calibration runs long
 
 Before the stage starts, say what it does and how long it may take: it runs the user's evaluator
-over a few known-good and known-bad answers to prove it separates them, four probe calls per
-input/expected pair. Multiply those calls by what one call costs the evaluator and state the
-number - for a judge, a model call per probe, that is minutes rather than seconds. Finishing
-matters more than finishing fast: an evaluator nobody could measure makes every later number
-unverifiable.
+over a few known-good and known-bad answers to prove it separates them: four probe calls per
+input/expected pair (the authored probes). A deterministic calibration also makes five exception
+probes and, where the expected answer has a distinct ordering, one permutation probe per pair.
+Those advisory probes are still scorer calls, so the default wait reserves for up to ten calls per
+pair. Multiply every call by what one call costs the evaluator and state the number - for a judge,
+a model call per probe, that is minutes rather than seconds. Finishing matters more than finishing
+fast: an evaluator nobody could measure makes every later number unverifiable.
 
-The script budgets itself the same way, per probe call rather than as one flat number, so a 3-5
-pair matrix leaves room for an evaluator taking about a minute per call. That one budget covers the
-authored probes and the supplemental ones together, so `--timeout` is the whole wait rather than
-half of it, and a calibration slow enough to spend it loses supplemental probes rather than
-extending the wait - which the `ADVISORY` line on stderr then names.
+The script budgets itself per probe call, not as one flat number. That budget covers authored and
+supplemental probes together, so `--timeout` is the whole wait rather than half of it; a
+calibration slow enough to spend it loses supplemental probes rather than extending the wait -
+which the `ADVISORY` line on stderr names.
 
 **Fifteen minutes is the ceiling on that budget, and say so before the wait starts.** This is
 onboarding rather than a full-power run: a calibration that has not separated a good answer from a
 bad one in fifteen minutes most probably will not, and the timeout is itself a result to act on.
-The ceiling bounds the wait, not the work, so a large case set is cut below the per-probe rate the
-budget was derived at: whole to three pairs deterministic and two for a judge, and at five pairs
-either way each probe gets 45 seconds - which is a 40% cut against the 75 the deterministic budget
-is derived at, and exactly half the 90 a judge is. The judge is cut harder at every size past two
-pairs, so quoting one number for both understates what a judge loses. Tell a user whose evaluator takes about a minute per call what that means for them: at that
-speed a five-pair matrix cannot finish inside the ceiling, so run fewer pairs or expect the timeout
-question. Their own larger `--timeout` is not capped; the ceiling only bounds what this stage
-chooses on its own.
+The ceiling bounds the wait, not the work. A deterministic matrix needs at least two pairs, and its
+maximum ten calls per pair means the cap already binds at that minimum: the 900-second default is
+45 seconds per possible call rather than the derived 75. A judge remains whole through two pairs;
+at five pairs a deterministic calibration gets 18 seconds per possible call and a judge gets 45;
+those are cuts against 75 and 90 respectively. Tell a user whose evaluator takes about a minute per call what
+that means for them: even the two-pair deterministic matrix cannot finish all ten possible probes
+per pair inside the default ceiling, and a five-pair matrix cannot finish for either kind. The
+ceiling is deliberate onboarding scope, not a promise that a slow calibration completes. Their own
+larger `--timeout` is not capped; the ceiling only bounds what this stage chooses on its own.
 
 **There is no resume.** The authored probes all run in one child that reports only once every case
 is done, and nothing is written until it returns, so a calibration stopped part-way records
@@ -997,15 +1000,14 @@ went should not have to ask twice. In the same layer, list the rest under the sa
 `traigent-runs/walkthrough_agent.py`, `traigent-runs/evaluator.py`, readiness report, and
 SDK run logs that exist. Name only what was actually written. The sentence above covers all of
 them - every one is derived, and that whole folder is git-ignored and can be deleted without
-losing anything. Five writes sit outside the folder and are not covered by it: the
+losing anything. Four writes sit outside the folder and are not covered by it: the
 `/traigent-runs/` line added to the project `.gitignore`; the provider key line in `.env`, or the
-whole file when this run created it; the virtual environment this run created at the project
-root - `.venv`, or its `.venv-traigent` fallback - which is the largest of them; the pinned
-packages installed into an environment this run did not create, whose site-packages sits wherever
-that environment does and is not undone by deleting anything here; and the credential handoff when
-the user named a file of their own, which is outside the project by definition. Name only the ones
-this run actually performed, and for the last two give the absolute path, because "delete the
-folder and nothing is lost" is false of them and a reader cannot find them from here.
+whole file when this run created it; the dedicated first-run virtual environment at the project
+root, `.venv-traigent`; and the credential handoff when the user named a file of their own, which
+is outside the project by definition. Name only the ones this run actually performed, and for the
+last two give the absolute path, because "delete the folder and nothing is lost" is false of them
+and a reader cannot find them from here. Existing environments and their site-packages are not
+first-run writes: this guide preserves them.
 
 Skills installed during this run are the one item the list cannot hand over ready to use. Name the
 absolute directory the install wrote to; it is outside the project, so deleting `traigent-runs/`

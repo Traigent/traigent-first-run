@@ -1620,10 +1620,11 @@ class TimeoutIsReportableTests(unittest.TestCase):
         """Pin the number to the work it must cover, not to itself.
 
         A flat budget passes every relative-shape assertion while failing the
-        one customer it was written for: 4 probe calls per case times a
-        one-minute call is 480 seconds at the two-case minimum and 1200 at five,
-        so 30 and 300 are the same defect an order of magnitude apart. Reverting
-        the derivation has to fail on meaning here, not on a file hash.
+        one customer it was written for: a deterministic case can have ten
+        calls, including up to six supplemental probes, while a judge has four.
+        At a minute per call, two deterministic cases need up to 1200 seconds.
+        Reverting that derivation has to fail on meaning here, not on a file
+        hash.
 
         What changed is where the check stops. The fifteen-minute cap is a
         decision about how long it is fair to make a first-run user wait, so
@@ -1634,13 +1635,23 @@ class TimeoutIsReportableTests(unittest.TestCase):
         """
         module = _load_constants()
         budget = module["calibration_timeout_seconds"]
-        probes_per_case = module["PROBES_PER_CASE"]
+        probes_per_case = {
+            "deterministic": (
+                module["PROBES_PER_CASE"]
+                + module["DETERMINISTIC_SUPPLEMENTAL_PROBES_PER_CASE"]
+            ),
+            "llm-judge": module["PROBES_PER_CASE"],
+        }
         ceiling = module["CALIBRATION_TIMEOUT_CEILING_SECONDS"]
 
         uncapped = 0
         for case_count in self.DOCUMENTED_CASE_COUNTS:
-            needed = case_count * probes_per_case * self.SLOW_EVALUATOR_SECONDS_PER_CALL
             for kind in ("deterministic", "llm-judge"):
+                needed = (
+                    case_count
+                    * probes_per_case[kind]
+                    * self.SLOW_EVALUATOR_SECONDS_PER_CALL
+                )
                 if needed > ceiling:
                     continue
                 uncapped += 1
@@ -1648,7 +1659,7 @@ class TimeoutIsReportableTests(unittest.TestCase):
                     self.assertGreaterEqual(
                         budget(case_count, kind),
                         needed,
-                        f"{case_count} cases is {case_count * probes_per_case} probe "
+                        f"{case_count} cases is {case_count * probes_per_case[kind]} probe "
                         f"calls; a {self.SLOW_EVALUATOR_SECONDS_PER_CALL}s-per-call "
                         f"evaluator needs {needed}s, the cap does not bind there, "
                         "and this budget kills it anyway",
@@ -1672,7 +1683,13 @@ class TimeoutIsReportableTests(unittest.TestCase):
         """
         module = _load_constants()
         budget = module["calibration_timeout_seconds"]
-        probes_per_case = module["PROBES_PER_CASE"]
+        probes_per_case = {
+            "deterministic": (
+                module["PROBES_PER_CASE"]
+                + module["DETERMINISTIC_SUPPLEMENTAL_PROBES_PER_CASE"]
+            ),
+            "llm-judge": module["PROBES_PER_CASE"],
+        }
         ceiling = module["CALIBRATION_TIMEOUT_CEILING_SECONDS"]
         per_probe = {
             "deterministic": module["DETERMINISTIC_SECONDS_PER_PROBE"],
@@ -1682,7 +1699,7 @@ class TimeoutIsReportableTests(unittest.TestCase):
         clamped = 0
         for case_count in self.DOCUMENTED_CASE_COUNTS:
             for kind, seconds in per_probe.items():
-                derived = case_count * probes_per_case * seconds
+                derived = case_count * probes_per_case[kind] * seconds
                 with self.subTest(cases=case_count, kind=kind):
                     self.assertEqual(budget(case_count, kind), min(derived, ceiling))
                 if derived > ceiling:
@@ -1704,22 +1721,27 @@ class TimeoutIsReportableTests(unittest.TestCase):
             kind: max(
                 count
                 for count in range(1, 100)
-                if count * probes_per_case * seconds <= ceiling
+                if count * probes_per_case[kind] * seconds <= ceiling
             )
             for kind, seconds in per_probe.items()
         }
-        self.assertEqual(last_whole, {"deterministic": 3, "llm-judge": 2})
-        five_pair_rate = ceiling / (5 * probes_per_case)
-        self.assertEqual(five_pair_rate, 45)
+        self.assertEqual(last_whole, {"deterministic": 1, "llm-judge": 2})
+        five_pair_rate = {
+            kind: ceiling / (5 * probes_per_case[kind]) for kind in self.KINDS
+        }
+        self.assertEqual(five_pair_rate, {"deterministic": 18, "llm-judge": 45})
         # Both cuts, because the sentence quotes both. One number for both rates
         # was true of the deterministic budget and understated the judge's: 45 is
         # a 40% cut against 75 and exactly half of 90, and it was the judge - the
         # slower of the two, and the one paying per model call - whose loss was
         # the one not stated.
         self.assertEqual(
-            round(100 * (1 - five_pair_rate / per_probe["deterministic"])), 40
+            round(
+                100 * (1 - five_pair_rate["deterministic"] / per_probe["deterministic"])
+            ),
+            76,
         )
-        self.assertEqual(five_pair_rate * 2, per_probe["llm-judge"])
+        self.assertEqual(five_pair_rate["llm-judge"] * 2, per_probe["llm-judge"])
         normalized = " ".join(EVALUATION_REFERENCE.read_text().casefold().split())
         for phrase in (
             "fifteen minutes is the ceiling on that budget, and say so before the wait "
@@ -1729,7 +1751,8 @@ class TimeoutIsReportableTests(unittest.TestCase):
             # Both rates, because a judge is cut a pair earlier than a
             # deterministic scorer and one number for both would misinform the
             # reader who is paying per probe.
-            "whole to three pairs deterministic and two for a judge",
+            "a deterministic matrix needs at least two pairs",
+            "the cap already binds at that minimum",
             # Built from the constants, not typed twice. A probe that moved
             # DETERMINISTIC_SECONDS_PER_PROBE to 60 survived the literal version
             # of this line: both counts above happened to stay put, and the only
@@ -1739,11 +1762,10 @@ class TimeoutIsReportableTests(unittest.TestCase):
             # named. "45 seconds instead of 75" said "either way" and then
             # quoted one rate, so the judge - cut to exactly half rather than by
             # 40% - read as losing less than it does.
-            f"{ceiling // (5 * probes_per_case)} seconds - which is a "
-            f"{round(100 * (1 - five_pair_rate / per_probe['deterministic']))}% "
-            f"cut against the {per_probe['deterministic']} the deterministic "
-            f"budget is derived at, and exactly half the "
-            f"{per_probe['llm-judge']} a judge is",
+            f"at five pairs a deterministic calibration gets "
+            f"{ceiling // (5 * probes_per_case['deterministic'])} seconds per possible call "
+            f"and a judge gets {ceiling // (5 * probes_per_case['llm-judge'])}; "
+            "those are cuts against 75 and 90 respectively",
             "their own larger `--timeout` is not capped",
         ):
             with self.subTest(phrase=phrase):
@@ -1918,12 +1940,14 @@ class TimeoutIsReportableTests(unittest.TestCase):
                 # And a zero/negative count cannot produce a nonsense budget.
                 self.assertGreater(budget(0, kind), 0)
                 self.assertEqual(budget(0, kind), budget(1, kind))
-        # A judge pays network latency on top of the same work - below the cap.
-        # At and above it the two paths meet at the same number, because the cap
-        # is a bound on the wait and the wait does not care which kind produced
-        # it. Asserting the strict inequality everywhere would be asserting the
-        # cap away; asserting both halves is what the function actually does.
-        self.assertGreater(budget(2, "llm-judge"), budget(2, "deterministic"))
+        # The two paths count different work.  A deterministic case reserves for
+        # its possible supplementals, so it can reach the cap before a judge;
+        # comparing only their per-call allowances would hide that customer cost.
+        self.assertGreater(budget(1, "deterministic"), budget(1, "llm-judge"))
+        self.assertGreater(budget(2, "deterministic"), budget(2, "llm-judge"))
+        # At and above the point where both hit it, the cap is the same bound
+        # regardless of the kind that produced it.
+        self.assertEqual(budget(4, "llm-judge"), budget(4, "deterministic"))
         self.assertEqual(budget(500, "llm-judge"), budget(500, "deterministic"))
         self.assertEqual(budget(500, "llm-judge"), ceiling)
 
@@ -2045,14 +2069,20 @@ class TimeoutIsReportableTests(unittest.TestCase):
         """
         module = _load_constants()
         budget = module["calibration_timeout_seconds"]
-        probes_per_case = module["PROBES_PER_CASE"]
+        probes_per_case = {
+            "deterministic": (
+                module["PROBES_PER_CASE"]
+                + module["DETERMINISTIC_SUPPLEMENTAL_PROBES_PER_CASE"]
+            ),
+            "llm-judge": module["PROBES_PER_CASE"],
+        }
         ceiling = module["CALIBRATION_TIMEOUT_CEILING_SECONDS"]
         per_probe = module["SECONDS_PER_PROBE"]
 
         below_ceiling = 0
         for kind in self.KINDS:
             for count in self.LEGAL_CASE_COUNTS:
-                derived = max(1, count) * probes_per_case * per_probe[kind]
+                derived = max(1, count) * probes_per_case[kind] * per_probe[kind]
                 with self.subTest(kind=kind, cases=count):
                     self.assertEqual(budget(count, kind), min(ceiling, derived))
                 if derived < ceiling:

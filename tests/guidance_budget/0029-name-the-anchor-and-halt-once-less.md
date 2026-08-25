@@ -1,6 +1,8 @@
 # 0029 - name the anchor, and halt once less
 
 follows: 0028
+follows-resident-measured: 76_351
+follows-total-measured: 347_299
 resident-ceiling: 76_900
 resident-measured: 76_711
 total-ceiling: 348_400

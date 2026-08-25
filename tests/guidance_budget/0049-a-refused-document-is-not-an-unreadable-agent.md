@@ -1,6 +1,8 @@
 # 0049 - a refused document is not an unreadable agent
 
 follows: 0048
+follows-resident-measured: 83_976
+follows-total-measured: 368_812
 resident-ceiling: 84_300
 resident-measured: 84_225
 total-ceiling: 369_150

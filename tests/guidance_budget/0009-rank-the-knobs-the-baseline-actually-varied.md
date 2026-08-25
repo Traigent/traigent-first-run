@@ -1,6 +1,7 @@
 # 0009 - which of a customer's knobs the enhanced run keeps
 
 follows: 0008
+follows-total-measured: 243_843
 total-ceiling: 245_250
 total-measured: 244_618
 

@@ -30,10 +30,11 @@ The assistant performs the technical work and asks only when it needs:
 - Approval before paid model calls or private-data egress.
 - Approval before judgment-dependent changes to real examples, expected answers, or grading policy,
   and before destructive or production-affecting actions.
-- Confirmation before installing into a virtual environment other work of yours depends on, rather
-  than one created for this run. It always names the full path first, either way, so you know which
-  directory is about to change - and a repeat run does not re-ask about the environment the last
-  one made.
+
+The run uses a dedicated `.venv-traigent` environment and preserves existing project, shared, and
+dependent environments. If that path already exists or its setup fails, the assistant stops with
+its path and recommends inspection; it removes and recreates that dedicated environment only on
+your explicit request.
 
 No existing agent, dataset, or evaluator is required to see the walkthrough. If several credible
 agents are present, the assistant asks which one to optimize; if there is exactly one, it names it

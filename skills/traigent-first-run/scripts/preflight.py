@@ -295,6 +295,8 @@ DOMINANT_OUTCOME_SHARE = Fraction(9, 10)
 MAX_REPORTED_DATASET_ERRORS = 5
 MAX_REPORTED_DATASET_IDS = 10
 WIRING_CHECK_EXAMPLES = 10
+FIRST_RUN_TUNING_ROWS = 18
+BOUNDED_SUBSET_ABOVE_ROWS = 100
 EXPECTED_DIFFICULTIES = {"easy", "medium", "hard", "very-hard"}
 REFERENCE_FREE_METHODS = {
     "llm-judge-pointwise",
@@ -623,31 +625,33 @@ def check_keys(env: dict[str, str | None]) -> None:
 def check_cost_settings(
     env: dict[str, str | None], file_values: dict[str, str | None]
 ) -> None:
+    # The first-run launcher overwrites this legacy SDK variable from the three
+    # approved first-run figures before it imports the SDK.  It never carries
+    # authority for this walkthrough, whether it came from .env or the parent
+    # process.  Validating it as an active cap would invent a protection that
+    # the launcher deliberately replaces.
     raw_cap = env.get("TRAIGENT_RUN_COST_LIMIT")
-    if not key_present(raw_cap):
+    if key_present(raw_cap):
+        emit(
+            "cost-cap",
+            SKIP,
+            "TRAIGENT_RUN_COST_LIMIT is inventory only; each first-run paid process "
+            "derives and sets its own cap from its approved figures",
+        )
+    else:
         emit(
             "cost-cap",
             PASS,
             "no per-optimization cap set here; each paid process derives its own from the "
             "approved figures it is launched with",
         )
-    else:
-        try:
-            cap = float(raw_cap)
-        except (TypeError, ValueError):
-            emit("cost-cap", FAIL, "TRAIGENT_RUN_COST_LIMIT must be a positive number")
-        else:
-            if cap <= 0:
-                emit("cost-cap", FAIL, "TRAIGENT_RUN_COST_LIMIT must be positive")
-            else:
-                emit("cost-cap", PASS, f"custom per-optimization cap: ${cap:.2f}")
 
-    # Same mechanism, extended to the figures that now govern spending: each is
-    # supplied per approved process, and a copy in .env is a number that
-    # outlives the approval which set it. The run reads them before .env is
-    # loaded, so one here changes nothing today - it is failed because a stale
-    # approved total sitting in a file is what a later change to that reading
-    # order would silently start enforcing.
+    # A first run preserves an existing owner-owned .env. The documented wrapper
+    # captures its approval figures before loading that file and then derives
+    # its own per-process limit, so a preserved value here cannot authorize or
+    # enlarge this run. Record it without asking the customer to alter unrelated
+    # local configuration; the approval card, not this inventory, owns whether
+    # the next paid process may start.
     persisted = [
         name
         for name in (
@@ -661,9 +665,9 @@ def check_cost_settings(
     if persisted:
         emit(
             "cost-figures-in-file",
-            FAIL,
-            f"{', '.join(persisted)} persisted in .env; remove and supply the approved "
-            "figures per paid process",
+            SKIP,
+            f"{', '.join(persisted)} preserved in .env; they do not authorize "
+            "this first run, whose approved figures are supplied per paid process",
         )
 
     approved_in_file = file_values.get("TRAIGENT_COST_APPROVED")
@@ -674,8 +678,9 @@ def check_cost_settings(
     }:
         emit(
             "cost-approved",
-            FAIL,
-            "TRAIGENT_COST_APPROVED is persisted in .env; remove it and set it only per approved process",
+            SKIP,
+            "TRAIGENT_COST_APPROVED is preserved in .env; it does not authorize a "
+            "first-run paid process",
         )
     elif key_present(env.get("TRAIGENT_COST_APPROVED")):
         emit(
@@ -695,10 +700,17 @@ def check_cost_settings(
         if key_present(env.get(name))
     ]
     if overridden:
+        names = " and ".join(overridden)
+        # The baseline forces the SDK backend-offline and drops the Traigent key
+        # before importing it, including one loaded from .env. An override
+        # therefore cannot move the baseline and is not a pre-baseline warning.
+        # The connected approval must inspect it before it can decide where that
+        # later run is recorded.
         emit(
             "backend-url",
-            WARN,
-            f"{' and '.join(overridden)} overridden; verify that a non-default backend is intentional",
+            SKIP,
+            f"{names} overridden; the local baseline reaches no backend, so verify "
+            "the connected destination at its approval",
         )
 
 
@@ -760,6 +772,15 @@ def dataset_field_value(row: dict[str, Any], field_path: str) -> tuple[bool, Any
             return False, None
         value = value[part]
     return True, value
+
+
+def first_run_row_count(usable_rows: int) -> int:
+    """Return the rows each paid first-run configuration scores."""
+    return (
+        FIRST_RUN_TUNING_ROWS
+        if usable_rows > BOUNDED_SUBSET_ABOVE_ROWS
+        else usable_rows
+    )
 
 
 def normalize_dataset_row(
@@ -2070,6 +2091,15 @@ def check_dataset(
             WARN,
             f"{len(rows)} rows is a wiring check, not a credible score",
         )
+    first_run_rows = first_run_row_count(len(rows))
+    emit(
+        "dataset-first-run-rows",
+        PASS,
+        f"proposed first-run subset cap: {first_run_rows} usable rows per "
+        f"configuration from {len(rows)} usable rows; select and record the "
+        "actual row ids before baseline approval",
+        {"first_run_rows": first_run_rows, "usable_rows": len(rows)},
+    )
 
     input_types = {type(row["input"]).__name__ for row in rows}
     if len(input_types) > 1:

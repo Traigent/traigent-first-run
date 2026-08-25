@@ -1,6 +1,8 @@
 # 0045 - opening evidence cannot be overridden
 
 follows: 0044
+follows-resident-measured: 79_634
+follows-total-measured: 368_565
 resident-ceiling: 80_950
 resident-measured: 80_559
 total-ceiling: 370_650

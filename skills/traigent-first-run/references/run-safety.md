@@ -16,35 +16,31 @@ Use this reference for setup, dry-run, paid execution, portal verification, reco
 
 ### Why the install sits where it does
 
-Stage 4 first establishes that the project is scoreable and stage 5 resolves the target
-environment. Installing earlier can therefore modify the wrong environment or spend time on a
-walkthrough whose task is not yet anchored. After that point, the remaining capability and mock
-checks need the installed SDK, so no useful independent work overlaps the install. Keep this one
-foreground command with its complete resolver diagnostic; explain the wait and do not delegate it.
-Nothing in this guide requires sub-agents, which not every supported assistant provides.
+Stage 4 first establishes that the project is scoreable and stage 5 creates the dedicated
+first-run environment. Installing earlier can therefore modify the wrong environment or spend time
+on a walkthrough whose task is not yet anchored. After that point, the remaining capability and
+mock checks need the installed SDK, so no useful independent work overlaps the install. Keep this
+one foreground command with its complete resolver diagnostic; explain the wait and do not delegate
+it. Nothing in this guide requires sub-agents, which not every supported assistant provides.
 
 ### Rules
 
-- Reuse an existing compatible isolated environment. When none exists, use the conventional
-  `.venv` with Python 3.11-3.13; do not replace the project's interpreter without approval.
-- Resolve every candidate recorded during inventory before touching one, and name the selected
-  environment by absolute path. Prefer the single compatible environment inside the project root.
-  Ignore environments owned by another project or by the assistant's tooling; a current-project
-  environment managed outside the root is an external candidate, not an ignored one. More than one
-  compatible candidate, or external-only environments, get one question with a recommendation and
-  every candidate path.
-  Before adopting an environment with other dependents, name the exact install and confirm once,
-  offering a separate `.venv-traigent`; a run-created environment or one containing only this
-  walkthrough's pinned set proceeds without repeating that question.
-- Create and then activate the environment before installing: `source .venv/bin/activate` on
-  macOS/Linux, `.venv\Scripts\Activate.ps1` on Windows PowerShell (a first run there may need
-  `Set-ExecutionPolicy -Scope Process RemoteSigned`). Confirm `sys.prefix` points inside the
-  environment before `pip install`, or the install silently lands in global Python and the run
-  cannot find `traigent`.
-- Only when `.venv` already exists but uses an incompatible interpreter, preserve it and create
-  `.venv-traigent` with a supported interpreter, for example
-  `python3.13 -m venv .venv-traigent`. Keep this fallback name as an implementation detail rather
-  than asking the user to choose an environment name.
+- Preserve every existing environment, including an otherwise-compatible project environment and
+  every shared or dependent environment. Create the dedicated `.venv-traigent` under the project
+  root with Python 3.11-3.13; do not replace the project's interpreter or install into an existing
+  environment.
+- Name the dedicated environment by absolute path before creating or touching it. If that path
+  already exists, inspect it without changing it, stop with its path and evidence, and recommend
+  inspection. Remove and recreate the existing dedicated environment only on the user's explicit
+  request. Never reuse it. Never select an existing project, shared, dependent, external, or
+  assistant-owned environment as a fallback.
+- Create and activate the named dedicated environment before installing. Confirm `sys.prefix`
+  points inside it before `pip install`, or the install silently lands in global Python and the
+  run cannot find `traigent`.
+- Create it with a supported interpreter, for example
+  `python3.13 -m venv .venv-traigent`. If creation, installation, or post-install preflight fails,
+  preserve the dedicated environment, report its absolute path and the concrete failure, and stop.
+  Recommend inspecting it first; remove and recreate it only on the user's explicit request.
 - Keep dependency installation as its own action class. It may proceed without another approval
   only inside that environment, from the exact packages and versions recorded for the top-level
   requirements plus their package-declared dependencies, as a package-artifact-only fetch/install
@@ -216,12 +212,15 @@ the default. Say this at the moment the user creates the key, not afterwards: th
 to prevent and expensive to discover, and a key accepted at the start but rejected mid-run
 leaves spend that already happened.
 
-Nothing else belongs in `.env`. Do not add a backend or API URL - the installed SDK already points
-at the production service, and a stray override silently sends a paid run somewhere the user cannot
-see it.
+Preserve existing owner-owned `.env` values. Add only a genuinely missing selected-provider key for
+this run; do not add a backend or API URL. An existing override does not affect the local baseline,
+which runs backend-offline and removes the Traigent key before importing the SDK. At connected-run
+approval, inspect that override and confirm the destination before a run can be recorded there.
+Existing cost figures and approval-looking values are likewise not approval for this run: its wrapper
+receives the approved figures in the paid process and does not take them from `.env`.
 
 SKILL's opening gate owns pre-stage-5 interpreter selection and the timing of the required opening
-readiness score. The environment selected or created in stage 5 remains authoritative for the
+readiness score. The dedicated environment created in stage 5 remains authoritative for the
 connected run.
 
 Follow SKILL stages 4-7 for ordering; this reference does not define a second flow.
@@ -237,7 +236,7 @@ what was examined and an absent class stays visible:
 | a classification | near-miss labels, an absent label, case and whitespace |
 | free text | omission, contradiction, added claims not in the input |
 | structured (JSON/schema) | missing optional field, wrong type, extra field, null vs absent |
-| code or SQL | parse or compile failure, correct but materially different implementation, full test pass, partial test pass, wrong result after a clean exit, runtime error, timeout or resource-limit breach, forbidden side effect |
+| code or SQL | out of scope for this first-run guide; stop before evaluator execution and use the manual-containment route below |
 
 Binding is first because a token comparison cannot see a correct value paired to the wrong key.
 The deterministic permutation probe asks about that one class mechanically; the rest still needs
@@ -245,8 +244,8 @@ the recorded semantic review.
 
 Identify execution evaluators from their complete call path. A scorer enters that path when it
 executes or imports candidate/model output as code, shells out with it, or submits it to a code or
-SQL engine. Apply the containment contract below before calibration; if it cannot be met, do not
-run that evaluator in calibration, mock, baseline, optimization, or validation.
+SQL engine. That is a scope stop for this first-run guide, not a sandbox request: do not run that
+evaluator in calibration, mock, baseline, optimization, or validation.
 
 ## Static and mock validation
 
@@ -268,49 +267,33 @@ deferred SDK finding, not as a failure of dataset-quality checks. Dataset heuris
 `--input-field` and `--expected-field` from the user's schema. Those choices configure only the
 local quality view; they are not aliases, rewrites, or proof of SDK acceptance.
 
-### Execution-evaluator containment
+### Execution evaluators are out of scope
 
-Treat model-written code or SQL as untrusted active content whenever an evaluator executes it.
-This requirement applies to calibration and every scored callback in baseline, optimization, and
-validation, including generated or preserved evaluators. Never execute that content inside the
-assistant, SDK, optimizer, or evaluator-orchestration process, or in an ordinary subprocess that
-shares the host's access.
+This first-run guide supports non-executing comparison evaluators. It does not ship, select, or
+validate a sandbox for candidate/model output that is executed as code or SQL. A virtual
+environment, stripped credentials, an ordinary subprocess, a timeout, or mock flags do not make
+that execution safe.
 
-Use a fresh disposable sandbox for each candidate, or reset it to an equivalent clean state, with:
-
-- Network disabled; no provider, Traigent, or project credentials; and a minimal environment.
-- No writable host home or project mount. Mount only required tests and fixtures read-only, plus a
-  bounded disposable scratch directory.
-- An unprivileged identity, no elevated capabilities or privilege escalation, and an OS-enforced
-  container, VM, or sandbox boundary appropriate to the host.
-- Hard limits on wall-clock time, CPU time, memory, process count, open files, file size and scratch
-  space, and captured output.
-- Terminate the whole descendant process tree on completion or any limit breach, then dispose of
-  the sandbox. Run SQL only against a disposable seeded database, never a production
-  connection or credential.
-
-Record the boundary, limits, mounted inputs, and permitted side effects in the run plan. Report a
-runtime error, timeout or resource-limit breach, forbidden side effect, and sandbox failure as
-distinct outcomes; never retry one outside containment. A virtual environment, stripped builtins,
-removed keys, proxy blackholing, an ordinary subprocess, or a timeout alone is not a sandbox.
-Resource limits alone do not provide isolation from the filesystem, network, or secrets. The
-calibration helper's child process separates scorer imports from the assistant, but a scorer that
-executes candidate content must still delegate that execution to the declared sandbox. If no
-available boundary enforces these properties, do not run the execution evaluator or paid
-optimization against it; use non-executing static/parser/compile checks or pause for a safe runner.
+When the resolved evaluator call path identifies that path, preserve the project, run only
+read-only static inspection that does not import or execute it, record a `stopped` `containment`
+event, and end this guide before calibration, environment setup, credentials, provider calls, or
+paid work.
+The next step is a separate manual containment design and review outside this guide; it must decide
+the execution boundary, mounted inputs, credentials, network, limits, cleanup, and SQL data scope.
+Do not describe that manual work as available through this guide or imply that a local subprocess
+fulfils it.
 
 ### Deterministic calibration and mock plumbing
 
 Deterministic calibration is a separate execution gate and always requires a recorded `sufficient`
 evidence-backed semantic-coverage verdict. Before environment setup, run only a non-executing
-evaluator whose complete call path is local-only, side-effect-free, and standard-library-only. An
-execution evaluator waits until its declared local dependencies and sandbox are available; every
-candidate execution must satisfy the containment contract above. A non-executing evaluator that
-needs a declared local dependency also waits until that dependency is installed. Run either before
-creating `.env` or requesting a provider key. A generic outside-review wait is not a gate; pause
-only when one unresolved product-grading ambiguity would materially change correctness or ranking.
-Do not execute an LLM judge or an uncertain or external evaluator without explicit approval in the
-stage where it runs, covering recipients, data, calls, runtime, and spend.
+evaluator whose complete call path is local-only, side-effect-free, and standard-library-only. A
+non-executing evaluator that needs a declared local dependency waits until that dependency is
+installed. An execution evaluator has already ended this guide at the scope gate above. Run either
+before creating `.env` or requesting a provider key. A generic outside-review wait is not a gate;
+pause only when one unresolved product-grading ambiguity would materially change correctness or
+ranking. Do not execute an LLM judge or an uncertain or external evaluator without explicit approval
+in the stage where it runs, covering recipients, data, calls, runtime, and spend.
 
 A Traigent mock run is a separate plumbing check:
 
@@ -344,11 +327,12 @@ free-tier run as mocked.
 ### Config-space document
 
 `scripts/readiness.py --config-space` scores the agent pillar from the space this run actually
-built. A file found before the current enhanced search - including one left by an earlier guided
-run - is historical context only. Its existence, timestamp, hash, or non-empty `wired` list cannot
-prove current wiring. Record its provenance and omit it from opening and stage-4 readiness. What
-those scores report the agent pillar from instead is the read of the agent's own source they are
-passed as `--agent-knobs`, never this file.
+built. A file found before the current enhanced search, including one left by an earlier guided run,
+is historical context only and never enters config-space scoring. A customer-authored file may guide
+source inspection, but its values and `wired` list never enter `--agent-knobs`. Record provenance;
+its existence, timestamp, hash, or non-empty `wired` list cannot prove current wiring. Omit either
+file from opening and stage-4 readiness. Those scores use the read of the agent's own source passed
+as `--agent-knobs`, never the file.
 
 The rule binds the run, not the invocation that reports. Omitting the document from the opening and
 stage-4 calls describes what those calls pass; a second call scoring the same file to see what the
@@ -372,13 +356,11 @@ reachable; this score says what the search actually received, and they are diffe
 Letting a read of the source stand in for a document the search never emitted would lift this
 ceiling on exactly the runs it exists for - the ones that stopped, failed, or bought no trial.
 
-Its BUILD half travels, and only where a config-space document decides the space beside it. Those
-four checks answer how the agent is put together, which no config space makes any claim about, so
-there is nothing here for a source read to stand in for and no ceiling it can reach. Dropping them
-would report four checks falling to unanswered between the opening card and the closing one while
-nothing about the agent had changed - the same fall the opening gate already refuses for the knob
-half. Where no document reaches the close, pass nothing: the knobs half would establish a space the
-search never received, and the two halves arrive in one file.
+Its BUILD half travels, and only where a config-space document decides the space beside it, but
+remains unmeasured. A config space proves neither how the agent is built nor its source reader's
+claims; dropping those observations would report four checks falling to unanswered between cards
+while nothing about the agent changed. Where no document reaches the close, pass nothing: the knobs
+half would establish a space the search never received, and the two halves arrive in one file.
 
 `agent-no-varying-knobs` is advisory whenever neither a document nor a reading reached the scorer,
 because the scorer cannot tell a document withheld before the search from one the search failed to
@@ -538,8 +520,8 @@ Before the provider-paid baseline, show only its immediate scope:
   calls, metric, runtime, estimated spend, and one total walkthrough ceiling, defaulting to
   `$5.00`. Call it an execution stop target, not a billing guarantee.
 - Recipients: baseline-data services; for OpenRouter, the gateway and allowed upstream/fallback routes.
-- Execution evaluators: repeated model-written code or SQL execution, sandbox location, tests and
-  fixtures, limits, residual risk, and any external sandbox recipient.
+- Execution evaluators end this guide before an approval card; do not price, approve, or run one
+  here.
 
 ### The pre-spend approval card
 
@@ -613,7 +595,8 @@ After showing the baseline result, give the connected stage a preview and approv
   a judge's are among them, on every scored row of the search as well as these.
 - Bounds and value: runtime, enhanced/spent cost and remaining ceiling; provider/Traigent recipients,
   zero-LLM probe, portal history/direct links, and exclusions. Dataset/configuration insights remain
-  conditional on verified run-scoped SDK artifacts. Repeat applicable evaluator containment.
+  conditional on verified run-scoped SDK artifacts. Repeat applicable execution-evaluator
+  scope/call-path checks.
 
 The enhanced run card's trial line is a ceiling paired with the size of the space it is drawn from, because
 at approval time the user is asking what the worst case is, and a range answers a question they did
@@ -634,8 +617,13 @@ combination count> configurations`, or the executed count alone when that total 
 
 Do not manufacture urgency. If baseline and evaluator show a measured quality, cost, or latency
 opportunity, say `Recommended next: continue with Traigent optimization because <observed reason>.`
-End the preview with `Continue with this bounded Traigent run?` Otherwise recommend the evidenced
-repair; never promise improvement.
+When the dataset and evaluator are sound but the baseline showed no measured quality or cost headroom,
+recommend harder realistic cases first. If the customer explicitly wants a verified portal/enhanced
+comparison anyway, offer it as an optional no-lift-possible verification run: say that it is not expected
+to find a gain and that declining leaves the honest baseline-only result intact. An invalid or
+non-discriminating dataset/evaluator has already stopped before this preview and gets the evidenced repair
+instead. End every offered connected preview with `Continue with this bounded Traigent run?`; that reply
+opens no paid work without the explicit approval below, and never promise improvement.
 
 Final reply-ready line: `Recommended next: <action> — <measured reason>. Reply "continue" and I
 will <next safe step>.` For controlled work, `continue` opens a preview; it approves nothing unless
@@ -748,8 +736,7 @@ state a permanent rejection leaves, are stamped on the run's own configuration w
 `references/sdk-execution.md` reads them: every later provider call is refused, so the trial already
 evaluated when the backend broke is the last one paid for. A missing `cloud_url` is not visible
 while the search runs - it exists only on the returned result - so that one is read the moment the
-search returns and stops the run before the next paid pass rather than after it. Report the
-degradation in the consolidated result with what it had already cost.
+search returns and stops the run before the next paid pass rather than after it.
 
 The probe answers whether tracking attaches, at the moment it runs. It cannot answer whether the
 managed brain is still reachable when the paid search starts a moment later, and the two failures
@@ -977,13 +964,10 @@ Before claiming success, verify:
 11. Baseline and enhanced tuning results are shown side by side, with the tuning-data limitation
     named before any generalization claim, and the held-out score SKILL stage 8 discloses appears
     beside them.
-12. Every execution-evaluator invocation used the declared sandbox and resource limits; timeouts,
-    limit breaches, forbidden side effects, and sandbox failures were counted and reported rather
-    than retried outside containment.
-13. Every reported frontier carries measured costs, a score claim the paired counts support, and no
+12. Every reported frontier carries measured costs, a score claim the paired counts support, and no
     point below the floor. Trials that came back without reported cost carry no cost claim: report
     that, not a number.
-14. Each paid process ran against the approved figures it was launched with, and the close reports
+13. Each paid process ran against the approved figures it was launched with, and the close reports
     them: the approved total, what this run spent against it, and what is left. A phase that
     refused to start, or stopped at the remaining, is named with the work it did not do.
 
@@ -1077,12 +1061,9 @@ not in that repository, and no `npx skills add` flag beyond `--list` and `--skil
   rerun by default.
 - Permanent HTTP validation error or missing `cloud_url`: surface a sanitized precise backend
   reason; do not replace it with a guessed explanation or claim portal success.
-- Tracking degraded to local-only during a connected run: the wrapper has already refused every
-  provider call since the stamp appeared, so report the degradation with a sanitized backend reason
-  and the spend it cost, and do not restart the phase to recover the link.
-- Tracking degraded to local-only during a connected run: stop paid work at once - the door
-  refuses the next call already, so surface a sanitized backend reason and report the
-  degradation rather than re-deciding whether to continue.
+- Tracking degraded to local-only during a connected run: stop paid work at once - the wrapper has
+  already refused every later provider call. Report a sanitized backend reason and the spend it
+  cost, rather than restarting the phase to recover the link or re-deciding whether to continue.
 - Cost limit reached with zero trials: no result exists. Reduce scope or obtain new approval.
 - Cost limit reached with completed trials: show the best partial result and name the cost cap as
   the stop reason; do not report it as a failure or silently drop the paid trials.
@@ -1110,6 +1091,10 @@ not in that repository, and no `npx skills add` flag beyond `--list` and `--skil
   calibration.
 - Dataset examples that fail under every configuration: inspect gold/reference and evaluator
   policy before blaming the model.
+- Dedicated first-run environment creation, installation, or preflight failure: preserve every
+  existing environment and stop with the dedicated environment's absolute path and the concrete
+  failure. Recommend inspecting it, or remove and recreate only that dedicated environment after
+  explicit user approval; never fall back to a shared or dependent environment.
 
 For generated wrappers, set the process-only SDK results folder to a child of `traigent-runs/`
 before importing Traigent so its local optimization logs and state remain inside the ignored

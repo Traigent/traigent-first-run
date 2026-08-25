@@ -1,6 +1,7 @@
 # 0036 - a flat result can point downward
 
 follows: 0035
+follows-total-measured: 354_942
 total-ceiling: 356_600
 total-measured: 356_289
 

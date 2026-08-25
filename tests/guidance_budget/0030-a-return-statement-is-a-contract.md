@@ -1,6 +1,7 @@
 # 0030 - a return statement is a contract
 
 follows: 0029
+follows-total-measured: 347_996
 total-ceiling: 349_200
 total-measured: 348_739
 

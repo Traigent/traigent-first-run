@@ -291,10 +291,11 @@ The lines under each pillar on the card
   check the run will do later keeps its weight, so the pillar reads under 100
   until calibration. That is why 2 of 4 measured is not 100.
 
-  Every config-space file found before this run's search is omitted, so no
-  settings document ever reaches an opening score - but your agent is still
-  there to read, and the assistant reads it: which parameters it can already
-  vary, and the line of your code showing each. That is what the opening
+  No settings document ever reaches an opening score. Every config-space file
+  found before this run's search is omitted; an earlier run's is circular
+  history, and a customer-authored one can guide source inspection but cannot
+  establish scored values or wiring. Your agent is still there to read, and the
+  assistant reads it: which parameters it can already vary, and the line of your code showing each. That is what the opening
   pillar is scored from, and it says "at least N configurations" because
   nobody has chosen the sweep yet. A reading that found nothing your agent can
   vary is a measurement of your project - a search here would compare one

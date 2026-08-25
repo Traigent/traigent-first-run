@@ -1,6 +1,7 @@
 # 0047 - the opening gate says where its own files go
 
 follows: 0046
+follows-total-measured: 367_952
 total-ceiling: 368_550
 total-measured: 368_467
 

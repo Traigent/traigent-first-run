@@ -1,6 +1,8 @@
 # 0046 - the record says where the run is
 
 follows: 0045
+follows-resident-measured: 80_559
+follows-total-measured: 370_217
 resident-ceiling: 83_645
 resident-measured: 83_297
 total-ceiling: 368_300

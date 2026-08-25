@@ -1,6 +1,8 @@
 # 0003 - routing a cap by what it asks for, and ranking every ceiling
 
 follows: 0002
+follows-resident-measured: 61_129
+follows-total-measured: 228_996
 resident-ceiling: 62_250
 resident-measured: 62_152
 total-ceiling: 231_500

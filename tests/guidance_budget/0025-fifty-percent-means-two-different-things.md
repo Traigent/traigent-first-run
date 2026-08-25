@@ -1,6 +1,7 @@
 # 0025 - fifty percent means two different things
 
 follows: 0024
+follows-total-measured: 326_112
 total-ceiling: 327_400
 total-measured: 327_063
 

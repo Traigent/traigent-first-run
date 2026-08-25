@@ -1,6 +1,6 @@
 ---
 name: traigent-first-run
-description: Guide a professional first Traigent optimization from any starting point, including projects missing or containing weak agent, evaluation dataset, or evaluation method components. Use when a user asks to try Traigent, get started with Traigent, run a first optimization, optimize an agent for the first time, set up Traigent, or opens the Traigent/traigent-first-run repository. Inspect what already exists, preserve real components, diagnose limitations with concrete evidence, offer repair and revalidation before spending, create only the missing pieces as one coherent system, distinguish demonstration substitutes from production readiness, preserve the user's baseline or generate a credible small sweep, run one broader bounded optimization, and report what the result does and does not prove.
+description: Guide a professional first Traigent optimization for non-executing comparison evaluators, such as classification, extraction, and short-answer QA. Use when a user asks to try Traigent, get started with Traigent, run a first optimization, optimize an agent for the first time, set up Traigent, or opens the Traigent/traigent-first-run repository. Inspect what already exists, preserve real components, diagnose limitations with concrete evidence, offer repair and revalidation before spending, create only the missing pieces as one coherent system, distinguish demonstration substitutes from production readiness, preserve the user's baseline or generate a credible small sweep, run one broader bounded optimization, and report what the result does and does not prove.
 ---
 
 # Traigent Guided First Run
@@ -51,7 +51,8 @@ next stage is always the first neither marked done nor skipped. A session findin
 when the agent line is `none discovered` - begins resume validation rather than automatically
 restarting: read it top to bottom and treat its status and results as resume hints. Independently
 verify the target and agent, rerun the cheap read-only/free gates required by the next action,
-including evaluator containment and call-path checks, and verify a paid artifact before quoting it.
+including execution-evaluator scope and call-path checks, and verify a paid artifact before quoting
+it.
 After that verification, continue through free work at the first stage neither marked done nor
 skipped. The record may avoid repeating paid work, never waive a safety precondition.
 Recorded scores, spend, completed paid results, and the opening score stand; recorded approvals do
@@ -115,11 +116,11 @@ approval.
 | Read-only discovery and static validation | Proceed without approval; do not import or execute user code. |
 | Create `traigent-runs/` artifacts; when the project root is inside a Git worktree, add `/traigent-runs/` to the project-root `.gitignore` | Proceed only after inspection and once task intent is anchored; when the Git probe fails, do not create `.gitignore`; preserve source material and provenance. |
 | Create an isolated environment | Proceed only after task intent is anchored and the available standard-library-only component checks have run; do not fetch or install packages as part of environment creation. |
-| Install dependencies in the isolated environment | Proceed only after task intent is anchored and the available standard-library-only component checks have run, and for the exact packages and versions declared for the run, as a package-artifact fetch/install with no provider or Traigent calls, private-data transfer, or user/project code execution. Name the environment's absolute path either way. Into an environment this run created, or one holding nothing but this walkthrough's own pinned set, proceed; into one with other dependents, obtain one confirmation first, because that resolution can move a package the user's other work depends on. A user or environment policy that requires install approval still takes precedence. |
+| Install dependencies in the isolated environment | Proceed only after task intent is anchored and the available standard-library-only component checks have run, and only in the dedicated first-run environment this run created, for the exact packages and versions declared for the run, as a package-artifact fetch/install with no provider or Traigent calls, private-data transfer, or user/project code execution. Name its absolute path before touching it. Preserve every existing, shared, or dependent environment; do not install into or fall back to one. A user or environment policy that requires install approval still takes precedence. |
 | Create or update a minimal `.env` | Proceed only after free checks, and only through `references/run-safety.md`'s ordered handoff, which selects the file. Preserve existing values and comments, append only its missing provider key, and require mode `0600` before opening. Before writing, run that reference's git-tracked-file safety check and its ignore verification; it owns the exact commands and exit-code handling, and stop before secret entry if either check fails. Outside Git, do not create `.gitignore`. Never copy or request a duplicate key. Add or request the Traigent key only after the baseline checkpoint. |
 | Repair a working copy after the user chooses repair | Proceed only within the agreed repair scope, then revalidate from the failed gate. |
 | Change real labels, expected answers, examples, or rubric policy | Show the exact judgment-dependent change and obtain explicit approval. |
-| Execute an evaluator or mock check | Proceed without provider approval only after inspection proves a non-executing evaluator path is local-only or every mock model call is intercepted, with no external side effects. Any path that executes or imports candidate output as code, shells out with it, or submits it to a code/SQL engine must satisfy the `run-safety.md` execution-evaluator containment contract on every invocation; otherwise do not run it. |
+| Execute an evaluator or mock check | Proceed without provider approval only after inspection proves a non-executing evaluator path is local-only or every mock model call is intercepted, with no external side effects. A path that executes or imports candidate output as code, shells out with it, or submits it to a code/SQL engine is outside this first-run guide: stop before execution and follow `run-safety.md`'s manual-containment route. |
 | Make provider, private-data, connected Traigent, or external calls other than the narrow dependency fetch | Obtain stage-specific approval for recipients/data, scope, runtime, and ceiling: baseline first; connected optimization after its checkpoint. |
 | Perform destructive or production-affecting actions | Obtain separate explicit approval for the exact action. |
 
@@ -246,38 +247,55 @@ outside the project wait for stage 5; if the sole candidate fails, record why an
 host. Stage 5 remains authoritative for the connected run.
 
 Run the bundled static preflight with `--defer-missing-sdk` over whatever dataset was discovered,
-omitting `--dataset` when none exists, then run `scripts/readiness.py` on that preflight JSON and
-any applicable calibration result. When rows exist, do the row-level sanity check in
+omitting `--dataset` when none exists, then run `scripts/readiness.py` on that preflight JSON
+without `--calibration`: an opening score has no current-run calibration. When rows exist, do the row-level sanity check in
 `references/evaluation-and-dataset.md` here and pass it as `--row-review`: it is your own read, it
 spends nothing, and no generated row competes with it yet. Apply the run-scoped evaluator-method rule above to both
 scripts, and apply the run-scoped task-kind rule to readiness only, and the origin rule with it.
-Explicitly omit every config-space file found before this run's enhanced search, including one left
-by an earlier guided run: it is historical, unverified context, not current wiring evidence. Record
-its provenance; a timestamp, hash, or non-empty `wired` list does not make it current. Every guided
+**Opening dataset sequencing.** The opening preflight reads a discovered dataset with its default
+`input`/`output` fields, before any explicit field mapping; do not pass `--input-field` or
+`--expected-field` to that opening call. A request/response log or accepted trace is a **source**
+from which rows may later be built, never a `--dataset` argument. If only such sources exist, omit
+`--dataset` so the opening card records `dataset-absent` and routes to `get-data`. After that
+recorded opening result, map a custom dataset's actual fields and re-score; when deriving rows from
+recorded calls, declare the real input separately from the generated candidate output, which is not
+an expected-answer key.
+
+On a zero-anchor run, keep the preflight JSON on stdout and feed it directly to
+`readiness.py --preflight -`; retain the rendered card in the conversation only. Until the answer
+anchors intent, do not use `--report`, write evidence under the project, or name a readiness
+directory.
+Explicitly omit every config-space file found before this run's enhanced search from scoring,
+including one left by an earlier guided run: it is historical context, not current-run readiness
+evidence. Record its provenance; a timestamp, hash, or non-empty `wired` list does not make it
+current. A customer-authored file may guide inspection, never score values or wiring. Every guided
 run does this, including a zero-anchor run.
 
 Then read the agent itself and pass what that read found as `--agent-knobs`, so the opening card
-grades this project instead of reporting nothing. Every file a scoring writes to reach it - that
-document, the preflight JSON, any note - goes in `traigent-runs/readiness/<YYYYMMDDTHHMMSSZ>/`, a
-fresh directory per scoring so a later one never reads an earlier one's. Never delete them, and name that
-directory to the user beside the card: they may want to keep, share, or remove it. Two halves, one pass, and
+ grades this project instead of reporting nothing. After task intent is anchored, every file a
+ scoring writes to reach it - that document, the preflight JSON, any note - goes in
+ `traigent-runs/readiness/<YYYYMMDDTHHMMSSZ>/`, a fresh directory per scoring so a later one never
+reads an earlier one's. Never delete them, and name that directory to the user beside the card in
+ that project-relative form, never expanded to an absolute path: they may want to keep, share, or
+ remove it. Two halves, one pass, and
 neither is optional where an agent was found. Read its own source for parameters it can already vary - model,
 temperature, top_p, prompt strategy, retry/reflection flags, tool selection - and record each with
 the line that shows it - executable code that reads it, passes it on, or selects behaviour from it.
-A name only in a comment, docstring, TODO, or example is not a knob, and the list above is examples
-to search the source for, not a set to report. Same rule as `references/component-creation.md`, applied here because this
+A name only in a comment, docstring, TODO, or example is not scored; it may guide inspection but
+cannot establish a value. Same rule as
+`references/component-creation.md`, applied here because this
 gate is evaluated before that reference loads. Read the same source for how the agent is built and
 answer all four checks the reference names: whether it carries a prompt and worked examples,
 whether anything pins down the
 shape of its answer, whether it ends and on what, and whether the tools it declares can be reached.
 Answer a check you cannot settle as undetermined with the reason, never as a no - a no says the
-agent lacks the thing, and the two are different statements about somebody's code. Withholding the
-second half is not free: those checks keep their weight and earn nothing, exactly as a withheld
-check does everywhere else in the score. Never write a range or an
+agent lacks the thing. Build declarations stay visible but unmeasured; an undetermined check
+still needs its reason. Never write a range or an
 option you did not read: an omitted parameter costs a few points, an invented one makes the card
 wrong. Wanting a second option here is the right instinct at the wrong stage - stage 5's enhanced
 run is where settings get added, from a materially larger space than the agent has today, so the
-honest one-option read costs the user nothing they do not get back. It attests nothing about wiring, clears no cap, and writes nothing into the user's project.
+honest one-option read costs the user nothing they do not get back. It attests nothing about wiring,
+clears no wiring cap, and writes nothing into the user's project.
 Every guided run that found an agent does this read - not conditionally, not depending on the
 agent's language or on how the card would look without it - and the flag is left off only where the
 inventory found no agent at all. Where an agent was found and its settings cannot be read out of it,
@@ -315,7 +333,7 @@ Read-only preflight and readiness runs are static local validation; they authori
 write.
 
 **Opening invocation contract.** When the opening call supplies measured evidence - its
-`--preflight` JSON, applicable `--calibration`, and any applicable `--agent-knobs` and
+`--preflight` JSON and any applicable `--agent-knobs` and
 `--row-review` documents - do **not** also pass `readiness.py --agent`, `--dataset`, or
 `--evaluation`. Those three flags are fallback declarations for material the score was not given;
 adding them beside measurements supplies two incompatible accounts of the same project, so
@@ -471,10 +489,9 @@ Follow this order:
 
    Resolve any `permutation_question` from inspected evidence; ask before paid work only if the
    competing order semantics remain unresolved.
-   On an execution evaluator, a permutation probe distinguished only because rearranged code is
-   caught and scored as invalid carries no evidence about label/value binding; a propagated parse
-   or runtime exception is not a pass. The semantic-coverage review must cover that axis for code
-   tasks.
+   If inspection identifies an execution evaluator, do not use a permutation probe to turn a
+   parse/runtime result into evidence. The scope stop below ends this first-run guide before any
+   evaluator execution.
 2. If unresolved product-grading ambiguity would materially change which output is correct or how
    candidate configurations rank, ask exactly one product-grading question, explain the affected
    decision, then stop and wait. Otherwise record that no ambiguity remains and do not add a generic
@@ -490,11 +507,12 @@ Follow this order:
    the evaluator was created or changed, resolve its method again, then pass that same current
    `--evaluator-method` value to this preflight and the paired readiness invocation in step 5 (or
    omit it from both when no method exists). This heuristic check does not assert SDK compatibility.
-4. Run deterministic calibration only after a `sufficient` semantic-coverage verdict. A
-   non-executing evaluator must have a fully inspected local-only, side-effect-free call path and
-   run in the credential-stripped calibration subprocess. An execution evaluator waits until the
-   sandbox and declared local dependencies in `references/run-safety.md` are available, and every
-   calibration/scored invocation uses that containment; otherwise do not run it.
+4. Before calibration, apply `references/run-safety.md`'s execution-evaluator scope gate. If the
+   resolved evaluator call path identifies code/SQL execution, record the `containment` stop and
+   end this guide before calibration, environment setup, credentials, provider calls, or paid work.
+   Otherwise, run deterministic calibration only after a `sufficient`
+   semantic-coverage verdict. Its non-executing path must be fully inspected, local-only, and
+   side-effect-free, and runs in the credential-stripped calibration subprocess.
 5. Re-run `scripts/readiness.py` on the fresh preflight JSON plus any applicable calibration
    result. Omit every config-space file found before this run's enhanced search here just as at the
    opening gate. This score is required even when a low score or cap is expected. Record its gate
@@ -627,19 +645,18 @@ Only after the standard-library-only component checks:
    A route change requires recipient disclosure and approval; never rewrite a route merely to match
    a key. With no route, use the sole available vendor or ask once. Generated baselines need their
    model ladder; a user-owned baseline requires only its existing route and credential.
-2. Resolve and prepare the environment through `references/run-safety.md`, naming its absolute
-   path before touching it. Reuse the single compatible project-root environment or, when none
-   exists, create the conventional `.venv` with Python 3.11-3.13 without fetching packages.
-   Preserve an incompatible `.venv` and treat `.venv-traigent` as the non-destructive
-   implementation detail fallback. The reference owns candidate choice, dependent-environment,
-   and activation mechanics.
+2. Resolve and prepare the dedicated first-run environment `.venv-traigent` through
+   `references/run-safety.md`, naming its absolute path before touching it. Preserve every existing
+   environment. The reference owns creation, recovery, and activation mechanics; never fall back
+   to a shared or dependent environment.
 3. Install the exact declared dependencies under the narrow authorization above: use the project's
    compatible exact declarations, or otherwise the exact pins in
    `assets/requirements-first-run.txt`. Never use an unversioned `pip install traigent`.
    Keep this unattended step foregrounded, explain the wait, and do not delegate it; the safety
    reference owns the rationale. Then re-run `scripts/preflight.py` in that environment without
-   `--defer-missing-sdk`; `sdk-version: PASS` is required before continuing. On `FAIL`, reinstall
-   the exact pin there and re-run it - nothing else catches a silent or partial install.
+   `--defer-missing-sdk`; `sdk-version: PASS` is required before continuing. On `FAIL`, preserve
+   that environment, report its path and the concrete failure, and stop. Recreate it only on the
+   user's explicit request; nothing else catches a silent or partial install.
 4. Verify capabilities and public signatures from the installed SDK. Use its public dataset
    loader/validator, decorator, and evaluation models; use a public no-execution contract validator
    when available, otherwise finish with safe mock plumbing and do not claim exhaustive static
@@ -685,9 +702,9 @@ Immediately before the paid baseline, show a short run card with model ids, each
 its explicit values, one plain-language note per knob, and the total combination count. The
 enhanced card waits until after the baseline checkpoint.
 
-Put the baseline runtime estimate and the default **30-minute completion target** in the same
-approval as the money ceiling. This is an estimate and an up-front sizing target, not a hard
-wall-clock guarantee. Size the baseline to fit before it starts.
+Put the baseline estimate, selected row count and ids, and **30-minute completion target** in the
+money approval. Preflight's first-run count is only a proposal; it cannot know the selected rows.
+This is an estimate, not a hard wall-clock guarantee. Size the baseline before it starts.
 
 When the SDK exposes trustworthy live progress, report only those values; otherwise report only
 observable phase milestones. Never invent progress or quietly drop validation. A timeout with
@@ -767,13 +784,16 @@ the run as baseline-only, not as a completed Traigent optimization.
 
 Now check whether the dataset and evaluator distinguish configurations. If not, stop before the search
 and recommend the evidenced repair before any connected preview. If the baseline is nearly perfect with no
-informative failures, report little or no accuracy headroom and recommend harder realistic cases;
-a ceiling effect remains a hypothesis. An accuracy-only search requires a workflow-demonstration
+informative failures, report little or no measured quality or cost headroom and recommend harder realistic
+cases; a ceiling effect remains a hypothesis. That finding does not itself block a healthy customer who
+explicitly wants one verified portal/enhanced comparison: offer the connected step as an optional,
+no-lift-possible verification run, never as an expected gain. If they decline it, preserve and report the
+baseline-only result. An accuracy-only search with walkthrough material requires a workflow-demonstration
 label. A cost objective may proceed at equal accuracy only when materially lower cost remains
 possible; report any gain as cost and still flag weak evidence.
 
-Only when this gate supports a measured opportunity, preview the connected step with the final
-reply-ready line and approval rules in `references/run-safety.md`.
+Preview the connected step with the final reply-ready line and approval rules in
+`references/run-safety.md`. Its explicit approval remains required before its key, probe, sync, or calls.
 
 Present `Stage 4/5 · Optimize` with the checklist in `references/run-safety.md`: explain
 managed selection, portal history, bounded calls/cost, and deeper insights as conditional

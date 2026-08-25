@@ -1,6 +1,8 @@
 # 0033 - a disjoint split drawn in the wrong place
 
 follows: 0032
+follows-resident-measured: 76_711
+follows-total-measured: 351_485
 resident-ceiling: 77_500
 resident-measured: 77_267
 total-ceiling: 352_700

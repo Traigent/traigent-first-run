@@ -1,6 +1,7 @@
 # 0035 - repair is not a promise about their product
 
 follows: 0034
+follows-total-measured: 353_736
 total-ceiling: 355_100
 total-measured: 354_942
 

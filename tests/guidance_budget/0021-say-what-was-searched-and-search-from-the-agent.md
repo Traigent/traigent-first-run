@@ -1,6 +1,8 @@
 # 0021 - say what was searched, and search from the agent
 
 follows: 0020
+follows-resident-measured: 72_173
+follows-total-measured: 320_054
 resident-ceiling: 72_400
 resident-measured: 72_173
 total-ceiling: 320_300

@@ -68,24 +68,21 @@ Open with the five-stage journey under "Opening message" in
 Proceed with read-only inspection after stating the plan. Do not make the user approve safe
 discovery. Stop only for:
 
-- A genuine choice between multiple agent candidates, or between multiple existing environments to
-  install into.
-- Installing into an environment other work of yours depends on, rather than one created for this
-  run or holding only a previous walkthrough's packages.
+- A genuine choice between multiple agent candidates.
 - One task-intent question when nothing anchors the walkthrough.
 - Secrets that must be pasted into a preserved or newly created owner-only local `.env`.
 - Paid/provider calls or private-data egress.
 - Judgment-dependent changes to real expected answers or grading policy.
 - Destructive or production-affecting changes.
 
-Creating the isolated environment and minimal `.env` is separate from installing dependencies.
-A dependency install may proceed without another approval only when it is confined to an
-environment this run created, uses the exact packages and versions declared at the top level plus
-their package-declared dependencies, fetches package artifacts only, and permits no
-project/provider/Traigent code execution or private-data transfer. Installing into an environment
-that other work depends on is confirmed once first: the other four conditions bound what is
-installed, and none of them bounds what a resolution can move inside an environment you built for
-something else.
+Create the isolated first-run environment and minimal `.env` separately. The run preserves
+existing environments and uses dedicated `.venv-traigent`; never install into a shared or
+dependent environment.
+A dependency install may proceed without another approval only when it is confined to that
+first-run environment, uses the exact packages and versions declared at the top level plus their
+package-declared dependencies, fetches package artifacts only, and permits no
+project/provider/Traigent code execution or private-data transfer. If it cannot be prepared, stop
+with its path and recommend inspection or user-requested removal and recreation. Do not fall back.
 A project without compatible exact declarations uses the skill's pinned first-run requirements;
 never run an unversioned `pip install traigent`.
 A user or environment install policy still takes precedence and may require approval. Provider,

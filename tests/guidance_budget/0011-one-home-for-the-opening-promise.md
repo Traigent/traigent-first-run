@@ -1,6 +1,8 @@
 # 0011 - the promise names the whole journey, in one place
 
 follows: 0010
+follows-resident-measured: 63_999
+follows-total-measured: 255_523
 resident-ceiling: 64_500
 resident-measured: 64_323
 total-ceiling: 256_250

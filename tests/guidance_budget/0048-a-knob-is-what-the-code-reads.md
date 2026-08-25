@@ -1,6 +1,8 @@
 # 0048 - a knob is what the code reads, not what a comment mentions
 
 follows: 0047
+follows-resident-measured: 83_297
+follows-total-measured: 368_467
 resident-ceiling: 84_050
 resident-measured: 83_976
 total-ceiling: 368_850

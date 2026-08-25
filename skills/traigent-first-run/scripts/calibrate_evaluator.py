@@ -3,8 +3,8 @@
 
 Every scorer must return a finite, normalized, higher-is-better score in ``[0,1]``.
 For deterministic calibration the child is credential-stripped, but process separation is not a
-sandbox. A scorer that executes candidate code or SQL must delegate that content to the
-execution-evaluator containment required by ``references/run-safety.md``.
+sandbox. This first-run guide does not calibrate a scorer that executes candidate code or SQL;
+``references/run-safety.md`` routes that work to a separate manual containment review.
 """
 
 from __future__ import annotations
@@ -36,18 +36,23 @@ from typing import Any
 # a cost signal, not a broken one.
 #
 # A flat number cannot do that, which is why it is gone. The work scales with
-# the case set: every case costs `PROBES_PER_CASE` calls and `--cases` requires
-# at least two cases, so a one-minute-per-call evaluator needs 480 seconds at
-# two cases, 720 at three, and 1200 at five. A flat 30 killed all three, and so
-# did a flat 300 - the same defect one order of magnitude later. Only a budget
-# that scales the way the work scales can tell slow from broken at every size
-# the guide actually asks for.
+# the case set: every case has four authored calls.  A deterministic run can add
+# up to six supplemental calls (five exception probes and, where meaningful, a
+# permutation probe).  A one-minute-per-call deterministic scorer therefore
+# needs up to 1200 seconds for two cases; a judge needs 480. The onboarding
+# ceiling can cut that work, but below it the budget must scale with every call
+# it can make.
 #
 # Per-probe allowances. 75 seconds deterministic: the evaluator this exists for
 # takes about a minute per call, and 75 gives that a quarter of headroom instead
 # of landing exactly on it. 90 for a judge, which additionally pays network
 # latency and may be a reasoning model thinking for a minute or more per probe.
+# Four probes decide the calibration. Deterministic calibration then makes five
+# exception probes and, where the expected output admits a distinct ordering,
+# one permutation probe per case. They are advisory, but they are real scorer
+# calls and the default whole-calibration deadline reserves for the maximum.
 PROBES_PER_CASE = 4
+DETERMINISTIC_SUPPLEMENTAL_PROBES_PER_CASE = 1 + 5
 DETERMINISTIC_SECONDS_PER_PROBE = 75
 LLM_JUDGE_SECONDS_PER_PROBE = 90
 # Fifteen minutes, and it is an owner decision rather than a derivation. This is
@@ -60,12 +65,13 @@ LLM_JUDGE_SECONDS_PER_PROBE = 90
 # person and not about the work.
 #
 # So it CLAMPS, on purpose, and the clamp is the part that must be disclosed
-# rather than hidden. At 75s per probe the derivation stays whole to three cases
-# (12 x 75 = 900) and is cut at four (1200) and five (1500); a judge at 90s
-# stays whole to two (720) and is cut from three (1080). A cut case set gets
-# less per probe than `--help` quotes - 45 seconds each at five cases - so an
-# evaluator that really does take about a minute per call cannot finish a
-# five-case matrix inside this ceiling and will reach the timeout question.
+# rather than hidden. A deterministic case reserves ten possible calls, so at
+# 75s each the ceiling already cuts the two-pair minimum (1500s derived); a
+# judge at 90s stays whole through two pairs (720s) and is cut from three
+# (1080s). A cut case set gets less per probe than `--help` quotes - 45 seconds
+# per judge call at five pairs and 18 seconds per deterministic possible call -
+# so an evaluator that really does take about a minute per call cannot finish a
+# documented matrix inside this ceiling and will reach the timeout question.
 # `references/evaluation-and-dataset.md` states that consequence to the user
 # before the wait starts, and the guidance test welds it to this number.
 #
@@ -95,7 +101,10 @@ PRE_CAP_WARNING_LEAD_SECONDS = 120
 
 def calibration_timeout_seconds(case_count: int, kind: str) -> int:
     """Budget a calibration from the number of probe calls it is about to make."""
-    probes = max(1, case_count) * PROBES_PER_CASE
+    probes_per_case = PROBES_PER_CASE
+    if kind == "deterministic":
+        probes_per_case += DETERMINISTIC_SUPPLEMENTAL_PROBES_PER_CASE
+    probes = max(1, case_count) * probes_per_case
     return min(
         CALIBRATION_TIMEOUT_CEILING_SECONDS,
         probes * SECONDS_PER_PROBE[kind],
@@ -683,8 +692,10 @@ def parse_args() -> argparse.Namespace:
             "seconds the whole calibration may take: the authored phase and the "
             "deterministic supplemental probes share this one total budget, so "
             "this is the worst-case wall time and not half of it. The default is "
-            f"derived from the work - {PROBES_PER_CASE} probe calls per case at "
-            f"{DETERMINISTIC_SECONDS_PER_PROBE}s each, or "
+            f"derived from the work - {PROBES_PER_CASE} authored and up to "
+            f"{DETERMINISTIC_SUPPLEMENTAL_PROBES_PER_CASE} supplemental probe "
+            f"calls per deterministic case at {DETERMINISTIC_SECONDS_PER_PROBE}s "
+            f"each, or {PROBES_PER_CASE} calls per --kind llm-judge case at "
             f"{LLM_JUDGE_SECONDS_PER_PROBE}s each for --kind llm-judge - and then "
             f"capped at {CALIBRATION_TIMEOUT_CEILING_SECONDS}s "
             f"({CALIBRATION_TIMEOUT_CEILING_SECONDS // 60} minutes), which is a "

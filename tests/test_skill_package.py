@@ -81,6 +81,9 @@ BUDGET_FIGURE = re.compile(
     r"^(resident|total)-(ceiling|measured): (\d[\d_]*)$", re.MULTILINE
 )
 BUDGET_FOLLOWS = re.compile(r"^follows: (\d{4})$", re.MULTILINE)
+BUDGET_FOLLOWS_MEASURED = re.compile(
+    r"^follows-(resident|total)-measured: (\d[\d_]*)$", re.MULTILINE
+)
 # A raise is a decision, so an entry that states a number and not a reason is
 # the thing this ledger exists to refuse. The floor is not a guess: the
 # shortest reason anyone has written across the nine raises in
@@ -171,7 +174,14 @@ def guidance_budget_entries(
             stated[(kind, which)] = stated.get((kind, which), 0) + 1
             figures[kind][which] = int(value.replace("_", ""))
         follows = BUDGET_FOLLOWS.findall(text)
-        reason = BUDGET_FOLLOWS.sub("", BUDGET_FIGURE.sub("", text))
+        follows_measured: dict[str, int] = {}
+        follows_stated: dict[str, int] = {}
+        for which, value in BUDGET_FOLLOWS_MEASURED.findall(text):
+            follows_stated[which] = follows_stated.get(which, 0) + 1
+            follows_measured[which] = int(value.replace("_", ""))
+        reason = BUDGET_FOLLOWS.sub(
+            "", BUDGET_FOLLOWS_MEASURED.sub("", BUDGET_FIGURE.sub("", text))
+        )
         # The heading is the entry's name, not its argument.
         reason = re.sub(r"^#.*$", "", reason, flags=re.MULTILINE)
         entries.append(
@@ -182,6 +192,10 @@ def guidance_budget_entries(
                 measured=figures["measured"],
                 follows=int(follows[0]) if len(follows) == 1 else None,
                 follows_count=len(follows),
+                follows_measured=follows_measured,
+                follows_restated=sorted(
+                    which for which, count in follows_stated.items() if count > 1
+                ),
                 restated=sorted(
                     f"{which}-{kind}" for (kind, which), n in stated.items() if n > 1
                 ),
@@ -228,6 +242,51 @@ def guidance_budget_reason_defect(reason: str) -> str | None:
             f"{repeated[0][:60]!r} - an entry appended to itself"
         )
     return None
+
+
+def guidance_budget_predecessor_binding_defects(
+    entry: SimpleNamespace, by_index: dict[int, SimpleNamespace]
+) -> list[str]:
+    """Reject an ambiguous or unbound state beneath a `follows:` pointer."""
+    defects: list[str] = []
+    for which in entry.follows_restated:
+        defects.append(
+            f"{entry.path.name} states follows-{which}-measured more than "
+            "once; a predecessor has one measured state, not whichever "
+            "line happened to be read last"
+        )
+    if entry.follows is None:
+        if entry.follows_measured:
+            defects.append(
+                f"{entry.path.name} binds a predecessor measurement but declares "
+                "no follows:; the root has no predecessor to bind"
+            )
+        return defects
+
+    for which in sorted(entry.measured):
+        if which not in entry.follows_measured:
+            defects.append(
+                f"{entry.path.name} follows {entry.follows:04d} but does "
+                f"not state follows-{which}-measured; a predecessor index "
+                "alone does not say which measured state this figure used"
+            )
+    for which in sorted(set(entry.follows_measured) - set(entry.measured)):
+        defects.append(
+            f"{entry.path.name} states follows-{which}-measured but does "
+            f"not measure {which}; bind only the figures this entry uses"
+        )
+    if entry.follows not in by_index:
+        defects.append(
+            f"{entry.path.name} follows {entry.follows:04d}, which is not "
+            "in this tree. An entry can only follow a state it actually "
+            "has: measure on top of an entry that exists here, and say so."
+        )
+    elif entry.follows >= entry.index:
+        defects.append(
+            f"{entry.path.name} follows {entry.follows:04d}, which is not "
+            "lower than its own number; the chain runs one way"
+        )
+    return defects
 
 
 def guidance_budget_defects(entries: list[SimpleNamespace]) -> list[str]:
@@ -320,17 +379,7 @@ def guidance_budget_defects(entries: list[SimpleNamespace]) -> list[str]:
                 f"{entry.path.name} declares follows: more than once; an entry "
                 "is measured on top of exactly one ledger state"
             )
-        elif entry.follows is not None and entry.follows not in by_index:
-            content.append(
-                f"{entry.path.name} follows {entry.follows:04d}, which is not "
-                "in this tree. An entry can only follow a state it actually "
-                "has: measure on top of an entry that exists here, and say so."
-            )
-        elif entry.follows is not None and entry.follows >= entry.index:
-            content.append(
-                f"{entry.path.name} follows {entry.follows:04d}, which is not "
-                "lower than its own number; the chain runs one way"
-            )
+        content.extend(guidance_budget_predecessor_binding_defects(entry, by_index))
     if content:
         return content
 
@@ -375,6 +424,18 @@ def guidance_budget_defects(entries: list[SimpleNamespace]) -> list[str]:
             if previous is None:
                 continue
             previous_entry, previous_measurement = previous
+            if (
+                which in later.follows_measured
+                and later.follows_measured[which] != previous_measurement
+            ):
+                monotone.append(
+                    f"{later.path.name} says it measured {which} on "
+                    f"{later.follows:04d}'s state at "
+                    f"{later.follows_measured[which]}, but that predecessor state "
+                    f"is {previous_entry.path.name}'s {previous_measurement}. "
+                    "Its predecessor moved after this entry was measured: re-measure "
+                    "the merged package and re-state this entry's figure and ceiling."
+                )
             previous_ceiling = _ceiling_in_force(chain, which, later)
             if (
                 which in later.ceilings
@@ -2983,6 +3044,10 @@ class SkillPackageTests(unittest.TestCase):
         self.assertIn(next_heading, text)
         gate = text.split(gate_heading, 1)[1].split(next_heading, 1)[0]
         normalized_gate = " ".join(gate.casefold().split())
+        opening_gate = text.split("#### Opening readiness gate", 1)[1].split(
+            gate_heading, 1
+        )[0]
+        normalized_opening_gate = " ".join(opening_gate.casefold().split())
         top_level = " ".join(
             text.split("## Operating contract", 1)[0].casefold().split()
         )
@@ -3019,6 +3084,24 @@ class SkillPackageTests(unittest.TestCase):
         ):
             self.assertIn(phrase, normalized_gate)
         self.assertIn("only after task intent is anchored", top_level)
+        # The mandatory empty-project score still has to be usable before this
+        # question, but its evidence cannot create the very project artifacts
+        # this gate prohibits. Keep the handoff in memory/stdout until intent
+        # authorizes the normal readiness directory.
+        self.assertIn(
+            "on a zero-anchor run, keep the preflight json on stdout and feed it "
+            "directly to `readiness.py --preflight -`",
+            normalized_opening_gate,
+        )
+        self.assertIn(
+            "until the answer anchors intent, do not use `--report`, write "
+            "evidence under the project, or name a readiness directory",
+            normalized_opening_gate,
+        )
+        self.assertIn(
+            "after task intent is anchored, every file a scoring writes",
+            normalized_opening_gate,
+        )
         for action in (
             "create `traigent-runs/` artifacts",
             "create an isolated environment",
@@ -3301,20 +3384,32 @@ class SkillPackageTests(unittest.TestCase):
             with self.subTest(phrase=phrase):
                 self.assertNotIn(phrase, readme)
 
-    def test_incompatible_environment_recovery_uses_distinct_venv(self) -> None:
+    def test_first_run_environment_is_dedicated_and_preserves_existing_environments(
+        self,
+    ) -> None:
         skill_text = " ".join(SKILL.read_text().casefold().split())
         safety_text = " ".join(RUN_SAFETY.read_text().casefold().split())
+        readme_text = " ".join((ROOT / "README.md").read_text().casefold().split())
 
         for text in (skill_text, safety_text):
-            self.assertIn("conventional `.venv`", text)
-            self.assertIn("implementation detail", text)
             self.assertIn("`.venv-traigent`", text)
-        self.assertIn("preserve an incompatible `.venv`", skill_text)
-        self.assertIn(
-            "`.venv` already exists but uses an incompatible interpreter", safety_text
-        )
+            self.assertIn("preserve every existing environment", text)
+            self.assertIn("shared or dependent environment", text)
+            self.assertIn("never fall back", text)
+        self.assertIn("dedicated first-run environment", skill_text)
+        self.assertIn("environment this run created", skill_text)
+        self.assertIn("only on the user's explicit request", safety_text)
+        self.assertIn("if that path already exists", safety_text)
+        self.assertIn("stop with its path and evidence", safety_text)
+        self.assertIn("never reuse it", safety_text)
+        self.assertNotIn("choose a new dedicated first-run path", safety_text)
+        self.assertNotIn("safely reused", safety_text)
+        self.assertIn("if that path already exists or its setup fails", readme_text)
+        self.assertIn("only on your explicit request", readme_text)
         self.assertIn("python3.13 -m venv .venv-traigent", safety_text)
-        self.assertNotIn("python3.13 -m venv .venv`", safety_text)
+        self.assertNotIn(
+            "reuse an existing compatible isolated environment", safety_text
+        )
 
     def test_opening_gate_uses_one_compatible_project_environment(self) -> None:
         """Inventory is actionable when it finds one unambiguous interpreter."""
@@ -3335,9 +3430,8 @@ class SkillPackageTests(unittest.TestCase):
         self.assertIn("skill's opening gate owns", safety)
         self.assertIn("stage 5 remains authoritative", safety)
         self.assertIn("environments outside the project", skill)
-        self.assertIn("external-only environments", safety)
         self.assertIn(
-            "a current-project environment managed outside the root is an external candidate, not an ignored one",
+            "never select an existing project, shared, dependent, external, or assistant-owned environment as a fallback",
             safety,
         )
         joined = f"{skill} {safety}"
@@ -4115,7 +4209,7 @@ class SkillPackageTests(unittest.TestCase):
             self.assertIn(phrase, normalized_local)
 
         ordered_environment_phrases = (
-            "resolve and prepare the environment",
+            "resolve and prepare the dedicated first-run environment",
             "install the exact declared dependencies",
             "verify capabilities and public signatures",
             "run a fresh-process traigent mock plumbing check",
@@ -4162,7 +4256,9 @@ class SkillPackageTests(unittest.TestCase):
             "re-run `scripts/preflight.py`",
             "without `--defer-missing-sdk`",
             "`sdk-version: pass` is required before continuing",
-            "reinstall the exact pin",
+            "preserve that environment",
+            "report its path and the concrete failure",
+            "recreate it only on the user's explicit request",
             "verify capabilities and public signatures",
         )
         for phrase in ordered:
@@ -4194,7 +4290,7 @@ class SkillPackageTests(unittest.TestCase):
         self.assertNotIn("use this gate order", normalized_safety)
         for heading in (
             "## static and mock validation",
-            "### execution-evaluator containment",
+            "### execution evaluators are out of scope",
             "### deterministic calibration and mock plumbing",
             "### config-space document",
             "## approval and budgets",
@@ -6120,13 +6216,32 @@ class SkillPackageTests(unittest.TestCase):
             "now check whether the dataset and evaluator distinguish configurations"
         )
         connected_preview = stage_seven.index(
-            "only when this gate supports a measured opportunity"
+            "that finding does not itself block a healthy customer"
         )
         connected_approval = stage_seven.index("stage 4/5 · optimize")
         self.assertLess(baseline_checkpoint, evidence_gate)
         self.assertLess(evidence_gate, connected_preview)
         self.assertLess(connected_preview, connected_approval)
         self.assertIn("stop before the search", stage_seven)
+        self.assertIn("optional, no-lift-possible verification run", stage_seven)
+        self.assertIn(
+            "if they decline it, preserve and report the baseline-only result",
+            stage_seven,
+        )
+        self.assertIn(
+            "explicit approval remains required before its key, probe, sync, or calls",
+            stage_seven,
+        )
+        safety_text = RUN_SAFETY.read_text().casefold()
+        self.assertIn("optional no-lift-possible verification run", safety_text)
+        self.assertIn("say that it is not expected", safety_text)
+        self.assertIn("to find a gain", safety_text)
+        self.assertIn(
+            "declining leaves the honest baseline-only result intact", safety_text
+        )
+        self.assertIn(
+            "opens no paid work without the explicit approval below", safety_text
+        )
         for document in (SKILL, RUN_SAFETY, ROOT / ".env.example"):
             self.assertNotIn("combined approval", document.read_text().casefold())
 
@@ -6648,43 +6763,22 @@ class SkillPackageTests(unittest.TestCase):
         ):
             self.assertIn(phrase, plan_text)
 
-    def test_mandated_semantic_review_covers_code_execution_outcomes(self) -> None:
-        """A supported code task must have explicit classes to review against."""
+    def test_code_and_sql_evaluators_are_out_of_scope_for_first_run(self) -> None:
+        """The guide stops safely rather than inventing a sandbox it cannot ship."""
         text = RUN_SAFETY.read_text().casefold()
         outcome_table = text.split("for the stage-4 semantic-coverage review", 1)[
             1
         ].split("binding is first", 1)[0]
         for phrase in (
             "code or sql",
-            "parse or compile failure",
-            "correct but materially different implementation",
-            "full test pass",
-            "partial test pass",
-            "wrong result after a clean exit",
-            "runtime error",
-            "timeout or resource-limit breach",
-            "forbidden side effect",
+            "out of scope for this first-run guide",
+            "stop before evaluator execution",
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, outcome_table)
 
-    def test_execution_evaluator_permutation_pass_is_not_binding_evidence(
-        self,
-    ) -> None:
-        """Reordered code failing to execute proves nothing about value binding."""
-        skill = " ".join(SKILL.read_text().casefold().split())
-        for phrase in (
-            "on an execution evaluator",
-            "distinguished only because rearranged code is caught and scored as invalid",
-            "carries no evidence about label/value binding",
-            "a propagated parse or runtime exception is not a pass",
-            "semantic-coverage review must cover that axis for code tasks",
-        ):
-            with self.subTest(phrase=phrase):
-                self.assertIn(phrase, skill)
-
-    def test_execution_evaluators_are_sandboxed_and_resource_bounded(self) -> None:
-        """A subprocess timeout alone cannot contain model-written code."""
+    def test_execution_evaluators_stop_before_first_run_execution(self) -> None:
+        """The scope boundary is explicit, early, and does not invent a product feature."""
         skill_text = SKILL.read_text()
         authorization = " ".join(
             skill_text.split("## Action authorization", 1)[1]
@@ -6693,9 +6787,10 @@ class SkillPackageTests(unittest.TestCase):
             .split()
         )
         for phrase in (
-            "any path that executes or imports candidate output as code, shells out with it, or submits it to a code/sql engine",
-            "execution-evaluator containment contract on every invocation",
-            "otherwise do not run it",
+            "a path that executes or imports candidate output as code, shells out with it, or submits it to a code/sql engine",
+            "outside this first-run guide",
+            "stop before execution",
+            "manual-containment route",
         ):
             with self.subTest(authorization_phrase=phrase):
                 self.assertIn(phrase, authorization)
@@ -6704,41 +6799,33 @@ class SkillPackageTests(unittest.TestCase):
             skill_text.split("### 4.", 1)[1].split("### 5.", 1)[0].casefold().split()
         )
         for phrase in (
-            "an execution evaluator waits until the sandbox and declared local dependencies",
-            "every calibration/scored invocation uses that containment",
-            "otherwise do not run it",
+            "before calibration, apply `references/run-safety.md`'s execution-evaluator scope gate",
+            "resolved evaluator call path identifies code/sql execution",
+            "record the `containment` stop",
+            "before calibration, environment setup, credentials, provider calls, or paid work",
         ):
             with self.subTest(stage_four_phrase=phrase):
                 self.assertIn(phrase, stage_four)
+        self.assertNotIn("static preflight identifies code/sql execution", stage_four)
 
         text = RUN_SAFETY.read_text()
-        section = text.split("### Execution-evaluator containment", 1)[1].split(
+        section = text.split("### Execution evaluators are out of scope", 1)[1].split(
             "### Deterministic calibration and mock plumbing", 1
         )[0]
         normalized = " ".join(section.casefold().split())
 
         for phrase in (
-            "model-written code or sql as untrusted active content",
-            "calibration and every scored callback",
-            "disposable sandbox",
-            "network disabled",
-            "no provider, traigent, or project credentials",
-            "read-only",
-            "unprivileged",
-            "wall-clock time",
-            "cpu time",
-            "memory",
-            "process count",
-            "open files",
-            "file size",
-            "captured output",
-            "terminate the whole descendant process tree",
-            "ordinary subprocess",
-            "resource limits alone do not provide isolation",
-            "do not run the execution evaluator",
+            "supports non-executing comparison evaluators",
+            "does not ship, select, or validate a sandbox",
+            "record a `stopped` `containment` event",
+            "end this guide before calibration, environment setup, credentials, provider calls, or paid work",
+            "separate manual containment design and review outside this guide",
+            "do not describe that manual work as available through this guide",
+            "local subprocess fulfils it",
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, normalized)
+        self.assertNotIn("static preflight identifies", normalized)
 
         calibration = " ".join(
             text.split("### Deterministic calibration and mock plumbing", 1)[1]
@@ -6748,8 +6835,7 @@ class SkillPackageTests(unittest.TestCase):
         )
         for phrase in (
             "before environment setup, run only a non-executing evaluator",
-            "execution evaluator waits until its declared local dependencies and sandbox are available",
-            "every candidate execution must satisfy the containment contract above",
+            "an execution evaluator has already ended this guide at the scope gate above",
         ):
             with self.subTest(calibration_phrase=phrase):
                 self.assertIn(phrase, calibration)
@@ -6761,31 +6847,11 @@ class SkillPackageTests(unittest.TestCase):
             .split()
         )
         for phrase in (
-            "repeated model-written code or sql execution",
-            "sandbox location",
-            "tests and fixtures",
-            "limits, residual risk",
-            "external sandbox recipient",
+            "execution evaluators end this guide before an approval card",
+            "do not price, approve, or run one here",
         ):
             with self.subTest(approval_phrase=phrase):
                 self.assertIn(phrase, approval)
-
-        post_run = " ".join(
-            text.split("## Post-run verification", 1)[1]
-            .split("## Recovery", 1)[0]
-            .casefold()
-            .split()
-        )
-        for phrase in (
-            "every execution-evaluator invocation used the declared sandbox and resource limits",
-            "timeouts",
-            "limit breaches",
-            "forbidden side effects",
-            "sandbox failures were counted and reported",
-            "rather than retried outside containment",
-        ):
-            with self.subTest(post_run_phrase=phrase):
-                self.assertIn(phrase, post_run)
 
         evaluation = " ".join(
             (SKILL_ROOT / "references" / "evaluation-and-dataset.md")
@@ -6795,12 +6861,12 @@ class SkillPackageTests(unittest.TestCase):
         )
         for phrase in (
             "process separation, not sandbox isolation",
-            "follow the skill stage-4 gate",
-            "`run-safety.md` owns execution-evaluator containment",
+            "stage-4 scope gate ends this guide",
+            "before any evaluator executes candidate code or sql",
         ):
             self.assertIn(phrase, evaluation)
         for duplicated_mandate in (
-            "delegate **every** probe's candidate content to that sandbox",
+            "must delegate that content to the execution-evaluator containment",
             "an execution evaluator waits for its declared dependencies",
         ):
             self.assertNotIn(duplicated_mandate, evaluation)
@@ -6811,7 +6877,10 @@ class SkillPackageTests(unittest.TestCase):
         calibrator_doc = ast.get_docstring(ast.parse(calibrator_source)) or ""
         normalized_doc = " ".join(calibrator_doc.casefold().split())
         self.assertIn("process separation is not a sandbox", normalized_doc)
-        self.assertIn("must delegate that content", normalized_doc)
+        self.assertIn(
+            "does not calibrate a scorer that executes candidate code or sql",
+            normalized_doc,
+        )
         self.assertNotIn("isolated", normalized_doc)
 
     def test_product_grading_question_is_an_ambiguity_only_gate(self) -> None:
@@ -11701,22 +11770,15 @@ class SkillPackageTests(unittest.TestCase):
             (
                 "the virtual environment this run created",
                 "Create an isolated environment",
-                ("`.venv`",),
-            ),
-            (
-                # Not the environment - the packages. Deleting a run-created
-                # `.venv` undoes this; installing into a reused one, which
-                # SKILL.md authorises behind one confirmation and run-safety.md
-                # says may sit outside the project root, leaves it behind.
-                "the pinned packages in an environment this run did not create",
-                "Install dependencies in the isolated environment",
-                ("an environment this run did not create",),
+                ("`.venv-traigent`",),
             ),
         )
         # Rows that write nothing the close has to hand over: nothing at all,
-        # only inside `traigent-runs/`, or only where the user already decided.
+        # only inside `traigent-runs/`, only where the user already decided,
+        # or only inside the already-disclosed dedicated first-run environment.
         writes_nothing_to_disclose_here = {
             "Read-only discovery and static validation",
+            "Install dependencies in the isolated environment",
             "Repair a working copy after the user chooses repair",
             "Change real labels, expected answers, examples, or rubric policy",
             "Execute an evaluator or mock check",
@@ -12818,6 +12880,8 @@ class SkillPackageTests(unittest.TestCase):
         )
 
         with tempfile.TemporaryDirectory() as directory:
+            project_root = Path(directory)
+            (project_root / ".env").write_text("TRAIGENT_API_KEY=uk_preserved\n")
             script = Path(directory) / "traigent-runs" / "walkthrough.py"
             script.parent.mkdir()
             with mock.patch.dict(
@@ -12827,6 +12891,12 @@ class SkillPackageTests(unittest.TestCase):
             ):
                 exec(program, {"__file__": str(script)})  # noqa: S102
                 self.assertEqual(os.environ["TRAIGENT_OFFLINE_MODE"], "true")
+                self.assertNotIn(
+                    "TRAIGENT_API_KEY",
+                    os.environ,
+                    "the baseline must drop a key loaded from the preserved .env "
+                    "before the SDK import",
+                )
 
             # A fresh process starts from its own launch environment; the
             # baseline assignment never mutates the parent shell.
@@ -13175,6 +13245,57 @@ class SkillPackageTests(unittest.TestCase):
         self.assertLess(gate, instruction)
         self.assertLess(instruction, creation)
         self.assertIn("no generated row competes with it yet", skill)
+
+    def test_opening_dataset_sequence_records_both_unmapped_and_absent_states(
+        self,
+    ) -> None:
+        """#282/#283: discovery must not repair either opening before scoring.
+
+        A custom-schema file has to reach the default read before field paths
+        are supplied, or `dataset-shape-unrecognised` can never tell the
+        customer what was learned. A recorded call log is useful evidence but
+        not scoreable rows, so it has to leave `--dataset` absent until rows are
+        derived and labelled. These are one sequencing contract: inventory may
+        discover either item, while the opening call still records its own
+        evidence boundary before any repair or construction.
+        """
+        skill = " ".join(SKILL.read_text().split())
+        gate = skill.index("#### Opening readiness gate")
+        sequence = skill.index("**Opening dataset sequencing.**")
+        creation = skill.index("### 3. Complete the system")
+        self.assertLess(gate, sequence)
+        self.assertLess(sequence, creation)
+        opening = skill[sequence:creation]
+        for phrase in (
+            "default `input`/`output` fields",
+            "before any explicit field mapping",
+            "do not pass `--input-field` or `--expected-field` to that opening call",
+            "never a `--dataset` argument",
+            "omit `--dataset` so the opening card records `dataset-absent`",
+            "After that recorded opening result, map a custom dataset's actual fields and re-score",
+            "generated candidate output, which is not an expected-answer key",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, opening)
+
+    def test_opening_score_never_reuses_a_calibration_artifact(self) -> None:
+        """#260: a prior or interrupted run cannot inflate the opening card."""
+        skill = SKILL.read_text()
+        opening = skill.split("#### Opening readiness gate", 1)[1].split(
+            "#### Zero-anchor intent gate", 1
+        )[0]
+        self.assertIn("without `--calibration`", opening)
+        self.assertIn("no current-run calibration", opening)
+
+    def test_source_read_claims_only_the_cap_it_can_clear(self) -> None:
+        """Source-read knobs establish a search space, never wiring or build proof."""
+        skill = SKILL.read_text()
+        component = (SKILL_ROOT / "references" / "component-creation.md").read_text()
+        for document in (skill, component):
+            self.assertIn("clears no wiring cap", document)
+            self.assertNotIn("clears no cap", document)
+        self.assertIn("leaves all four unmeasured", component)
+        self.assertNotIn("earns the check", component)
 
     def test_every_dataset_cap_condition_has_a_documented_branch(self) -> None:
         source = (SKILL_ROOT / "scripts" / "readiness.py").read_text()
@@ -13832,7 +13953,7 @@ class SkillPackageTests(unittest.TestCase):
             "treat its status and results as resume hints",
             "independently verify the target and agent",
             "rerun the cheap read-only/free gates required by the next action",
-            "including evaluator containment and call-path checks",
+            "including execution-evaluator scope and call-path checks",
             "verify a paid artifact before quoting it",
             "never waive a safety precondition",
             "recorded approvals do not",
@@ -20254,12 +20375,17 @@ class GuidanceBudgetLedgerRulesTests(unittest.TestCase):
         title: str,
         *,
         follows: int | None = None,
+        follows_measured: dict[str, int] | None = None,
         reason: str | None = None,
         **figures: int,
     ) -> str:
         lines = [f"# {title}", ""]
         if follows is not None:
             lines.append(f"follows: {follows:04d}")
+        lines += [
+            f"follows-{which.replace('_', '-')}-measured: {value}"
+            for which, value in (follows_measured or {}).items()
+        ]
         lines += [
             f"{name.replace('_', '-')}: {value}" for name, value in figures.items()
         ]
@@ -20310,12 +20436,14 @@ class GuidanceBudgetLedgerRulesTests(unittest.TestCase):
                 "0002-branch-a.md": self.entry(
                     "0002 - branch A",
                     follows=1,
+                    follows_measured={"total": 228_407},
                     total_ceiling=232_000,
                     total_measured=231_402,
                 ),
                 "0003-branch-b.md": self.entry(
                     "0003 - branch B",
                     follows=2,
+                    follows_measured={"total": 231_402},
                     total_ceiling=240_000,
                     total_measured=239_118,
                 ),
@@ -20330,6 +20458,109 @@ class GuidanceBudgetLedgerRulesTests(unittest.TestCase):
             guidance_budget_ceilings(entries),
             {"resident": 61_500, "total": 240_000},
         )
+
+    def test_a_new_entry_binds_the_predecessor_measurement_it_used(self) -> None:
+        """A predecessor index without its measured state goes stale silently.
+
+        This is the #305 shape: an entry can still name 0052 after that entry's
+        total has changed. The value binding makes the later branch red before
+        the merge, and the control proves the same chain passes after a genuine
+        re-measurement. The migration binds the historic chain too, rather than
+        leaving its older predecessor relations unprotected.
+        """
+        root = self.root()
+        predecessor = self.entry(
+            "0057 - predecessor",
+            follows=1,
+            follows_measured={"total": 228_407},
+            total_ceiling=232_000,
+            total_measured=231_402,
+        )
+        stale = self.entry(
+            "0058 - stale successor",
+            follows=57,
+            follows_measured={"total": 228_407},
+            total_ceiling=240_000,
+            total_measured=239_118,
+        )
+        entries = self.ledger(
+            **{
+                "0001-inherited-ledger.md": root,
+                "0057-predecessor.md": predecessor,
+                "0058-stale-successor.md": stale,
+            }
+        )
+        self.assertDefect(entries, "predecessor moved after this entry was measured")
+
+        current = stale.replace(
+            "follows-total-measured: 228407", "follows-total-measured: 231402"
+        )
+        entries = self.ledger(
+            **{
+                "0001-inherited-ledger.md": root,
+                "0057-predecessor.md": predecessor,
+                "0058-stale-successor.md": current,
+            }
+        )
+        self.assertEqual(guidance_budget_defects(entries), [])
+
+        missing = current.replace("follows-total-measured: 231402\n", "")
+        entries = self.ledger(
+            **{
+                "0001-inherited-ledger.md": root,
+                "0057-predecessor.md": predecessor,
+                "0058-stale-successor.md": missing,
+            }
+        )
+        self.assertDefect(entries, "does not state follows-total-measured")
+
+        duplicate = current.replace(
+            "follows-total-measured: 231402",
+            "follows-total-measured: 231402\nfollows-total-measured: 231402",
+        )
+        entries = self.ledger(
+            **{
+                "0001-inherited-ledger.md": root,
+                "0057-predecessor.md": predecessor,
+                "0058-stale-successor.md": duplicate,
+            }
+        )
+        self.assertDefect(entries, "states follows-total-measured more than once")
+
+        superfluous = current.replace(
+            "follows-total-measured: 231402",
+            "follows-resident-measured: 61_129\nfollows-total-measured: 231402",
+        )
+        entries = self.ledger(
+            **{
+                "0001-inherited-ledger.md": root,
+                "0057-predecessor.md": predecessor,
+                "0058-stale-successor.md": superfluous,
+            }
+        )
+        self.assertDefect(entries, "does not measure resident")
+
+        orphan = root.replace(
+            "resident-ceiling: 61500",
+            "follows-total-measured: 228407\nresident-ceiling: 61500",
+        )
+        entries = self.ledger(**{"0001-inherited-ledger.md": orphan})
+        self.assertDefect(entries, "the root has no predecessor to bind")
+
+    def test_the_currency_migration_freezes_the_historical_chain(self) -> None:
+        """The 0053 -> 0052 relation from #305 is not grandfathered."""
+        entries = guidance_budget_entries()
+        self.assertTrue(
+            all(
+                entry.follows is None
+                or set(entry.follows_measured) == set(entry.measured)
+                for entry in entries
+            ),
+            "the migration left a historical predecessor relation unbound",
+        )
+        entry_0053 = next(entry for entry in entries if entry.index == 53)
+        self.assertEqual(entry_0053.follows, 52)
+        self.assertEqual(entry_0053.follows_measured, {"total": 411_332})
 
     def test_two_entries_measured_on_the_same_state_are_refused(self) -> None:
         """The mistake the ledger records five times, caught at the merge.
@@ -20346,12 +20577,14 @@ class GuidanceBudgetLedgerRulesTests(unittest.TestCase):
                 "0002-branch-a.md": self.entry(
                     "0002 - branch A",
                     follows=1,
+                    follows_measured={"total": 228_407},
                     total_ceiling=232_000,
                     total_measured=231_402,
                 ),
                 "0003-branch-b.md": self.entry(
                     "0003 - branch B",
                     follows=1,
+                    follows_measured={"total": 228_407},
                     total_ceiling=240_000,
                     total_measured=239_118,
                 ),
@@ -20403,6 +20636,7 @@ class GuidanceBudgetLedgerRulesTests(unittest.TestCase):
                 "0002-branch-a.md": self.entry(
                     "0002 - branch A",
                     follows=1,
+                    follows_measured={"total": 228_407},
                     total_ceiling=232_000,
                     total_measured=231_402,
                 ),
@@ -20473,12 +20707,14 @@ class GuidanceBudgetLedgerRulesTests(unittest.TestCase):
                 "0002-branch-a.md": self.entry(
                     "0002 - branch A",
                     follows=1,
+                    follows_measured={"total": 228_407},
                     total_ceiling=232_000,
                     total_measured=231_402,
                 ),
                 "0003-branch-b.md": self.entry(
                     "0003 - branch B",
                     follows=2,
+                    follows_measured={"total": 231_402},
                     total_ceiling=232_500,
                     total_measured=229_800,
                 ),
@@ -20504,6 +20740,7 @@ class GuidanceBudgetLedgerRulesTests(unittest.TestCase):
                 "0002-branch-a.md": self.entry(
                     "0002 - the #104 migration",
                     follows=1,
+                    follows_measured={"total": 228_407},
                     total_ceiling=220_000,
                     total_measured=209_400,
                 ),
@@ -20531,6 +20768,7 @@ class GuidanceBudgetLedgerRulesTests(unittest.TestCase):
                 "0002-branch-a.md": self.entry(
                     "0002 - branch A",
                     follows=1,
+                    follows_measured={"total": 228_407},
                     total_ceiling=232_000,
                     total_measured=232_400,
                 ),
@@ -20547,6 +20785,7 @@ class GuidanceBudgetLedgerRulesTests(unittest.TestCase):
                 "0002-branch-a.md": self.entry(
                     "0002 - branch A",
                     follows=1,
+                    follows_measured={"total": 228_407},
                     resident_ceiling=62_000,
                     resident_measured=61_400,
                     total_measured=231_402,
@@ -20579,6 +20818,7 @@ class GuidanceBudgetLedgerRulesTests(unittest.TestCase):
                 "0002-branch-a.md": self.entry(
                     "0002 - branch A",
                     follows=1,
+                    follows_measured={"total": 228_407},
                     total_ceiling=232_000,
                     total_measured=231_402,
                 ),
@@ -20670,6 +20910,7 @@ class GuidanceBudgetLedgerRulesTests(unittest.TestCase):
                 "0002-branch-a.md": self.entry(
                     "0002 - branch A",
                     follows=1,
+                    follows_measured={"total": 228_407},
                     total_ceiling=232_000,
                     total_measured=231_402,
                 ),
@@ -22640,6 +22881,23 @@ class ARunThatStoppedCanSayWhyTests(unittest.TestCase):
             "ignored when the project uses git, like the rest of `traigent-runs/`",
             " ".join((ROOT / "README.md").read_text().casefold().split()),
         )
+
+
+class TrackingRecoveryTests(unittest.TestCase):
+    def test_one_recovery_bullet_covers_degraded_tracking(self) -> None:
+        """A degradation has one recovery, not competing instructions."""
+        safety = RUN_SAFETY.read_text()
+        readiness = safety.split("## Connected-run readiness", 1)[1].split(
+            "## Baseline and optimization", 1
+        )[0]
+        recovery = safety.split("## Recovery", 1)[1].split("## ", 1)[0]
+        self.assertEqual(
+            safety.count("Tracking degraded to local-only during a connected run"),
+            1,
+        )
+        self.assertIn("rather than restarting the phase to recover the link", recovery)
+        self.assertIn("re-deciding whether to continue", recovery)
+        self.assertNotIn("report the degradation", readiness.casefold())
 
 
 if __name__ == "__main__":

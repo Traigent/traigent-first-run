@@ -1,6 +1,8 @@
 # 0026 - one remedy per verdict, and a bounded top-up
 
 follows: 0025
+follows-resident-measured: 74_154
+follows-total-measured: 327_063
 resident-ceiling: 75_900
 resident-measured: 75_702
 total-ceiling: 332_400

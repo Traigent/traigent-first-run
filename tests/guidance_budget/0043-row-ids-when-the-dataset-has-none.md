@@ -1,6 +1,7 @@
 # 0043 - a row id the dataset does not have
 
 follows: 0042
+follows-total-measured: 365_609
 total-ceiling: 368_418
 total-measured: 368_018
 

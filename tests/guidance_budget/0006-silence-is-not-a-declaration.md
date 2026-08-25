@@ -1,6 +1,8 @@
 # 0006 - a row that says nothing is scored as generated
 
 follows: 0005
+follows-resident-measured: 62_650
+follows-total-measured: 234_004
 resident-ceiling: 63_000
 resident-measured: 62_939
 total-ceiling: 236_000
