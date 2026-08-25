@@ -297,16 +297,17 @@ provider calls are not intercepted automatically by Traigent mock mode.
 SKILL.md's opening gate asks for this; the shape is here. One document, two halves: `knobs` is what
 the agent can be told to do differently, and `build` is how it is put together.
 
-A name appearing only in a comment, docstring, TODO, or example is not a knob. Record one only where
-executable code reads it, passes it onward, or selects behaviour from it. A stub whose comment lists
-the settings a real call *would* take is describing an agent that does not exist yet, and recording
-those names reports a search space this project does not have - which is the same false readiness a
-historical config-space file produces, arriving through the one input that is supposed to be read
-fresh from the source. Two blinded runs reasoned this out unaided and wrote the reasoning down; a
-third recorded six comment-only names. It is not a judgement call, so it does not stay unstated. Pass
-it as `scripts/readiness.py --agent-knobs`; SKILL.md stage 1 states where it is written. Each
-scoring gets its own directory there for the same reason this paragraph refuses a found file: a
-read is evidence about the source at the moment it was taken, never a document to be reused.
+A name appearing only in a comment, docstring, TODO, or example is not a knob the opening score can
+use. Record one only where executable code reads it, passes it onward, or selects behaviour from it.
+A customer comment or settings file may guide inspection, but never supplies `values`, a range, or
+wiring evidence. If the source uses the parameter but does not enumerate alternatives, record its
+evidence without `values` or `low`/`high`; verify the real build path before adding those alternatives
+to the enhanced space. A stub whose comment lists the settings a real call *would* take is describing
+an agent that does not exist yet, and recording those names reports a search space this project does
+not have - the same false readiness a historical config-space file produces. Pass it as
+`scripts/readiness.py --agent-knobs`; SKILL.md stage 1 states where it is written. Each scoring gets
+its own directory there because a read is evidence about the source at the moment it was taken, never
+a document to be reused.
 
 ```json
 {"source": "agent.py",
@@ -339,10 +340,8 @@ below, and inside `knobs` it is refused - because a parameter establishing no ra
 nothing a search can vary, which is what recording it without one already says.
 `seed` and `max_tokens` earn nothing here, for the reasons the scorer already gives on the card.
 
-The opening read cannot prove that a listed option is wired into the running
-agent. Keep a comment-only or manual alternative out of `values`; it is a
-candidate to add deliberately in the enhanced configuration space, then verify
-on the real build path before treating it as searchable.
+Keep a comment-only or manual alternative out of `values`; verify the real
+build path before adding it deliberately to the enhanced configuration space.
 
 A range counts as at least two distinct values and no more; a value list counts as its own length.
 The score says "at least N configurations" because nobody has chosen the sweep yet. It is a read of
@@ -355,11 +354,9 @@ The `build` member in that same JSON object answers all four checks, each with
 the line you read. Do not split it into a second document: the consumer reads
 one object and requires `knobs` at its root.
 
-The opening card records these answers but leaves all four unmeasured. A line
-of source or a reader's description cannot prove that a prompt reaches the
-provider, every loop ends, every output has one shape, or a named tool is
-reachable. A later score may measure one only when it receives verification
-evidence for that fact; this opening document is not that proof.
+The source-read card records these answers but leaves all four unmeasured: source
+or a reader's description is not proof that a prompt reaches the provider, a
+loop ends, an output has one shape, or a named tool is reachable.
 
 What each is asking, and what it is not. **Prompt** is whether anything the model is told reaches
 the call, and how many worked examples ride with it; two is where examples start showing a pattern

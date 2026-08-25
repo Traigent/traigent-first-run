@@ -265,9 +265,10 @@ On a zero-anchor run, keep the preflight JSON on stdout and feed it directly to
 `readiness.py --preflight -`; retain the rendered card in the conversation only. Until the answer
 anchors intent, do not use `--report`, write evidence under the project, or name a readiness
 directory.
-Explicitly omit every config-space file found before this run's enhanced search, including one left
-by an earlier guided run: it is historical, unverified context, not current wiring evidence. Record
-its provenance; a timestamp, hash, or non-empty `wired` list does not make it current. Every guided
+Explicitly omit every config-space file found before this run's enhanced search from scoring,
+including one left by an earlier guided run: it is historical context, not current-run readiness
+evidence. Record its provenance; a timestamp, hash, or non-empty `wired` list does not make it
+current. A customer-authored file may guide inspection, never score values or wiring. Every guided
 run does this, including a zero-anchor run.
 
 Then read the agent itself and pass what that read found as `--agent-knobs`, so the opening card
@@ -280,16 +281,16 @@ reads an earlier one's. Never delete them, and name that directory to the user b
 neither is optional where an agent was found. Read its own source for parameters it can already vary - model,
 temperature, top_p, prompt strategy, retry/reflection flags, tool selection - and record each with
 the line that shows it - executable code that reads it, passes it on, or selects behaviour from it.
-A name only in a comment, docstring, TODO, or example is not a knob, and the list above is examples
-to search the source for, not a set to report. Same rule as `references/component-creation.md`, applied here because this
+A name only in a comment, docstring, TODO, or example is not scored; it may guide inspection but
+cannot establish a value. Same rule as
+`references/component-creation.md`, applied here because this
 gate is evaluated before that reference loads. Read the same source for how the agent is built and
 answer all four checks the reference names: whether it carries a prompt and worked examples,
 whether anything pins down the
 shape of its answer, whether it ends and on what, and whether the tools it declares can be reached.
 Answer a check you cannot settle as undetermined with the reason, never as a no - a no says the
-agent lacks the thing, and the two are different statements about somebody's code. Withholding the
-second half is not free: those checks keep their weight and earn nothing, exactly as a withheld
-check does everywhere else in the score. Never write a range or an
+agent lacks the thing. Build declarations stay visible but unmeasured; an undetermined check
+still needs its reason. Never write a range or an
 option you did not read: an omitted parameter costs a few points, an invented one makes the card
 wrong. Wanting a second option here is the right instinct at the wrong stage - stage 5's enhanced
 run is where settings get added, from a materially larger space than the agent has today, so the

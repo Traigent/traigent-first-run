@@ -327,11 +327,12 @@ free-tier run as mocked.
 ### Config-space document
 
 `scripts/readiness.py --config-space` scores the agent pillar from the space this run actually
-built. A file found before the current enhanced search - including one left by an earlier guided
-run - is historical context only. Its existence, timestamp, hash, or non-empty `wired` list cannot
-prove current wiring. Record its provenance and omit it from opening and stage-4 readiness. What
-those scores report the agent pillar from instead is the read of the agent's own source they are
-passed as `--agent-knobs`, never this file.
+built. A file found before the current enhanced search, including one left by an earlier guided run,
+is historical context only and never enters config-space scoring. A customer-authored file may guide
+source inspection, but its values and `wired` list never enter `--agent-knobs`. Record provenance;
+its existence, timestamp, hash, or non-empty `wired` list cannot prove current wiring. Omit either
+file from opening and stage-4 readiness. Those scores use the read of the agent's own source passed
+as `--agent-knobs`, never the file.
 
 The rule binds the run, not the invocation that reports. Omitting the document from the opening and
 stage-4 calls describes what those calls pass; a second call scoring the same file to see what the
@@ -355,13 +356,11 @@ reachable; this score says what the search actually received, and they are diffe
 Letting a read of the source stand in for a document the search never emitted would lift this
 ceiling on exactly the runs it exists for - the ones that stopped, failed, or bought no trial.
 
-Its BUILD half travels, and only where a config-space document decides the space beside it. Those
-four checks answer how the agent is put together, which no config space makes any claim about, so
-there is nothing here for a source read to stand in for and no ceiling it can reach. Dropping them
-would report four checks falling to unanswered between the opening card and the closing one while
-nothing about the agent had changed - the same fall the opening gate already refuses for the knob
-half. Where no document reaches the close, pass nothing: the knobs half would establish a space the
-search never received, and the two halves arrive in one file.
+Its BUILD half travels, and only where a config-space document decides the space beside it, but
+remains unmeasured. A config space proves neither how the agent is built nor its source reader's
+claims; dropping those observations would report four checks falling to unanswered between cards
+while nothing about the agent changed. Where no document reaches the close, pass nothing: the knobs
+half would establish a space the search never received, and the two halves arrive in one file.
 
 `agent-no-varying-knobs` is advisory whenever neither a document nor a reading reached the scorer,
 because the scorer cannot tell a document withheld before the search from one the search failed to

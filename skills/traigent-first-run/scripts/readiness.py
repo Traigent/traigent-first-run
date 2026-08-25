@@ -7970,12 +7970,12 @@ def agent_facts_from_discovery(document: Any) -> AgentFacts:
     )
 
 
-def opening_build_declarations_are_unmeasured(
+def build_declarations_are_unmeasured(
     build: tuple[BuildSignal, ...] | None,
 ) -> tuple[BuildSignal, ...] | None:
-    """Keep opening build declarations visible without scoring their prose.
+    """Keep source-read build declarations visible without scoring their prose.
 
-    The opening document records what its reader saw. It is not an execution,
+    The source-read document records what its reader saw. It is not an execution,
     reachability, or termination proof, so the customer-facing CLI must not
     turn a plausible declaration into points. A later score may only measure a
     build fact from an input that actually verifies that fact.
@@ -7989,7 +7989,8 @@ def opening_build_declarations_are_unmeasured(
             else replace(
                 signal,
                 points=0.0,
-                evidence="not measured by the opening source read - " + signal.evidence,
+                evidence="not measured from source-read declarations - "
+                + signal.evidence,
                 measured=False,
             )
         )
@@ -8328,7 +8329,7 @@ def run(argv: Sequence[str] | None = None) -> int:
         if args.agent_knobs:
             agent_facts = replace(
                 agent_facts,
-                build=opening_build_declarations_are_unmeasured(agent_facts.build),
+                build=build_declarations_are_unmeasured(agent_facts.build),
             )
         # Applied to whichever of the three the branches above built, because
         # who wrote the agent is a fact about the project and not about which
