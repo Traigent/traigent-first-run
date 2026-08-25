@@ -3044,6 +3044,10 @@ class SkillPackageTests(unittest.TestCase):
         self.assertIn(next_heading, text)
         gate = text.split(gate_heading, 1)[1].split(next_heading, 1)[0]
         normalized_gate = " ".join(gate.casefold().split())
+        opening_gate = text.split("#### Opening readiness gate", 1)[1].split(
+            gate_heading, 1
+        )[0]
+        normalized_opening_gate = " ".join(opening_gate.casefold().split())
         top_level = " ".join(
             text.split("## Operating contract", 1)[0].casefold().split()
         )
@@ -3080,6 +3084,24 @@ class SkillPackageTests(unittest.TestCase):
         ):
             self.assertIn(phrase, normalized_gate)
         self.assertIn("only after task intent is anchored", top_level)
+        # The mandatory empty-project score still has to be usable before this
+        # question, but its evidence cannot create the very project artifacts
+        # this gate prohibits. Keep the handoff in memory/stdout until intent
+        # authorizes the normal readiness directory.
+        self.assertIn(
+            "on a zero-anchor run, keep the preflight json on stdout and feed it "
+            "directly to `readiness.py --preflight -`",
+            normalized_opening_gate,
+        )
+        self.assertIn(
+            "until the answer anchors intent, do not use `--report`, write "
+            "evidence under the project, or name a readiness directory",
+            normalized_opening_gate,
+        )
+        self.assertIn(
+            "after task intent is anchored, every file a scoring writes",
+            normalized_opening_gate,
+        )
         for action in (
             "create `traigent-runs/` artifacts",
             "create an isolated environment",

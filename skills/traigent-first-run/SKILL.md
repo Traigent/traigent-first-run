@@ -252,7 +252,6 @@ any applicable calibration result. When rows exist, do the row-level sanity chec
 `references/evaluation-and-dataset.md` here and pass it as `--row-review`: it is your own read, it
 spends nothing, and no generated row competes with it yet. Apply the run-scoped evaluator-method rule above to both
 scripts, and apply the run-scoped task-kind rule to readiness only, and the origin rule with it.
-
 **Opening dataset sequencing.** The opening preflight reads a discovered dataset with its default
 `input`/`output` fields, before any explicit field mapping; do not pass `--input-field` or
 `--expected-field` to that opening call. A request/response log or accepted trace is a **source**
@@ -262,16 +261,22 @@ recorded opening result, map a custom dataset's actual fields and re-score; when
 recorded calls, declare the real input separately from the generated candidate output, which is not
 an expected-answer key.
 
+On a zero-anchor run, keep the preflight JSON on stdout and feed it directly to
+`readiness.py --preflight -`; retain the rendered card in the conversation only. Until the answer
+anchors intent, do not use `--report`, write evidence under the project, or name a readiness
+directory.
 Explicitly omit every config-space file found before this run's enhanced search, including one left
 by an earlier guided run: it is historical, unverified context, not current wiring evidence. Record
 its provenance; a timestamp, hash, or non-empty `wired` list does not make it current. Every guided
 run does this, including a zero-anchor run.
 
 Then read the agent itself and pass what that read found as `--agent-knobs`, so the opening card
-grades this project instead of reporting nothing. Every file a scoring writes to reach it - that
-document, the preflight JSON, any note - goes in `traigent-runs/readiness/<YYYYMMDDTHHMMSSZ>/`, a
-fresh directory per scoring so a later one never reads an earlier one's. Never delete them, and name that
-directory to the user beside the card: they may want to keep, share, or remove it. Two halves, one pass, and
+ grades this project instead of reporting nothing. After task intent is anchored, every file a
+ scoring writes to reach it - that document, the preflight JSON, any note - goes in
+ `traigent-runs/readiness/<YYYYMMDDTHHMMSSZ>/`, a fresh directory per scoring so a later one never
+reads an earlier one's. Never delete them, and name that directory to the user beside the card in
+ that project-relative form, never expanded to an absolute path: they may want to keep, share, or
+ remove it. Two halves, one pass, and
 neither is optional where an agent was found. Read its own source for parameters it can already vary - model,
 temperature, top_p, prompt strategy, retry/reflection flags, tool selection - and record each with
 the line that shows it - executable code that reads it, passes it on, or selects behaviour from it.
