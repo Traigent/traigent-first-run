@@ -3396,7 +3396,17 @@ class SkillPackageTests(unittest.TestCase):
             self.assertIn("shared or dependent environment", text)
             self.assertIn("never fall back", text)
         self.assertIn("dedicated first-run environment", skill_text)
+        self.assertIn(
+            "dedicated first-run environment that `references/run-safety.md` authorizes for this run",
+            skill_text,
+        )
+        self.assertNotIn("environment this run created", skill_text)
         self.assertIn("only on the user's explicit request", safety_text)
+        self.assertIn("recorded first-run provenance", safety_text)
+        self.assertIn("contains this walkthrough's pinned set", safety_text)
+        self.assertIn("has no other dependents", safety_text)
+        self.assertIn("otherwise stop with its path and evidence", safety_text)
+        self.assertNotIn("choose a new dedicated first-run path", safety_text)
         self.assertIn("python3.13 -m venv .venv-traigent", safety_text)
         self.assertNotIn(
             "reuse an existing compatible isolated environment", safety_text

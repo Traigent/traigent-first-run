@@ -32,9 +32,9 @@ it. Nothing in this guide requires sub-agents, which not every supported assista
 - Name the dedicated environment by absolute path before creating or touching it. If that path
   already exists, inspect it without changing it. Reuse it only when its recorded first-run
   provenance shows it contains this walkthrough's pinned set and has no other dependents;
-  otherwise stop and recommend one recovery: choose a new dedicated first-run path, or remove and
-  recreate the existing dedicated environment only on the user's explicit request. Never select an
-  existing project, shared, dependent, external, or assistant-owned environment as a fallback.
+  otherwise stop with its path and evidence and recommend inspection. Remove and recreate the
+  existing dedicated environment only on the user's explicit request. Never select an existing
+  project, shared, dependent, external, or assistant-owned environment as a fallback.
 - Create and activate the named dedicated environment before installing. Confirm `sys.prefix`
   points inside it before `pip install`, or the install silently lands in global Python and the
   run cannot find `traigent`.
