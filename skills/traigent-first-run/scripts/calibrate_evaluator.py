@@ -36,18 +36,21 @@ from typing import Any
 # a cost signal, not a broken one.
 #
 # A flat number cannot do that, which is why it is gone. The work scales with
-# the case set: every case has four authored calls, and deterministic runs add
-# six supplemental calls. A one-minute-per-call deterministic scorer therefore
-# needs 1200 seconds for two cases; a judge needs 480. The onboarding ceiling
-# can cut that work, but below it the budget must scale with every call it makes.
+# the case set: every case has four authored calls.  A deterministic run can add
+# up to six supplemental calls (five exception probes and, where meaningful, a
+# permutation probe).  A one-minute-per-call deterministic scorer therefore
+# needs up to 1200 seconds for two cases; a judge needs 480. The onboarding
+# ceiling can cut that work, but below it the budget must scale with every call
+# it can make.
 #
 # Per-probe allowances. 75 seconds deterministic: the evaluator this exists for
 # takes about a minute per call, and 75 gives that a quarter of headroom instead
 # of landing exactly on it. 90 for a judge, which additionally pays network
 # latency and may be a reasoning model thinking for a minute or more per probe.
-# Four probes decide the calibration. Deterministic calibration then makes one
-# permutation and five exception probes per case. They are advisory, but they
-# are real scorer calls and count in the default whole-calibration deadline.
+# Four probes decide the calibration. Deterministic calibration then makes five
+# exception probes and, where the expected output admits a distinct ordering,
+# one permutation probe per case. They are advisory, but they are real scorer
+# calls and the default whole-calibration deadline reserves for the maximum.
 PROBES_PER_CASE = 4
 DETERMINISTIC_SUPPLEMENTAL_PROBES_PER_CASE = 1 + 5
 DETERMINISTIC_SECONDS_PER_PROBE = 75
@@ -688,7 +691,7 @@ def parse_args() -> argparse.Namespace:
             "seconds the whole calibration may take: the authored phase and the "
             "deterministic supplemental probes share this one total budget, so "
             "this is the worst-case wall time and not half of it. The default is "
-            f"derived from the work - {PROBES_PER_CASE} authored and "
+            f"derived from the work - {PROBES_PER_CASE} authored and up to "
             f"{DETERMINISTIC_SUPPLEMENTAL_PROBES_PER_CASE} supplemental probe "
             f"calls per deterministic case at {DETERMINISTIC_SECONDS_PER_PROBE}s "
             f"each, or {PROBES_PER_CASE} calls per --kind llm-judge case at "

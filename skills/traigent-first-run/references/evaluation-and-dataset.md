@@ -553,11 +553,12 @@ the pairing and can have got it wrong. Stated once, here.
 
 Before the stage starts, say what it does and how long it may take: it runs the user's evaluator
 over a few known-good and known-bad answers to prove it separates them: four probe calls per
-input/expected pair (the authored probes). A deterministic calibration also makes one permutation
-and five exception probes per pair; they are advisory but still scorer calls, so count them in the
-default wait. Multiply every call by what one call costs the evaluator and state the number - for a
-judge, a model call per probe, that is minutes rather than seconds. Finishing matters more than
-finishing fast: an evaluator nobody could measure makes every later number unverifiable.
+input/expected pair (the authored probes). A deterministic calibration also makes five exception
+probes and, where the expected answer has a distinct ordering, one permutation probe per pair.
+Those advisory probes are still scorer calls, so the default wait reserves for up to ten calls per
+pair. Multiply every call by what one call costs the evaluator and state the number - for a judge,
+a model call per probe, that is minutes rather than seconds. Finishing matters more than finishing
+fast: an evaluator nobody could measure makes every later number unverifiable.
 
 The script budgets itself per probe call, not as one flat number. That budget covers authored and
 supplemental probes together, so `--timeout` is the whole wait rather than half of it; a
@@ -567,14 +568,15 @@ which the `ADVISORY` line on stderr names.
 **Fifteen minutes is the ceiling on that budget, and say so before the wait starts.** This is
 onboarding rather than a full-power run: a calibration that has not separated a good answer from a
 bad one in fifteen minutes most probably will not, and the timeout is itself a result to act on.
-The ceiling bounds the wait, not the work, so a large case set is cut below the per-probe rate the
-budget was derived at: whole to one pair deterministic and two for a judge. At five pairs a
-deterministic calibration gets 18 seconds per call and a judge gets 45; those are cuts against 75
-and 90 respectively. Tell a user whose evaluator takes about a minute per call what that means for
-them: even a two-pair deterministic matrix cannot finish all ten probes per pair inside the default
-ceiling, and a five-pair matrix cannot finish for either kind. Run fewer pairs where the matrix
-contract permits it, or expect the timeout question. Their own larger `--timeout` is not capped;
-the ceiling only bounds what this stage chooses on its own.
+The ceiling bounds the wait, not the work. A deterministic matrix needs at least two pairs, and its
+maximum ten calls per pair means the cap already binds at that minimum: the 900-second default is
+45 seconds per possible call rather than the derived 75. A judge remains whole through two pairs;
+at five pairs a deterministic calibration gets 18 seconds per possible call and a judge gets 45;
+those are cuts against 75 and 90 respectively. Tell a user whose evaluator takes about a minute per call what
+that means for them: even the two-pair deterministic matrix cannot finish all ten possible probes
+per pair inside the default ceiling, and a five-pair matrix cannot finish for either kind. The
+ceiling is deliberate onboarding scope, not a promise that a slow calibration completes. Their own
+larger `--timeout` is not capped; the ceiling only bounds what this stage chooses on its own.
 
 **There is no resume.** The authored probes all run in one child that reports only once every case
 is done, and nothing is written until it returns, so a calibration stopped part-way records

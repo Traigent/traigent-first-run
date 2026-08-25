@@ -1620,10 +1620,11 @@ class TimeoutIsReportableTests(unittest.TestCase):
         """Pin the number to the work it must cover, not to itself.
 
         A flat budget passes every relative-shape assertion while failing the
-        one customer it was written for: a deterministic case has ten calls,
-        including its six supplemental probes, while a judge has four. At a
-        minute per call, two deterministic cases need 1200 seconds. Reverting
-        that derivation has to fail on meaning here, not on a file hash.
+        one customer it was written for: a deterministic case can have ten
+        calls, including up to six supplemental probes, while a judge has four.
+        At a minute per call, two deterministic cases need up to 1200 seconds.
+        Reverting that derivation has to fail on meaning here, not on a file
+        hash.
 
         What changed is where the check stops. The fifteen-minute cap is a
         decision about how long it is fair to make a first-run user wait, so
@@ -1750,7 +1751,8 @@ class TimeoutIsReportableTests(unittest.TestCase):
             # Both rates, because a judge is cut a pair earlier than a
             # deterministic scorer and one number for both would misinform the
             # reader who is paying per probe.
-            "whole to one pair deterministic and two for a judge",
+            "a deterministic matrix needs at least two pairs",
+            "the cap already binds at that minimum",
             # Built from the constants, not typed twice. A probe that moved
             # DETERMINISTIC_SECONDS_PER_PROBE to 60 survived the literal version
             # of this line: both counts above happened to stay put, and the only
@@ -1760,7 +1762,8 @@ class TimeoutIsReportableTests(unittest.TestCase):
             # named. "45 seconds instead of 75" said "either way" and then
             # quoted one rate, so the judge - cut to exactly half rather than by
             # 40% - read as losing less than it does.
-            f"{ceiling // (5 * probes_per_case['deterministic'])} seconds per call "
+            f"at five pairs a deterministic calibration gets "
+            f"{ceiling // (5 * probes_per_case['deterministic'])} seconds per possible call "
             f"and a judge gets {ceiling // (5 * probes_per_case['llm-judge'])}; "
             "those are cuts against 75 and 90 respectively",
             "their own larger `--timeout` is not capped",
@@ -1937,12 +1940,14 @@ class TimeoutIsReportableTests(unittest.TestCase):
                 # And a zero/negative count cannot produce a nonsense budget.
                 self.assertGreater(budget(0, kind), 0)
                 self.assertEqual(budget(0, kind), budget(1, kind))
-        # A judge pays network latency on top of the same work - below the cap.
-        # At and above it the two paths meet at the same number, because the cap
-        # is a bound on the wait and the wait does not care which kind produced
-        # it. Asserting the strict inequality everywhere would be asserting the
-        # cap away; asserting both halves is what the function actually does.
-        self.assertGreater(budget(2, "llm-judge"), budget(2, "deterministic"))
+        # The two paths count different work.  A deterministic case reserves for
+        # its possible supplementals, so it can reach the cap before a judge;
+        # comparing only their per-call allowances would hide that customer cost.
+        self.assertGreater(budget(1, "deterministic"), budget(1, "llm-judge"))
+        self.assertGreater(budget(2, "deterministic"), budget(2, "llm-judge"))
+        # At and above the point where both hit it, the cap is the same bound
+        # regardless of the kind that produced it.
+        self.assertEqual(budget(4, "llm-judge"), budget(4, "deterministic"))
         self.assertEqual(budget(500, "llm-judge"), budget(500, "deterministic"))
         self.assertEqual(budget(500, "llm-judge"), ceiling)
 
