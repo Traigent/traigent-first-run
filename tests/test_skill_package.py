@@ -3389,6 +3389,7 @@ class SkillPackageTests(unittest.TestCase):
     ) -> None:
         skill_text = " ".join(SKILL.read_text().casefold().split())
         safety_text = " ".join(RUN_SAFETY.read_text().casefold().split())
+        readme_text = " ".join((ROOT / "README.md").read_text().casefold().split())
 
         for text in (skill_text, safety_text):
             self.assertIn("`.venv-traigent`", text)
@@ -3403,6 +3404,8 @@ class SkillPackageTests(unittest.TestCase):
         self.assertIn("never reuse it", safety_text)
         self.assertNotIn("choose a new dedicated first-run path", safety_text)
         self.assertNotIn("safely reused", safety_text)
+        self.assertIn("if that path already exists or its setup fails", readme_text)
+        self.assertIn("only on your explicit request", readme_text)
         self.assertIn("python3.13 -m venv .venv-traigent", safety_text)
         self.assertNotIn(
             "reuse an existing compatible isolated environment", safety_text
