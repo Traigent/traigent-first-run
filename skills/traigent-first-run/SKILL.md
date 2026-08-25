@@ -643,7 +643,7 @@ Only after the standard-library-only component checks:
    A route change requires recipient disclosure and approval; never rewrite a route merely to match
    a key. With no route, use the sole available vendor or ask once. Generated baselines need their
    model ladder; a user-owned baseline requires only its existing route and credential.
-2. Resolve and prepare the dedicated `.venv-traigent` first-run environment through
+2. Resolve and prepare the dedicated first-run environment `.venv-traigent` through
    `references/run-safety.md`, naming its absolute path before touching it. Preserve every existing
    environment. The reference owns creation, recovery, and activation mechanics; never fall back
    to a shared or dependent environment.
