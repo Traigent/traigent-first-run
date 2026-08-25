@@ -22845,5 +22845,22 @@ class ARunThatStoppedCanSayWhyTests(unittest.TestCase):
         )
 
 
+class TrackingRecoveryTests(unittest.TestCase):
+    def test_one_recovery_bullet_covers_degraded_tracking(self) -> None:
+        """A degradation has one recovery, not competing instructions."""
+        safety = RUN_SAFETY.read_text()
+        readiness = safety.split("## Connected-run readiness", 1)[1].split(
+            "## Baseline and optimization", 1
+        )[0]
+        recovery = safety.split("## Recovery", 1)[1].split("## ", 1)[0]
+        self.assertEqual(
+            safety.count("Tracking degraded to local-only during a connected run"),
+            1,
+        )
+        self.assertIn("rather than restarting the phase to recover the link", recovery)
+        self.assertIn("re-deciding whether to continue", recovery)
+        self.assertNotIn("report the degradation", readiness.casefold())
+
+
 if __name__ == "__main__":
     unittest.main()

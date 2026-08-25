@@ -735,8 +735,7 @@ state a permanent rejection leaves, are stamped on the run's own configuration w
 `references/sdk-execution.md` reads them: every later provider call is refused, so the trial already
 evaluated when the backend broke is the last one paid for. A missing `cloud_url` is not visible
 while the search runs - it exists only on the returned result - so that one is read the moment the
-search returns and stops the run before the next paid pass rather than after it. Report the
-degradation in the consolidated result with what it had already cost.
+search returns and stops the run before the next paid pass rather than after it.
 
 The probe answers whether tracking attaches, at the moment it runs. It cannot answer whether the
 managed brain is still reachable when the paid search starts a moment later, and the two failures
@@ -1061,12 +1060,9 @@ not in that repository, and no `npx skills add` flag beyond `--list` and `--skil
   rerun by default.
 - Permanent HTTP validation error or missing `cloud_url`: surface a sanitized precise backend
   reason; do not replace it with a guessed explanation or claim portal success.
-- Tracking degraded to local-only during a connected run: the wrapper has already refused every
-  provider call since the stamp appeared, so report the degradation with a sanitized backend reason
-  and the spend it cost, and do not restart the phase to recover the link.
-- Tracking degraded to local-only during a connected run: stop paid work at once - the door
-  refuses the next call already, so surface a sanitized backend reason and report the
-  degradation rather than re-deciding whether to continue.
+- Tracking degraded to local-only during a connected run: stop paid work at once - the wrapper has
+  already refused every later provider call. Report a sanitized backend reason and the spend it
+  cost, rather than restarting the phase to recover the link or re-deciding whether to continue.
 - Cost limit reached with zero trials: no result exists. Reduce scope or obtain new approval.
 - Cost limit reached with completed trials: show the best partial result and name the cost cap as
   the stop reason; do not report it as a failure or silently drop the paid trials.
