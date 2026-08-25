@@ -619,8 +619,13 @@ combination count> configurations`, or the executed count alone when that total 
 
 Do not manufacture urgency. If baseline and evaluator show a measured quality, cost, or latency
 opportunity, say `Recommended next: continue with Traigent optimization because <observed reason>.`
-End the preview with `Continue with this bounded Traigent run?` Otherwise recommend the evidenced
-repair; never promise improvement.
+When the dataset and evaluator are sound but the baseline showed no measured quality or cost headroom,
+recommend harder realistic cases first. If the customer explicitly wants a verified portal/enhanced
+comparison anyway, offer it as an optional no-lift-possible verification run: say that it is not expected
+to find a gain and that declining leaves the honest baseline-only result intact. An invalid or
+non-discriminating dataset/evaluator has already stopped before this preview and gets the evidenced repair
+instead. End every offered connected preview with `Continue with this bounded Traigent run?`; that reply
+opens no paid work without the explicit approval below, and never promise improvement.
 
 Final reply-ready line: `Recommended next: <action> — <measured reason>. Reply "continue" and I
 will <next safe step>.` For controlled work, `continue` opens a preview; it approves nothing unless

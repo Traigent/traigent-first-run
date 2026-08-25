@@ -783,13 +783,16 @@ the run as baseline-only, not as a completed Traigent optimization.
 
 Now check whether the dataset and evaluator distinguish configurations. If not, stop before the search
 and recommend the evidenced repair before any connected preview. If the baseline is nearly perfect with no
-informative failures, report little or no accuracy headroom and recommend harder realistic cases;
-a ceiling effect remains a hypothesis. An accuracy-only search requires a workflow-demonstration
+informative failures, report little or no measured quality or cost headroom and recommend harder realistic
+cases; a ceiling effect remains a hypothesis. That finding does not itself block a healthy customer who
+explicitly wants one verified portal/enhanced comparison: offer the connected step as an optional,
+no-lift-possible verification run, never as an expected gain. If they decline it, preserve and report the
+baseline-only result. An accuracy-only search with walkthrough material requires a workflow-demonstration
 label. A cost objective may proceed at equal accuracy only when materially lower cost remains
 possible; report any gain as cost and still flag weak evidence.
 
-Only when this gate supports a measured opportunity, preview the connected step with the final
-reply-ready line and approval rules in `references/run-safety.md`.
+Preview the connected step with the final reply-ready line and approval rules in
+`references/run-safety.md`. Its explicit approval remains required before its key, probe, sync, or calls.
 
 Present `Stage 4/5 · Optimize` with the checklist in `references/run-safety.md`: explain
 managed selection, portal history, bounded calls/cost, and deeper insights as conditional

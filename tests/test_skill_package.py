@@ -6203,13 +6203,32 @@ class SkillPackageTests(unittest.TestCase):
             "now check whether the dataset and evaluator distinguish configurations"
         )
         connected_preview = stage_seven.index(
-            "only when this gate supports a measured opportunity"
+            "that finding does not itself block a healthy customer"
         )
         connected_approval = stage_seven.index("stage 4/5 · optimize")
         self.assertLess(baseline_checkpoint, evidence_gate)
         self.assertLess(evidence_gate, connected_preview)
         self.assertLess(connected_preview, connected_approval)
         self.assertIn("stop before the search", stage_seven)
+        self.assertIn("optional, no-lift-possible verification run", stage_seven)
+        self.assertIn(
+            "if they decline it, preserve and report the baseline-only result",
+            stage_seven,
+        )
+        self.assertIn(
+            "explicit approval remains required before its key, probe, sync, or calls",
+            stage_seven,
+        )
+        safety_text = RUN_SAFETY.read_text().casefold()
+        self.assertIn("optional no-lift-possible verification run", safety_text)
+        self.assertIn("say that it is not expected", safety_text)
+        self.assertIn("to find a gain", safety_text)
+        self.assertIn(
+            "declining leaves the honest baseline-only result intact", safety_text
+        )
+        self.assertIn(
+            "opens no paid work without the explicit approval below", safety_text
+        )
         for document in (SKILL, RUN_SAFETY, ROOT / ".env.example"):
             self.assertNotIn("combined approval", document.read_text().casefold())
 
