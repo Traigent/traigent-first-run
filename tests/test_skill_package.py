@@ -15195,6 +15195,22 @@ class SkillPackageTests(unittest.TestCase):
             "a knob every model consumes must still be proven",
         )
 
+    def test_the_probe_deduplicates_declared_values_before_comparing_requests(
+        self,
+    ) -> None:
+        """Duplicate grid entries cannot make an otherwise visible knob partial."""
+        namespace = self._wiring_probe_namespace()
+        space = {
+            **namespace["ENHANCED_SPACE"],
+            "reflect": [False, True, True],
+        }
+        verdicts = namespace["probe_wiring"](space, namespace["BASELINE_CONFIG"])
+        self.assertEqual(
+            verdicts["reflect"],
+            "visible",
+            "the probe must compare distinct declared values, not a duplicate to itself",
+        )
+
     def test_the_probe_reads_more_than_one_input(self) -> None:
         """A swept knob must move every paid input, not one convenient probe.
 

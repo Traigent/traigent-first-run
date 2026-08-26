@@ -1548,8 +1548,8 @@ def probe_wiring(space: dict[str, list], base: dict) -> dict[str, str]:
     models = require_wiring_probe_inputs(space)
     verdicts: dict[str, str] = {}
     for knob in WIRED_KNOBS:
-        values = space.get(knob, [])
-        if len(set(map(repr, values))) < 2:
+        values = list({repr(value): value for value in space.get(knob, [])}.values())
+        if len(values) < 2:
             verdicts[knob] = "not-searched"
             continue
         moved = set()

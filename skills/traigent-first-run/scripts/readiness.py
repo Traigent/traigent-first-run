@@ -4876,10 +4876,11 @@ UNPROBED_DISCOVERED_KNOBS_CAP = Cap(
     AGENT_NO_VARYING_KNOBS_CEILING,
     "The source read found candidate settings, but it did not establish that "
     "changing them changes the finalized request. This advisory opening ceiling "
-    "remains until a successful current-run enhanced config-space artifact reaches "
-    "this scorer. Run the request-difference probe as a separate pre-call safety "
-    "guard; it does not raise this card. A single preserved configuration is not "
-    "a grid search.",
+    "remains while the cited source evidence is unverified: correct its selected-agent "
+    "path, executable source lines, or values to establish opening credit. A successful "
+    "current-run enhanced config-space artifact can later replace the opening evidence. "
+    "Run the request-difference probe as a separate pre-call safety guard; it does not "
+    "raise this card. A single preserved configuration is not a grid search.",
     blocks=False,
 )
 
@@ -7460,18 +7461,6 @@ BUILD_ONLY_KNOB_FIELDS = frozenset({"determined", "reason"})
 AGENT_KNOBS_DOCUMENT_FIELDS = frozenset({"knobs", "source", "build"})
 
 
-def _value_is_evidenced(value: Any, evidence: str) -> bool:
-    """Does the line the author cited actually show this option?
-
-    Word-boundary, not substring, and the difference is the whole check:
-    across the blinded runs that invented an option, every one of them was a
-    model name nested inside the real one - `gpt-4o` and `gpt-4` both sit
-    inside `gpt-4o-mini`. A substring test read those as evidenced and would
-    have waved through every case it was written for.
-    """
-    return bool(re.search(rf"(?<![\w.-]){re.escape(str(value))}(?![\w.-])", evidence))
-
-
 @dataclass(frozen=True)
 class StaticSourceEvidence:
     """A selected-agent source file checked without importing or executing it."""
@@ -7917,26 +7906,44 @@ def _selected_callable_binds(name: str, source: StaticSourceEvidence) -> bool:
 def _module_binding_is_current(
     binding: ast.Assign | ast.AnnAssign, name: str, source: StaticSourceEvidence
 ) -> bool:
-    """Accept a module binding only if another module binding cannot replace it.
+    """Accept a module binding only if no syntax can rebind its name.
 
-    A helper's local ``MODELS`` is not module scope.  Conversely, a cited
-    module assignment that is followed by another assignment to the same name
-    does not identify the value the selected callable reads.  Refuse both
-    cases rather than guessing a runtime path.
+    A cited module assignment does not identify the value a selected callable
+    reads once the module contains another write, delete, definition, or
+    import for that spelling. Enumerating assignment statement forms is not
+    sufficient: ``global MODELS; MODELS = ...`` and ``(MODELS := ...)`` are
+    both writes despite having different AST parents. Reject every other
+    binding site, in every lexical scope, rather than guessing whether a
+    runtime path can reach it. This is deliberately conservative source
+    credit; request wiring remains a separate pre-paid proof.
     """
     if (
         _lexical_owner(binding, source) is not source.tree
         or source.parents.get(id(binding)) is not source.tree
     ):
         return False
+    owned_target_nodes = {
+        id(target)
+        for target in (
+            binding.targets if isinstance(binding, ast.Assign) else (binding.target,)
+        )
+        for target in ast.walk(target)
+    }
     for candidate in ast.walk(source.tree):
-        if not isinstance(candidate, (ast.Assign, ast.AnnAssign)):
-            continue
-        if _lexical_owner(candidate, source) is not source.tree:
-            continue
-        if candidate.lineno <= binding.lineno:
-            continue
-        if name in _assignment_names(candidate):
+        if (
+            isinstance(candidate, ast.Name)
+            and isinstance(candidate.ctx, (ast.Store, ast.Del))
+            and candidate.id == name
+            and id(candidate) not in owned_target_nodes
+        ):
+            return False
+        if isinstance(candidate, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            if candidate.name == name:
+                return False
+        if isinstance(candidate, (ast.Import, ast.ImportFrom)) and any(
+            (alias.asname or alias.name.split(".")[0]) == name
+            for alias in candidate.names
+        ):
             return False
     return not _selected_callable_binds(name, source)
 
@@ -8061,8 +8068,10 @@ def _binding_values_for_knob(
 def values_are_in_checked_source(
     knob: str, values: Sequence[Any], lines: Sequence[int], source: StaticSourceEvidence
 ) -> list[str]:
-    bound_values = _binding_values_for_knob(knob, lines, source)
-    return [str(value) for value in values if value not in bound_values]
+    bound_values = {
+        repr(value) for value in _binding_values_for_knob(knob, lines, source)
+    }
+    return [str(value) for value in values if repr(value) not in bound_values]
 
 
 def discovered_knob_from_entry(
@@ -8152,15 +8161,7 @@ def discovered_knob_from_entry(
                 ),
                 unverified=True,
             )
-        unevidenced = (
-            values_are_in_checked_source(name, values, checked_lines, source)
-            if source is not None
-            else [
-                str(value)
-                for value in values
-                if not _value_is_evidenced(value, evidence)
-            ]
-        )
+        unevidenced = values_are_in_checked_source(name, values, checked_lines, source)
         if unevidenced:
             # A finding, not a refusal, per this error class's own rule: a
             # parameter that does not qualify is reported with its reason,
@@ -8663,13 +8664,26 @@ def agent_facts_from_discovery(
                     selected_agent_callable,
                 )
             except AgentDiscoveryInputError as error:
-                if "--selected-agent-callable must name exactly one" not in str(error):
+                message = str(error)
+                if "--selected-agent-callable must name exactly one" in message:
+                    source_unavailable_reason = (
+                        "the selected callable was not found as one top-level Python function, "
+                        "so this local static check cannot verify its call path; leave source "
+                        "credit unestablished or use a thin Python adapter that calls unchanged behavior"
+                    )
+                elif "is not readable Python for static validation" in message:
+                    # The customer's selected file is present, but this local
+                    # interpreter cannot parse it. That is an unsupported
+                    # static-inspection path, not evidence that the agent has
+                    # no knobs and not a malformed assistant-authored claim.
+                    source_unavailable_reason = (
+                        "the selected Python agent cannot be parsed by this local "
+                        "static checker, so source credit is unestablished; use a "
+                        "compatible local checker or a thin Python adapter that calls "
+                        "unchanged behavior"
+                    )
+                else:
                     raise
-                source_unavailable_reason = (
-                    "the selected callable was not found as one top-level Python function, "
-                    "so this local static check cannot verify its call path; leave source "
-                    "credit unestablished or use a thin Python adapter that calls unchanged behavior"
-                )
     return AgentFacts(
         discovered=tuple(
             discovered_knob_from_entry(

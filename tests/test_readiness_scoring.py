@@ -4533,9 +4533,9 @@ class PowerBoundsTheBandTests(unittest.TestCase):
         against evidence reading `["gpt-4o-mini", "gpt-4o"]` earns nothing".
         Its sibling above only ever exercises the coarse half - a value absent
         from the line altogether - which a plain `value in evidence` test
-        refuses just as readily. The fine half is the half the word boundaries
-        in `_value_is_evidenced` were actually written for, and loosening them
-        to a substring test is the exact defect its own docstring names.
+        refuses just as readily. The fine half is the source literal matching
+        rule: a value must match one of the cited binding's literal values,
+        not merely occur as a substring in its source text.
 
         Both directions, because one alone is passed by a guard that is
         uniformly wrong. `gpt-4` earns nothing though it is a substring twice
@@ -4601,20 +4601,13 @@ class PowerBoundsTheBandTests(unittest.TestCase):
 
         Its sibling above pins the RULE and not the boundary that implements
         it. `gpt-4` against `["gpt-4o-mini", "gpt-4o"]` is refused by a
-        standard word boundary exactly as readily as by the wider class
-        `_value_is_evidenced` actually uses, because nothing in that fixture
-        is hyphen-adjacent: swap the lookarounds for a plain word boundary and
-        every assertion above still passes. So that test cannot tell the two
-        definitions apart, and this one is where they part.
+        source string matching exactly as readily as by a whole-token rule,
+        because nothing in that fixture is hyphen-adjacent. This test instead
+        pins that only the cited binding's literal values may earn credit.
 
-        A standard word boundary reads a hyphen as a word break, and this
-        scorer deliberately does not. Under it, `mini` and `gpt` are whole
-        tokens of `gpt-4o-mini` and each earns credit for an option no agent
-        offers - the invented option this function's own docstring says it
-        exists to refuse, arriving through the model ids it was written for.
-        Both sides of the hyphen, because that is what "`-` is a token
-        character" means, and a class that dropped it from only one lookaround
-        would still refuse the other.
+        `mini` and `gpt` occur in a model id but are not values in the cited
+        binding. Neither can earn credit for an option the agent does not
+        offer.
         """
         for fragment in ("mini", "gpt"):
             with self.subTest(fragment=fragment):
@@ -9158,6 +9151,33 @@ class StaticAgentSourceEvidenceTests(unittest.TestCase):
         self.assertGreater(pillar.score, 0)
         self.assertFalse(any(cap.condition == "agent-no-varying-knobs" for cap in caps))
 
+    def test_python_equality_cannot_turn_one_bound_value_into_two_options(self) -> None:
+        """Source membership uses the same representation as the distinct count."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "agent.py").write_text(
+                "FLAGS = [1]\n"
+                "def call(choice):\n"
+                "    return provider(flag=FLAGS[choice])\n"
+            )
+            facts = MODULE.agent_facts_from_discovery(
+                {
+                    "source": "agent.py",
+                    "knobs": {
+                        "flag": {
+                            "values": [1, True],
+                            "source_lines": [1],
+                            "evidence": "selected source binding",
+                        }
+                    },
+                },
+                source_root=root,
+                selected_agent=root / "agent.py",
+                selected_agent_callable="call",
+            )
+        self.assertFalse(facts.discovered[0].credited)
+        self.assertIn("True", facts.discovered[0].uncredited_reason)
+
     def test_a_sibling_or_outside_selected_agent_cannot_supply_credit(self) -> None:
         """#330: root containment alone cannot bind another file to this agent."""
         with tempfile.TemporaryDirectory() as directory:
@@ -9269,6 +9289,45 @@ class StaticAgentSourceEvidenceTests(unittest.TestCase):
                 (root / "agent.py").write_text(text)
                 facts = MODULE.agent_facts_from_discovery(
                     self._document("conditional module state", source_lines=[line]),
+                    source_root=root,
+                    selected_agent=root / "agent.py",
+                    selected_agent_callable="call",
+                )
+            self.assertFalse(facts.discovered[0].credited)
+            self.assertTrue(facts.discovered[0].unverified)
+
+    def test_global_and_named_expression_rebindings_cannot_supply_credit(self) -> None:
+        """Every alternate binding site invalidates static source credit.
+
+        A ``global`` write runs outside its helper's lexical scope and a
+        named expression is not an assignment statement. Both previously
+        escaped a statement-shape scan and let stale module alternatives be
+        credited for the call that actually reads a one-value replacement.
+        """
+        cases = (
+            (
+                'MODELS = ["fast", "slow"]\n'
+                "def configure(allowed):\n"
+                "    global MODELS\n"
+                "    MODELS = allowed\n"
+                'configure(["fast"])\n'
+                "def call(message, choice):\n"
+                "    return provider(model=MODELS[choice], message=message)\n"
+            ),
+            (
+                'MODELS = ["fast", "slow"]\n'
+                'if (MODELS := ["fast"]):\n'
+                "    pass\n"
+                "def call(message, choice):\n"
+                "    return provider(model=MODELS[choice], message=message)\n"
+            ),
+        )
+        for text in cases:
+            with self.subTest(text=text), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                (root / "agent.py").write_text(text)
+                facts = MODULE.agent_facts_from_discovery(
+                    self._document("alternate binding", source_lines=[1]),
                     source_root=root,
                     selected_agent=root / "agent.py",
                     selected_agent_callable="call",
@@ -9408,6 +9467,27 @@ class StaticAgentSourceEvidenceTests(unittest.TestCase):
             self.assertTrue(facts.discovered[0].unverified)
             _pillar, caps, _ = MODULE.score_agent(facts)
             self.assertFalse(caps[0].blocks)
+
+    def test_unparseable_selected_python_is_an_advisory_unknown(self) -> None:
+        """A customer syntax/version mismatch does not abort the opening card."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "agent.py").write_text(
+                'MODELS = ["fast", "slow"]\n'
+                "def call(message, choice)\n"
+                "    return provider(model=MODELS[choice], message=message)\n"
+            )
+            facts = MODULE.agent_facts_from_discovery(
+                self._document("unparseable local source", source_lines=[1]),
+                source_root=root,
+                selected_agent=root / "agent.py",
+                selected_agent_callable="call",
+            )
+        self.assertFalse(facts.discovered[0].credited)
+        self.assertTrue(facts.discovered[0].unverified)
+        self.assertIn("cannot be parsed", facts.discovered[0].uncredited_reason)
+        _pillar, caps, _ = MODULE.score_agent(facts)
+        self.assertFalse(any(cap.blocks for cap in caps))
 
     def test_fixed_default_subscript_is_not_two_reachable_alternatives(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -9578,8 +9658,8 @@ class TheAgentPillarReadsTheAgentTests(unittest.TestCase):
         """Parsing the example is not the same as scoring it.
 
         Its sibling above passed while `model` and `style` earned nothing:
-        both evidence lines PARAPHRASED their options ("MODELS lists the three
-        ids"), and `_value_is_evidenced` looks for the literal value. The one
+        both evidence lines did not cite executable literals the selected
+        callable reached. The one
         document handed to a reader as the shape to copy was a shape that
         scores zero on two of its three knobs, and a structural check cannot
         see that. So run it through the scorer.
