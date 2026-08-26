@@ -5472,7 +5472,7 @@ class SkillPackageTests(unittest.TestCase):
             "why two lines are blank at the start",
             "no settings document ever reaches an opening score",
             # The Agent pillar's own sentence, which is now about what IS read.
-            "your agent is still there to read, and the assistant reads it",
+            "the assistant cites relative source lines below the local project root",
             # And the point of the paragraph, which survives both corrections.
             "neither is something you were supposed to bring",
         ):
@@ -5746,11 +5746,9 @@ class SkillPackageTests(unittest.TestCase):
                 self.assertIn(phrase, readme)
         self.assertNotIn("calibrating the evaluator is usually what moves it", readme)
         for phrase in (
-            "source discovery records candidates for the later request-difference proof",
-            "it earns no opening search-space credit and does not prove wiring",
-            "four opening-card states hold the score at 45",
-            "a source read that finds candidate settings is advisory until a successful current-run enhanced config-space artifact reaches the scorer",
-            "the request-difference probe is a separate pre-call safety guard: it does not raise the opening card",
+            "static parsing rejects comments, docstrings, todos, and example-only bindings",
+            "verified source alternatives earn opening search-space credit but do not prove final wiring",
+            "the separate pre-approval request-difference proof decides whether a paid grid may run",
             "an empty settings document also blocks because it establishes no usable dimension",
         ):
             with self.subTest(phrase=phrase):
@@ -5840,7 +5838,7 @@ class SkillPackageTests(unittest.TestCase):
     def test_the_four_opening_states_have_their_real_payment_routes(self) -> None:
         """One ceiling, four states, and two distinct payment routes.
 
-        `agent-no-varying-knobs` reaches 45 from four opening-card states. A
+        `agent-no-varying-knobs` reaches 45 from unestablished-space states. A
         read of the agent that established no usable setting is a
         MEASUREMENT of the project - a search here would compare one
         configuration - so it blocks the paid run. No document and no read is a
@@ -5848,13 +5846,11 @@ class SkillPackageTests(unittest.TestCase):
         beside that cap says it "claims nothing about the customer's project
         either way", so it is advisory and stops nothing.
 
-        A source read that finds candidates is a second advisory state, but its
-        opening ceiling is lifted only by a successful current-run Enhanced
-        config-space artifact. The request-difference probe remains a separate
-        pre-call safety guard; it cannot lift this card. An empty settings
-        document is the second blocking state. The four complete routes must
-        stay separate: otherwise a source read that found no usable setting can
-        be falsely described as advisory while a bare-token test still passes.
+        A source read with statically verified alternatives establishes opening
+        credit but not wiring. An unchecked source claim is advisory, while an
+        empty settings document is the second blocking state. The pre-approval
+        request proof, not this opening score, decides whether a paid grid can
+        proceed.
 
         Derived from the module rather than restated from either paragraph, so
         the day the two caps stop disagreeing about blocking, this fails here
@@ -5895,10 +5891,9 @@ class SkillPackageTests(unittest.TestCase):
         for route in (
             "a source read that finds no usable dimension blocks the paid run",
             "an empty settings document also blocks because it establishes no usable dimension",
-            "a source read that finds candidate settings is advisory until a successful current-run enhanced config-space artifact reaches the scorer",
-            "no source read and no settings document is also advisory",
-            "the request-difference probe is a separate pre-call safety guard: it does not raise the opening card",
-            "neither advisory state permits a grid",
+            "unchecked source claims and no source read/settings document are advisory",
+            "a verified source read can establish opening credit",
+            "the separate pre-approval request-difference proof decides whether a paid grid may run",
         ):
             with self.subTest(route=route):
                 self.assertIn(route, readme)
@@ -5907,8 +5902,8 @@ class SkillPackageTests(unittest.TestCase):
         # must retain the same blocks-versus-advisories partition.
         for route in (
             "a settings document or source read establishes no usable dimension",
-            "source candidates await request-difference proof, or where neither reached the score",
-            "neither advisory state permits a grid",
+            "source evidence could not be checked, or where neither source nor a settings document reached the score",
+            "the separate pre-approval request-difference proof decides whether any paid grid may proceed",
         ):
             with self.subTest(glossary_route=route):
                 self.assertIn(route, glossary)
@@ -6561,7 +6556,7 @@ class SkillPackageTests(unittest.TestCase):
         # agent evidence was supplied at all. "Usually" sends a reader who
         # cannot find their document looking for a mistake they did not make.
         self.assertIn(
-            "source candidates await request-difference proof, or where neither reached the score",
+            "source evidence could not be checked, or where neither source nor a settings document reached the score",
             glossary,
         )
 
@@ -13140,10 +13135,10 @@ class SkillPackageTests(unittest.TestCase):
         # an assistant meeting that card routes it as advisory.
         self.assertIn("source read finds no usable dimension", routing)
         self.assertIn(
-            "advisory only with no evidence or unprobed source candidates",
+            "advisory only with no evidence or source candidates whose references could not be verified",
             routing,
         )
-        self.assertIn("neither permits a grid", routing)
+        self.assertIn("request-difference proof", routing)
 
     def test_an_unrecognised_shape_is_read_before_it_is_called_broken(self) -> None:
         """The route has to say READ, not just "not creation".
@@ -13336,7 +13331,8 @@ class SkillPackageTests(unittest.TestCase):
         skill = SKILL.read_text()
         component = (SKILL_ROOT / "references" / "component-creation.md").read_text()
         self.assertIn(
-            "it proves neither paid space nor wiring", " ".join(skill.split())
+            "It attests nothing about wiring, clears no wiring cap, and writes nothing into the user's project.",
+            " ".join(skill.split()),
         )
         self.assertIn(
             "never supplies `values`, a range, or wiring evidence",
@@ -22428,22 +22424,24 @@ class TheReadHappensAndAFailedReadIsAQuestionTests(unittest.TestCase):
     ) -> None:
         """Guidance and scorer together, because either alone pins nothing.
 
-        The cap's meaning stays in stage 4. Source-only discovery adds an
-        advisory branch, but neither advisory branch grants a grid: the
-        baseline-stage request guard owns that decision.
+        The cap's meaning stays in stage 4. Verified source evidence can earn
+        opening credit, while the baseline-stage request guard owns paid-grid
+        permission.
         """
         gate = self._gate()
         self.assertIn("stage 4's cap routing below", gate)
         # The home it points at names both advisory states and denies a grid.
         skill = " ".join(SKILL.read_text().casefold().split())
         routing = skill.split(
-            "`agent-no-varying-knobs` blocks when a settings document or source read",
+            "`agent-no-varying-knobs` blocks when a settings document or a statically checked source read",
             1,
         )
         self.assertEqual(len(routing), 2, "the cap-routing paragraph has moved")
         self.assertIn("expose a direct request parameter", routing[1])
-        self.assertIn("unprobed source candidates", routing[1])
-        self.assertIn("neither permits a grid", routing[1])
+        self.assertIn(
+            "source candidates whose references could not be verified", routing[1]
+        )
+        self.assertIn("request-difference proof", routing[1])
 
         # The scorer half. The silent state still caps, still does not block,
         # and still sits at the shared ceiling.

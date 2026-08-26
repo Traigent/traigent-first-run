@@ -313,11 +313,14 @@ a document to be reused.
 {"source": "agent.py",
  "knobs": {
    "model":       {"values": ["gpt-4o-mini", "gpt-4o", "o3-mini"],
-                   "evidence": "agent.py:8 model=model reaches chat.completions.create; agent.py:4 MODELS = [\"gpt-4o-mini\", \"gpt-4o\", \"o3-mini\"]"},
+                   "source_lines": [4, 8],
+                   "evidence": "The selected agent's model alternatives reach its local call path."},
    "temperature": {"low": 0.0, "high": 1.0,
-                   "evidence": "agent.py:9 temperature=temperature reaches the provider call"},
+                   "source_lines": [5, 9],
+                   "evidence": "The selected agent's temperature alternatives reach its local call path."},
    "style":       {"values": ["direct", "structured"],
-                   "evidence": "agent.py:11 STYLES[style] selects the system prompt; agent.py:5 STYLES = {\"direct\": ..., \"structured\": ...}"}},
+                   "source_lines": [6, 12],
+                   "evidence": "The selected agent's style alternatives reach its local call path."}},
  "build": {
    "prompt": {"present": true, "few_shot": 2,
               "evidence": "agent.py:5-19 SYSTEM carries two worked examples"},
@@ -328,29 +331,30 @@ a document to be reused.
              "evidence": "agent.py:12 TOOLS lists both; both resolve in this module"}}}
 ```
 
-A parameter's `evidence` both cites the source and proves the declared range: quote the exact
-line that spells out each categorical option, or the numeric bounds, rather than only the line
-that passes the parameter onward. The scorer checks whole values against that evidence before it
-records a candidate. This records source discovery only; it earns no opening search-space credit
-and cannot establish wiring, reachability, or provider effect. Only the finalized wrapper's
-request-difference probe, run before presenting the baseline approval, can establish a
-multi-configuration paid baseline. Anything else is reported with the reason it earned nothing,
-which is a line the user can read and correct - so a parameter you are unsure of is worth recording
-rather than dropping. Record it with its `evidence`
-and no `values` or `low`/`high`: that is how a knob says "seen in the agent, extent not
-established". A knob has no `determined` field - that answer belongs to the four `build` checks
-below, and inside `knobs` it is refused - because a parameter establishing no range contributes
-nothing a search can vary, which is what recording it without one already says.
-`seed` and `max_tokens` earn nothing here, for the reasons the scorer already gives on the card.
+A parameter's `source_lines` are positive physical lines in relative `source`; that file must be
+`--selected-agent` below `--agent-source-root`. `--selected-agent-callable` names the selected
+top-level Python function. Without importing code, the scorer accepts only a cited executable
+literal binding that is an unconditional module-level statement, has no later binding of that
+name, and is consumed by the selected function's direct return/call through an unmodified formal
+parameter. Local bindings, branches, helpers, metadata, comments, examples, and another callable
+cannot lend it credit. This deliberately narrow static form is an opening observation, not a
+claim that every Python agent is unsupported. A valid range/list can improve the opening card,
+never prove wrapper wiring or provider effect. Record an unsettled parameter with `evidence` and
+no `values` or `low`/`high`; it is worth recording rather than dropping. A knob has no `determined` field.
+`seed` and `max_tokens` remain excluded. The pre-approval request-difference probe
+alone authorizes a multi-configuration paid grid; the Enhanced config-space record says what ran.
 
-Keep a comment-only or manual alternative out of `values`; verify the real
-build path before adding it deliberately to the enhanced configuration space.
+Run the read with all three bound inputs, for example:
 
-A range or value list remains useful candidate information, but it never clears the opening
-readiness cap. The contained request-difference probe over the finalized generated wrapper is a
-separate pre-call safety guard, completed before the baseline approval; it does not raise the
-opening card. Only the current-run enhanced config-space document the search emits can replace
-that source-only score.
+```bash
+scripts/readiness.py --agent-knobs traigent-runs/readiness/<run>/agent-knobs.json \
+  --agent-source-root "$PROJECT_ROOT" --selected-agent "$PROJECT_ROOT/agent.py" \
+  --selected-agent-callable answer_question
+```
+
+For a command, method, callable object, or non-Python agent, leave source credit unestablished and
+take the advisory route. A safely evaluated thin Python adapter is walkthrough material, not proof
+that the original production agent was optimized.
 
 ### The build half
 

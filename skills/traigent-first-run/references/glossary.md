@@ -294,14 +294,14 @@ The lines under each pillar on the card
   No settings document ever reaches an opening score. Every config-space file
   found before this run's search is omitted; an earlier run's is circular
   history, and a customer-authored one can guide source inspection but cannot
-  establish scored values or wiring. Your agent is still there to read, and the
-  assistant reads it: which parameters it can already vary, and the line of your code showing each. That is what the opening
-  pillar is scored from, and it says "at least N configurations" because
-  nobody has chosen the sweep yet. A reading that found nothing your agent can
-  vary is a measurement of your project - a search here would compare one
-  configuration - so it blocks the paid run until something can vary. Nothing
-  read and nothing supplied is a statement about what this score was given; it
-  claims nothing about your project either way, and it stops nothing.
+  establish current wiring. Your agent is still there to read. The assistant
+  cites relative source lines below the local project root, and the scorer
+  parses them without importing code: comments, docstrings, TODOs, and examples
+  do not count. Verified executable alternatives can score the opening search
+  space, but only the later request-difference proof permits a paid grid. A
+  reading that found nothing your agent can vary blocks the paid run until
+  something can vary. Nothing read and nothing supplied says only what this
+  score was given, not what is wrong with your project.
 
 Readiness score (the card, the three pillars, bands, caps, blocked)
   Plain: a quick first-pass estimate, from 0 to 100, of how ready your setup is
@@ -322,8 +322,10 @@ Readiness score (the card, the three pillars, bands, caps, blocked)
   evidence cannot support a trustworthy comparison. `agent-no-varying-knobs`
   holds the card at 45 when the paid space is not yet established. It blocks
   where a settings document or source read establishes no usable dimension. It
-  is advisory where source candidates await request-difference proof, or where
-  neither reached the score; neither advisory state permits a grid.
+  is advisory where source evidence could not be checked, or where neither
+  source nor a settings document reached the score. A verified source reading
+  can improve the opening card; the separate pre-approval request-difference
+  proof decides whether any paid grid may proceed.
   Bands: Not ready (0-29), Partial (30-54), Workable (55-74), Strong (75-89),
   Excellent (90-100).
   Cap: a ceiling on the whole score, so a high average cannot hide one bad part.

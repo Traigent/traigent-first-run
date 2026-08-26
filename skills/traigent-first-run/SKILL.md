@@ -271,16 +271,17 @@ evidence. Record its provenance; a timestamp, hash, or non-empty `wired` list do
 current. A customer-authored file may guide inspection, never score values or wiring. Every guided
 run does this, including a zero-anchor run.
 
-Then read the agent and record it as `--agent-knobs`; it proves neither paid space nor wiring.
 After task intent is anchored, every file a
  scoring writes to reach it - that document, the preflight JSON, any note - goes in
  `traigent-runs/readiness/<YYYYMMDDTHHMMSSZ>/`, a fresh directory per scoring so a later one never
 reads an earlier one's. Never delete them, and name that directory to the user beside the card in
  that project-relative form, never expanded to an absolute path: they may want to keep, share, or
  remove it. Two halves, one pass, and
-neither is optional where an agent was found. Read its own source for parameters it can already vary - model,
-temperature, top_p, prompt strategy, retry/reflection flags, tool selection - and record each with
-the line that shows it - executable code that reads it, passes it on, or selects behaviour from it.
+neither is optional where an agent was found. For a selected top-level Python function, include
+`--agent-source-root`, `--selected-agent`, and `--selected-agent-callable`; `source_lines` must show values on its
+direct path. Otherwise leave source credit unestablished and use the advisory route. A thin Python adapter is
+walkthrough material, not proof that the original agent was optimized. `references/component-creation.md` owns the
+exact argv and source-evidence contract.
 A name only in a comment, docstring, TODO, or example is not scored; it may guide inspection but
 cannot establish a value. Same rule as
 `references/component-creation.md`, applied here because this
@@ -625,9 +626,11 @@ close if it was not fixed. After any repair or substitute creation, re-run the a
 applicable calibration, and the score, then record that gate result without overwriting the opening
 one.
 
-`agent-no-varying-knobs` blocks when a settings document or source read finds no usable dimension.
-Mark one setting with a second value or expose a direct request parameter. It is advisory only with
-no evidence or unprobed source candidates; neither permits a grid. Report stops/zero trials.
+`agent-no-varying-knobs` blocks when a settings document or a statically checked source read finds
+no usable dimension. Mark one setting with a second value or expose a direct request parameter. It
+is advisory only with no evidence or source candidates whose references could not be verified.
+Before either paid grid, the local request-difference proof—not the opening score—must establish
+every selected direct dimension. Report stops/zero trials when that proof cannot do so.
 
 ### 5. Prepare the environment and finish free checks
 
