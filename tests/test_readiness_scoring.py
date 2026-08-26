@@ -1168,6 +1168,15 @@ class EvaluationScoringTests(unittest.TestCase):
         _, caps = MODULE.score_evaluation(facts)
         self.assertIn("evaluator-invalid", [cap.condition for cap in caps])
 
+    def test_known_good_rejection_is_capped_as_invalid(self) -> None:
+        facts = MODULE.EvaluationFacts(
+            present=True,
+            calibration_present=True,
+            checks=({"good_passes": False, "bad_fails": True, "non_constant": True},),
+        )
+        _, caps = MODULE.score_evaluation(facts)
+        self.assertIn("evaluator-invalid", [cap.condition for cap in caps])
+
     def test_weakest_case_drags_the_calibration_score(self) -> None:
         strong = MODULE.EvaluationFacts(
             present=True,
@@ -1272,6 +1281,39 @@ class EvaluationScoringTests(unittest.TestCase):
         cap = next(c for c in caps if c.condition == "evaluator-unresolved")
         self.assertEqual(cap.action_kind, "repair-evaluator")
         self.assertNotIn("does not parse", cap.reason)
+
+    def test_a_declared_method_without_calibration_is_unvalidated_not_broken(
+        self,
+    ) -> None:
+        """A method name cannot certify the file it is attached to (#304).
+
+        The opening score intentionally does not import evaluators: importing
+        arbitrary customer code can spend, use credentials, or trigger module
+        side effects. That makes a declaration useful metadata but not evidence
+        that the connected scorer reads either answer. Both an empty file and a
+        constant scorer therefore have to remain capped until the existing
+        approved calibration path has actually measured this evaluator.
+
+        This test pins the transition, not a synthetic parser heuristic. A
+        future static check may add facts, but it must not make a declared
+        method alone clear the evaluator cap again.
+        """
+        facts = MODULE.EvaluationFacts(
+            present=True,
+            method="exact",
+            task_kind="closed-label",
+            parses=True,
+        )
+        pillar, caps = MODULE.score_evaluation(facts)
+        conditions = [cap.condition for cap in caps]
+        self.assertIn("evaluator-unvalidated", conditions)
+        self.assertNotIn("evaluator-unresolved", conditions)
+        self.assertNotIn("evaluator-invalid", conditions)
+        cap = next(cap for cap in caps if cap.condition == "evaluator-unvalidated")
+        self.assertIn("method (exact) was declared", cap.reason)
+        self.assertIn("no calibration measured", cap.reason)
+        self.assertFalse(cap.blocks)
+        self.assertEqual(cap.action_kind, MODULE.PROCEED)
 
     def test_constant_pass_caught_by_calibration_is_evaluator_invalid_not_unresolved(
         self,
@@ -3780,8 +3822,9 @@ class NoInternalFailureReachesTheUserAsATracebackTests(unittest.TestCase):
             space = Path(directory) / "space.json"
             space.write_text(json.dumps({"knobs": {"temperature": [0.7, 0.9]}}))
             err = io.StringIO()
-            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(
-                io.StringIO()
+            with (
+                contextlib.redirect_stdout(io.StringIO()),
+                contextlib.redirect_stderr(io.StringIO()),
             ):
                 code = MODULE.main(["--config-space", str(space), "--json"])
             self.assertEqual(code, MODULE.INTERNAL_ERROR_EXIT)
@@ -5435,7 +5478,11 @@ class TheCapOrderingIsWrittenDownAndCheckedTests(unittest.TestCase):
                 # produces none.
                 25: ["evaluator-invalid", "dataset-shape-unrecognised"],
                 40: ["evaluator-absent", "evaluator-unresolved"],
-                45: ["evaluator-timeout", "agent-no-varying-knobs"],
+                45: [
+                    "evaluator-timeout",
+                    "evaluator-unvalidated",
+                    "agent-no-varying-knobs",
+                ],
                 # One split defect read from each end: the same rows on both
                 # sides, and every scoreable row on one. Neither breaks the
                 # material and both leave the run comparing nothing, so they
@@ -6375,7 +6422,7 @@ class TheRouteIsClassifiedInThreeKindsNotTwoTests(unittest.TestCase):
         self.assertEqual(
             set(MODULE.ROUTE_CATEGORY),
             set(MODULE.ACTION_FOR_CONDITION),
-            "a condition is routed and not classified, or classified and not " "routed",
+            "a condition is routed and not classified, or classified and not routed",
         )
         self.assertEqual(
             set(MODULE.ROUTE_CATEGORY.values()) - MODULE.ROUTE_CATEGORIES,

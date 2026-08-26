@@ -623,6 +623,7 @@ DETERMINISTIC_METHODS = {
     "routing",
     "fuzzy",
 }
+CALIBRATION_REQUIRED_CHECKS = frozenset({"good_passes", "bad_fails", "non_constant"})
 
 
 @dataclass(frozen=True)
@@ -773,6 +774,9 @@ ACTION_FOR_CONDITION: dict[str, str] = {
     "agent-generated": "connect-real-agent",
     "evaluator-unresolved": "repair-evaluator",
     "evaluator-invalid": "repair-evaluator",
+    # Calibration is the next guide stage for a declared evaluator.  It is not
+    # a repair instruction: no execution has found the file defective yet.
+    "evaluator-unvalidated": PROCEED,
     "evaluator-timeout": "bound-evaluator-cost",
     "agent-no-varying-knobs": "vary-knobs",
 }
@@ -931,6 +935,7 @@ ROUTE_CATEGORY: dict[str, str] = {
     # probes that ran, and this one was never read.
     "evaluator-unresolved": DIAGNOSTIC,
     "evaluator-invalid": CREATION_OR_REPAIR,
+    "evaluator-unvalidated": CLAIM_SCOPING,
     "evaluator-timeout": CREATION_OR_REPAIR,
     # Conditional, and classified the same way `dataset-below-measurable-size`
     # above already is: by what the result IS, not by whether the run waits.
@@ -1051,6 +1056,11 @@ EVALUATOR_TIMEOUT_CEILING = 45
 # First of the "answers the wrong question" band, so above every ceiling in the
 # band below it. Everything is connected and valid; this run simply did not
 # finish, and re-running within a bound is all that is asked.
+EVALUATOR_UNVALIDATED_CEILING = 45
+# A declared method describes intended semantics, but before a calibration case
+# ran it establishes no behavior of the connected file.  It carries the same
+# claim ceiling as a timeout, while preserving the distinct, planned recovery:
+# continue to calibration rather than repair a file nothing has found broken.
 AGENT_NO_VARYING_KNOBS_CEILING = 45
 # Equal to the timeout for the same reason: nothing is broken, and the run
 # compares nothing. An optimization with one configuration is a single
@@ -1253,6 +1263,7 @@ CAP_SEVERITY_ORDER: tuple[tuple[str, tuple[tuple[str, int], ...]], ...] = (
         "answers the wrong question",
         (
             ("evaluator-timeout", EVALUATOR_TIMEOUT_CEILING),
+            ("evaluator-unvalidated", EVALUATOR_UNVALIDATED_CEILING),
             ("agent-no-varying-knobs", AGENT_NO_VARYING_KNOBS_CEILING),
             ("dataset-tune-holdout-overlap", SPLIT_OVERLAP_CEILING),
             ("dataset-tuning-split-empty", TUNING_SPLIT_EMPTY_CEILING),
@@ -1417,8 +1428,12 @@ CAP_NO_IMPLICATION: dict[str, str] = {
         "whatever this run gave it, and a brought one may vary nothing"
     ),
     "evaluator-unresolved": (
-        "present-but-unnamed excludes absent, and no dataset condition follows "
-        "from it"
+        "present-but-unnamed excludes absent, and no dataset condition follows from it"
+    ),
+    "evaluator-unvalidated": (
+        "a declared method without completed calibration is mutually exclusive "
+        "with the unnamed and timeout routes and says nothing about data or "
+        "search-space conditions"
     ),
     "evaluator-timeout": "a run that did not finish says nothing about the material",
     "agent-no-varying-knobs": "about the search space, which no dataset fact implies",
@@ -2006,6 +2021,13 @@ class EvaluationFacts:
     # one that ran and produced none - and it was reporting the first of those
     # as though it had established it.
     calibration_supplied: bool = False
+    # `None` preserves the contract of direct scorer callers from before the
+    # on-disk calibration schema was introduced: a caller that supplies
+    # `calibration_present` and checks is asserting those facts.  The adapter
+    # sets this explicitly from the calibration artifact, where a partial or
+    # empty payload must not masquerade as the complete measurement the guide
+    # requires before it relies on an evaluator.
+    calibration_complete: bool | None = None
     checks: tuple[dict[str, bool], ...] = ()
     probe_scores: tuple[tuple[float, ...], ...] = ()
     timed_out: bool = False
@@ -3442,8 +3464,7 @@ def provenance_evidence(
         # mixture clause above already says so.
         if facts.sources:
             return (
-                f"{mixture}; declared sources: {', '.join(facts.sources)}"
-                f"{unverified}"
+                f"{mixture}; declared sources: {', '.join(facts.sources)}{unverified}"
             )
     return f"{mixture}{unverified}"
 
@@ -4353,7 +4374,6 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
     # from "evaluator-absent": nothing needs to be created or selected, an
     # existing file needs to be inspected, repaired, or replaced
     # (traigent-first-run#133).
-    #
     # Every witness that calibration was ever engaged - real checks, a
     # supplied payload, or a payload that timed out before producing checks -
     # excludes this branch, so a run that tried and has something to say
@@ -4391,7 +4411,11 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
         gating_failed = [
             index
             for index, checks in enumerate(facts.checks)
-            if not checks.get("non_constant", True) or not checks.get("bad_fails", True)
+            if (
+                not checks.get("good_passes", True)
+                or not checks.get("non_constant", True)
+                or not checks.get("bad_fails", True)
+            )
         ]
         per_case: list[float] = []
         for checks in facts.checks:
@@ -4413,8 +4437,9 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
                 Cap(
                     "evaluator-invalid",
                     EVALUATOR_INVALID_CEILING,
-                    "The evaluator scores a wrong answer as well as a right one, "
-                    "or returns a constant. Every number below it is unreliable.",
+                    "The evaluator rejects a right answer, scores a wrong answer "
+                    "as well as a right one, or returns a constant. Every number "
+                    "below it is unreliable.",
                 )
             )
     else:
@@ -4531,6 +4556,29 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
                 "evaluator-timeout",
                 EVALUATOR_TIMEOUT_CEILING,
                 "The evaluator did not finish within its timeout.",
+            )
+        )
+    # A method declares intended semantics, not the behavior of the file that
+    # was connected. The opening gate deliberately never imports customer code,
+    # so it cannot establish input-dependence safely. A completed calibration
+    # is the first measurement that can. An empty result is not a measurement;
+    # a timeout has its own, more specific recovery condition.
+    calibration_complete = facts.calibration_complete
+    if calibration_complete is None:
+        # Direct scorer callers predate the artifact contract.  Their explicit
+        # `calibration_present` plus checks remains a complete measurement;
+        # the absence of both remains unvalidated.
+        calibration_complete = facts.calibration_present and bool(facts.checks)
+    if facts.method is not None and not calibration_complete and not facts.timed_out:
+        caps.append(
+            Cap(
+                "evaluator-unvalidated",
+                EVALUATOR_UNVALIDATED_CEILING,
+                f"An evaluator method ({facts.method}) was declared, but no "
+                "calibration measured the connected evaluator yet, so the "
+                "declaration cannot establish that it distinguishes answers. "
+                "Continue to the approved calibration before relying on this score.",
+                blocks=False,
             )
         )
     return combine("evaluation", subs), caps
@@ -4994,8 +5042,7 @@ def score_discovered_agent(
         )
         return (
             nothing_to_search_pillar(
-                f"the agent was read and no varying setting was established - "
-                f"{detail}",
+                f"the agent was read and no varying setting was established - {detail}",
                 supplied=True,
             ),
             [NOTHING_IN_THE_AGENT_TO_VARY_CAP],
@@ -5424,8 +5471,7 @@ def collect_gaps(
                     (
                         sub.maximum * 0.5,
                         unranked,
-                        f"{pillar.name}/{named} could not be measured - "
-                        f"{sub.evidence}",
+                        f"{pillar.name}/{named} could not be measured - {sub.evidence}",
                     )
                 )
             elif sub.value < sub.maximum:
@@ -6798,12 +6844,23 @@ def evaluation_facts_from_calibration(
         cases = [payload]
     checks: list[dict[str, bool]] = []
     probes: list[tuple[float, ...]] = []
+    calibration_complete = bool(cases)
     for case in cases:
         if not isinstance(case, dict):
+            calibration_complete = False
             continue
         case_checks = case.get("checks")
         if isinstance(case_checks, dict):
             checks.append({key: bool(value) for key, value in case_checks.items()})
+        if not (
+            isinstance(case_checks, dict)
+            and CALIBRATION_REQUIRED_CHECKS <= case_checks.keys()
+            and all(
+                isinstance(case_checks[name], bool)
+                for name in CALIBRATION_REQUIRED_CHECKS
+            )
+        ):
+            calibration_complete = False
         scores = case.get("scores")
         if isinstance(scores, dict):
             numeric = [
@@ -6821,6 +6878,7 @@ def evaluation_facts_from_calibration(
         # A payload arrived, whatever it turned out to contain. Reaching this
         # line is the proof - `payload is None` returned above.
         calibration_supplied=True,
+        calibration_complete=calibration_complete,
         checks=tuple(checks),
         probe_scores=tuple(probes),
         timed_out=bool(payload.get("timed_out")),
@@ -7895,8 +7953,7 @@ def agent_build_from_document(build: Any) -> tuple[BuildSignal, ...]:
     """
     if not isinstance(build, dict):
         raise AgentDiscoveryInputError(
-            f"'build' must be an object keyed by check name, not "
-            f"{type(build).__name__}"
+            f"'build' must be an object keyed by check name, not {type(build).__name__}"
         )
     unknown = sorted(set(build) - set(BUILD_CHECK_FIELDS))
     if unknown:
@@ -7929,8 +7986,7 @@ def agent_facts_from_discovery(document: Any) -> AgentFacts:
     """
     if not isinstance(document, dict):
         raise AgentDiscoveryInputError(
-            f"the agent-knobs document must be an object, not "
-            f"{type(document).__name__}"
+            f"the agent-knobs document must be an object, not {type(document).__name__}"
         )
     unknown = sorted(set(document) - AGENT_KNOBS_DOCUMENT_FIELDS)
     if unknown:

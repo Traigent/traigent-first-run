@@ -607,7 +607,9 @@ Evaluator and agent caps route through the rules that already own them: `evaluat
 connected file with no honestly declarable method) and `evaluator-invalid` route through the
 invalid-evaluator paragraph above - inspect, repair, or replace; `evaluator-absent` routes through
 the absent-evidence reading in the opening readiness gate and the creation dependency matrix -
-create or select. `evaluator-generated` and `agent-generated` route through the walkthrough labeling
+create or select. `evaluator-unvalidated` means a method was declared but no complete calibration
+case measured the connected evaluator: it bounds the opening claim without calling the file broken;
+continue to the approved calibration before relying on the score. `evaluator-generated` and `agent-generated` route through the walkthrough labeling
 rules and nothing else - carry the substitute's provenance into the words as well as the card, and say the
 result measures the substitute rather than their product. Neither is a repair: this run created the
 component on purpose, the run continues, and what the ceiling refuses is the claim, not the work.
