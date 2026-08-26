@@ -2273,6 +2273,74 @@ class EvaluatorPresenceAdapterTests(unittest.TestCase):
         self.assertNotIn("evaluator-unresolved", caps)
         self.assertNotIn("evaluator-absent", caps)
 
+    def test_declared_method_with_incomplete_calibration_is_unvalidated(self) -> None:
+        """A payload is not proof unless it contains all measured checks (#304)."""
+        with tempfile.TemporaryDirectory() as directory:
+            evaluator = Path(directory) / "evaluator.py"
+            evaluator.write_text(
+                "def score(output, expected):\n"
+                "    return 1.0 if output == expected else 0.0\n"
+            )
+            for payload in (
+                {"cases": [], "passed": False},
+                {"cases": [{"checks": {}}], "passed": False},
+                {"cases": [{"checks": {"good_passes": True}}], "passed": False},
+            ):
+                with self.subTest(payload=payload):
+                    calibration = Path(directory) / "calibration.json"
+                    calibration.write_text(json.dumps(payload))
+                    score = _score_evaluator(
+                        evaluator,
+                        (
+                            "--evaluator-method",
+                            "exact",
+                            "--calibration",
+                            str(calibration),
+                        ),
+                    )
+                    cap = _cap(score, "evaluator-unvalidated")
+                    self.assertFalse(cap["blocks"])
+                    self.assertEqual(cap["action_kind"], "proceed")
+                    self.assertNotIn("evaluator-invalid", _evaluation_caps(score))
+
+    def test_calibration_that_rejects_a_known_good_answer_is_invalid(self) -> None:
+        """A complete failed check is a broken evaluator, not missing evidence."""
+        with tempfile.TemporaryDirectory() as directory:
+            evaluator = Path(directory) / "evaluator.py"
+            evaluator.write_text(
+                "def score(output, expected):\n"
+                "    return 1.0 if output == expected else 0.0\n"
+            )
+            calibration = Path(directory) / "calibration.json"
+            calibration.write_text(
+                json.dumps(
+                    {
+                        "cases": [
+                            {
+                                "checks": {
+                                    "good_passes": False,
+                                    "bad_fails": True,
+                                    "non_constant": True,
+                                }
+                            }
+                        ],
+                        "passed": False,
+                    }
+                )
+            )
+            score = _score_evaluator(
+                evaluator,
+                (
+                    "--evaluator-method",
+                    "exact",
+                    "--calibration",
+                    str(calibration),
+                ),
+            )
+        caps = _evaluation_caps(score)
+        self.assertIn("evaluator-invalid", caps)
+        self.assertNotIn("evaluator-unvalidated", caps)
+
     def test_healthy_evaluator_reaches_full_calibrated_scoring(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             evaluator = Path(directory) / "evaluator.py"
@@ -2841,7 +2909,7 @@ class RowReviewPipelineTests(unittest.TestCase):
             "deny",
         ),
         (
-            "Running watch returned on day 30 of a 30-day window, unworn and " "boxed.",
+            "Running watch returned on day 30 of a 30-day window, unworn and boxed.",
             "approve",
         ),
         (
@@ -2885,7 +2953,7 @@ class RowReviewPipelineTests(unittest.TestCase):
             "deny",
         ),
         (
-            "Webcam returned on day 12 of a 14-day window, in original " "packaging.",
+            "Webcam returned on day 12 of a 14-day window, in original packaging.",
             "approve",
         ),
         (
@@ -3163,7 +3231,8 @@ class TheFamilyPartitionedSplitReachesTheCardTests(unittest.TestCase):
 
         Compared on the CONDITIONS rather than on `overall`: neither run
         supplies a calibration or a reading of an agent, so both are already
-        held at 45 by the advisory no-knobs condition, and an equal score there
+        held at 45 by the advisory no-knobs and evaluator-unvalidated conditions,
+        and an equal score there
         would say nothing about the cap this test is for. Both also carry the
         small-comparison ceiling, which is a fact about how many rows there are
         and is identical on either side of the redraw - it is in the expected
@@ -3176,7 +3245,11 @@ class TheFamilyPartitionedSplitReachesTheCardTests(unittest.TestCase):
 
         self.assertEqual(
             conditions(self._score(False)),
-            ["agent-no-varying-knobs", "dataset-coarse-resolution"],
+            [
+                "agent-no-varying-knobs",
+                "dataset-coarse-resolution",
+                "evaluator-unvalidated",
+            ],
         )
         self.assertEqual(
             conditions(self._score(True)),
@@ -3184,6 +3257,7 @@ class TheFamilyPartitionedSplitReachesTheCardTests(unittest.TestCase):
                 "agent-no-varying-knobs",
                 "dataset-coarse-resolution",
                 "dataset-split-by-task-family",
+                "evaluator-unvalidated",
             ],
         )
 
@@ -3227,23 +3301,29 @@ class TheDeclaredOriginTravelsFromArgvToTheCardTests(unittest.TestCase):
         return sorted(cap["condition"] for cap in score["caps"])
 
     def test_declaring_nothing_is_the_baseline_these_are_measured_against(self) -> None:
-        self.assertEqual(self._conditions(), ["agent-no-varying-knobs"])
+        self.assertEqual(
+            self._conditions(), ["agent-no-varying-knobs", "evaluator-unvalidated"]
+        )
         self.assertEqual(
             self._conditions(
                 "--evaluator-origin", "brought", "--agent-origin", "brought"
             ),
-            ["agent-no-varying-knobs"],
+            ["agent-no-varying-knobs", "evaluator-unvalidated"],
         )
 
     def test_each_flag_reaches_the_payload_on_its_own(self) -> None:
         """One at a time, so neither line can be carried by the other."""
         self.assertEqual(
             self._conditions("--evaluator-origin", "generated"),
-            ["agent-no-varying-knobs", "evaluator-generated"],
+            [
+                "agent-no-varying-knobs",
+                "evaluator-generated",
+                "evaluator-unvalidated",
+            ],
         )
         self.assertEqual(
             self._conditions("--agent-origin", "generated"),
-            ["agent-generated", "agent-no-varying-knobs"],
+            ["agent-generated", "agent-no-varying-knobs", "evaluator-unvalidated"],
         )
 
     def test_an_unknown_origin_is_refused_rather_than_ignored(self) -> None:

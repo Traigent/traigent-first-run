@@ -6087,8 +6087,7 @@ class SkillPackageTests(unittest.TestCase):
         self.assertEqual(
             positions,
             sorted(positions),
-            "the promise lists these steps in an order the flow does not run "
-            "them in",
+            "the promise lists these steps in an order the flow does not run them in",
         )
         self.assertEqual(
             [item for _flow, item, _phrase in self.CUSTOMER_JOURNEY],
@@ -7178,7 +7177,7 @@ class SkillPackageTests(unittest.TestCase):
             # The reviewer's paraphrase of the deleted middle rung.
             (
                 "paraphrased middle rung",
-                "Otherwise open the `.env` in the " "project's own editor.",
+                "Otherwise open the `.env` in the project's own editor.",
             ),
             # The deleted middle rung, worded as the repository once had it.
             (
@@ -7192,20 +7191,20 @@ class SkillPackageTests(unittest.TestCase):
             # restoring a different one was invisible.
             (
                 "restored first rung",
-                "Open the `.env` using the first available " "GUI editor.",
+                "Open the `.env` using the first available GUI editor.",
             ),
             (
                 "restored fallback rung",
-                "If headless, print the full `.env` path " "and stop.",
+                "If headless, print the full `.env` path and stop.",
             ),
             (
                 "windows spelling",
-                "Hand off the credential file with " "`Start-Process`.",
+                "Hand off the credential file with `Start-Process`.",
             ),
             ("posix spelling", "Launch `xdg-open` on the credential file."),
             (
                 "desktop spelling",
-                "On a desktop session, pop the `.env` open for " "the user.",
+                "On a desktop session, pop the `.env` open for the user.",
             ),
         ):
             with self.subTest(planted=label):
@@ -7229,10 +7228,10 @@ class SkillPackageTests(unittest.TestCase):
                 "`references/run-safety.md` selects the credential "
                 "handoff file and owns every rule about it.",
             ),
-            ("the when-to-open rule", "Stop once only when a key is truly " "missing."),
+            ("the when-to-open rule", "Stop once only when a key is truly missing."),
             (
                 "the coding agent",
-                "Your agent is the assistant running in your " "editor or terminal.",
+                "Your agent is the assistant running in your editor or terminal.",
             ),
             (
                 "the tracked-file check",
@@ -10981,7 +10980,7 @@ class SkillPackageTests(unittest.TestCase):
             [self._ten_day_defect(s) for s in ten_day_sentences(table)], ["", ""]
         )
         blurred = (
-            "- The code expires 10 days after it is issued\n" "- You then get 10 days\n"
+            "- The code expires 10 days after it is issued\n- You then get 10 days\n"
         )
         self.assertEqual(len(ten_day_sentences(blurred)), 2)
         self.assertTrue(
@@ -13158,7 +13157,7 @@ class SkillPackageTests(unittest.TestCase):
         self.assertIn("--row-review", skill)
         # 2. Scoped to the rows the user brought, stated as a purpose.
         self.assertIn(
-            "reads the rows the user brought, and skips the rows this run " "generated",
+            "reads the rows the user brought, and skips the rows this run generated",
             normalized,
         )
         self.assertIn("marking its own homework", normalized)
@@ -13806,10 +13805,11 @@ class SkillPackageTests(unittest.TestCase):
             for condition in re.findall(r'Cap\(\s*"([a-z0-9-]+)"', source)
             if condition.startswith("evaluator-")
         }
-        # #238 adds the fifth, and it is the one the other four could not
-        # express: those grade whether the evaluator WORKS, and this grades
-        # whose it is. A run that wrote the ruler had no condition to raise.
-        self.assertEqual(len(conditions), 5)
+        # #238 added the ownership condition; #304 adds the separate claim
+        # boundary for a named evaluator that calibration has not measured.
+        # #304 adds a sixth: a declared method is metadata until calibration
+        # measures the connected evaluator.
+        self.assertEqual(len(conditions), 6)
         normalized = " ".join(SKILL.read_text().casefold().split())
         routing = normalized.split(
             "evaluator and agent caps route through the rules that already own them", 1
@@ -13817,6 +13817,7 @@ class SkillPackageTests(unittest.TestCase):
         for condition, branch in (
             ("evaluator-unresolved", "inspect, repair, or replace"),
             ("evaluator-invalid", "inspect, repair, or replace"),
+            ("evaluator-unvalidated", "continue to the approved calibration"),
             ("evaluator-timeout", "five-option question"),
             ("evaluator-absent", "create or select"),
             ("evaluator-generated", "walkthrough labeling"),
@@ -20258,7 +20259,6 @@ class TheGapIsPutToTheUserOnceTests(unittest.TestCase):
 
 
 class GuidanceBudgetLedgerRulesTests(unittest.TestCase):
-
     def test_an_entry_appended_to_itself_is_a_defect(self) -> None:
         """The guard added after a doubling shipped, probed both ways.
 
