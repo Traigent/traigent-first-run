@@ -328,12 +328,15 @@ a document to be reused.
              "evidence": "agent.py:12 TOOLS lists both; both resolve in this module"}}}
 ```
 
-A parameter earns credit only from what its own `evidence` shows: a numeric one needs `low`/`high`
-it genuinely accepts, a categorical one needs two or more options its `evidence` quotes verbatim.
-That string is all the scorer reads - it never opens the agent - and it matches whole tokens, so
-`gpt-4` declared against evidence reading `["gpt-4o-mini", "gpt-4o"]` earns nothing. Anything else
-is reported with the reason it earned nothing, which is a line the user can read and correct - so a
-parameter you are unsure of is worth recording rather than dropping. Record it with its `evidence`
+A parameter's `evidence` both cites the source and proves the declared range: quote the exact
+line that spells out each categorical option, or the numeric bounds, rather than only the line
+that passes the parameter onward. The scorer checks whole values against that evidence before it
+records a candidate. This records source discovery only; it earns no opening search-space credit
+and cannot establish wiring, reachability, or provider effect. Only the finalized wrapper's
+request-difference probe, run before presenting the baseline approval, can establish a
+multi-configuration paid baseline. Anything else is reported with the reason it earned nothing,
+which is a line the user can read and correct - so a parameter you are unsure of is worth recording
+rather than dropping. Record it with its `evidence`
 and no `values` or `low`/`high`: that is how a knob says "seen in the agent, extent not
 established". A knob has no `determined` field - that answer belongs to the four `build` checks
 below, and inside `knobs` it is refused - because a parameter establishing no range contributes
@@ -343,10 +346,11 @@ nothing a search can vary, which is what recording it without one already says.
 Keep a comment-only or manual alternative out of `values`; verify the real
 build path before adding it deliberately to the enhanced configuration space.
 
-A range counts as at least two distinct values and no more; a value list counts as its own length.
-The score says "at least N configurations" because nobody has chosen the sweep yet. It is a read of
-what is reachable and attests nothing about wiring: it clears no wiring cap, and it never substitutes for
-the config-space document the enhanced search emits.
+A range or value list remains useful candidate information, but it never clears the opening
+readiness cap. The contained request-difference probe over the finalized generated wrapper is a
+separate pre-call safety guard, completed before the baseline approval; it does not raise the
+opening card. Only the current-run enhanced config-space document the search emits can replace
+that source-only score.
 
 ### The build half
 
@@ -370,7 +374,8 @@ performed are separate questions and this one asks only the first, so withholdin
 stub answers a question nobody put. **Control flow** is whether the agent ends and on what: no loop
 ends trivially, a loop with a bound can be recorded, and a loop with neither is one input costing an
 unbounded number of calls. **Tools**
-is whether each declared tool can be found. `"used": false` removes only this wiring check; prompt,
+is whether each declared tool can be found. A partly reachable list earns only the reachable share
+of this check. `"used": false` removes only this wiring check; prompt,
 output-contract, control-flow, and config-space checks remain, with dataset/evaluation in separate
 pillars. Memory/context and provider connectivity are not scored here; run safety handles the latter.
 

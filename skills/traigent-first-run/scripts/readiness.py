@@ -2064,27 +2064,10 @@ class DiscoveredKnob:
     reachable, never one we invented. A parameter with no citation is not a
     parameter this score has seen.
 
-    `reachable_values` is deliberately a FLOOR, not an estimate, and the two
-    kinds get it for different reasons.
-
-    A categorical parameter is counted at the number of values actually
-    available - the model ids configured, the prompt strategies the code
-    branches on - because those are countable things that exist. Two is the
-    minimum that means anything: one option is not a choice, which is exactly
-    the rule `categorical_breadth` already applies to a declared knob.
-
-    A numeric parameter is counted at 2 and never more, however wide its range,
-    because how many points a search would take inside that range is a decision
-    nobody has made yet. Two is what the range itself establishes: a span wider
-    than this scorer's own noise floor contains at least two values a run could
-    tell apart. Counting a continuous range as "many" would be the invention the
-    owner's rule refuses, and it is also how a space grows by declaring values
-    nothing can distinguish - the defect `noise_floor` exists to refuse.
     """
 
     name: str
     kind: str
-    reachable_values: int
     evidence: str
     # Empty when the parameter earns credit. Otherwise the reason it does not,
     # said to the reader rather than dropped: an author who wrote down a
@@ -4877,6 +4860,18 @@ UNATTESTED_WIRING_CAP = Cap(
     "them is what makes them searchable.",
 )
 
+UNPROBED_DISCOVERED_KNOBS_CAP = Cap(
+    "agent-no-varying-knobs",
+    AGENT_NO_VARYING_KNOBS_CEILING,
+    "The source read found candidate settings, but it did not establish that "
+    "changing them changes the finalized request. This advisory opening ceiling "
+    "remains until a successful current-run enhanced config-space artifact reaches "
+    "this scorer. Run the request-difference probe as a separate pre-call safety "
+    "guard; it does not raise this card. A single preserved configuration is not "
+    "a grid search.",
+    blocks=False,
+)
+
 
 def nothing_to_search_pillar(
     evidence: str, *, supplied: bool, withheld: bool = False
@@ -4940,72 +4935,14 @@ def nothing_to_search_pillar(
     )
 
 
-def discovered_space_evidence(
-    credited: Sequence[DiscoveredKnob],
-    reachable: int,
-    refused: Sequence[DiscoveredKnob] = (),
-) -> str:
-    """What the read of the agent found, as a floor the reader can check.
-
-    Says "at least", every time, and means it. `reachable` multiplies a floor
-    per parameter (see `DiscoveredKnob`), so the true space is this number or
-    larger and never smaller - and a sentence that dropped the qualifier would
-    be asserting a count nobody has chosen the values for.
-
-    Names the parameters rather than counting them. "3 settings" is a number the
-    reader cannot check against their own file; `model, temperature, top_p` is a
-    list they can, and disagreeing with it is the point - this is a read of
-    their code, and a read they can see is a read they can correct.
-
-    NAMES THE REFUSED ONES TOO, and #241 is why that half was missing rather
-    than declined. `component-creation.md` promises that a parameter earning
-    nothing "is reported with the reason it earned nothing, which is a line the
-    user can read and correct - so a parameter you are unsure of is worth
-    recording rather than dropping". That promise held on exactly one path: the
-    branch below where NO parameter is credited already lists every refusal.
-    Credit one knob and the sentence switched to the credited list alone, so a
-    `top_p` recorded with its evidence and no established range appeared on no
-    card and in no payload - `--json` did not mention the name. A reader
-    following the instruction could not tell their record from a typo, which is
-    the same silence `DISCOVERED_KNOB_FIELDS` refuses one function down.
-
-    Kept in one sentence rather than promoted to a sub-score. These parameters
-    establish no dimension, so they may not move the number; what they owe the
-    reader is the line that lets them disagree with a read of their own code.
-    """
-    named = ", ".join(knob.name for knob in credited)
-    unit = "configuration" if reachable == 1 else "configurations"
-    evidence = (
-        f"read from your agent: {named} can vary, reaching at least {reachable} "
-        f"distinct {unit}; no trial budget is declared yet, so this counts what "
-        "the agent makes reachable rather than what a run would compare"
-    )
-    if refused:
-        detail = "; ".join(f"{knob.name}: {knob.uncredited_reason}" for knob in refused)
-        evidence += f". Recorded and not counted - {detail}"
-    return evidence
-
-
 def score_discovered_agent(
     facts: AgentFacts,
 ) -> tuple[Pillar, list[Cap], list[KnobScore]]:
-    """Score the search space from the agent's own code (#201).
+    """Score an evidenced read of the agent when no config-space file exists.
 
-    The opening gate's answer to "what is there to search", when no config-space
-    document exists yet and by the guide's own design never will at this point.
-
-    Two properties hold here that do not hold for a config-space document, and
-    both are why this is a separate path rather than a looser reading of that
-    one. It attests nothing about wiring, so it clears no wiring cap and cannot
-    be mistaken for the `wired` list the guide refuses to inherit. And it has no
-    trial budget - the run that would spend one has not been planned - so
-    `search_space_points` is asked with `budget=None`, which its own rule
-    already damps one rung below complete. A space measured before anyone has
-    said how much of it will be compared may not present as fully searched.
-
-    Returns no `KnobScore` rows. Those grade a DECLARED knob against its range
-    and its value list, and neither exists here; emitting rows built from a
-    floor would put invented per-knob detail on the card beside real detail.
+    This path establishes possible dimensions from source evidence, not a
+    wiring attestation or a selected paid search space. It returns no
+    `KnobScore` rows because no declared values are available to grade.
     """
     credited = [knob for knob in facts.discovered if knob.credited]
     if not credited:
@@ -5048,31 +4985,22 @@ def score_discovered_agent(
             [NOTHING_IN_THE_AGENT_TO_VARY_CAP],
             [],
         )
-    reachable = 1
-    for knob in credited:
-        reachable *= knob.reachable_values
+    # A source read can reveal candidates but cannot prove the final wrapper
+    # consumes them. Keeping this zero in the denominator prevents a comment
+    # or dead-code claim from buying a paid multi-configuration grid.
+    names = ", ".join(knob.name for knob in credited)
+    refused = [knob for knob in facts.discovered if not knob.credited]
+    detail = f"source read found candidate setting(s): {names}"
+    if refused:
+        detail += "; " + "; ".join(
+            f"{knob.name}: {knob.uncredited_reason}" for knob in refused
+        )
     return (
-        combine(
-            "agent",
-            [
-                SubScore(
-                    "search-space",
-                    search_space_points(reachable, None),
-                    SEARCH_SPACE_WEIGHT,
-                    True,
-                    discovered_space_evidence(
-                        credited,
-                        reachable,
-                        [knob for knob in facts.discovered if not knob.credited],
-                    ),
-                )
-            ],
+        nothing_to_search_pillar(
+            detail + ". Source discovery is not request-difference evidence.",
+            supplied=True,
         ),
-        # No cap. Every credited parameter reaches two or more values it can be
-        # told apart on, so `agent-no-varying-knobs` would be false here in all
-        # three of its readings - there IS something to search, and this is the
-        # evidence for it.
-        [],
+        [UNPROBED_DISCOVERED_KNOBS_CAP],
         [],
     )
 
@@ -7561,9 +7489,7 @@ def discovered_knob_from_entry(name: str, spec: Any) -> DiscoveredKnob:
         # Refused for exactly the reason a declared one is, and with the same
         # sentence, so an author who wired `seed` reads one explanation rather
         # than two that have to be reconciled.
-        return DiscoveredKnob(
-            name, "excluded", 0, evidence, EXCLUDED_KNOB_REASONS[name]
-        )
+        return DiscoveredKnob(name, "excluded", evidence, EXCLUDED_KNOB_REASONS[name])
 
     values = spec.get("values")
     if values is not None:
@@ -7600,7 +7526,6 @@ def discovered_knob_from_entry(name: str, spec: Any) -> DiscoveredKnob:
             return DiscoveredKnob(
                 name,
                 "categorical",
-                0,
                 evidence,
                 "declares "
                 + ", ".join(repr(value) for value in unevidenced)
@@ -7617,19 +7542,17 @@ def discovered_knob_from_entry(name: str, spec: Any) -> DiscoveredKnob:
             return DiscoveredKnob(
                 name,
                 "categorical",
-                distinct,
                 evidence,
                 f"{distinct} option(s) available - one option is not a choice, "
                 "so there is nothing here for a search to compare",
             )
-        return DiscoveredKnob(name, "categorical", distinct, evidence)
+        return DiscoveredKnob(name, "categorical", evidence)
 
     low, high = spec.get("low"), spec.get("high")
     if low is None or high is None:
         return DiscoveredKnob(
             name,
             "unknown",
-            0,
             evidence,
             "neither a list of options nor a low/high range was established, "
             "so how much this parameter could vary is not something this score "
@@ -7655,12 +7578,11 @@ def discovered_knob_from_entry(name: str, spec: Any) -> DiscoveredKnob:
         return DiscoveredKnob(
             name,
             "numeric",
-            0,
             evidence,
             f"the range {low} to {high} is inside this score's noise floor for "
             f"{name}, so two values drawn from it would not be told apart",
         )
-    return DiscoveredKnob(name, "numeric", 2, evidence)
+    return DiscoveredKnob(name, "numeric", evidence)
 
 
 # The keys each build check may carry. Closed and checked for the reason the
@@ -7926,7 +7848,6 @@ def build_signal_from_entry(check: str, spec: Any) -> BuildSignal:
             "does not declare them; an unreachable tool is one of the declared "
             "ones this read could not find behind its name"
         )
-    reachable = len(declared) - len(set(unreachable))
     if not unreachable:
         return BuildSignal(
             check,
@@ -7935,9 +7856,10 @@ def build_signal_from_entry(check: str, spec: Any) -> BuildSignal:
         )
     return BuildSignal(
         check,
-        round(weight * reachable / len(declared), 2),
-        f"{len(set(unreachable))} of {len(declared)} tool(s) declared and not "
-        f"found behind the name: {', '.join(sorted(set(unreachable)))} "
+        round(weight * (len(declared) - len(set(unreachable))) / len(declared), 2),
+        f"{len(set(unreachable))} of {len(declared)} declared tool(s) were not "
+        f"found behind the name: {', '.join(sorted(set(unreachable)))}; tool "
+        "wiring receives credit only for declared tools that resolve "
         f"({evidence})",
     )
 
@@ -8108,9 +8030,9 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help=(
             "the coding assistant's own read of the agent's source (path or -): "
             "which parameters it can already vary and how it is put together, "
-            "each with the line that shows it. Measures the search space at the "
-            "opening gate, where no config-space document exists; attests "
-            "nothing about wiring. Its knob half is ignored when --config-space "
+            "each with the line that shows it. Records source discovery at the "
+            "opening gate, where no config-space document exists; its knobs earn "
+            "no search-space credit and attest nothing about wiring. Its knob half is ignored when --config-space "
             "is given, because that document decides the space; its build half "
             "is read either way, because no config space describes how the "
             "agent is built. Reads "

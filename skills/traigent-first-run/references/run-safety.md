@@ -308,9 +308,11 @@ A Traigent mock run is a separate plumbing check:
   proof that an invoked path is local-only.
 - If any path cannot be proven free, do not call it a free dry-run. Ask approval for the smallest
   real probe or use static validation only.
-- If mock validation says trial settings are not consumed, return to the stage-2
-  repair/continue/pause choice. Enter stage-3 adapter repair and revalidate only after the user
-  chooses its scope; do not open a credential file while optimization remains phantom.
+- If mock validation says trial settings are not consumed, return to **SKILL.md stage 4**'s
+  repair/continue/pause choice. Revalidate only after the user chooses that repair's scope; do not
+  open a credential file while optimization remains phantom. A retrieval, tool, or multi-call
+  control needs separately contained tracing that proves its own execution path before a later
+  workflow can treat it as a paid search dimension.
 - Exit the process after mock validation. Mock state has no reliable public undo.
 
 Uniform mock scores can be expected for output-based evaluators. Plumbing success means trials
@@ -468,14 +470,11 @@ Three honesty rules govern the file:
   value and returns one verdict per knob.
 
   State the probe's limits exactly, because they are narrow. Its exact claim is **request
-  visibility, per model** - that changing the knob changes the request dict, under each model in
-  the space - and never provider *effect*: only the run can show effect; the probe only rules out
+  visibility, per model** - that each declared value produces a distinct request dict for every
+  model and tuning input in the space - and never provider *effect*: only the run can show effect; the probe only rules out
   the dimension that could not have one. The verdict semantics live beside the code in
-  `references/sdk-execution.md` - why a `partial` knob is a conditional dimension that loads, why
-  only an `invisible` verdict fails, and how a knob acting outside request construction is
-  recorded in the `WIRED_OUTSIDE_THE_REQUEST` mapping of knob to *where it acts*, which the load
-  prints as an unverified claim for a reader to challenge rather than proving it. If you cannot
-  say where such a knob acts, drop it from `wired`.
+  `references/sdk-execution.md`: `partial` and
+  `invisible` fail; indirect behavior is outside this first-run paid space.
 - `bounds` is likewise self-declared and unverified. It changes the noise floor and the span a knob
   is measured against, so a narrow declared range can turn two nearly-identical values into a
   "varying" knob and clear `agent-no-varying-knobs` on bounds alone. Declare the range the knob
@@ -769,7 +768,8 @@ never run.
 The three default behaviour knobs are prompt style, thinking shape (direct or chain-of-thought),
 and reflect; temperature stays fixed at the task-selected value owned by `sdk-execution.md`, so
 every swept knob is real for every model. They are
-selected from the eleven-knob catalog `references/sdk-execution.md` owns. The approval card shows
+selected from the seven direct-parameter controls in the nine-control catalog
+`references/sdk-execution.md` owns. The approval card shows
 the selected three and why they fit; the customer does not have to design a space from the whole
 catalog. `self_check` is not among them - it and `reflect` were one knob
 under two names, and `reflect` is the one that stayed. The
@@ -784,9 +784,8 @@ approval: skipping the flagship keeps the first run faster and cheaper, and the 
 available for a separately disclosed later comparison if the evidence supports one. A preserved
 baseline keeps its exact model set, including a flagship when present. Do not add cheaper tiers or
 any other model unless a separate model comparison is disclosed and approved. For preserved
-agents, add task-relevant non-model controls only to the enhanced space by default, such as context
-format, retrieval depth, few-shot count, tool policy, or repair behavior; do not force the
-generated example's controls onto an unrelated task.
+agents, add only direct request parameters, such as context format or few-shot count; do not force
+the generated example's controls onto an unrelated task.
 
 A customer who brings ten wired knobs does not get all ten, and the reason is arithmetic. Ten knobs
 at two values each is 1024 configurations against a 12-trial cap - 1% of the space sampled - and
@@ -839,16 +838,8 @@ Native boolean knobs use `[True, False]`, never string encodings. A generated wa
 one task-selected temperature owned by `sdk-execution.md` across both phases and carries the search
 on behaviour knobs instead. Preserve a user-owned baseline's temperature behavior exactly,
 including an unset provider default; record resulting nondeterminism as a limitation rather than
-silently changing the baseline. Multi-call composite controls multiply cost and require a concrete
-failure-mode justification; every knob in the generated default stays within one provider call.
-`self_consistency` is the catalog's one deliberate exception, under the precondition and approval
-rule `sdk-execution.md` owns.
-
-Match each knob to how the agent actually fails: repair (re-prompt once on a malformed or erroring
-output), self-consistency (sample N and vote, for unstable answers), similarity-selected retrieval
-(for unseen patterns), and chain-of-thought or plan-then-act (for multi-step reasoning). A knob only
-helps if it targets the observed failure mode; wired in blind it adds cost and can even lower the
-score.
+silently changing the baseline. Multi-call controls are outside this first-run paid space. Match
+each direct parameter to an observed single-call failure; blind wiring adds cost and can lower score.
 
 Managed `auto` is a guided search, not an exhaustive grid: `max_trials` is a cap, not a minimum,
 so the service can stop with fewer trials. `auto` already runs Traigent's smart cloud search, so do
@@ -860,8 +851,7 @@ connected `auto` with a default cap of 12 for the enhanced space, then report th
 stop reason; `references/sdk-execution.md` owns the shortfall obligation beneath that cap, so never
 silently present a two-row generated run as the intended comparison.
 
-Composite patterns multiply calls and cost. Use them only when the agent shape and observed
-failure mode justify them.
+Composite patterns are a later workflow, not a first-run paid dimension.
 
 ### The accuracy-cost frontier
 

@@ -320,11 +320,10 @@ Readiness score (the card, the three pillars, bands, caps, blocked)
   labeled walkthrough. A low number alone does not stop a safe walkthrough, but
   a blocking cap does stop paid optimization when the current components or
   evidence cannot support a trustworthy comparison. `agent-no-varying-knobs`
-  fires wherever nothing your agent can vary is established, holding the card
-  at 45. It blocks the paid run where something was read and found empty - a
-  settings document, or your agent's own code - and is advisory where neither
-  reached the score, stopping nothing; see that entry above for why one never
-  is provided at the opening score.
+  holds the card at 45 when the paid space is not yet established. It blocks
+  where a settings document or source read establishes no usable dimension. It
+  is advisory where source candidates await request-difference proof, or where
+  neither reached the score; neither advisory state permits a grid.
   Bands: Not ready (0-29), Partial (30-54), Workable (55-74), Strong (75-89),
   Excellent (90-100).
   Cap: a ceiling on the whole score, so a high average cannot hide one bad part.

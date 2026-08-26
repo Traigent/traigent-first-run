@@ -3636,14 +3636,15 @@ class CliTests(unittest.TestCase):
             )
         agent = next(p for p in read["pillars"] if p["name"] == "agent")
         space = next(s for s in agent["subscores"] if s["name"] == "search-space")
-        # The read measured the search space. The pillar's own confidence is
-        # lower since #184 because this document answers only the knob half of
-        # the read, which is the point: the other half is asked for and absent.
+        # The read is candidate discovery only.  It remains measured (so it
+        # cannot renormalize away) but earns no paid-search credit until the
+        # approved request-difference guard proves the final wrapper.
         self.assertTrue(space["measured"])
-        self.assertGreater(agent["score"], 0)
-        self.assertNotIn(
-            "agent-no-varying-knobs", [cap["condition"] for cap in read["caps"]]
+        self.assertEqual(agent["score"], 0)
+        read_cap = next(
+            cap for cap in read["caps"] if cap["condition"] == "agent-no-varying-knobs"
         )
+        self.assertFalse(read_cap["blocks"])
         # The document decides, and it says nothing is wired.
         self.assertIn(
             "agent-no-varying-knobs",
@@ -3908,6 +3909,13 @@ class NoInternalFailureReachesTheUserAsATracebackTests(unittest.TestCase):
         help_text = out.getvalue()
         for field in MODULE.AGENT_KNOBS_DOCUMENT_FIELDS | MODULE.DISCOVERED_KNOB_FIELDS:
             self.assertIn(field, help_text)
+        normalized_help = " ".join(help_text.casefold().split())
+        self.assertIn("records source discovery at the opening gate", normalized_help)
+        self.assertIn("no search-space credit", normalized_help)
+        self.assertIn("attest nothing about wiring", normalized_help)
+        self.assertNotIn(
+            "measures the search space at the opening gate", normalized_help
+        )
 
     def test_a_document_of_the_wrong_shape_is_refused_by_name(self) -> None:
         """`--preflight` reads a list of checks; a dict is a different document.
@@ -4160,8 +4168,8 @@ class PowerBoundsTheBandTests(unittest.TestCase):
         """One discovered-knob document entry, read through the real adapter."""
         return MODULE.agent_facts_from_discovery({"knobs": fields})
 
-    def test_the_opening_score_measures_the_agents_own_search_space(self) -> None:
-        """#201's headline: the opening card grades what the project can search.
+    def test_source_discovery_is_advisory_until_the_approved_probe(self) -> None:
+        """A source read informs the baseline guard but cannot fund a paid grid.
 
         Measured end to end before this landed, on 200 production-sourced rows,
         difficulty-tagged, split 180/20, with a deterministic evaluator passing
@@ -4171,12 +4179,10 @@ class PowerBoundsTheBandTests(unittest.TestCase):
         customer, because the guide withholds every config-space document found
         before this run's search.
 
-        The same evidence with the agent read - four parameters, each carrying
-        the line of the customer's own code that shows it - scores agent 70 and
-        92 EXCELLENT overall, with no cap. The pillar is scored from a floor:
-        three model ids and two prompt styles are counted at three and two, and
-        each numeric range at two, so 24 configurations is the smallest space
-        the agent certainly reaches and not an estimate of the largest.
+        A source read can show plausible candidates but cannot prove the final
+        wrapper consumes them. It therefore stays a measured zero and advisory
+        45-point ceiling until the approved baseline-stage request-difference
+        guard runs before any provider call.
         """
         facts = self._knob(
             model={
@@ -4194,18 +4200,14 @@ class PowerBoundsTheBandTests(unittest.TestCase):
             },
         )
         pillar, caps, knobs = score_space(facts)
-        self.assertEqual(caps, [])
+        self.assertEqual([cap.condition for cap in caps], ["agent-no-varying-knobs"])
+        self.assertFalse(caps[0].blocks)
         self.assertEqual(knobs, [])
         self.assertEqual(pillar.confidence, 1.0)
-        self.assertEqual(pillar.score, 70)
+        self.assertEqual(pillar.score, 0)
         evidence = pillar.subscores[0].evidence
-        # 3 x 2 x 2 = 12 - the numeric range counts as two and no more.
-        self.assertIn("at least 12 distinct configurations", evidence)
-        # Named, so the customer can disagree with the read of their own code.
         self.assertIn("model, style, temperature", evidence)
-        # And bounded: no trial budget exists yet, so the top rung is refused
-        # by `search_space_points`' own undeclared-budget rule, not by a cap.
-        self.assertLess(pillar.score, 100)
+        self.assertIn("not request-difference evidence", evidence)
 
     def test_a_discovered_space_is_never_a_wiring_attestation(self) -> None:
         """The safety property, stated where it could most easily be lost.
@@ -4241,8 +4243,8 @@ class PowerBoundsTheBandTests(unittest.TestCase):
         self.assertEqual([cap.condition for cap in caps], ["agent-no-varying-knobs"])
         self.assertTrue(caps[0].blocks)
 
-    def test_looking_at_the_agent_beats_saying_nothing_about_it(self) -> None:
-        """A read that found settings must outscore one that found none.
+    def test_source_candidates_do_not_outscore_absent_evidence(self) -> None:
+        """Discovery does not turn an unverified candidate into search credit.
 
         The first draft of #201 renormalized an unmeasured agent pillar out of
         the average, and measured on the 200-row project that scored 99 for a
@@ -4289,10 +4291,12 @@ class PowerBoundsTheBandTests(unittest.TestCase):
                 }
             )
         )
-        self.assertGreater(read.overall, silent.overall)
-        self.assertGreater(read.overall, found_nothing.overall)
-        # And the read that found nothing is not punished for having looked
-        # either: same finding as silence about the same project, same number.
+        self.assertEqual(read.overall, silent.overall)
+        self.assertEqual(read.overall, found_nothing.overall)
+        self.assertFalse(any(cap.blocks for cap in read.caps))
+        self.assertTrue(any(cap.blocks for cap in found_nothing.caps))
+        # And the read that found nothing is not punished for having looked:
+        # it is the same one-configuration finding as an empty settings space.
         self.assertEqual(found_nothing.overall, silent.overall)
 
     def test_a_read_that_finds_nothing_is_a_measured_zero(self) -> None:
@@ -4439,7 +4443,6 @@ class PowerBoundsTheBandTests(unittest.TestCase):
             model={"values": ["gpt-4o-mini", "gpt-4o"], "evidence": line}
         )
         self.assertTrue(whole.discovered[0].credited, whole.discovered[0])
-        self.assertEqual(whole.discovered[0].reachable_values, 2)
 
     def test_a_hyphen_delimited_fragment_is_not_evidenced(self) -> None:
         """The boundary counts `.` and `-` as token characters - pinned here.
@@ -5047,17 +5050,17 @@ class LessEvidenceMayNotOutscoreMoreTests(unittest.TestCase):
             ),
             (
                 "read: one numeric knob",
-                2,
+                1,
                 read(temperature={"low": 0.0, "high": 1.0, "evidence": cited}),
             ),
             (
                 "read: one categorical knob",
-                2,
+                1,
                 read(model={"values": ["gpt-4o-mini", "gpt-4o"], "evidence": cited}),
             ),
             (
                 "read: two knobs",
-                4,
+                1,
                 read(
                     model={"values": ["gpt-4o-mini", "gpt-4o"], "evidence": cited},
                     temperature={"low": 0.0, "high": 1.0, "evidence": cited},
@@ -5065,7 +5068,7 @@ class LessEvidenceMayNotOutscoreMoreTests(unittest.TestCase):
             ),
             (
                 "read: three knobs",
-                8,
+                1,
                 read(
                     model={"values": ["gpt-4o-mini", "gpt-4o"], "evidence": cited},
                     temperature={"low": 0.0, "high": 1.0, "evidence": cited},
@@ -5074,7 +5077,7 @@ class LessEvidenceMayNotOutscoreMoreTests(unittest.TestCase):
             ),
             (
                 "read: four knobs",
-                24,
+                1,
                 read(
                     model={
                         "values": ["gpt-4o-mini", "gpt-4o", "o3-mini"],
@@ -9015,7 +9018,11 @@ class TheAgentPillarReadsTheAgentTests(unittest.TestCase):
         ]
 
         def overall(build):
-            pillar, caps, knobs = MODULE.score_agent(_read(build))
+            facts = MODULE.agent_facts_from_config_space(
+                {"knobs": {"model": ["fast", "slow"]}, "wired": ["model"]}
+            )
+            facts = MODULE.replace(facts, build=_read(build).build)
+            pillar, caps, knobs = MODULE.score_agent(facts)
             return MODULE.aggregate(
                 [*pillars, pillar], caps, knobs, dict(MODULE.DEFAULT_WEIGHTS)
             )
@@ -9162,10 +9169,17 @@ class TheAgentPillarReadsTheAgentTests(unittest.TestCase):
 
     def test_an_agent_with_no_tools_is_neither_charged_nor_paid(self) -> None:
         """The N/A case, which is not a zero and is not full marks either."""
+
+        def proven(build):
+            facts = MODULE.agent_facts_from_config_space(
+                {"knobs": {"model": ["fast", "slow"]}, "wired": ["model"]}
+            )
+            return MODULE.replace(facts, build=_read(build).build)
+
         none = _build_document(
             tools={"used": False, "evidence": "agent.py: no tool list reaches the call"}
         )
-        pillar, checks = self._pillar(_read(none))
+        pillar, checks = self._pillar(proven(none))
         self.assertFalse(checks["tools"].measured)
         self.assertFalse(checks["tools"].withheld)
         self.assertFalse(checks["tools"].applicable)
@@ -9174,14 +9188,14 @@ class TheAgentPillarReadsTheAgentTests(unittest.TestCase):
         # is not the same number as an agent whose tools all resolve - the
         # denominator moved - and it is close to it rather than below it, which
         # is the property that matters: having no tools is not a deduction.
-        every_tool, _ = self._pillar(_read(_build_document()))
-        self.assertAlmostEqual(pillar.score, every_tool.score, delta=2)
+        every_tool, every_checks = self._pillar(proven(_build_document()))
+        self.assertAlmostEqual(pillar.score, every_tool.score, delta=3)
         self.assertEqual(pillar.confidence, 1.0)
         self.assertEqual(pillar.confidence, every_tool.confidence)
         # And a declared tool nothing implements is charged, which is the one
         # thing "wired correctly" can be checked for by reading source.
         broken, broken_checks = self._pillar(
-            _read(
+            proven(
                 _build_document(
                     tools={
                         "used": True,
@@ -9192,7 +9206,16 @@ class TheAgentPillarReadsTheAgentTests(unittest.TestCase):
                 )
             )
         )
-        self.assertLess(broken.score, pillar.score)
+        self.assertLess(
+            broken_checks["tools"].value,
+            checks["tools"].maximum,
+            "an unreachable declared tool must not earn the tool-check credit",
+        )
+        self.assertLess(
+            broken_checks["tools"].value,
+            every_checks["tools"].value,
+            "a partly unreachable declaration receives only proportional tool credit",
+        )
         self.assertIn("not found behind the name", broken_checks["tools"].evidence)
 
     def test_every_check_names_the_line_it_was_read_from(self) -> None:
@@ -9322,7 +9345,8 @@ class RecordingAnUnsettledKnobHasOneShapeAndItWorksTests(unittest.TestCase):
             evidence="agent.py:14 top_p=cfg['top_p'] reaches the provider call"
         )
         self.assertEqual(recorded.score, settled.score)
-        self.assertEqual([cap.condition for cap in caps], [])
+        self.assertEqual([cap.condition for cap in caps], ["agent-no-varying-knobs"])
+        self.assertFalse(caps[0].blocks)
 
     def test_a_knob_recorded_with_evidence_alone_is_reported(self) -> None:
         """The half that did not hold, and the reason the reference could lie.
@@ -9337,7 +9361,9 @@ class RecordingAnUnsettledKnobHasOneShapeAndItWorksTests(unittest.TestCase):
         )
         space = next(sub for sub in pillar.subscores if sub.name == "search-space")
         self.assertIn("top_p", space.evidence)
-        self.assertIn("Recorded and not counted", space.evidence)
+        self.assertIn(
+            "Source discovery is not request-difference evidence", space.evidence
+        )
         # The reason travels with the name. "top_p was ignored" is not a line a
         # user can correct; the reason it counts for nothing is.
         self.assertIn("neither a list of options nor a low/high range", space.evidence)
@@ -9348,7 +9374,7 @@ class RecordingAnUnsettledKnobHasOneShapeAndItWorksTests(unittest.TestCase):
         recorded, _, _ = self._uncounted(evidence="agent.py:14 top_p from config")
         for pillar in (settled, recorded):
             space = next(s for s in pillar.subscores if s.name == "search-space")
-            self.assertIn("reaching at least 6 distinct configurations", space.evidence)
+            self.assertIn("source read found candidate setting(s)", space.evidence)
 
     def test_the_build_shape_inside_knobs_is_refused_with_the_remedy(self) -> None:
         """Naming the accepted fields is half a message.
@@ -9410,7 +9436,9 @@ class RecordingAnUnsettledKnobHasOneShapeAndItWorksTests(unittest.TestCase):
             / "component-creation.md"
         ).read_text()
         knob_half = guide.split("### The build half", 1)[0]
-        self.assertIn("worth recording rather than dropping", knob_half)
+        self.assertIn(
+            "worth recording rather than dropping", " ".join(knob_half.split())
+        )
         self.assertIn("no `values` or `low`/`high`", knob_half)
         self.assertIn("A knob has no `determined` field", knob_half)
 
@@ -9527,6 +9555,13 @@ class WhoWroteItBoundsWhatItMayClaimTests(unittest.TestCase):
 
     def _score(self, **origins) -> "MODULE.ReadinessScore":
         """The whole reachable case: real agent, collected rows, one origin varied."""
+        # This class tests origin ceilings after the baseline-stage guard has
+        # established the actual space.  A source read alone is intentionally
+        # not substituted here: it is the unprobed opening state tested above.
+        agent = MODULE.agent_facts_from_config_space(
+            {"knobs": {"model": ["fast", "slow"]}, "wired": ["model"]}
+        )
+        agent = replace(agent, build=_read(_build_document()).build)
         return MODULE.score_run(
             _brought(
                 120,
@@ -9536,7 +9571,7 @@ class WhoWroteItBoundsWhatItMayClaimTests(unittest.TestCase):
                 holdout_labelled_rows=36,
             ),
             self._evaluation(origins.get("evaluation")),
-            replace(_read(_build_document()), origin=origins.get("agent")),
+            replace(agent, origin=origins.get("agent")),
             dict(MODULE.DEFAULT_WEIGHTS),
         )
 
@@ -9549,7 +9584,7 @@ class WhoWroteItBoundsWhatItMayClaimTests(unittest.TestCase):
         # this is the card a project with real material and a run-written
         # evaluator got before #238, and it is what a run that still declares
         # nothing gets today.
-        self.assertEqual((undeclared.overall, undeclared.band), (93, "EXCELLENT"))
+        self.assertEqual((undeclared.overall, undeclared.band), (86, "STRONG"))
         self.assertEqual(undeclared.recommended_action, "proceed")
         self.assertEqual([cap.condition for cap in undeclared.caps], [])
         self.assertEqual(

@@ -159,22 +159,23 @@ pillar is thin - `EVALUATION 75/100 (2 of 4 checks measured)` - and calibrating 
 what fills that one in.
 
 No settings document exists before the search, so the agent pillar is read from the agent's own
-code instead - which parameters it can already vary, each against the line that shows it - and that
-is what the opening score grades the search space from. The same read answers four more questions
+code instead - which parameters it may already vary, each against the line that shows it. That
+source discovery records candidates for the later request-difference proof; it earns no opening
+search-space credit and does not prove wiring. The same read answers four more questions
 about how the agent is built: whether it carries a prompt and worked examples, whether anything
 pins down the shape of its answer, whether it ends and on what, and whether the tools it declares
 can be reached. Each is a fact with a line of your code behind it, and a question the read cannot
 settle is reported as unsettled rather than counted against you. Two things the pillar is not
 allowed to guess at are named on the card instead: whether your dataset and your evaluation method
 are wired into the agent, which this run builds afterwards and checks against the installed SDK.
-Where the read finds settings, no agent
-ceiling applies and calibrating can carry the band the whole way. Two states hold the score at 45,
-inside Partial, and they are different findings. A reading that found nothing your agent can vary
-says a search here would compare one configuration - a measurement of your project - so it blocks
-the paid run until something can vary. No reading and no document says only that this score was
-given nothing to count: it claims nothing about your project either way, and it stops nothing. What
-the opening card no longer does is hold every project at 45 for a document nobody was supposed to
-bring.
+Four opening-card states hold the score at 45, inside Partial. A source read that finds no usable
+dimension blocks the paid run because a search would compare one configuration. An empty settings
+document also blocks because it establishes no usable dimension. A source read that finds candidate
+settings is advisory until a successful current-run Enhanced config-space artifact reaches the
+scorer. The request-difference probe is a separate pre-call safety guard: it does not raise the
+opening card. No source read and no settings document is also advisory: it says only that this
+score was given nothing to count, not that anything is wrong with your project. Neither advisory
+state permits a grid; the pre-approval proof decides that before any provider call.
 
 Some conditions cap the whole score instead of costing a few points, because an average can hide a
 broken ruler - an evaluator that scores a wrong answer as well as a right one, a tuning set that
