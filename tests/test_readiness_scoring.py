@@ -8383,6 +8383,180 @@ class MeasuredOpeningInvocationTests(unittest.TestCase):
         self.assertEqual(stderr, "")
 
 
+class TheSourceTrioIsOptionalButWholeTests(unittest.TestCase):
+    """#330: the source flags gate CREDIT, and must not gate the read itself.
+
+    Requiring the trio alongside `--agent-knobs` bought nothing: a read
+    supplied without it credits zero knobs, which is the answer refusing it
+    gives. What it cost was the BUILD half, which makes no source claim at all.
+    An agent this static check cannot name a top-level Python callable for -- a
+    command, a method, a callable object -- can satisfy neither
+    `--selected-agent` nor `--selected-agent-callable`, so the whole document
+    became unsupplyable and its four build checks fell to WITHHELD: a read that
+    HAPPENED, recorded as this run's silence. That is the inversion
+    `SubScore.withheld` exists to prevent, and it is why omitting the read must
+    never score the same as doing it.
+    """
+
+    @staticmethod
+    def _run(argv: list[str]) -> tuple[int, str, str]:
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = MODULE.run(argv)
+        return code, out.getvalue(), err.getvalue()
+
+    @staticmethod
+    @contextlib.contextmanager
+    def _read():
+        """One valid agent-knobs document, and the project it describes."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "agent.py").write_text(
+                'MODELS = ["fast", "slow"]\n'
+                "def call(message, model):\n"
+                "    return provider(model=MODELS[model], message=message)\n"
+            )
+            document = root / "knobs.json"
+            document.write_text(
+                json.dumps(
+                    {
+                        "source": "agent.py",
+                        "knobs": {
+                            "model": {
+                                "values": ["fast", "slow"],
+                                "source_lines": [1],
+                                "evidence": "MODELS reaches the local call path",
+                            }
+                        },
+                        # Both halves, because the guide asks for both wherever
+                        # an agent was found -- and because the build half is
+                        # the one this contract change exists to keep
+                        # reachable. A document carrying only `knobs` withholds
+                        # these four correctly, which is a different fact.
+                        "build": {
+                            "prompt": {
+                                "present": True,
+                                "few_shot": 2,
+                                "evidence": "agent.py:1 SYSTEM carries two examples",
+                            },
+                            "output-contract": {
+                                "present": True,
+                                "evidence": "agent.py:3 json.loads(reply) parses it",
+                            },
+                            "control-flow": {
+                                "loop": False,
+                                "bounded": True,
+                                "evidence": "agent.py:2 one call, no loop",
+                            },
+                            "tools": {
+                                "used": False,
+                                "declared": [],
+                                "unreachable": [],
+                                "evidence": "agent.py:2 no tool is reached",
+                            },
+                        },
+                    }
+                )
+            )
+            yield root, document
+
+    def test_the_read_alone_is_scored_and_credits_nothing(self) -> None:
+        """The whole point: it runs, and the knob still earns no dimension."""
+        with self._read() as (_root, document):
+            code, stdout, stderr = self._run(["--agent-knobs", str(document), "--json"])
+        self.assertEqual(code, 0, stderr)
+        score = json.loads(stdout)
+        agent = next(p for p in score["pillars"] if p["name"] == "agent")
+        self.assertEqual(agent["score"], 0)
+        # Advisory, never blocking: the read happened and established nothing.
+        cap = next(
+            c for c in score["caps"] if c["condition"] == "agent-no-varying-knobs"
+        )
+        self.assertFalse(cap["blocks"])
+        # And it says which flag would establish it, rather than reporting the
+        # customer's agent as having nothing to vary.
+        self.assertIn("source root was not supplied", json.dumps(score))
+
+    def test_a_read_that_happened_is_never_recorded_as_silence(self) -> None:
+        """The regression this reopens the CLI for, measured on the card."""
+        with self._read() as (_root, document):
+            code, stdout, _stderr = self._run(
+                ["--agent-knobs", str(document), "--json"]
+            )
+        self.assertEqual(code, 0)
+        agent = next(p for p in json.loads(stdout)["pillars"] if p["name"] == "agent")
+        withheld = [s["name"] for s in agent["subscores"] if s["withheld"]]
+        self.assertEqual(
+            withheld,
+            [],
+            "the read was supplied, so no check it answers may be withheld",
+        )
+        self.assertGreater(agent["confidence"], 0.0)
+
+    def test_a_partial_trio_is_still_refused(self) -> None:
+        """Optional as a unit, never as three independent flags."""
+        with self._read() as (root, document):
+            for extra in (
+                ["--agent-source-root", str(root)],
+                ["--selected-agent", str(root / "agent.py")],
+                ["--selected-agent-callable", "call"],
+                [
+                    "--agent-source-root",
+                    str(root),
+                    "--selected-agent-callable",
+                    "call",
+                ],
+            ):
+                with self.subTest(extra=extra):
+                    code, stdout, stderr = self._run(
+                        ["--agent-knobs", str(document), *extra]
+                    )
+                    self.assertEqual(code, 2)
+                    self.assertEqual(stdout, "")
+                    self.assertIn("all three or none", stderr)
+
+    def test_the_trio_without_the_read_it_checks_is_refused(self) -> None:
+        """A flag accepted and ignored reads as a check that ran."""
+        with self._read() as (root, _document):
+            code, stdout, stderr = self._run(
+                [
+                    "--agent-source-root",
+                    str(root),
+                    "--selected-agent",
+                    str(root / "agent.py"),
+                    "--selected-agent-callable",
+                    "call",
+                ]
+            )
+        self.assertEqual(code, 2)
+        self.assertEqual(stdout, "")
+        self.assertIn("need the read they check", stderr)
+
+    def test_all_four_still_credit_exactly_as_before(self) -> None:
+        """Reopening the CLI may not move a single credit decision."""
+        with self._read() as (root, document):
+            code, stdout, stderr = self._run(
+                [
+                    "--agent-knobs",
+                    str(document),
+                    "--agent-source-root",
+                    str(root),
+                    "--selected-agent",
+                    str(root / "agent.py"),
+                    "--selected-agent-callable",
+                    "call",
+                    "--json",
+                ]
+            )
+        self.assertEqual(code, 0, stderr)
+        score = json.loads(stdout)
+        agent = next(p for p in score["pillars"] if p["name"] == "agent")
+        self.assertGreater(agent["score"], 0)
+        self.assertNotIn(
+            "agent-no-varying-knobs", [c["condition"] for c in score["caps"]]
+        )
+
+
 class RowReviewInputTests(unittest.TestCase):
     """What the scorer refuses to accept as a reading.
 

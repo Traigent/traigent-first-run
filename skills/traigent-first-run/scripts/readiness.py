@@ -8995,16 +8995,37 @@ def run(argv: Sequence[str] | None = None) -> int:
         )
         return 2
 
-    if not (
-        bool(args.agent_knobs)
-        == bool(args.agent_source_root)
-        == bool(args.selected_agent)
-        == bool(args.selected_agent_callable)
-    ):
+    # The three source flags are one unit, and that unit is OPTIONAL.
+    #
+    # Requiring them alongside --agent-knobs bought no safety: a read supplied
+    # without them credits zero knobs, which is the same answer as not being
+    # allowed to supply it. What it cost was the BUILD half. A command agent,
+    # or any agent this static check cannot name a top-level Python callable
+    # for, can satisfy neither --selected-agent nor --selected-agent-callable,
+    # so the whole read was refused and its four build checks fell to WITHHELD
+    # - reported as this run's silence rather than as the read it actually was.
+    # That is the exact inversion `SubScore.withheld` exists to prevent:
+    # omitting the read must never outscore doing it.
+    #
+    # So the source trio is all-three-or-none and may be absent, and an absent
+    # one takes the advisory route `agent_facts_from_discovery` already has.
+    source_flags = (
+        args.agent_source_root,
+        args.selected_agent,
+        args.selected_agent_callable,
+    )
+    if any(source_flags) and not all(source_flags):
         print(
-            "cannot read scoring input: --agent-knobs, --agent-source-root, and "
-            "--selected-agent, and --selected-agent-callable must be supplied together; "
+            "cannot read scoring input: --agent-source-root, --selected-agent and "
+            "--selected-agent-callable are one unit - supply all three or none; "
             "source evidence is checked only against that selected callable",
+            file=sys.stderr,
+        )
+        return 2
+    if any(source_flags) and not args.agent_knobs:
+        print(
+            "cannot read scoring input: the source flags describe --agent-knobs, "
+            "so they need the read they check",
             file=sys.stderr,
         )
         return 2
@@ -9115,16 +9136,26 @@ def run(argv: Sequence[str] | None = None) -> int:
                     agent_facts,
                     build=agent_facts_from_discovery(
                         load_json(args.agent_knobs),
-                        source_root=Path(args.agent_source_root),
-                        selected_agent=Path(args.selected_agent),
+                        source_root=(
+                            Path(args.agent_source_root)
+                            if args.agent_source_root
+                            else None
+                        ),
+                        selected_agent=(
+                            Path(args.selected_agent) if args.selected_agent else None
+                        ),
                         selected_agent_callable=args.selected_agent_callable,
                     ).build,
                 )
         elif args.agent_knobs:
             agent_facts = agent_facts_from_discovery(
                 load_json(args.agent_knobs),
-                source_root=Path(args.agent_source_root),
-                selected_agent=Path(args.selected_agent),
+                source_root=(
+                    Path(args.agent_source_root) if args.agent_source_root else None
+                ),
+                selected_agent=(
+                    Path(args.selected_agent) if args.selected_agent else None
+                ),
                 selected_agent_callable=args.selected_agent_callable,
             )
         else:
