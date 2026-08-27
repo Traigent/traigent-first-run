@@ -8475,7 +8475,10 @@ class TheSourceTrioIsOptionalButWholeTests(unittest.TestCase):
         self.assertFalse(cap["blocks"])
         # And it says which flag would establish it, rather than reporting the
         # customer's agent as having nothing to vary.
-        self.assertIn("source root was not supplied", json.dumps(score))
+        self.assertIn(
+            "could not verify how they reach the selected local call",
+            json.dumps(score),
+        )
 
     def test_a_read_that_happened_is_never_recorded_as_silence(self) -> None:
         """The regression this reopens the CLI for, measured on the card."""

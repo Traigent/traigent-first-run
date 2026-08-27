@@ -4984,15 +4984,23 @@ def score_discovered_agent(
         # qualification a settings document that lists nothing already carries,
         # where nobody proposed dropping the pillar over it.
         refused = [knob for knob in facts.discovered if not knob.credited]
-        detail = (
-            "; ".join(f"{knob.name}: {knob.uncredited_reason}" for knob in refused)
-            if refused
-            else "the read found no parameter the agent can vary"
-        )
         unverified = any(knob.unverified for knob in facts.discovered)
+        if unverified:
+            detail = ", ".join(knob.name for knob in refused) or "the candidates"
+            evidence = (
+                "the source read found candidate settings, but this narrow static "
+                "check could not verify how they reach the selected local call: "
+                f"{detail}. It has not established an opening search dimension"
+            )
+        else:
+            evidence = "the agent was read and no varying setting was established - " + (
+                "; ".join(f"{knob.name}: {knob.uncredited_reason}" for knob in refused)
+                if refused
+                else "the read found no parameter the agent can vary"
+            )
         return (
             nothing_to_search_pillar(
-                f"the agent was read and no varying setting was established - {detail}",
+                evidence,
                 supplied=True,
             ),
             [
