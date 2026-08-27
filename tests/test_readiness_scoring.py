@@ -8479,6 +8479,7 @@ class TheSourceTrioIsOptionalButWholeTests(unittest.TestCase):
             "could not verify how they reach the selected local call",
             json.dumps(score),
         )
+        self.assertNotIn("no varying setting was established", json.dumps(score))
 
     def test_a_read_that_happened_is_never_recorded_as_silence(self) -> None:
         """The regression this reopens the CLI for, measured on the card."""
@@ -8495,6 +8496,32 @@ class TheSourceTrioIsOptionalButWholeTests(unittest.TestCase):
             "the read was supplied, so no check it answers may be withheld",
         )
         self.assertGreater(agent["confidence"], 0.0)
+
+    def test_unverified_summary_does_not_mislabel_an_excluded_candidate(self) -> None:
+        facts = MODULE.AgentFacts(
+            discovered=(
+                MODULE.DiscoveredKnob(
+                    "model",
+                    "categorical",
+                    "read",
+                    ("fast", "slow"),
+                    "static reach was not established",
+                    True,
+                ),
+                MODULE.DiscoveredKnob(
+                    "seed",
+                    "categorical",
+                    "read",
+                    (),
+                    "run-to-run variance is excluded",
+                    False,
+                ),
+            )
+        )
+        pillar, caps, _ = MODULE.score_discovered_agent(facts)
+        self.assertFalse(caps[0].blocks)
+        self.assertIn("model", pillar.subscores[0].evidence)
+        self.assertNotIn("seed", pillar.subscores[0].evidence)
 
     def test_a_partial_trio_is_still_refused(self) -> None:
         """Optional as a unit, never as three independent flags."""
