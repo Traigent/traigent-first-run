@@ -121,6 +121,12 @@ it. Nothing in this guide requires sub-agents, which not every supported assista
 
 Ask before any private content leaves the machine, even when the provider key already exists.
 
+Before a Traigent key request, link current [pricing](https://portal.traigent.ai/pricing),
+[terms](https://portal.traigent.ai/terms), and [privacy](https://portal.traigent.ai/privacy). Do
+not copy their prices or claims. They do not establish training use of submitted material: make no
+claim. Stop before key handoff; ask Traigent for its canonical training-use policy, then resume
+after review.
+
 At the secret-entry gate, show only the URL needed for the selected service:
 
 - Traigent registration, only once the user already has their access code:
@@ -130,17 +136,12 @@ At the secret-entry gate, show only the URL needed for the selected service:
 - OpenAI keys: `https://platform.openai.com/api-keys`
 - Anthropic keys: `https://console.anthropic.com/settings/keys`
 
-These account/key links are necessary actions, not educational detours. Do not show every provider
-link; show only the selected provider and Traigent when each key becomes necessary.
+These links are actions, not detours: show only the selected provider and Traigent when needed.
 
-A first-time user reaches that key page one way. They start at `https://traigent.ai` and submit their
-email address, and Traigent sends a six-digit confirmation code that proves the mailbox and expires
-within minutes. Once they enter it, a second email arrives carrying a single-use access code, valid
-for 10 days, that authorizes one portal registration. The registration link in that same email is
-deliberately plain and carries no credential, so the code is typed into the page rather than
-clicked through. When the user completes portal registration the code is spent, the account's
-portal access period starts, and they land in the portal. Their address is already confirmed by
-then, so registration does not ask for a second confirmation.
+A first-time user starts at `https://traigent.ai`, confirms their email with its short-lived code,
+then receives a single-use 10-day access code for one portal registration. The registration link
+carries no credential: type the code into the page. Registration spends it, starts portal access,
+and needs no second email confirmation.
 
 The key is then created, not handed over — which is why the write-scope rule below is the main path
 here and not an edge case. Two places create one: the key control in the portal's top bar, which
