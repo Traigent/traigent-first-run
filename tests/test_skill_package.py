@@ -3031,11 +3031,8 @@ class SkillPackageTests(unittest.TestCase):
         self.assertIn("they do not establish training use", safety)
         self.assertIn("stop before key handoff", safety)
         self.assertIn("ask traigent for its canonical training-use policy", safety)
-        self.assertIn(
-            "this blocks until traigent provides an authoritative training-use policy",
-            safety,
-        )
-        self.assertIn("do not resume based on a local review", safety)
+        self.assertIn("nothing local clears this", safety)
+        self.assertIn("it holds until traigent provides one", safety)
 
         def assert_stops_before_key_route(text: str) -> None:
             self.assertLess(

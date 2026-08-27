@@ -3,7 +3,7 @@
 follows: 0060
 follows-total-measured: 429_933
 total-ceiling: 430_500
-total-measured: 430_397
+total-measured: 430_436
 
 The paid Enhanced handoff must show the current pricing, terms, and privacy
 sources before it asks for a Traigent key, while stating plainly that those
