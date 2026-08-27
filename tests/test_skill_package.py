@@ -3925,6 +3925,7 @@ class SkillPackageTests(unittest.TestCase):
         current = None
         namespace = {
             "litellm": litellm_module(lambda **_: current),
+            "assert_wiring_still_proven": lambda: None,
             "build_request": lambda message, config: {},
             "require_nonzero_token_usage": lambda response: None,
             "provider_reported_cost": lambda response: 0.01,
@@ -4039,6 +4040,7 @@ class SkillPackageTests(unittest.TestCase):
 
         namespace = {
             "litellm": litellm_module(lambda **_: current),
+            "assert_wiring_still_proven": lambda: None,
             "build_request": lambda message, config: {},
             "require_nonzero_token_usage": usage_guard,
             "require_untruncated_completion": truncation_guard,
@@ -5470,7 +5472,7 @@ class SkillPackageTests(unittest.TestCase):
             "why two lines are blank at the start",
             "no settings document ever reaches an opening score",
             # The Agent pillar's own sentence, which is now about what IS read.
-            "your agent is still there to read, and the assistant reads it",
+            "the assistant cites relative source lines below the local project root",
             # And the point of the paragraph, which survives both corrections.
             "neither is something you were supposed to bring",
         ):
@@ -5703,22 +5705,21 @@ class SkillPackageTests(unittest.TestCase):
         ]
         read = {self._opening_card(*shape, self.OPENING_READ)[0] for shape in shapes}
         silent = {self._opening_card(*shape)[0] for shape in shapes}
-        # The conformant opening card - the one where the assistant read the
-        # agent, which SKILL.md now mandates - reaches Excellent. That is #201's
-        # whole result and the README paragraph rests on it.
-        self.assertGreaterEqual(max(read), 90)
+        # A source read is useful discovery, but no longer masquerades as
+        # request-difference evidence. It stays measured at the shared
+        # ceiling until a successful current-run Enhanced config-space artifact
+        # reaches the scorer; the wrapper probe is only a pre-call guard.
+        self.assertEqual(max(read), READINESS.AGENT_NO_VARYING_KNOBS_CEILING)
         _agent, read_caps, _knobs = READINESS.score_agent(
             READINESS.agent_facts_from_discovery(self.OPENING_READ)
         )
         self.assertEqual(
-            read_caps,
-            [],
-            "reading the agent and finding settings raises a cap again; README "
-            "describes a card that no ceiling limits, so update both or neither",
+            [cap.condition for cap in read_caps], ["agent-no-varying-knobs"]
         )
+        self.assertFalse(read_caps[0].blocks)
         # And the card that established nothing is held where the README says
-        # it is. Not a blanket ceiling: it is the same 45 a settings document
-        # declaring an empty space gets, on the same evidence about the space.
+        # it is. It is advisory because it is a statement about absent evidence,
+        # not a finding about this customer's agent.
         self.assertEqual(max(silent), READINESS.AGENT_NO_VARYING_KNOBS_CEILING)
         _agent, silent_caps, _knobs = READINESS.score_agent(READINESS.AgentFacts())
         self.assertEqual(
@@ -5726,36 +5727,32 @@ class SkillPackageTests(unittest.TestCase):
         )
         self.assertFalse(silent_caps[0].blocks)
 
-        # Calibrating the evaluator is modelled as that pillar reaching 100, and
-        # it has to move a card that is not already pinned to a ceiling - which
-        # is exactly what the read buys.
+        # Calibration still changes lower cards, but cannot lift this
+        # unprobed request-space state above its ceiling.
         moved = [
             s
             for s in shapes
             if self._opening_card(100, s[1], self.OPENING_READ)
             != self._opening_card(*s, self.OPENING_READ)
         ]
-        self.assertTrue(
-            moved,
-            "calibrating moves no modelled opening card at all, so the README "
-            "may not tell a reader it fills anything in",
-        )
+        self.assertTrue(moved)
 
         readme = " ".join((ROOT / "README.md").read_text().casefold().split())
         for phrase in (
             "the card names which pillar is thin",
             "calibrating the evaluator is what fills that one in",
-            # The pillar-level half of the same promise, which is what #201
-            # made the opening card actually keep.
-            "where the read finds settings, no agent ceiling applies",
-            # Both states that land on 45, and the fact that there are two of
-            # them. They share a ceiling and they do not share a verdict; the
-            # shared number is what made one sentence look able to carry both.
-            "two states hold the score at 45",
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, readme)
         self.assertNotIn("calibrating the evaluator is usually what moves it", readme)
+        for phrase in (
+            "static parsing rejects comments, docstrings, todos, and example-only bindings",
+            "verified source alternatives earn opening search-space credit but do not prove final wiring",
+            "the separate pre-approval request-difference proof decides whether a paid grid may run",
+            "an empty settings document also blocks because it establishes no usable dimension",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, readme)
         # Every spelling of the ceiling that no longer exists. Each of these was
         # a sentence in this paragraph at some point, and each would now be
         # false rather than merely stale.
@@ -5838,23 +5835,22 @@ class SkillPackageTests(unittest.TestCase):
         self.assertGreater(supplied.score, pillar.score)
         self.assertIn("keeps its weight and earns nothing", readme)
 
-    def test_the_two_states_that_share_45_are_not_told_as_one(self) -> None:
-        """One ceiling, two findings - and only one of them is about the customer.
+    def test_the_four_opening_states_have_their_real_payment_routes(self) -> None:
+        """One ceiling, four states, and two distinct payment routes.
 
-        `agent-no-varying-knobs` reaches 45 from two places on the opening
-        card. A read of the agent that established nothing it can vary is a
+        `agent-no-varying-knobs` reaches 45 from unestablished-space states. A
+        read of the agent that established no usable setting is a
         MEASUREMENT of the project - a search here would compare one
         configuration - so it blocks the paid run. No document and no read is a
         statement about what this score was given, and the module's own comment
         beside that cap says it "claims nothing about the customer's project
         either way", so it is advisory and stops nothing.
 
-        Fused into one clause, the justification that belongs to the first
-        state is asserted about a customer whose agent nobody opened, and the
-        difference that decides whether they may pay for a run goes unmentioned
-        in both documents. The glossary states the split correctly fourteen
-        lines further down, which is what makes the fused version a
-        contradiction inside one document rather than merely a thin sentence.
+        A source read with statically verified alternatives establishes opening
+        credit but not wiring. An unchecked source claim is advisory, while an
+        empty settings document is the second blocking state. The pre-approval
+        request proof, not this opening score, decides whether a paid grid can
+        proceed.
 
         Derived from the module rather than restated from either paragraph, so
         the day the two caps stop disagreeing about blocking, this fails here
@@ -5863,6 +5859,8 @@ class SkillPackageTests(unittest.TestCase):
         """
         measured = READINESS.NOTHING_IN_THE_AGENT_TO_VARY_CAP
         unsupplied = READINESS.NO_SEARCH_SPACE_ESTABLISHED_CAP
+        empty_document = READINESS.NOTHING_WIRED_CAP
+        candidates = READINESS.UNPROBED_DISCOVERED_KNOBS_CAP
         self.assertEqual(measured.condition, unsupplied.condition)
         self.assertEqual(
             measured.ceiling,
@@ -5879,28 +5877,45 @@ class SkillPackageTests(unittest.TestCase):
         )
         self.assertTrue(measured.blocks)
         self.assertFalse(unsupplied.blocks)
+        self.assertTrue(empty_document.blocks)
+        self.assertFalse(candidates.blocks)
+        self.assertIn(
+            "they may be correct while this narrow static read still cannot verify "
+            "the route to the call",
+            candidates.reason,
+        )
+        self.assertIn(
+            "not a finding that the agent has no setting",
+            candidates.reason,
+        )
 
         readme = " ".join((ROOT / "README.md").read_text().casefold().split())
         glossary = " ".join(
             (SKILL_ROOT / "references" / "glossary.md").read_text().casefold().split()
         )
-        for document, text in (("README.md", readme), ("glossary.md", glossary)):
-            with self.subTest(document=document):
-                # Both states named, the blocking one named as a finding about
-                # the project, and the advisory one named as a finding about
-                # this score's inputs.
-                self.assertIn("a reading that found nothing your agent can vary", text)
-                self.assertIn("blocks the paid run", text)
-                self.assertIn("claims nothing about your project either way", text)
-                self.assertIn("stops nothing", text)
-                # The fusion itself, in both spellings that shipped: one clause
-                # covering the two states, justified by the claim only the
-                # measured one supports.
-                for fused in (
-                    "nothing read or supplied, or a reading that found nothing",
-                    "no reading and no document, or a reading that found nothing",
-                ):
-                    self.assertNotIn(fused, text)
+        # These are complete behavioral claims, not word-presence checks.  The
+        # README is the customer-facing explanation of all four scorer routes:
+        # a mutation that fuses the source-read-no-usable branch into either
+        # advisory route loses its blocking clause and fails here.
+        for route in (
+            "a source read that finds no usable dimension blocks the paid run",
+            "an empty settings document also blocks because it establishes no usable dimension",
+            "unchecked source claims and no source read/settings document are advisory",
+            "a verified source read can establish opening credit",
+            "the separate pre-approval request-difference proof decides whether a paid grid may run",
+        ):
+            with self.subTest(route=route):
+                self.assertIn(route, readme)
+
+        # The shorter glossary need not duplicate the timing sentence, but it
+        # must retain the same blocks-versus-advisories partition.
+        for route in (
+            "a settings document or source read establishes no usable dimension",
+            "source evidence could not be checked, or where neither source nor a settings document reached the score",
+            "the separate pre-approval request-difference proof decides whether any paid grid may proceed",
+        ):
+            with self.subTest(glossary_route=route):
+                self.assertIn(route, glossary)
 
     def test_local_example_retention_is_stated_the_same_way_in_both_homes(
         self,
@@ -6549,8 +6564,10 @@ class SkillPackageTests(unittest.TestCase):
         # source, and `45/100 PARTIAL` with `0 of 1 checks measured` where no
         # agent evidence was supplied at all. "Usually" sends a reader who
         # cannot find their document looking for a mistake they did not make.
-        self.assertIn("see that entry above for why one never is", glossary)
-        self.assertNotIn("for why one usually is", glossary)
+        self.assertIn(
+            "source evidence could not be checked, or where neither source nor a settings document reached the score",
+            glossary,
+        )
 
     def test_zero_anchor_gate_triggers_on_quality_not_file_presence(self) -> None:
         """#61: a stub agent satisfied the trigger and anchored nothing.
@@ -7856,14 +7873,8 @@ class SkillPackageTests(unittest.TestCase):
             text,
         )
 
-    def test_the_knob_catalog_offers_eleven_and_the_space_pays_for_three(self) -> None:
-        """The assistant has breadth while the first taste pays for three.
-
-        `batch_size` is absent for the same reason `max_tokens` is: it moves
-        throughput and cost without changing what the answer says. It was
-        replaced by `self_consistency`, which does change the answer and does
-        cost money to do it.
-        """
+    def test_the_knob_catalog_offers_nine_and_the_space_pays_for_three(self) -> None:
+        """The assistant has breadth while the first taste pays for three."""
         text = SDK_EXECUTION.read_text()
         catalog = text.split("### The knob catalog", 1)[1].split("###", 1)[0]
         for knob in (
@@ -7872,8 +7883,6 @@ class SkillPackageTests(unittest.TestCase):
             "thinking_shape",
             "reflect",
             "few_shot_count",
-            "task_decomposition",
-            "self_consistency",
             "retrieval_k",
             "context_format",
             "tool_policy",
@@ -7881,17 +7890,20 @@ class SkillPackageTests(unittest.TestCase):
         ):
             with self.subTest(knob=knob):
                 self.assertIn(f"`{knob}`", catalog)
-        table = catalog.split("Two entries carry a precondition", 1)[0]
-        for out in ("batch_size", "max_tokens", "self_check"):
+        table = catalog.split("| Knob | Values | Choose it when |", 1)[1].split(
+            "\n\n", 1
+        )[0]
+        for out in (
+            "batch_size",
+            "max_tokens",
+            "self_check",
+            "task_decomposition",
+            "self_consistency",
+        ):
             with self.subTest(out=out):
                 self.assertNotIn(f"`{out}`", table)
         self.assertIn("`batch_size` and `max_tokens` are deliberately absent", catalog)
-        # `self_consistency` needs sampling diversity, so zero-temperature
-        # configurations cannot pay for repeated identical calls.
-        self.assertIn(
-            "only when every sampled configuration uses temperature above 0",
-            catalog,
-        )
+        self.assertIn("require separately contained tracing", catalog)
         self.assertIn(
             "one task-selected fixed value, not a search slot",
             " ".join(catalog.split()),
@@ -7942,7 +7954,29 @@ class SkillPackageTests(unittest.TestCase):
                 bullets[-1] += " " + line.strip()
             elif not line.strip():
                 continue
-        self.assertEqual(len(bullets), 11, "one line per catalog knob")
+        expected_knobs = {
+            "model",
+            "prompt_style",
+            "thinking_shape",
+            "reflect",
+            "few_shot_count",
+            "context_format",
+            "temperature",
+        }
+        observed_knobs = {
+            re.match(r"- \*\*([^*]+)\*\* - ", bullet).group(1) for bullet in bullets
+        }
+        self.assertEqual(
+            len(bullets),
+            len(expected_knobs),
+            "one customer-facing sentence per eligible direct parameter",
+        )
+        self.assertEqual(
+            observed_knobs,
+            expected_knobs,
+            "the customer-facing list must cover exactly the direct parameters "
+            "eligible for this first paid space",
+        )
         for bullet in bullets:
             with self.subTest(bullet=bullet[:40]):
                 explanation = bullet.split("** - ", 1)[1]
@@ -8086,11 +8120,16 @@ class SkillPackageTests(unittest.TestCase):
             "BASELINE_CONFIG",
             "BASELINE_SPACE",
             "ENHANCED_SPACE",
+            "BASELINE_IS_USER_OWNED",
+            "WIRED_KNOBS",
+            "PROBE_INPUTS",
+            "PROBE_VERDICTS",
+            "UNPROVEN_WIRED_KNOBS",
+            "_tuning_for_probe",
             "WIRED_KNOBS",
             "BEHAVIOUR_KNOBS",
             "PROBE_INPUTS",
             "PROBE_VERDICTS",
-            "WIRED_OUTSIDE_THE_REQUEST",
             "UNPROVEN_WIRED_KNOBS",
         }
         selected_nodes = []
@@ -8100,6 +8139,8 @@ class SkillPackageTests(unittest.TestCase):
                 "config_space_document",
                 "build_prompt",
                 "build_request",
+                "holdout_agent_input",
+                "require_wiring_probe_inputs",
                 "probe_wiring",
             }:
                 selected_nodes.append(node)
@@ -8132,6 +8173,14 @@ class SkillPackageTests(unittest.TestCase):
             "BASELINE_TRIALS": 12,
             "ENHANCED_MAX_TRIALS": 10,
             "MODEL_REQUEST_TIMEOUT_SECONDS": 120.0,
+            "TUNING_DATASET": "/project/traigent-runs/tuning.jsonl",
+            "traigent": SimpleNamespace(
+                Dataset=SimpleNamespace(
+                    from_jsonl=lambda _path: SimpleNamespace(
+                        examples=[SimpleNamespace(input_data="probe")]
+                    )
+                )
+            ),
         }
         exec(compile(executable, "<sdk-spaces-and-knobs>", "exec"), namespace)
 
@@ -8244,6 +8293,14 @@ class SkillPackageTests(unittest.TestCase):
             "BASELINE_TRIALS": 7,
             "ENHANCED_MAX_TRIALS": 10,
             "MODEL_REQUEST_TIMEOUT_SECONDS": 120.0,
+            "TUNING_DATASET": "/project/traigent-runs/tuning.jsonl",
+            "traigent": SimpleNamespace(
+                Dataset=SimpleNamespace(
+                    from_jsonl=lambda _path: SimpleNamespace(
+                        examples=[SimpleNamespace(input_data="probe")]
+                    )
+                )
+            ),
         }
         with self.assertRaises(AssertionError):
             exec(
@@ -8267,6 +8324,14 @@ class SkillPackageTests(unittest.TestCase):
             "BASELINE_TRIALS": 12,
             "ENHANCED_MAX_TRIALS": 10,
             "MODEL_REQUEST_TIMEOUT_SECONDS": 120.0,
+            "TUNING_DATASET": "/project/traigent-runs/tuning.jsonl",
+            "traigent": SimpleNamespace(
+                Dataset=SimpleNamespace(
+                    from_jsonl=lambda _path: SimpleNamespace(
+                        examples=[SimpleNamespace(input_data="probe")]
+                    )
+                )
+            ),
         }
         exec(
             compile(executable, "<sdk-reasoning-strong-tier>", "exec"),
@@ -8484,7 +8549,8 @@ class SkillPackageTests(unittest.TestCase):
         self.assertIn("its row count exactly; do not expand it to twelve", sdk)
         self.assertIn("real one-row fixed configuration remains one row", sdk)
         self.assertIn("preserve its exact model set", sdk)
-        self.assertIn("add non-model controls by default", sdk)
+        self.assertIn("add only direct request parameters the probe establishes", sdk)
+        self.assertNotIn("add non-model controls by default", sdk)
         self.assertIn(
             "matched an explicitly approved and disclosed reduced target", skill
         )
@@ -8583,6 +8649,7 @@ class SkillPackageTests(unittest.TestCase):
         )
         namespace = {
             "litellm": litellm_module(fake_completion),
+            "assert_wiring_still_proven": lambda: None,
             "provider_reported_cost": lambda response: 0.01,
             "require_nonzero_token_usage": lambda response: None,
             "require_untruncated_completion": lambda response: None,
@@ -9515,6 +9582,7 @@ class SkillPackageTests(unittest.TestCase):
         call_namespace = {
             "math": __import__("math"),
             "litellm": litellm_module(completion),
+            "assert_wiring_still_proven": lambda: None,
             "build_request": lambda message, config: {},
             **spend_gate_bindings(),
         }
@@ -9640,6 +9708,7 @@ class SkillPackageTests(unittest.TestCase):
 
         namespace = {
             "HOLDOUT_DATASET": "/project/traigent-runs/holdout.jsonl",
+            "assert_wiring_still_proven": lambda: None,
             # The door is part of the gate, so compiling the gate installs it
             # on this module even where the fixture's `call_agent` is a stub.
             "litellm": litellm_module(lambda **_: None),
@@ -9813,8 +9882,8 @@ class SkillPackageTests(unittest.TestCase):
         safety = " ".join(RUN_SAFETY.read_text().casefold().split())
         for phrase in (
             "trial settings are not consumed",
-            "return to the stage-2 repair/continue/pause choice",
-            "enter stage-3 adapter repair and revalidate only after the user chooses its scope",
+            "return to **skill.md stage 4**'s repair/continue/pause choice",
+            "revalidate only after the user chooses that repair's scope",
             "do not open a credential file while optimization remains phantom",
         ):
             self.assertIn(phrase, safety)
@@ -12979,10 +13048,10 @@ class SkillPackageTests(unittest.TestCase):
             "historical context only",
             "only that current-run file enters closing readiness",
             "request visibility, per model",
-            "unverified claim for a reader to challenge",
+            "includes only direct request parameters",
         ):
             with self.subTest(phrase=phrase):
-                self.assertIn(phrase, f"{safety} {sdk}")
+                self.assertIn(phrase, f"{skill} {safety} {sdk}")
 
     def test_every_agent_cap_condition_has_a_documented_branch(self) -> None:
         """The sibling below covers the dataset caps; nothing covered the agent one.
@@ -13027,7 +13096,7 @@ class SkillPackageTests(unittest.TestCase):
             "evaluator and agent caps route through the rules that already own them", 1
         )[1]
         for condition, branch in (
-            ("agent-no-varying-knobs", "that run's own outcome to report"),
+            ("agent-no-varying-knobs", "report stops/zero trials"),
             # #238: routed to the walkthrough labeling rules, which is the one
             # place this guide already decides what may be said about material
             # it wrote itself.
@@ -13080,11 +13149,10 @@ class SkillPackageTests(unittest.TestCase):
                 both[value.blocks].append(name)
         self.assertTrue(both[True], "no blocking branch left; rewrite this check")
         self.assertEqual(
-            len(both[False]),
-            1,
-            "agent-no-varying-knobs has more than one advisory branch, or none; "
-            "SKILL.md scopes the advisory reading to exactly one state - "
-            f"neither a document nor a read reached the score. Found {both}",
+            set(both[False]),
+            {"NO_SEARCH_SPACE_ESTABLISHED_CAP", "UNPROBED_DISCOVERED_KNOBS_CAP"},
+            "only unestablished and source-only states are advisory; a source "
+            "candidate must remain measured rather than being renormalized away",
         )
         normalized = " ".join(SKILL.read_text().casefold().split())
         routing = normalized.split("evaluator and agent caps route through", 1)[1]
@@ -13097,8 +13165,12 @@ class SkillPackageTests(unittest.TestCase):
         self.assertNotIn("an absent settings document raises no cap at all", routing)
         # The scoped claim, and it has to name the read as a blocking branch or
         # an assistant meeting that card routes it as advisory.
-        self.assertIn("advisory ceiling only where its reason says", routing)
-        self.assertIn("or a reading of the agent that established nothing", routing)
+        self.assertIn("source read finds no usable dimension", routing)
+        self.assertIn(
+            "advisory only with no evidence or source candidates whose references could not be verified",
+            routing,
+        )
+        self.assertIn("request-difference proof", routing)
 
     def test_an_unrecognised_shape_is_read_before_it_is_called_broken(self) -> None:
         """The route has to say READ, not just "not creation".
@@ -13290,8 +13362,15 @@ class SkillPackageTests(unittest.TestCase):
         """Source-read knobs establish a search space, never wiring or build proof."""
         skill = SKILL.read_text()
         component = (SKILL_ROOT / "references" / "component-creation.md").read_text()
+        self.assertIn(
+            "It attests nothing about wiring, clears no wiring cap, and writes nothing into the user's project.",
+            " ".join(skill.split()),
+        )
+        self.assertIn(
+            "never supplies `values`, a range, or wiring evidence",
+            " ".join(component.split()),
+        )
         for document in (skill, component):
-            self.assertIn("clears no wiring cap", document)
             self.assertNotIn("clears no cap", document)
         self.assertIn("leaves all four unmeasured", component)
         self.assertNotIn("earns the check", component)
@@ -14327,6 +14406,7 @@ class SkillPackageTests(unittest.TestCase):
             "BASELINE_CONFIG",
             "BASELINE_SPACE",
             "ENHANCED_SPACE",
+            "BASELINE_IS_USER_OWNED",
             "WIRED_KNOBS",
         }
         selected = [
@@ -14419,6 +14499,7 @@ class SkillPackageTests(unittest.TestCase):
                     # reader answering. A fixture supplying `lambda: None`
                     # here would run green against a stop that was deleted.
                     "TRACKED_RUN": None,
+                    "assert_wiring_still_proven": lambda: None,
                 }
             )
             reader = next(
@@ -14731,13 +14812,29 @@ class SkillPackageTests(unittest.TestCase):
             "BASELINE_CONFIG",
             "BASELINE_SPACE",
             "ENHANCED_SPACE",
+            "BASELINE_IS_USER_OWNED",
+            "WIRED_KNOBS",
+            "PROBE_INPUTS",
+            "PROBE_VERDICTS",
+            "REQUEST_FINGERPRINT",
+            "_tuning_for_probe",
         }
         selected = [
             node
             for node in module.body
             if (
                 isinstance(node, ast.FunctionDef)
-                and node.name in {"build_prompt", "build_request", "call_agent"}
+                and node.name
+                in {
+                    "build_prompt",
+                    "build_request",
+                    "holdout_agent_input",
+                    "require_wiring_probe_inputs",
+                    "probe_wiring",
+                    "request_fingerprint",
+                    "assert_wiring_still_proven",
+                    "call_agent",
+                }
             )
             or (
                 isinstance(node, ast.Assign)
@@ -14748,7 +14845,14 @@ class SkillPackageTests(unittest.TestCase):
             )
         ]
         self.assertEqual(
-            len(selected), 7, "the template no longer defines the knobs it wires"
+            len(selected), 18, "the template no longer defines the knobs it wires"
+        )
+        self.assertIn(
+            "assert_wiring_still_proven()\nbaseline_results", SDK_EXECUTION.read_text()
+        )
+        self.assertIn(
+            "assert_wiring_still_proven()\n    optimized_results",
+            SDK_EXECUTION.read_text(),
         )
 
         requests: list[dict] = []
@@ -14768,6 +14872,17 @@ class SkillPackageTests(unittest.TestCase):
             "SELECTED_ALTERNATIVE_MODEL": "provider/alternative",
             "SELECTED_STRONG_MODEL": "provider/strong",
             "STRONG_REASONING_EFFORT": None,
+            "TUNING_DATASET": "/project/traigent-runs/tuning.jsonl",
+            "traigent": SimpleNamespace(
+                Dataset=SimpleNamespace(
+                    from_jsonl=lambda _path: SimpleNamespace(
+                        examples=[
+                            SimpleNamespace(input_data="task"),
+                            SimpleNamespace(input_data="different task"),
+                        ]
+                    )
+                )
+            ),
             **spend_gate_bindings(),
         }
         exec(
@@ -14784,6 +14899,7 @@ class SkillPackageTests(unittest.TestCase):
                 ),
                 "<sdk-call-agent>",
                 "exec",
+                optimize=1,
             ),
             namespace,
         )
@@ -14798,8 +14914,54 @@ class SkillPackageTests(unittest.TestCase):
                 r"^WIRED_KNOBS = (\[.*?\])", code[0], re.MULTILINE | re.DOTALL
             ).group(1)
         )
+        namespace["assert_wiring_still_proven"]()
         namespace["call_agent"]("task", base)
+        self.assertEqual(
+            len(requests),
+            1,
+            "the proven current configuration may place its one preserved call",
+        )
         baseline_request = requests[-1]
+
+        # These are the actual paid-phase guard's absent-input branches. They
+        # remain RuntimeErrors when Python runs optimized, and no provider call
+        # may escape while either proof input is absent.
+        before_absent_proof = len(requests)
+        original_inputs = namespace["PROBE_INPUTS"]
+        namespace["PROBE_INPUTS"] = ()
+        with self.assertRaisesRegex(RuntimeError, "tuning input to prove"):
+            namespace["assert_wiring_still_proven"]()
+        self.assertEqual(len(requests), before_absent_proof)
+
+        # The Basic phase can retain a customer-owned space that differs from
+        # the enhanced one. A duplicate there pays duplicate baseline trials
+        # unless the shared pre-phase guard validates both raw spaces.
+        namespace["PROBE_INPUTS"] = original_inputs
+        original_baseline_space = namespace["BASELINE_SPACE"]
+        namespace["BASELINE_SPACE"] = {
+            **original_baseline_space,
+            "reflect": [False, 0],
+        }
+        with self.assertRaisesRegex(RuntimeError, "duplicate paid values"):
+            namespace["assert_wiring_still_proven"]()
+        self.assertEqual(
+            len(requests),
+            before_absent_proof,
+            "a duplicate preserved baseline must stop before its provider call",
+        )
+        namespace["BASELINE_SPACE"] = original_baseline_space
+        original_models = namespace["ENHANCED_SPACE"]["model"]
+        namespace["ENHANCED_SPACE"] = {
+            **namespace["ENHANCED_SPACE"],
+            "model": [],
+        }
+        with self.assertRaisesRegex(RuntimeError, "model to prove"):
+            namespace["assert_wiring_still_proven"]()
+        self.assertEqual(len(requests), before_absent_proof)
+        namespace["ENHANCED_SPACE"] = {
+            **namespace["ENHANCED_SPACE"],
+            "model": original_models,
+        }
         for knob in wired:
             with self.subTest(knob=knob):
                 self.assertIn(
@@ -14816,6 +14978,7 @@ class SkillPackageTests(unittest.TestCase):
                     # than silently skipping a knob that lost its values.
                     self.assertEqual(len(space[knob]), 1)
                     continue
+                namespace["assert_wiring_still_proven"]()
                 namespace["call_agent"]("task", dict(base, **{knob: alternatives[0]}))
                 self.assertNotEqual(
                     requests[-1],
@@ -14827,9 +14990,13 @@ class SkillPackageTests(unittest.TestCase):
 
         # `call_agent` must route through `build_request`, not re-inline the
         # request: everything the fence asserts at load time is a claim about
-        # `build_request`, and an inlined `call_agent` would drift past it.
+        # `build_request`, and an inlined `call_agent` would drift past it. The
+        # local recording stub is the only completion target in this test.
+        honest_build_request = namespace["build_request"]
         namespace["build_request"] = lambda message, config: {"probe": "sentinel"}
+        before_routing_probe = len(requests)
         namespace["call_agent"]("task", base)
+        self.assertEqual(len(requests), before_routing_probe + 1)
         # Every key `build_request` produced, and one the door adds on its way
         # past: it holds an invocation to a single billable attempt, so it is a
         # transport setting rather than a search dimension. Asserting the pair
@@ -14842,6 +15009,85 @@ class SkillPackageTests(unittest.TestCase):
             "fence's wiring assert guards code the agent no longer calls",
         )
         self.assertEqual(requests[-1].get("max_retries"), 0)
+        namespace["build_request"] = honest_build_request
+
+        # A mutated swept knob that changes only one paid input cannot enter the
+        # phase: the guard rechecks every tuning input before the first call.
+        honest_request = namespace["build_request"]
+
+        def one_input_only(message, config):
+            request = honest_request(message, {**config, "reflect": False})
+            if message == "task" and config["reflect"]:
+                request = {**request, "reflect_only_on_one_input": True}
+            return request
+
+        namespace["build_request"] = one_input_only
+        before = len(requests)
+        with self.assertRaises(RuntimeError):
+            namespace["assert_wiring_still_proven"]()
+        self.assertEqual(len(requests), before)
+
+    def test_shared_tuning_and_holdout_input_parser_has_a_neutral_error(self) -> None:
+        """A tuning-row failure must not send the customer to holdout.jsonl.
+
+        The parser runs while the template loads tuning.jsonl for the local
+        wiring proof and again for holdout rows. Its failure text therefore
+        names the data shape, not one of those two callers.
+        """
+        code = re.findall(
+            r"```python\n(.*?)\n```", SDK_EXECUTION.read_text(), re.DOTALL
+        )[0]
+        module = ast.parse(code)
+        parser = next(
+            node
+            for node in module.body
+            if isinstance(node, ast.FunctionDef) and node.name == "holdout_agent_input"
+        )
+        tuning_load = [
+            node
+            for node in module.body
+            if isinstance(node, ast.Assign)
+            and any(
+                isinstance(target, ast.Name)
+                and target.id in {"_tuning_for_probe", "PROBE_INPUTS"}
+                for target in node.targets
+            )
+        ]
+        self.assertEqual(
+            len(tuning_load),
+            2,
+            "the local tuning proof must load rows and derive its inputs at import",
+        )
+        loaded: list[str] = []
+        namespace = {
+            "TUNING_DATASET": "/project/traigent-runs/tuning.jsonl",
+            "traigent": SimpleNamespace(
+                Dataset=SimpleNamespace(
+                    from_jsonl=lambda path: (
+                        loaded.append(path)
+                        or SimpleNamespace(
+                            examples=[SimpleNamespace(input_data={"not_message": 1})]
+                        )
+                    )
+                )
+            ),
+        }
+        with self.assertRaisesRegex(
+            TypeError,
+            r"^Dataset input does not match the inspected agent\(message: str\) contract$",
+        ):
+            exec(  # noqa: S102 - executes the document's import-time local proof
+                compile(
+                    ast.fix_missing_locations(
+                        ast.Module(body=[parser, *tuning_load], type_ignores=[])
+                    ),
+                    "<sdk-malformed-tuning-row>",
+                    "exec",
+                    optimize=1,
+                ),
+                namespace,
+            )
+        self.assertEqual(loaded, ["/project/traigent-runs/tuning.jsonl"])
 
     def _wiring_probe_namespace(self, **overrides) -> dict:
         """Execute the fence's wiring probe with pieces of it swapped out."""
@@ -14854,16 +15100,28 @@ class SkillPackageTests(unittest.TestCase):
             "BASELINE_CONFIG",
             "BASELINE_SPACE",
             "ENHANCED_SPACE",
+            "BASELINE_IS_USER_OWNED",
             "WIRED_KNOBS",
             "PROBE_INPUTS",
-            "WIRED_OUTSIDE_THE_REQUEST",
+            "PROBE_VERDICTS",
+            "UNPROVEN_WIRED_KNOBS",
+            "_tuning_for_probe",
+            "WIRED_KNOBS",
+            "PROBE_INPUTS",
         }
         selected = [
             node
             for node in module.body
             if (
                 isinstance(node, ast.FunctionDef)
-                and node.name in {"build_prompt", "build_request", "probe_wiring"}
+                and node.name
+                in {
+                    "build_prompt",
+                    "build_request",
+                    "holdout_agent_input",
+                    "require_wiring_probe_inputs",
+                    "probe_wiring",
+                }
             )
             or (
                 isinstance(node, ast.Assign)
@@ -14884,6 +15142,17 @@ class SkillPackageTests(unittest.TestCase):
             "SELECTED_ALTERNATIVE_MODEL": "provider/alternative",
             "SELECTED_STRONG_MODEL": "provider/strong",
             "STRONG_REASONING_EFFORT": None,
+            "TUNING_DATASET": "/project/traigent-runs/tuning.jsonl",
+            "traigent": SimpleNamespace(
+                Dataset=SimpleNamespace(
+                    from_jsonl=lambda _path: SimpleNamespace(
+                        examples=[
+                            SimpleNamespace(input_data="probe"),
+                            SimpleNamespace(input_data="other probe"),
+                        ]
+                    )
+                )
+            ),
         }
         exec(
             compile(
@@ -14908,12 +15177,6 @@ class SkillPackageTests(unittest.TestCase):
         silently re-admit the unverified claim the probe exists to expose.
         """
         honest = self._wiring_probe_namespace()
-        self.assertEqual(
-            honest["WIRED_OUTSIDE_THE_REQUEST"],
-            {},
-            "the shipped walkthrough wires every knob into the request, so its "
-            "escape mapping must stay empty",
-        )
         verdicts = honest["probe_wiring"](
             honest["ENHANCED_SPACE"], honest["BASELINE_CONFIG"]
         )
@@ -14981,15 +15244,41 @@ class SkillPackageTests(unittest.TestCase):
             "a knob every model consumes must still be proven",
         )
 
-    def test_the_probe_reads_more_than_one_input(self) -> None:
-        """A knob that acts on real input only must not block a paying run.
+    def test_duplicate_paid_values_are_refused_before_request_proof(
+        self,
+    ) -> None:
+        """A duplicate cannot become an unsearched dimension while the grid pays it."""
+        namespace = self._wiring_probe_namespace()
+        space = {
+            **namespace["ENHANCED_SPACE"],
+            "reflect": [False, 0],
+        }
+        requests = 0
 
-        The probe tested the single literal `"probe"`, so a knob keyed on the
-        shape of the input - a `sql_mode` applied when the message starts
-        `SQL:` - produced identical requests, landed in UNPROVEN_WIRED_KNOBS,
-        and failed the module import. That is a legitimate run blocked at
-        generation time, so the probe reads several representative inputs and
-        the template says to replace them with real ones.
+        def should_not_build_request(*_args, **_kwargs):
+            nonlocal requests
+            requests += 1
+            raise AssertionError(
+                "duplicate values must stop before request construction"
+            )
+
+        namespace["build_request"] = should_not_build_request
+        with self.assertRaisesRegex(RuntimeError, "duplicate paid values"):
+            namespace["probe_wiring"](space, namespace["BASELINE_CONFIG"])
+        self.assertEqual(requests, 0)
+        self.assertEqual(
+            [repr(value) for value in space["reflect"]],
+            ["False", "0"],
+            "the safety gate must preserve a customer-owned space rather than normalize it",
+        )
+
+    def test_the_probe_reads_more_than_one_input(self) -> None:
+        """A swept knob must move every paid input, not one convenient probe.
+
+        The probe uses the exact tuning inputs because an input-dependent knob
+        can look connected on one convenient example while leaving other paid
+        inputs unchanged. Such a partial dimension must stop before the grid,
+        rather than being treated as a legitimate Cartesian search dimension.
         """
         namespace = self._wiring_probe_namespace()
         self.assertGreater(
@@ -15015,9 +15304,9 @@ class SkillPackageTests(unittest.TestCase):
         )
         self.assertEqual(
             verdicts["reflect"],
-            "visible",
-            "a knob that acts only on one of the probed inputs is wired, and "
-            "refusing to load is a false refusal that blocks a paid run",
+            "partial",
+            "a knob that leaves any paid input unchanged cannot enter this "
+            "first-run Cartesian grid",
         )
 
     def _wiring_fence_block(self) -> ast.Module:
@@ -15045,25 +15334,14 @@ class SkillPackageTests(unittest.TestCase):
             for index, node in enumerate(body)
             if index > start
             and isinstance(node, ast.FunctionDef)
-            and node.decorator_list
+            and node.name == "request_fingerprint"
         )
         return ast.fix_missing_locations(
             ast.Module(body=body[start:end], type_ignores=[])
         )
 
-    def test_a_conditional_knob_loads_and_says_which_models_honour_it(self) -> None:
-        """`partial` blocked a legitimate run, and only `invisible` should.
-
-        A knob can legitimately affect only the models that support it -
-        `reasoning_effort` on a reasoning model is a conditional dimension, not
-        an ignored knob - and the fence aborted the import on it, so a valid
-        run never started. `WIRED_OUTSIDE_THE_REQUEST` is no honest escape for
-        it either: the knob does act inside request construction, which is
-        exactly what the probe just saw. It loads and is reported instead, with
-        the models that honour it, so the asymmetry reaches the run record. The
-        no-op the guard exists to catch - a knob no model and no probed input
-        ever moves - still fails the load.
-        """
+    def test_a_partial_knob_is_refused_before_the_cartesian_grid_runs(self) -> None:
+        """A partial dimension fails before either Cartesian grid can load or record it."""
         fence = self._wiring_fence_block()
 
         conditional = self._wiring_probe_namespace()
@@ -15079,9 +15357,12 @@ class SkillPackageTests(unittest.TestCase):
             return request
 
         conditional["build_request"] = only_the_base_model_reads_the_prompt
-        printed = io.StringIO()
-        with contextlib.redirect_stdout(printed):
-            exec(compile(fence, "<sdk-conditional-knob>", "exec"), conditional)
+        conditional["BASELINE_IS_USER_OWNED"] = True
+        with self.assertRaisesRegex(RuntimeError, "preserved baseline") as raised:
+            exec(
+                compile(fence, "<sdk-conditional-knob>", "exec", optimize=1),
+                conditional,
+            )
 
         self.assertEqual(
             {
@@ -15097,28 +15378,32 @@ class SkillPackageTests(unittest.TestCase):
         )
         self.assertEqual(
             conditional["UNPROVEN_WIRED_KNOBS"],
-            {},
-            "a conditional dimension is information, not a failed load",
-        )
-        self.assertEqual(
-            conditional["CONDITIONAL_WIRED_KNOBS"],
             {
-                "prompt_style": [base_model],
-                "thinking_shape": [base_model],
-                "reflect": [base_model],
+                "prompt_style": "partial",
+                "thinking_shape": "partial",
+                "reflect": "partial",
             },
-            "the load must name the models that honour a conditional knob",
+            "partial dimensions must not enter the paid Cartesian grid",
         )
-        report = printed.getvalue()
-        for expected in ("conditional dimension", "prompt_style", base_model):
-            self.assertIn(expected, report)
+        self.assertIn("do not alter tuning rows", str(raised.exception))
+        code = SDK_EXECUTION.read_text()
+        self.assertLess(
+            code.index("if UNPROVEN_WIRED_KNOBS"),
+            code.index("@traigent.optimize"),
+            "the partial-dimension refusal must precede either paid grid's decorator",
+        )
+        self.assertLess(
+            code.index("if UNPROVEN_WIRED_KNOBS"),
+            code.index("config_space_evidence ="),
+            "a partial dimension must fail before config-space evidence can be serialized",
+        )
 
         # A builder that ignores every control makes all three paid prompt knobs
         # no-ops at once, and every one must fail the load.
         dead = self._wiring_probe_namespace(
             build_prompt=lambda message, *, style, thinking_shape, reflect: message
         )
-        with self.assertRaises(AssertionError) as raised:
+        with self.assertRaises(RuntimeError) as raised:
             with contextlib.redirect_stdout(io.StringIO()):
                 exec(compile(fence, "<sdk-no-op-knob>", "exec"), dead)
         self.assertIn("prompt_style", str(raised.exception))
@@ -15131,43 +15416,94 @@ class SkillPackageTests(unittest.TestCase):
             },
         )
 
-    def test_the_escape_list_cannot_be_a_blanket_waiver(self) -> None:
-        """`WIRED_OUTSIDE_THE_REQUEST = list(WIRED_KNOBS)` silenced the guard.
+        # Two declared values that the wrapper normalizes to one request are
+        # duplicate paid trials, not a visible dimension. The old any-value
+        # comparison accepted this because either value differed from the base
+        # request; the pair must differ from each other as well.
+        aliases = self._wiring_probe_namespace()
+        aliases["ENHANCED_SPACE"] = {
+            **aliases["ENHANCED_SPACE"],
+            "reflect": [1, 2],
+        }
+        honest_build_request = aliases["build_request"]
 
-        As a bare list of names, one assignment excused every knob at once
-        while still passing every check. As a mapping of knob to where it acts,
-        each entry is a reviewable claim: the list spelling no longer type-
-        checks, and an entry naming a knob that is not wired, or carrying an
-        empty description, fails the fence's own assert.
+        def normalize_reflect(message: str, config: dict) -> dict:
+            return honest_build_request(
+                message, {**config, "reflect": bool(config["reflect"])}
+            )
+
+        aliases["build_request"] = normalize_reflect
+        with self.assertRaisesRegex(RuntimeError, "reflect"):
+            exec(compile(fence, "<sdk-aliased-knob>", "exec", optimize=1), aliases)
+        self.assertEqual(aliases["PROBE_VERDICTS"]["reflect"], "invisible")
+        self.assertEqual(
+            normalize_reflect(
+                aliases["PROBE_INPUTS"][0],
+                {**aliases["BASELINE_CONFIG"], "reflect": 1},
+            ),
+            normalize_reflect(
+                aliases["PROBE_INPUTS"][0],
+                {**aliases["BASELINE_CONFIG"], "reflect": 2},
+            ),
+            "the mutant must really collapse two paid values into one request",
+        )
+
+    def test_a_preserved_custom_dimension_cannot_escape_the_local_proof(self) -> None:
+        """An omitted preserved dimension fails before the paid grid can load.
+
+        The generated list cannot be inherited for a preserved agent: a new
+        direct key would otherwise enter the enhanced grid and config-space
+        artifact without `probe_wiring` ever rebuilding it.
         """
+        fence = self._wiring_fence_block()
+        preserved = self._wiring_probe_namespace()
+        custom_key = "few_shot_count"
+        preserved["BASELINE_IS_USER_OWNED"] = True
+        preserved["BASELINE_CONFIG"] = {
+            **preserved["BASELINE_CONFIG"],
+            custom_key: 0,
+        }
+        preserved["BASELINE_SPACE"] = {
+            **preserved["BASELINE_SPACE"],
+            custom_key: [0, 2],
+        }
+        preserved["ENHANCED_SPACE"] = {
+            **preserved["ENHANCED_SPACE"],
+            custom_key: [0, 2],
+        }
+        request_builds: list[object] = []
+        honest_build_request = preserved["build_request"]
+
+        def counted_build_request(message, config):
+            request_builds.append((message, config))
+            return honest_build_request(message, config)
+
+        preserved["build_request"] = counted_build_request
+
+        with self.assertRaisesRegex(RuntimeError, "few_shot_count") as raised:
+            exec(
+                compile(fence, "<sdk-preserved-unwired-dimension>", "exec", optimize=1),
+                preserved,
+            )
+
+        self.assertIn("no provider call was placed", str(raised.exception))
+        self.assertEqual(
+            request_builds,
+            [],
+            "the structural dimension fence must run before a request or provider call",
+        )
+
+    def test_no_outside_request_waiver_enters_the_first_run_paid_space(self) -> None:
+        """Request-dict movement cannot waive an indirect paid-search dimension."""
         text = SDK_EXECUTION.read_text()
-        self.assertIn("WIRED_OUTSIDE_THE_REQUEST: dict[str, str] = {}", text)
-        namespace = self._wiring_probe_namespace()
-        guard = next(
-            node
-            for node in ast.parse(
-                re.findall(r"```python\n(.*?)\n```", text, re.DOTALL)[0]
-            ).body
-            if isinstance(node, ast.Assert)
-            and "WIRED_OUTSIDE_THE_REQUEST" in ast.dump(node.test)
+        self.assertNotIn("WIRED_OUTSIDE_THE_REQUEST", text)
+        self.assertIn("not visible for every model", text)
+        normalized = " ".join(text.casefold().split())
+        self.assertIn("direct request parameters", normalized)
+        self.assertIn(
+            "even when changing one also changes an outer request dict", normalized
         )
-        block = ast.fix_missing_locations(ast.Module(body=[guard], type_ignores=[]))
-
-        for waiver, why in (
-            (list(namespace["WIRED_KNOBS"]), "a bare list is a blanket waiver"),
-            ({"model": ""}, "an empty description records no claim"),
-            ({"not_a_knob": "somewhere"}, "an entry must name a wired knob"),
-        ):
-            with self.subTest(waiver=waiver):
-                scope = dict(namespace, WIRED_OUTSIDE_THE_REQUEST=waiver)
-                with self.assertRaises((AssertionError, AttributeError), msg=why):
-                    exec(compile(block, "<sdk-wiring-escape>", "exec"), scope)
-
-        scope = dict(
-            namespace,
-            WIRED_OUTSIDE_THE_REQUEST={"model": "chosen inside the retrieval step"},
-        )
-        exec(compile(block, "<sdk-wiring-escape>", "exec"), scope)
+        self.assertIn("separately contained tracing", normalized)
 
     def test_the_documented_schema_table_is_read_from_the_declaration(self) -> None:
         """The table and the validator must not be two hand-written artifacts.
@@ -15838,6 +16174,7 @@ class TheApprovedTotalReachesTheCodeTests(unittest.TestCase):
         reported: float | None = bindings.pop("reported_cost", 0.04)
         namespace = {
             "litellm": fake_litellm(placed),
+            "assert_wiring_still_proven": lambda: None,
             "build_request": lambda message, config: {"model": config.get("model")},
             "provider_reported_cost": lambda response: reported,
             "require_nonzero_token_usage": lambda response: None,
@@ -16535,6 +16872,7 @@ class TheApprovedTotalReachesTheCodeTests(unittest.TestCase):
         def build(**bindings):
             namespace = {
                 "HOLDOUT_DATASET": "/project/traigent-runs/holdout.jsonl",
+                "assert_wiring_still_proven": lambda: None,
                 # The door is installed on it even though this fixture's
                 # `call_agent` is a stub that debits by hand: the install is
                 # part of the gate now, so every compile of the gate runs it.
@@ -16645,6 +16983,7 @@ class TheApprovedTotalReachesTheCodeTests(unittest.TestCase):
         ]
         namespace = {
             "litellm": litellm_module(completion),
+            "assert_wiring_still_proven": lambda: None,
             "build_request": lambda message, config: {"model": config["model"]},
             "provider_reported_cost": lambda response: response.reported_usd,
             "require_nonzero_token_usage": lambda response: None,
@@ -17418,6 +17757,11 @@ class TheApprovedTotalReachesTheCodeTests(unittest.TestCase):
                         "import os",
                         "import signal",
                         "import time",
+                        # `subprocess.run(..., restore_signals=True)` does not
+                        # reset SIGQUIT.  A parent that ignores it would make
+                        # the child sleep and exit normally, measuring its
+                        # inherited test environment rather than this ending.
+                        "signal.signal(signal.SIGQUIT, signal.SIG_DFL)",
                         self.spend_report_program(
                             ceiling=5.00,
                             spent=2.00,
@@ -18200,6 +18544,7 @@ class TrackingLossStopsFurtherSpendingTests(unittest.TestCase):
         placed: list[dict] = []
         namespace = {
             "litellm": fake_litellm(placed),
+            "assert_wiring_still_proven": lambda: None,
             "build_request": lambda message, config: {"model": config.get("model")},
             "provider_reported_cost": lambda response: 0.01,
             "require_nonzero_token_usage": lambda response: None,
@@ -22156,26 +22501,24 @@ class TheReadHappensAndAFailedReadIsAQuestionTests(unittest.TestCase):
     ) -> None:
         """Guidance and scorer together, because either alone pins nothing.
 
-        The ceiling stays. What this gate must NOT do is give it a second
-        reading: stage 4's cap routing already says it is advisory where
-        neither a document nor a reading reached the score, and that nothing
-        there is a verdict on the project. A draft of this change restated that
-        AND narrowed it to "a caller with nobody to ask" - which is false, since
-        `run-safety.md` reaches the same advisory cap on a closing card after a
-        stopped, failed, or zero-trial search, with the user sitting right
-        there. So the gate points and the routing keeps its one home.
+        The cap's meaning stays in stage 4. Verified source evidence can earn
+        opening credit, while the baseline-stage request guard owns paid-grid
+        permission.
         """
         gate = self._gate()
-        self.assertIn("stage 4's cap routing below, which is unchanged", gate)
-        # The home it points at, still saying it, still once.
+        self.assertIn("stage 4's cap routing below", gate)
+        # The home it points at names both advisory states and denies a grid.
         skill = " ".join(SKILL.read_text().casefold().split())
         routing = skill.split(
-            "`agent-no-varying-knobs` blocks where something was read", 1
+            "`agent-no-varying-knobs` blocks when a settings document or a statically checked source read",
+            1,
         )
         self.assertEqual(len(routing), 2, "the cap-routing paragraph has moved")
-        self.assertIn("nothing there is a verdict on the project", routing[1])
-        # And the false narrowing cannot come back.
-        self.assertNotIn("only for a caller with nobody to ask", skill)
+        self.assertIn("expose a direct request parameter", routing[1])
+        self.assertIn(
+            "source candidates whose references could not be verified", routing[1]
+        )
+        self.assertIn("request-difference proof", routing[1])
 
         # The scorer half. The silent state still caps, still does not block,
         # and still sits at the shared ceiling.
@@ -22189,6 +22532,19 @@ class TheReadHappensAndAFailedReadIsAQuestionTests(unittest.TestCase):
             "the unestablished-space reading bounds the claim; it does not stop "
             "a customer whose agent this run could not open",
         )
+
+        source_only = READINESS.agent_facts_from_discovery(
+            {
+                "knobs": {
+                    "model": {
+                        "values": ["a", "b"],
+                        "evidence": "agent.py:4 model in ('a', 'b') reaches request",
+                    }
+                }
+            }
+        )
+        _pillar, source_caps, _knobs = READINESS.score_agent(source_only)
+        self.assertFalse(source_caps[0].blocks)
 
         # And the two findings ABOUT the project still block, which is the whole
         # difference between them.

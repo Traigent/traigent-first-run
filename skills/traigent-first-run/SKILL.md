@@ -271,16 +271,17 @@ evidence. Record its provenance; a timestamp, hash, or non-empty `wired` list do
 current. A customer-authored file may guide inspection, never score values or wiring. Every guided
 run does this, including a zero-anchor run.
 
-Then read the agent itself and pass what that read found as `--agent-knobs`, so the opening card
- grades this project instead of reporting nothing. After task intent is anchored, every file a
+After task intent is anchored, every file a
  scoring writes to reach it - that document, the preflight JSON, any note - goes in
  `traigent-runs/readiness/<YYYYMMDDTHHMMSSZ>/`, a fresh directory per scoring so a later one never
 reads an earlier one's. Never delete them, and name that directory to the user beside the card in
  that project-relative form, never expanded to an absolute path: they may want to keep, share, or
  remove it. Two halves, one pass, and
-neither is optional where an agent was found. Read its own source for parameters it can already vary - model,
-temperature, top_p, prompt strategy, retry/reflection flags, tool selection - and record each with
-the line that shows it - executable code that reads it, passes it on, or selects behaviour from it.
+neither is optional where an agent was found. For a selected top-level Python function, include
+`--agent-source-root`, `--selected-agent`, and `--selected-agent-callable`; `source_lines` must show values on its
+direct path. Otherwise leave source credit unestablished and use the advisory route. A thin Python adapter is
+walkthrough material, not proof that the original agent was optimized. `references/component-creation.md` owns the
+exact argv and source-evidence contract.
 A name only in a comment, docstring, TODO, or example is not scored; it may guide inspection but
 cannot establish a value. Same rule as
 `references/component-creation.md`, applied here because this
@@ -625,13 +626,11 @@ close if it was not fixed. After any repair or substitute creation, re-run the a
 applicable calibration, and the score, then record that gate result without overwriting the opening
 one.
 
-`agent-no-varying-knobs` blocks where something was read and found empty - a settings document with
-no knobs, none marked as wired, one value each, or only knobs excluded from scoring; or a reading
-of the agent that established nothing it can vary. The card prints `FIX BEFORE PAID RUN`; route by
-its reason - mark the settings the agent uses, give one a second value, or expose a parameter it
-has none of. It is an advisory ceiling only where its reason says neither a document nor a reading
-reached the score: nothing there is a verdict on the project, and after a stopped, failed, or
-zero-trial enhanced run it is that run's own outcome to report.
+`agent-no-varying-knobs` blocks when a settings document or a statically checked source read finds
+no usable dimension. Mark one setting with a second value or expose a direct request parameter. It
+is advisory only with no evidence or source candidates whose references could not be verified.
+Before either paid grid, the local request-difference proof—not the opening score—must establish
+every selected direct dimension. Report stops/zero trials when that proof cannot do so.
 
 ### 5. Prepare the environment and finish free checks
 
@@ -671,6 +670,11 @@ Only after the standard-library-only component checks:
    `references/run-safety.md`'s ordered credential handoff, which selects the file: add only a
    genuinely missing selected-provider key, and stop once for only that secret locally. Do not
    request or route the Traigent key before the stage-7 baseline checkpoint.
+
+Before baseline approval, locally prove request differences. For an inspected customer baseline, set
+`BASELINE_IS_USER_OWNED = True` and make `WIRED_KNOBS` exactly match its paid enhanced dimensions;
+preserve conditional rows/dimensions; stop for approved per-model validation. Re-prove before each
+paid phase.
 
 Before baseline approval, explain only its provider recipients using `references/run-safety.md`:
 the selected provider receives normal model-call content; OpenRouter and every allowed upstream
@@ -736,8 +740,9 @@ Use the same tuning slice, evaluator, objectives, and agent call path for both m
    `references/run-safety.md`, including the initial configuration.
 2. **Enhanced Traigent optimization** - keep every baseline value and model, add only meaningful
    controls the agent consumes, and test up to 12 configurations (`references/sdk-execution.md`
-   explains that cap and the shortfall it obliges). Add non-model, task-relevant controls by
-   default; any new model is a separately disclosed experiment. The reference owns the
+   explains that cap and the shortfall it obliges). Add only direct request parameters the
+   pre-approval proof establishes for every selected model and tuning input; any new model is a
+   separately disclosed experiment. The reference owns the
    generated-space mechanics that make the
    comparison attributable to the managed search rather than a quiet model upgrade. This is the
    last run, so the controls that carry cost are varied here or not at all - which the shared model
@@ -840,10 +845,9 @@ replaying the same tiny grid - and no larger than that cap can explore: aim at f
 knobs, never a customer's whole declared set. `references/run-safety.md` owns that arithmetic and
 the baseline evidence that picks which.
 
-Before the enhanced search, re-establish current wiring in memory using the pure per-model,
-per-input request-diff probe and explicit outside-request claims in
-`references/sdk-execution.md`; a historical `wired` attestation is never proof. Once the enhanced
-space is final, follow that reference's freeze/remove/persist lifecycle. Save
+Before the enhanced search, prove final wrapper/spaces in its fresh process. Re-prove after a change;
+historical `wired` is never proof. Follow that reference's freeze/remove/persist lifecycle.
+Save
 `traigent-runs/config-space.json` only after this search returns nonzero trials, from the exact
 space it received, and use only that current-run document for the closing `--config-space` score.
 

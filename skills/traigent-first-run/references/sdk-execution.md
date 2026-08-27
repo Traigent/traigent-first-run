@@ -177,7 +177,7 @@ wrapper. The assistant adds the disclosed
 controls; Traigent performs managed, cost-aware selection among them. Keep those actors separate
 in the report.
 
-### The knob catalog - eleven to choose from, three to pay for
+### The knob catalog - nine documented controls, seven eligible direct parameters
 
 The three slots above are the default fill for a generated single-call classification or extraction
 walkthrough - a selection, not the list. Pick the three that fit the customer's agent from this
@@ -192,22 +192,17 @@ card shows the selected three and why they fit.
 | `thinking_shape` | `direct`, `chain_of_thought` | default slot; answers need derivation, not recall |
 | `reflect` | off, on | default slot; answers are nearly right and need one revision |
 | `few_shot_count` | two counts within 0-10 | the task has a house format worked examples would teach |
-| `task_decomposition` | off, on | one request bundles several sub-tasks |
-| `self_consistency` | off, on | only when every sampled configuration uses temperature above 0 - see below |
-| `retrieval_k` | two counts within 1-5 | RAG agents only; there is a retriever to widen |
+| `retrieval_k` | two counts within 1-5 | not part of this first-run paid space; retrieval is indirect and needs separately contained tracing |
 | `context_format` | two layouts | retrieved or structured context is pasted in raw |
-| `tool_policy` | two policies | the agent calls tools and over- or under-uses them |
+| `tool_policy` | two policies | not part of this first-run paid space; tool behavior is indirect and needs separately contained tracing |
 | `temperature` | the customer's own values | only when preserving a customer-owned sweep - see below |
 
-Two entries carry a precondition, and both are load-bearing.
-
-`self_consistency` samples an answer several times and keeps the majority one. It earns its catalog
-place by being a quality lever that is visibly also a cost lever - it buys accuracy by spending more
-per question, which puts it on the accuracy-for-cost frontier this guide reports rather than only
-claiming to sit there. But it needs sampling diversity. Select it only when every sampled
-configuration uses a temperature above `0` and the agent and evaluator can benefit from diverse
-answers; at `0`, the majority vote can cost three calls to reproduce one. Its extra calls must fit
-the connected-stage approval and one of the existing three slots.
+This first run includes only direct request parameters: values this finalized wrapper passes to
+its single model request and whose distinct values produce distinct dicts for every selected model
+and tuning input. Source inspection does not
+prove the customer's original agent varies. Retrieval, tool, repair, and multi-call controls -
+including task decomposition and self-consistency - are indirect even when changing one also changes
+an outer request dict; they require separately contained tracing and are excluded from this paid space.
 
 For an assistant-prepared walkthrough, temperature is one task-selected fixed value, not a search
 slot. When the customer already sweeps it, preserve **their** values rather than inventing a new
@@ -244,9 +239,7 @@ whether two of their knobs are the same knob, and the scorer never will.
 
 ### Say what is being tried, once the enhanced run is under way
 
-The moment the enhanced optimization starts, the customer is waiting on it. Use that wait: print one
-line per knob in the space, in their terms, saying what it changes about how their agent answers.
-One sentence each, verbatim:
+When enhanced optimization starts, name its direct paid parameters and their effect on the answer:
 
 - **model** - Tries the same task on a cheaper, a mid-range, and a stronger model.
 - **prompt_style** - Changes how the request is worded, from bare task to spelled-out instructions.
@@ -254,12 +247,7 @@ One sentence each, verbatim:
   answering straight away.
 - **reflect** - Has the model look back at its own answer and fix it before returning it.
 - **few_shot_count** - Shows the model worked examples of the task first.
-- **task_decomposition** - Splits a request that contains several jobs into separate steps.
-- **self_consistency** - Answers the same question several times and keeps the answer that comes up
-  most.
-- **retrieval_k** - Changes how much retrieved material the model is given to work from.
 - **context_format** - Changes how the supplied material is laid out for the model to read.
-- **tool_policy** - Changes how readily the agent reaches for its tools.
 - **temperature** - Changes how much the model varies its wording between runs.
 
 Say nothing else here. No percentages, no reported gains, no references, no "research shows". A
@@ -277,10 +265,11 @@ and the three paid behaviour knobs are real for a reasoning model and a sampling
 both branches run the same 12 and 24.
 
 When the user already owns a baseline, do not apply this ladder. Preserve its exact model set and
-row count in the enhanced space and add non-model controls by default. Adding a cheaper or stronger
-model changes the experiment and attribution, so do it only as a separately disclosed and approved
-model comparison. Preserve an existing flagship and its calling convention exactly; never replace
-or augment it silently.
+row count in the enhanced space and add only direct request parameters the probe establishes for
+every selected model and tuning input. Indirect, retrieval, tool, repair, and multi-call controls
+stay outside this paid space. Adding a cheaper or stronger model changes the experiment
+and attribution, so do it only as a separately disclosed and approved model comparison. Preserve an
+existing flagship and its calling convention exactly; never replace or augment it silently.
 
 For the generated ladder, use one model family when the selected route can supply all three model
 choices. One family keeps the result readable - "the mid tier held the strong tier's accuracy at a
@@ -677,6 +666,9 @@ ENHANCED_SPACE = {
     "thinking_shape": BASELINE_SPACE["thinking_shape"],
     "reflect": [False, True],
 }
+# Set True only for an inspected customer baseline. It preserves that space and
+# stops before approval for separately approved per-model validation.
+BASELINE_IS_USER_OWNED = False
 # Readiness evidence for `scripts/readiness.py --config-space`. WIRED_KNOBS
 # names only the dimensions call_agent below actually consumes - a knob listed
 # here that the agent ignores is a false claim about the search space. The
@@ -689,16 +681,22 @@ WIRED_KNOBS = [
     "thinking_shape",
     "reflect",
 ]
-# Inputs the wiring probe below re-builds requests over. A knob that acts only
-# on some inputs - a `sql_mode` applied when the message starts "SQL:", say -
-# produces identical requests under a single literal, so probing one string
-# reports a genuinely wired knob as unproven and blocks the run before it
-# starts. Replace these with two or three real inputs from tuning.jsonl,
-# covering the shapes the task actually contains.
-PROBE_INPUTS = [
-    "probe",
-    "Probe: a longer request that states an explicit output constraint.",
-]
+def holdout_agent_input(input_data):
+    if isinstance(input_data, str):
+        return input_data
+    if isinstance(input_data, dict) and isinstance(input_data.get("message"), str):
+        return input_data["message"]
+    raise TypeError(
+        "Dataset input does not match the inspected agent(message: str) contract"
+    )
+
+
+# Before approval, locally prove the exact tuning inputs both paid phases use.
+# Keep them only in memory; do not write, print, hash, or log their contents.
+_tuning_for_probe = traigent.Dataset.from_jsonl(TUNING_DATASET)
+PROBE_INPUTS = tuple(
+    holdout_agent_input(example.input_data) for example in _tuning_for_probe.examples
+)
 
 
 def configuration_count(space: dict[str, list]) -> int:
@@ -745,8 +743,9 @@ assert configuration_count(ENHANCED_SPACE) == 24
 # a truncated space.
 assert BASELINE_TRIALS == configuration_count(BASELINE_SPACE)
 assert 1 <= ENHANCED_MAX_TRIALS < configuration_count(ENHANCED_SPACE)
-assert set(WIRED_KNOBS) <= set(ENHANCED_SPACE), (
-    "every wired knob must name a dimension of the space actually searched"
+assert set(WIRED_KNOBS) == set(ENHANCED_SPACE), (
+    "wired knobs must cover exactly the paid dimensions, so the local proof "
+    "cannot skip a searched key"
 )
 
 OBJECTIVES = ObjectiveSchema.from_objectives(
@@ -1489,142 +1488,187 @@ def task_score(prediction, expected, input_data) -> float:
     return score
 
 
+def require_wiring_probe_inputs(space: dict[str, list]) -> list:
+    """Fail closed on an incomplete paid surface or absent proof inputs."""
+    missing = set(space) - set(WIRED_KNOBS)
+    extra = set(WIRED_KNOBS) - set(space)
+    if missing or extra:
+        raise RuntimeError(
+            "WIRED_KNOBS must name exactly every paid configuration dimension "
+            f"(missing={sorted(missing)!r}, extra={sorted(extra)!r}); no provider "
+            "call was placed. Update the wrapper and repeat the local proof "
+            "before approval."
+        )
+    for knob, values in space.items():
+        if any(
+            value == earlier
+            for index, value in enumerate(values)
+            for earlier in values[:index]
+        ):
+            raise RuntimeError(
+                f"{knob!r} contains duplicate paid values; preserve the source "
+                "space and stop before approval rather than paying duplicate "
+                "trials. No provider call was placed."
+            )
+    if not PROBE_INPUTS:
+        raise RuntimeError(
+            "No tuning input to prove before a provider call; no provider call "
+            "was placed. Add real tuning rows and repeat the local proof before approval."
+        )
+    models = list(space.get("model", []))
+    if not models:
+        raise RuntimeError(
+            "No model to prove before a provider call; no provider call was "
+            "placed. Restore the intended model list and repeat the local proof."
+        )
+    return models
+
+
 def probe_wiring(space: dict[str, list], base: dict) -> dict[str, str]:
     """Classify each wired knob by what a pure request diff can actually prove.
 
-    What this proves and nothing more: **request visibility, per model** - that
-    changing the knob changes the dict `build_request` returns, under each model
-    in the space. It never proves provider *effect*: a provider that silently
+    A local no-provider proof, repeated before paid phases. It proves only
+    **request visibility, per model** - that every distinct value of a swept
+    knob produces a distinct dict `build_request` returns, under each model and
+    tuning input in the space. It never proves provider *effect*: a provider that silently
     ignores a parameter it accepts produces two different requests and one
     behaviour. Only the run itself can show effect; this only rules out the
     dimension that could not possibly have one.
 
     It probes every model in the space, not just the base's, because request
-    construction branches on the model. It probes several inputs, because a knob
-    that acts only on some inputs is invisible under one literal string.
+    construction branches on the model. It probes every tuning input; each
+    swept knob must distinguish every declared value on every one.
 
     Verdicts:
 
-    - `visible`     - under every model in the space, some alternative value
-                      changes the request for some probed input.
-    - `partial`     - it changes the request under some models and never under
-                      others. That is a *conditional* dimension, not a dead one:
-                      `reasoning_effort` exists only on a reasoning model, so a
-                      knob that moves that model's request and no other is
-                      exactly right. This is information about the shape of the
-                      space, reported below with the models that honour it - not
-                      a failure, and not something to launder through
-                      WIRED_OUTSIDE_THE_REQUEST, since the knob demonstrably
-                      does act inside request construction.
+    - `visible`     - under every model in the space, every distinct value
+                      produces a distinct request for every tuning input.
+    - `partial`     - it fails that test for some models or inputs. A Cartesian
+                      grid would pay duplicates, so use later/manual per-model design.
     - `invisible`   - no model and no probed input ever changes the request.
                       This alone is fatal: it is the no-op that inflates the
                       config-space document with a dimension nothing can move.
                       The probe cannot tell "acts outside request construction"
-                      from "the agent ignores it"; it says so and refuses to
-                      guess, which is what WIRED_OUTSIDE_THE_REQUEST records.
+                      from "the agent ignores it"; this first-run guide refuses
+                      both rather than accepting a prose waiver.
     - `not-searched`- fewer than two distinct values, so it claims no dimension.
     """
-    models = list(dict.fromkeys(space.get("model", [base["model"]])))
+    models = require_wiring_probe_inputs(space)
     verdicts: dict[str, str] = {}
     for knob in WIRED_KNOBS:
         values = space.get(knob, [])
-        if len(set(map(repr, values))) < 2:
+        if len(values) < 2:
             verdicts[knob] = "not-searched"
             continue
         moved = set()
+        any_distinct_requests = False
         for model in models:
             model_base = {**base, "model": model}
+            distinguishes_every_input = True
             for message in PROBE_INPUTS:
-                baseline = build_request(message, model_base)
-                if any(
-                    build_request(message, {**model_base, knob: value}) != baseline
+                requests = [
+                    build_request(message, {**model_base, knob: value})
                     for value in values
-                ):
-                    moved.add(model)
-                    break
+                ]
+                distinguishes_values = all(
+                    request != other
+                    for index, request in enumerate(requests)
+                    for other in requests[index + 1 :]
+                )
+                any_distinct_requests = any_distinct_requests or distinguishes_values
+                distinguishes_every_input = (
+                    distinguishes_every_input and distinguishes_values
+                )
+            if distinguishes_every_input:
+                moved.add(model)
         if len(moved) == len(models):
             verdicts[knob] = "visible"
-        elif moved:
+        elif any_distinct_requests:
             verdicts[knob] = "partial"
         else:
             verdicts[knob] = "invisible"
     return verdicts
 
 
-# Knobs that genuinely act outside request construction - a RAG retrieval depth,
-# a tool policy, a repair loop - are invisible to the probe above, so they are
-# recorded here instead. This is a MAPPING, knob -> where it acts, because a
-# bare list of names was a blanket waiver: `WIRED_OUTSIDE_THE_REQUEST =
-# list(WIRED_KNOBS)` silenced the guard entirely while still passing. An entry
-# is an explicit, reviewable claim, NOT evidence: nothing verifies it, and the
-# load prints it so a reader can challenge it. Add a knob only when you can say
-# where in the agent it acts; if you cannot, it is not a real search dimension -
-# drop it from WIRED_KNOBS rather than parking it here. Empty for this
-# walkthrough: all three of its paid knobs are visible in the request.
-WIRED_OUTSIDE_THE_REQUEST: dict[str, str] = {}
-
-assert all(
-    knob in WIRED_KNOBS and isinstance(where, str) and where.strip()
-    for knob, where in WIRED_OUTSIDE_THE_REQUEST.items()
-), (
-    "every WIRED_OUTSIDE_THE_REQUEST entry must map a wired knob to a "
-    "non-empty description of where in the agent it acts"
-)
-
 PROBE_VERDICTS = probe_wiring(ENHANCED_SPACE, BASELINE_CONFIG)
-# A `partial` knob is a conditional dimension and it loads: `reasoning_effort`
-# on a reasoning model moves that model's request and no other, and failing the
-# load on it blocked a valid run before it started. Re-probing the space one
-# model at a time names the models that do honour it, so the asymmetry reaches
-# the run record instead of being either hidden or fatal.
-CONDITIONAL_WIRED_KNOBS = {
-    knob: [
-        model
-        for model in dict.fromkeys(
-            ENHANCED_SPACE.get("model", [BASELINE_CONFIG["model"]])
-        )
-        if probe_wiring(
-            {**ENHANCED_SPACE, "model": [model]},
-            {**BASELINE_CONFIG, "model": model},
-        )[knob]
-        == "visible"
-    ]
-    for knob, verdict in PROBE_VERDICTS.items()
-    if verdict == "partial"
-}
-# Only `invisible` is fatal, because only `invisible` is the no-op this guard
-# exists to catch: a knob no model and no probed input ever moves is a claimed
-# search dimension the agent cannot act on, and claiming it is what inflated an
-# earlier walkthrough's agent pillar by 12 points.
 UNPROVEN_WIRED_KNOBS = {
     knob: verdict
     for knob, verdict in PROBE_VERDICTS.items()
-    if verdict == "invisible" and knob not in WIRED_OUTSIDE_THE_REQUEST
+    if verdict not in {"visible", "not-searched"}
 }
-assert not UNPROVEN_WIRED_KNOBS, (
-    f"{UNPROVEN_WIRED_KNOBS} are listed under WIRED_KNOBS but changing them "
-    "never changed the request under any model or any probed input, so the "
-    "config-space document would claim a search dimension the agent cannot "
-    "move. The probe cannot tell 'acts outside request construction' from "
-    "'the agent ignores it' and will not guess: wire them, add probe inputs "
-    "that exercise them, record where they act in WIRED_OUTSIDE_THE_REQUEST, "
-    "or remove them from WIRED_KNOBS"
-)
-for _knob, _models in sorted(CONDITIONAL_WIRED_KNOBS.items()):
-    # Neither a failure nor a free pass: the search moves this knob for part of
-    # the space, and the run record should say which part.
-    print(
-        f"conditional dimension: '{_knob}' changes the request under "
-        f"{', '.join(_models)} and under no other model in the space; the "
-        "search still moves it, for those models only"
+if UNPROVEN_WIRED_KNOBS:
+    if BASELINE_IS_USER_OWNED:
+        raise RuntimeError(
+            f"{UNPROVEN_WIRED_KNOBS} are conditional or unproven in a preserved "
+            "baseline. Preserve it: do not alter tuning rows or remove its "
+            "dimension. Stop before approval for later approved per-model "
+            "validation. No provider call was placed."
+        )
+    raise RuntimeError(
+        f"{UNPROVEN_WIRED_KNOBS} are not visible for every model in the paid "
+        "space. A generated first-run Cartesian grid may use only dimensions "
+        "every model receives; revise the generated space or defer it to later "
+        "contained validation. No provider call was placed."
     )
-for _knob, _where in sorted(WIRED_OUTSIDE_THE_REQUEST.items()):
-    # Say it rather than wave it through: an escaped knob is an unproven claim
-    # and the run record should show it as one.
-    print(
-        f"unverified wiring claim: '{_knob}' is declared to act at {_where}; "
-        "the request probe cannot confirm it"
+
+
+def request_fingerprint() -> tuple:
+    """Canonical in-memory proof of the exact finalized request surface."""
+    def freeze(value):
+        if isinstance(value, dict):
+            return tuple(sorted((repr(key), freeze(item)) for key, item in value.items()))
+        if isinstance(value, (list, tuple)):
+            return tuple(freeze(item) for item in value)
+        if isinstance(value, set):
+            return tuple(sorted(freeze(item) for item in value))
+        return (type(value).__qualname__, repr(value))
+
+    def configurations(space):
+        result = [dict()]
+        for knob in sorted(space):
+            result = [
+                {**config, knob: value}
+                for config in result
+                for value in space[knob]
+            ]
+        return result
+
+    return (
+        freeze(BASELINE_CONFIG),
+        freeze(BASELINE_SPACE),
+        freeze(ENHANCED_SPACE),
+        freeze(PROBE_INPUTS),
+        tuple(
+            (message, freeze(config), freeze(build_request(message, config)))
+            for space in (BASELINE_SPACE, ENHANCED_SPACE)
+            for config in configurations(space)
+            for message in PROBE_INPUTS
+        ),
     )
+
+
+REQUEST_FINGERPRINT = request_fingerprint()
+
+
+def assert_wiring_still_proven() -> None:
+    """Re-prove this fresh process's finalized request surface before its paid phase."""
+    require_wiring_probe_inputs(BASELINE_SPACE)
+    require_wiring_probe_inputs(ENHANCED_SPACE)
+    current = probe_wiring(ENHANCED_SPACE, BASELINE_CONFIG)
+    if current != PROBE_VERDICTS or request_fingerprint() != REQUEST_FINGERPRINT:
+        raise RuntimeError(
+            "The builder, inputs, or spaces changed after this process's local "
+            "proof; no provider call was placed. Re-run it over the final spaces."
+        )
+    unproven = {
+        knob: verdict
+        for knob, verdict in current.items()
+        if verdict not in {"visible", "not-searched"}
+    }
+    if unproven:
+        raise RuntimeError(
+            f"{unproven} are not visible for every model; no provider call was placed."
+        )
 
 
 @traigent.optimize(
@@ -1721,8 +1765,8 @@ walkthrough, following the walkthrough model ladder above; set
 a reasoning-effort control, and pin the same value for both runs. A new route or recipient
 requires revised data-egress approval. In the generated default, every search
 variable must affect the actual agent call for every model in the space. A preserved conditional
-dimension may affect only the models that support it, but the request probe must report that
-partial coverage and the run record must name those models. When the strong tier runs as a
+dimension receives a `partial` verdict during the local proof before approval. Preserve it unchanged
+and stop this first-run path for later/manual approved per-model design. When the strong tier runs as a
 reasoning model, temperature is inert for it - which costs the comparison nothing, because
 temperature is fixed in both spaces and every swept knob is uniform across the ladder.
 
@@ -1734,9 +1778,10 @@ and adds one more real one-call control: reflect. That is exactly 24 configurati
 managed run has meaningful choices to make while keeping the first taste deliberately small.
 
 When the user already has a baseline or fixed current configuration, preserve that baseline space
-and its row count exactly; do not expand it to twelve. Add task-relevant controls only to the enhanced
-space, based on the existing agent and observed failure modes. Useful additions include context
-format, retrieval depth, few-shot count, tool policy, or repair behavior. Do not add no-op fields,
+and its row count exactly; do not expand it to twelve. Replace this example's spaces and `WIRED_KNOBS`
+together: the list names every paid enhanced key, including pinned keys. Add direct request parameters
+such as context format or few-shot count for observed failures. Retrieval, tools, repair, and multi-call
+controls require separately contained tracing outside this first-run paid space. Do not add no-op fields,
 string-encoded booleans, or multi-call composite behavior merely to increase the portal row count.
 
 Require nonzero token usage for every provider call; cost metadata alone does not prove the model
@@ -1806,6 +1851,7 @@ process requires it absent and refuses it if inherited.
 assert FIRST_RUN_PHASE == "baseline", "baseline must run in the local phase"
 os.environ["TRAIGENT_EXPERIMENT_NAME"] = "first-run standard sweep"
 require_current_route_credential()
+assert_wiring_still_proven()
 baseline_results = agent.optimize_sync(
     algorithm="grid",
     configuration_space=BASELINE_SPACE,
@@ -1838,8 +1884,8 @@ Do not supply a separate `default_config`; on local proposal paths it can consum
 truncate the grid. Normally verify all twelve distinct points executed and that `BASELINE_CONFIG`
 appears in the returned trials. If the baseline approval explicitly reduced that default, verify
 the returned count matches the disclosed plan and still contains `BASELINE_CONFIG`. For an
-existing user-owned baseline, replace the generated example's
-`BASELINE_SPACE`, trial count, and algorithm with the preserved values and behavior exactly. A
+existing user-owned baseline, replace the generated example's configuration, spaces, wired list,
+trial count, and algorithm with the preserved values and behavior exactly. A
 real one-row fixed configuration remains one row; never manufacture variants around it.
 
 The baseline process prints its ledger on the way out, whether it finished or died on any ending
@@ -1974,6 +2020,7 @@ except OSError:
         "Managed optimization did not start: the stale sanitized error artifact could not be removed."
     ) from None
 try:
+    assert_wiring_still_proven()
     optimized_results = agent.optimize_sync(
         algorithm="auto",
         configuration_space=ENHANCED_SPACE,
@@ -2177,16 +2224,6 @@ pass refuses to start unless the remaining funds every row and its grading, and 
 `litellm.completion` refuses each call individually once it does not.
 
 ```python
-def holdout_agent_input(input_data):
-    if isinstance(input_data, str):
-        return input_data
-    if isinstance(input_data, dict) and isinstance(input_data.get("message"), str):
-        return input_data["message"]
-    raise TypeError(
-        "Holdout input does not match the inspected agent(message: str) contract"
-    )
-
-
 def evaluate_holdout(config: dict) -> tuple[float, float | None]:
     scores = []
     holdout = traigent.Dataset.from_jsonl(HOLDOUT_DATASET)
@@ -2197,6 +2234,7 @@ def evaluate_holdout(config: dict) -> tuple[float, float | None]:
     refuse_unless_it_fits(
         len(holdout.examples) * CALLS_PER_SCORED_ROW, "held-out scoring"
     )
+    assert_wiring_still_proven()
     # Every call this pass places falls between these two marks, a judge's
     # grading calls included. Summing the slice rather than the agent call's own
     # cost is what stops a judged pass from reporting half of what it spent to

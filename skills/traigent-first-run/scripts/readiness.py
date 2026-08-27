@@ -30,17 +30,20 @@ that pillar reports nothing to search.
 from __future__ import annotations
 
 import argparse
+import ast
 import difflib
+import io
 import json
 import math
 import os
 import re
 import sys
 import textwrap
+import tokenize
 import traceback
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
-from typing import Any, Iterable, Literal, Sequence
+from typing import Any, Iterable, Iterator, Literal, Sequence
 
 ComponentState = Literal["real", "limited", "demo", "missing", "invalid"]
 COMPONENTS = ("agent", "dataset", "evaluation")
@@ -2064,32 +2067,23 @@ class DiscoveredKnob:
     reachable, never one we invented. A parameter with no citation is not a
     parameter this score has seen.
 
-    `reachable_values` is deliberately a FLOOR, not an estimate, and the two
-    kinds get it for different reasons.
-
-    A categorical parameter is counted at the number of values actually
-    available - the model ids configured, the prompt strategies the code
-    branches on - because those are countable things that exist. Two is the
-    minimum that means anything: one option is not a choice, which is exactly
-    the rule `categorical_breadth` already applies to a declared knob.
-
-    A numeric parameter is counted at 2 and never more, however wide its range,
-    because how many points a search would take inside that range is a decision
-    nobody has made yet. Two is what the range itself establishes: a span wider
-    than this scorer's own noise floor contains at least two values a run could
-    tell apart. Counting a continuous range as "many" would be the invention the
-    owner's rule refuses, and it is also how a space grows by declaring values
-    nothing can distinguish - the defect `noise_floor` exists to refuse.
     """
 
     name: str
     kind: str
-    reachable_values: int
     evidence: str
+    # Values established by statically checked source.  They are kept distinct
+    # from AgentFacts.knobs: a source read can establish possible alternatives,
+    # never that the final paid wrapper consumes them.
+    values: tuple[Any, ...] = ()
     # Empty when the parameter earns credit. Otherwise the reason it does not,
     # said to the reader rather than dropped: an author who wrote down a
     # parameter and saw it silently ignored learns nothing about why.
     uncredited_reason: str = ""
+    # A source read that could not establish a value is an unknown, not a
+    # measured one-option agent.  Keep this structured: cap routing must never
+    # infer a safety decision from a sentence written for the customer.
+    unverified: bool = False
 
     @property
     def credited(self) -> bool:
@@ -4877,6 +4871,22 @@ UNATTESTED_WIRING_CAP = Cap(
     "them is what makes them searchable.",
 )
 
+UNPROBED_DISCOVERED_KNOBS_CAP = Cap(
+    "agent-no-varying-knobs",
+    AGENT_NO_VARYING_KNOBS_CEILING,
+    "The source read found candidate settings, but it did not establish that "
+    "changing them changes the finalized request. This advisory opening ceiling "
+    "remains while the cited source evidence is unverified. Check the cited "
+    "selected-agent path, executable source lines, and values; they may be "
+    "correct while this narrow static read still cannot verify the route to the "
+    "call. This ceiling records that limit, not a finding that the agent has no "
+    "setting. A successful "
+    "current-run enhanced config-space artifact can later replace the opening evidence. "
+    "Run the request-difference probe as a separate pre-call safety guard; it does not "
+    "raise this card. A single preserved configuration is not a grid search.",
+    blocks=False,
+)
+
 
 def nothing_to_search_pillar(
     evidence: str, *, supplied: bool, withheld: bool = False
@@ -4940,72 +4950,14 @@ def nothing_to_search_pillar(
     )
 
 
-def discovered_space_evidence(
-    credited: Sequence[DiscoveredKnob],
-    reachable: int,
-    refused: Sequence[DiscoveredKnob] = (),
-) -> str:
-    """What the read of the agent found, as a floor the reader can check.
-
-    Says "at least", every time, and means it. `reachable` multiplies a floor
-    per parameter (see `DiscoveredKnob`), so the true space is this number or
-    larger and never smaller - and a sentence that dropped the qualifier would
-    be asserting a count nobody has chosen the values for.
-
-    Names the parameters rather than counting them. "3 settings" is a number the
-    reader cannot check against their own file; `model, temperature, top_p` is a
-    list they can, and disagreeing with it is the point - this is a read of
-    their code, and a read they can see is a read they can correct.
-
-    NAMES THE REFUSED ONES TOO, and #241 is why that half was missing rather
-    than declined. `component-creation.md` promises that a parameter earning
-    nothing "is reported with the reason it earned nothing, which is a line the
-    user can read and correct - so a parameter you are unsure of is worth
-    recording rather than dropping". That promise held on exactly one path: the
-    branch below where NO parameter is credited already lists every refusal.
-    Credit one knob and the sentence switched to the credited list alone, so a
-    `top_p` recorded with its evidence and no established range appeared on no
-    card and in no payload - `--json` did not mention the name. A reader
-    following the instruction could not tell their record from a typo, which is
-    the same silence `DISCOVERED_KNOB_FIELDS` refuses one function down.
-
-    Kept in one sentence rather than promoted to a sub-score. These parameters
-    establish no dimension, so they may not move the number; what they owe the
-    reader is the line that lets them disagree with a read of their own code.
-    """
-    named = ", ".join(knob.name for knob in credited)
-    unit = "configuration" if reachable == 1 else "configurations"
-    evidence = (
-        f"read from your agent: {named} can vary, reaching at least {reachable} "
-        f"distinct {unit}; no trial budget is declared yet, so this counts what "
-        "the agent makes reachable rather than what a run would compare"
-    )
-    if refused:
-        detail = "; ".join(f"{knob.name}: {knob.uncredited_reason}" for knob in refused)
-        evidence += f". Recorded and not counted - {detail}"
-    return evidence
-
-
 def score_discovered_agent(
     facts: AgentFacts,
 ) -> tuple[Pillar, list[Cap], list[KnobScore]]:
-    """Score the search space from the agent's own code (#201).
+    """Score an evidenced read of the agent when no config-space file exists.
 
-    The opening gate's answer to "what is there to search", when no config-space
-    document exists yet and by the guide's own design never will at this point.
-
-    Two properties hold here that do not hold for a config-space document, and
-    both are why this is a separate path rather than a looser reading of that
-    one. It attests nothing about wiring, so it clears no wiring cap and cannot
-    be mistaken for the `wired` list the guide refuses to inherit. And it has no
-    trial budget - the run that would spend one has not been planned - so
-    `search_space_points` is asked with `budget=None`, which its own rule
-    already damps one rung below complete. A space measured before anyone has
-    said how much of it will be compared may not present as fully searched.
-
-    Returns no `KnobScore` rows. Those grade a DECLARED knob against its range
-    and its value list, and neither exists here; emitting rows built from a
-    floor would put invented per-knob detail on the card beside real detail.
+    This path establishes possible dimensions from source evidence, not a
+    wiring attestation or a selected paid search space. It returns no
+    `KnobScore` rows because no declared values are available to grade.
     """
     credited = [knob for knob in facts.discovered if knob.credited]
     if not credited:
@@ -5035,46 +4987,75 @@ def score_discovered_agent(
         # qualification a settings document that lists nothing already carries,
         # where nobody proposed dropping the pillar over it.
         refused = [knob for knob in facts.discovered if not knob.credited]
-        detail = (
-            "; ".join(f"{knob.name}: {knob.uncredited_reason}" for knob in refused)
-            if refused
-            else "the read found no parameter the agent can vary"
-        )
+        unverified = any(knob.unverified for knob in facts.discovered)
+        if unverified:
+            detail = (
+                ", ".join(knob.name for knob in refused if knob.unverified)
+                or "the candidates"
+            )
+            evidence = (
+                "the source read found candidate settings, but this narrow static "
+                "check could not verify how they reach the selected local call: "
+                f"{detail}. It has not established an opening search dimension"
+            )
+        else:
+            evidence = (
+                "the agent was read and no varying setting was established - "
+                + (
+                    "; ".join(
+                        f"{knob.name}: {knob.uncredited_reason}" for knob in refused
+                    )
+                    if refused
+                    else "the read found no parameter the agent can vary"
+                )
+            )
         return (
             nothing_to_search_pillar(
-                f"the agent was read and no varying setting was established - {detail}",
+                evidence,
                 supplied=True,
             ),
-            [NOTHING_IN_THE_AGENT_TO_VARY_CAP],
-            [],
-        )
-    reachable = 1
-    for knob in credited:
-        reachable *= knob.reachable_values
-    return (
-        combine(
-            "agent",
             [
-                SubScore(
-                    "search-space",
-                    search_space_points(reachable, None),
-                    SEARCH_SPACE_WEIGHT,
-                    True,
-                    discovered_space_evidence(
-                        credited,
-                        reachable,
-                        [knob for knob in facts.discovered if not knob.credited],
-                    ),
+                (
+                    UNPROBED_DISCOVERED_KNOBS_CAP
+                    if unverified
+                    else NOTHING_IN_THE_AGENT_TO_VARY_CAP
                 )
             ],
-        ),
-        # No cap. Every credited parameter reaches two or more values it can be
-        # told apart on, so `agent-no-varying-knobs` would be false here in all
-        # three of its readings - there IS something to search, and this is the
-        # evidence for it.
-        [],
-        [],
+            [],
+        )
+    # This is a statically verified statement of what the selected agent's
+    # executable source can vary.  It earns opening readiness credit, but does
+    # not say the final wrapper consumes those values: the pre-approval request
+    # proof owns that later, stronger claim.
+    variations = [knob_variation(knob.name, list(knob.values)) for knob in credited]
+    scoreable = [knob for knob in variations if knob.kind != "excluded"]
+    configurations = math.prod(max(knob.effective_values, 1) for knob in scoreable)
+    declared = math.prod(max(knob.distinct_values, 1) for knob in scoreable)
+    refused = [knob for knob in facts.discovered if not knob.credited]
+    detail = (
+        "static source verification established possible settings "
+        + ", ".join(knob.name for knob in credited)
+        + "; it does not establish final request wiring. "
+        + search_space_evidence(configurations, declared, 1, None)
     )
+    if refused:
+        detail += "; " + "; ".join(
+            f"{knob.name}: {knob.uncredited_reason}" for knob in refused
+        )
+    pillar = combine(
+        "agent",
+        [
+            SubScore(
+                "search-space",
+                search_space_points(configurations, None),
+                SEARCH_SPACE_WEIGHT,
+                True,
+                detail,
+            ),
+            *build_subscores(facts),
+        ],
+    )
+    return pillar, [], []
 
 
 def build_subscores(facts: AgentFacts) -> list[SubScore]:
@@ -7466,7 +7447,9 @@ class AgentDiscoveryInputError(ValueError):
 # checked, for the reason the config-space fields are: a misspelled `values` is
 # a parameter that silently earns nothing, and silence is how an author
 # concludes the tool ignored them rather than that they typed it wrong.
-DISCOVERED_KNOB_FIELDS = frozenset({"values", "low", "high", "evidence"})
+DISCOVERED_KNOB_FIELDS = frozenset(
+    {"values", "low", "high", "evidence", "source_lines"}
+)
 # The `build` half's answer for "the read could not settle this", named here so
 # a knob carrying it can be refused with the remedy rather than with a list.
 #
@@ -7497,19 +7480,626 @@ BUILD_ONLY_KNOB_FIELDS = frozenset({"determined", "reason"})
 AGENT_KNOBS_DOCUMENT_FIELDS = frozenset({"knobs", "source", "build"})
 
 
-def _value_is_evidenced(value: Any, evidence: str) -> bool:
-    """Does the line the author cited actually show this option?
+@dataclass(frozen=True)
+class StaticSourceEvidence:
+    """A selected-agent source file checked without importing or executing it."""
 
-    Word-boundary, not substring, and the difference is the whole check:
-    across the blinded runs that invented an option, every one of them was a
-    model name nested inside the real one - `gpt-4o` and `gpt-4` both sit
-    inside `gpt-4o-mini`. A substring test read those as evidenced and would
-    have waved through every case it was written for.
+    path: Path
+    display_path: str
+    executable_lines: frozenset[int]
+    text_by_line: tuple[str, ...]
+    tree: ast.Module
+    parents: dict[int, ast.AST]
+    selected_callable: ast.FunctionDef | ast.AsyncFunctionDef
+
+
+def static_source_evidence(
+    source: Any,
+    source_root: Path,
+    selected_agent: Path | None = None,
+    selected_callable: str | None = None,
+) -> StaticSourceEvidence:
+    """Resolve and parse one selected-agent path below the declared local root.
+
+    The JSON document is assistant-authored.  Its path and line claims are
+    therefore inputs, not authority: resolve symlinks before containment, read
+    text only, and parse the language without importing the customer module.
     """
-    return bool(re.search(rf"(?<![\w.-]){re.escape(str(value))}(?![\w.-])", evidence))
+    if not isinstance(source, str) or not source.strip():
+        raise AgentDiscoveryInputError(
+            "agent-knobs needs a non-empty relative 'source' path when "
+            "--agent-source-root is supplied"
+        )
+    relative = Path(source)
+    if relative.is_absolute():
+        raise AgentDiscoveryInputError(
+            "agent-knobs 'source' must be relative to --agent-source-root"
+        )
+    root = source_root.resolve()
+    candidate = (root / relative).resolve()
+    try:
+        candidate.relative_to(root)
+    except ValueError as error:
+        raise AgentDiscoveryInputError(
+            "agent-knobs 'source' escapes --agent-source-root; no source was read"
+        ) from error
+    if not candidate.is_file():
+        raise AgentDiscoveryInputError(
+            f"agent-knobs source {source!r} is not a regular file below --agent-source-root"
+        )
+    if selected_agent is None:
+        raise AgentDiscoveryInputError(
+            "selected-agent is required with source-root for static agent evidence"
+        )
+    if (
+        not isinstance(selected_callable, str)
+        or not selected_callable
+        or not selected_callable.isidentifier()
+    ):
+        raise AgentDiscoveryInputError(
+            "--selected-agent-callable must name the inventory-selected Python "
+            "callable as one identifier"
+        )
+    selected = selected_agent.resolve()
+    try:
+        selected.relative_to(root)
+    except ValueError as error:
+        raise AgentDiscoveryInputError(
+            "--selected-agent must name a file below --agent-source-root"
+        ) from error
+    if not selected.is_file():
+        raise AgentDiscoveryInputError(
+            "--selected-agent must name an existing regular file"
+        )
+    if candidate != selected:
+        raise AgentDiscoveryInputError(
+            "agent-knobs 'source' must resolve exactly to --selected-agent; "
+            "a sibling or another in-root file is not evidence for the selected agent"
+        )
+    try:
+        text = candidate.read_text(encoding="utf-8")
+        tree = ast.parse(text, filename=str(candidate))
+    except (OSError, UnicodeDecodeError, SyntaxError) as error:
+        raise AgentDiscoveryInputError(
+            f"agent-knobs source {source!r} is not readable Python for static validation: {error}"
+        ) from error
+
+    # A source file can contain helpers, abandoned experiments, and a second
+    # agent.  Inventory selects one callable, so source credit may describe
+    # only that callable's direct body.  Do not guess a class method, dotted
+    # name, or a nested helper: accepting one would turn an assistant's name
+    # into an unverified reachability claim.
+    selected_nodes = [
+        node
+        for node in tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name == selected_callable
+    ]
+    if len(selected_nodes) != 1:
+        raise AgentDiscoveryInputError(
+            "--selected-agent-callable must name exactly one top-level function "
+            "or async function in --selected-agent"
+        )
+
+    # AST nodes cover executable syntax and deliberately omit comments.  Remove
+    # docstrings explicitly: they are Expr(Constant(str)) nodes even though
+    # they are not executable behavior.
+    docstring_lines: set[int] = set()
+    for owner in (
+        tree,
+        *[
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+        ],
+    ):
+        if (
+            owner.body
+            and isinstance(owner.body[0], ast.Expr)
+            and isinstance(getattr(owner.body[0], "value", None), ast.Constant)
+            and isinstance(owner.body[0].value.value, str)
+        ):
+            docstring_lines.update(
+                range(
+                    owner.body[0].lineno,
+                    getattr(owner.body[0], "end_lineno", owner.body[0].lineno) + 1,
+                )
+            )
+    # AST ranges deliberately span comments inside a multi-line expression.
+    # A citation to such an interior comment is not executable evidence, so
+    # derive physical executable lines from Python tokens rather than node
+    # spans.  AST is still the authority for docstrings and bindings below.
+    executable: set[int] = set()
+    ignored = {
+        tokenize.COMMENT,
+        tokenize.NL,
+        tokenize.NEWLINE,
+        tokenize.INDENT,
+        tokenize.DEDENT,
+        tokenize.ENDMARKER,
+        tokenize.ENCODING,
+    }
+    try:
+        for token in tokenize.generate_tokens(io.StringIO(text).readline):
+            if token.type not in ignored:
+                executable.add(token.start[0])
+    except tokenize.TokenError as error:  # ast.parse above normally catches this.
+        raise AgentDiscoveryInputError(
+            f"agent-knobs source {source!r} cannot be tokenized for static validation: {error}"
+        ) from error
+    executable.difference_update(docstring_lines)
+    parents = {
+        id(child): parent
+        for parent in ast.walk(tree)
+        for child in ast.iter_child_nodes(parent)
+    }
+    return StaticSourceEvidence(
+        candidate,
+        source,
+        frozenset(executable),
+        tuple(text.splitlines()),
+        tree,
+        parents,
+        selected_nodes[0],
+    )
 
 
-def discovered_knob_from_entry(name: str, spec: Any) -> DiscoveredKnob:
+def checked_source_lines(lines: Any, source: StaticSourceEvidence) -> tuple[int, ...]:
+    """Validate structured, physical source lines without trusting prose.
+
+    `evidence` is explanatory text the assistant authored.  It never carries a
+    coordinate because a permissive `path:line` parser can accidentally accept
+    malformed suffixes.  The small JSON list below is the complete authority.
+    """
+    if not isinstance(lines, list) or not lines:
+        raise AgentDiscoveryInputError(
+            "knob 'source_lines' must be a non-empty list of positive line numbers"
+        )
+    if any(
+        isinstance(line, bool) or not isinstance(line, int) or line < 1
+        for line in lines
+    ):
+        raise AgentDiscoveryInputError(
+            "knob 'source_lines' must contain only positive integer line numbers"
+        )
+    cited = set(lines)
+    if max(cited) > len(source.text_by_line):
+        raise AgentDiscoveryInputError(
+            "knob 'source_lines' cites a line outside the selected agent source"
+        )
+    if not cited <= source.executable_lines:
+        raise AgentDiscoveryInputError(
+            "knob 'source_lines' cites comment/docstring/non-executable source; "
+            "cite the executable statement that establishes the value"
+        )
+    return tuple(sorted(cited))
+
+
+def _name_matches_knob(binding: str, knob: str) -> bool:
+    """Whether a static binding is named for this declared configuration key.
+
+    `MODELS`, `model_choices`, and `MODEL_CONFIG` are ordinary ways to hold a
+    `model` dimension.  A generic note containing the same values is not.
+    This is deliberately a narrow, syntax-only association: request wiring is
+    proven later by the wrapper probe, never guessed here.
+    """
+    wanted = re.findall(r"[a-z0-9]+", knob.casefold())
+    available = re.findall(r"[a-z0-9]+", binding.casefold())
+    if not wanted or not available:
+        return False
+    normalized = {
+        token[:-1] if token.endswith("s") and len(token) > 1 else token
+        for token in available
+    }
+    return all(token in normalized for token in wanted)
+
+
+def _literal_values(node: ast.AST) -> tuple[Any, ...] | None:
+    """Return literal alternatives without evaluating customer code."""
+    if isinstance(node, ast.Constant):
+        return (node.value,)
+    if isinstance(node, (ast.List, ast.Tuple, ast.Set)):
+        values: list[Any] = []
+        for element in node.elts:
+            literal = _literal_values(element)
+            if literal is None or len(literal) != 1:
+                return None
+            values.extend(literal)
+        return tuple(values)
+    if isinstance(node, ast.Dict):
+        values: list[Any] = []
+        for value in node.values:
+            literal = _literal_values(value)
+            if literal is None or len(literal) != 1:
+                return None
+            values.extend(literal)
+        return tuple(values)
+    return None
+
+
+def _literal_mapping_keys(node: ast.Dict) -> tuple[Any, ...] | None:
+    """Dictionary keys are choices for a named table such as `STYLES`."""
+    keys: list[Any] = []
+    for key in node.keys:
+        if not isinstance(key, ast.Constant):
+            return None
+        keys.append(key.value)
+    return tuple(keys)
+
+
+def _node_lines(node: ast.AST) -> set[int]:
+    if not hasattr(node, "lineno"):
+        return set()
+    return set(range(node.lineno, getattr(node, "end_lineno", node.lineno) + 1))
+
+
+def _literal_condition_value(node: ast.AST) -> bool | None:
+    """Return a condition's result only for a tiny, syntax-only literal subset.
+
+    This deliberately evaluates neither names nor customer expressions.  The
+    subset catches visibly dead examples such as ``if False`` and ``if 1 ==
+    2``; everything else remains potentially reachable, which is safer than
+    guessing at a customer's runtime state.
+    """
+    if isinstance(node, ast.Constant):
+        return bool(node.value)
+    if (
+        isinstance(node, ast.Compare)
+        and len(node.ops) == len(node.comparators) == 1
+        and isinstance(node.left, ast.Constant)
+        and isinstance(node.comparators[0], ast.Constant)
+    ):
+        left, right = node.left.value, node.comparators[0].value
+        operation = node.ops[0]
+        try:
+            if isinstance(operation, ast.Eq):
+                return left == right
+            if isinstance(operation, ast.NotEq):
+                return left != right
+            if isinstance(operation, ast.Lt):
+                return left < right
+            if isinstance(operation, ast.LtE):
+                return left <= right
+            if isinstance(operation, ast.Gt):
+                return left > right
+            if isinstance(operation, ast.GtE):
+                return left >= right
+        except TypeError:
+            # Mixed literal types are not a proof of a branch's runtime
+            # intent; leave them potentially reachable.
+            return None
+    return None
+
+
+def _is_statically_reachable(node: ast.AST, source: StaticSourceEvidence) -> bool:
+    """Reject syntactically dead code without trying to execute the agent.
+
+    This is deliberately a small syntactic check, not a control-flow engine.
+    Literal-dead branches and statements following an unconditional transfer in
+    the same block cannot establish customer-facing source evidence.  More
+    complicated paths remain unknown rather than being guessed executable.
+    """
+    child = node
+    while (parent := source.parents.get(id(child))) is not None:
+        for statement_list in (
+            getattr(parent, "body", ()),
+            getattr(parent, "orelse", ()),
+            getattr(parent, "finalbody", ()),
+        ):
+            if child not in statement_list:
+                continue
+            index = statement_list.index(child)
+            if any(
+                isinstance(previous, (ast.Return, ast.Raise, ast.Break, ast.Continue))
+                for previous in statement_list[:index]
+            ):
+                return False
+            break
+        if isinstance(parent, ast.If):
+            truth = _literal_condition_value(parent.test)
+            if truth is False and child in parent.body:
+                return False
+            if truth is True and child in parent.orelse:
+                return False
+        if isinstance(parent, ast.While):
+            truth = _literal_condition_value(parent.test)
+            if truth is False and child in parent.body:
+                return False
+        child = parent
+    return True
+
+
+def _expression_uses_name(node: ast.AST, name: str) -> bool:
+    return any(
+        isinstance(child, ast.Name) and child.id == name for child in ast.walk(node)
+    )
+
+
+def _selected_callable_parameter_is_unshadowed(
+    name: str, source: StaticSourceEvidence
+) -> bool:
+    """A selector is dynamic only when the selected callable receives it intact."""
+    arguments = source.selected_callable.args
+    parameters = {
+        argument.arg
+        for argument in (
+            *arguments.posonlyargs,
+            *arguments.args,
+            *arguments.kwonlyargs,
+        )
+    }
+    if arguments.vararg is not None:
+        parameters.add(arguments.vararg.arg)
+    if arguments.kwarg is not None:
+        parameters.add(arguments.kwarg.arg)
+    if name not in parameters:
+        return False
+    return not any(
+        isinstance(child, ast.Name)
+        and child.id == name
+        and isinstance(child.ctx, ast.Store)
+        for child in _selected_callable_nodes(source)
+    )
+
+
+def _expression_varies_binding(
+    node: ast.AST, name: str, source: StaticSourceEvidence
+) -> bool:
+    """A literal collection only represents alternatives when selection varies."""
+    for child in ast.walk(node):
+        if not isinstance(child, ast.Subscript) or not _expression_uses_name(
+            child.value, name
+        ):
+            continue
+        # `MODELS[0]`, `MODELS[0 + 0]`, and a ternary whose arms are constants
+        # are fixed defaults dressed as a list of choices.  A bare identifier
+        # is the narrow static proof that the selected callable receives a
+        # choice from its caller without evaluating customer code.
+        if isinstance(
+            child.slice, ast.Name
+        ) and _selected_callable_parameter_is_unshadowed(child.slice.id, source):
+            return True
+    return False
+
+
+def _selected_callable_nodes(source: StaticSourceEvidence) -> Iterator[ast.AST]:
+    """Walk only the selected callable's direct lexical body.
+
+    A nested function can be conditionally called, returned, or never called;
+    proving that relationship requires a call graph and would overstate a
+    static first-run read.  Keep source credit to the inventory-selected
+    callable itself.  Module constants remain eligible only when that callable
+    directly selects and passes them onward.
+    """
+    pending = list(source.selected_callable.body)
+    while pending:
+        node = pending.pop()
+        yield node
+        if isinstance(
+            node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
+        ):
+            continue
+        pending.extend(reversed(list(ast.iter_child_nodes(node))))
+
+
+def _lexical_owner(node: ast.AST, source: StaticSourceEvidence) -> ast.AST:
+    """Return the module/function/class scope that owns ``node``."""
+    child = node
+    while (parent := source.parents.get(id(child))) is not None:
+        if isinstance(
+            parent, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+        ):
+            return parent
+        child = parent
+    return source.tree
+
+
+def _assignment_names(node: ast.Assign | ast.AnnAssign) -> list[str]:
+    if isinstance(node, ast.Assign):
+        return [target.id for target in node.targets if isinstance(target, ast.Name)]
+    return [node.target.id] if isinstance(node.target, ast.Name) else []
+
+
+def _selected_callable_binds(name: str, source: StaticSourceEvidence) -> bool:
+    """Whether normal Python scope makes ``name`` local to the selected call."""
+    arguments = source.selected_callable.args
+    for argument in (
+        *arguments.posonlyargs,
+        *arguments.args,
+        *arguments.kwonlyargs,
+    ):
+        if argument.arg == name:
+            return True
+    if arguments.vararg is not None and arguments.vararg.arg == name:
+        return True
+    if arguments.kwarg is not None and arguments.kwarg.arg == name:
+        return True
+    for child in _selected_callable_nodes(source):
+        if not isinstance(child, ast.Name) or not isinstance(child.ctx, ast.Store):
+            continue
+        if child.id == name:
+            return True
+    return False
+
+
+def _module_binding_is_current(
+    binding: ast.Assign | ast.AnnAssign, name: str, source: StaticSourceEvidence
+) -> bool:
+    """Accept a module binding only if no syntax can rebind its name.
+
+    A cited module assignment does not identify the value a selected callable
+    reads once the module contains another write, delete, definition, or
+    import for that spelling. Enumerating assignment statement forms is not
+    sufficient: ``global MODELS; MODELS = ...`` and ``(MODELS := ...)`` are
+    both writes despite having different AST parents. Reject every other
+    binding site, in every lexical scope, rather than guessing whether a
+    runtime path can reach it. This is deliberately conservative source
+    credit; request wiring remains a separate pre-paid proof.
+    """
+    if (
+        _lexical_owner(binding, source) is not source.tree
+        or source.parents.get(id(binding)) is not source.tree
+    ):
+        return False
+    owned_target_nodes = {
+        id(target)
+        for target in (
+            binding.targets if isinstance(binding, ast.Assign) else (binding.target,)
+        )
+        for target in ast.walk(target)
+    }
+    for candidate in ast.walk(source.tree):
+        if (
+            isinstance(candidate, ast.Name)
+            and isinstance(candidate.ctx, (ast.Store, ast.Del))
+            and candidate.id == name
+            and id(candidate) not in owned_target_nodes
+        ):
+            return False
+        if isinstance(candidate, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            if candidate.name == name:
+                return False
+        if isinstance(candidate, (ast.Import, ast.ImportFrom)) and any(
+            (alias.asname or alias.name.split(".")[0]) == name
+            for alias in candidate.names
+        ):
+            return False
+    return not _selected_callable_binds(name, source)
+
+
+def _binding_reaches_call_path(
+    binding: str,
+    knob: str,
+    *,
+    mapping: bool,
+    binding_node: ast.Assign | ast.AnnAssign,
+    source: StaticSourceEvidence,
+) -> bool:
+    """Require a narrow static flow from the cited binding into a call.
+
+    This deliberately does not infer a provider, execute code, or claim the
+    final generated wrapper will use the value.  It only prevents metadata and
+    unused `MODELS`/`CONFIG` declarations from becoming opening evidence.
+    """
+    if not _module_binding_is_current(binding_node, binding, source):
+        return False
+
+    for call in _selected_callable_nodes(source):
+        if not isinstance(call, ast.Call) or not _is_statically_reachable(call, source):
+            continue
+        statement = source.parents.get(id(call))
+        if not isinstance(statement, (ast.Return, ast.Expr)) or (
+            source.parents.get(id(statement)) is not source.selected_callable
+        ):
+            continue
+        for keyword in call.keywords:
+            if mapping:
+                if keyword.arg is None and _expression_varies_binding(
+                    keyword.value, binding, source
+                ):
+                    return True
+            elif keyword.arg == knob and _expression_varies_binding(
+                keyword.value, binding, source
+            ):
+                return True
+    return False
+
+
+def _binding_values_for_knob(
+    knob: str, lines: Sequence[int], source: StaticSourceEvidence
+) -> tuple[Any, ...]:
+    """Read literal alternatives from a cited executable config binding.
+
+    A value must come from either a binding whose identifier names the knob
+    (`MODELS = [...]`) or a literal configuration mapping keyed by the knob
+    (`CONFIG = {"model": [...]}`).  Text presence is intentionally not enough:
+    it would allow comments, docstrings, or `NOTE = "fast slow"` to impersonate
+    the paid dimension this first-run score reports.
+    """
+    cited = set(lines)
+    found: list[Any] = []
+    for node in ast.walk(source.tree):
+        if not isinstance(node, (ast.Assign, ast.AnnAssign)):
+            continue
+        if not _is_statically_reachable(node, source):
+            continue
+        value = node.value
+        if value is None or not (_node_lines(node) & cited):
+            continue
+        names = _assignment_names(node)
+        # A table of request dictionaries is a genuine configuration mapping
+        # only when a non-constant selection is expanded into a call.  It is
+        # intentionally narrower than an arbitrary dict called "metadata".
+        if isinstance(value, (ast.List, ast.Tuple)) and any(
+            _binding_reaches_call_path(
+                name, knob, mapping=True, binding_node=node, source=source
+            )
+            for name in names
+        ):
+            for item in value.elts:
+                if not isinstance(item, ast.Dict):
+                    continue
+                for key, mapped_value in zip(item.keys, item.values):
+                    if (
+                        isinstance(key, ast.Constant)
+                        and isinstance(key.value, str)
+                        and key.value.casefold() == knob.casefold()
+                    ):
+                        literal = _literal_values(mapped_value)
+                        if literal is not None:
+                            found.extend(literal)
+        if any(_name_matches_knob(name, knob) for name in names):
+            literal = (
+                _literal_mapping_keys(value)
+                if isinstance(value, ast.Dict)
+                else _literal_values(value)
+            )
+            if literal is not None and any(
+                _binding_reaches_call_path(
+                    name, knob, mapping=False, binding_node=node, source=source
+                )
+                for name in names
+                if _name_matches_knob(name, knob)
+            ):
+                found.extend(literal)
+        if isinstance(value, ast.Dict):
+            for key, mapped_value in zip(value.keys, value.values):
+                if (
+                    isinstance(key, ast.Constant)
+                    and isinstance(key.value, str)
+                    and key.value.casefold() == knob.casefold()
+                ):
+                    literal = _literal_values(mapped_value)
+                    if literal is not None and any(
+                        _binding_reaches_call_path(
+                            name,
+                            knob,
+                            mapping=True,
+                            binding_node=node,
+                            source=source,
+                        )
+                        for name in names
+                    ):
+                        found.extend(literal)
+    return tuple(found)
+
+
+def values_are_in_checked_source(
+    knob: str, values: Sequence[Any], lines: Sequence[int], source: StaticSourceEvidence
+) -> list[str]:
+    bound_values = {
+        repr(value) for value in _binding_values_for_knob(knob, lines, source)
+    }
+    return [str(value) for value in values if repr(value) not in bound_values]
+
+
+def discovered_knob_from_entry(
+    name: str,
+    spec: Any,
+    source: StaticSourceEvidence | None = None,
+    *,
+    source_unavailable_reason: str | None = None,
+) -> DiscoveredKnob:
     """Read one discovered parameter, saying plainly why it earns nothing.
 
     Every refusal below is the owner's rule, which is a rule about EVIDENCE
@@ -7557,12 +8147,18 @@ def discovered_knob_from_entry(name: str, spec: Any) -> DiscoveredKnob:
         )
     evidence = evidence.strip()
 
+    checked_lines = (
+        checked_source_lines(spec.get("source_lines"), source)
+        if source is not None
+        else ()
+    )
+
     if name in EXCLUDED_KNOBS:
         # Refused for exactly the reason a declared one is, and with the same
         # sentence, so an author who wired `seed` reads one explanation rather
         # than two that have to be reconciled.
         return DiscoveredKnob(
-            name, "excluded", 0, evidence, EXCLUDED_KNOB_REASONS[name]
+            name, "excluded", evidence, uncredited_reason=EXCLUDED_KNOB_REASONS[name]
         )
 
     values = spec.get("values")
@@ -7572,9 +8168,19 @@ def discovered_knob_from_entry(name: str, spec: Any) -> DiscoveredKnob:
                 f"knob {name!r} declares 'values' as {type(values).__name__}; "
                 "it is the list of options the agent can actually take"
             )
-        unevidenced = [
-            str(value) for value in values if not _value_is_evidenced(value, evidence)
-        ]
+        if source is None:
+            return DiscoveredKnob(
+                name,
+                "categorical",
+                evidence,
+                uncredited_reason=(
+                    source_unavailable_reason
+                    or "the source root was not supplied, so this read cannot statically "
+                    "verify that its declared values are executable code"
+                ),
+                unverified=True,
+            )
+        unevidenced = values_are_in_checked_source(name, values, checked_lines, source)
         if unevidenced:
             # A finding, not a refusal, per this error class's own rule: a
             # parameter that does not qualify is reported with its reason,
@@ -7600,40 +8206,44 @@ def discovered_knob_from_entry(name: str, spec: Any) -> DiscoveredKnob:
             return DiscoveredKnob(
                 name,
                 "categorical",
-                0,
                 evidence,
-                "declares "
-                + ", ".join(repr(value) for value in unevidenced)
-                + " which the evidence given for it does not show, so this "
-                "score has not seen them; the options a search varies get "
-                "added at the enhanced run, and this read records the ones "
-                "the source already has; quote the line that spells the "
-                "options out, not just the line that uses the parameter, in "
-                "this parameter's own 'evidence' - that string is all this "
-                "check reads, and it matches whole tokens",
+                uncredited_reason=(
+                    "declares "
+                    + ", ".join(repr(value) for value in unevidenced)
+                    + " which the cited executable selected-agent call path does "
+                    "not show, so this score has not seen them; the options a search varies get "
+                    "added at the enhanced run, and this read records the ones "
+                    "the source already has; quote the line that spells the "
+                    "options out and use them on the local call path; record those "
+                    "physical lines in this parameter's 'source_lines'"
+                ),
+                unverified=True,
             )
         distinct = len({repr(value) for value in values})
         if distinct < 2:
             return DiscoveredKnob(
                 name,
                 "categorical",
-                distinct,
                 evidence,
-                f"{distinct} option(s) available - one option is not a choice, "
-                "so there is nothing here for a search to compare",
+                uncredited_reason=(
+                    f"{distinct} option(s) available - one option is not a choice, "
+                    "so there is nothing here for a search to compare"
+                ),
             )
-        return DiscoveredKnob(name, "categorical", distinct, evidence)
+        return DiscoveredKnob(name, "categorical", evidence, tuple(values))
 
     low, high = spec.get("low"), spec.get("high")
     if low is None or high is None:
         return DiscoveredKnob(
             name,
             "unknown",
-            0,
             evidence,
-            "neither a list of options nor a low/high range was established, "
-            "so how much this parameter could vary is not something this score "
-            "has seen",
+            uncredited_reason=(
+                "neither a list of options nor a low/high range was established, "
+                "so how much this parameter could vary is not something this score "
+                "has seen"
+            ),
+            unverified=True,
         )
     if not all(
         isinstance(bound, (int, float)) and not isinstance(bound, bool)
@@ -7648,6 +8258,18 @@ def discovered_knob_from_entry(name: str, spec: Any) -> DiscoveredKnob:
             f"knob {name!r} declares low {low!r} and high {high!r}; the high "
             "bound has to be above the low one for the range to hold anything"
         )
+    if source is None:
+        return DiscoveredKnob(
+            name,
+            "numeric",
+            evidence,
+            uncredited_reason=(
+                source_unavailable_reason
+                or "the source root was not supplied, so this read cannot statically "
+                "verify that its declared bounds are executable code"
+            ),
+            unverified=True,
+        )
     # The same floor a declared numeric knob is measured against, so a range
     # too narrow for this scorer to tell two values apart is refused here
     # rather than counted as a dimension and collapsed later.
@@ -7655,12 +8277,25 @@ def discovered_knob_from_entry(name: str, spec: Any) -> DiscoveredKnob:
         return DiscoveredKnob(
             name,
             "numeric",
-            0,
             evidence,
-            f"the range {low} to {high} is inside this score's noise floor for "
-            f"{name}, so two values drawn from it would not be told apart",
+            uncredited_reason=(
+                f"the range {low} to {high} is inside this score's noise floor for "
+                f"{name}, so two values drawn from it would not be told apart"
+            ),
         )
-    return DiscoveredKnob(name, "numeric", 2, evidence)
+    unevidenced = values_are_in_checked_source(name, (low, high), checked_lines, source)
+    if unevidenced:
+        return DiscoveredKnob(
+            name,
+            "numeric",
+            evidence,
+            (),
+            "declares bound(s) "
+            + ", ".join(unevidenced)
+            + " that the cited executable source does not show",
+            unverified=True,
+        )
+    return DiscoveredKnob(name, "numeric", evidence, (low, high))
 
 
 # The keys each build check may carry. Closed and checked for the reason the
@@ -7711,7 +8346,8 @@ AGENT_KNOBS_EXAMPLE: dict[str, Any] = {
         # assistant is told to copy. Three blinded runs over-claimed a search
         # space; the example must not be a fourth reason to.
         "model": {
-            "evidence": 'agent.py:3 MODELS = ["fast", "slow"], read at agent.py:6',
+            "evidence": "The selected agent uses these alternatives on its local call path.",
+            "source_lines": [3],
             "values": ["fast", "slow"],
         }
     },
@@ -7926,7 +8562,6 @@ def build_signal_from_entry(check: str, spec: Any) -> BuildSignal:
             "does not declare them; an unreachable tool is one of the declared "
             "ones this read could not find behind its name"
         )
-    reachable = len(declared) - len(set(unreachable))
     if not unreachable:
         return BuildSignal(
             check,
@@ -7935,9 +8570,10 @@ def build_signal_from_entry(check: str, spec: Any) -> BuildSignal:
         )
     return BuildSignal(
         check,
-        round(weight * reachable / len(declared), 2),
-        f"{len(set(unreachable))} of {len(declared)} tool(s) declared and not "
-        f"found behind the name: {', '.join(sorted(set(unreachable)))} "
+        round(weight * (len(declared) - len(set(unreachable))) / len(declared), 2),
+        f"{len(set(unreachable))} of {len(declared)} declared tool(s) were not "
+        f"found behind the name: {', '.join(sorted(set(unreachable)))}; tool "
+        "wiring receives credit only for declared tools that resolve "
         f"({evidence})",
     )
 
@@ -7975,7 +8611,13 @@ def agent_build_from_document(build: Any) -> tuple[BuildSignal, ...]:
     )
 
 
-def agent_facts_from_discovery(document: Any) -> AgentFacts:
+def agent_facts_from_discovery(
+    document: Any,
+    *,
+    source_root: Path | None = None,
+    selected_agent: Path | None = None,
+    selected_agent_callable: str | None = None,
+) -> AgentFacts:
     """Read the assistant's read of the agent, and nothing about wiring.
 
     Returns `AgentFacts` with `knobs` and `wired` untouched on purpose. This
@@ -8006,9 +8648,69 @@ def agent_facts_from_discovery(document: Any) -> AgentFacts:
             f"'knobs' must be an object keyed by parameter name, not "
             f"{type(knobs).__name__}"
         )
+    if bool(source_root) != bool(selected_agent):
+        raise AgentDiscoveryInputError(
+            "source-root and selected-agent must be supplied together for static agent evidence"
+        )
+    source: StaticSourceEvidence | None = None
+    source_unavailable_reason: str | None = None
+    if source_root and selected_agent:
+        # Static source credit is a Python-only optional refinement.  A
+        # non-Python selected agent remains an honest unknown at this gate;
+        # rejecting its entire readiness record would confuse unsupported
+        # inspection with proof that it has no settings.
+        if selected_agent.suffix.casefold() != ".py":
+            source_unavailable_reason = (
+                "the selected agent is not Python, so this local static source "
+                "check cannot verify executable alternatives; leave source credit "
+                "unestablished or use a thin Python adapter that calls unchanged behavior"
+            )
+        elif (
+            not isinstance(selected_agent_callable, str)
+            or not selected_agent_callable.isidentifier()
+        ):
+            source_unavailable_reason = (
+                "the inventory-selected callable is not a top-level Python function, "
+                "so this local static check cannot verify its call path; leave source "
+                "credit unestablished or use a thin Python adapter that calls unchanged behavior"
+            )
+        else:
+            try:
+                source = static_source_evidence(
+                    document.get("source"),
+                    source_root,
+                    selected_agent,
+                    selected_agent_callable,
+                )
+            except AgentDiscoveryInputError as error:
+                message = str(error)
+                if "--selected-agent-callable must name exactly one" in message:
+                    source_unavailable_reason = (
+                        "the selected callable was not found as one top-level Python function, "
+                        "so this local static check cannot verify its call path; leave source "
+                        "credit unestablished or use a thin Python adapter that calls unchanged behavior"
+                    )
+                elif "is not readable Python for static validation" in message:
+                    # The customer's selected file is present, but this local
+                    # interpreter cannot parse it. That is an unsupported
+                    # static-inspection path, not evidence that the agent has
+                    # no knobs and not a malformed assistant-authored claim.
+                    source_unavailable_reason = (
+                        "the selected Python agent cannot be parsed by this local "
+                        "static checker, so source credit is unestablished; use a "
+                        "compatible local checker or a thin Python adapter that calls "
+                        "unchanged behavior"
+                    )
+                else:
+                    raise
     return AgentFacts(
         discovered=tuple(
-            discovered_knob_from_entry(name, spec)
+            discovered_knob_from_entry(
+                name,
+                spec,
+                source,
+                source_unavailable_reason=source_unavailable_reason,
+            )
             for name, spec in sorted(knobs.items())
         ),
         # Reaching this line is the proof: the agent was read.
@@ -8108,9 +8810,10 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help=(
             "the coding assistant's own read of the agent's source (path or -): "
             "which parameters it can already vary and how it is put together, "
-            "each with the line that shows it. Measures the search space at the "
-            "opening gate, where no config-space document exists; attests "
-            "nothing about wiring. Its knob half is ignored when --config-space "
+            "each with the line that shows it. Records source discovery at the "
+            "opening gate, where no config-space document exists; checked source "
+            "alternatives can earn opening search-space credit but attest nothing "
+            "about final wrapper wiring. Its knob half is ignored when --config-space "
             "is given, because that document decides the space; its build half "
             "is read either way, because no config space describes how the "
             "agent is built. Reads "
@@ -8119,6 +8822,30 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
             + ", ".join(sorted(DISCOVERED_KNOB_FIELDS))
             + ". `knobs` maps each parameter's name to its entry rather than "
             "listing entries: the name is the key, never a field inside one"
+        ),
+    )
+    parser.add_argument(
+        "--agent-source-root",
+        help=(
+            "absolute project root containing the selected agent source named by "
+            "--agent-knobs; required with --agent-knobs so source:line evidence "
+            "is statically checked without importing customer code"
+        ),
+    )
+    parser.add_argument(
+        "--selected-agent",
+        help=(
+            "absolute path of the one agent selected at inventory; required with "
+            "--agent-knobs and --agent-source-root. The document's relative "
+            "'source' must resolve exactly to this file."
+        ),
+    )
+    parser.add_argument(
+        "--selected-agent-callable",
+        help=(
+            "identifier of the inventory-selected top-level Python callable; "
+            "required with --agent-knobs, --agent-source-root, and --selected-agent. "
+            "Static source credit follows only this callable's direct body."
         ),
     )
     parser.add_argument(
@@ -8287,6 +9014,56 @@ def run(argv: Sequence[str] | None = None) -> int:
         )
         return 2
 
+    # The three source flags are one unit, and that unit is OPTIONAL.
+    #
+    # Requiring them alongside --agent-knobs bought no safety: a read supplied
+    # without them credits zero knobs, which is the same answer as not being
+    # allowed to supply it. What it cost was the BUILD half. A command agent,
+    # or any agent this static check cannot name a top-level Python callable
+    # for, can satisfy neither --selected-agent nor --selected-agent-callable,
+    # so the whole read was refused and its four build checks fell to WITHHELD
+    # - reported as this run's silence rather than as the read it actually was.
+    # That is the exact inversion `SubScore.withheld` exists to prevent:
+    # omitting the read must never outscore doing it.
+    #
+    # So the source trio is all-three-or-none and may be absent, and an absent
+    # one takes the advisory route `agent_facts_from_discovery` already has.
+    source_flags = (
+        args.agent_source_root,
+        args.selected_agent,
+        args.selected_agent_callable,
+    )
+    if any(source_flags) and not all(source_flags):
+        print(
+            "cannot read scoring input: --agent-source-root, --selected-agent and "
+            "--selected-agent-callable are one unit - supply all three or none; "
+            "source evidence is checked only against that selected callable",
+            file=sys.stderr,
+        )
+        return 2
+    if any(source_flags) and not args.agent_knobs:
+        print(
+            "cannot read scoring input: the source flags describe --agent-knobs, "
+            "so they need the read they check",
+            file=sys.stderr,
+        )
+        return 2
+    if args.agent_source_root:
+        source_root = Path(args.agent_source_root)
+        if not source_root.is_absolute() or not source_root.is_dir():
+            print(
+                "cannot read scoring input: --agent-source-root must name an existing absolute directory",
+                file=sys.stderr,
+            )
+            return 2
+        selected_agent = Path(args.selected_agent)
+        if not selected_agent.is_absolute():
+            print(
+                "cannot read scoring input: --selected-agent must name an existing absolute file",
+                file=sys.stderr,
+            )
+            return 2
+
     # The planner's three component-state flags are declarations for when the
     # caller has no measured opening evidence. Any scoring evidence is that
     # evidence for the project being scored, so accepting both would give one
@@ -8376,10 +9153,30 @@ def run(argv: Sequence[str] | None = None) -> int:
                 # refuses for the knob read one paragraph over.
                 agent_facts = replace(
                     agent_facts,
-                    build=agent_facts_from_discovery(load_json(args.agent_knobs)).build,
+                    build=agent_facts_from_discovery(
+                        load_json(args.agent_knobs),
+                        source_root=(
+                            Path(args.agent_source_root)
+                            if args.agent_source_root
+                            else None
+                        ),
+                        selected_agent=(
+                            Path(args.selected_agent) if args.selected_agent else None
+                        ),
+                        selected_agent_callable=args.selected_agent_callable,
+                    ).build,
                 )
         elif args.agent_knobs:
-            agent_facts = agent_facts_from_discovery(load_json(args.agent_knobs))
+            agent_facts = agent_facts_from_discovery(
+                load_json(args.agent_knobs),
+                source_root=(
+                    Path(args.agent_source_root) if args.agent_source_root else None
+                ),
+                selected_agent=(
+                    Path(args.selected_agent) if args.selected_agent else None
+                ),
+                selected_agent_callable=args.selected_agent_callable,
+            )
         else:
             agent_facts = AgentFacts()
         if args.agent_knobs:

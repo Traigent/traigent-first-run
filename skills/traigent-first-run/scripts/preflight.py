@@ -959,10 +959,7 @@ def _named_forms(forms: Iterable[str]) -> str:
     "2 forms" is a number the reader cannot check against their own file;
     `add two, find the` is a list they can, and disagreeing with it is the
     whole point - this check reads leading words and never meaning, so the only
-    thing that settles whether two forms are one task is a person looking at
-    them. `discovered_space_evidence` in readiness.py names its parameters for
-    the identical reason.
-
+    thing that settles whether two forms are one task is a person looking at it.
     Materialized on the first line, and that is the bug this docstring exists
     to keep fixed. Counting the total and taking the sample are two passes over
     the argument; against a generator the first pass exhausts it, the second

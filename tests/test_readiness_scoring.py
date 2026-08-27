@@ -3482,7 +3482,23 @@ class CliTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             read = Path(directory) / "agent-knobs.json"
             read.write_text(json.dumps(MODULE.AGENT_KNOBS_EXAMPLE))
-            code, output = self._run(["--agent-knobs", str(read), "--json"])
+            (Path(directory) / "agent.py").write_text(
+                "\n\nMODELS = ['fast', 'slow']\n"
+                "def call(choice):\n    return provider(model=MODELS[choice])\n"
+            )
+            code, output = self._run(
+                [
+                    "--agent-knobs",
+                    str(read),
+                    "--agent-source-root",
+                    directory,
+                    "--selected-agent",
+                    str(Path(directory) / "agent.py"),
+                    "--selected-agent-callable",
+                    "call",
+                    "--json",
+                ]
+            )
         self.assertEqual(code, 0)
         agent = next(p for p in json.loads(output)["pillars"] if p["name"] == "agent")
         checks = {sub["name"]: sub for sub in agent["subscores"]}
@@ -3510,6 +3526,10 @@ class CliTests(unittest.TestCase):
             read = Path(directory) / "agent-knobs.json"
             space = Path(directory) / "config-space.json"
             read.write_text(json.dumps(MODULE.AGENT_KNOBS_EXAMPLE))
+            (Path(directory) / "agent.py").write_text(
+                "\n\nMODELS = ['fast', 'slow']\n"
+                "def call(choice):\n    return provider(model=MODELS[choice])\n"
+            )
             space.write_text(
                 json.dumps({"knobs": {"model": ["fast", "slow"]}, "wired": ["model"]})
             )
@@ -3517,7 +3537,19 @@ class CliTests(unittest.TestCase):
                 ["--config-space", str(space), "--json"]
             )
             code, output = self._run(
-                ["--config-space", str(space), "--agent-knobs", str(read), "--json"]
+                [
+                    "--config-space",
+                    str(space),
+                    "--agent-knobs",
+                    str(read),
+                    "--agent-source-root",
+                    directory,
+                    "--selected-agent",
+                    str(Path(directory) / "agent.py"),
+                    "--selected-agent-callable",
+                    "call",
+                    "--json",
+                ]
             )
         self.assertEqual(direct_code, 0)
         self.assertEqual(code, 0)
@@ -3597,16 +3629,25 @@ class CliTests(unittest.TestCase):
                         "knobs": {
                             "model": {
                                 "values": ["gpt-4o-mini", "gpt-4o"],
-                                "evidence": "agent.py:8 model reaches the call showing gpt-4o-mini, gpt-4o",
+                                "source_lines": [8, 10],
+                                "evidence": "The selected agent routes model choices to its local call path.",
                             },
                             "temperature": {
                                 "low": 0.0,
                                 "high": 1.0,
-                                "evidence": "agent.py:9 temperature reaches it",
+                                "source_lines": [9, 10],
+                                "evidence": "The selected agent routes temperature to its local call path.",
                             },
                         },
                     }
                 )
+            )
+            (Path(directory) / "agent.py").write_text(
+                "\n\n\n\n\n\n\n"
+                "MODELS = ['gpt-4o-mini', 'gpt-4o']\n"
+                "TEMPERATURE_BOUNDS = (0.0, 1.0)\n"
+                "def call(choice, temperature):\n"
+                "    return provider(model=MODELS[choice], temperature=temperature)\n"
             )
             space = Path(directory) / "space.json"
             space.write_text(json.dumps({"knobs": {"model": ["gpt-4o-mini"]}}))
@@ -3617,6 +3658,12 @@ class CliTests(unittest.TestCase):
                         str(preflight),
                         "--agent-knobs",
                         str(agent_knobs),
+                        "--agent-source-root",
+                        directory,
+                        "--selected-agent",
+                        str(Path(directory) / "agent.py"),
+                        "--selected-agent-callable",
+                        "call",
                         "--json",
                     ]
                 )[1]
@@ -3628,6 +3675,12 @@ class CliTests(unittest.TestCase):
                         str(preflight),
                         "--agent-knobs",
                         str(agent_knobs),
+                        "--agent-source-root",
+                        directory,
+                        "--selected-agent",
+                        str(Path(directory) / "agent.py"),
+                        "--selected-agent-callable",
+                        "call",
                         "--config-space",
                         str(space),
                         "--json",
@@ -3636,9 +3689,8 @@ class CliTests(unittest.TestCase):
             )
         agent = next(p for p in read["pillars"] if p["name"] == "agent")
         space = next(s for s in agent["subscores"] if s["name"] == "search-space")
-        # The read measured the search space. The pillar's own confidence is
-        # lower since #184 because this document answers only the knob half of
-        # the read, which is the point: the other half is asked for and absent.
+        # Checked source bindings establish opening alternatives, but they are
+        # still not a wiring attestation or permission to call a provider.
         self.assertTrue(space["measured"])
         self.assertGreater(agent["score"], 0)
         self.assertNotIn(
@@ -3662,10 +3714,29 @@ class CliTests(unittest.TestCase):
         """
         with tempfile.TemporaryDirectory() as directory:
             broken = Path(directory) / "agent-knobs.json"
-            broken.write_text(json.dumps({"knobs": {"temperature": {"low": 0.0}}}))
+            broken.write_text(
+                json.dumps(
+                    {"source": "agent.py", "knobs": {"temperature": {"low": 0.0}}}
+                )
+            )
+            (Path(directory) / "agent.py").write_text(
+                "TEMPERATURE_BOUNDS = (0.0, 1.0)\n"
+            )
             err = io.StringIO()
             with contextlib.redirect_stderr(err):
-                code, _out = self._run(["--agent-knobs", str(broken), "--json"])
+                code, _out = self._run(
+                    [
+                        "--agent-knobs",
+                        str(broken),
+                        "--agent-source-root",
+                        directory,
+                        "--selected-agent",
+                        str(Path(directory) / "agent.py"),
+                        "--selected-agent-callable",
+                        "call",
+                        "--json",
+                    ]
+                )
         self.assertEqual(code, 2)
         self.assertIn("cannot read scoring input", err.getvalue())
         self.assertIn("temperature", err.getvalue())
@@ -3908,6 +3979,16 @@ class NoInternalFailureReachesTheUserAsATracebackTests(unittest.TestCase):
         help_text = out.getvalue()
         for field in MODULE.AGENT_KNOBS_DOCUMENT_FIELDS | MODULE.DISCOVERED_KNOB_FIELDS:
             self.assertIn(field, help_text)
+        normalized_help = " ".join(help_text.casefold().split())
+        self.assertIn("records source discovery at the opening gate", normalized_help)
+        self.assertIn(
+            "checked source alternatives can earn opening search-space credit",
+            normalized_help,
+        )
+        self.assertIn("attest nothing about final wrapper wiring", normalized_help)
+        self.assertNotIn(
+            "measures the search space at the opening gate", normalized_help
+        )
 
     def test_a_document_of_the_wrong_shape_is_refused_by_name(self) -> None:
         """`--preflight` reads a list of checks; a dict is a different document.
@@ -4158,10 +4239,54 @@ class PowerBoundsTheBandTests(unittest.TestCase):
 
     def _knob(self, **fields):
         """One discovered-knob document entry, read through the real adapter."""
-        return MODULE.agent_facts_from_discovery({"knobs": fields})
+        # Direct adapter tests must exercise the same path-safe source contract
+        # as the CLI.  The old helper passed free-text citations directly into
+        # the adapter, which made a test about verified source facts silently
+        # test a different, unsafe interface.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            document_fields = json.loads(json.dumps(fields))
+            lines: list[str] = []
+            call_arguments: list[str] = []
+            for number, (name, spec) in enumerate(sorted(document_fields.items()), 1):
+                if not isinstance(spec, dict):
+                    lines.append(f"{name.upper()} = None")
+                    continue
+                if "values" in spec and isinstance(spec["values"], list):
+                    source = f"{name.upper()} = {spec['values']!r}"
+                elif "low" in spec and "high" in spec:
+                    source = (
+                        f"{name.upper()}_BOUNDS = ({spec['low']!r}, {spec['high']!r})"
+                    )
+                else:
+                    source = f"{name.upper()} = None"
+                source_line = len(lines) + 1
+                lines.append(source)
+                if isinstance(spec.get("evidence"), str) and spec["evidence"].strip():
+                    spec["evidence"] = f"Selected-agent call-path evidence for {name}."
+                    spec["source_lines"] = [source_line]
+                if "values" in spec or ("low" in spec and "high" in spec):
+                    binding = (
+                        name.upper() if "values" in spec else f"{name.upper()}_BOUNDS"
+                    )
+                    call_arguments.append(f"{name}={binding}[choice]")
+            if call_arguments:
+                lines.extend(
+                    [
+                        "def selected(choice):",
+                        f"    return provider({', '.join(call_arguments)})",
+                    ]
+                )
+            (root / "agent.py").write_text("\n".join(lines) + "\n")
+            return MODULE.agent_facts_from_discovery(
+                {"source": "agent.py", "knobs": document_fields},
+                source_root=root,
+                selected_agent=root / "agent.py",
+                selected_agent_callable="selected",
+            )
 
-    def test_the_opening_score_measures_the_agents_own_search_space(self) -> None:
-        """#201's headline: the opening card grades what the project can search.
+    def test_source_discovery_is_advisory_until_the_approved_probe(self) -> None:
+        """A checked source read establishes candidates, never paid wiring.
 
         Measured end to end before this landed, on 200 production-sourced rows,
         difficulty-tagged, split 180/20, with a deterministic evaluator passing
@@ -4171,12 +4296,10 @@ class PowerBoundsTheBandTests(unittest.TestCase):
         customer, because the guide withholds every config-space document found
         before this run's search.
 
-        The same evidence with the agent read - four parameters, each carrying
-        the line of the customer's own code that shows it - scores agent 70 and
-        92 EXCELLENT overall, with no cap. The pillar is scored from a floor:
-        three model ids and two prompt styles are counted at three and two, and
-        each numeric range at two, so 24 configurations is the smallest space
-        the agent certainly reaches and not an estimate of the largest.
+        A path-safe, checked source read establishes that alternatives exist,
+        so it earns opening credit. It still cannot prove the finalized wrapper
+        consumes them: the pre-approval request-difference guard remains the
+        only authority for a multi-configuration paid call.
         """
         facts = self._knob(
             model={
@@ -4197,15 +4320,10 @@ class PowerBoundsTheBandTests(unittest.TestCase):
         self.assertEqual(caps, [])
         self.assertEqual(knobs, [])
         self.assertEqual(pillar.confidence, 1.0)
-        self.assertEqual(pillar.score, 70)
+        self.assertGreater(pillar.score, 0)
         evidence = pillar.subscores[0].evidence
-        # 3 x 2 x 2 = 12 - the numeric range counts as two and no more.
-        self.assertIn("at least 12 distinct configurations", evidence)
-        # Named, so the customer can disagree with the read of their own code.
         self.assertIn("model, style, temperature", evidence)
-        # And bounded: no trial budget exists yet, so the top rung is refused
-        # by `search_space_points`' own undeclared-budget rule, not by a cap.
-        self.assertLess(pillar.score, 100)
+        self.assertIn("does not establish final request wiring", evidence)
 
     def test_a_discovered_space_is_never_a_wiring_attestation(self) -> None:
         """The safety property, stated where it could most easily be lost.
@@ -4241,8 +4359,8 @@ class PowerBoundsTheBandTests(unittest.TestCase):
         self.assertEqual([cap.condition for cap in caps], ["agent-no-varying-knobs"])
         self.assertTrue(caps[0].blocks)
 
-    def test_looking_at_the_agent_beats_saying_nothing_about_it(self) -> None:
-        """A read that found settings must outscore one that found none.
+    def test_source_candidates_do_not_outscore_absent_evidence(self) -> None:
+        """Checked source credit cannot make a failed source read look better.
 
         The first draft of #201 renormalized an unmeasured agent pillar out of
         the average, and measured on the 200-row project that scored 99 for a
@@ -4290,9 +4408,11 @@ class PowerBoundsTheBandTests(unittest.TestCase):
             )
         )
         self.assertGreater(read.overall, silent.overall)
-        self.assertGreater(read.overall, found_nothing.overall)
-        # And the read that found nothing is not punished for having looked
-        # either: same finding as silence about the same project, same number.
+        self.assertEqual(silent.overall, found_nothing.overall)
+        self.assertFalse(any(cap.blocks for cap in read.caps))
+        self.assertTrue(any(cap.blocks for cap in found_nothing.caps))
+        # And the read that found nothing is not punished for having looked:
+        # it is the same one-configuration finding as an empty settings space.
         self.assertEqual(found_nothing.overall, silent.overall)
 
     def test_a_read_that_finds_nothing_is_a_measured_zero(self) -> None:
@@ -4413,9 +4533,9 @@ class PowerBoundsTheBandTests(unittest.TestCase):
         against evidence reading `["gpt-4o-mini", "gpt-4o"]` earns nothing".
         Its sibling above only ever exercises the coarse half - a value absent
         from the line altogether - which a plain `value in evidence` test
-        refuses just as readily. The fine half is the half the word boundaries
-        in `_value_is_evidenced` were actually written for, and loosening them
-        to a substring test is the exact defect its own docstring names.
+        refuses just as readily. The fine half is the source literal matching
+        rule: a value must match one of the cited binding's literal values,
+        not merely occur as a substring in its source text.
 
         Both directions, because one alone is passed by a guard that is
         uniformly wrong. `gpt-4` earns nothing though it is a substring twice
@@ -4423,10 +4543,28 @@ class PowerBoundsTheBandTests(unittest.TestCase):
         whole token. A guard that always refuses fails the second, a guard that
         always accepts fails the first, and only the boundary passes both.
         """
-        line = 'agent.py:4 MODELS = ["gpt-4o-mini", "gpt-4o"]'
-
         # Nested, so unseen: `gpt-4` sits inside both ids and is neither.
-        nested = self._knob(model={"values": ["gpt-4", "gpt-4o"], "evidence": line})
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "agent.py").write_text(
+                'MODELS = ["gpt-4o-mini", "gpt-4o"]\n'
+                "def call(choice):\n    return provider(model=MODELS[choice])\n"
+            )
+            nested = MODULE.agent_facts_from_discovery(
+                {
+                    "source": "agent.py",
+                    "knobs": {
+                        "model": {
+                            "values": ["gpt-4", "gpt-4o"],
+                            "source_lines": [1],
+                            "evidence": "candidate values",
+                        }
+                    },
+                },
+                source_root=root,
+                selected_agent=root / "agent.py",
+                selected_agent_callable="call",
+            )
         self.assertFalse(nested.discovered[0].credited)
         reason = nested.discovered[0].uncredited_reason
         self.assertIn("does not show", reason)
@@ -4435,39 +4573,65 @@ class PowerBoundsTheBandTests(unittest.TestCase):
         self.assertNotIn("'gpt-4o'", reason)
 
         # And whole tokens off that same line earn their credit.
-        whole = self._knob(
-            model={"values": ["gpt-4o-mini", "gpt-4o"], "evidence": line}
-        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "agent.py").write_text(
+                'MODELS = ["gpt-4o-mini", "gpt-4o"]\n'
+                "def call(choice):\n    return provider(model=MODELS[choice])\n"
+            )
+            whole = MODULE.agent_facts_from_discovery(
+                {
+                    "source": "agent.py",
+                    "knobs": {
+                        "model": {
+                            "values": ["gpt-4o-mini", "gpt-4o"],
+                            "source_lines": [1],
+                            "evidence": "candidate values",
+                        }
+                    },
+                },
+                source_root=root,
+                selected_agent=root / "agent.py",
+                selected_agent_callable="call",
+            )
         self.assertTrue(whole.discovered[0].credited, whole.discovered[0])
-        self.assertEqual(whole.discovered[0].reachable_values, 2)
 
     def test_a_hyphen_delimited_fragment_is_not_evidenced(self) -> None:
         """The boundary counts `.` and `-` as token characters - pinned here.
 
         Its sibling above pins the RULE and not the boundary that implements
         it. `gpt-4` against `["gpt-4o-mini", "gpt-4o"]` is refused by a
-        standard word boundary exactly as readily as by the wider class
-        `_value_is_evidenced` actually uses, because nothing in that fixture
-        is hyphen-adjacent: swap the lookarounds for a plain word boundary and
-        every assertion above still passes. So that test cannot tell the two
-        definitions apart, and this one is where they part.
+        source string matching exactly as readily as by a whole-token rule,
+        because nothing in that fixture is hyphen-adjacent. This test instead
+        pins that only the cited binding's literal values may earn credit.
 
-        A standard word boundary reads a hyphen as a word break, and this
-        scorer deliberately does not. Under it, `mini` and `gpt` are whole
-        tokens of `gpt-4o-mini` and each earns credit for an option no agent
-        offers - the invented option this function's own docstring says it
-        exists to refuse, arriving through the model ids it was written for.
-        Both sides of the hyphen, because that is what "`-` is a token
-        character" means, and a class that dropped it from only one lookaround
-        would still refuse the other.
+        `mini` and `gpt` occur in a model id but are not values in the cited
+        binding. Neither can earn credit for an option the agent does not
+        offer.
         """
-        line = 'agent.py:4 MODELS = ["gpt-4o-mini", "gpt-4o"]'
-
         for fragment in ("mini", "gpt"):
             with self.subTest(fragment=fragment):
-                facts = self._knob(
-                    model={"values": [fragment, "gpt-4o"], "evidence": line}
-                )
+                with tempfile.TemporaryDirectory() as directory:
+                    root = Path(directory)
+                    (root / "agent.py").write_text(
+                        'MODELS = ["gpt-4o-mini", "gpt-4o"]\n'
+                        "def call(choice):\n    return provider(model=MODELS[choice])\n"
+                    )
+                    facts = MODULE.agent_facts_from_discovery(
+                        {
+                            "source": "agent.py",
+                            "knobs": {
+                                "model": {
+                                    "values": [fragment, "gpt-4o"],
+                                    "source_lines": [1],
+                                    "evidence": "candidate values",
+                                }
+                            },
+                        },
+                        source_root=root,
+                        selected_agent=root / "agent.py",
+                        selected_agent_callable="call",
+                    )
                 self.assertFalse(facts.discovered[0].credited)
                 reason = facts.discovered[0].uncredited_reason
                 self.assertIn("does not show", reason)
@@ -5047,17 +5211,17 @@ class LessEvidenceMayNotOutscoreMoreTests(unittest.TestCase):
             ),
             (
                 "read: one numeric knob",
-                2,
+                1,
                 read(temperature={"low": 0.0, "high": 1.0, "evidence": cited}),
             ),
             (
                 "read: one categorical knob",
-                2,
+                1,
                 read(model={"values": ["gpt-4o-mini", "gpt-4o"], "evidence": cited}),
             ),
             (
                 "read: two knobs",
-                4,
+                1,
                 read(
                     model={"values": ["gpt-4o-mini", "gpt-4o"], "evidence": cited},
                     temperature={"low": 0.0, "high": 1.0, "evidence": cited},
@@ -5065,7 +5229,7 @@ class LessEvidenceMayNotOutscoreMoreTests(unittest.TestCase):
             ),
             (
                 "read: three knobs",
-                8,
+                1,
                 read(
                     model={"values": ["gpt-4o-mini", "gpt-4o"], "evidence": cited},
                     temperature={"low": 0.0, "high": 1.0, "evidence": cited},
@@ -5074,7 +5238,7 @@ class LessEvidenceMayNotOutscoreMoreTests(unittest.TestCase):
             ),
             (
                 "read: four knobs",
-                24,
+                1,
                 read(
                     model={
                         "values": ["gpt-4o-mini", "gpt-4o", "o3-mini"],
@@ -8174,9 +8338,32 @@ class MeasuredOpeningInvocationTests(unittest.TestCase):
                 ("--evaluation", "invalid"),
             ):
                 with self.subTest(evidence=evidence_flag, declaration=flag):
-                    code, stdout, stderr = self._run(
-                        [evidence_flag, evidence_value, flag, value]
-                    )
+                    command = [evidence_flag, evidence_value]
+                    if evidence_flag == "--agent-knobs":
+                        # This guard is intentionally reached after the
+                        # source-evidence binding guard. Give it a real,
+                        # selected file so this test continues to exercise the
+                        # two-sources-of-truth refusal rather than a malformed
+                        # source-read invocation.
+                        with tempfile.TemporaryDirectory() as directory:
+                            selected = Path(directory) / "agent.py"
+                            selected.write_text("MODEL = 'fast'\n")
+                            command.extend(
+                                [
+                                    "--agent-source-root",
+                                    directory,
+                                    "--selected-agent",
+                                    str(selected),
+                                    "--selected-agent-callable",
+                                    "call",
+                                    flag,
+                                    value,
+                                ]
+                            )
+                            code, stdout, stderr = self._run(command)
+                    else:
+                        command.extend([flag, value])
+                        code, stdout, stderr = self._run(command)
                     self.assertEqual(code, 2)
                     self.assertEqual(stdout, "")
                     self.assertIn(
@@ -8194,6 +8381,210 @@ class MeasuredOpeningInvocationTests(unittest.TestCase):
         )
         self.assertEqual(code, 0)
         self.assertEqual(stderr, "")
+
+
+class TheSourceTrioIsOptionalButWholeTests(unittest.TestCase):
+    """#330: the source flags gate CREDIT, and must not gate the read itself.
+
+    Requiring the trio alongside `--agent-knobs` bought nothing: a read
+    supplied without it credits zero knobs, which is the answer refusing it
+    gives. What it cost was the BUILD half, which makes no source claim at all.
+    An agent this static check cannot name a top-level Python callable for -- a
+    command, a method, a callable object -- can satisfy neither
+    `--selected-agent` nor `--selected-agent-callable`, so the whole document
+    became unsupplyable and its four build checks fell to WITHHELD: a read that
+    HAPPENED, recorded as this run's silence. That is the inversion
+    `SubScore.withheld` exists to prevent, and it is why omitting the read must
+    never score the same as doing it.
+    """
+
+    @staticmethod
+    def _run(argv: list[str]) -> tuple[int, str, str]:
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = MODULE.run(argv)
+        return code, out.getvalue(), err.getvalue()
+
+    @staticmethod
+    @contextlib.contextmanager
+    def _read():
+        """One valid agent-knobs document, and the project it describes."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "agent.py").write_text(
+                'MODELS = ["fast", "slow"]\n'
+                "def call(message, model):\n"
+                "    return provider(model=MODELS[model], message=message)\n"
+            )
+            document = root / "knobs.json"
+            document.write_text(
+                json.dumps(
+                    {
+                        "source": "agent.py",
+                        "knobs": {
+                            "model": {
+                                "values": ["fast", "slow"],
+                                "source_lines": [1],
+                                "evidence": "MODELS reaches the local call path",
+                            }
+                        },
+                        # Both halves, because the guide asks for both wherever
+                        # an agent was found -- and because the build half is
+                        # the one this contract change exists to keep
+                        # reachable. A document carrying only `knobs` withholds
+                        # these four correctly, which is a different fact.
+                        "build": {
+                            "prompt": {
+                                "present": True,
+                                "few_shot": 2,
+                                "evidence": "agent.py:1 SYSTEM carries two examples",
+                            },
+                            "output-contract": {
+                                "present": True,
+                                "evidence": "agent.py:3 json.loads(reply) parses it",
+                            },
+                            "control-flow": {
+                                "loop": False,
+                                "bounded": True,
+                                "evidence": "agent.py:2 one call, no loop",
+                            },
+                            "tools": {
+                                "used": False,
+                                "declared": [],
+                                "unreachable": [],
+                                "evidence": "agent.py:2 no tool is reached",
+                            },
+                        },
+                    }
+                )
+            )
+            yield root, document
+
+    def test_the_read_alone_is_scored_and_credits_nothing(self) -> None:
+        """The whole point: it runs, and the knob still earns no dimension."""
+        with self._read() as (_root, document):
+            code, stdout, stderr = self._run(["--agent-knobs", str(document), "--json"])
+        self.assertEqual(code, 0, stderr)
+        score = json.loads(stdout)
+        agent = next(p for p in score["pillars"] if p["name"] == "agent")
+        self.assertEqual(agent["score"], 0)
+        # Advisory, never blocking: the read happened and established nothing.
+        cap = next(
+            c for c in score["caps"] if c["condition"] == "agent-no-varying-knobs"
+        )
+        self.assertFalse(cap["blocks"])
+        # And it says which flag would establish it, rather than reporting the
+        # customer's agent as having nothing to vary.
+        self.assertIn(
+            "could not verify how they reach the selected local call",
+            json.dumps(score),
+        )
+        self.assertNotIn("no varying setting was established", json.dumps(score))
+
+    def test_a_read_that_happened_is_never_recorded_as_silence(self) -> None:
+        """The regression this reopens the CLI for, measured on the card."""
+        with self._read() as (_root, document):
+            code, stdout, _stderr = self._run(
+                ["--agent-knobs", str(document), "--json"]
+            )
+        self.assertEqual(code, 0)
+        agent = next(p for p in json.loads(stdout)["pillars"] if p["name"] == "agent")
+        withheld = [s["name"] for s in agent["subscores"] if s["withheld"]]
+        self.assertEqual(
+            withheld,
+            [],
+            "the read was supplied, so no check it answers may be withheld",
+        )
+        self.assertGreater(agent["confidence"], 0.0)
+
+    def test_unverified_summary_does_not_mislabel_an_excluded_candidate(self) -> None:
+        facts = MODULE.AgentFacts(
+            discovered=(
+                MODULE.DiscoveredKnob(
+                    "model",
+                    "categorical",
+                    "read",
+                    ("fast", "slow"),
+                    "static reach was not established",
+                    True,
+                ),
+                MODULE.DiscoveredKnob(
+                    "seed",
+                    "categorical",
+                    "read",
+                    (),
+                    "run-to-run variance is excluded",
+                    False,
+                ),
+            )
+        )
+        pillar, caps, _ = MODULE.score_discovered_agent(facts)
+        self.assertFalse(caps[0].blocks)
+        self.assertIn("model", pillar.subscores[0].evidence)
+        self.assertNotIn("seed", pillar.subscores[0].evidence)
+
+    def test_a_partial_trio_is_still_refused(self) -> None:
+        """Optional as a unit, never as three independent flags."""
+        with self._read() as (root, document):
+            for extra in (
+                ["--agent-source-root", str(root)],
+                ["--selected-agent", str(root / "agent.py")],
+                ["--selected-agent-callable", "call"],
+                [
+                    "--agent-source-root",
+                    str(root),
+                    "--selected-agent-callable",
+                    "call",
+                ],
+            ):
+                with self.subTest(extra=extra):
+                    code, stdout, stderr = self._run(
+                        ["--agent-knobs", str(document), *extra]
+                    )
+                    self.assertEqual(code, 2)
+                    self.assertEqual(stdout, "")
+                    self.assertIn("all three or none", stderr)
+
+    def test_the_trio_without_the_read_it_checks_is_refused(self) -> None:
+        """A flag accepted and ignored reads as a check that ran."""
+        with self._read() as (root, _document):
+            code, stdout, stderr = self._run(
+                [
+                    "--agent-source-root",
+                    str(root),
+                    "--selected-agent",
+                    str(root / "agent.py"),
+                    "--selected-agent-callable",
+                    "call",
+                ]
+            )
+        self.assertEqual(code, 2)
+        self.assertEqual(stdout, "")
+        self.assertIn("need the read they check", stderr)
+
+    def test_all_four_still_credit_exactly_as_before(self) -> None:
+        """Reopening the CLI may not move a single credit decision."""
+        with self._read() as (root, document):
+            code, stdout, stderr = self._run(
+                [
+                    "--agent-knobs",
+                    str(document),
+                    "--agent-source-root",
+                    str(root),
+                    "--selected-agent",
+                    str(root / "agent.py"),
+                    "--selected-agent-callable",
+                    "call",
+                    "--json",
+                ]
+            )
+        self.assertEqual(code, 0, stderr)
+        score = json.loads(stdout)
+        agent = next(p for p in score["pillars"] if p["name"] == "agent")
+        self.assertGreater(agent["score"], 0)
+        self.assertNotIn(
+            "agent-no-varying-knobs", [c["condition"] for c in score["caps"]]
+        )
 
 
 class RowReviewInputTests(unittest.TestCase):
@@ -8825,7 +9216,48 @@ def _read(build=None, knobs=None):
     }
     if build is not None:
         document["build"] = build
-    return MODULE.agent_facts_from_discovery(document)
+    # Keep direct scoring fixtures on the same checked-source interface as the
+    # command.  Build-only tests still pass through this source safely; their
+    # source declarations remain unmeasured by design.
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        document["source"] = "agent.py"
+        lines: list[str] = []
+        call_arguments: list[str] = []
+        for number, (name, spec) in enumerate(sorted(document["knobs"].items()), 1):
+            if not isinstance(spec, dict):
+                lines.append(f"{name.upper()} = None")
+                continue
+            if "values" in spec and isinstance(spec["values"], list):
+                source = f"{name.upper()} = {spec['values']!r}"
+            elif "low" in spec and "high" in spec:
+                source = f"{name.upper()}_BOUNDS = ({spec['low']!r}, {spec['high']!r})"
+            else:
+                source = f"{name.upper()} = None"
+            source_line = len(lines) + 1
+            lines.append(source)
+            if isinstance(spec.get("evidence"), str) and spec["evidence"].strip():
+                spec["evidence"] = (
+                    f"Selected-agent local call-path evidence for {name}."
+                )
+                spec["source_lines"] = [source_line]
+            if "values" in spec or ("low" in spec and "high" in spec):
+                binding = name.upper() if "values" in spec else f"{name.upper()}_BOUNDS"
+                call_arguments.append(f"{name}={binding}[choice]")
+        if call_arguments:
+            lines.extend(
+                [
+                    "def selected(choice):",
+                    f"    return provider({', '.join(call_arguments)})",
+                ]
+            )
+        (root / "agent.py").write_text("\n".join(lines) + "\n")
+        return MODULE.agent_facts_from_discovery(
+            document,
+            source_root=root,
+            selected_agent=root / "agent.py",
+            selected_agent_callable="selected",
+        )
 
 
 def _documented_agent_read():
@@ -8839,6 +9271,27 @@ def _documented_agent_read():
     ).read_text()
     section = guide.split("## Reading the agent for the opening score", 1)[1]
     return json.loads(section.split("```json", 1)[1].split("```", 1)[0])
+
+
+@contextlib.contextmanager
+def _documented_agent_source_root():
+    """A local source fixture matching the customer-facing read example."""
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        (root / "agent.py").write_text(
+            "\n\n\n"
+            'MODELS = ["gpt-4o-mini", "gpt-4o", "o3-mini"]\n'
+            "TEMPERATURE_BOUNDS = (0.0, 1.0)\n"
+            'STYLES = {"direct": "be brief", "structured": "use headings"}\n'
+            "\n"
+            "def call(model_index, temperature_index, style):\n"
+            "    return provider(model=MODELS[model_index], "
+            "temperature=TEMPERATURE_BOUNDS[temperature_index], style=STYLES[style])\n"
+            "\n"
+            "# line 11 is intentionally an executable style use below\n"
+            "selected_style = STYLES['direct']\n"
+        )
+        yield root
 
 
 # The parameters that example is expected to declare an extent for.
@@ -8857,6 +9310,525 @@ def _documented_agent_read():
 DOCUMENTED_AGENT_KNOBS = frozenset({"model", "temperature", "style"})
 
 
+class StaticAgentSourceEvidenceTests(unittest.TestCase):
+    """#330: only checked executable selected-agent source can earn credit."""
+
+    def _document(
+        self,
+        evidence: str,
+        *,
+        source: str = "agent.py",
+        source_lines: list[int] | None = None,
+    ) -> dict:
+        return {
+            "source": source,
+            "knobs": {
+                "model": {
+                    "values": ["fast", "slow"],
+                    "source_lines": source_lines if source_lines is not None else [2],
+                    "evidence": evidence,
+                }
+            },
+        }
+
+    def _write_agent(self, root: Path) -> None:
+        (root / "agent.py").write_text(
+            '"""fast slow docstring"""\n'
+            'MODELS = ["fast", "slow"]\n'
+            '# TODO try "fast" and "slow"\n'
+            'EXAMPLE_MODELS = ["fast", "slow"]\n'
+            "def call(message, model):\n"
+            "    return provider(model=MODELS[model], message=message)\n"
+        )
+
+    def test_executable_selected_source_can_earn_opening_credit(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_agent(root)
+            facts = MODULE.agent_facts_from_discovery(
+                self._document("MODELS are passed to the local call path"),
+                source_root=root,
+                selected_agent=root / "agent.py",
+                selected_agent_callable="call",
+            )
+        pillar, caps, _ = MODULE.score_agent(facts)
+        self.assertGreater(pillar.score, 0)
+        self.assertFalse(any(cap.condition == "agent-no-varying-knobs" for cap in caps))
+
+    def test_python_equality_cannot_turn_one_bound_value_into_two_options(self) -> None:
+        """Source membership uses the same representation as the distinct count."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "agent.py").write_text(
+                "FLAGS = [1]\n"
+                "def call(choice):\n"
+                "    return provider(flag=FLAGS[choice])\n"
+            )
+            facts = MODULE.agent_facts_from_discovery(
+                {
+                    "source": "agent.py",
+                    "knobs": {
+                        "flag": {
+                            "values": [1, True],
+                            "source_lines": [1],
+                            "evidence": "selected source binding",
+                        }
+                    },
+                },
+                source_root=root,
+                selected_agent=root / "agent.py",
+                selected_agent_callable="call",
+            )
+        self.assertFalse(facts.discovered[0].credited)
+        self.assertIn("True", facts.discovered[0].uncredited_reason)
+
+    def test_a_sibling_or_outside_selected_agent_cannot_supply_credit(self) -> None:
+        """#330: root containment alone cannot bind another file to this agent."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_agent(root)
+            (root / "sibling.py").write_text(
+                'MODELS = ["fast", "slow"]\n'
+                "def call(choice):\n    return provider(model=MODELS[choice])\n"
+            )
+            for source, selected in (
+                ("sibling.py", root / "agent.py"),
+                ("agent.py", root / "outside.py"),
+            ):
+                with self.subTest(source=source, selected=selected), self.assertRaises(
+                    MODULE.AgentDiscoveryInputError
+                ):
+                    MODULE.agent_facts_from_discovery(
+                        self._document("irrelevant prose", source=source),
+                        source_root=root,
+                        selected_agent=selected,
+                        selected_agent_callable="call",
+                    )
+
+    def test_metadata_and_unused_binding_are_not_a_call_path(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "agent.py").write_text(
+                'MODEL_METADATA = ["fast", "slow"]  # TODO audited\n'
+                'REQUEST_DEFAULTS = {"model": ["fast", "slow"]}\n'
+                "def call(message):\n    return provider(message=message)\n"
+            )
+            for line in ([1], [2]):
+                with self.subTest(line=line):
+                    facts = MODULE.agent_facts_from_discovery(
+                        self._document("metadata is not a request", source_lines=line),
+                        source_root=root,
+                        selected_agent=root / "agent.py",
+                        selected_agent_callable="call",
+                    )
+                    self.assertFalse(facts.discovered[0].credited)
+
+    def test_another_callable_cannot_lend_the_selected_callable_credit(self) -> None:
+        """Inventory's selected callable, not any function in the file, owns credit."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "agent.py").write_text(
+                'MODELS = ["fast", "slow"]\n'
+                "def never(choice):\n"
+                "    return provider(model=MODELS[choice])\n"
+                "def selected(message):\n"
+                "    return provider(message=message)\n"
+            )
+            facts = MODULE.agent_facts_from_discovery(
+                self._document("only another callable varies it", source_lines=[1]),
+                source_root=root,
+                selected_agent=root / "agent.py",
+                selected_agent_callable="selected",
+            )
+        self.assertFalse(facts.discovered[0].credited)
+        self.assertTrue(facts.discovered[0].unverified)
+
+    def test_helper_local_with_the_same_name_cannot_supply_selected_credit(
+        self,
+    ) -> None:
+        """#330: lexical scope, not a shared spelling, binds source evidence."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "agent.py").write_text(
+                'MODELS = ["fast", "slow"]\n'
+                "def helper():\n"
+                '    MODELS = ["misleading-a", "misleading-b"]\n'
+                "    return MODELS\n"
+                "def selected(message, choice):\n"
+                "    return provider(model=MODELS[choice], message=message)\n"
+            )
+            facts = MODULE.agent_facts_from_discovery(
+                self._document("helper local", source_lines=[3]),
+                source_root=root,
+                selected_agent=root / "agent.py",
+                selected_agent_callable="selected",
+            )
+        self.assertFalse(facts.discovered[0].credited)
+        self.assertTrue(facts.discovered[0].unverified)
+
+    def test_conditional_module_binding_or_rebinding_cannot_supply_credit(
+        self,
+    ) -> None:
+        """#330 source evidence deliberately accepts only unconditional module state."""
+        cases = (
+            (
+                "if enabled:\n"
+                '    MODELS = ["fast", "slow"]\n'
+                "def call(choice):\n"
+                "    return provider(model=MODELS[choice])\n",
+                2,
+            ),
+            (
+                'MODELS = ["fast", "slow"]\n'
+                "if enabled:\n"
+                '    MODELS = ["other-a", "other-b"]\n'
+                "def call(choice):\n"
+                "    return provider(model=MODELS[choice])\n",
+                1,
+            ),
+        )
+        for text, line in cases:
+            with self.subTest(text=text), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                (root / "agent.py").write_text(text)
+                facts = MODULE.agent_facts_from_discovery(
+                    self._document("conditional module state", source_lines=[line]),
+                    source_root=root,
+                    selected_agent=root / "agent.py",
+                    selected_agent_callable="call",
+                )
+            self.assertFalse(facts.discovered[0].credited)
+            self.assertTrue(facts.discovered[0].unverified)
+
+    def test_global_and_named_expression_rebindings_cannot_supply_credit(self) -> None:
+        """Every alternate binding site invalidates static source credit.
+
+        A ``global`` write runs outside its helper's lexical scope and a
+        named expression is not an assignment statement. Both previously
+        escaped a statement-shape scan and let stale module alternatives be
+        credited for the call that actually reads a one-value replacement.
+        """
+        cases = (
+            (
+                'MODELS = ["fast", "slow"]\n'
+                "def configure(allowed):\n"
+                "    global MODELS\n"
+                "    MODELS = allowed\n"
+                'configure(["fast"])\n'
+                "def call(message, choice):\n"
+                "    return provider(model=MODELS[choice], message=message)\n"
+            ),
+            (
+                'MODELS = ["fast", "slow"]\n'
+                'if (MODELS := ["fast"]):\n'
+                "    pass\n"
+                "def call(message, choice):\n"
+                "    return provider(model=MODELS[choice], message=message)\n"
+            ),
+        )
+        for text in cases:
+            with self.subTest(text=text), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                (root / "agent.py").write_text(text)
+                facts = MODULE.agent_facts_from_discovery(
+                    self._document("alternate binding", source_lines=[1]),
+                    source_root=root,
+                    selected_agent=root / "agent.py",
+                    selected_agent_callable="call",
+                )
+            self.assertFalse(facts.discovered[0].credited)
+            self.assertTrue(facts.discovered[0].unverified)
+
+    def test_reassigned_selector_is_not_a_dynamic_choice(self) -> None:
+        """A formal parameter reset to a constant is a fixed default, not a grid."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "agent.py").write_text(
+                'MODELS = ["fast", "slow"]\n'
+                "def call(choice):\n"
+                "    choice = 0\n"
+                "    return provider(model=MODELS[choice])\n"
+            )
+            facts = MODULE.agent_facts_from_discovery(
+                self._document("reassigned selector", source_lines=[1]),
+                source_root=root,
+                selected_agent=root / "agent.py",
+                selected_agent_callable="call",
+            )
+        self.assertFalse(facts.discovered[0].credited)
+        self.assertTrue(facts.discovered[0].unverified)
+
+    def test_statements_after_unconditional_return_cannot_supply_credit(self) -> None:
+        """#330: executable tokens after a return are not a selected call path."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "agent.py").write_text(
+                "def call(choice):\n"
+                "    return provider(message='fixed')\n"
+                '    MODELS = ["fast", "slow"]\n'
+                "    return provider(model=MODELS[choice])\n"
+            )
+            facts = MODULE.agent_facts_from_discovery(
+                self._document("after return", source_lines=[3]),
+                source_root=root,
+                selected_agent=root / "agent.py",
+                selected_agent_callable="call",
+            )
+        self.assertFalse(facts.discovered[0].credited)
+        self.assertTrue(facts.discovered[0].unverified)
+
+    def test_statements_after_loop_exit_cannot_supply_credit(self) -> None:
+        """A break or continue makes later statements in its loop body dead."""
+        for terminal in ("break", "continue"):
+            with self.subTest(
+                terminal=terminal
+            ), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                (root / "agent.py").write_text(
+                    "def call(choice):\n"
+                    "    for _ in (0,):\n"
+                    f"        {terminal}\n"
+                    '        MODELS = ["fast", "slow"]\n'
+                    "    return provider(model=MODELS[choice])\n"
+                )
+                facts = MODULE.agent_facts_from_discovery(
+                    self._document("after loop exit", source_lines=[4]),
+                    source_root=root,
+                    selected_agent=root / "agent.py",
+                    selected_agent_callable="call",
+                )
+            self.assertFalse(facts.discovered[0].credited)
+            self.assertTrue(facts.discovered[0].unverified)
+
+    def test_constant_dead_if_branches_cannot_supply_credit(self) -> None:
+        """Both branch directions and a literal comparison are static dead code."""
+        cases = (
+            ("if True:\n    pass\nelse:\n    MODELS = ['fast', 'slow']\n", 4),
+            ("if False:\n    MODELS = ['fast', 'slow']\nelse:\n    pass\n", 2),
+            ("if 1 == 2:\n    MODELS = ['fast', 'slow']\nelse:\n    pass\n", 2),
+        )
+        for branch, source_line in cases:
+            with self.subTest(branch=branch):
+                with tempfile.TemporaryDirectory() as directory:
+                    root = Path(directory)
+                    (root / "agent.py").write_text(
+                        branch
+                        + "def call(choice):\n"
+                        + "    return provider(model=MODELS[choice])\n"
+                    )
+                    facts = MODULE.agent_facts_from_discovery(
+                        self._document("dead branch", source_lines=[source_line]),
+                        source_root=root,
+                        selected_agent=root / "agent.py",
+                        selected_agent_callable="call",
+                    )
+                self.assertFalse(facts.discovered[0].credited)
+                self.assertTrue(facts.discovered[0].unverified)
+
+    def test_expression_indices_are_not_a_static_choice_flow(self) -> None:
+        """Constant arithmetic and ternaries are fixed defaults, not selectors."""
+        for selector in ("0 + 0", "0 if True else 1"):
+            with self.subTest(
+                selector=selector
+            ), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                (root / "agent.py").write_text(
+                    'MODELS = ["fast", "slow"]\n'
+                    "def call():\n"
+                    f"    return provider(model=MODELS[{selector}])\n"
+                )
+                facts = MODULE.agent_facts_from_discovery(
+                    self._document("constant index", source_lines=[1]),
+                    source_root=root,
+                    selected_agent=root / "agent.py",
+                    selected_agent_callable="call",
+                )
+            self.assertFalse(facts.discovered[0].credited)
+            self.assertTrue(facts.discovered[0].unverified)
+
+    def test_unsupported_callable_and_non_python_agent_are_advisory_unknowns(
+        self,
+    ) -> None:
+        """Unsupported static inspection never turns into 'the agent has none'."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "agent.py").write_text('MODELS = ["fast", "slow"]\n')
+            unsupported = MODULE.agent_facts_from_discovery(
+                self._document("callable object", source_lines=[1]),
+                source_root=root,
+                selected_agent=root / "agent.py",
+                selected_agent_callable="Agent.call",
+            )
+            (root / "agent.js").write_text("export const call = () => {};\n")
+            non_python = MODULE.agent_facts_from_discovery(
+                {**self._document("non-python", source="agent.js", source_lines=[1])},
+                source_root=root,
+                selected_agent=root / "agent.js",
+                selected_agent_callable="call",
+            )
+        for facts in (unsupported, non_python):
+            self.assertFalse(facts.discovered[0].credited)
+            self.assertTrue(facts.discovered[0].unverified)
+            _pillar, caps, _ = MODULE.score_agent(facts)
+            self.assertFalse(caps[0].blocks)
+
+    def test_unparseable_selected_python_is_an_advisory_unknown(self) -> None:
+        """A customer syntax/version mismatch does not abort the opening card."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "agent.py").write_text(
+                'MODELS = ["fast", "slow"]\n'
+                "def call(message, choice)\n"
+                "    return provider(model=MODELS[choice], message=message)\n"
+            )
+            facts = MODULE.agent_facts_from_discovery(
+                self._document("unparseable local source", source_lines=[1]),
+                source_root=root,
+                selected_agent=root / "agent.py",
+                selected_agent_callable="call",
+            )
+        self.assertFalse(facts.discovered[0].credited)
+        self.assertTrue(facts.discovered[0].unverified)
+        self.assertIn("cannot be parsed", facts.discovered[0].uncredited_reason)
+        _pillar, caps, _ = MODULE.score_agent(facts)
+        self.assertFalse(any(cap.blocks for cap in caps))
+
+    def test_fixed_default_subscript_is_not_two_reachable_alternatives(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "agent.py").write_text(
+                'MODELS = ["fast", "slow"]\n'
+                "def call():\n    return provider(model=MODELS[0])\n"
+            )
+            facts = MODULE.agent_facts_from_discovery(
+                self._document(
+                    "a fixed default is not a varied path", source_lines=[1]
+                ),
+                source_root=root,
+                selected_agent=root / "agent.py",
+                selected_agent_callable="call",
+            )
+            self.assertFalse(facts.discovered[0].credited)
+
+    def test_comment_docstring_todo_and_example_only_references_refuse(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_agent(root)
+            for line in (1, 3):
+                with self.subTest(line=line), self.assertRaises(
+                    MODULE.AgentDiscoveryInputError
+                ):
+                    MODULE.agent_facts_from_discovery(
+                        self._document("comment-only proof", source_lines=[line]),
+                        source_root=root,
+                        selected_agent=root / "agent.py",
+                        selected_agent_callable="call",
+                    )
+            facts = MODULE.agent_facts_from_discovery(
+                self._document("example binding", source_lines=[4]),
+                source_root=root,
+                selected_agent=root / "agent.py",
+                selected_agent_callable="call",
+            )
+            self.assertFalse(facts.discovered[0].credited)
+
+    def test_arbitrary_literal_and_statically_dead_binding_cannot_impersonate_model(
+        self,
+    ) -> None:
+        """#330: values need a cited configuration binding for their own knob."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "agent.py").write_text(
+                'NOTE = "fast slow"\n'
+                "if False:\n"
+                '    MODELS = ["fast", "slow"]\n'
+                "def call(message):\n"
+                "    return provider(message=message)\n"
+            )
+            for line in (1, 3):
+                with self.subTest(line=line):
+                    facts = MODULE.agent_facts_from_discovery(
+                        self._document("not a binding", source_lines=[line]),
+                        source_root=root,
+                        selected_agent=root / "agent.py",
+                        selected_agent_callable="call",
+                    )
+                    self.assertFalse(facts.discovered[0].credited)
+                    self.assertIn(
+                        "does not show", facts.discovered[0].uncredited_reason
+                    )
+
+    def test_comment_inside_a_multiline_expression_is_not_a_citable_binding(
+        self,
+    ) -> None:
+        """Physical token lines, not an AST span, decide what a cite can name."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "agent.py").write_text(
+                "MODELS = [\n"
+                '    "fast",\n'
+                '    # "fast" and "slow" are the production choices\n'
+                '    "slow",\n'
+                "]\n"
+                "def call(choice):\n    return provider(model=MODELS[choice])\n"
+            )
+            with self.assertRaises(MODULE.AgentDiscoveryInputError):
+                MODULE.agent_facts_from_discovery(
+                    self._document("comment only", source_lines=[3]),
+                    source_root=root,
+                    selected_agent=root / "agent.py",
+                    selected_agent_callable="call",
+                )
+            facts = MODULE.agent_facts_from_discovery(
+                self._document("binding", source_lines=[1, 2]),
+                source_root=root,
+                selected_agent=root / "agent.py",
+                selected_agent_callable="call",
+            )
+            self.assertTrue(facts.discovered[0].credited)
+
+    def test_literal_config_dictionary_key_is_a_binding_for_its_knob(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "agent.py").write_text(
+                'REQUEST_CONFIGS = [{"model": "fast"}, {"model": "slow"}]\n'
+                "def call(choice):\n    return provider(**REQUEST_CONFIGS[choice])\n"
+            )
+            facts = MODULE.agent_facts_from_discovery(
+                self._document("mapping reaches kwargs", source_lines=[1]),
+                source_root=root,
+                selected_agent=root / "agent.py",
+                selected_agent_callable="call",
+            )
+            self.assertTrue(facts.discovered[0].credited)
+
+    def test_malformed_out_of_root_and_mismatched_references_refuse(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_agent(root)
+            cases = (
+                (
+                    self._document("no coordinates are parsed", source_lines=[0]),
+                    root / "agent.py",
+                ),
+                (
+                    self._document("source escapes", source="../agent.py"),
+                    root / "agent.py",
+                ),
+                (self._document("sibling", source="other.py"), root / "agent.py"),
+            )
+            for document, selected in cases:
+                with self.subTest(document=document), self.assertRaises(
+                    MODULE.AgentDiscoveryInputError
+                ):
+                    MODULE.agent_facts_from_discovery(
+                        document,
+                        source_root=root,
+                        selected_agent=selected,
+                        selected_agent_callable="call",
+                    )
+
+
 class TheAgentPillarReadsTheAgentTests(unittest.TestCase):
     """#184: `AGENT` over one number that answered a question about our search.
 
@@ -8873,7 +9845,13 @@ class TheAgentPillarReadsTheAgentTests(unittest.TestCase):
     """
 
     def test_the_documented_agent_read_is_one_complete_consumable_object(self) -> None:
-        facts = MODULE.agent_facts_from_discovery(_documented_agent_read())
+        with _documented_agent_source_root() as root:
+            facts = MODULE.agent_facts_from_discovery(
+                _documented_agent_read(),
+                source_root=root,
+                selected_agent=root / "agent.py",
+                selected_agent_callable="call",
+            )
         self.assertTrue(facts.discovery_supplied)
         self.assertEqual(
             {signal.name for signal in facts.build or ()},
@@ -8884,8 +9862,8 @@ class TheAgentPillarReadsTheAgentTests(unittest.TestCase):
         """Parsing the example is not the same as scoring it.
 
         Its sibling above passed while `model` and `style` earned nothing:
-        both evidence lines PARAPHRASED their options ("MODELS lists the three
-        ids"), and `_value_is_evidenced` looks for the literal value. The one
+        both evidence lines did not cite executable literals the selected
+        callable reached. The one
         document handed to a reader as the shape to copy was a shape that
         scores zero on two of its three knobs, and a structural check cannot
         see that. So run it through the scorer.
@@ -8929,7 +9907,13 @@ class TheAgentPillarReadsTheAgentTests(unittest.TestCase):
             "from the example: update DOCUMENTED_AGENT_KNOBS in the same "
             "change that adds or drops a knob there.",
         )
-        facts = MODULE.agent_facts_from_discovery(document)
+        with _documented_agent_source_root() as root:
+            facts = MODULE.agent_facts_from_discovery(
+                document,
+                source_root=root,
+                selected_agent=root / "agent.py",
+                selected_agent_callable="call",
+            )
         credited = {knob.name for knob in facts.discovered or () if knob.credited}
         # Why THAT knob earned nothing, in the scorer's own words, rather than
         # one repair named for every knob at once. "Cite the values or drop the
@@ -9015,7 +9999,11 @@ class TheAgentPillarReadsTheAgentTests(unittest.TestCase):
         ]
 
         def overall(build):
-            pillar, caps, knobs = MODULE.score_agent(_read(build))
+            facts = MODULE.agent_facts_from_config_space(
+                {"knobs": {"model": ["fast", "slow"]}, "wired": ["model"]}
+            )
+            facts = MODULE.replace(facts, build=_read(build).build)
+            pillar, caps, knobs = MODULE.score_agent(facts)
             return MODULE.aggregate(
                 [*pillars, pillar], caps, knobs, dict(MODULE.DEFAULT_WEIGHTS)
             )
@@ -9108,7 +10096,7 @@ class TheAgentPillarReadsTheAgentTests(unittest.TestCase):
         run's to supply wherever an agent was found, so their absence keeps its
         weight and earns nothing - and the worst honest read still beats it.
         """
-        silent, checks = self._pillar(_read())
+        silent, checks = self._pillar(MODULE.AgentFacts())
         for name, _weight in MODULE.AGENT_BUILD_CHECKS:
             with self.subTest(check=name):
                 self.assertFalse(checks[name].measured)
@@ -9155,17 +10143,23 @@ class TheAgentPillarReadsTheAgentTests(unittest.TestCase):
             silent.confidence,
             "an honest read of the agent is no better evidenced than silence",
         )
-        # And the band gate survives it: a run that supplies only the knob half
-        # keeps enough of the pillar measured that the card is not demoted on a
-        # fact about our own input.
-        self.assertGreaterEqual(silent.confidence, MODULE.MIN_CONFIDENCE_FOR_TOP_BANDS)
+        # Missing source evidence is not free: it stays below the confidence
+        # needed for the top bands until the read actually happens.
+        self.assertLess(silent.confidence, MODULE.MIN_CONFIDENCE_FOR_TOP_BANDS)
 
     def test_an_agent_with_no_tools_is_neither_charged_nor_paid(self) -> None:
         """The N/A case, which is not a zero and is not full marks either."""
+
+        def proven(build):
+            facts = MODULE.agent_facts_from_config_space(
+                {"knobs": {"model": ["fast", "slow"]}, "wired": ["model"]}
+            )
+            return MODULE.replace(facts, build=_read(build).build)
+
         none = _build_document(
             tools={"used": False, "evidence": "agent.py: no tool list reaches the call"}
         )
-        pillar, checks = self._pillar(_read(none))
+        pillar, checks = self._pillar(proven(none))
         self.assertFalse(checks["tools"].measured)
         self.assertFalse(checks["tools"].withheld)
         self.assertFalse(checks["tools"].applicable)
@@ -9174,14 +10168,14 @@ class TheAgentPillarReadsTheAgentTests(unittest.TestCase):
         # is not the same number as an agent whose tools all resolve - the
         # denominator moved - and it is close to it rather than below it, which
         # is the property that matters: having no tools is not a deduction.
-        every_tool, _ = self._pillar(_read(_build_document()))
-        self.assertAlmostEqual(pillar.score, every_tool.score, delta=2)
+        every_tool, every_checks = self._pillar(proven(_build_document()))
+        self.assertAlmostEqual(pillar.score, every_tool.score, delta=3)
         self.assertEqual(pillar.confidence, 1.0)
         self.assertEqual(pillar.confidence, every_tool.confidence)
         # And a declared tool nothing implements is charged, which is the one
         # thing "wired correctly" can be checked for by reading source.
         broken, broken_checks = self._pillar(
-            _read(
+            proven(
                 _build_document(
                     tools={
                         "used": True,
@@ -9192,7 +10186,16 @@ class TheAgentPillarReadsTheAgentTests(unittest.TestCase):
                 )
             )
         )
-        self.assertLess(broken.score, pillar.score)
+        self.assertLess(
+            broken_checks["tools"].value,
+            checks["tools"].maximum,
+            "an unreachable declared tool must not earn the tool-check credit",
+        )
+        self.assertLess(
+            broken_checks["tools"].value,
+            every_checks["tools"].value,
+            "a partly unreachable declaration receives only proportional tool credit",
+        )
         self.assertIn("not found behind the name", broken_checks["tools"].evidence)
 
     def test_every_check_names_the_line_it_was_read_from(self) -> None:
@@ -9322,7 +10325,7 @@ class RecordingAnUnsettledKnobHasOneShapeAndItWorksTests(unittest.TestCase):
             evidence="agent.py:14 top_p=cfg['top_p'] reaches the provider call"
         )
         self.assertEqual(recorded.score, settled.score)
-        self.assertEqual([cap.condition for cap in caps], [])
+        self.assertEqual(caps, [])
 
     def test_a_knob_recorded_with_evidence_alone_is_reported(self) -> None:
         """The half that did not hold, and the reason the reference could lie.
@@ -9337,7 +10340,7 @@ class RecordingAnUnsettledKnobHasOneShapeAndItWorksTests(unittest.TestCase):
         )
         space = next(sub for sub in pillar.subscores if sub.name == "search-space")
         self.assertIn("top_p", space.evidence)
-        self.assertIn("Recorded and not counted", space.evidence)
+        self.assertIn("does not establish final request wiring", space.evidence)
         # The reason travels with the name. "top_p was ignored" is not a line a
         # user can correct; the reason it counts for nothing is.
         self.assertIn("neither a list of options nor a low/high range", space.evidence)
@@ -9348,7 +10351,7 @@ class RecordingAnUnsettledKnobHasOneShapeAndItWorksTests(unittest.TestCase):
         recorded, _, _ = self._uncounted(evidence="agent.py:14 top_p from config")
         for pillar in (settled, recorded):
             space = next(s for s in pillar.subscores if s.name == "search-space")
-            self.assertIn("reaching at least 6 distinct configurations", space.evidence)
+            self.assertIn("static source verification established", space.evidence)
 
     def test_the_build_shape_inside_knobs_is_refused_with_the_remedy(self) -> None:
         """Naming the accepted fields is half a message.
@@ -9410,7 +10413,9 @@ class RecordingAnUnsettledKnobHasOneShapeAndItWorksTests(unittest.TestCase):
             / "component-creation.md"
         ).read_text()
         knob_half = guide.split("### The build half", 1)[0]
-        self.assertIn("worth recording rather than dropping", knob_half)
+        self.assertIn(
+            "worth recording rather than dropping", " ".join(knob_half.split())
+        )
         self.assertIn("no `values` or `low`/`high`", knob_half)
         self.assertIn("A knob has no `determined` field", knob_half)
 
@@ -9527,6 +10532,13 @@ class WhoWroteItBoundsWhatItMayClaimTests(unittest.TestCase):
 
     def _score(self, **origins) -> "MODULE.ReadinessScore":
         """The whole reachable case: real agent, collected rows, one origin varied."""
+        # This class tests origin ceilings after the baseline-stage guard has
+        # established the actual space.  A source read alone is intentionally
+        # not substituted here: it is the unprobed opening state tested above.
+        agent = MODULE.agent_facts_from_config_space(
+            {"knobs": {"model": ["fast", "slow"]}, "wired": ["model"]}
+        )
+        agent = replace(agent, build=_read(_build_document()).build)
         return MODULE.score_run(
             _brought(
                 120,
@@ -9536,7 +10548,7 @@ class WhoWroteItBoundsWhatItMayClaimTests(unittest.TestCase):
                 holdout_labelled_rows=36,
             ),
             self._evaluation(origins.get("evaluation")),
-            replace(_read(_build_document()), origin=origins.get("agent")),
+            replace(agent, origin=origins.get("agent")),
             dict(MODULE.DEFAULT_WEIGHTS),
         )
 
@@ -9549,7 +10561,7 @@ class WhoWroteItBoundsWhatItMayClaimTests(unittest.TestCase):
         # this is the card a project with real material and a run-written
         # evaluator got before #238, and it is what a run that still declares
         # nothing gets today.
-        self.assertEqual((undeclared.overall, undeclared.band), (93, "EXCELLENT"))
+        self.assertEqual((undeclared.overall, undeclared.band), (86, "STRONG"))
         self.assertEqual(undeclared.recommended_action, "proceed")
         self.assertEqual([cap.condition for cap in undeclared.caps], [])
         self.assertEqual(
@@ -9746,19 +10758,25 @@ class TheRefusalMessageIsADocumentThatWorksTests(unittest.TestCase):
         facts = MODULE.agent_facts_from_discovery(document)
         self.assertEqual(["model"], [knob.name for knob in facts.discovered])
 
-    def test_the_example_declares_no_value_its_own_evidence_does_not_show(
+    def test_the_example_carries_structured_lines_for_each_declared_value(
         self,
     ) -> None:
-        # SKILL.md forbids recording an option that was not read - "an omitted
-        # parameter costs a few points, an invented one makes the card wrong" -
-        # and three blinded runs over-claimed a search space anyway. An earlier
-        # example cited one default and declared two options, teaching the
-        # invention in the text an assistant is told to copy.
+        # Prose is assistant-authored and intentionally not evidence. The
+        # example must teach structured physical coordinates that the static
+        # selected-agent check validates before a value earns credit.
         for name, spec in MODULE.AGENT_KNOBS_EXAMPLE["knobs"].items():
-            evidence = str(spec.get("evidence", ""))
             for value in spec.get("values", []):
                 with self.subTest(knob=name, value=value):
-                    self.assertIn(str(value), evidence)
+                    self.assertIsInstance(spec.get("source_lines"), list)
+                    self.assertTrue(spec["source_lines"])
+                    self.assertTrue(
+                        all(
+                            isinstance(line, int)
+                            and not isinstance(line, bool)
+                            and line > 0
+                            for line in spec["source_lines"]
+                        )
+                    )
 
     def test_every_check_is_refused_without_the_flag_the_example_answers(
         self,

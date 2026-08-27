@@ -158,23 +158,23 @@ it is the card declining to call a project Strong on evidence it has not seen. T
 pillar is thin - `EVALUATION 75/100 (2 of 4 checks measured)` - and calibrating the evaluator is
 what fills that one in.
 
-No settings document exists before the search, so the agent pillar is read from the agent's own
-code instead - which parameters it can already vary, each against the line that shows it - and that
-is what the opening score grades the search space from. The same read answers four more questions
+No settings document exists before the search, so the agent pillar is read from the selected
+agent's own code instead - which parameters it may already vary, each against a checked relative
+source line under the local project root. Static parsing rejects comments, docstrings, TODOs, and
+example-only bindings. Verified source alternatives earn opening search-space credit but do not
+prove final wiring; the later request-difference proof controls paid grids. The same read answers four more questions
 about how the agent is built: whether it carries a prompt and worked examples, whether anything
 pins down the shape of its answer, whether it ends and on what, and whether the tools it declares
 can be reached. Each is a fact with a line of your code behind it, and a question the read cannot
 settle is reported as unsettled rather than counted against you. Two things the pillar is not
 allowed to guess at are named on the card instead: whether your dataset and your evaluation method
 are wired into the agent, which this run builds afterwards and checks against the installed SDK.
-Where the read finds settings, no agent
-ceiling applies and calibrating can carry the band the whole way. Two states hold the score at 45,
-inside Partial, and they are different findings. A reading that found nothing your agent can vary
-says a search here would compare one configuration - a measurement of your project - so it blocks
-the paid run until something can vary. No reading and no document says only that this score was
-given nothing to count: it claims nothing about your project either way, and it stops nothing. What
-the opening card no longer does is hold every project at 45 for a document nobody was supposed to
-bring.
+A source read that finds no usable dimension blocks the paid run because a search would compare one
+configuration. An empty settings document also blocks because it establishes no usable dimension.
+Unchecked source claims and no source read/settings document are advisory: they do not make a claim
+about the project's usable search space. A verified source read can establish opening credit, but
+the separate pre-approval request-difference proof decides whether a paid grid may run. The
+current-run Enhanced config-space artifact is the closing evidence of what actually ran.
 
 Some conditions cap the whole score instead of costing a few points, because an average can hide a
 broken ruler - an evaluator that scores a wrong answer as well as a right one, a tuning set that
