@@ -5879,6 +5879,15 @@ class SkillPackageTests(unittest.TestCase):
         self.assertFalse(unsupplied.blocks)
         self.assertTrue(empty_document.blocks)
         self.assertFalse(candidates.blocks)
+        self.assertIn(
+            "they may be correct while this narrow static read still cannot verify "
+            "the route to the call",
+            candidates.reason,
+        )
+        self.assertIn(
+            "not a finding that the agent has no setting",
+            candidates.reason,
+        )
 
         readme = " ".join((ROOT / "README.md").read_text().casefold().split())
         glossary = " ".join(

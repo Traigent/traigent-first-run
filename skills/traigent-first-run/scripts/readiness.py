@@ -4876,8 +4876,11 @@ UNPROBED_DISCOVERED_KNOBS_CAP = Cap(
     AGENT_NO_VARYING_KNOBS_CEILING,
     "The source read found candidate settings, but it did not establish that "
     "changing them changes the finalized request. This advisory opening ceiling "
-    "remains while the cited source evidence is unverified: correct its selected-agent "
-    "path, executable source lines, or values to establish opening credit. A successful "
+    "remains while the cited source evidence is unverified. Check the cited "
+    "selected-agent path, executable source lines, and values; they may be "
+    "correct while this narrow static read still cannot verify the route to the "
+    "call. This ceiling records that limit, not a finding that the agent has no "
+    "setting. A successful "
     "current-run enhanced config-space artifact can later replace the opening evidence. "
     "Run the request-difference probe as a separate pre-call safety guard; it does not "
     "raise this card. A single preserved configuration is not a grid search.",
