@@ -7945,7 +7945,29 @@ class SkillPackageTests(unittest.TestCase):
                 bullets[-1] += " " + line.strip()
             elif not line.strip():
                 continue
-        self.assertEqual(len(bullets), 9, "one line per catalog knob")
+        expected_knobs = {
+            "model",
+            "prompt_style",
+            "thinking_shape",
+            "reflect",
+            "few_shot_count",
+            "context_format",
+            "temperature",
+        }
+        observed_knobs = {
+            re.match(r"- \*\*([^*]+)\*\* - ", bullet).group(1) for bullet in bullets
+        }
+        self.assertEqual(
+            len(bullets),
+            len(expected_knobs),
+            "one customer-facing sentence per eligible direct parameter",
+        )
+        self.assertEqual(
+            observed_knobs,
+            expected_knobs,
+            "the customer-facing list must cover exactly the direct parameters "
+            "eligible for this first paid space",
+        )
         for bullet in bullets:
             with self.subTest(bullet=bullet[:40]):
                 explanation = bullet.split("** - ", 1)[1]
@@ -8518,7 +8540,8 @@ class SkillPackageTests(unittest.TestCase):
         self.assertIn("its row count exactly; do not expand it to twelve", sdk)
         self.assertIn("real one-row fixed configuration remains one row", sdk)
         self.assertIn("preserve its exact model set", sdk)
-        self.assertIn("add non-model controls by default", sdk)
+        self.assertIn("add only direct request parameters the probe establishes", sdk)
+        self.assertNotIn("add non-model controls by default", sdk)
         self.assertIn(
             "matched an explicitly approved and disclosed reduced target", skill
         )
@@ -14900,7 +14923,24 @@ class SkillPackageTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "tuning input to prove"):
             namespace["assert_wiring_still_proven"]()
         self.assertEqual(len(requests), before_absent_proof)
+
+        # The Basic phase can retain a customer-owned space that differs from
+        # the enhanced one. A duplicate there pays duplicate baseline trials
+        # unless the shared pre-phase guard validates both raw spaces.
         namespace["PROBE_INPUTS"] = original_inputs
+        original_baseline_space = namespace["BASELINE_SPACE"]
+        namespace["BASELINE_SPACE"] = {
+            **original_baseline_space,
+            "reflect": [False, False],
+        }
+        with self.assertRaisesRegex(RuntimeError, "duplicate paid values"):
+            namespace["assert_wiring_still_proven"]()
+        self.assertEqual(
+            len(requests),
+            before_absent_proof,
+            "a duplicate preserved baseline must stop before its provider call",
+        )
+        namespace["BASELINE_SPACE"] = original_baseline_space
         original_models = namespace["ENHANCED_SPACE"]["model"]
         namespace["ENHANCED_SPACE"] = {
             **namespace["ENHANCED_SPACE"],
@@ -15195,20 +15235,32 @@ class SkillPackageTests(unittest.TestCase):
             "a knob every model consumes must still be proven",
         )
 
-    def test_the_probe_deduplicates_declared_values_before_comparing_requests(
+    def test_duplicate_paid_values_are_refused_before_request_proof(
         self,
     ) -> None:
-        """Duplicate grid entries cannot make an otherwise visible knob partial."""
+        """A duplicate cannot become an unsearched dimension while the grid pays it."""
         namespace = self._wiring_probe_namespace()
         space = {
             **namespace["ENHANCED_SPACE"],
-            "reflect": [False, True, True],
+            "reflect": [False, False],
         }
-        verdicts = namespace["probe_wiring"](space, namespace["BASELINE_CONFIG"])
+        requests = 0
+
+        def should_not_build_request(*_args, **_kwargs):
+            nonlocal requests
+            requests += 1
+            raise AssertionError(
+                "duplicate values must stop before request construction"
+            )
+
+        namespace["build_request"] = should_not_build_request
+        with self.assertRaisesRegex(RuntimeError, "duplicate paid values"):
+            namespace["probe_wiring"](space, namespace["BASELINE_CONFIG"])
+        self.assertEqual(requests, 0)
         self.assertEqual(
-            verdicts["reflect"],
-            "visible",
-            "the probe must compare distinct declared values, not a duplicate to itself",
+            space["reflect"],
+            [False, False],
+            "the safety gate must preserve a customer-owned space rather than normalize it",
         )
 
     def test_the_probe_reads_more_than_one_input(self) -> None:

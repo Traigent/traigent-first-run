@@ -239,9 +239,8 @@ whether two of their knobs are the same knob, and the scorer never will.
 
 ### Say what is being tried, once the enhanced run is under way
 
-The moment the enhanced optimization starts, the customer is waiting on it. Use that wait: print one
-line per knob in the space, in their terms, saying what it changes about how their agent answers.
-One sentence each, verbatim:
+When enhanced optimization starts, print one sentence for each direct paid parameter, in the
+customer's terms, saying what it changes about the answer:
 
 - **model** - Tries the same task on a cheaper, a mid-range, and a stronger model.
 - **prompt_style** - Changes how the request is worded, from bare task to spelled-out instructions.
@@ -249,9 +248,7 @@ One sentence each, verbatim:
   answering straight away.
 - **reflect** - Has the model look back at its own answer and fix it before returning it.
 - **few_shot_count** - Shows the model worked examples of the task first.
-- **retrieval_k** - Changes how much retrieved material the model is given to work from.
 - **context_format** - Changes how the supplied material is laid out for the model to read.
-- **tool_policy** - Changes how readily the agent reaches for its tools.
 - **temperature** - Changes how much the model varies its wording between runs.
 
 Say nothing else here. No percentages, no reported gains, no references, no "research shows". A
@@ -269,10 +266,11 @@ and the three paid behaviour knobs are real for a reasoning model and a sampling
 both branches run the same 12 and 24.
 
 When the user already owns a baseline, do not apply this ladder. Preserve its exact model set and
-row count in the enhanced space and add non-model controls by default. Adding a cheaper or stronger
-model changes the experiment and attribution, so do it only as a separately disclosed and approved
-model comparison. Preserve an existing flagship and its calling convention exactly; never replace
-or augment it silently.
+row count in the enhanced space and add only direct request parameters the probe establishes for
+every selected model and tuning input. Indirect, retrieval, tool, repair, and multi-call controls
+stay outside this first-run paid space. Adding a cheaper or stronger model changes the experiment
+and attribution, so do it only as a separately disclosed and approved model comparison. Preserve an
+existing flagship and its calling convention exactly; never replace or augment it silently.
 
 For the generated ladder, use one model family when the selected route can supply all three model
 choices. One family keeps the result readable - "the mid tier held the strong tier's accuracy at a
@@ -1502,12 +1500,19 @@ def require_wiring_probe_inputs(space: dict[str, list]) -> list:
             "call was placed. Update the wrapper and repeat the local proof "
             "before approval."
         )
+    for knob, values in space.items():
+        if len({repr(value) for value in values}) != len(values):
+            raise RuntimeError(
+                f"{knob!r} contains duplicate paid values; preserve the source "
+                "space and stop before approval rather than paying duplicate "
+                "trials. No provider call was placed."
+            )
     if not PROBE_INPUTS:
         raise RuntimeError(
             "No tuning input to prove before a provider call; no provider call "
             "was placed. Add real tuning rows and repeat the local proof before approval."
         )
-    models = list(dict.fromkeys(space.get("model", [])))
+    models = list(space.get("model", []))
     if not models:
         raise RuntimeError(
             "No model to prove before a provider call; no provider call was "
@@ -1548,7 +1553,7 @@ def probe_wiring(space: dict[str, list], base: dict) -> dict[str, str]:
     models = require_wiring_probe_inputs(space)
     verdicts: dict[str, str] = {}
     for knob in WIRED_KNOBS:
-        values = list({repr(value): value for value in space.get(knob, [])}.values())
+        values = space.get(knob, [])
         if len(values) < 2:
             verdicts[knob] = "not-searched"
             continue
@@ -1644,6 +1649,7 @@ REQUEST_FINGERPRINT = request_fingerprint()
 
 def assert_wiring_still_proven() -> None:
     """Re-prove this fresh process's finalized request surface before its paid phase."""
+    require_wiring_probe_inputs(BASELINE_SPACE)
     require_wiring_probe_inputs(ENHANCED_SPACE)
     current = probe_wiring(ENHANCED_SPACE, BASELINE_CONFIG)
     if current != PROBE_VERDICTS or request_fingerprint() != REQUEST_FINGERPRINT:

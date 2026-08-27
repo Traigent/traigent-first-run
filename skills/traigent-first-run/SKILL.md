@@ -740,8 +740,9 @@ Use the same tuning slice, evaluator, objectives, and agent call path for both m
    `references/run-safety.md`, including the initial configuration.
 2. **Enhanced Traigent optimization** - keep every baseline value and model, add only meaningful
    controls the agent consumes, and test up to 12 configurations (`references/sdk-execution.md`
-   explains that cap and the shortfall it obliges). Add non-model, task-relevant controls by
-   default; any new model is a separately disclosed experiment. The reference owns the
+   explains that cap and the shortfall it obliges). Add only direct request parameters the
+   pre-approval proof establishes for every selected model and tuning input; any new model is a
+   separately disclosed experiment. The reference owns the
    generated-space mechanics that make the
    comparison attributable to the managed search rather than a quiet model upgrade. This is the
    last run, so the controls that carry cost are varied here or not at all - which the shared model
