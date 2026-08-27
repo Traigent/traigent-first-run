@@ -124,8 +124,8 @@ Ask before any private content leaves the machine, even when the provider key al
 Before a Traigent key request, link current [pricing](https://portal.traigent.ai/pricing),
 [terms](https://portal.traigent.ai/terms), and [privacy](https://portal.traigent.ai/privacy). Do
 not copy their prices or claims. They do not establish training use of submitted material: make no
-claim. Stop before key handoff; ask Traigent for its canonical training-use policy, then resume
-after review.
+claim. Stop before key handoff; ask Traigent for its canonical training-use policy. This blocks
+until Traigent provides an authoritative training-use policy; do not resume based on a local review.
 
 At the secret-entry gate, show only the URL needed for the selected service:
 
