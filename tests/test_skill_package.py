@@ -14931,7 +14931,7 @@ class SkillPackageTests(unittest.TestCase):
         original_baseline_space = namespace["BASELINE_SPACE"]
         namespace["BASELINE_SPACE"] = {
             **original_baseline_space,
-            "reflect": [False, False],
+            "reflect": [False, 0],
         }
         with self.assertRaisesRegex(RuntimeError, "duplicate paid values"):
             namespace["assert_wiring_still_proven"]()
@@ -15242,7 +15242,7 @@ class SkillPackageTests(unittest.TestCase):
         namespace = self._wiring_probe_namespace()
         space = {
             **namespace["ENHANCED_SPACE"],
-            "reflect": [False, False],
+            "reflect": [False, 0],
         }
         requests = 0
 
@@ -15258,8 +15258,8 @@ class SkillPackageTests(unittest.TestCase):
             namespace["probe_wiring"](space, namespace["BASELINE_CONFIG"])
         self.assertEqual(requests, 0)
         self.assertEqual(
-            space["reflect"],
-            [False, False],
+            [repr(value) for value in space["reflect"]],
+            ["False", "0"],
             "the safety gate must preserve a customer-owned space rather than normalize it",
         )
 

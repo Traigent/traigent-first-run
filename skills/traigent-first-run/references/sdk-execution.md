@@ -239,8 +239,7 @@ whether two of their knobs are the same knob, and the scorer never will.
 
 ### Say what is being tried, once the enhanced run is under way
 
-When enhanced optimization starts, print one sentence for each direct paid parameter, in the
-customer's terms, saying what it changes about the answer:
+When enhanced optimization starts, name its direct paid parameters and their effect on the answer:
 
 - **model** - Tries the same task on a cheaper, a mid-range, and a stronger model.
 - **prompt_style** - Changes how the request is worded, from bare task to spelled-out instructions.
@@ -268,7 +267,7 @@ both branches run the same 12 and 24.
 When the user already owns a baseline, do not apply this ladder. Preserve its exact model set and
 row count in the enhanced space and add only direct request parameters the probe establishes for
 every selected model and tuning input. Indirect, retrieval, tool, repair, and multi-call controls
-stay outside this first-run paid space. Adding a cheaper or stronger model changes the experiment
+stay outside this paid space. Adding a cheaper or stronger model changes the experiment
 and attribution, so do it only as a separately disclosed and approved model comparison. Preserve an
 existing flagship and its calling convention exactly; never replace or augment it silently.
 
@@ -1501,7 +1500,11 @@ def require_wiring_probe_inputs(space: dict[str, list]) -> list:
             "before approval."
         )
     for knob, values in space.items():
-        if len({repr(value) for value in values}) != len(values):
+        if any(
+            value == earlier
+            for index, value in enumerate(values)
+            for earlier in values[:index]
+        ):
             raise RuntimeError(
                 f"{knob!r} contains duplicate paid values; preserve the source "
                 "space and stop before approval rather than paying duplicate "
