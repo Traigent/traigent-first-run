@@ -1457,7 +1457,7 @@ WALKTHROUGH_CONFIG_SPACE = {
         "model": ["provider/current", "provider/alternative", "provider/strong"],
         "prompt_style": ["plain", "structured"],
         "thinking_shape": ["direct", "chain_of_thought"],
-        "reflect": [False, True],
+        "reflect": ["off", "on"],
         "temperature": [0.0],
     },
     "max_trials": 12,
@@ -2602,7 +2602,7 @@ class TheConfigSpaceSizeIsTheMeasureTests(unittest.TestCase):
                 "temperature": [0],
                 "prompt_style": ["direct", "structured"],
                 "thinking_shape": ["direct", "cot"],
-                "reflect": [False, True],
+                "reflect": ["off", "on"],
             }
         )
         oversized = self._shape({f"k{index}": ["a", "b"] for index in range(10)})

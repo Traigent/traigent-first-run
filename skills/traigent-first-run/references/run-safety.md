@@ -504,7 +504,7 @@ The JSON below is the exact-output worked example, so its selected value is `0.0
     "model": ["provider/current", "provider/alternative", "provider/strong"],
     "prompt_style": ["plain", "structured"],
     "thinking_shape": ["direct", "chain_of_thought"],
-    "reflect": [false, true],
+    "reflect": ["off", "on"],
     "temperature": [0.0]
   },
   "max_trials": 12,
@@ -777,8 +777,7 @@ every swept knob is real for every model. They are
 selected from the seven direct-parameter controls in the nine-control catalog
 `references/sdk-execution.md` owns. The approval card shows
 the selected three and why they fit; the customer does not have to design a space from the whole
-catalog. `self_check` is not among them - it and `reflect` were one knob
-under two names, and `reflect` is the one that stayed. The
+catalog. The
 models are the fast, mid, and strong rungs of the walkthrough model
 ladder from the selected route - the strong rung one step below the vendor's newest flagship, at a
 pinned effort in both runs when it is a reasoning model, and never the flagship itself. The
@@ -840,7 +839,7 @@ principle is shown. This is a demonstration, not the ceiling of what Traigent ca
 result here should be read as the best the system could reach. Never present the smaller space as
 though the improvement were bought by shrinking the search.
 
-Native boolean knobs use `[True, False]`, never string encodings. A generated walkthrough fixes the
+The generated `reflect` control ships as `off`/`on`; the pinned cloud session rejects bools, and `off` is truthy. A generated walkthrough fixes the
 one task-selected temperature owned by `sdk-execution.md` across both phases and carries the search
 on behaviour knobs instead. Preserve a user-owned baseline's temperature behavior exactly,
 including an unset provider default; record resulting nondeterminism as a limitation rather than

@@ -839,8 +839,9 @@ score only that one against the ten held-out rows;
 Do not run an offline baseline and then pay to repeat it merely to populate the portal. Do not ask
 the user to choose trial counts or knobs; select them from the inspected agent and include their
 calls in the connected-stage approval.
-Every knob must change real behavior, native booleans must stay booleans, and the enhanced space
-must be materially larger than its trial cap so Traigent is choosing what to test rather than
+Every knob must change real behavior. Preserve customer values exactly. Generated `reflect` uses
+`off`/`on` because the pinned cloud session rejects bools; never recode a customer boolean. Before
+baseline approval, refuse a final space the pinned SDK rejects and stop. The enhanced space must be materially larger than its trial cap so Traigent is choosing what to test rather than
 replaying the same tiny grid - and no larger than that cap can explore: aim at four to six varying
 knobs, never a customer's whole declared set. `references/run-safety.md` owns that arithmetic and
 the baseline evidence that picks which.
