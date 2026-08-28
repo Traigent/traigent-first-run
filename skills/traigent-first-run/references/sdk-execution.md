@@ -637,7 +637,7 @@ BASELINE_CONFIG = {
     # and took that word for the thing it actually describes.
     "prompt_style": "plain",
     "thinking_shape": "direct",
-    "reflect": False,
+    "reflect": "off",
 }
 BASELINE_SPACE = {
     # The same three ladder models run in both phases, so the enhanced run
@@ -664,7 +664,7 @@ ENHANCED_SPACE = {
     # baseline space is a strict subset of this one.
     "prompt_style": BASELINE_SPACE["prompt_style"],
     "thinking_shape": BASELINE_SPACE["thinking_shape"],
-    "reflect": [False, True],
+    "reflect": ["off", "on"],
 }
 # Set True only for an inspected customer baseline. It preserves that space and
 # stops before approval for separately approved per-model validation.
@@ -763,7 +763,7 @@ def build_prompt(
     *,
     style: str,
     thinking_shape: str,
-    reflect: bool,
+    reflect: str,
 ) -> str:
     """The three supported prompt controls act at different moments.
 
@@ -792,11 +792,13 @@ def build_prompt(
         )
     elif thinking_shape != "direct":
         raise ValueError(f"unsupported thinking shape: {thinking_shape}")
-    if reflect:
+    if reflect == "on":
         prompt += (
             "\n\nAfter reaching an answer, reconsider whether it is actually correct, and "
             "revise it if it is not. Return only the final answer."
         )
+    elif reflect != "off":
+        raise ValueError(f"unsupported reflect: {reflect}")
     return prompt
 
 
@@ -1524,6 +1526,60 @@ def require_wiring_probe_inputs(space: dict[str, list]) -> list:
     return models
 
 
+def require_pinned_cloud_space_compatibility(*spaces: dict[str, object]) -> None:
+    """Stop before approval on literal bools the pinned cloud session rejects."""
+    typed = sorted({
+        knob
+        for space in spaces
+        for knob, values in space.items()
+        if isinstance(values, dict)
+    })
+    if typed:
+        if BASELINE_IS_USER_OWNED:
+            raise RuntimeError(
+                f"{typed!r} use typed parameter mappings. This first-run wrapper "
+                "supports scalar, list, or tuple dimensions only; preserve the "
+                "customer baseline unchanged and pause this Basic-to-Enhanced path "
+                "for a later/manual compatible route. No provider call was placed."
+            )
+        raise RuntimeError(
+            f"The generated space uses typed parameter mappings at {typed!r}. "
+            "Correct the generated space to scalar, list, or tuple dimensions and "
+            "repeat the local proof before approval. No provider call was placed."
+        )
+
+    def contains_literal_bool(value: object) -> bool:
+        if type(value) is bool:
+            return True
+        if isinstance(value, (list, tuple)):
+            return any(type(item) is bool for item in value)
+        return False
+
+    offending = sorted({
+        knob
+        for space in spaces
+        for knob, values in space.items()
+        if contains_literal_bool(values)
+    })
+    if not offending:
+        return
+    if BASELINE_IS_USER_OWNED:
+        raise RuntimeError(
+            f"{offending!r} contain literal bool values the pinned cloud session "
+            "rejects. Preserve the customer baseline unchanged; pause this "
+            "Basic-to-Enhanced path for a later/manual compatible route. No provider "
+            "call was placed."
+        )
+    raise RuntimeError(
+        f"The generated space contains literal bool values at {offending!r}, which "
+        "the pinned cloud session rejects. Correct the generated space and repeat "
+        "the local proof before approval. No provider call was placed."
+    )
+
+
+require_pinned_cloud_space_compatibility(BASELINE_SPACE, ENHANCED_SPACE)
+
+
 def probe_wiring(space: dict[str, list], base: dict) -> dict[str, str]:
     """Classify each wired knob by what a pure request diff can actually prove.
 
@@ -1654,6 +1710,7 @@ def assert_wiring_still_proven() -> None:
     """Re-prove this fresh process's finalized request surface before its paid phase."""
     require_wiring_probe_inputs(BASELINE_SPACE)
     require_wiring_probe_inputs(ENHANCED_SPACE)
+    require_pinned_cloud_space_compatibility(BASELINE_SPACE, ENHANCED_SPACE)
     current = probe_wiring(ENHANCED_SPACE, BASELINE_CONFIG)
     if current != PROBE_VERDICTS or request_fingerprint() != REQUEST_FINGERPRINT:
         raise RuntimeError(
@@ -1782,7 +1839,7 @@ and its row count exactly; do not expand it to twelve. Replace this example's sp
 together: the list names every paid enhanced key, including pinned keys. Add direct request parameters
 such as context format or few-shot count for observed failures. Retrieval, tools, repair, and multi-call
 controls require separately contained tracing outside this first-run paid space. Do not add no-op fields,
-string-encoded booleans, or multi-call composite behavior merely to increase the portal row count.
+recode a customer boolean, or add multi-call composite behavior merely to increase the portal row count.
 
 Require nonzero token usage for every provider call; cost metadata alone does not prove the model
 ran. Use public response cost when present. Reported `0` is valid with nonzero usage. The
