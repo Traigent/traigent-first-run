@@ -121,6 +121,12 @@ it. Nothing in this guide requires sub-agents, which not every supported assista
 
 Ask before any private content leaves the machine, even when the provider key already exists.
 
+Before a Traigent key request, link current [pricing](https://portal.traigent.ai/pricing),
+[terms](https://portal.traigent.ai/terms), and [privacy](https://portal.traigent.ai/privacy). Do
+not copy their prices or claims. They do not establish training use of submitted material: make no
+claim. Stop before key handoff; ask Traigent for its canonical training-use policy. Nothing local
+clears this: it holds until Traigent provides one.
+
 At the secret-entry gate, show only the URL needed for the selected service:
 
 - Traigent registration, only once the user already has their access code:

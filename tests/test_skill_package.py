@@ -3008,6 +3008,46 @@ class SkillPackageTests(unittest.TestCase):
                     "hand over",
                 )
 
+    def test_key_handoff_links_live_commercial_sources_without_inventing_training_policy(
+        self,
+    ) -> None:
+        """The customer sees live legal sources before the full-access key request.
+
+        This is intentionally scoped to the handoff owner rather than duplicated in
+        the README or SKILL flow: plan terms change, and the public sources do not
+        establish a training-use answer. Removing the stop would let a key request
+        outrun the missing disclosure; replacing it with a reassuring sentence
+        would fabricate vendor policy.
+        """
+        safety = " ".join(RUN_SAFETY.read_text().casefold().split())
+        for url in (
+            "https://portal.traigent.ai/pricing",
+            "https://portal.traigent.ai/terms",
+            "https://portal.traigent.ai/privacy",
+        ):
+            with self.subTest(url=url):
+                self.assertIn(url, safety)
+        self.assertIn("do not copy their prices or claims", safety)
+        self.assertIn("they do not establish training use", safety)
+        self.assertIn("stop before key handoff", safety)
+        self.assertIn("ask traigent for its canonical training-use policy", safety)
+        self.assertIn("nothing local clears this", safety)
+        self.assertIn("it holds until traigent provides one", safety)
+
+        def assert_stops_before_key_route(text: str) -> None:
+            self.assertLess(
+                text.index("stop before key handoff"),
+                text.index("at the secret-entry gate"),
+                "the unresolved training-use disclosure must stop before the "
+                "first key route or instruction",
+            )
+
+        assert_stops_before_key_route(safety)
+        moved_stop = safety.replace("stop before key handoff", "", 1)
+        moved_stop += " stop before key handoff"
+        with self.assertRaises(AssertionError):
+            assert_stops_before_key_route(moved_stop)
+
     def test_quality_advisory_requires_evidence_choice_and_revalidation(self) -> None:
         skill_text = SKILL.read_text().casefold()
         quality_text = (
