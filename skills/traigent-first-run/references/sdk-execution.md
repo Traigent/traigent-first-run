@@ -1528,20 +1528,31 @@ def require_wiring_probe_inputs(space: dict[str, list]) -> list:
 
 def require_pinned_cloud_space_compatibility(*spaces: dict[str, object]) -> None:
     """Stop before approval on literal bools the pinned cloud session rejects."""
+    typed = sorted({
+        knob
+        for space in spaces
+        for knob, values in space.items()
+        if isinstance(values, dict)
+    })
+    if typed:
+        if BASELINE_IS_USER_OWNED:
+            raise RuntimeError(
+                f"{typed!r} use typed parameter mappings. This first-run wrapper "
+                "supports scalar, list, or tuple dimensions only; preserve the "
+                "customer baseline unchanged and pause this Basic-to-Enhanced path "
+                "for a later/manual compatible route. No provider call was placed."
+            )
+        raise RuntimeError(
+            f"The generated space uses typed parameter mappings at {typed!r}. "
+            "Correct the generated space to scalar, list, or tuple dimensions and "
+            "repeat the local proof before approval. No provider call was placed."
+        )
+
     def contains_literal_bool(value: object) -> bool:
         if type(value) is bool:
             return True
         if isinstance(value, (list, tuple)):
             return any(type(item) is bool for item in value)
-        # The pinned SDK also accepts typed parameter mappings. Check only
-        # their candidate collections, without reproducing its validator or
-        # reinterpreting customer-owned definitions.
-        if isinstance(value, dict):
-            return any(
-                isinstance(candidates, (list, tuple))
-                and any(type(item) is bool for item in candidates)
-                for candidates in (value.get("choices"), value.get("values"))
-            )
         return False
 
     offending = sorted({

@@ -8153,6 +8153,14 @@ class SkillPackageTests(unittest.TestCase):
                         },
                         enhanced,
                     )
+        with self.assertRaisesRegex(RuntimeError, r"typed parameter mappings"):
+            namespace["require_pinned_cloud_space_compatibility"](
+                {
+                    **baseline,
+                    "reflect": {"type": "categorical", "choices": ["off", "on"]},
+                },
+                enhanced,
+            )
         text = SDK_EXECUTION.read_text()
         self.assertLess(
             text.index("require_pinned_cloud_space_compatibility(BASELINE_SPACE"),
