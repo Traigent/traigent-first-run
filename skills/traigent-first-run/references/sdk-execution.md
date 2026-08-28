@@ -1528,20 +1528,23 @@ def require_wiring_probe_inputs(space: dict[str, list]) -> list:
 
 def require_pinned_cloud_space_compatibility(*spaces: dict[str, list]) -> None:
     """Stop before approval on literal bools the pinned cloud session rejects."""
-    offending = sorted(
+    offending = sorted({
         knob
         for space in spaces
         for knob, values in space.items()
-        if any(type(value) is bool for value in values)
-    )
+        if any(
+            type(value) is bool
+            for value in (values if isinstance(values, (list, tuple)) else [values])
+        )
+    })
     if not offending:
         return
     if BASELINE_IS_USER_OWNED:
         raise RuntimeError(
             f"{offending!r} contain literal bool values the pinned cloud session "
-            "rejects. Preserve the customer baseline unchanged; do not offer the "
-            "Basic-to-Enhanced approval. Use a separately approved local baseline-only "
-            "run or later/manual compatible route. No provider call was placed."
+            "rejects. Preserve the customer baseline unchanged; pause this "
+            "Basic-to-Enhanced path for a later/manual compatible route. No provider "
+            "call was placed."
         )
     raise RuntimeError(
         f"The generated space contains literal bool values at {offending!r}, which "

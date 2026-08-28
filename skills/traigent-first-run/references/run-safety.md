@@ -839,7 +839,7 @@ principle is shown. This is a demonstration, not the ceiling of what Traigent ca
 result here should be read as the best the system could reach. Never present the smaller space as
 though the improvement were bought by shrinking the search.
 
-The generated `reflect` control ships as `off`/`on`; the pinned cloud session rejects bools, and `off` is truthy. A generated walkthrough fixes the
+The generated `reflect` control ships as `off`/`on`; the pinned cloud session rejects bools, so the builder compares labels explicitly because `off` is a non-empty string. A generated walkthrough fixes the
 one task-selected temperature owned by `sdk-execution.md` across both phases and carries the search
 on behaviour knobs instead. Preserve a user-owned baseline's temperature behavior exactly,
 including an unset provider default; record resulting nondeterminism as a limitation rather than

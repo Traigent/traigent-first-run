@@ -8117,6 +8117,12 @@ class SkillPackageTests(unittest.TestCase):
             namespace["require_pinned_cloud_space_compatibility"](baseline, enhanced)
         self.assertIn("No provider call was placed", str(stopped.exception))
         self.assertEqual(baseline["reflect"], [False, True])
+
+        with self.assertRaisesRegex(RuntimeError, r"\['reflect'\]"):
+            namespace["require_pinned_cloud_space_compatibility"](
+                {**baseline, "reflect": False},
+                {**enhanced, "reflect": False},
+            )
         text = SDK_EXECUTION.read_text()
         self.assertLess(
             text.index("require_pinned_cloud_space_compatibility(BASELINE_SPACE"),
