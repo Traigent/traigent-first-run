@@ -1526,16 +1526,29 @@ def require_wiring_probe_inputs(space: dict[str, list]) -> list:
     return models
 
 
-def require_pinned_cloud_space_compatibility(*spaces: dict[str, list]) -> None:
+def require_pinned_cloud_space_compatibility(*spaces: dict[str, object]) -> None:
     """Stop before approval on literal bools the pinned cloud session rejects."""
+    def contains_literal_bool(value: object) -> bool:
+        if type(value) is bool:
+            return True
+        if isinstance(value, (list, tuple)):
+            return any(type(item) is bool for item in value)
+        # The pinned SDK also accepts typed parameter mappings. Check only
+        # their candidate collections, without reproducing its validator or
+        # reinterpreting customer-owned definitions.
+        if isinstance(value, dict):
+            return any(
+                isinstance(candidates, (list, tuple))
+                and any(type(item) is bool for item in candidates)
+                for candidates in (value.get("choices"), value.get("values"))
+            )
+        return False
+
     offending = sorted({
         knob
         for space in spaces
         for knob, values in space.items()
-        if any(
-            type(value) is bool
-            for value in (values if isinstance(values, (list, tuple)) else [values])
-        )
+        if contains_literal_bool(values)
     })
     if not offending:
         return

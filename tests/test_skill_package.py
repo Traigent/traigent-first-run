@@ -8105,6 +8105,23 @@ class SkillPackageTests(unittest.TestCase):
         self.assertIn("boolean", str(rejected.exception).lower())
         self.assertFalse(client.called)
 
+        for candidate_key in ("choices", "values"):
+            with self.subTest(candidate_key=candidate_key):
+                typed_client = NoNetworkClient()
+                with self.assertRaises(ValidationError) as typed_rejected:
+                    SessionOperations(typed_client).create_session(
+                        "first-run-guide",
+                        {
+                            "reflect": {
+                                "type": "categorical",
+                                candidate_key: [False, True],
+                            }
+                        },
+                        metadata={"max_trials": 12},
+                    )
+                self.assertIn("reflect", str(typed_rejected.exception))
+                self.assertFalse(typed_client.called)
+
     def test_a_preserved_boolean_space_stops_before_baseline_approval(self) -> None:
         """Preservation never means paying for a later-known SDK rejection."""
         namespace = self._wiring_probe_namespace()
@@ -8123,6 +8140,19 @@ class SkillPackageTests(unittest.TestCase):
                 {**baseline, "reflect": False},
                 {**enhanced, "reflect": False},
             )
+        for candidate_key in ("choices", "values"):
+            with self.subTest(candidate_key=candidate_key):
+                with self.assertRaisesRegex(RuntimeError, r"\['reflect'\]"):
+                    namespace["require_pinned_cloud_space_compatibility"](
+                        {
+                            **baseline,
+                            "reflect": {
+                                "type": "categorical",
+                                candidate_key: [False, True],
+                            },
+                        },
+                        enhanced,
+                    )
         text = SDK_EXECUTION.read_text()
         self.assertLess(
             text.index("require_pinned_cloud_space_compatibility(BASELINE_SPACE"),
