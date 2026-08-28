@@ -8265,70 +8265,78 @@ class SkillPackageTests(unittest.TestCase):
                 self.assertIn("reflect", str(typed_rejected.exception))
                 self.assertFalse(typed_client.called)
 
-    def test_the_pinned_sdk_still_ships_example_content_whatever_privacy_asks(
+    def test_the_pinned_sdk_omits_example_content_from_standard_trial_payload(
         self,
     ) -> None:
-        """Pin the gap the guidance now describes, so the wording cannot outlive it.
+        """Pin the actual standard connected-trial boundary, not local state.
 
-        `run-safety.md` used to tell the customer the backend transmission
-        excludes their prompts, dataset contents and model responses. Measured
-        on the pinned SDK that is false, so the guidance now says so instead.
-
-        A sentence about someone else's code rots silently. This is the probe
-        that notices: it goes RED the day the SDK honours the flag, and red
-        here means *go widen the guidance*, not go weaken the test. Deleting it
-        returns the guide to claiming a protection the customer does not have.
-
-        The mechanism is the finding. The builder takes an evaluation result
-        and two numbers - no configuration reaches it at all - so it cannot
-        consult `privacy_enabled` even in principle. The removal site lives on
-        a different path this one never takes, which is why setting the flag on
-        the decorator changes nothing.
+        `_build_success_trial_metadata` deliberately retains example content
+        locally. It is not the object submitted to the backend. The normal
+        guide route rebuilds the trial metadata, then wraps that exact metadata
+        in the JSON-ready result object used by the session-results POST. This
+        test gives the local result unmistakable private values and proves they
+        do not survive either step, while the portal-relevant label, numeric
+        score, stable example ID, and numeric measure do. It performs no I/O.
         """
-        from types import SimpleNamespace
+        from datetime import UTC, datetime
+        from importlib.metadata import version
 
-        from traigent.core.trial_result_factory import _build_success_trial_metadata
+        from traigent.api.types import TrialResult, TrialStatus
+        from traigent.cloud.trial_operations import TrialOperations
+        from traigent.core.metadata_helpers import build_backend_metadata
 
-        self.assertNotIn(
-            "privacy",
-            str(inspect.signature(_build_success_trial_metadata)),
-            "the builder now receives configuration, so it may honour privacy: "
-            "re-measure and update the run-safety.md transmission paragraph",
+        self.assertEqual(version("traigent"), pinned_sdk_version())
+        trial = TrialResult(
+            trial_id="trial-0",
+            config={"prompt_style": "concise"},
+            metrics={"task_success": 1.0},
+            status=TrialStatus.COMPLETED,
+            duration=0.01,
+            timestamp=datetime.now(UTC),
+            metadata={
+                "example_results": [
+                    {
+                        "example_id": "example-0",
+                        "input_data": {"message": "CUSTOMER-INPUT"},
+                        "expected_output": "CUSTOMER-EXPECTED",
+                        "actual_output": "MODEL-OUTPUT",
+                        "metrics": {"task_success": 1.0},
+                        "execution_time": 0.01,
+                    }
+                ]
+            },
         )
-
-        row = {
-            "example_id": "example_0",
-            "input_data": {"message": "CUSTOMER-INPUT"},
-            "expected_output": "CUSTOMER-EXPECTED",
-            "actual_output": "MODEL-OUTPUT",
-            "metrics": {"task_success": 1.0},
-            "execution_time": 0.01,
-            "success": True,
-            "error_message": None,
-        }
-        metadata = _build_success_trial_metadata(
-            SimpleNamespace(
-                example_results=[row], successful_examples=1, success_rate=1.0
-            ),
-            1,
-            0.0,
+        # This builder depends only on these public-shape values. Keeping the
+        # test at that seam avoids an unrelated execution-policy assertion.
+        transport_config = SimpleNamespace(
+            minimal_logging=False,
+            execution_mode_enum=None,
+            privacy_enabled=False,
+            execution_mode="hybrid",
         )
-
-        attached = metadata.get("example_results")
-        self.assertIsNotNone(
-            attached,
-            "the pinned SDK no longer attaches per-example results: the guide "
-            "may describe the transmission as content-free again",
+        submission_metadata = build_backend_metadata(
+            trial, "task_success", transport_config, session_id="session-0"
         )
-        carried = json.dumps(attached, default=str)
+        payload = TrialOperations._sanitize_for_json(
+            TrialOperations._build_trial_result_data(
+                None,
+                trial.trial_id,
+                trial.config,
+                trial.metrics,
+                "completed",
+                "managed",
+                metadata=submission_metadata,
+            )
+        )
+        serialized = json.dumps(payload, sort_keys=True, default=str)
         for content in ("CUSTOMER-INPUT", "CUSTOMER-EXPECTED", "MODEL-OUTPUT"):
             with self.subTest(content=content):
-                self.assertIn(
-                    content,
-                    carried,
-                    "the pinned SDK now withholds this from the trial payload; "
-                    "widen the guidance rather than deleting this pin",
-                )
+                self.assertNotIn(content, serialized)
+        self.assertEqual(payload["config"], {"prompt_style": "concise"})
+        self.assertEqual(payload["metrics"], {"task_success": 1.0})
+        measure = payload["metadata"]["measures"][0]
+        self.assertEqual(measure["example_id"], "example-0")
+        self.assertEqual(measure["metrics"]["task_success"], 1.0)
 
     def test_a_preserved_boolean_space_stops_before_baseline_approval(self) -> None:
         """Preservation never means paying for a later-known SDK rejection."""
@@ -12903,6 +12911,7 @@ class SkillPackageTests(unittest.TestCase):
         for phrase in (
             "does not send user prompts or inputs",
             "to the traigent backend",
+            "does not say credentials are 'not transmitted'",
             "local optimization logs",
             "`query`, `response`, and `expected`",
             "`traigent_log_example_content=false`",
@@ -12926,23 +12935,21 @@ class SkillPackageTests(unittest.TestCase):
         ):
             with self.subTest(local_log_boundary=phrase):
                 self.assertIn(phrase, safety)
-        # This used to pin the phrase "documented backend-payload contract".
-        # The guidance stopped describing a contract because the contract was
-        # measured and did not hold: the transmission carries per-example
-        # content. The anti-overclaim half is what mattered and is kept, so a
-        # future editor still cannot upgrade "measured" into "audited".
-        self.assertIn("privacy wording describes measured payload behavior", safety)
-        self.assertIn("not an independent packet audit", safety)
-        # And the half that replaced it: the guide has to say content travels,
-        # not merely stop claiming it does not. Silence here would read as
-        # content-free to every customer who does not go looking.
-        for transmitted in (
-            "they also send per-example content",
-            "each scored example's inputs, expected outputs, and model responses",
-            "do not describe the transmission as content-free",
+        self.assertIn(
+            "the documented sdk/service contract says",
+            safety,
+        )
+        self.assertIn("not independently audited network traffic", safety)
+        for measured in (
+            "final trial-result serializer",
+            "do not reach its submitted object",
+            "configuration label, numeric score, stable example id, and numeric measure",
+            "session creation sends the configured space, dataset size/name, and function identifier",
+            "a connected request uses the traigent api key to authenticate",
+            "neither inspects network packets nor proves every optional sdk feature",
         ):
-            with self.subTest(transmitted=transmitted):
-                self.assertIn(transmitted, safety)
+            with self.subTest(measured=measured):
+                self.assertIn(measured, safety)
         self.assertIn("never a raw traceback", safety)
         self.assertIn("sanitized provider message", safety)
 

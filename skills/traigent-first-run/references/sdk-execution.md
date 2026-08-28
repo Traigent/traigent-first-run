@@ -1731,13 +1731,6 @@ def assert_wiring_still_proven() -> None:
 @traigent.optimize(
     objectives=OBJECTIVES,
     configuration_space=ENHANCED_SPACE,
-    # Asks for privacy by default. It does not currently take effect: measured
-    # on 0.26.0, the success path attaches per-example content whatever this
-    # says, because no configuration reaches the builder that attaches it. Set
-    # because the intent is privacy unless a customer opts out, so this run
-    # inherits the fix the day it lands upstream. Do not read it as protection
-    # while the pinned test in the suite still passes.
-    privacy_enabled=True,
     evaluation=EvaluationOptions(
         eval_dataset=TUNING_DATASET,
         metric_functions={"task_success": task_score},
