@@ -785,6 +785,65 @@ def prose_statements(text: str) -> list[str]:
 RUN_SAFETY = SKILL_ROOT / "references" / "run-safety.md"
 SDK_EXECUTION = SKILL_ROOT / "references" / "sdk-execution.md"
 
+# The guide must not answer the training-use question, because nobody at
+# Traigent has. #298 asks for the answer; the disclosure above says only that
+# the linked sources do not carry one. The risk is not that someone deletes
+# that sentence - it is asserted elsewhere and would be caught - but that
+# someone adds a reassurance beside it, which reads as vendor policy while
+# leaving every existing assertion true.
+#
+# So the allowlist is of PLACES, not of phrasings. Enumerating fabrications
+# would be the same mistake as enumerating refusal messages: the next one is
+# never in the list. Every training-vocabulary occurrence must fall inside a
+# sanctioned span, and anything new lands outside one however it is worded.
+#
+# The honest limit: this is lexical. A reassurance that avoids the vocabulary
+# entirely ("your material never improves our models") passes. It narrows the
+# opening rather than closing it, and the sentence it protects is the one the
+# whole paid handoff is currently blocked on.
+TRAINING_VOCABULARY = re.compile(
+    r"\b(?:(?:pre|re)?train(?:s|ed|ing|er|ers)?|fine[- ]?tun\w*)\b"
+)
+
+# Fragment text rather than line numbers: the disclosure wraps, and a re-wrap
+# is not a policy change. Casefolded, whitespace already collapsed by the
+# caller. A fragment that stops matching does not quietly shrink the allowlist -
+# the occurrence it covered becomes an offence, and the presence check below
+# names the fragment instead of leaving a silent no-op.
+SANCTIONED_TRAINING_MENTIONS: dict[str, tuple[str, ...]] = {
+    "glossary.md": ("train/test idea, except nothing is trained",),
+    "run-safety.md": (
+        "they do not establish training use of submitted material",
+        "ask traigent for its canonical training-use policy",
+    ),
+}
+
+
+def training_mentions_outside_sanctioned_spans(name: str, raw: str) -> list[str]:
+    """Training-vocabulary occurrences not contained by a sanctioned fragment.
+
+    Span containment, not sentence membership: a fabrication appended to a
+    sanctioned sentence ("... make no claim, but Traigent never trains on your
+    data") shares that sentence, so a sentence-level check would clear the
+    very smuggle worth catching. The occurrence itself has to sit inside the
+    fragment.
+    """
+    text = " ".join(raw.split()).casefold()
+    allowed: list[tuple[int, int]] = []
+    for fragment in SANCTIONED_TRAINING_MENTIONS.get(name, ()):
+        start = 0
+        while (found := text.find(fragment, start)) != -1:
+            allowed.append((found, found + len(fragment)))
+            start = found + 1
+    return [
+        text[max(0, match.start() - 60) : match.end() + 60]
+        for match in TRAINING_VOCABULARY.finditer(text)
+        if not any(
+            begin <= match.start() and match.end() <= end for begin, end in allowed
+        )
+    ]
+
+
 # Two different 10-day periods exist and a customer meets both, so every mention
 # of one has to say which. Spelled out as well as in digits: "the two ten-day
 # windows" is the same sentence with the same defect, and a digits-only pattern
@@ -3047,6 +3106,90 @@ class SkillPackageTests(unittest.TestCase):
         moved_stop += " stop before key handoff"
         with self.assertRaises(AssertionError):
             assert_stops_before_key_route(moved_stop)
+
+    def test_no_document_asserts_a_training_use_position(self) -> None:
+        """The guide may report the gap. It may not answer the question.
+
+        The disclosure above is asserted by presence, which catches its
+        deletion and nothing else. A reassurance added beside it leaves every
+        one of those assertions true: measured on this suite, inserting
+        "Traigent never trains on your data." into run-safety.md kept all
+        1,281 tests passing. The byte ceiling refused a longer fabrication,
+        but a ceiling is a size check that happened to fire - the same PR
+        that raises it would carry the sentence through.
+
+        What that sentence would be is the point. Nobody at Traigent has
+        stated a training-use position: the Privacy Policy runs ten sections
+        with no occurrence of the word, and the one in the Terms is inside
+        "constraints". A guide that answers anyway is not summarising policy,
+        it is authoring it, in the paragraph that asks for a full-access key.
+
+        Deletion and fabrication are opposite failures and this covers the
+        second. Both are needed: presence alone lets the answer in, spans
+        alone let the question out.
+        """
+        offences = {
+            document.name: outside
+            for document in assistant_facing_documents()
+            if (
+                outside := training_mentions_outside_sanctioned_spans(
+                    document.name, document.read_text()
+                )
+            )
+        }
+        self.assertEqual(
+            offences,
+            {},
+            "an assistant-facing document mentions training outside the "
+            "sanctioned disclosure. The guide reports that Traigent has "
+            "published no training-use policy; it must not state what that "
+            "policy says. If Traigent has now provided one, link it and "
+            "widen SANCTIONED_TRAINING_MENTIONS in the same change",
+        )
+
+        # A location allowlist decays into a no-op when its fragments stop
+        # matching, and it decays silently: every real occurrence is then an
+        # offence for the wrong reason, or - if the text moved too - none is.
+        for name, fragments in SANCTIONED_TRAINING_MENTIONS.items():
+            document = " ".join((SKILL_ROOT / "references" / name).read_text().split())
+            for fragment in fragments:
+                with self.subTest(sanctioned=fragment):
+                    self.assertIn(
+                        fragment,
+                        document.casefold(),
+                        f"{name} no longer carries a sanctioned fragment, so "
+                        "the allowlist is guarding text that is not there",
+                    )
+
+        # The control the byte ceiling gave by accident, made deliberate: the
+        # check has to fail on the fabrication it exists for, and pass on the
+        # honest sentence it must not block.
+        honest = RUN_SAFETY.read_text()
+        self.assertEqual(
+            training_mentions_outside_sanctioned_spans("run-safety.md", honest), []
+        )
+        appended = "\n\nTraigent never trains on your data.\n"
+        # The one a sentence-level check would clear: spliced into the
+        # sanctioned sentence itself, sharing it with the honest clause.
+        spliced = honest.replace(
+            "make no\nclaim.",
+            "make no\nclaim, though Traigent never trains on submitted material.",
+            1,
+        )
+        self.assertNotEqual(spliced, honest, "the splice anchor moved")
+        for label, fabricated in (
+            ("appended", honest + appended),
+            ("spliced into the sanctioned sentence", spliced),
+            ("without the word train", honest + "\n\nWe never fine-tune on it.\n"),
+        ):
+            with self.subTest(smuggle=label):
+                self.assertNotEqual(
+                    training_mentions_outside_sanctioned_spans(
+                        "run-safety.md", fabricated
+                    ),
+                    [],
+                    "the check accepted an invented training-use claim",
+                )
 
     def test_quality_advisory_requires_evidence_choice_and_revalidation(self) -> None:
         skill_text = SKILL.read_text().casefold()
