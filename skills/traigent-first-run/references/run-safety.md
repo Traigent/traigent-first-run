@@ -93,16 +93,14 @@ it. Nothing in this guide requires sub-agents, which not every supported assista
 - When a readiness command is asked to write a report file, verify that the file exists after the
   command returns. Some tooling still prints the score to stdout even when `--report` is supplied,
   so stdout is evidence of the score, not proof that the requested file was written.
-- According to the documented SDK/service contract, connected runs send configuration keys and
-  values, numeric measures, run state, and content-free metadata to the Traigent backend. Except
-  for content deliberately placed in a tuned configuration value and observability content the
-  project explicitly opts into recording, the contract excludes user prompts/inputs, dataset
-  contents and expected outputs, model responses, source code, and credentials from that backend
-  transmission. This guide does not independently inspect network packets; stop if observed
-  runtime behavior contradicts that contract. Privacy wording describes Traigent's documented
-  backend-payload contract, not an independent packet audit: where payload behavior cannot be
-  inspected, say the contract was followed rather than claiming network traffic was independently
-  audited.
+- Connected runs send configuration keys and values, numeric measures, and run state to the
+  Traigent backend, and they also send per-example content. Measured on SDK 0.26.0: every trial
+  carries `example_results` holding each scored example's inputs, expected outputs, and model
+  responses, and asking for privacy on the decorator does not remove them. Source code and
+  credentials are not transmitted. Say this plainly before the key request and let the customer
+  decide; do not describe the transmission as content-free. Privacy wording describes measured
+  payload behavior, not an independent packet audit: report what was measured rather than
+  claiming network traffic was audited.
 - Treat backend transmission and local persistence as separate boundaries. SDK 0.26.0 writes
   per-example `query`, `response`, and `expected` text to local optimization logs by default. In
   the first-run wrapper, set `TRAIGENT_LOG_EXAMPLE_CONTENT=false` in the process before importing

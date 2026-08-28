@@ -8265,6 +8265,71 @@ class SkillPackageTests(unittest.TestCase):
                 self.assertIn("reflect", str(typed_rejected.exception))
                 self.assertFalse(typed_client.called)
 
+    def test_the_pinned_sdk_still_ships_example_content_whatever_privacy_asks(
+        self,
+    ) -> None:
+        """Pin the gap the guidance now describes, so the wording cannot outlive it.
+
+        `run-safety.md` used to tell the customer the backend transmission
+        excludes their prompts, dataset contents and model responses. Measured
+        on the pinned SDK that is false, so the guidance now says so instead.
+
+        A sentence about someone else's code rots silently. This is the probe
+        that notices: it goes RED the day the SDK honours the flag, and red
+        here means *go widen the guidance*, not go weaken the test. Deleting it
+        returns the guide to claiming a protection the customer does not have.
+
+        The mechanism is the finding. The builder takes an evaluation result
+        and two numbers - no configuration reaches it at all - so it cannot
+        consult `privacy_enabled` even in principle. The removal site lives on
+        a different path this one never takes, which is why setting the flag on
+        the decorator changes nothing.
+        """
+        from types import SimpleNamespace
+
+        from traigent.core.trial_result_factory import _build_success_trial_metadata
+
+        self.assertNotIn(
+            "privacy",
+            str(inspect.signature(_build_success_trial_metadata)),
+            "the builder now receives configuration, so it may honour privacy: "
+            "re-measure and update the run-safety.md transmission paragraph",
+        )
+
+        row = {
+            "example_id": "example_0",
+            "input_data": {"message": "CUSTOMER-INPUT"},
+            "expected_output": "CUSTOMER-EXPECTED",
+            "actual_output": "MODEL-OUTPUT",
+            "metrics": {"task_success": 1.0},
+            "execution_time": 0.01,
+            "success": True,
+            "error_message": None,
+        }
+        metadata = _build_success_trial_metadata(
+            SimpleNamespace(
+                example_results=[row], successful_examples=1, success_rate=1.0
+            ),
+            1,
+            0.0,
+        )
+
+        attached = metadata.get("example_results")
+        self.assertIsNotNone(
+            attached,
+            "the pinned SDK no longer attaches per-example results: the guide "
+            "may describe the transmission as content-free again",
+        )
+        carried = json.dumps(attached, default=str)
+        for content in ("CUSTOMER-INPUT", "CUSTOMER-EXPECTED", "MODEL-OUTPUT"):
+            with self.subTest(content=content):
+                self.assertIn(
+                    content,
+                    carried,
+                    "the pinned SDK now withholds this from the trial payload; "
+                    "widen the guidance rather than deleting this pin",
+                )
+
     def test_a_preserved_boolean_space_stops_before_baseline_approval(self) -> None:
         """Preservation never means paying for a later-known SDK rejection."""
         namespace = self._wiring_probe_namespace()
@@ -12861,10 +12926,23 @@ class SkillPackageTests(unittest.TestCase):
         ):
             with self.subTest(local_log_boundary=phrase):
                 self.assertIn(phrase, safety)
-        self.assertIn(
-            "privacy wording describes traigent's documented backend-payload contract",
-            safety,
-        )
+        # This used to pin the phrase "documented backend-payload contract".
+        # The guidance stopped describing a contract because the contract was
+        # measured and did not hold: the transmission carries per-example
+        # content. The anti-overclaim half is what mattered and is kept, so a
+        # future editor still cannot upgrade "measured" into "audited".
+        self.assertIn("privacy wording describes measured payload behavior", safety)
+        self.assertIn("not an independent packet audit", safety)
+        # And the half that replaced it: the guide has to say content travels,
+        # not merely stop claiming it does not. Silence here would read as
+        # content-free to every customer who does not go looking.
+        for transmitted in (
+            "they also send per-example content",
+            "each scored example's inputs, expected outputs, and model responses",
+            "do not describe the transmission as content-free",
+        ):
+            with self.subTest(transmitted=transmitted):
+                self.assertIn(transmitted, safety)
         self.assertIn("never a raw traceback", safety)
         self.assertIn("sanitized provider message", safety)
 
