@@ -20727,6 +20727,70 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
             "that matters, not either side's.",
         )
 
+    def test_the_newest_ledger_entry_measured_the_tree_it_ships_with(self) -> None:
+        """The declared measurement is a claim, and nothing was checking it.
+
+        The ceiling check above compares a LIVE measurement against the
+        ceiling, so it catches guidance that outgrew its budget. It never
+        looks at the `-measured:` figure the entry states. That number is
+        therefore free text: it can be stale, mistyped, or measured before the
+        author's last edit, and the suite stays green either way.
+
+        It is not hypothetical. Two entries were written on one day with wrong
+        figures - one off by 129 bytes, one by 54 - by two different authors,
+        each caught by hand afterwards and only because someone re-measured.
+        A second occurrence at the same seam is the argument for a check
+        rather than a third careful author.
+
+        Only the NEWEST entry is checkable, and that is not a compromise. An
+        older entry measured an older tree and its figure is a correct record
+        of that tree; re-measuring it here would demand it describe documents
+        it never saw. The newest entry is the one that claims to describe the
+        tree it ships with, so it is exactly the one that can be wrong about
+        it today.
+
+        This does not replace the ceiling check. A wrong-but-lower figure
+        passes that one and is still a false record of what was weighed.
+        """
+        document_bytes = {
+            path: len(path.read_bytes()) for path in assistant_facing_documents()
+        }
+        live = {
+            "resident": sum(
+                size
+                for path, size in document_bytes.items()
+                if path in {ROOT / "GUIDE.md", SKILL}
+            ),
+            "total": sum(document_bytes.values()),
+        }
+
+        newest = guidance_budget_chain()[-1]
+
+        # An entry stating no measurement at all would make the loop below run
+        # zero times and report green, which is the shape this check exists to
+        # refuse. The ledger's own rules require a measured figure beside every
+        # ceiling; this refuses the vacuous pass if that ever stops holding.
+        self.assertTrue(
+            newest.measured,
+            f"{newest.path.name} states no '-measured:' figure, so this check "
+            "would pass without comparing anything",
+        )
+
+        for which, declared in sorted(newest.measured.items()):
+            with self.subTest(budget=which, entry=newest.path.name):
+                self.assertEqual(
+                    declared,
+                    live[which],
+                    f"{newest.path.name} says {which}-measured: {declared}, but "
+                    f"the documents it ships with measure {live[which]} "
+                    f"({live[which] - declared:+d}). Re-measure and correct the "
+                    "entry rather than the tree: the ledger is the record of "
+                    "what was actually weighed when the ceiling was set, and a "
+                    "figure nobody took is worth less than no figure at all. If "
+                    "you edited the guidance after writing the entry, this is "
+                    "that edit.",
+                )
+
 
 class TheGapIsPutToTheUserOnceTests(unittest.TestCase):
     """One ask at discovery, and the two checkpoints that are the whole design.
