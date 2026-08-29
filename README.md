@@ -294,8 +294,10 @@ connected runs can send tuned configuration keys and values, numeric metrics, tr
 content-free metadata needed for optimization and portal history. Except for content deliberately
 placed in a tuned configuration value and any observability content the project explicitly opts
 into recording, the contract says the SDK does not send user prompts or inputs,
-evaluation-dataset contents, expected outputs, model responses, source code, or credentials to the
-Traigent backend.
+evaluation-dataset contents, expected outputs, or model responses in that result metadata sent to
+the Traigent backend. A
+connected request necessarily uses the Traigent API key to authenticate; the guide never prints or
+records it, but does not say credentials are 'not transmitted'.
 Because configuration choices are synchronized, this walkthrough maps prompt variants to short
 content-free labels inside the agent; raw prompt text is not used as a configuration value. This
 walkthrough does not independently audit network packets; it stops if observed runtime behavior

@@ -853,7 +853,9 @@ def calibration_cases(args: argparse.Namespace) -> tuple[list[dict[str, Any]], b
     )
 
 
-def calibration_thresholds(args: argparse.Namespace) -> dict[str, float]:
+def calibration_thresholds(
+    args: argparse.Namespace, cases: list[dict[str, Any]]
+) -> dict[str, float]:
     thresholds = {
         "good_minimum": args.good_minimum,
         "bad_maximum": args.bad_maximum,
@@ -866,6 +868,14 @@ def calibration_thresholds(args: argparse.Namespace) -> dict[str, float]:
         raise ValueError(
             "--separation-margin must be no greater than 0.5 so a normalized "
             "partial score can be separated from both good and bad"
+        )
+    if any(case["score_mode"] == "graded" for case in cases) and (
+        thresholds["good_minimum"] - thresholds["bad_maximum"]
+        < 2 * thresholds["separation_margin"]
+    ):
+        raise ValueError(
+            "--good-minimum minus --bad-maximum must be at least twice "
+            "--separation-margin for graded cases"
         )
     return thresholds
 
@@ -1109,7 +1119,7 @@ def run() -> int:
         # cases are parsed.
         args.timeout = calibration_timeout_seconds(len(cases), args.kind)
     try:
-        thresholds = calibration_thresholds(args)
+        thresholds = calibration_thresholds(args, cases)
     except ValueError as error:
         print(f"Invalid calibration thresholds: {error}", file=sys.stderr)
         return 2
