@@ -3,7 +3,7 @@
 follows: 0063
 follows-total-measured: 432_942
 total-ceiling: 433_500
-total-measured: 433_300
+total-measured: 433_305
 
 The review found that the earlier probe had inspected local trial metadata and
 mistaken it for the connected submission. The standard guide path rebuilds

@@ -785,12 +785,10 @@ def prose_statements(text: str) -> list[str]:
 RUN_SAFETY = SKILL_ROOT / "references" / "run-safety.md"
 SDK_EXECUTION = SKILL_ROOT / "references" / "sdk-execution.md"
 
-# The guide must not answer the training-use question, because nobody at
-# Traigent has. #298 asks for the answer; the disclosure above says only that
-# the linked sources do not carry one. The risk is not that someone deletes
-# that sentence - it is asserted elsewhere and would be caught - but that
-# someone adds a reassurance beside it, which reads as vendor policy while
-# leaving every existing assertion true.
+# The guide must not author a training-use policy. Once the policy is published
+# at its stable section, the credential handoff links it rather than
+# paraphrasing it. The risk is a reassuring sentence beside that link: it
+# would turn a customer-facing guide into a second, drifting policy source.
 #
 # So the allowlist is of PLACES, not of phrasings. Enumerating fabrications
 # would be the same mistake as enumerating refusal messages: the next one is
@@ -799,8 +797,7 @@ SDK_EXECUTION = SKILL_ROOT / "references" / "sdk-execution.md"
 #
 # The honest limit: this is lexical. A reassurance that avoids the vocabulary
 # entirely ("your material never improves our models") passes. It narrows the
-# opening rather than closing it, and the sentence it protects is the one the
-# whole paid handoff is currently blocked on.
+# opening rather than closing it, so the policy remains the legal source.
 TRAINING_VOCABULARY = re.compile(
     r"\b(?:(?:pre|re)?train(?:s|ed|ing|er|ers)?|fine[- ]?tun\w*)\b"
 )
@@ -812,10 +809,6 @@ TRAINING_VOCABULARY = re.compile(
 # names the fragment instead of leaving a silent no-op.
 SANCTIONED_TRAINING_MENTIONS: dict[str, tuple[str, ...]] = {
     "glossary.md": ("train/test idea, except nothing is trained",),
-    "run-safety.md": (
-        "they do not establish training use of submitted material",
-        "ask traigent for its canonical training-use policy",
-    ),
 }
 
 
@@ -2990,7 +2983,8 @@ class SkillPackageTests(unittest.TestCase):
             # The public site is the ONLY destination for a user who holds no
             # access code yet - the portal's register page refuses them, so
             # without this the guide names the one address it must not give and
-            # no address it may.
+            # no address it may. The canonical pricing route is an explicit
+            # exception: this SPA publishes it as a hash route rather than a path.
             "traigent.ai",
             "openrouter.ai",
             "platform.openai.com",
@@ -3017,9 +3011,14 @@ class SkillPackageTests(unittest.TestCase):
         # Host granularity is enough for the provider links, and not enough for
         # this one: `traigent.ai/register` is a page that does not exist and is
         # the exact shape run-safety forbids handing to a user with no access
-        # code. The public site is only ever given bare.
-        if host == "traigent.ai" and url != "https://traigent.ai":
-            return "the public site is handed over bare, never with a path"
+        # code. The public site is otherwise only ever given bare. Its current
+        # pricing page is the one supported hash-route exception; accepting a
+        # broad path here would re-open the invalid-register route above.
+        if host == "traigent.ai" and url not in {
+            "https://traigent.ai",
+            "https://traigent.ai/#/pricing",
+        }:
+            return "the public site is handed over bare, except for its canonical pricing route"
         return None
 
     def test_active_run_guidance_contains_only_required_account_links(self) -> None:
@@ -3067,48 +3066,42 @@ class SkillPackageTests(unittest.TestCase):
                     "hand over",
                 )
 
-    def test_key_handoff_links_live_commercial_sources_without_inventing_training_policy(
+    def test_key_handoff_links_the_published_policy_before_secret_entry(
         self,
     ) -> None:
         """The customer sees live legal sources before the full-access key request.
 
         This is intentionally scoped to the handoff owner rather than duplicated in
-        the README or SKILL flow: plan terms change, and the public sources do not
-        establish a training-use answer. Removing the stop would let a key request
-        outrun the missing disclosure; replacing it with a reassuring sentence
-        would fabricate vendor policy.
+        the README or SKILL flow. The public policy is the source of truth: the guide
+        must route there before secret entry, not restate customer-data terms itself.
         """
         safety = " ".join(RUN_SAFETY.read_text().casefold().split())
         for url in (
-            "https://portal.traigent.ai/pricing",
+            "https://traigent.ai/#/pricing",
             "https://portal.traigent.ai/terms",
-            "https://portal.traigent.ai/privacy",
+            "https://portal.traigent.ai/privacy#customer-optimization-data",
         ):
             with self.subTest(url=url):
                 self.assertIn(url, safety)
-        self.assertIn("do not copy their prices or claims", safety)
-        self.assertIn("they do not establish training use", safety)
-        self.assertIn("stop before key handoff", safety)
-        self.assertIn("ask traigent for its canonical training-use policy", safety)
-        self.assertIn("nothing local clears this", safety)
-        self.assertIn("it holds until traigent provides one", safety)
+        self.assertIn("published policy is the canonical account", safety)
+        self.assertIn("do not paraphrase its prices or terms", safety)
 
-        def assert_stops_before_key_route(text: str) -> None:
+        def assert_links_before_key_route(text: str) -> None:
             self.assertLess(
-                text.index("stop before key handoff"),
+                text.index("privacy#customer-optimization-data"),
                 text.index("at the secret-entry gate"),
-                "the unresolved training-use disclosure must stop before the "
-                "first key route or instruction",
+                "the published data-use policy must be linked before the first key "
+                "route or instruction",
             )
 
-        assert_stops_before_key_route(safety)
-        moved_stop = safety.replace("stop before key handoff", "", 1)
-        moved_stop += " stop before key handoff"
+        assert_links_before_key_route(safety)
+        moved_link = safety.replace("privacy#customer-optimization-data", "", 1)
+        moved_link += " privacy#customer-optimization-data"
         with self.assertRaises(AssertionError):
-            assert_stops_before_key_route(moved_stop)
+            assert_links_before_key_route(moved_link)
 
-    def test_no_document_asserts_a_training_use_position(self) -> None:
-        """The guide may report the gap. It may not answer the question.
+    def test_no_document_restates_the_published_training_use_policy(self) -> None:
+        """The guide may link the policy. It may not restate it.
 
         The disclosure above is asserted by presence, which catches its
         deletion and nothing else. A reassurance added beside it leaves every
@@ -3118,11 +3111,10 @@ class SkillPackageTests(unittest.TestCase):
         but a ceiling is a size check that happened to fire - the same PR
         that raises it would carry the sentence through.
 
-        What that sentence would be is the point. Nobody at Traigent has
-        stated a training-use position: the Privacy Policy runs ten sections
-        with no occurrence of the word, and the one in the Terms is inside
-        "constraints". A guide that answers anyway is not summarising policy,
-        it is authoring it, in the paragraph that asks for a full-access key.
+        What that sentence would be is the point. The Privacy Policy is the
+        public source that answers it. A guide that answers again is not
+        summarising policy; it is creating a second policy at the paragraph
+        that asks for a full-access key.
 
         Deletion and fabrication are opposite failures and this covers the
         second. Both are needed: presence alone lets the answer in, spans
@@ -3141,10 +3133,8 @@ class SkillPackageTests(unittest.TestCase):
             offences,
             {},
             "an assistant-facing document mentions training outside the "
-            "sanctioned disclosure. The guide reports that Traigent has "
-            "published no training-use policy; it must not state what that "
-            "policy says. If Traigent has now provided one, link it and "
-            "widen SANCTIONED_TRAINING_MENTIONS in the same change",
+            "sanctioned span. The guide must link the published policy rather "
+            "than state what that policy says.",
         )
 
         # A location allowlist decays into a no-op when its fragments stop
@@ -3162,24 +3152,15 @@ class SkillPackageTests(unittest.TestCase):
                     )
 
         # The control the byte ceiling gave by accident, made deliberate: the
-        # check has to fail on the fabrication it exists for, and pass on the
-        # honest sentence it must not block.
+        # check has to fail on a duplicate policy claim and pass on the linked
+        # policy route.
         honest = RUN_SAFETY.read_text()
         self.assertEqual(
             training_mentions_outside_sanctioned_spans("run-safety.md", honest), []
         )
         appended = "\n\nTraigent never trains on your data.\n"
-        # The one a sentence-level check would clear: spliced into the
-        # sanctioned sentence itself, sharing it with the honest clause.
-        spliced = honest.replace(
-            "make no\nclaim.",
-            "make no\nclaim, though Traigent never trains on submitted material.",
-            1,
-        )
-        self.assertNotEqual(spliced, honest, "the splice anchor moved")
         for label, fabricated in (
             ("appended", honest + appended),
-            ("spliced into the sanctioned sentence", spliced),
             ("without the word train", honest + "\n\nWe never fine-tune on it.\n"),
         ):
             with self.subTest(smuggle=label):

@@ -124,11 +124,11 @@ it. Nothing in this guide requires sub-agents, which not every supported assista
 
 Ask before any private content leaves the machine, even when the provider key already exists.
 
-Before a Traigent key request, link current [pricing](https://portal.traigent.ai/pricing),
-[terms](https://portal.traigent.ai/terms), and [privacy](https://portal.traigent.ai/privacy). Do
-not copy their prices or claims. They do not establish training use of submitted material: make no
-claim. Stop before key handoff; ask Traigent for its canonical training-use policy. Nothing local
-clears this: it holds until Traigent provides one.
+Before a Traigent key request, link current [pricing](https://traigent.ai/#/pricing),
+[terms](https://portal.traigent.ai/terms), and the [Customer Optimization Data section of the
+Privacy Policy](https://portal.traigent.ai/privacy#customer-optimization-data). The published
+policy is the canonical account of how submitted optimization metadata is used; do not paraphrase
+its prices or terms. Read it before choosing whether to enter a key.
 
 At the secret-entry gate, show only the URL needed for the selected service:
 
