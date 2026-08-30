@@ -4517,7 +4517,7 @@ class SkillPackageTests(unittest.TestCase):
         text = RUN_SAFETY.read_text()
         normalized_safety = " ".join(text.casefold().split())
         self.assertIn(
-            "follow skill stages 4-7 for ordering; this reference does not define a second flow",
+            "follow skill's opening gate and stages 4-7 for ordering; this reference does not define a second flow",
             normalized_safety,
         )
         self.assertNotIn("use this gate order", normalized_safety)
@@ -6000,9 +6000,9 @@ class SkillPackageTests(unittest.TestCase):
         # The card line the README teaches, derived from `score_evaluation`
         # instead of pinned as a literal. It was pinned, at
         # `EVALUATION 100/100 (2 of 4 checks measured)`, which no reachable
-        # state of this scorer prints: `probe-spread` is withheld before
-        # calibration, keeps its 15 points in the denominator and earns none,
-        # so the pillar reads 75. The presence check could not see that - it
+        # state of this scorer prints: missing calibration evidence keeps its
+        # 40 points in the denominator, while unknown probe spread is excluded,
+        # so the pillar reads 53. The presence check could not see that - it
         # asserted the wrong number had to stay - so the number is read out of
         # the scorer here and the README has to follow it.
         opening = READINESS.EvaluationFacts(
@@ -6061,7 +6061,19 @@ class SkillPackageTests(unittest.TestCase):
         for sub in withheld:
             self.assertFalse(sub.measured)
         supplied, _ = READINESS.score_evaluation(
-            READINESS.replace(opening, probe_scores=((0.05, 0.0),))
+            READINESS.replace(
+                opening,
+                calibration_present=True,
+                calibration_complete=True,
+                checks=(
+                    {
+                        "good_passes": True,
+                        "bad_fails": True,
+                        "non_constant": True,
+                    },
+                ),
+                probe_scores=((0.05, 0.0),),
+            )
         )
         self.assertGreater(supplied.score, pillar.score)
         self.assertIn("keeps its weight and earns nothing", readme)
@@ -6963,7 +6975,7 @@ class SkillPackageTests(unittest.TestCase):
             quality_text,
         )
         self.assertIn(
-            "for the stage-4 semantic-coverage review, use this outcome inventory",
+            "for skill's semantic-coverage review, use this outcome inventory",
             safety_text,
         )
         self.assertNotIn("human semantic-coverage", skill_text)
@@ -7013,9 +7025,9 @@ class SkillPackageTests(unittest.TestCase):
     def test_code_and_sql_evaluators_are_out_of_scope_for_first_run(self) -> None:
         """The guide stops safely rather than inventing a sandbox it cannot ship."""
         text = RUN_SAFETY.read_text().casefold()
-        outcome_table = text.split("for the stage-4 semantic-coverage review", 1)[
-            1
-        ].split("binding is first", 1)[0]
+        outcome_table = text.split("for skill's semantic-coverage review", 1)[1].split(
+            "binding is first", 1
+        )[0]
         for phrase in (
             "code or sql",
             "out of scope for this first-run guide",
@@ -7108,7 +7120,7 @@ class SkillPackageTests(unittest.TestCase):
         )
         for phrase in (
             "process separation, not sandbox isolation",
-            "stage-4 scope gate ends this guide",
+            "skill's scope gate ends this guide",
             "before any evaluator executes candidate code or sql",
         ):
             self.assertIn(phrase, evaluation)
@@ -7148,7 +7160,7 @@ class SkillPackageTests(unittest.TestCase):
             ):
                 self.assertIn(phrase, text)
         self.assertIn(
-            "proceed without asking or pausing. run static preflight immediately, then follow skill stage 4 for calibration sequencing",
+            "proceed without asking or pausing. run static preflight immediately, then follow skill's opening/stage-4 calibration sequencing",
             quality_text,
         )
         self.assertIn(
@@ -13463,7 +13475,7 @@ class SkillPackageTests(unittest.TestCase):
             "again as a required step of local validation",
             "the score grades measured evidence, not declared existence",
             # the opening score must reach the USER, not merely be computed
-            "show it before anything is created or repaired",
+            "show it before any agent, dataset, or evaluation component is created or repaired",
             # a cap phrased for an absent component must not be read aloud at a
             # component that exists but is only unmeasured
             "describe an existing but unmeasured component as not yet measured",
@@ -13799,14 +13811,43 @@ class SkillPackageTests(unittest.TestCase):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, opening)
 
-    def test_opening_score_never_reuses_a_calibration_artifact(self) -> None:
-        """#260: a prior or interrupted run cannot inflate the opening card."""
+    def test_opening_score_uses_only_fresh_safe_fast_calibration(self) -> None:
+        """Opening measures what is safe now without trusting a stale result."""
         skill = SKILL.read_text()
         opening = skill.split("#### Opening readiness gate", 1)[1].split(
             "#### Zero-anchor intent gate", 1
         )[0]
-        self.assertIn("without `--calibration`", opening)
-        self.assertIn("no current-run calibration", opening)
+        normalized = " ".join(opening.split())
+        for phrase in (
+            "construct or revalidate its current-run case matrix",
+            "complete path does not execute candidate-generated code or sql",
+            "is local-only, side-effect-free, standard-library-only",
+            "expected to return in seconds",
+            "run fresh credential-stripped calibration now",
+            "pass its result to `scripts/readiness.py --calibration`",
+            "tell the user that this local check imports the inspected evaluator",
+            "pass `--allow-execution` as the assistant's explicit acknowledgement",
+            "the flag is not safety evidence and bypasses no scope gate",
+            "this notice adds no stop-and-wait",
+            "evaluator-method name and `--kind deterministic` are not safety evidence",
+            "never reuse a result from an earlier run or a pre-existing artifact",
+            "otherwise run readiness without `--calibration`",
+            "`evaluator-unvalidated` ceiling limits the readiness claim to 45",
+            "an llm judge that needs paid approval",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, normalized.casefold())
+
+    def test_stage_four_does_not_repeat_opening_calibration(self) -> None:
+        skill = " ".join(SKILL.read_text().casefold().split())
+        stage_four = skill.split("### 4. validate components locally", 1)[1].split(
+            "### 5. prepare the environment", 1
+        )[0]
+        self.assertIn("opening gate already produced that fresh result", stage_four)
+        self.assertIn("do not execute the same calibration twice", stage_four)
+        self.assertIn(
+            "run here anything the opening gate truthfully deferred", stage_four
+        )
 
     def test_source_read_claims_only_the_cap_it_can_clear(self) -> None:
         """Source-read knobs establish a search space, never wiring or build proof."""
@@ -14308,7 +14349,7 @@ class SkillPackageTests(unittest.TestCase):
         """The dataset caps were routed exhaustively; the evaluator ones were not.
 
         SKILL.md's paragraph opens "Evaluator and agent caps route through the
-        rules that already own them" and then named three of the four the
+        rules that already own them" and then named three of the conditions the
         scorer can emit. `evaluator-timeout` ceilings the whole score at 45 and
         carries the remedy `bound-evaluator-cost` - a word that appeared in no
         guidance document, so an assistant holding that payload had nothing to
@@ -14325,7 +14366,7 @@ class SkillPackageTests(unittest.TestCase):
         fails if a second branch appears.
 
         Enumerated from the module rather than listed here, for the same reason
-        the dataset check pins its count: a fifth evaluator cap must be routed
+        the dataset check pins its count: a new evaluator cap must be routed
         too.
         """
         source = (SKILL_ROOT / "scripts" / "readiness.py").read_text()
@@ -14334,10 +14375,6 @@ class SkillPackageTests(unittest.TestCase):
             for condition in re.findall(r'Cap\(\s*"([a-z0-9-]+)"', source)
             if condition.startswith("evaluator-")
         }
-        # #238 added the ownership condition; #304 adds the separate claim
-        # boundary for a named evaluator that calibration has not measured.
-        # #304 adds a sixth: a declared method is metadata until calibration
-        # measures the connected evaluator.
         self.assertEqual(len(conditions), 6)
         normalized = " ".join(SKILL.read_text().casefold().split())
         routing = normalized.split(
@@ -14346,7 +14383,7 @@ class SkillPackageTests(unittest.TestCase):
         for condition, branch in (
             ("evaluator-unresolved", "inspect, repair, or replace"),
             ("evaluator-invalid", "inspect, repair, or replace"),
-            ("evaluator-unvalidated", "continue to the approved calibration"),
+            ("evaluator-unvalidated", "opening/stage-4 calibration gate"),
             ("evaluator-timeout", "five-option question"),
             ("evaluator-absent", "create or select"),
             ("evaluator-generated", "walkthrough labeling"),
@@ -14404,7 +14441,7 @@ class SkillPackageTests(unittest.TestCase):
             # the two facts are taken at the same moment: SKILL.md records the
             # opening result after the ask is answered, so a supplied path is
             # part of what that score was read from.
-            "opening readiness score before any creation or repair - overall, "
+            "opening readiness score before any agent, dataset, or evaluation component creation or repair - overall, "
             "band, binding caps, and the one ask's gaps, answer, and any path "
             "given or missed:",
             # the gate half, pinned so the removal above cannot take it too: a
@@ -22257,13 +22294,13 @@ class TheBuildRoutePromisesOnlyWhatSurvivesTests(unittest.TestCase):
         self.assertIn('not a "while you decide"', creation)
 
 
-class TheScoreNamesTheOneFileItWritesTests(unittest.TestCase):
-    """A promise of no writes, made by the gate that writes a file.
+class TheScoreNamesTheEvidenceItWritesTests(unittest.TestCase):
+    """A promise of no writes, made by a gate that can write evidence.
 
     The same opening gate requires the row-level review to be recorded in
-    `traigent-runs/row-review.json`, so on any project with rows the sentence
-    is refuted by one `ls` - and a blinded run produced exactly that: the file
-    was the only change it made, and it made it while saying it made none.
+    `traigent-runs/row-review.json`, and eligible opening calibration can also
+    write its canonical cases/results pair. On either project the sentence is
+    refuted by one `ls`.
 
     Two halves, one boundary. The claim is corrected here, and the file it
     names is given the lifecycle it never had: a run that stops at the ask
@@ -22286,7 +22323,10 @@ class TheScoreNamesTheOneFileItWritesTests(unittest.TestCase):
     def test_the_opening_message_no_longer_claims_it_writes_nothing(self) -> None:
         skill = " ".join(SKILL.read_text().casefold().split())
         self.assertNotIn("the score reads the project and changes nothing in it", skill)
-        self.assertIn("changes nothing of the customer's", skill)
+        self.assertIn(
+            "the scoring command reads the project and changes nothing of the customer's",
+            skill,
+        )
 
     def test_it_names_the_file_instead_of_the_absence_of_writes(self) -> None:
         """Naming beats hedging: a reader can check the claim in one command.
@@ -22301,7 +22341,10 @@ class TheScoreNamesTheOneFileItWritesTests(unittest.TestCase):
         not that it repeats an address owned somewhere else.
         """
         skill = " ".join(SKILL.read_text().casefold().split())
-        self.assertIn("wrote its own row review, naming where", skill)
+        self.assertIn("its row review when rows exist", skill)
+        self.assertIn("both calibration artifacts when opening calibration ran", skill)
+        self.assertIn("traigent-runs/calibration-cases.json", skill)
+        self.assertIn("traigent-runs/calibration-results.json", skill)
         self.assertIn("a claim of no writes is refuted by one `ls`", skill)
         self.assertNotIn("traigent-runs/row-review.json", skill)
 

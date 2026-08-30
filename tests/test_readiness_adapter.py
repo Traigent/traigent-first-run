@@ -275,7 +275,8 @@ HEALTHY_CALIBRATION = {
             "checks": {"good_passes": True, "bad_fails": True, "non_constant": True},
             "scores": {"good": 1.0, "bad": 0.0},
         }
-    ]
+    ],
+    "passed": True,
 }
 HEALTHY_SPACE = {
     "knobs": {
@@ -2244,7 +2245,8 @@ class EvaluatorPresenceAdapterTests(unittest.TestCase):
                                 "non_constant": False,
                             }
                         }
-                    ]
+                    ],
+                    "passed": False,
                 }
             )
             preflight_json = json.dumps(_preflight_evaluator_records(evaluator))
@@ -2273,8 +2275,8 @@ class EvaluatorPresenceAdapterTests(unittest.TestCase):
         self.assertNotIn("evaluator-unresolved", caps)
         self.assertNotIn("evaluator-absent", caps)
 
-    def test_declared_method_with_incomplete_calibration_is_unvalidated(self) -> None:
-        """A payload is not proof unless it contains all measured checks (#304)."""
+    def test_incomplete_calibration_earns_no_behavioral_credit(self) -> None:
+        """A payload is not proof unless it contains all measured checks."""
         with tempfile.TemporaryDirectory() as directory:
             evaluator = Path(directory) / "evaluator.py"
             evaluator.write_text(
@@ -2298,10 +2300,29 @@ class EvaluatorPresenceAdapterTests(unittest.TestCase):
                             str(calibration),
                         ),
                     )
-                    cap = _cap(score, "evaluator-unvalidated")
-                    self.assertFalse(cap["blocks"])
-                    self.assertEqual(cap["action_kind"], "proceed")
-                    self.assertNotIn("evaluator-invalid", _evaluation_caps(score))
+                    caps = _evaluation_caps(score)
+                    self.assertIn("evaluator-unvalidated", caps)
+                    self.assertNotIn("evaluator-invalid", caps)
+                    unvalidated = _cap(score, "evaluator-unvalidated")
+                    self.assertEqual(
+                        unvalidated["ceiling"],
+                        MODULE.EVALUATOR_UNVALIDATED_CEILING,
+                    )
+                    self.assertFalse(unvalidated["blocks"])
+                    self.assertEqual(unvalidated["action_kind"], "proceed")
+                    evaluation = next(
+                        pillar
+                        for pillar in score["pillars"]
+                        if pillar["name"] == "evaluation"
+                    )
+                    calibration_score = next(
+                        subscore
+                        for subscore in evaluation["subscores"]
+                        if subscore["name"] == "calibration"
+                    )
+                    self.assertFalse(calibration_score["measured"])
+                    self.assertTrue(calibration_score["withheld"])
+                    self.assertEqual(calibration_score["value"], 0.0)
 
     def test_calibration_that_rejects_a_known_good_answer_is_invalid(self) -> None:
         """A complete failed check is a broken evaluator, not missing evidence."""
@@ -2341,6 +2362,49 @@ class EvaluatorPresenceAdapterTests(unittest.TestCase):
         self.assertIn("evaluator-invalid", caps)
         self.assertNotIn("evaluator-unvalidated", caps)
 
+    def test_any_complete_authored_calibration_failure_is_invalid(self) -> None:
+        """Partial and equivalent probes are verdict checks, not decoration."""
+        for failed_check in ("partial_fails", "equivalent_is_accepted"):
+            with self.subTest(
+                failed_check=failed_check
+            ), tempfile.TemporaryDirectory() as directory:
+                evaluator = Path(directory) / "evaluator.py"
+                evaluator.write_text(
+                    "def score(output, expected):\n"
+                    "    return 1.0 if output == expected else 0.0\n"
+                )
+                checks = {
+                    "good_passes": True,
+                    "bad_fails": True,
+                    "non_constant": True,
+                    "partial_fails": True,
+                    "equivalent_is_accepted": True,
+                }
+                checks[failed_check] = False
+                calibration = Path(directory) / "calibration.json"
+                calibration.write_text(
+                    json.dumps(
+                        {
+                            "cases": [{"checks": checks}],
+                            "passed": False,
+                        }
+                    )
+                )
+                score = _score_evaluator(
+                    evaluator,
+                    (
+                        "--evaluator-method",
+                        "exact",
+                        "--calibration",
+                        str(calibration),
+                    ),
+                )
+
+            caps = _evaluation_caps(score)
+            self.assertIn("evaluator-invalid", caps)
+            self.assertNotIn("evaluator-unvalidated", caps)
+            self.assertLessEqual(score["overall"], MODULE.EVALUATOR_INVALID_CEILING)
+
     def test_healthy_evaluator_reaches_full_calibrated_scoring(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             evaluator = Path(directory) / "evaluator.py"
@@ -2365,7 +2429,8 @@ class EvaluatorPresenceAdapterTests(unittest.TestCase):
                                 "non_constant": True,
                             }
                         },
-                    ]
+                    ],
+                    "passed": True,
                 }
             )
             preflight_json = json.dumps(_preflight_evaluator_records(evaluator))
@@ -3231,13 +3296,12 @@ class TheFamilyPartitionedSplitReachesTheCardTests(unittest.TestCase):
 
         Compared on the CONDITIONS rather than on `overall`: neither run
         supplies a calibration or a reading of an agent, so both are already
-        held at 45 by the advisory no-knobs and evaluator-unvalidated conditions,
-        and an equal score there
-        would say nothing about the cap this test is for. Both also carry the
-        small-comparison ceiling, which is a fact about how many rows there are
-        and is identical on either side of the redraw - it is in the expected
-        list precisely so that the one condition that does move is the only
-        difference between them.
+        held at 45 by the advisory no-knobs and unvalidated-evaluator
+        conditions, and an equal score there would say nothing about the cap
+        this test is for. Both also carry the small-comparison ceiling, which
+        is a fact about how many rows there are and is identical on either side
+        of the redraw - it is in the expected list precisely so that the one
+        condition that does move is the only difference between them.
         """
 
         def conditions(score: dict) -> list[str]:
@@ -3302,7 +3366,8 @@ class TheDeclaredOriginTravelsFromArgvToTheCardTests(unittest.TestCase):
 
     def test_declaring_nothing_is_the_baseline_these_are_measured_against(self) -> None:
         self.assertEqual(
-            self._conditions(), ["agent-no-varying-knobs", "evaluator-unvalidated"]
+            self._conditions(),
+            ["agent-no-varying-knobs", "evaluator-unvalidated"],
         )
         self.assertEqual(
             self._conditions(
@@ -3323,7 +3388,11 @@ class TheDeclaredOriginTravelsFromArgvToTheCardTests(unittest.TestCase):
         )
         self.assertEqual(
             self._conditions("--agent-origin", "generated"),
-            ["agent-generated", "agent-no-varying-knobs", "evaluator-unvalidated"],
+            [
+                "agent-generated",
+                "agent-no-varying-knobs",
+                "evaluator-unvalidated",
+            ],
         )
 
     def test_an_unknown_origin_is_refused_rather_than_ignored(self) -> None:

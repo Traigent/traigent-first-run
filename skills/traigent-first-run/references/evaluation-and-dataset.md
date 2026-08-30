@@ -120,7 +120,7 @@ those paths and this concise summary in `traigent-runs/run-plan.md`:
 Script/schema validation proves only that the matrix is well formed. The assistant's review must
 connect the selected probes to the product's meaning of correctness. If the evidence supports a
 `sufficient` verdict, proceed without asking or pausing. Run static preflight immediately, then
-follow SKILL stage 4 for calibration sequencing.
+follow SKILL's opening/stage-4 calibration sequencing.
 
 If the evidence leaves unresolved product-grading ambiguity that would materially change which
 output is correct or how candidate configurations rank, record an `ambiguous` verdict, ask
@@ -229,8 +229,8 @@ questions.
 For deterministic calibration, the helper runs authored probes in a credential-stripped child.
 Each deterministic supplemental attempt gets a fresh child, also stripped of credentials, isolating
 process-local scorer and dependency state from other attempts. This is process separation, not
-sandbox isolation. Its supplemental phase shares the single `--timeout` budget. The stage-4 scope
-gate ends this guide before any evaluator executes candidate code or SQL.
+sandbox isolation. Its supplemental phase shares the single `--timeout` budget. SKILL's scope gate
+ends this guide before any evaluator executes candidate code or SQL.
 
 Read `exception_probe_advisory` as an advisory, not a verdict. The probe family exercises common
 `ValueError`, `TypeError`, and runtime-error operations, plus malformed Python and JSON text that

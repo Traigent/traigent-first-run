@@ -335,9 +335,10 @@ A parameter's `source_lines` are positive physical lines in relative `source`; t
 `--selected-agent` below `--agent-source-root`. `--selected-agent-callable` names the selected
 top-level Python function. Without importing code, the scorer accepts only a cited executable
 literal binding that is an unconditional module-level statement, has no later binding of that
-name, and is consumed by the selected function's direct return/call through an unmodified formal
-parameter. Local bindings, branches, helpers, metadata, comments, examples, and another callable
-cannot lend it credit. This deliberately narrow static form is an opening observation, not a
+name, and is consumed by the selected function or one same-file helper whose result contributes
+to its return through an intact formal parameter. Local bindings, branches, discarded or uncalled
+helpers, metadata, comments, examples, and an unrelated callable cannot lend it credit. This deliberately
+narrow static form is an opening observation, not a
 claim that every Python agent is unsupported. A valid range/list can improve the opening card,
 never prove wrapper wiring or provider effect. Record an unsettled parameter with `evidence` and
 no `values` or `low`/`high`; it is worth recording rather than dropping. A knob has no `determined` field.

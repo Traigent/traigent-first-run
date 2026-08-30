@@ -16,12 +16,13 @@ Use this reference for setup, dry-run, paid execution, portal verification, reco
 
 ### Why the install sits where it does
 
-Stage 4 first establishes that the project is scoreable and stage 5 creates the dedicated
-first-run environment. Installing earlier can therefore modify the wrong environment or spend time
-on a walkthrough whose task is not yet anchored. After that point, the remaining capability and
-mock checks need the installed SDK, so no useful independent work overlaps the install. Keep this
-one foreground command with its complete resolver diagnostic; explain the wait and do not delegate
-it. Nothing in this guide requires sub-agents, which not every supported assistant provides.
+The opening gate establishes every scoreable fact available without installation, stage 4 finishes
+deferred local validation, and stage 5 creates the dedicated first-run environment. Installing
+earlier can therefore modify the wrong environment or spend time on a walkthrough whose task is not
+yet anchored. After that point, the remaining capability and mock checks need the installed SDK, so
+no useful independent work overlaps the install. Keep this one foreground command with its complete
+resolver diagnostic; explain the wait and do not delegate it. Nothing in this guide requires
+sub-agents, which not every supported assistant provides.
 
 ### Rules
 
@@ -232,9 +233,10 @@ SKILL's opening gate owns pre-stage-5 interpreter selection and the timing of th
 readiness score. The dedicated environment created in stage 5 remains authoritative for the
 connected run.
 
-Follow SKILL stages 4-7 for ordering; this reference does not define a second flow.
+Follow SKILL's opening gate and stages 4-7 for ordering; this reference does not define a second
+flow.
 
-For the stage-4 semantic-coverage review, use this outcome inventory rather than an unrecorded
+For SKILL's semantic-coverage review, use this outcome inventory rather than an unrecorded
 impression. Name the applicable classes in each case's `outcome_classes`, so `sufficient` records
 what was examined and an absent class stays visible:
 
