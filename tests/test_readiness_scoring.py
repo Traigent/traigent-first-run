@@ -9628,20 +9628,13 @@ class StaticAgentSourceEvidenceTests(unittest.TestCase):
     def test_a_setting_is_credited_from_the_shapes_agents_actually_write(
         self,
     ) -> None:
-        """Both directions, because a reader can fail either way.
+        """Both directions, through the score and cap the customer receives.
 
-        The reader used to credit one shape - a module binding whose NAME
-        resembled the setting, passed as a keyword argument named after it, on
-        a call that was itself the returned expression. Agents delegate, pass
-        positionally, and name their tables for what they hold, so the card
-        told projects it could not see settings written plainly in the file it
-        had just parsed.
-
-        Widening a scorer is where over-crediting starts, so the refusals are
-        half of this test and not an afterthought. Each one is a shape that
-        LOOKS like wiring to a text search and is not: a value read and
-        dropped, a table that is local rather than declared, a selection after
-        the function has returned, and a helper nothing calls.
+        The positive side covers a direct selection, an exact reject-unknown
+        guard, a returned helper, and an annotated module table. The negative
+        side attacks the widening: fixed inputs, dead or discarded work,
+        backwards/no-op guards, and a same-named function parameter must not
+        remove `agent-no-varying-knobs` from the public score.
         """
         credited = {
             "a table selected by the setting": (
@@ -9670,49 +9663,395 @@ class StaticAgentSourceEvidenceTests(unittest.TestCase):
                 "    return build(text, config)\n",
                 ("plain", "rich"),
             ),
+            "a selection made in an awaited helper": (
+                "style",
+                'STYLES = {"plain": "a", "rich": "b"}\n'
+                "async def build(text, config):\n"
+                '    return STYLES[config.get("style", "plain")] + text\n'
+                "async def run(text, config):\n"
+                "    return await build(text, config)\n",
+                ("plain", "rich"),
+            ),
+            "an annotated table selected by the setting": (
+                "style",
+                'STYLES: dict[str, str] = {"plain": "a", "rich": "b"}\n'
+                "def run(text, config):\n"
+                '    return STYLES[config["style"]] + text\n',
+                ("plain", "rich"),
+            ),
+            "a selected value returned through one local": (
+                "style",
+                'STYLES = {"plain": "a", "rich": "b"}\n'
+                "def run(text, config):\n"
+                '    style = STYLES[config.get("style", "plain")]\n'
+                "    return style + text\n",
+                ("plain", "rich"),
+            ),
+            "a selected prompt value formatted before return": (
+                "style",
+                'STYLES = {"plain": "say {text}", "rich": "explain {text}"}\n'
+                "def run(text, config):\n"
+                '    return STYLES[config.get("style", "plain")].format(text=text)\n',
+                ("plain", "rich"),
+            ),
         }
         refused = {
             "a value read and never used": (
+                "style",
+                ("plain", "rich"),
                 'STYLES = {"plain": "a", "rich": "b"}\n'
                 "def run(text, config):\n"
                 '    unused = config.get("style", "plain")\n'
-                "    return text\n"
+                "    return text\n",
+            ),
+            "a selected value discarded before the return": (
+                "style",
+                ("plain", "rich"),
+                'STYLES = {"plain": "a", "rich": "b"}\n'
+                "def run(text, config):\n"
+                '    STYLES[config.get("style", "plain")]\n'
+                "    return text\n",
             ),
             "a local table rather than a declared one": (
+                "style",
+                ("plain", "rich"),
                 "def run(text, config):\n"
                 '    styles = {"plain": "a", "rich": "b"}\n'
-                '    return styles[config.get("style", "plain")]\n'
+                '    return styles[config.get("style", "plain")]\n',
             ),
             "a selection the function has already returned past": (
+                "style",
+                ("plain", "rich"),
                 'STYLES = {"plain": "a", "rich": "b"}\n'
                 "def run(text, config):\n"
                 "    return text\n"
-                '    return STYLES[config.get("style", "plain")]\n'
+                '    return STYLES[config.get("style", "plain")]\n',
             ),
             "a helper nothing calls": (
+                "style",
+                ("plain", "rich"),
                 'STYLES = {"plain": "a", "rich": "b"}\n'
                 "def orphan(config):\n"
                 '    return STYLES[config.get("style", "plain")]\n'
                 "def run(text, config):\n"
-                "    return text\n"
+                "    return text\n",
+            ),
+            "a returned helper called with a fixed mapping": (
+                "style",
+                ("plain", "rich"),
+                'STYLES = {"plain": "a", "rich": "b"}\n'
+                "def build(text, config):\n"
+                '    return STYLES[config.get("style", "plain")] + text\n'
+                "def run(text, config):\n"
+                '    return build(text, {"style": "plain"})\n',
+            ),
+            "a returned helper called with a fixed selector": (
+                "model",
+                ("fast", "slow"),
+                'MODELS = ["fast", "slow"]\n'
+                "def build(model):\n"
+                "    return provider(model=MODELS[model])\n"
+                "def run(model):\n"
+                "    return build(0)\n",
+            ),
+            "a returned helper receiving the mapping twice": (
+                "style",
+                ("plain", "rich"),
+                'STYLES = {"plain": "a", "rich": "b"}\n'
+                "def build(config, pin):\n"
+                '    pin["style"] = "plain"\n'
+                '    return STYLES[config.get("style", "plain")]\n'
+                "def run(text, config):\n"
+                "    return build(config, config)\n",
+            ),
+            "a returned helper receiving a hidden mapping alias": (
+                "style",
+                ("plain", "rich"),
+                'STYLES = {"plain": "a", "rich": "b"}\n'
+                "def build(config, pins):\n"
+                '    pins[0]["style"] = "plain"\n'
+                '    return STYLES[config.get("style", "plain")]\n'
+                "def run(text, config):\n"
+                "    return build(config, [config])\n",
+            ),
+            "a returned helper missing a required argument": (
+                "style",
+                ("plain", "rich"),
+                'STYLES = {"plain": "a", "rich": "b"}\n'
+                "def build(config, required):\n"
+                '    return STYLES[config.get("style", "plain")] + required\n'
+                "def run(text, config):\n"
+                "    return build(config)\n",
+            ),
+            "a positional-only helper argument passed by keyword": (
+                "style",
+                ("plain", "rich"),
+                'STYLES = {"plain": "a", "rich": "b"}\n'
+                "def build(config, /):\n"
+                '    return STYLES[config.get("style", "plain")]\n'
+                "def run(text, config):\n"
+                "    return build(config=config)\n",
+            ),
+            "an async helper returned without being awaited": (
+                "style",
+                ("plain", "rich"),
+                'STYLES = {"plain": "a", "rich": "b"}\n'
+                "async def build(config):\n"
+                '    return STYLES[config.get("style", "plain")]\n'
+                "async def run(text, config):\n"
+                "    return build(config)\n",
+            ),
+            "a returned helper shadowed by a parameter": (
+                "style",
+                ("plain", "rich"),
+                'STYLES = {"plain": "a", "rich": "b"}\n'
+                "def build(config):\n"
+                '    return STYLES[config.get("style", "plain")]\n'
+                "def run(text, config, build):\n"
+                "    return build(config)\n",
+            ),
+            "a helper result that is discarded": (
+                "style",
+                ("plain", "rich"),
+                'STYLES = {"plain": "a", "rich": "b"}\n'
+                "def build(config):\n"
+                '    return STYLES[config.get("style", "plain")]\n'
+                "def run(text, config):\n"
+                "    build(config)\n"
+                "    return text\n",
+            ),
+            "a helper only present in a literal-dead expression": (
+                "style",
+                ("plain", "rich"),
+                'STYLES = {"plain": "a", "rich": "b"}\n'
+                "def build(config):\n"
+                '    return STYLES[config.get("style", "plain")]\n'
+                "def run(text, config):\n"
+                "    return build(config) if False else text\n",
+            ),
+            "a selection behind a literal short-circuit": (
+                "style",
+                ("plain", "rich"),
+                'STYLES = {"plain": "a", "rich": "b"}\n'
+                "def run(text, config):\n"
+                '    return False and STYLES[config.get("style", "plain")]\n',
+            ),
+            "a caller input overwritten before selection": (
+                "style",
+                ("plain", "rich"),
+                'STYLES = {"plain": "a", "rich": "b"}\n'
+                "def run(text, config):\n"
+                '    config["style"] = "plain"\n'
+                '    return STYLES[config.get("style", "plain")] + text\n',
+            ),
+            "a caller input mutated before selection": (
+                "style",
+                ("plain", "rich"),
+                'STYLES = {"plain": "a", "rich": "b"}\n'
+                "def run(text, config):\n"
+                "    config.clear()\n"
+                '    config.update({"style": "plain"})\n'
+                '    return STYLES[config.get("style", "plain")] + text\n',
+            ),
+            "a module helper rebound before the selected call": (
+                "style",
+                ("plain", "rich"),
+                'STYLES = {"plain": "a", "rich": "b"}\n'
+                "def build(config):\n"
+                '    return STYLES[config.get("style", "plain")]\n'
+                'build = lambda config: "plain"\n'
+                "def run(text, config):\n"
+                "    return build(config) + text\n",
+            ),
+            "a decorated helper whose wrapper is unknown": (
+                "style",
+                ("plain", "rich"),
+                'STYLES = {"plain": "a", "rich": "b"}\n'
+                "def wrap(function):\n"
+                "    return function\n"
+                "@wrap\n"
+                "def build(config):\n"
+                '    return STYLES[config.get("style", "plain")]\n'
+                "def run(text, config):\n"
+                "    return build(config) + text\n",
+            ),
+            "a decorated selected callable whose wrapper is unknown": (
+                "style",
+                ("plain", "rich"),
+                'STYLES = {"plain": "a", "rich": "b"}\n'
+                "def wrap(function):\n"
+                '    return lambda text, config: "plain"\n'
+                "@wrap\n"
+                "def run(text, config):\n"
+                '    return STYLES[config.get("style", "plain")] + text\n',
+            ),
+            "a selected callable rebound after its definition": (
+                "style",
+                ("plain", "rich"),
+                'STYLES = {"plain": "a", "rich": "b"}\n'
+                "def run(text, config):\n"
+                '    return STYLES[config.get("style", "plain")] + text\n'
+                'run = lambda text, config: "plain"\n',
+            ),
+            "a caller mapping retained through an alias": (
+                "style",
+                ("plain", "rich"),
+                'STYLES = {"plain": "a", "rich": "b"}\n'
+                "def run(text, config):\n"
+                "    alias = config\n"
+                "    alias.clear()\n"
+                '    alias.update({"style": "plain"})\n'
+                '    return STYLES[config.get("style", "plain")] + text\n',
+            ),
+            "a caller mapping handed to an unverified call": (
+                "style",
+                ("plain", "rich"),
+                'STYLES = {"plain": "a", "rich": "b"}\n'
+                "def pin(config):\n"
+                '    config["style"] = "plain"\n'
+                "def run(text, config):\n"
+                "    pin(config)\n"
+                '    return STYLES[config.get("style", "plain")] + text\n',
+            ),
+            "a caller mapping mutated from a nested closure": (
+                "style",
+                ("plain", "rich"),
+                'STYLES = {"plain": "a", "rich": "b"}\n'
+                "def run(text, config):\n"
+                "    def pin():\n"
+                '        config["style"] = "plain"\n'
+                "    pin()\n"
+                '    return STYLES[config.get("style", "plain")] + text\n',
+            ),
+            "a caller mapping aliased before a returned helper": (
+                "style",
+                ("plain", "rich"),
+                'STYLES = {"plain": "a", "rich": "b"}\n'
+                "def build(config):\n"
+                '    return STYLES[config.get("style", "plain")]\n'
+                "def run(text, config):\n"
+                "    alias = config\n"
+                "    alias.clear()\n"
+                '    alias.update({"style": "plain"})\n'
+                "    return build(config)\n",
+            ),
+            "a caller mapping aliased through iteration": (
+                "style",
+                ("plain", "rich"),
+                'STYLES = {"plain": "a", "rich": "b"}\n'
+                "def run(text, config):\n"
+                "    for alias in (config,):\n"
+                '        alias["style"] = "plain"\n'
+                '    return STYLES[config.get("style", "plain")] + text\n',
+            ),
+            "a declared table collapsed through mutation": (
+                "style",
+                ("plain", "rich"),
+                'STYLES = {"plain": "a", "rich": "b"}\n'
+                "STYLES.clear()\n"
+                'STYLES.update({"plain": "a"})\n'
+                "def run(text, config):\n"
+                '    return STYLES[config.get("style", "plain")] + text\n',
+            ),
+            "a declared table choice overwritten after declaration": (
+                "style",
+                ("plain", "rich"),
+                'STYLES = {"plain": "a", "rich": "b"}\n'
+                'STYLES["rich"] = "a"\n'
+                "def run(text, config):\n"
+                '    return STYLES[config.get("style", "plain")] + text\n',
+            ),
+            "a declared table aliased through iteration": (
+                "style",
+                ("plain", "rich"),
+                'STYLES = {"plain": "a", "rich": "b"}\n'
+                "for alias in (STYLES,):\n"
+                "    alias.clear()\n"
+                "def run(text, config):\n"
+                '    return STYLES[config.get("style", "plain")] + text\n',
+            ),
+            "a selected local named only in a dead return arm": (
+                "style",
+                ("plain", "rich"),
+                'STYLES = {"plain": "a", "rich": "b"}\n'
+                "def run(text, config):\n"
+                '    style = STYLES[config.get("style", "plain")]\n'
+                "    return text if True else style\n",
+            ),
+            "a guarded holder named only in a dead return arm": (
+                "depth",
+                (0, 2, 4),
+                "DEPTHS = (0, 2, 4)\n"
+                "def run(text, config):\n"
+                '    depth = config.get("depth", 0)\n'
+                "    if depth not in DEPTHS:\n"
+                '        raise ValueError("no")\n'
+                "    return text if True else depth\n",
+            ),
+            "a membership expression that refuses nothing": (
+                "depth",
+                (0, 2, 4),
+                "DEPTHS = (0, 2, 4)\n"
+                "def run(text, config):\n"
+                '    d = config.get("depth", 0)\n'
+                "    d not in DEPTHS\n"
+                "    return text * d\n",
+            ),
+            "a guard that rejects the declared values": (
+                "depth",
+                (0, 2, 4),
+                "DEPTHS = (0, 2, 4)\n"
+                "def run(text, config):\n"
+                '    d = config.get("depth", 0)\n'
+                "    if d in DEPTHS:\n"
+                '        raise ValueError("backwards")\n'
+                "    return text * d\n",
+            ),
+            "a fixed module mapping read as if it were caller config": (
+                "style",
+                ("plain", "rich"),
+                'STYLES = {"plain": "a", "rich": "b"}\n'
+                'DEFAULTS = {"style": "plain"}\n'
+                "def run(text, config):\n"
+                '    return STYLES[DEFAULTS.get("style", "plain")] + text\n',
             ),
         }
 
-        def values(source: str, knob: str) -> tuple:
+        def decision(source: str, knob: str, expected: tuple):
             with tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
                 (root / "agent.py").write_text(source, encoding="utf-8")
-                evidence = MODULE.static_source_evidence(
-                    "agent.py", root, root / "agent.py", "run"
+                facts = MODULE.agent_facts_from_discovery(
+                    {
+                        "source": "agent.py",
+                        "knobs": {
+                            knob: {
+                                "values": list(expected),
+                                "source_lines": [1],
+                                "evidence": "agent.py:1 and selected run path",
+                            }
+                        },
+                    },
+                    source_root=root,
+                    selected_agent=root / "agent.py",
+                    selected_agent_callable="run",
                 )
-                return MODULE._binding_values_for_knob(knob, [], evidence)
+            pillar, caps, _ = MODULE.score_agent(facts)
+            return facts.discovered[0], pillar, [cap.condition for cap in caps]
 
         for label, (knob, source, expected) in credited.items():
             with self.subTest(credits=label):
-                self.assertEqual(values(source, knob), expected)
-        for label, source in refused.items():
+                discovered, pillar, caps = decision(source, knob, expected)
+                self.assertTrue(discovered.credited)
+                self.assertEqual(discovered.values, expected)
+                self.assertGreater(pillar.score, 0)
+                self.assertNotIn("agent-no-varying-knobs", caps)
+        for label, (knob, expected, source) in refused.items():
             with self.subTest(refuses=label):
-                self.assertEqual(values(source, "style"), ())
+                discovered, pillar, caps = decision(source, knob, expected)
+                self.assertFalse(discovered.credited)
+                self.assertEqual(pillar.score, 0)
+                self.assertIn("agent-no-varying-knobs", caps)
 
     def test_expression_indices_are_not_a_static_choice_flow(self) -> None:
         """Constant arithmetic and ternaries are fixed defaults, not selectors."""

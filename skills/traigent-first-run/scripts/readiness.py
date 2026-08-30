@@ -7799,6 +7799,30 @@ def _literal_condition_value(node: ast.AST) -> bool | None:
     return None
 
 
+def _literal_branch_is_dead(parent: ast.AST, child: ast.AST) -> bool:
+    """Whether a literal branch or short-circuit makes ``child`` impossible."""
+    if isinstance(parent, ast.If):
+        truth = _literal_condition_value(parent.test)
+        return (truth is False and child in parent.body) or (
+            truth is True and child in parent.orelse
+        )
+    if isinstance(parent, ast.IfExp):
+        truth = _literal_condition_value(parent.test)
+        return (truth is False and child is parent.body) or (
+            truth is True and child is parent.orelse
+        )
+    if isinstance(parent, ast.While):
+        return _literal_condition_value(parent.test) is False and child in parent.body
+    if isinstance(parent, ast.BoolOp) and child in parent.values:
+        before = parent.values[: parent.values.index(child)]
+        return any(
+            (isinstance(parent.op, ast.And) and value is False)
+            or (isinstance(parent.op, ast.Or) and value is True)
+            for value in map(_literal_condition_value, before)
+        )
+    return False
+
+
 def _is_statically_reachable(node: ast.AST, source: StaticSourceEvidence) -> bool:
     """Reject syntactically dead code without trying to execute the agent.
 
@@ -7829,16 +7853,8 @@ def _is_statically_reachable(node: ast.AST, source: StaticSourceEvidence) -> boo
             ):
                 return False
             break
-        if isinstance(parent, ast.If):
-            truth = _literal_condition_value(parent.test)
-            if truth is False and child in parent.body:
-                return False
-            if truth is True and child in parent.orelse:
-                return False
-        if isinstance(parent, ast.While):
-            truth = _literal_condition_value(parent.test)
-            if truth is False and child in parent.body:
-                return False
+        if _literal_branch_is_dead(parent, child):
+            return False
         child = parent
     return True
 
@@ -7849,11 +7865,72 @@ def _expression_uses_name(node: ast.AST, name: str) -> bool:
     )
 
 
-def _selected_callable_parameter_is_unshadowed(
-    name: str, source: StaticSourceEvidence
+def _expression_uses_reachable_name(
+    node: ast.AST, name: str, source: StaticSourceEvidence
 ) -> bool:
-    """A selector is dynamic only when the selected callable receives it intact."""
-    arguments = source.selected_callable.args
+    """A name mentioned only in a literal-dead arm is not returned evidence."""
+    return any(
+        isinstance(child, ast.Name)
+        and child.id == name
+        and _is_statically_reachable(child, source)
+        for child in ast.walk(node)
+    )
+
+
+def _call_has_one_bare_reference(call: ast.Call, node: ast.Name, name: str) -> bool:
+    """A checked helper receives one intact object, not aliases of it."""
+    occurrences = [
+        child
+        for expression in (
+            *call.args,
+            *(keyword.value for keyword in call.keywords),
+        )
+        for child in ast.walk(expression)
+        if isinstance(child, ast.Name) and child.id == name
+    ]
+    return occurrences == [node]
+
+
+def _mapping_reference_is_safe(
+    node: ast.Name,
+    name: str,
+    parents: dict[int, ast.AST],
+    allowed_forwarding_calls: frozenset[int],
+) -> bool:
+    """Allow a mapping value read or one exact checked-helper forwarding."""
+    parent = parents.get(id(node))
+    if (
+        isinstance(parent, ast.Attribute)
+        and parent.value is node
+        and parent.attr == "get"
+        and isinstance(parents.get(id(parent)), ast.Call)
+        and parents[id(parent)].func is parent
+    ):
+        return True
+    if (
+        isinstance(parent, ast.Subscript)
+        and parent.value is node
+        and isinstance(parent.ctx, ast.Load)
+    ):
+        return True
+    call = parent if isinstance(parent, ast.Call) else parents.get(id(parent))
+    return (
+        isinstance(call, ast.Call)
+        and id(call) in allowed_forwarding_calls
+        and (
+            node in call.args or any(keyword.value is node for keyword in call.keywords)
+        )
+        and _call_has_one_bare_reference(call, node, name)
+    )
+
+
+def _callable_parameter_is_unshadowed(
+    name: str,
+    callable_node: ast.FunctionDef | ast.AsyncFunctionDef,
+    allowed_forwarding_calls: frozenset[int] = frozenset(),
+) -> bool:
+    """A selector is dynamic only when this callable receives it intact."""
+    arguments = callable_node.args
     parameters = {
         argument.arg
         for argument in (
@@ -7868,16 +7945,73 @@ def _selected_callable_parameter_is_unshadowed(
         parameters.add(arguments.kwarg.arg)
     if name not in parameters:
         return False
+    body_nodes = tuple(_callable_body_nodes(callable_node))
+    if any(
+        isinstance(
+            child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
+        )
+        and _expression_uses_name(child, name)
+        for child in body_nodes
+    ):
+        # A closure can retain or mutate the caller's object without passing it
+        # at the call site. Proving closure execution would turn this small
+        # source read into a call graph, so leave the setting unverified.
+        return False
+    # Scalar selectors are meant to flow into indexing expressions and call
+    # arguments. The stricter alias/escape rule belongs only to parameters the
+    # callable actually reads as a configuration mapping.
+    forwarded_to_checked_helper = any(
+        isinstance(child, ast.Call)
+        and id(child) in allowed_forwarding_calls
+        and any(
+            isinstance(argument, ast.Name) and argument.id == name
+            for argument in (
+                *child.args,
+                *(keyword.value for keyword in child.keywords),
+            )
+        )
+        for child in body_nodes
+    )
+    mapping_receiver = forwarded_to_checked_helper or any(
+        _config_read_key(child, frozenset({name})) is not None for child in body_nodes
+    )
+    parents = {
+        id(child): parent
+        for parent in ast.walk(callable_node)
+        for child in ast.iter_child_nodes(parent)
+    }
     return not any(
-        isinstance(child, ast.Name)
-        and child.id == name
-        and isinstance(child.ctx, ast.Store)
-        for child in _selected_callable_nodes(source)
+        (
+            isinstance(child, ast.Name)
+            and child.id == name
+            and isinstance(child.ctx, (ast.Store, ast.Del))
+        )
+        or (
+            mapping_receiver
+            and isinstance(child, ast.Name)
+            and child.id == name
+            and isinstance(child.ctx, ast.Load)
+            and not _mapping_reference_is_safe(
+                child, name, parents, allowed_forwarding_calls
+            )
+        )
+        for child in body_nodes
+    )
+
+
+def _selected_callable_parameter_is_unshadowed(
+    name: str,
+    source: StaticSourceEvidence,
+    allowed_forwarding_calls: frozenset[int] = frozenset(),
+) -> bool:
+    """Compatibility spelling for the selected callable's parameter check."""
+    return _callable_parameter_is_unshadowed(
+        name, source.selected_callable, allowed_forwarding_calls
     )
 
 
 def _expression_varies_binding(
-    node: ast.AST, name: str, source: StaticSourceEvidence
+    node: ast.AST, name: str, dynamic_parameters: frozenset[str]
 ) -> bool:
     """A literal collection only represents alternatives when selection varies."""
     for child in ast.walk(node):
@@ -7889,9 +8023,7 @@ def _expression_varies_binding(
         # are fixed defaults dressed as a list of choices.  A bare identifier
         # is the narrow static proof that the selected callable receives a
         # choice from its caller without evaluating customer code.
-        if isinstance(
-            child.slice, ast.Name
-        ) and _selected_callable_parameter_is_unshadowed(child.slice.id, source):
+        if isinstance(child.slice, ast.Name) and child.slice.id in dynamic_parameters:
             return True
     return False
 
@@ -7934,6 +8066,19 @@ def _assignment_names(node: ast.Assign | ast.AnnAssign) -> list[str]:
     return [node.target.id] if isinstance(node.target, ast.Name) else []
 
 
+def _direct_callable_statement(
+    node: ast.AST,
+    callable_node: ast.FunctionDef | ast.AsyncFunctionDef,
+    source: StaticSourceEvidence,
+) -> ast.stmt | None:
+    statement = source.parents.get(id(node))
+    while statement is not None and not isinstance(statement, ast.stmt):
+        statement = source.parents.get(id(statement))
+    if statement is None or source.parents.get(id(statement)) is not callable_node:
+        return None
+    return statement
+
+
 def _selected_callable_binds(name: str, source: StaticSourceEvidence) -> bool:
     """Whether normal Python scope makes ``name`` local to the selected call."""
     arguments = source.selected_callable.args
@@ -7954,6 +8099,34 @@ def _selected_callable_binds(name: str, source: StaticSourceEvidence) -> bool:
         if child.id == name:
             return True
     return False
+
+
+def _module_binding_reference_is_safe(
+    node: ast.Name, source: StaticSourceEvidence
+) -> bool:
+    """A module choice table may only be indexed, read, or compared."""
+    parent = source.parents.get(id(node))
+    if (
+        isinstance(parent, ast.Subscript)
+        and parent.value is node
+        and isinstance(parent.ctx, ast.Load)
+    ):
+        return True
+    if (
+        isinstance(parent, ast.Attribute)
+        and parent.value is node
+        and parent.attr == "get"
+        and isinstance(source.parents.get(id(parent)), ast.Call)
+        and source.parents[id(parent)].func is parent
+    ):
+        return True
+    return isinstance(parent, ast.Compare) and any(
+        comparator is node and isinstance(operation, (ast.In, ast.NotIn))
+        for operation, comparator in zip(
+            parent.ops,
+            parent.comparators,
+        )
+    )
 
 
 def _module_binding_is_current(
@@ -7998,6 +8171,13 @@ def _module_binding_is_current(
             for alias in candidate.names
         ):
             return False
+        if (
+            isinstance(candidate, ast.Name)
+            and candidate.id == name
+            and isinstance(candidate.ctx, ast.Load)
+            and not _module_binding_reference_is_safe(candidate, source)
+        ):
+            return False
     return not _selected_callable_binds(name, source)
 
 
@@ -8018,7 +8198,7 @@ def _binding_reaches_call_path(
     if not _module_binding_is_current(binding_node, binding, source):
         return False
 
-    for callable_node in _callables_on_the_call_path(source):
+    for callable_node, dynamic_parameters in _callables_on_the_call_path(source):
         for call in _callable_body_nodes(callable_node):
             if not isinstance(call, ast.Call) or not _is_statically_reachable(
                 call, source
@@ -8028,38 +8208,46 @@ def _binding_reaches_call_path(
             # BE the returned expression. `return parse(send(model, prompt))` is
             # the ordinary way to write this, and the inner call's parent is the
             # outer call, so a direct-parent test scored that shape zero.
-            statement = source.parents.get(id(call))
-            while statement is not None and not isinstance(statement, ast.stmt):
-                statement = source.parents.get(id(statement))
-            if statement is None or (
-                source.parents.get(id(statement)) is not callable_node
+            if _direct_callable_statement(call, callable_node, source) is None:
+                continue
+            if _call_uses_binding(
+                call,
+                binding,
+                knob,
+                mapping=mapping,
+                dynamic_parameters=dynamic_parameters,
+                source=source,
             ):
-                continue
-            for keyword in call.keywords:
-                if mapping:
-                    if keyword.arg is None and _expression_varies_binding(
-                        keyword.value, binding, source
-                    ):
-                        return True
-                elif keyword.arg == knob and _expression_varies_binding(
-                    keyword.value, binding, source
-                ):
-                    return True
-            if mapping:
-                continue
-            # A positional argument carries the value exactly as a keyword does.
-            # Only same-file module-level definitions are resolved, so the
-            # parameter name is read rather than assumed.
-            parameters = _module_function_parameters(source, call.func)
-            for index, argument in enumerate(call.args):
-                if (
-                    parameters is not None
-                    and index < len(parameters)
-                    and parameters[index] == knob
-                    and _expression_varies_binding(argument, binding, source)
-                ):
-                    return True
+                return True
     return False
+
+
+def _call_uses_binding(
+    call: ast.Call,
+    binding: str,
+    knob: str,
+    *,
+    mapping: bool,
+    dynamic_parameters: frozenset[str],
+    source: StaticSourceEvidence,
+) -> bool:
+    for keyword in call.keywords:
+        expected = keyword.arg is None if mapping else keyword.arg == knob
+        if expected and _expression_varies_binding(
+            keyword.value, binding, dynamic_parameters
+        ):
+            return True
+    if mapping:
+        return False
+    # A positional argument carries the value exactly as a keyword does. Only
+    # same-file module definitions are resolved; imported signatures are unknown.
+    parameters = _module_function_parameters(source, call.func)
+    return parameters is not None and any(
+        index < len(parameters)
+        and parameters[index] == knob
+        and _expression_varies_binding(argument, binding, dynamic_parameters)
+        for index, argument in enumerate(call.args)
+    )
 
 
 def _module_function_parameters(
@@ -8078,7 +8266,9 @@ def _module_function_parameters(
             isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
             and node.name == func.id
         ):
-            return [argument.arg for argument in node.args.args]
+            return [
+                argument.arg for argument in (*node.args.posonlyargs, *node.args.args)
+            ]
     return None
 
 
@@ -8095,9 +8285,197 @@ def _callable_body_nodes(node: ast.AST) -> Iterator[ast.AST]:
         pending.extend(reversed(list(ast.iter_child_nodes(current))))
 
 
+def _callable_parameter_names(
+    node: ast.FunctionDef | ast.AsyncFunctionDef,
+) -> tuple[str, ...]:
+    arguments = node.args
+    names = [
+        argument.arg
+        for argument in (
+            *arguments.posonlyargs,
+            *arguments.args,
+            *arguments.kwonlyargs,
+        )
+    ]
+    if arguments.vararg is not None:
+        names.append(arguments.vararg.arg)
+    if arguments.kwarg is not None:
+        names.append(arguments.kwarg.arg)
+    return tuple(names)
+
+
+def _callable_binds(name: str, node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+    """Whether Python resolves ``name`` inside this call rather than at module level."""
+    if name in _callable_parameter_names(node):
+        return True
+    for child in _callable_body_nodes(node):
+        if (
+            isinstance(child, ast.Name)
+            and child.id == name
+            and isinstance(child.ctx, ast.Store)
+        ):
+            return True
+        if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            if child.name == name:
+                return True
+        if isinstance(child, (ast.Import, ast.ImportFrom)) and any(
+            (alias.asname or alias.name.split(".")[0]) == name for alias in child.names
+        ):
+            return True
+    return False
+
+
+def _node_reaches_return(
+    node: ast.AST,
+    callable_node: ast.FunctionDef | ast.AsyncFunctionDef,
+    source: StaticSourceEvidence,
+) -> bool:
+    """Whether this expression contributes directly to this call's return."""
+    child = node
+    while (parent := source.parents.get(id(child))) is not None:
+        if parent is callable_node:
+            return False
+        if isinstance(parent, ast.Return):
+            return True
+        if isinstance(
+            parent, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
+        ):
+            return False
+        child = parent
+    return False
+
+
+def _forwarded_parameters(
+    call: ast.Call,
+    target: ast.FunctionDef | ast.AsyncFunctionDef,
+    dynamic_parameters: frozenset[str],
+) -> set[str]:
+    """Map intact caller inputs to the exact parameters a helper receives."""
+    positional = (*target.args.posonlyargs, *target.args.args)
+    forwarded = {
+        positional[index].arg
+        for index, argument in enumerate(call.args)
+        if index < len(positional)
+        and isinstance(argument, ast.Name)
+        and argument.id in dynamic_parameters
+    }
+    forwarded.update(
+        keyword.arg
+        for keyword in call.keywords
+        if keyword.arg is not None
+        and isinstance(keyword.value, ast.Name)
+        and keyword.value.id in dynamic_parameters
+        and keyword.arg in _callable_parameter_names(target)
+    )
+    return {
+        name for name in forwarded if _callable_parameter_is_unshadowed(name, target)
+    }
+
+
+def _scope_declares_global(node: ast.AST, name: str) -> bool:
+    return isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and any(
+        isinstance(child, ast.Global) and name in child.names
+        for child in _callable_body_nodes(node)
+    )
+
+
+def _module_callable_is_current(
+    target: ast.FunctionDef | ast.AsyncFunctionDef, source: StaticSourceEvidence
+) -> bool:
+    """Whether an undecorated module helper still owns its exact name."""
+    if source.parents.get(id(target)) is not source.tree or target.decorator_list:
+        return False
+    for candidate in ast.walk(source.tree):
+        if candidate is target:
+            continue
+        if isinstance(candidate, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            if (
+                candidate.name == target.name
+                and source.parents.get(id(candidate)) is source.tree
+            ):
+                return False
+        if isinstance(candidate, (ast.Import, ast.ImportFrom)) and any(
+            (alias.asname or alias.name.split(".")[0]) == target.name
+            for alias in candidate.names
+        ):
+            owner = _lexical_owner(candidate, source)
+            if owner is source.tree or _scope_declares_global(owner, target.name):
+                return False
+        if (
+            isinstance(candidate, ast.Name)
+            and candidate.id == target.name
+            and isinstance(candidate.ctx, (ast.Store, ast.Del))
+        ):
+            owner = _lexical_owner(candidate, source)
+            if owner is source.tree or _scope_declares_global(owner, target.name):
+                return False
+    return True
+
+
+def _call_matches_static_signature(
+    call: ast.Call, target: ast.FunctionDef | ast.AsyncFunctionDef
+) -> bool:
+    """Whether an ordinary call supplies the helper's required parameters."""
+    arguments = target.args
+    if (
+        arguments.vararg is not None
+        or arguments.kwarg is not None
+        or any(isinstance(argument, ast.Starred) for argument in call.args)
+        or any(keyword.arg is None for keyword in call.keywords)
+    ):
+        return False
+    positional_only = [argument.arg for argument in arguments.posonlyargs]
+    positional = positional_only + [argument.arg for argument in arguments.args]
+    keyword_only = [argument.arg for argument in arguments.kwonlyargs]
+    if len(call.args) > len(positional):
+        return False
+    supplied = set(positional[: len(call.args)])
+    for keyword in call.keywords:
+        assert keyword.arg is not None
+        if (
+            keyword.arg in positional_only
+            or keyword.arg not in (*positional, *keyword_only)
+            or keyword.arg in supplied
+        ):
+            return False
+        supplied.add(keyword.arg)
+    required_positional = positional[: len(positional) - len(arguments.defaults)]
+    required_keyword_only = [
+        argument.arg
+        for argument, default in zip(arguments.kwonlyargs, arguments.kw_defaults)
+        if default is None
+    ]
+    return set((*required_positional, *required_keyword_only)) <= supplied
+
+
+def _call_returns_helper_result(
+    call: ast.Call,
+    target: ast.FunctionDef | ast.AsyncFunctionDef,
+    selected: ast.FunctionDef | ast.AsyncFunctionDef,
+    source: StaticSourceEvidence,
+) -> bool:
+    """A sync helper is returned directly; an async helper is returned awaited."""
+    if any(
+        isinstance(node, (ast.Yield, ast.YieldFrom))
+        for node in _callable_body_nodes(target)
+    ):
+        return False
+    parent = source.parents.get(id(call))
+    if isinstance(target, ast.AsyncFunctionDef):
+        returned = source.parents.get(id(parent))
+        return (
+            isinstance(selected, ast.AsyncFunctionDef)
+            and isinstance(parent, ast.Await)
+            and parent.value is call
+            and isinstance(returned, ast.Return)
+            and returned.value is parent
+        )
+    return isinstance(parent, ast.Return) and parent.value is call
+
+
 def _callables_on_the_call_path(
     source: StaticSourceEvidence,
-) -> list[ast.FunctionDef | ast.AsyncFunctionDef]:
+) -> list[tuple[ast.FunctionDef | ast.AsyncFunctionDef, frozenset[str]]]:
     """The selected callable and the same-file helpers it actually calls.
 
     Real agents delegate: `run` orchestrates while a helper builds the prompt
@@ -8106,54 +8484,225 @@ def _callables_on_the_call_path(
     functions below, in the same file the reader already parsed. That sentence
     was false, and a false sentence is worse than a narrow one.
 
-    The widening stays static and definite. Only module-level `def`s resolved
-    by exact name from a direct call are followed - never an import, an
-    attribute, a variable holding a function, or a nested closure - so nothing
-    here needs dynamic dispatch or a real call graph. Recursion is bounded by
-    the visited set, and `_is_statically_reachable` still governs whether an
-    individual call site counts.
+    The widening stays static and definite. A helper is followed only when its
+    return value contributes to the caller's return and an intact parameter is
+    passed into it. That proves both reachability and caller control without a
+    runtime call graph. This first-readiness check crosses one helper boundary,
+    not an arbitrary chain. Imports, attributes, fixed arguments, discarded
+    helper results, shadowed names, and nested closures earn nothing.
     """
     definitions = {
         node.name: node
         for node in source.tree.body
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
     }
-    ordered = [source.selected_callable]
-    seen = {id(source.selected_callable)}
-    index = 0
-    while index < len(ordered):
-        current = ordered[index]
-        index += 1
-        for node in _callable_body_nodes(current):
-            if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name):
-                continue
-            target = definitions.get(node.func.id)
-            if target is not None and id(target) not in seen:
-                seen.add(id(target))
-                ordered.append(target)
-    return ordered
+    selected = source.selected_callable
+    if not _module_callable_is_current(selected, source):
+        return []
+    helper_calls: list[tuple[ast.Call, ast.FunctionDef | ast.AsyncFunctionDef]] = []
+    for node in _callable_body_nodes(selected):
+        if (
+            not isinstance(node, ast.Call)
+            or not isinstance(node.func, ast.Name)
+            or not _is_statically_reachable(node, source)
+            or _callable_binds(node.func.id, selected)
+        ):
+            continue
+        target = definitions.get(node.func.id)
+        if (
+            target is not None
+            and _module_callable_is_current(target, source)
+            and _call_matches_static_signature(node, target)
+            and _call_returns_helper_result(node, target, selected, source)
+        ):
+            helper_calls.append((node, target))
+    allowed_forwarding_calls = frozenset(id(call) for call, _ in helper_calls)
+    initial = {
+        name
+        for name in _callable_parameter_names(selected)
+        if _selected_callable_parameter_is_unshadowed(
+            name, source, allowed_forwarding_calls
+        )
+    }
+    helpers: dict[int, tuple[ast.FunctionDef | ast.AsyncFunctionDef, set[str]]] = {}
+    for node, target in helper_calls:
+        forwarded = _forwarded_parameters(node, target, frozenset(initial))
+        if not forwarded:
+            continue
+        helper, known = helpers.setdefault(id(target), (target, set()))
+        known.update(forwarded)
+    return [(selected, frozenset(initial))] + [
+        (helper, frozenset(parameters)) for helper, parameters in helpers.values()
+    ]
 
 
-def _config_read_key(node: ast.AST) -> str | None:
+def _config_read_key(node: ast.AST, receivers: frozenset[str]) -> str | None:
     """The literal setting name this expression reads out of a config mapping.
 
     Covers the two spellings an agent actually uses - `config.get("knob")` and
-    `config["knob"]` - and nothing else. A non-literal key is not a name this
-    read can report, so it earns nothing.
+    `config["knob"]` - and nothing else. The mapping must be an intact input to
+    this callable; a module default or fixed helper argument is not proof that
+    the selected agent exposes the setting.
     """
     if (
         isinstance(node, ast.Call)
         and isinstance(node.func, ast.Attribute)
         and node.func.attr == "get"
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id in receivers
         and node.args
     ):
         first = node.args[0]
         if isinstance(first, ast.Constant) and isinstance(first.value, str):
             return first.value
-    if isinstance(node, ast.Subscript) and isinstance(node.slice, ast.Constant):
+    if (
+        isinstance(node, ast.Subscript)
+        and isinstance(node.value, ast.Name)
+        and node.value.id in receivers
+        and isinstance(node.slice, ast.Constant)
+    ):
         if isinstance(node.slice.value, str):
             return node.slice.value
     return None
+
+
+def _callable_store_count(
+    name: str, callable_node: ast.FunctionDef | ast.AsyncFunctionDef
+) -> int:
+    return sum(
+        1
+        for child in _callable_body_nodes(callable_node)
+        if isinstance(child, ast.Name)
+        and child.id == name
+        and isinstance(child.ctx, ast.Store)
+    )
+
+
+def _direct_config_holders(
+    knob: str,
+    callable_node: ast.FunctionDef | ast.AsyncFunctionDef,
+    dynamic_parameters: frozenset[str],
+    source: StaticSourceEvidence,
+) -> dict[str, ast.Assign | ast.AnnAssign]:
+    """Single-assignment locals that hold this setting in one callable."""
+    holders: dict[str, ast.Assign | ast.AnnAssign] = {}
+    for node in callable_node.body:
+        if not isinstance(node, (ast.Assign, ast.AnnAssign)):
+            continue
+        value = node.value
+        names = _assignment_names(node)
+        if (
+            value is None
+            or len(names) != 1
+            or not _is_statically_reachable(node, source)
+            or (_config_read_key(value, dynamic_parameters) or "").casefold()
+            != knob.casefold()
+        ):
+            continue
+        name = names[0]
+        if _callable_store_count(name, callable_node) == 1:
+            holders[name] = node
+    return holders
+
+
+def _holder_reaches_later_return(
+    holder: str,
+    guard: ast.If,
+    assignment: ast.Assign | ast.AnnAssign,
+    callable_node: ast.FunctionDef | ast.AsyncFunctionDef,
+    source: StaticSourceEvidence,
+) -> bool:
+    """The accepted value must affect a later returned result."""
+    body = callable_node.body
+    assignment_index = body.index(assignment)
+    guard_index = body.index(guard)
+    if assignment_index >= guard_index:
+        return False
+    return any(
+        isinstance(statement, ast.Return)
+        and statement.value is not None
+        and _expression_uses_reachable_name(statement.value, holder, source)
+        and _is_statically_reachable(statement, source)
+        for statement in body[guard_index + 1 :]
+    )
+
+
+def _guarded_collection(
+    node: ast.AST,
+    holders: dict[str, ast.Assign | ast.AnnAssign],
+    declared: set[str],
+    callable_node: ast.FunctionDef | ast.AsyncFunctionDef,
+    source: StaticSourceEvidence,
+) -> str | None:
+    """Return the declared set used by an exact reject-unknown guard."""
+    if (
+        not isinstance(node, ast.If)
+        or source.parents.get(id(node)) is not callable_node
+        or node.orelse
+        or len(node.body) != 1
+        or not isinstance(node.body[0], ast.Raise)
+        or not isinstance(node.test, ast.Compare)
+        or len(node.test.ops) != 1
+        or not isinstance(node.test.ops[0], ast.NotIn)
+        or len(node.test.comparators) != 1
+        or not isinstance(node.test.left, ast.Name)
+        or not isinstance(node.test.comparators[0], ast.Name)
+    ):
+        return None
+    holder = node.test.left.id
+    collection = node.test.comparators[0].id
+    assignment = holders.get(holder)
+    if (
+        assignment is None
+        or collection not in declared
+        or _callable_binds(collection, callable_node)
+        or not _holder_reaches_later_return(
+            holder, node, assignment, callable_node, source
+        )
+    ):
+        return None
+    return collection
+
+
+def _selector_reads_knob(
+    selector: ast.AST,
+    knob: str,
+    holders: dict[str, ast.Assign | ast.AnnAssign],
+    dynamic_parameters: frozenset[str],
+    selection: ast.Subscript,
+) -> bool:
+    read = _config_read_key(selector, dynamic_parameters)
+    if read is not None:
+        return read.casefold() == knob.casefold()
+    return (
+        isinstance(selector, ast.Name)
+        and selector.id in holders
+        and holders[selector.id].lineno < selection.lineno
+    )
+
+
+def _selection_reaches_return(
+    selection: ast.Subscript,
+    callable_node: ast.FunctionDef | ast.AsyncFunctionDef,
+    source: StaticSourceEvidence,
+) -> bool:
+    """Accept a returned selection directly or through one stable local."""
+    if _node_reaches_return(selection, callable_node, source):
+        return True
+    statement = _direct_callable_statement(selection, callable_node, source)
+    if not isinstance(statement, (ast.Assign, ast.AnnAssign)):
+        return False
+    names = _assignment_names(statement)
+    if len(names) != 1 or _callable_store_count(names[0], callable_node) != 1:
+        return False
+    statement_index = callable_node.body.index(statement)
+    return any(
+        isinstance(later, ast.Return)
+        and later.value is not None
+        and _expression_uses_reachable_name(later.value, names[0], source)
+        and _is_statically_reachable(later, source)
+        for later in callable_node.body[statement_index + 1 :]
+    )
 
 
 def _module_collections_this_knob_selects(
@@ -8178,23 +8727,16 @@ def _module_collections_this_knob_selects(
     by `output_format` is credited exactly like `MODELS` keyed by `model`.
     """
     declared = {
-        target.id
+        name
         for node in source.tree.body
-        if isinstance(node, ast.Assign)
-        for target in node.targets
-        if isinstance(target, ast.Name)
+        if isinstance(node, (ast.Assign, ast.AnnAssign))
+        for name in _assignment_names(node)
     }
     selected: list[str] = []
-    for callable_node in _callables_on_the_call_path(source):
-        # Locals in this callable that hold a read of this setting.
-        holders = {
-            target.id
-            for node in _callable_body_nodes(callable_node)
-            if isinstance(node, ast.Assign)
-            and (_config_read_key(node.value) or "").casefold() == knob.casefold()
-            for target in node.targets
-            if isinstance(target, ast.Name)
-        }
+    for callable_node, dynamic_parameters in _callables_on_the_call_path(source):
+        holders = _direct_config_holders(
+            knob, callable_node, dynamic_parameters, source
+        )
         for node in _callable_body_nodes(callable_node):
             if not _is_statically_reachable(node, source):
                 continue
@@ -8202,19 +8744,107 @@ def _module_collections_this_knob_selects(
                 isinstance(node, ast.Subscript)
                 and isinstance(node.value, ast.Name)
                 and node.value.id in declared
-                and (_config_read_key(node.slice) or "").casefold() == knob.casefold()
+                and not _callable_binds(node.value.id, callable_node)
+                and _selector_reads_knob(
+                    node.slice, knob, holders, dynamic_parameters, node
+                )
+                and _selection_reaches_return(node, callable_node, source)
             ):
                 selected.append(node.value.id)
-            if isinstance(node, ast.Compare) and isinstance(node.left, ast.Name):
-                if node.left.id not in holders:
-                    continue
-                for operator, comparator in zip(node.ops, node.comparators):
-                    if isinstance(operator, (ast.In, ast.NotIn)) and isinstance(
-                        comparator, ast.Name
-                    ):
-                        if comparator.id in declared:
-                            selected.append(comparator.id)
+            guarded = _guarded_collection(
+                node, holders, declared, callable_node, source
+            )
+            if guarded is not None:
+                selected.append(guarded)
     return selected
+
+
+def _names_reach_call_path(
+    names: Sequence[str],
+    knob: str,
+    *,
+    mapping: bool,
+    binding_node: ast.Assign | ast.AnnAssign,
+    source: StaticSourceEvidence,
+) -> bool:
+    return any(
+        _binding_reaches_call_path(
+            name,
+            knob,
+            mapping=mapping,
+            binding_node=binding_node,
+            source=source,
+        )
+        for name in names
+    )
+
+
+def _dict_values_for_knob(mapping: ast.Dict, knob: str) -> list[Any]:
+    found: list[Any] = []
+    for key, value in zip(mapping.keys, mapping.values):
+        if (
+            isinstance(key, ast.Constant)
+            and isinstance(key.value, str)
+            and key.value.casefold() == knob.casefold()
+        ):
+            literal = _literal_values(value)
+            if literal is not None:
+                found.extend(literal)
+    return found
+
+
+def _values_from_cited_binding(
+    node: ast.Assign | ast.AnnAssign,
+    knob: str,
+    source: StaticSourceEvidence,
+) -> list[Any]:
+    value = node.value
+    if value is None:
+        return []
+    names = _assignment_names(node)
+    mapping_used = _names_reach_call_path(
+        names, knob, mapping=True, binding_node=node, source=source
+    )
+    found: list[Any] = []
+    # A table of request dictionaries is a genuine configuration mapping only
+    # when a non-constant selection is expanded into a call.
+    if isinstance(value, (ast.List, ast.Tuple)) and mapping_used:
+        for item in value.elts:
+            if isinstance(item, ast.Dict):
+                found.extend(_dict_values_for_knob(item, knob))
+    matching_names = [name for name in names if _name_matches_knob(name, knob)]
+    if matching_names and _names_reach_call_path(
+        matching_names, knob, mapping=False, binding_node=node, source=source
+    ):
+        literal = (
+            _literal_mapping_keys(value)
+            if isinstance(value, ast.Dict)
+            else _literal_values(value)
+        )
+        if literal is not None:
+            found.extend(literal)
+    if isinstance(value, ast.Dict) and mapping_used:
+        found.extend(_dict_values_for_knob(value, knob))
+    return found
+
+
+def _selected_collection_values(knob: str, source: StaticSourceEvidence) -> list[Any]:
+    chosen = set(_module_collections_this_knob_selects(knob, source))
+    found: list[Any] = []
+    for node in source.tree.body:
+        if not isinstance(node, (ast.Assign, ast.AnnAssign)) or node.value is None:
+            continue
+        selected = sorted(set(_assignment_names(node)) & chosen)
+        if not selected or not _module_binding_is_current(node, selected[0], source):
+            continue
+        literal = (
+            _literal_mapping_keys(node.value)
+            if isinstance(node.value, ast.Dict)
+            else _literal_values(node.value)
+        )
+        if literal is not None:
+            found.extend(literal)
+    return found
 
 
 def _binding_values_for_knob(
@@ -8231,93 +8861,19 @@ def _binding_values_for_knob(
     cited = set(lines)
     found: list[Any] = []
     for node in ast.walk(source.tree):
-        if not isinstance(node, (ast.Assign, ast.AnnAssign)):
+        if not isinstance(node, (ast.Assign, ast.AnnAssign)) or not (
+            _node_lines(node) & cited
+        ):
             continue
         if not _is_statically_reachable(node, source):
             continue
-        value = node.value
-        if value is None or not (_node_lines(node) & cited):
-            continue
-        names = _assignment_names(node)
-        # A table of request dictionaries is a genuine configuration mapping
-        # only when a non-constant selection is expanded into a call.  It is
-        # intentionally narrower than an arbitrary dict called "metadata".
-        if isinstance(value, (ast.List, ast.Tuple)) and any(
-            _binding_reaches_call_path(
-                name, knob, mapping=True, binding_node=node, source=source
-            )
-            for name in names
-        ):
-            for item in value.elts:
-                if not isinstance(item, ast.Dict):
-                    continue
-                for key, mapped_value in zip(item.keys, item.values):
-                    if (
-                        isinstance(key, ast.Constant)
-                        and isinstance(key.value, str)
-                        and key.value.casefold() == knob.casefold()
-                    ):
-                        literal = _literal_values(mapped_value)
-                        if literal is not None:
-                            found.extend(literal)
-        if any(_name_matches_knob(name, knob) for name in names):
-            literal = (
-                _literal_mapping_keys(value)
-                if isinstance(value, ast.Dict)
-                else _literal_values(value)
-            )
-            if literal is not None and any(
-                _binding_reaches_call_path(
-                    name, knob, mapping=False, binding_node=node, source=source
-                )
-                for name in names
-                if _name_matches_knob(name, knob)
-            ):
-                found.extend(literal)
-        if isinstance(value, ast.Dict):
-            for key, mapped_value in zip(value.keys, value.values):
-                if (
-                    isinstance(key, ast.Constant)
-                    and isinstance(key.value, str)
-                    and key.value.casefold() == knob.casefold()
-                ):
-                    literal = _literal_values(mapped_value)
-                    if literal is not None and any(
-                        _binding_reaches_call_path(
-                            name,
-                            knob,
-                            mapping=True,
-                            binding_node=node,
-                            source=source,
-                        )
-                        for name in names
-                    ):
-                        found.extend(literal)
+        found.extend(_values_from_cited_binding(node, knob, source))
 
     # And the collections this setting is actually used to choose from, learned
     # from the expression rather than from a name resemblance. This is the
     # branch that reads wiring the way a person reads it: the setting indexes a
     # declared table, or is refused unless the declared table contains it.
-    if not found:
-        chosen = set(_module_collections_this_knob_selects(knob, source))
-        for node in source.tree.body:
-            if not isinstance(node, ast.Assign):
-                continue
-            names = {
-                target.id for target in node.targets if isinstance(target, ast.Name)
-            }
-            if not (names & chosen) or not _module_binding_is_current(
-                node, next(iter(names & chosen)), source
-            ):
-                continue
-            literal = (
-                _literal_mapping_keys(node.value)
-                if isinstance(node.value, ast.Dict)
-                else _literal_values(node.value)
-            )
-            if literal is not None:
-                found.extend(literal)
-    return tuple(found)
+    return tuple(found or _selected_collection_values(knob, source))
 
 
 def values_are_in_checked_source(
