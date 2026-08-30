@@ -252,7 +252,8 @@ host. Stage 5 remains authoritative for the connected run.
 
 Run the bundled static preflight with `--defer-missing-sdk` over whatever dataset was discovered,
 omitting `--dataset` when none exists, then run `scripts/readiness.py` on that preflight JSON
-without `--calibration`: an opening score has no current-run calibration. When rows exist, do the row-level sanity check in
+without `--calibration`: it has no current-run calibration result, earns no calibration points, leaves probe spread unmeasured,
+and raises no validation cap. When rows exist, do the row-level sanity check in
 `references/evaluation-and-dataset.md` here and pass it as `--row-review`: it is your own read, it
 spends nothing, and no generated row competes with it yet. Apply the run-scoped evaluator-method rule above to both
 scripts, and apply the run-scoped task-kind rule to readiness only, and the origin rule with it.
@@ -283,7 +284,7 @@ reads an earlier one's. Never delete them, and name that directory to the user b
  remove it. Two halves, one pass, and
 neither is optional where an agent was found. For a selected top-level Python function, include
 `--agent-source-root`, `--selected-agent`, and `--selected-agent-callable`; `source_lines` must show values on its
-direct path. Otherwise leave source credit unestablished and use the advisory route. A thin Python adapter is
+verified selected-call path. Otherwise leave source credit unestablished and use the advisory route. A thin Python adapter is
 walkthrough material, not proof that the original agent was optimized. `references/component-creation.md` owns the
 exact argv and source-evidence contract.
 A name only in a comment, docstring, TODO, or example is not scored; it may guide inspection but
@@ -342,8 +343,8 @@ write.
 `--row-review` documents - do **not** also pass `readiness.py --agent`, `--dataset`, or
 `--evaluation`. Those three flags are fallback declarations for material the score was not given;
 adding them beside measurements supplies two incompatible accounts of the same project, so
-`readiness.py` rejects the invocation. The opening readiness argv therefore contains only the
-measured inputs plus the run-scoped `--task-kind`, `--evaluator-method`, and component-origin
+`readiness.py` rejects the invocation. The opening readiness argv therefore contains the measured
+inputs plus the run-scoped `--task-kind`, `--evaluator-method`, and component-origin
 flags that the rules above establish. Before running it, check the row-review mechanically against its documented
 shape: every reviewed row has `id`, normalized `origin`, `verdict`, one-sentence `note`, and the
 same explicit `in_run` boolean when membership is settled. Do not rely on a successful exit to
@@ -612,9 +613,7 @@ Evaluator and agent caps route through the rules that already own them: `evaluat
 connected file with no honestly declarable method) and `evaluator-invalid` route through the
 invalid-evaluator paragraph above - inspect, repair, or replace; `evaluator-absent` routes through
 the absent-evidence reading in the opening readiness gate and the creation dependency matrix -
-create or select. `evaluator-unvalidated` means a method was declared but no complete calibration
-case measured the connected evaluator: it bounds the opening claim without calling the file broken;
-continue to the approved calibration before relying on the score. `evaluator-generated` and `agent-generated` route through the walkthrough labeling
+create or select. `evaluator-generated` and `agent-generated` route through the walkthrough labeling
 rules and nothing else - carry the substitute's provenance into the words as well as the card, and say the
 result measures the substitute rather than their product. Neither is a repair: this run created the
 component on purpose, the run continues, and what the ceiling refuses is the claim, not the work.

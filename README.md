@@ -147,15 +147,15 @@ machine, so it estimates rather than measures. A check this tool could not compu
 unmeasured and excluded rather than scored zero; a check the run was asked for and did not supply
 is marked unmeasured too, but keeps its weight and earns nothing, so withholding it can never pay.
 The card says how much of each pillar it actually observed, and
-`EVALUATION 75/100 (2 of 4 checks measured)` is what an opening card prints before any calibration
-has run - 75 is the most that pillar can read while two of its four checks are unmeasured, not a
-verdict on your evaluator. A low score never stops the run; it decides which gaps are worth
+`EVALUATION 53/100 (2 of 4 checks measured)` is what an opening card prints before calibration:
+no validation credit, full method-fit and reproducibility credit, and no claim that the evaluator
+failed. A low score never stops the run; it decides which gaps are worth
 explaining and which are worth fixing first.
 
 That is also why the band can sit below the number. A pillar measured thinly cannot carry a strong
 verdict, so `89/100 WORKABLE` is not a contradiction even though 89 falls inside the Strong range -
 it is the card declining to call a project Strong on evidence it has not seen. The card names which
-pillar is thin - `EVALUATION 75/100 (2 of 4 checks measured)` - and calibrating the evaluator is
+pillar is thin - `EVALUATION 53/100 (2 of 4 checks measured)` - and calibrating the evaluator is
 what fills that one in.
 
 No settings document exists before the search, so the agent pillar is read from the selected

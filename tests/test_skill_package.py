@@ -6000,9 +6000,9 @@ class SkillPackageTests(unittest.TestCase):
         # The card line the README teaches, derived from `score_evaluation`
         # instead of pinned as a literal. It was pinned, at
         # `EVALUATION 100/100 (2 of 4 checks measured)`, which no reachable
-        # state of this scorer prints: `probe-spread` is withheld before
-        # calibration, keeps its 15 points in the denominator and earns none,
-        # so the pillar reads 75. The presence check could not see that - it
+        # state of this scorer prints: missing calibration evidence keeps its
+        # 40 points in the denominator, while unknown probe spread is excluded,
+        # so the pillar reads 53. The presence check could not see that - it
         # asserted the wrong number had to stay - so the number is read out of
         # the scorer here and the README has to follow it.
         opening = READINESS.EvaluationFacts(
@@ -6061,7 +6061,19 @@ class SkillPackageTests(unittest.TestCase):
         for sub in withheld:
             self.assertFalse(sub.measured)
         supplied, _ = READINESS.score_evaluation(
-            READINESS.replace(opening, probe_scores=((0.05, 0.0),))
+            READINESS.replace(
+                opening,
+                calibration_present=True,
+                calibration_complete=True,
+                checks=(
+                    {
+                        "good_passes": True,
+                        "bad_fails": True,
+                        "non_constant": True,
+                    },
+                ),
+                probe_scores=((0.05, 0.0),),
+            )
         )
         self.assertGreater(supplied.score, pillar.score)
         self.assertIn("keeps its weight and earns nothing", readme)
@@ -13807,6 +13819,7 @@ class SkillPackageTests(unittest.TestCase):
         )[0]
         self.assertIn("without `--calibration`", opening)
         self.assertIn("no current-run calibration", opening)
+        self.assertIn("run `scripts/readiness.py`", opening)
 
     def test_source_read_claims_only_the_cap_it_can_clear(self) -> None:
         """Source-read knobs establish a search space, never wiring or build proof."""
@@ -14334,11 +14347,9 @@ class SkillPackageTests(unittest.TestCase):
             for condition in re.findall(r'Cap\(\s*"([a-z0-9-]+)"', source)
             if condition.startswith("evaluator-")
         }
-        # #238 added the ownership condition; #304 adds the separate claim
-        # boundary for a named evaluator that calibration has not measured.
-        # #304 adds a sixth: a declared method is metadata until calibration
-        # measures the connected evaluator.
-        self.assertEqual(len(conditions), 6)
+        # A missing calibration result is a weighted evidence gap rather than
+        # a cap, so the scorer has five evaluator cap conditions to route.
+        self.assertEqual(len(conditions), 5)
         normalized = " ".join(SKILL.read_text().casefold().split())
         routing = normalized.split(
             "evaluator and agent caps route through the rules that already own them", 1
@@ -14346,7 +14357,6 @@ class SkillPackageTests(unittest.TestCase):
         for condition, branch in (
             ("evaluator-unresolved", "inspect, repair, or replace"),
             ("evaluator-invalid", "inspect, repair, or replace"),
-            ("evaluator-unvalidated", "continue to the approved calibration"),
             ("evaluator-timeout", "five-option question"),
             ("evaluator-absent", "create or select"),
             ("evaluator-generated", "walkthrough labeling"),

@@ -777,9 +777,6 @@ ACTION_FOR_CONDITION: dict[str, str] = {
     "agent-generated": "connect-real-agent",
     "evaluator-unresolved": "repair-evaluator",
     "evaluator-invalid": "repair-evaluator",
-    # Calibration is the next guide stage for a declared evaluator.  It is not
-    # a repair instruction: no execution has found the file defective yet.
-    "evaluator-unvalidated": PROCEED,
     "evaluator-timeout": "bound-evaluator-cost",
     "agent-no-varying-knobs": "vary-knobs",
 }
@@ -938,7 +935,6 @@ ROUTE_CATEGORY: dict[str, str] = {
     # probes that ran, and this one was never read.
     "evaluator-unresolved": DIAGNOSTIC,
     "evaluator-invalid": CREATION_OR_REPAIR,
-    "evaluator-unvalidated": CLAIM_SCOPING,
     "evaluator-timeout": CREATION_OR_REPAIR,
     # Conditional, and classified the same way `dataset-below-measurable-size`
     # above already is: by what the result IS, not by whether the run waits.
@@ -1059,11 +1055,6 @@ EVALUATOR_TIMEOUT_CEILING = 45
 # First of the "answers the wrong question" band, so above every ceiling in the
 # band below it. Everything is connected and valid; this run simply did not
 # finish, and re-running within a bound is all that is asked.
-EVALUATOR_UNVALIDATED_CEILING = 45
-# A declared method describes intended semantics, but before a calibration case
-# ran it establishes no behavior of the connected file.  It carries the same
-# claim ceiling as a timeout, while preserving the distinct, planned recovery:
-# continue to calibration rather than repair a file nothing has found broken.
 AGENT_NO_VARYING_KNOBS_CEILING = 45
 # Equal to the timeout for the same reason: nothing is broken, and the run
 # compares nothing. An optimization with one configuration is a single
@@ -1266,7 +1257,6 @@ CAP_SEVERITY_ORDER: tuple[tuple[str, tuple[tuple[str, int], ...]], ...] = (
         "answers the wrong question",
         (
             ("evaluator-timeout", EVALUATOR_TIMEOUT_CEILING),
-            ("evaluator-unvalidated", EVALUATOR_UNVALIDATED_CEILING),
             ("agent-no-varying-knobs", AGENT_NO_VARYING_KNOBS_CEILING),
             ("dataset-tune-holdout-overlap", SPLIT_OVERLAP_CEILING),
             ("dataset-tuning-split-empty", TUNING_SPLIT_EMPTY_CEILING),
@@ -1432,11 +1422,6 @@ CAP_NO_IMPLICATION: dict[str, str] = {
     ),
     "evaluator-unresolved": (
         "present-but-unnamed excludes absent, and no dataset condition follows from it"
-    ),
-    "evaluator-unvalidated": (
-        "a declared method without completed calibration is mutually exclusive "
-        "with the unnamed and timeout routes and says nothing about data or "
-        "search-space conditions"
     ),
     "evaluator-timeout": "a run that did not finish says nothing about the material",
     "agent-no-varying-knobs": "about the search space, which no dataset fact implies",
@@ -4370,16 +4355,16 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
     # (traigent-first-run#133).
     # Every witness that calibration was ever engaged - real checks, a
     # supplied payload, or a payload that timed out before producing checks -
-    # excludes this branch, so a run that tried and has something to say
-    # (including "it timed out") keeps saying it through the paths below
-    # rather than being relabelled "never resolved".
+    # excludes the unknown-method branch, so a run that tried and has
+    # something to say keeps saying it below. It never overrides a current
+    # parse failure: a result from another revision cannot make this file run.
     calibration_engaged = (
         facts.calibration_present
         or facts.calibration_supplied
         or facts.timed_out
         or bool(facts.checks)
     )
-    if facts.method is None and not calibration_engaged:
+    if facts.parses is False or (facts.method is None and not calibration_engaged):
         if facts.parses is False:
             reason = (
                 "An evaluator file is connected, but it does not parse as "
@@ -4401,7 +4386,21 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
         subs.append(SubScore("probe-spread", 0.0, 15.0, False, evidence))
         return combine("evaluation", subs), caps
 
-    if facts.calibration_present and facts.checks:
+    calibration_complete = facts.calibration_complete
+    if calibration_complete is None:
+        # Direct callers predate the artifact adapter. Their facts count only
+        # when every case carries the complete behavioral check set too; a
+        # partial dictionary is evidence that calibration was attempted, not
+        # evidence that the evaluator was validated.
+        calibration_complete = bool(facts.checks) and all(
+            CALIBRATION_REQUIRED_CHECKS <= checks.keys()
+            and all(
+                isinstance(checks[name], bool) for name in CALIBRATION_REQUIRED_CHECKS
+            )
+            for checks in facts.checks
+        )
+
+    if calibration_complete and facts.checks:
         gating_failed = [
             index
             for index, checks in enumerate(facts.checks)
@@ -4458,7 +4457,21 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
             evidence = "calibration ran but reported no checks"
         else:
             evidence = "no calibration result was provided to this score"
-        subs.append(SubScore("calibration", 0.0, 40.0, False, evidence))
+        subs.append(
+            SubScore(
+                "calibration",
+                0.0,
+                40.0,
+                False,
+                evidence,
+                # The score describes the evidence connected to this run, not
+                # everything that may exist elsewhere. A complete calibration
+                # result earns these points; one that was not found or passed
+                # in does not. Keeping the check in the denominator makes the
+                # readiness gap visible without claiming the evaluator failed.
+                withheld=True,
+            )
+        )
 
     profile = METHOD_PROFILES.get(facts.method or "")
     if profile and facts.task_kind:
@@ -4517,7 +4530,7 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
             )
         )
 
-    if facts.probe_scores:
+    if calibration_complete and facts.probe_scores:
         spreads = [max(case) - min(case) for case in facts.probe_scores if case]
         widest = max(spreads) if spreads else 0.0
         subs.append(
@@ -4537,10 +4550,13 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
                 15.0,
                 False,
                 "not yet measured how far apart it scores a right and a wrong answer",
-                # Same shape as task-fit: calibration is this run's to perform,
-                # and reporting no probe scores used to score the pillar 100
-                # against 87 for reporting a narrow spread honestly.
-                withheld=True,
+                # A complete calibration that omits its scores must not
+                # outscore one that reports a narrow spread honestly. When no
+                # complete calibration exists at all, however, its missing
+                # evidence is already charged by the calibration subscore;
+                # spread remains unknown rather than charging the same absence
+                # a second time.
+                withheld=bool(calibration_complete),
             )
         )
 
@@ -4550,29 +4566,6 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
                 "evaluator-timeout",
                 EVALUATOR_TIMEOUT_CEILING,
                 "The evaluator did not finish within its timeout.",
-            )
-        )
-    # A method declares intended semantics, not the behavior of the file that
-    # was connected. The opening gate deliberately never imports customer code,
-    # so it cannot establish input-dependence safely. A completed calibration
-    # is the first measurement that can. An empty result is not a measurement;
-    # a timeout has its own, more specific recovery condition.
-    calibration_complete = facts.calibration_complete
-    if calibration_complete is None:
-        # Direct scorer callers predate the artifact contract.  Their explicit
-        # `calibration_present` plus checks remains a complete measurement;
-        # the absence of both remains unvalidated.
-        calibration_complete = facts.calibration_present and bool(facts.checks)
-    if facts.method is not None and not calibration_complete and not facts.timed_out:
-        caps.append(
-            Cap(
-                "evaluator-unvalidated",
-                EVALUATOR_UNVALIDATED_CEILING,
-                f"An evaluator method ({facts.method}) was declared, but no "
-                "calibration measured the connected evaluator yet, so the "
-                "declaration cannot establish that it distinguishes answers. "
-                "Continue to the approved calibration before relying on this score.",
-                blocks=False,
             )
         )
     return combine("evaluation", subs), caps
@@ -7877,27 +7870,63 @@ def _expression_uses_reachable_name(
     )
 
 
-def _call_has_one_bare_reference(call: ast.Call, node: ast.Name, name: str) -> bool:
-    """A checked helper receives one intact object, not aliases of it."""
-    occurrences = [
-        child
-        for expression in (
-            *call.args,
-            *(keyword.value for keyword in call.keywords),
-        )
-        for child in ast.walk(expression)
-        if isinstance(child, ast.Name) and child.id == name
-    ]
-    return occurrences == [node]
+def _name_contributes_to_expression(
+    expression: ast.expr,
+    name: str,
+    callable_node: ast.FunctionDef | ast.AsyncFunctionDef,
+    source: StaticSourceEvidence,
+    *,
+    follow_same_file_call: bool = True,
+) -> bool:
+    """Whether one reachable read still contributes to an assigned value."""
+    for reference in ast.walk(expression):
+        if (
+            not isinstance(reference, ast.Name)
+            or not isinstance(reference.ctx, ast.Load)
+            or reference.id != name
+            or not _is_statically_reachable(reference, source)
+        ):
+            continue
+        child: ast.AST = reference
+        while child is not expression:
+            parent = source.parents.get(id(child))
+            if parent is None:
+                break
+            if isinstance(parent, ast.keyword) and parent.value is child:
+                child = parent
+                continue
+            if isinstance(parent, ast.Call) and (
+                child in parent.args
+                or isinstance(child, ast.keyword)
+                and child in parent.keywords
+            ):
+                if not _call_argument_contributes(
+                    parent,
+                    child,
+                    callable_node,
+                    source,
+                    follow_same_file_call=follow_same_file_call,
+                ):
+                    break
+                child = parent
+                continue
+            if isinstance(
+                parent,
+                (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda),
+            ):
+                break
+            child = parent
+        else:
+            return True
+    return False
 
 
 def _mapping_reference_is_safe(
     node: ast.Name,
-    name: str,
     parents: dict[int, ast.AST],
-    allowed_forwarding_calls: frozenset[int],
+    allowed_forwarding_references: frozenset[int],
 ) -> bool:
-    """Allow a mapping value read or one exact checked-helper forwarding."""
+    """Allow a mapping read or one exact, independently checked forwarding."""
     parent = parents.get(id(node))
     if (
         isinstance(parent, ast.Attribute)
@@ -7913,21 +7942,15 @@ def _mapping_reference_is_safe(
         and isinstance(parent.ctx, ast.Load)
     ):
         return True
-    call = parent if isinstance(parent, ast.Call) else parents.get(id(parent))
-    return (
-        isinstance(call, ast.Call)
-        and id(call) in allowed_forwarding_calls
-        and (
-            node in call.args or any(keyword.value is node for keyword in call.keywords)
-        )
-        and _call_has_one_bare_reference(call, node, name)
-    )
+    return id(node) in allowed_forwarding_references
 
 
 def _callable_parameter_is_unshadowed(
     name: str,
     callable_node: ast.FunctionDef | ast.AsyncFunctionDef,
-    allowed_forwarding_calls: frozenset[int] = frozenset(),
+    allowed_forwarding_references: frozenset[int] = frozenset(),
+    *,
+    require_mapping_safety: bool = False,
 ) -> bool:
     """A selector is dynamic only when this callable receives it intact."""
     arguments = callable_node.args
@@ -7961,19 +7984,18 @@ def _callable_parameter_is_unshadowed(
     # arguments. The stricter alias/escape rule belongs only to parameters the
     # callable actually reads as a configuration mapping.
     forwarded_to_checked_helper = any(
-        isinstance(child, ast.Call)
-        and id(child) in allowed_forwarding_calls
-        and any(
-            isinstance(argument, ast.Name) and argument.id == name
-            for argument in (
-                *child.args,
-                *(keyword.value for keyword in child.keywords),
-            )
-        )
+        isinstance(child, ast.Name)
+        and child.id == name
+        and id(child) in allowed_forwarding_references
         for child in body_nodes
     )
-    mapping_receiver = forwarded_to_checked_helper or any(
-        _config_read_key(child, frozenset({name})) is not None for child in body_nodes
+    mapping_receiver = (
+        require_mapping_safety
+        or forwarded_to_checked_helper
+        or any(
+            _config_read_key(child, frozenset({name})) is not None
+            for child in body_nodes
+        )
     )
     parents = {
         id(child): parent
@@ -7992,7 +8014,7 @@ def _callable_parameter_is_unshadowed(
             and child.id == name
             and isinstance(child.ctx, ast.Load)
             and not _mapping_reference_is_safe(
-                child, name, parents, allowed_forwarding_calls
+                child, parents, allowed_forwarding_references
             )
         )
         for child in body_nodes
@@ -8002,11 +8024,11 @@ def _callable_parameter_is_unshadowed(
 def _selected_callable_parameter_is_unshadowed(
     name: str,
     source: StaticSourceEvidence,
-    allowed_forwarding_calls: frozenset[int] = frozenset(),
+    allowed_forwarding_references: frozenset[int] = frozenset(),
 ) -> bool:
     """Compatibility spelling for the selected callable's parameter check."""
     return _callable_parameter_is_unshadowed(
-        name, source.selected_callable, allowed_forwarding_calls
+        name, source.selected_callable, allowed_forwarding_references
     )
 
 
@@ -8119,6 +8141,8 @@ def _module_binding_reference_is_safe(
         and isinstance(source.parents.get(id(parent)), ast.Call)
         and source.parents[id(parent)].func is parent
     ):
+        return True
+    if isinstance(parent, ast.FormattedValue) and parent.value is node:
         return True
     return isinstance(parent, ast.Compare) and any(
         comparator is node and isinstance(operation, (ast.In, ast.NotIn))
@@ -8329,14 +8353,34 @@ def _node_reaches_return(
     node: ast.AST,
     callable_node: ast.FunctionDef | ast.AsyncFunctionDef,
     source: StaticSourceEvidence,
+    *,
+    follow_same_file_call: bool = True,
 ) -> bool:
-    """Whether this expression contributes directly to this call's return."""
+    """Whether this expression contributes to this call's returned value."""
     child = node
     while (parent := source.parents.get(id(child))) is not None:
         if parent is callable_node:
             return False
         if isinstance(parent, ast.Return):
-            return True
+            return parent.value is child
+        if isinstance(parent, ast.keyword) and parent.value is child:
+            child = parent
+            continue
+        if isinstance(parent, ast.Call) and (
+            child in parent.args
+            or isinstance(child, ast.keyword)
+            and child in parent.keywords
+        ):
+            if not _call_argument_contributes(
+                parent,
+                child,
+                callable_node,
+                source,
+                follow_same_file_call=follow_same_file_call,
+            ):
+                return False
+            child = parent
+            continue
         if isinstance(
             parent, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
         ):
@@ -8345,31 +8389,25 @@ def _node_reaches_return(
     return False
 
 
-def _forwarded_parameters(
+def _forwarded_parameter_references(
     call: ast.Call,
     target: ast.FunctionDef | ast.AsyncFunctionDef,
-    dynamic_parameters: frozenset[str],
-) -> set[str]:
-    """Map intact caller inputs to the exact parameters a helper receives."""
+) -> tuple[tuple[ast.Name, str], ...]:
+    """Pair each bare caller input with the helper parameter that receives it."""
     positional = (*target.args.posonlyargs, *target.args.args)
-    forwarded = {
-        positional[index].arg
+    forwarded = [
+        (argument, positional[index].arg)
         for index, argument in enumerate(call.args)
-        if index < len(positional)
-        and isinstance(argument, ast.Name)
-        and argument.id in dynamic_parameters
-    }
-    forwarded.update(
-        keyword.arg
+        if index < len(positional) and isinstance(argument, ast.Name)
+    ]
+    forwarded.extend(
+        (keyword.value, keyword.arg)
         for keyword in call.keywords
         if keyword.arg is not None
         and isinstance(keyword.value, ast.Name)
-        and keyword.value.id in dynamic_parameters
         and keyword.arg in _callable_parameter_names(target)
     )
-    return {
-        name for name in forwarded if _callable_parameter_is_unshadowed(name, target)
-    }
+    return tuple(forwarded)
 
 
 def _scope_declares_global(node: ast.AST, name: str) -> bool:
@@ -8448,29 +8486,342 @@ def _call_matches_static_signature(
     return set((*required_positional, *required_keyword_only)) <= supplied
 
 
-def _call_returns_helper_result(
+def _call_argument_contributes(
+    call: ast.Call,
+    argument: ast.AST,
+    selected: ast.FunctionDef | ast.AsyncFunctionDef,
+    source: StaticSourceEvidence,
+    *,
+    follow_same_file_call: bool = True,
+) -> bool:
+    """Refuse a known wrapper that discards or overwrites this argument.
+
+    Passing a value to an external call is the same narrow wiring evidence as
+    passing a selected model into a provider call: the callee is opaque, but
+    the value is on its call path. A same-file wrapper is stronger evidence in
+    the other direction because its body is available; when that body ignores
+    the parameter, crediting it would contradict source we already read.
+    """
+    if isinstance(call.func, ast.Lambda):
+        return False
+    if not isinstance(call.func, ast.Name):
+        return True
+    if _callable_binds(call.func.id, selected):
+        return False
+    target = next(
+        (
+            candidate
+            for candidate in source.tree.body
+            if isinstance(candidate, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and candidate.name == call.func.id
+        ),
+        None,
+    )
+    if target is None:
+        return True
+    if not follow_same_file_call:
+        return False
+    parameter = _call_argument_parameter(call, argument, target)
+    return bool(
+        _module_callable_is_current(target, source)
+        and parameter is not None
+        and _call_matches_static_signature(call, target)
+        and _name_reaches_return(
+            parameter,
+            target,
+            source,
+            refuse_rebinding=True,
+            follow_same_file_call=False,
+        )
+    )
+
+
+def _single_literal_initializer(
+    name: str,
+    stores: dict[str, list[ast.Name]],
+    source: StaticSourceEvidence,
+) -> ast.expr | None:
+    writes = stores.get(name, ())
+    if len(writes) != 1:
+        return None
+    parent = source.parents.get(id(writes[0]))
+    if isinstance(parent, (ast.Assign, ast.AnnAssign)):
+        return parent.value
+    return None
+
+
+def _mutation_guarantees_growth(call: ast.Call, initializer: ast.expr | None) -> bool:
+    """Recognize only container mutations that definitely change a literal."""
+    if initializer is None or not isinstance(call.func, ast.Attribute) or call.keywords:
+        return False
+    method = call.func.attr
+    if method == "append":
+        return isinstance(initializer, ast.List) and len(call.args) == 1
+    if method == "insert":
+        return isinstance(initializer, ast.List) and len(call.args) == 2
+    if method == "extend" and isinstance(initializer, ast.List) and len(call.args) == 1:
+        extension = call.args[0]
+        if isinstance(extension, (ast.List, ast.Tuple, ast.Set)):
+            return any(
+                not isinstance(element, ast.Starred) for element in extension.elts
+            )
+        return (
+            isinstance(extension, ast.Constant)
+            and isinstance(extension.value, (str, bytes))
+            and bool(extension.value)
+        )
+    return False
+
+
+def _name_reaches_return(
+    name: str,
+    callable_node: ast.FunctionDef | ast.AsyncFunctionDef,
+    source: StaticSourceEvidence,
+    *,
+    after_line: int = 0,
+    refuse_rebinding: bool = False,
+    follow_same_file_call: bool = True,
+) -> bool:
+    """Whether a returned result still depends on one local name.
+
+    This is deliberately smaller than general data flow. It follows ordinary
+    local assignments only when every write to that local still uses an
+    already-dependent name. That covers response adapters such as
+    ``answer = client.send(prompt); return answer.text``. It also recognizes a
+    bounded context loop whose iteration count changes a returned accumulator,
+    without claiming to understand arbitrary control flow.
+    """
+    if refuse_rebinding and any(
+        isinstance(child, ast.Name)
+        and child.id == name
+        and isinstance(child.ctx, (ast.Store, ast.Del))
+        and _is_statically_reachable(child, source)
+        for child in _callable_body_nodes(callable_node)
+    ):
+        return False
+    dependent = {name}
+    stores: dict[str, list[ast.Name]] = {}
+    for child in _callable_body_nodes(callable_node):
+        if (
+            isinstance(child, ast.Name)
+            and isinstance(child.ctx, ast.Store)
+            and _is_statically_reachable(child, source)
+        ):
+            stores.setdefault(child.id, []).append(child)
+
+    changed = True
+    while changed:
+        changed = False
+        for candidate, writes in stores.items():
+            if candidate in dependent:
+                continue
+            values: list[ast.expr] = []
+            for write in writes:
+                parent = source.parents.get(id(write))
+                if isinstance(parent, (ast.Assign, ast.AnnAssign)):
+                    value = parent.value
+                elif isinstance(parent, ast.NamedExpr) and parent.target is write:
+                    value = parent.value
+                else:
+                    break
+                if value is None:
+                    break
+                values.append(value)
+            else:
+                if values and all(
+                    any(
+                        _name_contributes_to_expression(
+                            value,
+                            upstream,
+                            callable_node,
+                            source,
+                            follow_same_file_call=follow_same_file_call,
+                        )
+                        for upstream in dependent
+                    )
+                    for value in values
+                ):
+                    dependent.add(candidate)
+                    changed = True
+
+        for loop in (
+            child
+            for child in _callable_body_nodes(callable_node)
+            if isinstance(child, (ast.For, ast.AsyncFor))
+            and _is_statically_reachable(child, source)
+            and any(
+                _name_contributes_to_expression(
+                    child.iter,
+                    candidate,
+                    callable_node,
+                    source,
+                    follow_same_file_call=follow_same_file_call,
+                )
+                for candidate in dependent
+            )
+        ):
+            for call in _callable_body_nodes(loop):
+                if (
+                    not isinstance(call, ast.Call)
+                    or not _is_statically_reachable(call, source)
+                    or not isinstance(call.func, ast.Attribute)
+                    or not isinstance(call.func.value, ast.Name)
+                ):
+                    continue
+                accumulator = call.func.value.id
+                initializer = _single_literal_initializer(accumulator, stores, source)
+                if (
+                    accumulator not in dependent
+                    and _mutation_guarantees_growth(call, initializer)
+                    and _accumulator_only_grows(accumulator, callable_node, source)
+                ):
+                    dependent.add(accumulator)
+                    changed = True
+
+    for returned in _callable_body_nodes(callable_node):
+        if (
+            not isinstance(returned, ast.Return)
+            or returned.value is None
+            or returned.lineno <= after_line
+            or not _is_statically_reachable(returned, source)
+        ):
+            continue
+        for reference in ast.walk(returned.value):
+            if (
+                isinstance(reference, ast.Name)
+                and isinstance(reference.ctx, ast.Load)
+                and reference.id in dependent
+                and _is_statically_reachable(reference, source)
+                and _node_reaches_return(
+                    reference,
+                    callable_node,
+                    source,
+                    follow_same_file_call=follow_same_file_call,
+                )
+            ):
+                return True
+    return False
+
+
+def _accumulator_only_grows(
+    name: str,
+    callable_node: ast.FunctionDef | ast.AsyncFunctionDef,
+    source: StaticSourceEvidence,
+) -> bool:
+    """Refuse syntax that can erase a loop-derived container dependency."""
+    stores: dict[str, list[ast.Name]] = {}
+    for child in _callable_body_nodes(callable_node):
+        if (
+            isinstance(child, ast.Name)
+            and child.id == name
+            and isinstance(child.ctx, ast.Store)
+        ):
+            stores.setdefault(name, []).append(child)
+    initializer = _single_literal_initializer(name, stores, source)
+    for child in _callable_body_nodes(callable_node):
+        if (
+            not isinstance(child, ast.Name)
+            or child.id != name
+            or not _is_statically_reachable(child, source)
+        ):
+            continue
+        if isinstance(child.ctx, ast.Del):
+            return False
+        if not isinstance(child.ctx, ast.Load):
+            continue
+        node: ast.AST = child
+        enclosing_call: ast.Call | None = None
+        while (parent := source.parents.get(id(node))) is not None:
+            if isinstance(parent, ast.Call):
+                enclosing_call = parent
+                break
+            if parent is callable_node or isinstance(
+                parent,
+                (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda),
+            ):
+                break
+            node = parent
+        if enclosing_call is None:
+            if not _node_reaches_return(child, callable_node, source):
+                return False
+            continue
+        additive_receiver = (
+            isinstance(enclosing_call.func, ast.Attribute)
+            and enclosing_call.func.value is child
+            and _mutation_guarantees_growth(enclosing_call, initializer)
+        )
+        safe_returned_join = (
+            isinstance(enclosing_call.func, ast.Attribute)
+            and enclosing_call.func.attr == "join"
+            and isinstance(enclosing_call.func.value, ast.Constant)
+            and isinstance(enclosing_call.func.value.value, str)
+            and _node_reaches_return(enclosing_call, callable_node, source)
+        )
+        if not additive_receiver and not safe_returned_join:
+            return False
+    return True
+
+
+def _call_argument_parameter(
+    call: ast.Call,
+    argument: ast.AST,
+    target: ast.FunctionDef | ast.AsyncFunctionDef,
+) -> str | None:
+    """Map one direct argument node to its same-file parameter."""
+    positional = (*target.args.posonlyargs, *target.args.args)
+    if argument in call.args:
+        index = call.args.index(argument)
+        return positional[index].arg if index < len(positional) else None
+    if isinstance(argument, ast.keyword) and argument in call.keywords:
+        return argument.arg
+    return None
+
+
+def _call_contributes_to_return(
     call: ast.Call,
     target: ast.FunctionDef | ast.AsyncFunctionDef,
     selected: ast.FunctionDef | ast.AsyncFunctionDef,
     source: StaticSourceEvidence,
 ) -> bool:
-    """A sync helper is returned directly; an async helper is returned awaited."""
+    """A helper result reaches the return through eager call composition."""
     if any(
         isinstance(node, (ast.Yield, ast.YieldFrom))
         for node in _callable_body_nodes(target)
     ):
         return False
-    parent = source.parents.get(id(call))
+    node: ast.AST = call
+    parent = source.parents.get(id(node))
     if isinstance(target, ast.AsyncFunctionDef):
-        returned = source.parents.get(id(parent))
-        return (
-            isinstance(selected, ast.AsyncFunctionDef)
-            and isinstance(parent, ast.Await)
-            and parent.value is call
-            and isinstance(returned, ast.Return)
-            and returned.value is parent
-        )
-    return isinstance(parent, ast.Return) and parent.value is call
+        if (
+            not isinstance(selected, ast.AsyncFunctionDef)
+            or not isinstance(parent, ast.Await)
+            or parent.value is not call
+        ):
+            return False
+        node = parent
+    elif isinstance(parent, ast.Await):
+        return False
+
+    while (parent := source.parents.get(id(node))) is not None:
+        if isinstance(parent, ast.Return):
+            return parent.value is node
+        if isinstance(parent, ast.Await) and parent.value is node:
+            node = parent
+            continue
+        if isinstance(parent, ast.keyword) and parent.value is node:
+            node = parent
+            continue
+        if isinstance(parent, ast.Call) and (
+            node in parent.args
+            or isinstance(node, ast.keyword)
+            and node in parent.keywords
+        ):
+            if not _call_argument_contributes(parent, node, selected, source):
+                return False
+            node = parent
+            continue
+        return False
+    return False
 
 
 def _callables_on_the_call_path(
@@ -8513,20 +8864,55 @@ def _callables_on_the_call_path(
             target is not None
             and _module_callable_is_current(target, source)
             and _call_matches_static_signature(node, target)
-            and _call_returns_helper_result(node, target, selected, source)
+            and _call_contributes_to_return(node, target, selected, source)
         ):
             helper_calls.append((node, target))
-    allowed_forwarding_calls = frozenset(id(call) for call, _ in helper_calls)
+    forwarding_edges = [
+        (call, target, _forwarded_parameter_references(call, target))
+        for call, target in helper_calls
+    ]
+    selected_mapping_parameters = {
+        name
+        for name in _callable_parameter_names(selected)
+        if any(
+            _config_read_key(child, frozenset({name})) is not None
+            for child in _callable_body_nodes(selected)
+        )
+        or any(
+            reference.id == name
+            and any(
+                _config_read_key(child, frozenset({target_parameter})) is not None
+                for child in _callable_body_nodes(target)
+            )
+            for _, target, references in forwarding_edges
+            for reference, target_parameter in references
+        )
+    }
+    allowed_forwarding_references = frozenset(
+        id(reference)
+        for _, target, references in forwarding_edges
+        for reference, target_parameter in references
+        if _callable_parameter_is_unshadowed(
+            target_parameter,
+            target,
+            require_mapping_safety=reference.id in selected_mapping_parameters,
+        )
+    )
     initial = {
         name
         for name in _callable_parameter_names(selected)
         if _selected_callable_parameter_is_unshadowed(
-            name, source, allowed_forwarding_calls
+            name, source, allowed_forwarding_references
         )
     }
     helpers: dict[int, tuple[ast.FunctionDef | ast.AsyncFunctionDef, set[str]]] = {}
-    for node, target in helper_calls:
-        forwarded = _forwarded_parameters(node, target, frozenset(initial))
+    for _, target, references in forwarding_edges:
+        forwarded = {
+            target_parameter
+            for reference, target_parameter in references
+            if reference.id in initial
+            and id(reference) in allowed_forwarding_references
+        }
         if not forwarded:
             continue
         helper, known = helpers.setdefault(id(target), (target, set()))
@@ -8618,12 +9004,11 @@ def _holder_reaches_later_return(
     guard_index = body.index(guard)
     if assignment_index >= guard_index:
         return False
-    return any(
-        isinstance(statement, ast.Return)
-        and statement.value is not None
-        and _expression_uses_reachable_name(statement.value, holder, source)
-        and _is_statically_reachable(statement, source)
-        for statement in body[guard_index + 1 :]
+    return _name_reaches_return(
+        holder,
+        callable_node,
+        source,
+        after_line=guard.end_lineno or guard.lineno,
     )
 
 
@@ -8695,13 +9080,11 @@ def _selection_reaches_return(
     names = _assignment_names(statement)
     if len(names) != 1 or _callable_store_count(names[0], callable_node) != 1:
         return False
-    statement_index = callable_node.body.index(statement)
-    return any(
-        isinstance(later, ast.Return)
-        and later.value is not None
-        and _expression_uses_reachable_name(later.value, names[0], source)
-        and _is_statically_reachable(later, source)
-        for later in callable_node.body[statement_index + 1 :]
+    return _name_reaches_return(
+        names[0],
+        callable_node,
+        source,
+        after_line=statement.end_lineno or statement.lineno,
     )
 
 

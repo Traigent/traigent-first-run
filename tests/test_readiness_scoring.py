@@ -1282,22 +1282,10 @@ class EvaluationScoringTests(unittest.TestCase):
         self.assertEqual(cap.action_kind, "repair-evaluator")
         self.assertNotIn("does not parse", cap.reason)
 
-    def test_a_declared_method_without_calibration_is_unvalidated_not_broken(
+    def test_a_declared_method_without_calibration_loses_only_evidence_credit(
         self,
     ) -> None:
-        """A method name cannot certify the file it is attached to (#304).
-
-        The opening score intentionally does not import evaluators: importing
-        arbitrary customer code can spend, use credentials, or trigger module
-        side effects. That makes a declaration useful metadata but not evidence
-        that the connected scorer reads either answer. Both an empty file and a
-        constant scorer therefore have to remain capped until the existing
-        approved calibration path has actually measured this evaluator.
-
-        This test pins the transition, not a synthetic parser heuristic. A
-        future static check may add facts, but it must not make a declared
-        method alone clear the evaluator cap again.
-        """
+        """A method name earns no behavioral credit and invents no hard cap."""
         facts = MODULE.EvaluationFacts(
             present=True,
             method="exact",
@@ -1306,14 +1294,50 @@ class EvaluationScoringTests(unittest.TestCase):
         )
         pillar, caps = MODULE.score_evaluation(facts)
         conditions = [cap.condition for cap in caps]
-        self.assertIn("evaluator-unvalidated", conditions)
+        self.assertNotIn("evaluator-unvalidated", conditions)
         self.assertNotIn("evaluator-unresolved", conditions)
         self.assertNotIn("evaluator-invalid", conditions)
-        cap = next(cap for cap in caps if cap.condition == "evaluator-unvalidated")
-        self.assertIn("method (exact) was declared", cap.reason)
-        self.assertIn("no calibration measured", cap.reason)
-        self.assertFalse(cap.blocks)
-        self.assertEqual(cap.action_kind, MODULE.PROCEED)
+        calibration = next(sub for sub in pillar.subscores if sub.name == "calibration")
+        spread = next(sub for sub in pillar.subscores if sub.name == "probe-spread")
+        self.assertFalse(calibration.measured)
+        self.assertTrue(calibration.withheld)
+        self.assertFalse(spread.measured)
+        self.assertFalse(spread.withheld)
+        self.assertEqual(pillar.score, 53)
+        self.assertLess(pillar.confidence, MODULE.MIN_CONFIDENCE_FOR_TOP_BANDS)
+
+    def test_a_proven_parse_failure_remains_a_negative_finding(self) -> None:
+        facts = MODULE.EvaluationFacts(
+            present=True,
+            method="exact",
+            task_kind="closed-label",
+            parses=False,
+        )
+        _, caps = MODULE.score_evaluation(facts)
+        self.assertIn("evaluator-unresolved", [cap.condition for cap in caps])
+
+    def test_calibration_evidence_cannot_override_a_current_parse_failure(self) -> None:
+        facts = MODULE.EvaluationFacts(
+            present=True,
+            method="exact",
+            task_kind="closed-label",
+            parses=False,
+            calibration_present=True,
+            calibration_supplied=True,
+            calibration_complete=True,
+            checks=(
+                {
+                    "good_passes": True,
+                    "bad_fails": True,
+                    "non_constant": True,
+                },
+            ),
+            probe_scores=((1.0, 0.0),),
+        )
+        _, caps = MODULE.score_evaluation(facts)
+        conditions = [cap.condition for cap in caps]
+        self.assertIn("evaluator-unresolved", conditions)
+        self.assertNotIn("evaluator-invalid", conditions)
 
     def test_constant_pass_caught_by_calibration_is_evaluator_invalid_not_unresolved(
         self,
@@ -5642,11 +5666,7 @@ class TheCapOrderingIsWrittenDownAndCheckedTests(unittest.TestCase):
                 # produces none.
                 25: ["evaluator-invalid", "dataset-shape-unrecognised"],
                 40: ["evaluator-absent", "evaluator-unresolved"],
-                45: [
-                    "evaluator-timeout",
-                    "evaluator-unvalidated",
-                    "agent-no-varying-knobs",
-                ],
+                45: ["evaluator-timeout", "agent-no-varying-knobs"],
                 # One split defect read from each end: the same rows on both
                 # sides, and every scoreable row on one. Neither breaks the
                 # material and both leave the run comparing nothing, so they
@@ -9654,6 +9674,54 @@ class StaticAgentSourceEvidenceTests(unittest.TestCase):
                 "    return text * d\n",
                 (0, 2, 4),
             ),
+            "a guarded depth controls returned prompt context": (
+                "retrieval",
+                "DEPTHS = (0, 2, 4)\n"
+                'PAST = ("one", "two", "three", "four")\n'
+                "def build(text, config):\n"
+                '    depth = config.get("retrieval", 0)\n'
+                "    if depth not in DEPTHS:\n"
+                '        raise ValueError(f"{depth!r} is not one of {DEPTHS}")\n'
+                "    lines = [text]\n"
+                "    for incident in PAST[:depth]:\n"
+                "        lines.append(incident)\n"
+                '    return "\\n".join(lines)\n'
+                "def run(text, config):\n"
+                "    return send(build(text, config))\n",
+                (0, 2, 4),
+            ),
+            "a guarded depth extends context by a list item": (
+                "retrieval",
+                "DEPTHS = (0, 2, 4)\n"
+                'PAST = ("one", "two", "three", "four")\n'
+                "def build(text, config):\n"
+                '    depth = config.get("retrieval", 0)\n'
+                "    if depth not in DEPTHS:\n"
+                '        raise ValueError("no")\n'
+                "    lines = [text]\n"
+                "    for incident in PAST[:depth]:\n"
+                "        lines.extend([incident])\n"
+                '    return "\\n".join(lines)\n'
+                "def run(text, config):\n"
+                "    return send(build(text, config))\n",
+                (0, 2, 4),
+            ),
+            "a guarded depth extends context by a tuple item": (
+                "retrieval",
+                "DEPTHS = (0, 2, 4)\n"
+                'PAST = ("one", "two", "three", "four")\n'
+                "def build(text, config):\n"
+                '    depth = config.get("retrieval", 0)\n'
+                "    if depth not in DEPTHS:\n"
+                '        raise ValueError("no")\n'
+                "    lines = [text]\n"
+                "    for incident in PAST[:depth]:\n"
+                "        lines.extend((incident,))\n"
+                '    return "\\n".join(lines)\n'
+                "def run(text, config):\n"
+                "    return send(build(text, config))\n",
+                (0, 2, 4),
+            ),
             "a selection made in a helper this agent calls": (
                 "style",
                 'STYLES = {"plain": "a", "rich": "b"}\n'
@@ -9663,6 +9731,17 @@ class StaticAgentSourceEvidenceTests(unittest.TestCase):
                 "    return build(text, config)\n",
                 ("plain", "rich"),
             ),
+            "a helper selection composed into the returned result": (
+                "style",
+                'STYLES = {"plain": "a", "rich": "b"}\n'
+                "def build(text, config):\n"
+                '    return STYLES[config.get("style", "plain")] + text\n'
+                "def parse_reply(reply, config):\n"
+                '    return reply.strip() if config.get("format") else reply\n'
+                "def run(text, config):\n"
+                "    return parse_reply(send(build(text, config)), config)\n",
+                ("plain", "rich"),
+            ),
             "a selection made in an awaited helper": (
                 "style",
                 'STYLES = {"plain": "a", "rich": "b"}\n'
@@ -9670,6 +9749,19 @@ class StaticAgentSourceEvidenceTests(unittest.TestCase):
                 '    return STYLES[config.get("style", "plain")] + text\n'
                 "async def run(text, config):\n"
                 "    return await build(text, config)\n",
+                ("plain", "rich"),
+            ),
+            "an awaited helper composed through keyword arguments": (
+                "style",
+                'STYLES = {"plain": "a", "rich": "b"}\n'
+                "async def build(text, config):\n"
+                '    return STYLES[config.get("style", "plain")] + text\n'
+                "def parse_reply(reply, config):\n"
+                '    return reply.strip() if config.get("strip") else reply\n'
+                "async def run(text, config):\n"
+                "    return parse_reply(\n"
+                "        reply=await build(text=text, config=config), config=config\n"
+                "    )\n",
                 ("plain", "rich"),
             ),
             "an annotated table selected by the setting": (
@@ -9711,6 +9803,43 @@ class StaticAgentSourceEvidenceTests(unittest.TestCase):
                 "def run(text, config):\n"
                 '    STYLES[config.get("style", "plain")]\n'
                 "    return text\n",
+            ),
+            "a selected value swallowed by a lambda": (
+                "style",
+                ("plain", "rich"),
+                'STYLES = {"plain": "a", "rich": "b"}\n'
+                "def run(text, config):\n"
+                "    return (lambda ignored: text)(\n"
+                '        STYLES[config.get("style", "plain")]\n'
+                "    )\n",
+            ),
+            "a selected value swallowed by a same-file wrapper": (
+                "style",
+                ("plain", "rich"),
+                'STYLES = {"plain": "a", "rich": "b"}\n'
+                "def ignore(value):\n"
+                '    return "fixed"\n'
+                "def run(text, config):\n"
+                '    return ignore(STYLES[config.get("style", "plain")])\n',
+            ),
+            "an assigned selected value swallowed by a lambda": (
+                "style",
+                ("plain", "rich"),
+                'STYLES = {"plain": "a", "rich": "b"}\n'
+                "def run(text, config):\n"
+                '    style = STYLES[config.get("style", "plain")]\n'
+                "    return (lambda ignored: text)(style)\n",
+            ),
+            "an assigned selected value swallowed by a same-file wrapper": (
+                "style",
+                ("plain", "rich"),
+                'STYLES = {"plain": "a", "rich": "b"}\n'
+                "def ignore(value):\n"
+                '    result = (lambda ignored: "fixed")(value)\n'
+                "    return result\n"
+                "def run(text, config):\n"
+                '    style = STYLES[config.get("style", "plain")]\n'
+                "    return ignore(style)\n",
             ),
             "a local table rather than a declared one": (
                 "style",
@@ -9819,6 +9948,244 @@ class StaticAgentSourceEvidenceTests(unittest.TestCase):
                 "def run(text, config):\n"
                 "    build(config)\n"
                 "    return text\n",
+            ),
+            "a composed helper reached through a comprehension": (
+                "style",
+                ("plain", "rich"),
+                'STYLES = {"plain": "a", "rich": "b"}\n'
+                "def build(config):\n"
+                '    return STYLES[config.get("style", "plain")]\n'
+                "def run(text, config):\n"
+                "    return consume([build(config) for _ in ()])\n",
+            ),
+            "a composed helper handed to a lambda that discards it": (
+                "style",
+                ("plain", "rich"),
+                'STYLES = {"plain": "a", "rich": "b"}\n'
+                "def build(config):\n"
+                '    return STYLES[config.get("style", "plain")]\n'
+                "def run(text, config):\n"
+                "    return (lambda ignored: text)(build(config))\n",
+            ),
+            "a composed helper handed to a local function that ignores it": (
+                "style",
+                ("plain", "rich"),
+                'STYLES = {"plain": "a", "rich": "b"}\n'
+                "def build(config):\n"
+                '    return STYLES[config.get("style", "plain")]\n'
+                "def ignore(value):\n"
+                '    return "fixed"\n'
+                "def run(text, config):\n"
+                "    return ignore(build(config))\n",
+            ),
+            "a composed helper whose local receiver overwrites its input": (
+                "style",
+                ("plain", "rich"),
+                'STYLES = {"plain": "a", "rich": "b"}\n'
+                "def build(config):\n"
+                '    return STYLES[config.get("style", "plain")]\n'
+                "def ignore(value):\n"
+                '    value = "fixed"\n'
+                "    return value\n"
+                "def run(text, config):\n"
+                "    return ignore(build(config))\n",
+            ),
+            "a contributing helper that can pin the mapping first": (
+                "style",
+                ("plain", "rich"),
+                'STYLES = {"plain": "a", "rich": "b"}\n'
+                "def pin(config):\n"
+                '    config["style"] = "plain"\n'
+                '    return "pinned"\n'
+                "def build(config):\n"
+                '    return STYLES[config.get("style", "plain")]\n'
+                "def run(text, config):\n"
+                "    return consume(pin(config), build(config))\n",
+            ),
+            "a composing call that receives the unchecked mapping too": (
+                "style",
+                ("plain", "rich"),
+                'STYLES = {"plain": "a", "rich": "b"}\n'
+                "def build(config):\n"
+                '    return STYLES[config.get("style", "plain")]\n'
+                "def run(text, config):\n"
+                "    return send(build(config), config)\n",
+            ),
+            "a nested argument that can conceal a mapping alias": (
+                "style",
+                ("plain", "rich"),
+                'STYLES = {"plain": "a", "rich": "b"}\n'
+                "def build(config):\n"
+                '    return STYLES[config.get("style", "plain")]\n'
+                "def retain(value):\n"
+                "    return value\n"
+                "def run(text, config):\n"
+                "    return consume(build(config), retain([config]))\n",
+            ),
+            "a composed helper that can return the mapping itself": (
+                "style",
+                ("plain", "rich"),
+                'STYLES = {"plain": "a", "rich": "b"}\n'
+                "def build(config):\n"
+                '    return STYLES[config.get("style", "plain")]\n'
+                "def retain(config):\n"
+                "    return config\n"
+                "def run(text, config):\n"
+                "    return consume(build(config), retain(config))\n",
+            ),
+            "a depth loop that clears every selected item": (
+                "retrieval",
+                (0, 2, 4),
+                "DEPTHS = (0, 2, 4)\n"
+                'PAST = ("one", "two", "three", "four")\n'
+                "def build(text, config):\n"
+                '    depth = config.get("retrieval", 0)\n'
+                "    if depth not in DEPTHS:\n"
+                '        raise ValueError(f"{depth!r} is not one of {DEPTHS}")\n'
+                "    lines = []\n"
+                "    for incident in PAST[:depth]:\n"
+                "        lines.append(incident)\n"
+                "        lines.clear()\n"
+                "    return lines\n"
+                "def run(text, config):\n"
+                "    return send(build(text, config))\n",
+            ),
+            "a depth loop whose returned accumulator is deleted": (
+                "retrieval",
+                (0, 2, 4),
+                "DEPTHS = (0, 2, 4)\n"
+                'PAST = ("one", "two", "three", "four")\n'
+                "def build(text, config):\n"
+                '    depth = config.get("retrieval", 0)\n'
+                "    if depth not in DEPTHS:\n"
+                '        raise ValueError(f"{depth!r} is not one of {DEPTHS}")\n'
+                "    lines = []\n"
+                "    for incident in PAST[:depth]:\n"
+                "        lines.append(incident)\n"
+                "    del lines\n"
+                "    return lines\n"
+                "def run(text, config):\n"
+                "    return send(build(text, config))\n",
+            ),
+            "a depth loop erased through an accumulator alias": (
+                "retrieval",
+                (0, 2, 4),
+                "DEPTHS = (0, 2, 4)\n"
+                'PAST = ("one", "two", "three", "four")\n'
+                "def build(text, config):\n"
+                '    depth = config.get("retrieval", 0)\n'
+                "    if depth not in DEPTHS:\n"
+                '        raise ValueError(f"{depth!r} is not one of {DEPTHS}")\n'
+                "    lines = []\n"
+                "    alias = lines\n"
+                "    for incident in PAST[:depth]:\n"
+                "        lines.append(incident)\n"
+                "    alias.clear()\n"
+                "    return lines\n"
+                "def run(text, config):\n"
+                "    return send(build(text, config))\n",
+            ),
+            "a depth loop handed to an unverified mutator": (
+                "retrieval",
+                (0, 2, 4),
+                "DEPTHS = (0, 2, 4)\n"
+                'PAST = ("one", "two", "three", "four")\n'
+                "def build(text, config):\n"
+                '    depth = config.get("retrieval", 0)\n'
+                "    if depth not in DEPTHS:\n"
+                '        raise ValueError(f"{depth!r} is not one of {DEPTHS}")\n'
+                "    lines = []\n"
+                "    for incident in PAST[:depth]:\n"
+                "        lines.append(incident)\n"
+                "    wipe(lines)\n"
+                "    return lines\n"
+                "def run(text, config):\n"
+                "    return send(build(text, config))\n",
+            ),
+            "a guarded value swallowed by a lambda": (
+                "depth",
+                (0, 2, 4),
+                "DEPTHS = (0, 2, 4)\n"
+                "def run(text, config):\n"
+                '    depth = config.get("depth", 0)\n'
+                "    if depth not in DEPTHS:\n"
+                '        raise ValueError("no")\n'
+                "    return (lambda ignored: text)(depth)\n",
+            ),
+            "an assigned guarded value swallowed by a lambda": (
+                "depth",
+                (0, 2, 4),
+                "DEPTHS = (0, 2, 4)\n"
+                "def run(text, config):\n"
+                '    depth = config.get("depth", 0)\n'
+                "    if depth not in DEPTHS:\n"
+                '        raise ValueError("no")\n'
+                "    result = (lambda ignored: text)(depth)\n"
+                "    return result\n",
+            ),
+            "a depth loop extending by an empty collection": (
+                "retrieval",
+                (0, 2, 4),
+                "DEPTHS = (0, 2, 4)\n"
+                'PAST = ("one", "two", "three", "four")\n'
+                "def build(text, config):\n"
+                '    depth = config.get("retrieval", 0)\n'
+                "    if depth not in DEPTHS:\n"
+                '        raise ValueError("no")\n'
+                "    lines = []\n"
+                "    for incident in PAST[:depth]:\n"
+                "        lines.extend([])\n"
+                "    return lines\n"
+                "def run(text, config):\n"
+                "    return send(build(text, config))\n",
+            ),
+            "a depth loop extending by a starred empty literal": (
+                "retrieval",
+                (0, 2, 4),
+                "DEPTHS = (0, 2, 4)\n"
+                'PAST = ("one", "two", "three", "four")\n'
+                "def build(text, config):\n"
+                '    depth = config.get("retrieval", 0)\n'
+                "    if depth not in DEPTHS:\n"
+                '        raise ValueError("no")\n'
+                "    lines = []\n"
+                "    for incident in PAST[:depth]:\n"
+                "        lines.extend([*()])\n"
+                "    return lines\n"
+                "def run(text, config):\n"
+                "    return send(build(text, config))\n",
+            ),
+            "a depth loop adding a value already in the set": (
+                "retrieval",
+                (0, 2, 4),
+                "DEPTHS = (0, 2, 4)\n"
+                'PAST = ("one", "two", "three", "four")\n'
+                "def build(text, config):\n"
+                '    depth = config.get("retrieval", 0)\n'
+                "    if depth not in DEPTHS:\n"
+                '        raise ValueError("no")\n'
+                '    lines = {"fixed"}\n'
+                "    for incident in PAST[:depth]:\n"
+                '        lines.add("fixed")\n'
+                "    return lines\n"
+                "def run(text, config):\n"
+                "    return send(build(text, config))\n",
+            ),
+            "a depth loop whose set saturates after one iteration": (
+                "retrieval",
+                (1, 2, 4),
+                "DEPTHS = (1, 2, 4)\n"
+                'PAST = ("one", "two", "three", "four")\n'
+                "def build(text, config):\n"
+                '    depth = config.get("retrieval", 1)\n'
+                "    if depth not in DEPTHS:\n"
+                '        raise ValueError("no")\n'
+                '    lines = {"seed"}\n'
+                "    for incident in PAST[:depth]:\n"
+                '        lines.add("fixed")\n'
+                "    return lines\n"
+                "def run(text, config):\n"
+                "    return send(build(text, config))\n",
             ),
             "a helper only present in a literal-dead expression": (
                 "style",
@@ -10073,6 +10440,75 @@ class StaticAgentSourceEvidenceTests(unittest.TestCase):
                 )
             self.assertFalse(facts.discovered[0].credited)
             self.assertTrue(facts.discovered[0].unverified)
+
+    def test_composed_config_agent_credits_every_source_backed_setting(self) -> None:
+        """Case 46's shape proves the widening, not its predeclared config file."""
+        source = (
+            'MODELS = {"fast": "a", "careful": "b"}\n'
+            'STYLES = {"plain": "say", "rubric": "classify"}\n'
+            "DEPTHS = (0, 2, 4)\n"
+            'FORMATS = {"label": "text", "json": "object"}\n'
+            "PAST = ('one', 'two', 'three', 'four')\n"
+            "def build(text, config):\n"
+            '    depth = config.get("retrieval", 0)\n'
+            "    if depth not in DEPTHS:\n"
+            '        raise ValueError(f"{depth!r} is not one of {DEPTHS}")\n'
+            "    lines = [\n"
+            '        STYLES[config.get("prompt_style", "plain")],\n'
+            '        FORMATS[config.get("output_format", "label")],\n'
+            "    ]\n"
+            "    for item in PAST[:depth]:\n"
+            "        lines.append(item)\n"
+            '    return "\\n".join((*lines, text))\n'
+            "def parse(reply, config):\n"
+            '    return reply.strip() if config.get("output_format") else reply\n'
+            "def call_model(model, prompt):\n"
+            "    return provider(model=model, prompt=prompt)\n"
+            "def run(text, config):\n"
+            '    model = config.get("model", "fast")\n'
+            "    if model not in MODELS:\n"
+            '        raise ValueError(f"{model!r} is not one of {MODELS}")\n'
+            "    return parse(call_model(model, build(text, config)), config)\n"
+        )
+        values = {
+            "model": (["fast", "careful"], 1),
+            "prompt_style": (["plain", "rubric"], 2),
+            "retrieval": ([0, 2, 4], 3),
+            "output_format": (["label", "json"], 4),
+        }
+        document = {
+            "source": "agent.py",
+            "knobs": {
+                name: {
+                    "values": options,
+                    "source_lines": [line],
+                    "evidence": f"agent.py:{line} declares {options!r}",
+                }
+                for name, (options, line) in values.items()
+            },
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            agent = root / "agent.py"
+            agent.write_text(source, encoding="utf-8")
+            facts = MODULE.agent_facts_from_discovery(
+                document,
+                source_root=root,
+                selected_agent=agent,
+                selected_agent_callable="run",
+            )
+
+        pillar, caps, _ = MODULE.score_agent(facts)
+        self.assertEqual(
+            {knob.name for knob in facts.discovered if knob.credited},
+            set(values),
+            [
+                (knob.name, knob.credited, knob.uncredited_reason)
+                for knob in facts.discovered
+            ],
+        )
+        self.assertGreater(pillar.score, 0)
+        self.assertNotIn("agent-no-varying-knobs", [cap.condition for cap in caps])
 
     def test_unsupported_callable_and_non_python_agent_are_advisory_unknowns(
         self,
@@ -10394,7 +10830,13 @@ class TheAgentPillarReadsTheAgentTests(unittest.TestCase):
                 task_kind="closed-label",
                 calibration_present=True,
                 calibration_supplied=True,
-                checks=({f"check-{index}": True for index in range(7)},),
+                checks=(
+                    {
+                        "good_passes": True,
+                        "bad_fails": True,
+                        "non_constant": True,
+                    },
+                ),
                 probe_scores=((1.0, 0.0),),
             ),
             MODULE.AgentFacts(),
@@ -10953,7 +11395,13 @@ class WhoWroteItBoundsWhatItMayClaimTests(unittest.TestCase):
             task_kind="closed-label",
             calibration_present=True,
             calibration_supplied=True,
-            checks=({f"check-{index}": True for index in range(7)},),
+            checks=(
+                {
+                    "good_passes": True,
+                    "bad_fails": True,
+                    "non_constant": True,
+                },
+            ),
             probe_scores=((1.0, 0.0),),
             origin=origin,
         )
@@ -11097,7 +11545,13 @@ class WhoWroteItBoundsWhatItMayClaimTests(unittest.TestCase):
                 method="normalized-exact",
                 calibration_present=True,
                 calibration_supplied=True,
-                checks=({"non_constant": False, "bad_fails": False},),
+                checks=(
+                    {
+                        "good_passes": True,
+                        "non_constant": False,
+                        "bad_fails": False,
+                    },
+                ),
                 origin="generated",
             )
         )
