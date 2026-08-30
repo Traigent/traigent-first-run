@@ -1,22 +1,18 @@
 # Contributor Licensing and CLA Policy
 
-Traigent uses dual licensing for the project:
-
-- open-source releases are licensed under GNU Affero General Public License
-  v3.0 only (`AGPL-3.0-only`)
-- commercial licenses are available separately from Traigent
-
-To keep dual licensing viable, Traigent requires a signed Contributor License
-Agreement (CLA) before accepting non-trivial external contributions.
+This repository is licensed under the Apache License 2.0. Traigent retains its
+Contributor License Agreement (CLA) policy to document provenance, employer
+authority, and the copyright and patent rights needed to accept contributions.
 
 ## Policy
 
 - External contributors must sign Traigent's current Individual CLA or
   Corporate CLA before a pull request can be merged.
 - By opening a contribution, you confirm that you have the right to submit the
-  code and that it does not knowingly violate third-party rights.
-- Contributions accepted into the project may be distributed by Traigent under
-  the repository's open-source license and under separate commercial terms.
+  material and that it does not knowingly violate third-party rights.
+- Unless you explicitly state otherwise, a contribution intentionally submitted
+  for inclusion is offered under Apache-2.0 section 5. A CLA may record
+  additional authority or grants; Apache-2.0 preserves separate agreements.
 - Traigent may decline or defer review of contributions until the CLA process is
   complete.
 

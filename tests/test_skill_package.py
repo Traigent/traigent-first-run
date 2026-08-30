@@ -4,6 +4,7 @@ import ast
 import asyncio
 import contextlib
 import contextvars
+import hashlib
 import http.server
 import importlib.util
 import inspect
@@ -2363,7 +2364,8 @@ class SkillPackageTests(unittest.TestCase):
             for line in frontmatter.splitlines()
             if ":" in line
         }
-        self.assertEqual(keys, {"name", "description"})
+        self.assertEqual(keys, {"name", "description", "license"})
+        self.assertIn("license: Apache-2.0", frontmatter)
 
     def test_every_relative_markdown_link_in_skill_exists(self) -> None:
         text = SKILL.read_text()
@@ -3440,7 +3442,8 @@ class SkillPackageTests(unittest.TestCase):
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, readme)
-        for target in ("LICENSE", "COMMERCIAL-LICENSE.md"):
+        commercial_license = "-".join(("COMMERCIAL", "LICENSE.md"))
+        for target in ("LICENSE", commercial_license):
             with self.subTest(target=target):
                 self.assertIn(
                     f"https://github.com/Traigent/Traigent/blob/v{version}/{target}",
@@ -3546,26 +3549,69 @@ class SkillPackageTests(unittest.TestCase):
             "release for any other reason is still a release nobody installs",
         )
 
-    def test_readme_asserts_no_license_terms_for_this_repository(self) -> None:
-        """This repository has no LICENSE, so it may not describe its own terms.
+    def test_apache_terms_travel_with_the_installed_skill(self) -> None:
+        """The installer copies the skill directory without repository root files."""
+        root_license = (ROOT / "LICENSE").read_bytes()
+        skill_license = (SKILL_ROOT / "LICENSE").read_bytes()
+        root_notice = (ROOT / "NOTICE").read_bytes()
+        skill_notice = (SKILL_ROOT / "NOTICE").read_bytes()
 
-        `gh api repos/Traigent/traigent-first-run` returns `"license": null`
-        with `"visibility": "public"`, and no LICENSE file is tracked - which
-        is all-rights-reserved by default, while this same README tells the
-        reader to `npx skills add Traigent/traigent-first-run`. A sentence
-        saying the SDK notice "does not change the license terms for this
-        guide repository" asserts terms that do not exist. Choosing a license
-        is the owner's call; saying nothing is strictly better than saying
-        something false, so the sentence is gone and stays gone.
-        """
+        self.assertTrue(
+            {"LICENSE", "NOTICE"} <= shipped_skill_files(),
+            "the installer inventory must include the Apache terms",
+        )
+        self.assertEqual(skill_license, root_license)
+        self.assertEqual(skill_notice, root_notice)
+        self.assertEqual(
+            hashlib.sha256(root_license).hexdigest(),
+            "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+            "LICENSE must be the official Apache-2.0 text byte-for-byte",
+        )
+        self.assertEqual(
+            root_notice.decode(),
+            "Traigent First Run\nCopyright 2026 Traigent Ltd\n",
+        )
+
+        commercial_license = "-".join(("COMMERCIAL", "LICENSE.md"))
+        self.assertFalse(
+            (ROOT / commercial_license).exists(),
+            "the Apache guide has no redundant local commercial-license branch",
+        )
+        draft_artifact_permission = "-".join(("PROJECT", "ARTIFACTS.md"))
+        for parent in (ROOT, SKILL_ROOT):
+            self.assertFalse(
+                (parent / draft_artifact_permission).exists(),
+                "an additional project-artifact grant needs approved final terms",
+            )
+
         readme = " ".join((ROOT / "README.md").read_text().casefold().split())
         for phrase in (
-            "license terms for this guide repository",
-            "the license of this repository",
-            "this repository is licensed",
+            "licensed under the [apache license 2.0](license)",
+            "using the guide inside a proprietary project does not relicense",
+            "this repository and the traigent sdk are distributed under separate terms",
+            "apache-2.0 rights in this repository do not relicense the sdk",
+            "external contributions remain subject to traigent's cla policy",
         ):
             with self.subTest(phrase=phrase):
-                self.assertNotIn(phrase, readme)
+                self.assertIn(phrase, readme)
+
+        for obsolete in (
+            "dual-licensed on the same terms as the sdk",
+            "one licence covers both",
+        ):
+            with self.subTest(obsolete=obsolete):
+                self.assertNotIn(obsolete, readme)
+
+        contributor_policy = " ".join(
+            (ROOT / "CONTRIBUTOR-LICENSING.md").read_text().casefold().split()
+        )
+        for phrase in (
+            "must sign traigent's current individual cla",
+            "employer authority",
+            "apache-2.0 preserves separate agreements",
+        ):
+            with self.subTest(policy=phrase):
+                self.assertIn(phrase, contributor_policy)
 
     def test_first_run_environment_is_dedicated_and_preserves_existing_environments(
         self,
@@ -6700,7 +6746,7 @@ class SkillPackageTests(unittest.TestCase):
             "agent-type",
             "n-gram",
             "getting-familiar",
-            "SPDX: AGPL-3.0-only OR LicenseRef-Traigent-Commercial",
+            "SPDX: Apache-2.0",
         ):
             with self.subTest(legitimate=legitimate):
                 self.assertEqual(scan(legitimate, "probe"), [])

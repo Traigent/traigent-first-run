@@ -266,15 +266,17 @@ paste secrets into chat.
 
 ## License
 
-This repository - the walkthrough, the bundled skill, the scripts and the references - is
-**dual-licensed** on the same terms as the SDK it installs: the
-[GNU Affero General Public License v3.0 only](LICENSE) (`AGPL-3.0-only`) **or** a
-[Traigent commercial license](COMMERCIAL-LICENSE.md) under a separate written agreement.
-SPDX: `AGPL-3.0-only OR LicenseRef-Traigent-Commercial`. Commercial inquiries: `legal@traigent.ai`.
+This repository - the walkthrough, bundled skill, scripts and references - is licensed under the
+[Apache License 2.0](LICENSE). SPDX: `Apache-2.0`. The installed skill carries the same `LICENSE`
+and `NOTICE`, so its terms travel with every distributed copy.
 
-One licence covers both, so a project already holding commercial terms for the SDK needs nothing
-further to use this guide. External contributions require a signed CLA - see
-[CONTRIBUTOR-LICENSING.md](CONTRIBUTOR-LICENSING.md).
+Using the guide inside a proprietary project does not relicense that project's unrelated code,
+data, prompts or outputs. If guide material itself is copied, modified or redistributed, Apache
+2.0 section 4 applies to that material. External contributions remain subject to Traigent's CLA
+policy; see [CONTRIBUTOR-LICENSING.md](CONTRIBUTOR-LICENSING.md).
+
+This repository and the Traigent SDK are distributed under separate terms. Apache-2.0 rights in
+this repository do not relicense the SDK; evaluate the SDK under the terms below.
 
 ## SDK licensing
 
