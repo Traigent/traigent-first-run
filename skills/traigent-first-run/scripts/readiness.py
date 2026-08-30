@@ -5042,6 +5042,12 @@ def score_discovered_agent(
         detail += "; " + "; ".join(
             f"{knob.name}: {knob.uncredited_reason}" for knob in refused
         )
+    # The build checks are NOT added here. `with_build` is applied at every
+    # return in `score_agent_evidence` and owns them, so adding them again
+    # here reported every build check twice on one card. It never surfaced
+    # before because this branch is only reached when the
+    # source read credits a knob, which nothing did until the reader learned
+    # to follow a setting into the collection it selects from.
     pillar = combine(
         "agent",
         [
@@ -5052,7 +5058,6 @@ def score_discovered_agent(
                 True,
                 detail,
             ),
-            *build_subscores(facts),
         ],
     )
     return pillar, [], []
@@ -5880,8 +5885,8 @@ def render_card(
         # gating on the second hid the first exactly where it mattered most:
         # `search-space` carries 100 of the agent pillar's 130 weight, so one
         # measured check out of five still reads as high confidence, and the
-        # card printed a bare `AGENT 0/100`. On the bank's one all-real project
-        # - a working agent whose four settings the same card cites by line -
+        # card printed a bare `AGENT 0/100`. On a project whose agent, dataset
+        # and evaluator are all real - four settings the same card cites by line -
         # that zero was read as a verdict on the agent. It is a verdict on one
         # question of five; the other four say in their own evidence lines,
         # two rows below, that nothing here verified them.
@@ -7809,6 +7814,12 @@ def _is_statically_reachable(node: ast.AST, source: StaticSourceEvidence) -> boo
             getattr(parent, "orelse", ()),
             getattr(parent, "finalbody", ()),
         ):
+            # `body` is a statement list on a statement and a single
+            # expression on a ternary or a lambda, so this walked into
+            # `x in Constant` and raised TypeError for any node inside
+            # `0 if True else 1`. Only a real list is a statement list.
+            if not isinstance(statement_list, list):
+                continue
             if child not in statement_list:
                 continue
             index = statement_list.index(child)
@@ -8007,25 +8018,203 @@ def _binding_reaches_call_path(
     if not _module_binding_is_current(binding_node, binding, source):
         return False
 
-    for call in _selected_callable_nodes(source):
-        if not isinstance(call, ast.Call) or not _is_statically_reachable(call, source):
-            continue
-        statement = source.parents.get(id(call))
-        if not isinstance(statement, (ast.Return, ast.Expr)) or (
-            source.parents.get(id(statement)) is not source.selected_callable
-        ):
-            continue
-        for keyword in call.keywords:
-            if mapping:
-                if keyword.arg is None and _expression_varies_binding(
+    for callable_node in _callables_on_the_call_path(source):
+        for call in _callable_body_nodes(callable_node):
+            if not isinstance(call, ast.Call) or not _is_statically_reachable(
+                call, source
+            ):
+                continue
+            # Walk out to the enclosing statement rather than demanding the call
+            # BE the returned expression. `return parse(send(model, prompt))` is
+            # the ordinary way to write this, and the inner call's parent is the
+            # outer call, so a direct-parent test scored that shape zero.
+            statement = source.parents.get(id(call))
+            while statement is not None and not isinstance(statement, ast.stmt):
+                statement = source.parents.get(id(statement))
+            if statement is None or (
+                source.parents.get(id(statement)) is not callable_node
+            ):
+                continue
+            for keyword in call.keywords:
+                if mapping:
+                    if keyword.arg is None and _expression_varies_binding(
+                        keyword.value, binding, source
+                    ):
+                        return True
+                elif keyword.arg == knob and _expression_varies_binding(
                     keyword.value, binding, source
                 ):
                     return True
-            elif keyword.arg == knob and _expression_varies_binding(
-                keyword.value, binding, source
-            ):
-                return True
+            if mapping:
+                continue
+            # A positional argument carries the value exactly as a keyword does.
+            # Only same-file module-level definitions are resolved, so the
+            # parameter name is read rather than assumed.
+            parameters = _module_function_parameters(source, call.func)
+            for index, argument in enumerate(call.args):
+                if (
+                    parameters is not None
+                    and index < len(parameters)
+                    and parameters[index] == knob
+                    and _expression_varies_binding(argument, binding, source)
+                ):
+                    return True
     return False
+
+
+def _module_function_parameters(
+    source: StaticSourceEvidence, func: ast.expr
+) -> list[str] | None:
+    """Positional parameter names of a same-file module-level callee.
+
+    None for anything this file does not define at module level - an import, an
+    attribute call, a local closure - because the position-to-name mapping
+    would then be a guess, and a guess is what this read exists to avoid.
+    """
+    if not isinstance(func, ast.Name):
+        return None
+    for node in source.tree.body:
+        if (
+            isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name == func.id
+        ):
+            return [argument.arg for argument in node.args.args]
+    return None
+
+
+def _callable_body_nodes(node: ast.AST) -> Iterator[ast.AST]:
+    """Every node in one callable's own body, not entering nested definitions."""
+    pending = list(getattr(node, "body", []))
+    while pending:
+        current = pending.pop()
+        yield current
+        if isinstance(
+            current, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
+        ):
+            continue
+        pending.extend(reversed(list(ast.iter_child_nodes(current))))
+
+
+def _callables_on_the_call_path(
+    source: StaticSourceEvidence,
+) -> list[ast.FunctionDef | ast.AsyncFunctionDef]:
+    """The selected callable and the same-file helpers it actually calls.
+
+    Real agents delegate: `run` orchestrates while a helper builds the prompt
+    and another places the call. Reading only `run` therefore reported "no
+    opening search dimension" for agents whose dimension is written plainly two
+    functions below, in the same file the reader already parsed. That sentence
+    was false, and a false sentence is worse than a narrow one.
+
+    The widening stays static and definite. Only module-level `def`s resolved
+    by exact name from a direct call are followed - never an import, an
+    attribute, a variable holding a function, or a nested closure - so nothing
+    here needs dynamic dispatch or a real call graph. Recursion is bounded by
+    the visited set, and `_is_statically_reachable` still governs whether an
+    individual call site counts.
+    """
+    definitions = {
+        node.name: node
+        for node in source.tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    ordered = [source.selected_callable]
+    seen = {id(source.selected_callable)}
+    index = 0
+    while index < len(ordered):
+        current = ordered[index]
+        index += 1
+        for node in _callable_body_nodes(current):
+            if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name):
+                continue
+            target = definitions.get(node.func.id)
+            if target is not None and id(target) not in seen:
+                seen.add(id(target))
+                ordered.append(target)
+    return ordered
+
+
+def _config_read_key(node: ast.AST) -> str | None:
+    """The literal setting name this expression reads out of a config mapping.
+
+    Covers the two spellings an agent actually uses - `config.get("knob")` and
+    `config["knob"]` - and nothing else. A non-literal key is not a name this
+    read can report, so it earns nothing.
+    """
+    if (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "get"
+        and node.args
+    ):
+        first = node.args[0]
+        if isinstance(first, ast.Constant) and isinstance(first.value, str):
+            return first.value
+    if isinstance(node, ast.Subscript) and isinstance(node.slice, ast.Constant):
+        if isinstance(node.slice.value, str):
+            return node.slice.value
+    return None
+
+
+def _module_collections_this_knob_selects(
+    knob: str, source: StaticSourceEvidence
+) -> list[str]:
+    """Module bindings the selected agent uses this setting to choose from.
+
+    Two idioms, both plainly readable and both static:
+
+        PROMPT_STYLES[config.get("prompt_style", "plain")]   # selects a value
+        depth = config.get("retrieval", 0)                   # then guards it
+        if depth not in CONTEXT_DEPTHS: raise
+
+    Either one establishes that the setting reaches the request: the first
+    chooses the text that goes into the prompt, the second refuses a value the
+    declared set does not contain. Reporting "could not verify how they reach
+    the call" about code like this was false, and no project could reach the
+    top band while it stood.
+
+    The binding's identifier is not required to resemble the setting. The
+    reader learns the pair from the expression, so `FORMAT_INSTRUCTIONS` keyed
+    by `output_format` is credited exactly like `MODELS` keyed by `model`.
+    """
+    declared = {
+        target.id
+        for node in source.tree.body
+        if isinstance(node, ast.Assign)
+        for target in node.targets
+        if isinstance(target, ast.Name)
+    }
+    selected: list[str] = []
+    for callable_node in _callables_on_the_call_path(source):
+        # Locals in this callable that hold a read of this setting.
+        holders = {
+            target.id
+            for node in _callable_body_nodes(callable_node)
+            if isinstance(node, ast.Assign)
+            and (_config_read_key(node.value) or "").casefold() == knob.casefold()
+            for target in node.targets
+            if isinstance(target, ast.Name)
+        }
+        for node in _callable_body_nodes(callable_node):
+            if not _is_statically_reachable(node, source):
+                continue
+            if (
+                isinstance(node, ast.Subscript)
+                and isinstance(node.value, ast.Name)
+                and node.value.id in declared
+                and (_config_read_key(node.slice) or "").casefold() == knob.casefold()
+            ):
+                selected.append(node.value.id)
+            if isinstance(node, ast.Compare) and isinstance(node.left, ast.Name):
+                if node.left.id not in holders:
+                    continue
+                for operator, comparator in zip(node.ops, node.comparators):
+                    if isinstance(operator, (ast.In, ast.NotIn)) and isinstance(
+                        comparator, ast.Name
+                    ):
+                        if comparator.id in declared:
+                            selected.append(comparator.id)
+    return selected
 
 
 def _binding_values_for_knob(
@@ -8104,6 +8293,30 @@ def _binding_values_for_knob(
                         for name in names
                     ):
                         found.extend(literal)
+
+    # And the collections this setting is actually used to choose from, learned
+    # from the expression rather than from a name resemblance. This is the
+    # branch that reads wiring the way a person reads it: the setting indexes a
+    # declared table, or is refused unless the declared table contains it.
+    if not found:
+        chosen = set(_module_collections_this_knob_selects(knob, source))
+        for node in source.tree.body:
+            if not isinstance(node, ast.Assign):
+                continue
+            names = {
+                target.id for target in node.targets if isinstance(target, ast.Name)
+            }
+            if not (names & chosen) or not _module_binding_is_current(
+                node, next(iter(names & chosen)), source
+            ):
+                continue
+            literal = (
+                _literal_mapping_keys(node.value)
+                if isinstance(node.value, ast.Dict)
+                else _literal_values(node.value)
+            )
+            if literal is not None:
+                found.extend(literal)
     return tuple(found)
 
 
