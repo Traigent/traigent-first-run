@@ -9941,6 +9941,44 @@ class StaticAgentSourceEvidenceTests(unittest.TestCase):
                 "    return [d, text]\n",
                 (0, 2, 4),
             ),
+            "a guarded setting reaches a direct imported request": (
+                "model",
+                'MODELS = ("small", "large")\n'
+                "from vendor import Client\n"
+                "def run(text, config):\n"
+                '    model = config.get("model", MODELS[0])\n'
+                "    if model not in MODELS:\n"
+                '        raise ValueError(f"unknown model: {model}")\n'
+                "    client = Client()\n"
+                "    return client.responses.create(model=model, input=text)\n",
+                ("small", "large"),
+            ),
+            "a helper guard reaches its direct imported request": (
+                "model",
+                'MODELS = ("small", "large")\n'
+                "from vendor import Client\n"
+                "def send(text, config):\n"
+                '    model = config.get("model", MODELS[0])\n'
+                "    if model not in MODELS:\n"
+                '        raise ValueError(f"unknown model: {model}")\n'
+                "    return Client().responses.create(model=model, input=text)\n"
+                "def run(text, config):\n"
+                "    return send(text, config)\n",
+                ("small", "large"),
+            ),
+            "every branch sends the guarded setting": (
+                "model",
+                'MODELS = ("small", "large")\n'
+                "from vendor import Primary, Backup\n"
+                "def run(text, config):\n"
+                '    model = config.get("model", MODELS[0])\n'
+                "    if model not in MODELS:\n"
+                '        raise ValueError(f"unknown model: {model}")\n'
+                "    if text:\n"
+                "        return Primary().responses.create(model=model, input=text)\n"
+                "    return Backup().messages.create(model=model, input=text)\n",
+                ("small", "large"),
+            ),
             "a guarded depth controls returned prompt context": (
                 "retrieval",
                 "DEPTHS = (0, 2, 4)\n"
@@ -10528,6 +10566,43 @@ class StaticAgentSourceEvidenceTests(unittest.TestCase):
                 "    if depth not in DEPTHS:\n"
                 '        raise ValueError("no")\n'
                 "    return (lambda ignored: text)(depth)\n",
+            ),
+            "a guarded setting omitted from the direct request": (
+                "model",
+                ("small", "large"),
+                'MODELS = ("small", "large")\n'
+                "from vendor import Client\n"
+                "def run(text, config):\n"
+                '    model = config.get("model", MODELS[0])\n'
+                "    if model not in MODELS:\n"
+                '        raise ValueError(f"unknown model: {model}")\n'
+                "    return Client().responses.create(model='fixed', input=text)\n",
+            ),
+            "a guarded request followed by a fixed return branch": (
+                "model",
+                ("small", "large"),
+                'MODELS = ("small", "large")\n'
+                "from vendor import Client\n"
+                "def run(text, config):\n"
+                '    model = config.get("model", MODELS[0])\n'
+                "    if model not in MODELS:\n"
+                '        raise ValueError(f"unknown model: {model}")\n'
+                "    if text:\n"
+                "        return Client().responses.create(model=model, input=text)\n"
+                "    return 'fixed'\n",
+            ),
+            "a guarded request with a fixed sibling request": (
+                "model",
+                ("small", "large"),
+                'MODELS = ("small", "large")\n'
+                "from vendor import Primary, Backup\n"
+                "def run(text, config):\n"
+                '    model = config.get("model", MODELS[0])\n'
+                "    if model not in MODELS:\n"
+                '        raise ValueError(f"unknown model: {model}")\n'
+                "    if text:\n"
+                "        return Primary().responses.create(model=model, input=text)\n"
+                "    return Backup().messages.create(model='fixed', input=text)\n",
             ),
             "an assigned guarded value swallowed by a lambda": (
                 "depth",

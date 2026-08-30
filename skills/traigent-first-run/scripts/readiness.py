@@ -9588,6 +9588,25 @@ def _call_is_eager_in_returned_expression(
     return False
 
 
+def _enclosing_return(
+    node: ast.AST,
+    callable_node: ast.FunctionDef | ast.AsyncFunctionDef,
+    source: StaticSourceEvidence,
+) -> ast.Return | None:
+    """The return whose expression eagerly evaluates this node, if any."""
+    child = node
+    while (parent := source.parents.get(id(child))) is not None:
+        if isinstance(parent, ast.Return):
+            return parent
+        if parent is callable_node or isinstance(
+            parent,
+            (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda),
+        ):
+            return None
+        child = parent
+    return None
+
+
 def _call_is_an_intermediate_argument(
     call: ast.Call,
     callable_node: ast.FunctionDef | ast.AsyncFunctionDef,
@@ -10115,6 +10134,7 @@ def _holder_reaches_later_return(
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
     }
     verified_request_references: set[int] = set()
+    verified_request_returns: set[int] = set()
     for reference in all_holder_reads:
         if not (reference.lineno > (guard.end_lineno or guard.lineno)):
             continue
@@ -10124,13 +10144,37 @@ def _holder_reaches_later_return(
                 child = parent
                 continue
             if isinstance(parent, ast.Call):
-                if not isinstance(parent.func, ast.Name):
-                    break
-                target = definitions.get(parent.func.id)
                 argument = child
                 argument_value = (
                     argument.value if isinstance(argument, ast.keyword) else argument
                 )
+                is_argument = argument in parent.args or (
+                    isinstance(argument, ast.keyword) and argument in parent.keywords
+                )
+                if (
+                    is_argument
+                    and not any(
+                        isinstance(call_argument, ast.Starred)
+                        for call_argument in parent.args
+                    )
+                    and not any(keyword.arg is None for keyword in parent.keywords)
+                    and isinstance(argument_value, ast.expr)
+                    and _node_is_structurally_embedded(
+                        reference, argument_value, source
+                    )
+                    and _request_call_consumes_argument(parent, callable_node, source)
+                ):
+                    verified_request_references.add(id(reference))
+                    verified_request_returns.update(
+                        id(returned)
+                        for returned in _request_result_return_nodes(
+                            parent, callable_node, source
+                        )
+                    )
+                    break
+                if not isinstance(parent.func, ast.Name):
+                    break
+                target = definitions.get(parent.func.id)
                 parameter = (
                     _call_argument_parameter(parent, argument, target)
                     if target is not None
@@ -10156,12 +10200,20 @@ def _holder_reaches_later_return(
                     )
                 ):
                     verified_request_references.add(id(reference))
+                    returned = _enclosing_return(parent, callable_node, source)
+                    if returned is not None:
+                        verified_request_returns.add(id(returned))
                 break
             if isinstance(parent, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
                 break
             child = parent
+    outcomes = _request_path_outcomes(
+        callable_node.body, frozenset(verified_request_returns), source
+    )
     return bool(
         verified_request_references
+        and "request" in outcomes
+        and outcomes <= {"request", "raise"}
         and all(
             id(reference) in guard_nodes or id(reference) in verified_request_references
             for reference in all_holder_reads
