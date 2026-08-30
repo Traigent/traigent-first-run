@@ -9469,6 +9469,38 @@ class StaticAgentSourceEvidenceTests(unittest.TestCase):
             "    return provider(model=MODELS[model], message=message)\n"
         )
 
+    def _style_is_credited(
+        self,
+        source: str,
+        *,
+        extra_files: dict[str, str] | None = None,
+        source_reference: str = "agent.py",
+    ) -> bool:
+        compile(source, "agent.py", "exec")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "agent.py").write_text(source, encoding="utf-8")
+            for relative, content in (extra_files or {}).items():
+                target = root / relative
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text(content, encoding="utf-8")
+            facts = MODULE.agent_facts_from_discovery(
+                {
+                    "source": source_reference,
+                    "knobs": {
+                        "style": {
+                            "values": ["plain", "rich"],
+                            "source_lines": [1],
+                            "evidence": "the declared table reaches run's returned path",
+                        }
+                    },
+                },
+                source_root=root,
+                selected_agent=root / "agent.py",
+                selected_agent_callable="run",
+            )
+        return facts.discovered[0].credited
+
     def test_executable_selected_source_can_earn_opening_credit(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -9496,7 +9528,7 @@ class StaticAgentSourceEvidenceTests(unittest.TestCase):
                 (root / "agent.py").write_text(
                     f"STYLES = {mapping!r}\n"
                     "def run(text, config):\n"
-                    '    return STYLES[config.get("style", "plain")] + text\n',
+                    '    return [STYLES[config.get("style", "plain")], text]\n',
                     encoding="utf-8",
                 )
                 facts = MODULE.agent_facts_from_discovery(
@@ -9530,7 +9562,7 @@ class StaticAgentSourceEvidenceTests(unittest.TestCase):
                 (root / "agent.py").write_text(
                     f"STYLES = {mapping_source}\n"
                     "def run(text, config):\n"
-                    '    return STYLES[config.get("style", "plain")] + text\n',
+                    '    return [STYLES[config.get("style", "plain")], text]\n',
                     encoding="utf-8",
                 )
                 facts = MODULE.agent_facts_from_discovery(
@@ -9896,7 +9928,7 @@ class StaticAgentSourceEvidenceTests(unittest.TestCase):
                 "style",
                 'STYLES = {"plain": "a", "rich": "b"}\n'
                 "def run(text, config):\n"
-                '    return STYLES[config.get("style", "plain")] + text\n',
+                '    return [STYLES[config.get("style", "plain")], text]\n',
                 ("plain", "rich"),
             ),
             "a guard refusing an undeclared value": (
@@ -9906,7 +9938,7 @@ class StaticAgentSourceEvidenceTests(unittest.TestCase):
                 '    d = config.get("depth", 0)\n'
                 "    if d not in DEPTHS:\n"
                 '        raise ValueError("no")\n'
-                "    return text * d\n",
+                "    return [d, text]\n",
                 (0, 2, 4),
             ),
             "a guarded depth controls returned prompt context": (
@@ -9961,7 +9993,7 @@ class StaticAgentSourceEvidenceTests(unittest.TestCase):
                 "style",
                 'STYLES = {"plain": "a", "rich": "b"}\n'
                 "def build(text, config):\n"
-                '    return STYLES[config.get("style", "plain")] + text\n'
+                '    return [STYLES[config.get("style", "plain")], text]\n'
                 "def run(text, config):\n"
                 "    return build(text, config)\n",
                 ("plain", "rich"),
@@ -9981,7 +10013,7 @@ class StaticAgentSourceEvidenceTests(unittest.TestCase):
                 "style",
                 'STYLES = {"plain": "a", "rich": "b"}\n'
                 "async def build(text, config):\n"
-                '    return STYLES[config.get("style", "plain")] + text\n'
+                '    return [STYLES[config.get("style", "plain")], text]\n'
                 "async def run(text, config):\n"
                 "    return await build(text, config)\n",
                 ("plain", "rich"),
@@ -10003,7 +10035,7 @@ class StaticAgentSourceEvidenceTests(unittest.TestCase):
                 "style",
                 'STYLES: dict[str, str] = {"plain": "a", "rich": "b"}\n'
                 "def run(text, config):\n"
-                '    return STYLES[config["style"]] + text\n',
+                '    return [STYLES[config["style"]], text]\n',
                 ("plain", "rich"),
             ),
             "a selected value returned through one local": (
@@ -10011,7 +10043,7 @@ class StaticAgentSourceEvidenceTests(unittest.TestCase):
                 'STYLES = {"plain": "a", "rich": "b"}\n'
                 "def run(text, config):\n"
                 '    style = STYLES[config.get("style", "plain")]\n'
-                "    return style + text\n",
+                "    return [style, text]\n",
                 ("plain", "rich"),
             ),
             "a selected prompt value formatted before return": (
@@ -10019,6 +10051,35 @@ class StaticAgentSourceEvidenceTests(unittest.TestCase):
                 'STYLES = {"plain": "say {text}", "rich": "explain {text}"}\n'
                 "def run(text, config):\n"
                 '    return STYLES[config.get("style", "plain")].format(text=text)\n',
+                ("plain", "rich"),
+            ),
+            "a selected value reaches an imported request boundary": (
+                "style",
+                'STYLES = {"plain": "a", "rich": "b"}\n'
+                "from openai import OpenAI as Client\n"
+                "def send(value):\n"
+                "    client: Client = Client()\n"
+                "    answer = client.responses.create(input=value)\n"
+                "    return answer.output_text\n"
+                "def run(text, config):\n"
+                '    return send([STYLES[config.get("style", "plain")], text])\n',
+                ("plain", "rich"),
+            ),
+            "a request builder is followed before an opaque parser": (
+                "style",
+                'STYLES = {"plain": "a", "rich": "b"}\n'
+                "import json\n"
+                "from openai import OpenAI\n"
+                "def build(text, config):\n"
+                '    lines = [STYLES[config.get("style", "plain")], f"{text}"]\n'
+                '    return "\\n".join(lines)\n'
+                "def send(value):\n"
+                "    answer = OpenAI().responses.create(input=value)\n"
+                "    return answer.output_text\n"
+                "def parse(reply):\n"
+                '    return json.loads(reply)["answer"]\n'
+                "def run(text, config):\n"
+                "    return parse(send(build(text, config)))\n",
                 ("plain", "rich"),
             ),
         }
@@ -10284,6 +10345,42 @@ class StaticAgentSourceEvidenceTests(unittest.TestCase):
                 '    return STYLES[config.get("style", "plain")]\n'
                 "def discard(value):\n"
                 '    return identity([value, "fixed"])[1]\n'
+                "def run(text, config):\n"
+                "    return discard(build(config))\n",
+            ),
+            "a helper mention discarded through an opaque method projection": (
+                "style",
+                ("plain", "rich"),
+                'STYLES = {"plain": "a", "rich": "b"}\n'
+                "def build(config):\n"
+                '    return STYLES[config.get("style", "plain")]\n'
+                "def discard(value):\n"
+                "    client = Client()\n"
+                '    return client.identity([value, "fixed"])[1]\n'
+                "def run(text, config):\n"
+                "    return discard(build(config))\n",
+            ),
+            "a helper mention discarded by a locally fixed formatter": (
+                "style",
+                ("plain", "rich"),
+                'STYLES = {"plain": "a", "rich": "b"}\n'
+                "def build(config):\n"
+                '    return STYLES[config.get("style", "plain")]\n'
+                "def discard(value):\n"
+                '    template = "fixed"\n'
+                "    return template.format(value)\n"
+                "def run(text, config):\n"
+                "    return discard(build(config))\n",
+            ),
+            "a shadowed deserializer cannot claim structural preservation": (
+                "style",
+                ("plain", "rich"),
+                'STYLES = {"plain": "a", "rich": "b"}\n'
+                "json = FakeJson()\n"
+                "def build(config):\n"
+                '    return STYLES[config.get("style", "plain")]\n'
+                "def discard(value):\n"
+                '    return json.loads(value)["fixed"]\n'
                 "def run(text, config):\n"
                 "    return discard(build(config))\n",
             ),
@@ -10704,6 +10801,20 @@ class StaticAgentSourceEvidenceTests(unittest.TestCase):
             ),
         }
 
+        # A nested producer behind an opaque `send(...)` name is not request
+        # evidence. These used to be positives and made a weaker unknown call
+        # score better than the intact external boundary checked below.
+        for label in (
+            "a guarded depth controls returned prompt context",
+            "a guarded depth extends context by a list item",
+            "a guarded depth extends context by a tuple item",
+            "a helper selection composed into the returned result",
+            "an awaited helper composed through keyword arguments",
+            "a selected prompt value formatted before return",
+        ):
+            knob, source, expected = credited.pop(label)
+            refused[label] = (knob, expected, source)
+
         def decision(source: str, knob: str, expected: tuple):
             with tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
@@ -10729,7 +10840,7 @@ class StaticAgentSourceEvidenceTests(unittest.TestCase):
         for label, (knob, source, expected) in credited.items():
             with self.subTest(credits=label):
                 discovered, pillar, caps = decision(source, knob, expected)
-                self.assertTrue(discovered.credited)
+                self.assertTrue(discovered.credited, label)
                 self.assertEqual(discovered.values, expected)
                 self.assertGreater(pillar.score, 0)
                 self.assertNotIn("agent-no-varying-knobs", caps)
@@ -10739,6 +10850,608 @@ class StaticAgentSourceEvidenceTests(unittest.TestCase):
                 self.assertFalse(discovered.credited)
                 self.assertEqual(pillar.score, 0)
                 self.assertIn("agent-no-varying-knobs", caps)
+
+    def test_request_boundary_needs_an_external_receiver(self) -> None:
+        """A request-shaped call needs an external imported client binding."""
+        selected = 'STYLES[config.get("style", "plain")]'
+        refused = {
+            "same-file class": (
+                "class Client:\n"
+                "    pass\n"
+                "def discard(value):\n"
+                "    return Client().responses.create(input=value)\n"
+            ),
+            "standard-library constructor": (
+                "from types import SimpleNamespace as Client\n"
+                "def discard(value):\n"
+                "    client = Client()\n"
+                "    return client.responses.create(input=value)\n"
+            ),
+            "standard-library module constructor": (
+                "import types\n"
+                "def discard(value):\n"
+                "    client = types.SimpleNamespace()\n"
+                "    return client.responses.create(input=value)\n"
+            ),
+            "selected project module as constructor root": (
+                "import agent as sdk\n"
+                "def discard(value):\n"
+                "    return sdk.Client().responses.create(input=value)\n"
+            ),
+            "constructor import shadowed in the helper": (
+                "from vendor import Client\n"
+                "def discard(value):\n"
+                "    class Client:\n"
+                "        pass\n"
+                "    return Client().responses.create(input=value)\n"
+            ),
+            "import after constructor use": (
+                "def discard(value):\n"
+                "    client = Client()\n"
+                "    from vendor import Client\n"
+                "    return client.responses.create(input=value)\n"
+            ),
+            "dead local import still owns Python scope": (
+                "from vendor import Client\n"
+                "def discard(value):\n"
+                "    if False:\n"
+                "        from local import Client\n"
+                "    return Client().responses.create(input=value)\n"
+            ),
+            "module alias shadowed in the helper": (
+                "import vendor as sdk\n"
+                "def discard(value, sdk=None):\n"
+                "    return sdk.Client().responses.create(input=value)\n"
+            ),
+            "request argument selects a fixed sibling": (
+                "from vendor import Client\n"
+                "def discard(value):\n"
+                "    answer = Client().responses.create(input=[value, 'fixed'][1])\n"
+                "    return answer.output_text\n"
+            ),
+            "request argument reduces to a fixed predicate": (
+                "from vendor import Client\n"
+                "def discard(value):\n"
+                "    answer = Client().responses.create(input=value.startswith(''))\n"
+                "    return answer.output_text\n"
+            ),
+            "request argument is multiplied away": (
+                "from vendor import Client\n"
+                "def discard(value):\n"
+                "    answer = Client().responses.create(input=value * 0)\n"
+                "    return answer.output_text\n"
+            ),
+            "request argument is compared with itself": (
+                "from vendor import Client\n"
+                "def discard(value):\n"
+                "    answer = Client().responses.create(input=value == value)\n"
+                "    return answer.output_text\n"
+            ),
+            "request unpacks the selected value": (
+                "from vendor import Client\n"
+                "def discard(value):\n"
+                "    answer = Client().responses.create(**value)\n"
+                "    return answer.output_text\n"
+            ),
+            "request both passes and unpacks the selected value": (
+                "from vendor import Client\n"
+                "def discard(value):\n"
+                "    answer = Client().responses.create(input=value, **value)\n"
+                "    return answer.output_text\n"
+            ),
+            "request set deduplicates the selected value": (
+                "from vendor import Client\n"
+                "def discard(value):\n"
+                "    answer = Client().responses.create(\n"
+                "        input={value, 'plain', 'rich'}\n"
+                "    )\n"
+                "    return answer.output_text\n"
+            ),
+            "request uses the selected value only as a redundant dict key": (
+                "from vendor import Client\n"
+                "def discard(value):\n"
+                "    answer = Client().responses.create(\n"
+                "        input={value: 'same', 'plain': 'same', 'rich': 'same'}\n"
+                "    )\n"
+                "    return answer.output_text\n"
+            ),
+            "request dict overwrites the selected value": (
+                "from vendor import Client\n"
+                "def discard(value):\n"
+                "    answer = Client().responses.create(\n"
+                "        input={'content': value, 'content': 'fixed'}\n"
+                "    )\n"
+                "    return answer.output_text\n"
+            ),
+            "replaced response": (
+                "from vendor import Client\n"
+                "def discard(value):\n"
+                "    answer = Client().responses.create(input=value)\n"
+                "    answer = object()\n"
+                "    return answer.output_text\n"
+            ),
+        }
+        for label, helper in refused.items():
+            with self.subTest(label=label):
+                source = (
+                    'STYLES = {"plain": "a", "rich": "b"}\n'
+                    + helper
+                    + f"def run(text, config):\n    return discard({selected})\n"
+                )
+                self.assertFalse(self._style_is_credited(source), label)
+
+        configured_client = (
+            'STYLES = {"plain": "a", "rich": "b"}\n'
+            "from vendor import Client\n"
+            "def discard(value):\n"
+            "    client = Client()\n"
+            "    client.configure(timeout=1)\n"
+            "    return client.responses.create(input=value)\n"
+            f"def run(text, config):\n    return discard({selected})\n"
+        )
+        self.assertTrue(self._style_is_credited(configured_client))
+
+        for module_import in (
+            "import vendor\n",
+            "import vendor as sdk\n",
+        ):
+            with self.subTest(module_constructor=module_import):
+                module_name = "vendor" if module_import == "import vendor\n" else "sdk"
+                source = (
+                    'STYLES = {"plain": "a", "rich": "b"}\n'
+                    + module_import
+                    + "def discard(value):\n"
+                    + f"    return {module_name}.Client().responses.create(input=value)\n"
+                    + f"def run(text, config):\n    return discard({selected})\n"
+                )
+                self.assertTrue(self._style_is_credited(source))
+
+        local_module_import = (
+            'STYLES = {"plain": "a", "rich": "b"}\n'
+            "def discard(value):\n"
+            "    import vendor as sdk\n"
+            "    client = sdk.Client()\n"
+            "    return client.responses.create(input=value)\n"
+            f"def run(text, config):\n    return discard({selected})\n"
+        )
+        self.assertTrue(self._style_is_credited(local_module_import))
+
+        registered_helper = (
+            'STYLES = {"plain": "a", "rich": "b"}\n'
+            "from vendor import Client\n"
+            "def send(value):\n"
+            "    return Client().responses.create(input=value)\n"
+            "def register(callback):\n"
+            "    return callback\n"
+            "registered = register(send)\n"
+            "def run(text, config):\n"
+            f"    return send({selected})\n"
+        )
+        self.assertTrue(self._style_is_credited(registered_helper))
+
+        for expression in (
+            f"{selected} * 0",
+            f"{selected} == {selected}",
+            f"{selected} is {selected}",
+            f"{selected}[:0]",
+            f"not {selected}",
+        ):
+            with self.subTest(direct_fixed_request=expression):
+                source = (
+                    'STYLES = {"plain": "a", "rich": "b"}\n'
+                    "from vendor import Client\n"
+                    "def run(text, config):\n"
+                    f"    return Client().responses.create(input={expression}).output_text\n"
+                )
+                self.assertFalse(self._style_is_credited(source))
+
+        unpacked = (
+            'STYLES = {"plain": "a", "rich": "b"}\n'
+            "from vendor import Client\n"
+            "def run(text, config):\n"
+            "    return Client().responses.create(\n"
+            f"        **{selected}\n"
+            "    ).output_text\n"
+        )
+        self.assertFalse(self._style_is_credited(unpacked))
+
+        for arguments in (
+            f"input={selected}, **{selected}",
+            f"input={selected}, **{{'input': 'fixed'}}",
+            f"{selected}, *{selected}",
+            f"input=[{selected}, *None]",
+            f"input=({selected}, *None)",
+        ):
+            with self.subTest(unpack_arguments=arguments):
+                mixed_unpack = (
+                    'STYLES = {"plain": "a", "rich": "b"}\n'
+                    "from vendor import Client\n"
+                    "def run(text, config):\n"
+                    "    return Client().responses.create(\n"
+                    f"        {arguments}\n"
+                    "    ).output_text\n"
+                )
+                self.assertFalse(self._style_is_credited(mixed_unpack))
+
+    def test_request_builder_credit_needs_a_preserved_result(self) -> None:
+        """One exact producer edge must not reopen transform-based credit."""
+        prefix = 'STYLES = {"plain": "a", "rich": "b"}\n' "from vendor import Client\n"
+        suffix = (
+            "def send(value):\n"
+            "    answer = Client().responses.create(input=value)\n"
+            "    return answer.output_text\n"
+            "def parse(reply):\n"
+            "    return reply.strip()\n"
+            "def run(text, config):\n"
+            "    return parse(send(build(text, config)))\n"
+        )
+        credited = (
+            "def build(text, config):\n"
+            '    lines = [STYLES[config.get("style", "plain")], f"{text}"]\n'
+            '    return "\\n".join(lines)\n'
+        )
+        self.assertTrue(self._style_is_credited(prefix + credited + suffix))
+
+        list_builder = (
+            "def build(text, config):\n"
+            '    return [STYLES[config.get("style", "plain")], text]\n'
+        )
+        self.assertTrue(self._style_is_credited(prefix + list_builder + suffix))
+        request_parameter_failures = {
+            "mutated through a method": "    value.clear()\n",
+            "mutated through a slice": "    value[:] = []\n",
+            "escaped to another call": "    inspect(value)\n",
+            "escaped through an alias": "    alias = value\n    alias.clear()\n",
+        }
+        for label, statement in request_parameter_failures.items():
+            with self.subTest(request_parameter=label):
+                mutated_request = suffix.replace(
+                    "def send(value):\n",
+                    "def send(value):\n" + statement,
+                )
+                self.assertFalse(
+                    self._style_is_credited(prefix + list_builder + mutated_request)
+                )
+
+        unpacked_request = suffix.replace(
+            "Client().responses.create(input=value)",
+            "Client().responses.create(**value)",
+        )
+        self.assertFalse(
+            self._style_is_credited(prefix + list_builder + unpacked_request)
+        )
+
+        selected = 'STYLES[config.get("style", "plain")]'
+        refused = {
+            "multiplied away": f"return {selected} * 0",
+            "reduced to a predicate": f"return {selected} == {selected}",
+            "projected away": f"return {selected}[:0]",
+            "deduplicated by a set": f"return {{{selected}, 'a', 'b'}}",
+            "used only as a redundant key": (
+                f"return {{{selected}: 'same', 'plain': 'same', 'rich': 'same'}}"
+            ),
+            "overwritten in a duplicate-key dict": (
+                f"return {{'value': {selected}, 'value': 'fixed'}}"
+            ),
+        }
+        for label, returned in refused.items():
+            with self.subTest(label=label):
+                builder = "def build(text, config):\n" f"    {returned}\n"
+                self.assertFalse(self._style_is_credited(prefix + builder + suffix))
+
+        same_knob_twice = (
+            "def build(text, config):\n"
+            '    lines = [STYLES[config.get("style", "plain")], text]\n'
+            '    lines.append(STYLES[config.get("style", "plain")])\n'
+            '    return "\\n".join(lines)\n'
+        )
+        self.assertFalse(self._style_is_credited(prefix + same_knob_twice + suffix))
+
+        same_holder_twice = (
+            'OTHER = {"plain": "b", "rich": "a"}\n'
+            "def build(text, config):\n"
+            '    style = config.get("style", "plain")\n'
+            "    lines = [STYLES[style], text]\n"
+            "    lines.append(OTHER[style])\n"
+            '    return "".join(lines)\n'
+        )
+        self.assertFalse(self._style_is_credited(prefix + same_holder_twice + suffix))
+
+        escaped_config = (
+            "def suffix(config):\n"
+            "    return 'fixed'\n"
+            "def build(text, config):\n"
+            '    lines = [STYLES[config.get("style", "plain")], suffix(config)]\n'
+            '    return "\\n".join(lines)\n'
+        )
+        self.assertFalse(self._style_is_credited(prefix + escaped_config + suffix))
+
+        non_string_growth = (
+            "def build(text, config):\n"
+            '    lines = [STYLES[config.get("style", "plain")]]\n'
+            "    lines.append(None)\n"
+            '    return "\\n".join(lines)\n'
+        )
+        self.assertFalse(self._style_is_credited(prefix + non_string_growth + suffix))
+
+        dead_selection = (
+            "def build(text, config):\n"
+            "    return 'fixed'\n"
+            f"    return {selected}\n"
+        )
+        self.assertFalse(self._style_is_credited(prefix + dead_selection + suffix))
+
+        wrapped_result = suffix.replace(
+            "send(build(text, config))",
+            "send([build(text, config), 'fixed'][1])",
+        )
+        self.assertFalse(self._style_is_credited(prefix + credited + wrapped_result))
+
+        async_suffix = suffix.replace("def send(value):", "async def send(value):")
+        self.assertFalse(self._style_is_credited(prefix + credited + async_suffix))
+
+        awaited_async = async_suffix.replace(
+            "def run(text, config):\n" "    return parse(send(build(text, config)))\n",
+            "async def run(text, config):\n"
+            "    return parse(await send(build(text, config)))\n",
+        )
+        self.assertTrue(self._style_is_credited(prefix + credited + awaited_async))
+
+        conditional_builder = (
+            "def build(text, config, enabled):\n"
+            '    lines = [STYLES[config.get("style", "plain")], f"{text}"]\n'
+            "    if enabled:\n"
+            '        return "\\n".join(lines)\n'
+            "    return 'fixed'\n"
+        )
+        fixed_builder_branch = suffix.replace(
+            "build(text, config)", "build(text, config, False)"
+        )
+        self.assertFalse(
+            self._style_is_credited(prefix + conditional_builder + fixed_builder_branch)
+        )
+
+        conditional_request = (
+            "def send(value, enabled):\n"
+            "    if enabled:\n"
+            "        return Client().responses.create(input=value).output_text\n"
+            "    return 'fixed'\n"
+            "def parse(reply):\n"
+            "    return reply.strip()\n"
+            "def run(text, config):\n"
+            "    return parse(send(build(text, config), False))\n"
+        )
+        self.assertFalse(
+            self._style_is_credited(prefix + credited + conditional_request)
+        )
+
+    def test_request_parameter_must_reach_every_returned_request(self) -> None:
+        """Alternative provider paths preserve only their shared payload."""
+        prefix = (
+            'STYLES = {"plain": "a", "rich": "b"}\n' "from vendor import Alpha, Beta\n"
+        )
+        helper = (
+            "def build(text, config):\n"
+            "    return [STYLES[config.get('style', 'plain')], text]\n"
+            "def send(route, value):\n"
+            "    if route == 'alpha':\n"
+            "        return Alpha().responses.create(input=value).output_text\n"
+            "    return Beta().responses.create(input=value).output_text\n"
+            "def parse(reply):\n"
+            "    return reply.strip()\n"
+            "def run(text, config):\n"
+            "    return parse(send(text, build(text, config)))\n"
+        )
+        self.assertTrue(self._style_is_credited(prefix + helper))
+
+        validation_guard = helper.replace(
+            "def send(route, value):\n",
+            "def send(route, value):\n"
+            "    if not value:\n"
+            "        raise ValueError(f'empty request: {value!r}')\n",
+        )
+        self.assertTrue(self._style_is_credited(prefix + validation_guard))
+
+        all_raise = helper.replace(
+            "return Alpha().responses.create(input=value).output_text",
+            "raise ValueError(value)",
+        ).replace(
+            "return Beta().responses.create(input=value).output_text",
+            "raise ValueError(value)",
+        )
+        self.assertFalse(self._style_is_credited(prefix + all_raise))
+
+        fixed_branch = helper.replace(
+            "return Beta().responses.create(input=value).output_text",
+            "return Beta().responses.create(input='fixed').output_text",
+        )
+        self.assertFalse(self._style_is_credited(prefix + fixed_branch))
+
+    def test_return_path_credit_needs_a_preserved_value(self) -> None:
+        """Generic returns do not get a weaker transform rule than requests."""
+        selected = 'STYLES[config.get("style", "plain")]'
+        prefix = 'STYLES = {"plain": "a", "rich": "b"}\n'
+        for returned in (
+            selected,
+            f"[{selected}, text]",
+            f"({selected}, text)",
+            f"{{'style': {selected}, 'text': text}}",
+        ):
+            with self.subTest(preserved=returned):
+                source = prefix + f"def run(text, config):\n    return {returned}\n"
+                self.assertTrue(self._style_is_credited(source))
+
+        for returned in (
+            f"{selected} * 0",
+            f"{selected} == {selected}",
+            f"{selected}[:0]",
+            f"not {selected}",
+        ):
+            with self.subTest(erased=returned):
+                source = prefix + f"def run(text, config):\n    return {returned}\n"
+                self.assertFalse(self._style_is_credited(source))
+
+        for returned in (
+            "value * 0",
+            "value == value",
+            "value[:0]",
+            "not value",
+        ):
+            with self.subTest(helper_erasure=returned):
+                source = (
+                    prefix
+                    + f"def discard(value):\n    return {returned}\n"
+                    + f"def run(text, config):\n    return discard({selected})\n"
+                )
+                self.assertFalse(self._style_is_credited(source))
+
+        direct_provider = (
+            prefix
+            + "def run(text, style):\n"
+            + "    return provider(style=STYLES[style])\n"
+        )
+        self.assertTrue(self._style_is_credited(direct_provider))
+        for argument in (
+            "STYLES[style] * 0",
+            "STYLES[style] == STYLES[style]",
+            "STYLES[style][:0]",
+        ):
+            with self.subTest(opaque_provider_erasure=argument):
+                source = (
+                    prefix
+                    + "def run(text, style):\n"
+                    + f"    return provider(style={argument})\n"
+                )
+                self.assertFalse(self._style_is_credited(source))
+
+        cancelling_selections = (
+            "A = {'plain': 'a', 'rich': 'ab'}\n"
+            "B = {'plain': 'bc', 'rich': 'c'}\n"
+            "def run(text, config):\n"
+            "    parts = [A[config.get('style', 'plain')], "
+            "B[config.get('style', 'plain')]]\n"
+            "    return ''.join(parts)\n"
+        )
+        self.assertFalse(self._style_is_credited(cancelling_selections))
+
+        for returned in ("depth * 0", "depth == depth"):
+            with self.subTest(guard_erasure=returned):
+                guarded = (
+                    "STYLES = ('plain', 'rich')\n"
+                    "def run(config):\n"
+                    "    depth = config.get('style', 'plain')\n"
+                    "    if depth not in STYLES:\n"
+                    "        raise ValueError(depth)\n"
+                    f"    return {returned}\n"
+                )
+                self.assertFalse(self._style_is_credited(guarded))
+
+    def test_guarded_value_does_not_follow_a_shadowed_request_helper(self) -> None:
+        source = (
+            'STYLES = {"plain": "a", "rich": "b"}\n'
+            "from vendor import Client\n"
+            "def send(value):\n"
+            "    return Client().responses.create(input=value).output_text\n"
+            "def ignore(value):\n"
+            "    return 'fixed'\n"
+            "def run(text, config):\n"
+            '    style = config.get("style", "plain")\n'
+            "    if style not in STYLES:\n"
+            "        raise ValueError(style)\n"
+            "    send = ignore\n"
+            "    return send(style)\n"
+        )
+        self.assertFalse(self._style_is_credited(source))
+
+    def test_a_found_declaration_is_not_reported_as_missing_source(self) -> None:
+        """A narrow flow refusal must not ask the customer to rewrite true evidence."""
+        source = (
+            "DEPTHS = (0, 2, 4)\n"
+            "from vendor import Client\n"
+            "def build(text, config):\n"
+            '    depth = config.get("depth", 0)\n'
+            "    if depth not in DEPTHS:\n"
+            "        raise ValueError(depth)\n"
+            "    return 'fixed'\n"
+            "def send(value):\n"
+            "    return Client().responses.create(input=value).output_text\n"
+            "def run(text, config):\n"
+            "    return send(build(text, config))\n"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            agent = root / "agent.py"
+            agent.write_text(source, encoding="utf-8")
+            facts = MODULE.agent_facts_from_discovery(
+                {
+                    "source": "agent.py",
+                    "knobs": {
+                        "depth": {
+                            "values": [0, 2, 4],
+                            "source_lines": [1],
+                            "evidence": "agent.py:1 declares the accepted depths",
+                        }
+                    },
+                },
+                source_root=root,
+                selected_agent=agent,
+                selected_agent_callable="run",
+            )
+
+        finding = facts.discovered[0]
+        self.assertFalse(finding.credited)
+        self.assertIn("no source defect is inferred", finding.uncredited_reason)
+        self.assertNotIn("quote the line", finding.uncredited_reason)
+
+    def test_branch_merged_request_response_remains_unverified(self) -> None:
+        """The shallow check intentionally does not infer a branch merge."""
+        source = (
+            'STYLES = {"plain": "a", "rich": "b"}\n'
+            "from vendor import Client\n"
+            "def discard(value, first):\n"
+            "    if first:\n"
+            "        answer = Client().responses.create(input=value)\n"
+            "    else:\n"
+            "        answer = Client().messages.create(input=value)\n"
+            "    return answer.output_text\n"
+            "def run(text, config):\n"
+            '    return discard(STYLES[config.get("style", "plain")], True)\n'
+        )
+        self.assertFalse(self._style_is_credited(source))
+
+    def test_response_parser_alone_does_not_establish_request_wiring(self) -> None:
+        """The source check stops at a verified request boundary, before parsing."""
+        selected = 'STYLES[config.get("style", "plain")]'
+        source = (
+            'STYLES = {"plain": "a", "rich": "b"}\n'
+            "import json\n"
+            "def parse(value):\n"
+            '    return json.loads(value)["answer"]\n'
+            "def run(text, config):\n"
+            f"    return parse(send({selected} + text))\n"
+        )
+        self.assertFalse(self._style_is_credited(source))
+
+    def test_project_shadow_is_refused_for_every_source_spelling(self) -> None:
+        """Containment and import checks use the same resolved project root."""
+        selected = 'STYLES[config.get("style", "plain")]'
+        source = (
+            'STYLES = {"plain": "a", "rich": "b"}\n'
+            "from vendor import Client\n"
+            "def send(value):\n"
+            "    return Client().responses.create(input=value).output_text\n"
+            "def run(text, config):\n"
+            f"    return send({selected} + text)\n"
+        )
+        for source_reference in ("agent.py", "sub/../agent.py"):
+            with self.subTest(source_reference=source_reference):
+                self.assertFalse(
+                    self._style_is_credited(
+                        source,
+                        extra_files={"vendor.py": "class Client: pass\n"},
+                        source_reference=source_reference,
+                    )
+                )
 
     def test_expression_indices_are_not_a_static_choice_flow(self) -> None:
         """Constant arithmetic and ternaries are fixed defaults, not selectors."""
@@ -10761,14 +11474,15 @@ class StaticAgentSourceEvidenceTests(unittest.TestCase):
             self.assertFalse(facts.discovered[0].credited)
             self.assertTrue(facts.discovered[0].unverified)
 
-    def test_nested_composition_credits_every_source_backed_setting(self) -> None:
-        """Nested returned calls preserve each verified selected-path setting."""
+    def test_verified_request_composition_credits_only_proven_settings(self) -> None:
+        """A stronger request anchor must not restore an unproved loop setting."""
         source = (
             'MODELS = {"fast": "a", "careful": "b"}\n'
             'STYLES = {"plain": "say", "rubric": "classify"}\n'
             "DEPTHS = (0, 2, 4)\n"
             'FORMATS = {"label": "text", "json": "object"}\n'
             "PAST = ('one', 'two', 'three', 'four')\n"
+            "from vendor import Client\n"
             "def build(text, config):\n"
             '    depth = config.get("retrieval", 0)\n'
             "    if depth not in DEPTHS:\n"
@@ -10778,12 +11492,14 @@ class StaticAgentSourceEvidenceTests(unittest.TestCase):
             '        FORMATS[config.get("output_format", "label")],\n'
             "    ]\n"
             "    for item in PAST[:depth]:\n"
-            "        lines.append(item)\n"
-            '    return "\\n".join((*lines, text))\n'
+            '        lines.append(f"{item}")\n'
+            '    lines.append(f"{text}")\n'
+            '    return "\\n".join(lines)\n'
             "def parse(reply, config):\n"
             '    return reply.strip() if config.get("output_format") else reply\n'
             "def call_model(model, prompt):\n"
-            "    return provider(model=model, prompt=prompt)\n"
+            "    answer = Client().responses.create(model=model, input=prompt)\n"
+            "    return answer.output_text\n"
             "def run(text, config):\n"
             '    model = config.get("model", "fast")\n'
             "    if model not in MODELS:\n"
@@ -10821,12 +11537,15 @@ class StaticAgentSourceEvidenceTests(unittest.TestCase):
         pillar, caps, _ = MODULE.score_agent(facts)
         self.assertEqual(
             {knob.name for knob in facts.discovered if knob.credited},
-            set(values),
+            {"model", "prompt_style", "output_format"},
             [
                 (knob.name, knob.credited, knob.uncredited_reason)
                 for knob in facts.discovered
             ],
         )
+        retrieval = next(knob for knob in facts.discovered if knob.name == "retrieval")
+        self.assertTrue(retrieval.unverified)
+        self.assertIn("no source defect is inferred", retrieval.uncredited_reason)
         self.assertGreater(pillar.score, 0)
         self.assertNotIn("agent-no-varying-knobs", [cap.condition for cap in caps])
 
@@ -11569,6 +12288,10 @@ class RecordingAnUnsettledKnobHasOneShapeAndItWorksTests(unittest.TestCase):
         for pillar in (settled, recorded):
             space = next(s for s in pillar.subscores if s.name == "search-space")
             self.assertIn("static source verification established", space.evidence)
+            self.assertIn(
+                "does not rewrite its own functions or imports at runtime",
+                space.evidence,
+            )
 
     def test_the_build_shape_inside_knobs_is_refused_with_the_remedy(self) -> None:
         """Naming the accepted fields is half a message.

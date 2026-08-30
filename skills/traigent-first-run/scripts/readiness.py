@@ -5063,8 +5063,9 @@ def score_discovered_agent(
     detail = (
         "static source verification established possible settings "
         + ", ".join(knob.name for knob in credited)
-        + "; it does not establish final request wiring. "
-        + search_space_evidence(configurations, declared, 1, None)
+        + "; this advisory read assumes the selected source does not rewrite "
+        "its own functions or imports at runtime. It does not establish final "
+        "request wiring. " + search_space_evidence(configurations, declared, 1, None)
     )
     if refused:
         detail += "; " + "; ".join(
@@ -7545,6 +7546,7 @@ class StaticSourceEvidence:
     """A selected-agent source file checked without importing or executing it."""
 
     path: Path
+    root: Path
     display_path: str
     executable_lines: frozenset[int]
     text_by_line: tuple[str, ...]
@@ -7695,6 +7697,7 @@ def static_source_evidence(
     }
     return StaticSourceEvidence(
         candidate,
+        root,
         source,
         frozenset(executable),
         tuple(text.splitlines()),
@@ -7949,6 +7952,7 @@ def _name_contributes_to_expression(
                 if not _call_argument_contributes(
                     parent,
                     child,
+                    reference,
                     callable_node,
                     source,
                     follow_same_file_call=follow_same_file_call,
@@ -7956,6 +7960,30 @@ def _name_contributes_to_expression(
                     break
                 child = parent
                 continue
+            if isinstance(parent, ast.Call) and parent.func is child:
+                preserving_receiver = isinstance(
+                    child, ast.Attribute
+                ) and child.attr in {
+                    "strip",
+                    "lstrip",
+                    "rstrip",
+                    "lower",
+                    "upper",
+                    "casefold",
+                    "format",
+                }
+                if not preserving_receiver:
+                    break
+                child = parent
+                continue
+            if isinstance(parent, (ast.Tuple, ast.List, ast.Dict, ast.Set)):
+                selection = source.parents.get(id(parent))
+                if isinstance(selection, ast.Subscript) and selection.value is parent:
+                    selected = _literal_composite_selected_children(
+                        parent, selection.slice
+                    )
+                    if selected is not None and child not in selected:
+                        break
             if isinstance(
                 parent,
                 (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda),
@@ -8079,9 +8107,12 @@ def _selected_callable_parameter_is_unshadowed(
 
 
 def _expression_varies_binding(
-    node: ast.AST, name: str, dynamic_parameters: frozenset[str]
+    node: ast.AST,
+    name: str,
+    dynamic_parameters: frozenset[str],
+    source: StaticSourceEvidence,
 ) -> bool:
-    """A literal collection only represents alternatives when selection varies."""
+    """A dynamic selection survives whole in one call argument."""
     for child in ast.walk(node):
         if not isinstance(child, ast.Subscript) or not _expression_uses_name(
             child.value, name
@@ -8091,7 +8122,11 @@ def _expression_varies_binding(
         # are fixed defaults dressed as a list of choices.  A bare identifier
         # is the narrow static proof that the selected callable receives a
         # choice from its caller without evaluating customer code.
-        if isinstance(child.slice, ast.Name) and child.slice.id in dynamic_parameters:
+        if (
+            isinstance(child.slice, ast.Name)
+            and child.slice.id in dynamic_parameters
+            and _node_is_structurally_embedded(child, node, source)
+        ):
             return True
     return False
 
@@ -8320,9 +8355,13 @@ def _call_uses_binding(
     dynamic_parameters: frozenset[str],
     source: StaticSourceEvidence,
 ) -> bool:
+    if any(isinstance(argument, ast.Starred) for argument in call.args) or any(
+        keyword.arg is None for keyword in call.keywords
+    ):
+        return False
     for keyword in call.keywords:
         if keyword.arg == knob and _expression_varies_binding(
-            keyword.value, binding, dynamic_parameters
+            keyword.value, binding, dynamic_parameters, source
         ):
             return True
     # A positional argument carries the value exactly as a keyword does. Only
@@ -8331,7 +8370,7 @@ def _call_uses_binding(
     return parameters is not None and any(
         index < len(parameters)
         and parameters[index] == knob
-        and _expression_varies_binding(argument, binding, dynamic_parameters)
+        and _expression_varies_binding(argument, binding, dynamic_parameters, source)
         for index, argument in enumerate(call.args)
     )
 
@@ -8470,6 +8509,7 @@ def _node_reaches_return(
     follow_same_file_call: bool = True,
 ) -> bool:
     """Whether this expression contributes to this call's returned value."""
+    contribution = node
     child = node
     while (parent := source.parents.get(id(child))) is not None:
         if parent is callable_node:
@@ -8492,6 +8532,7 @@ def _node_reaches_return(
                 if not _call_argument_contributes(
                     parent,
                     child,
+                    contribution,
                     callable_node,
                     source,
                     follow_same_file_call=follow_same_file_call,
@@ -8509,8 +8550,9 @@ def _node_reaches_return(
                     "lower",
                     "upper",
                     "casefold",
+                    "format",
                 }
-                if not follow_same_file_call and not preserving_receiver:
+                if not preserving_receiver:
                     return False
                 child = parent
                 continue
@@ -8561,7 +8603,7 @@ def _scope_declares_global(node: ast.AST, name: str) -> bool:
 def _module_callable_is_current(
     target: ast.FunctionDef | ast.AsyncFunctionDef, source: StaticSourceEvidence
 ) -> bool:
-    """Whether an undecorated module helper still owns its exact name."""
+    """Whether ordinary lexical binding still names this module helper."""
     if source.parents.get(id(target)) is not source.tree or target.decorator_list:
         return False
     for candidate in ast.walk(source.tree):
@@ -8627,9 +8669,47 @@ def _call_matches_static_signature(
     return set((*required_positional, *required_keyword_only)) <= supplied
 
 
+def _node_is_structurally_embedded(
+    node: ast.AST,
+    expression: ast.expr,
+    source: StaticSourceEvidence,
+) -> bool:
+    """The exact value is carried whole in an argument, perhaps in containers.
+
+    Operators, predicates, formatting, projections, and calls can collapse two
+    declared alternatives to the same request value. This first read does not
+    try to prove those transforms injective; only a bare value or literal
+    container nesting preserves the value as an object the request receives.
+    """
+    child = node
+    while child is not expression:
+        parent = source.parents.get(id(child))
+        if parent is None:
+            return False
+        if isinstance(parent, (ast.List, ast.Tuple)) and child in parent.elts:
+            if any(isinstance(element, ast.Starred) for element in parent.elts):
+                return False
+            child = parent
+            continue
+        if isinstance(parent, ast.Dict) and child in parent.values:
+            if any(not isinstance(key, ast.Constant) for key in parent.keys):
+                return False
+            keys = [key.value for key in parent.keys]
+            try:
+                if len(set(keys)) != len(keys):
+                    return False
+            except TypeError:
+                return False
+            child = parent
+            continue
+        return False
+    return True
+
+
 def _call_argument_contributes(
     call: ast.Call,
     argument: ast.AST,
+    contributing_node: ast.AST,
     selected: ast.FunctionDef | ast.AsyncFunctionDef,
     source: StaticSourceEvidence,
     *,
@@ -8643,12 +8723,18 @@ def _call_argument_contributes(
     the other direction because its body is available; when that body ignores
     the parameter, crediting it would contradict source we already read.
     """
-    if isinstance(call.func, ast.Lambda):
+    if (
+        isinstance(call.func, ast.Lambda)
+        or any(isinstance(call_argument, ast.Starred) for call_argument in call.args)
+        or any(keyword.arg is None for keyword in call.keywords)
+    ):
+        # ``*value``/``**value`` expand an object into separate arguments; they
+        # do not carry that object itself to the callee. Refuse the whole call
+        # rather than crediting a normal sibling: expansion can fail or collide
+        # before the request executes.
         return False
     if not isinstance(call.func, ast.Name):
-        if follow_same_file_call:
-            return True
-        return bool(
+        returned_join = bool(
             isinstance(call.func, ast.Attribute)
             and call.func.attr == "join"
             and isinstance(call.func.value, ast.Constant)
@@ -8656,6 +8742,16 @@ def _call_argument_contributes(
             and len(call.args) == 1
             and argument is call.args[0]
             and not call.keywords
+        )
+        request_argument = (
+            argument.value if isinstance(argument, ast.keyword) else argument
+        )
+        return returned_join or bool(
+            isinstance(request_argument, ast.expr)
+            and _node_is_structurally_embedded(
+                contributing_node, request_argument, source
+            )
+            and _request_call_consumes_argument(call, selected, source)
         )
     if _callable_binds(call.func.id, selected):
         return False
@@ -8680,16 +8776,31 @@ def _call_argument_contributes(
     if not follow_same_file_call:
         return False
     parameter = _call_argument_parameter(call, argument, target)
+    argument_value = argument.value if isinstance(argument, ast.keyword) else argument
+    if not (
+        isinstance(argument_value, ast.expr)
+        and _node_is_structurally_embedded(contributing_node, argument_value, source)
+    ):
+        return False
+    request_boundary = any(
+        isinstance(candidate, ast.Call)
+        and _is_statically_reachable(candidate, source)
+        and isinstance(candidate.func, ast.Attribute)
+        and _request_receiver_has_external_constructor(
+            candidate.func.value, target, source
+        )
+        and _request_result_reaches_return(candidate, target, source)
+        for candidate in _callable_body_nodes(target)
+    )
     return bool(
         _module_callable_is_current(target, source)
         and parameter is not None
         and _call_matches_static_signature(call, target)
-        and _name_reaches_return(
-            parameter,
-            target,
-            source,
-            refuse_rebinding=True,
-            follow_same_file_call=False,
+        and _call_await_matches_target(call, target, selected, source)
+        and (
+            parameter in _request_parameters(target, source)
+            if request_boundary
+            else _parameter_reaches_structural_return(parameter, target, source)
         )
     )
 
@@ -8714,6 +8825,16 @@ def _call_result_is_subscripted(
                 child = parent
                 continue
             if parent.func is child:
+                if isinstance(child, ast.Attribute) and child.attr in {
+                    "strip",
+                    "lstrip",
+                    "rstrip",
+                    "lower",
+                    "upper",
+                    "casefold",
+                }:
+                    child = parent
+                    continue
                 return True
         if isinstance(
             parent, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
@@ -8721,6 +8842,417 @@ def _call_result_is_subscripted(
             return False
         child = parent
     return False
+
+
+def _request_call_consumes_argument(
+    call: ast.Call,
+    callable_node: ast.FunctionDef | ast.AsyncFunctionDef,
+    source: StaticSourceEvidence,
+) -> bool:
+    """One imported request call consumes this argument on the return path."""
+    return bool(
+        isinstance(call.func, ast.Attribute)
+        and _request_receiver_has_external_constructor(
+            call.func.value, callable_node, source
+        )
+        and _request_result_reaches_return(call, callable_node, source)
+    )
+
+
+def _import_binding_name(
+    statement: ast.Import | ast.ImportFrom, alias: ast.alias
+) -> str:
+    """The lexical name one import form binds."""
+    if alias.asname:
+        return alias.asname
+    return (
+        alias.name
+        if isinstance(statement, ast.ImportFrom)
+        else alias.name.split(".")[0]
+    )
+
+
+def _external_import_candidates(
+    statements: Iterable[ast.AST],
+    name: str,
+    *,
+    module_qualified: bool,
+) -> tuple[
+    list[ast.Import | ast.ImportFrom], list[tuple[ast.Import | ast.ImportFrom, str]]
+]:
+    """All bindings for a spelling and those matching the constructor form."""
+    bindings: list[ast.Import | ast.ImportFrom] = []
+    matches: list[tuple[ast.Import | ast.ImportFrom, str]] = []
+    for statement in statements:
+        if not isinstance(statement, (ast.Import, ast.ImportFrom)):
+            continue
+        for alias in statement.names:
+            if _import_binding_name(statement, alias) != name:
+                continue
+            bindings.append(statement)
+            if module_qualified and isinstance(statement, ast.Import):
+                matches.append((statement, alias.name))
+            elif (
+                not module_qualified
+                and isinstance(statement, ast.ImportFrom)
+                and statement.level == 0
+                and statement.module
+            ):
+                matches.append((statement, statement.module))
+    return bindings, matches
+
+
+def _direct_external_constructor_import(
+    constructor: ast.expr,
+    callable_node: ast.FunctionDef | ast.AsyncFunctionDef,
+    source: StaticSourceEvidence,
+) -> bool:
+    """Resolve one ordinary constructor rooted in a non-project import."""
+    root: ast.expr = constructor
+    while isinstance(root, ast.Attribute):
+        root = root.value
+    if not isinstance(root, ast.Name):
+        return False
+    module_qualified = root is not constructor
+    name = root.id
+    local_nodes = [
+        node
+        for node in _callable_body_nodes(callable_node)
+        if _lexical_owner(node, source) is callable_node
+    ]
+    local_bindings, local_matches = _external_import_candidates(
+        local_nodes,
+        name,
+        module_qualified=module_qualified,
+    )
+    locally_bound = name in _callable_parameter_names(callable_node) or any(
+        (
+            isinstance(node, ast.Name)
+            and node.id == name
+            and isinstance(node.ctx, (ast.Store, ast.Del))
+        )
+        or (
+            isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+            and node is not callable_node
+            and node.name == name
+            and _lexical_owner(node, source) is callable_node
+        )
+        for node in local_nodes
+    )
+    if local_bindings or locally_bound:
+        if locally_bound or len(local_bindings) != 1 or len(local_matches) != 1:
+            return False
+        selected_import, imported_module = local_matches[0]
+        if not _is_statically_reachable(
+            selected_import, source
+        ) or not _statement_precedes_reference(
+            selected_import, root, callable_node, source
+        ):
+            return False
+    else:
+        module_bindings, module_matches = _external_import_candidates(
+            source.tree.body,
+            name,
+            module_qualified=module_qualified,
+        )
+        if len(module_bindings) != 1 or len(module_matches) != 1:
+            return False
+        selected_import, imported_module = module_matches[0]
+        if selected_import.lineno >= root.lineno:
+            return False
+        for node in ast.walk(source.tree):
+            if (
+                isinstance(node, ast.Name)
+                and node.id == name
+                and isinstance(node.ctx, (ast.Store, ast.Del))
+            ):
+                owner = _lexical_owner(node, source)
+                if owner is source.tree or _scope_declares_global(owner, name):
+                    return False
+            if (
+                isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+                and node.name == name
+                and source.parents.get(id(node)) is source.tree
+            ):
+                return False
+    top_level = imported_module.split(".", 1)[0]
+    return bool(
+        top_level not in sys.stdlib_module_names
+        and top_level != "builtins"
+        and not _project_shadows_import(imported_module, source)
+    )
+
+
+def _request_receiver_has_external_constructor(
+    receiver: ast.AST,
+    callable_node: ast.FunctionDef | ast.AsyncFunctionDef,
+    source: StaticSourceEvidence,
+) -> bool:
+    """A request receiver is a direct imported constructor or one client local."""
+    root = receiver
+    while isinstance(root, (ast.Attribute, ast.Subscript)):
+        root = root.value
+    if isinstance(root, ast.Name):
+        writes = [
+            node
+            for node in _callable_body_nodes(callable_node)
+            if isinstance(node, ast.Name)
+            and node.id == root.id
+            and isinstance(node.ctx, (ast.Store, ast.Del))
+            and _is_statically_reachable(node, source)
+        ]
+        if len(writes) != 1 or isinstance(writes[0].ctx, ast.Del):
+            return False
+        assignment = source.parents.get(id(writes[0]))
+        initializer = (
+            assignment.value
+            if isinstance(assignment, (ast.Assign, ast.AnnAssign))
+            else None
+        )
+        if not isinstance(initializer, ast.Call) or not _statement_precedes_reference(
+            assignment, root, callable_node, source
+        ):
+            return False
+        root = initializer
+    if not (
+        isinstance(root, ast.Call)
+        and _direct_external_constructor_import(root.func, callable_node, source)
+    ):
+        return False
+    return True
+
+
+def _projection_return_nodes(
+    name: str,
+    assignment: ast.Assign | ast.AnnAssign,
+    callable_node: ast.FunctionDef | ast.AsyncFunctionDef,
+    source: StaticSourceEvidence,
+) -> tuple[ast.Return, ...]:
+    """Returns in the assignment's branch that project one response binding."""
+    location = _statement_list_location(assignment, callable_node, source)
+    if location is None or not _name_returns_by_projection(
+        name, assignment, callable_node, source
+    ):
+        return ()
+    found: list[ast.Return] = []
+    for returned in _callable_body_nodes(callable_node):
+        if not (
+            isinstance(returned, ast.Return)
+            and returned.value is not None
+            and _is_statically_reachable(returned, source)
+            and (
+                return_location := _statement_list_location(
+                    returned, callable_node, source
+                )
+            )
+            is not None
+            and return_location[:2] == location[:2]
+            and return_location[2] > location[2]
+        ):
+            continue
+        root: ast.AST = returned.value
+        while isinstance(root, (ast.Attribute, ast.Subscript)):
+            root = root.value
+        if isinstance(root, ast.Name) and root.id == name:
+            found.append(returned)
+    return tuple(found)
+
+
+def _request_result_return_nodes(
+    call: ast.Call,
+    callable_node: ast.FunctionDef | ast.AsyncFunctionDef,
+    source: StaticSourceEvidence,
+) -> tuple[ast.Return, ...]:
+    """Returns reached whole or through attribute/index response access."""
+    child: ast.AST = call
+    while (parent := source.parents.get(id(child))) is not None:
+        if isinstance(parent, (ast.Attribute, ast.Subscript)) and parent.value is child:
+            child = parent
+            continue
+        if isinstance(parent, ast.Await) and parent.value is child:
+            child = parent
+            continue
+        if isinstance(parent, ast.Return):
+            return (parent,) if parent.value is child else ()
+        if isinstance(parent, (ast.Assign, ast.AnnAssign)) and parent.value is child:
+            targets = (
+                parent.targets if isinstance(parent, ast.Assign) else (parent.target,)
+            )
+            names = [target.id for target in targets if isinstance(target, ast.Name)]
+            return (
+                _projection_return_nodes(names[0], parent, callable_node, source)
+                if len(names) == 1
+                else ()
+            )
+        return ()
+    return ()
+
+
+def _request_result_reaches_return(
+    call: ast.Call,
+    callable_node: ast.FunctionDef | ast.AsyncFunctionDef,
+    source: StaticSourceEvidence,
+) -> bool:
+    return bool(_request_result_return_nodes(call, callable_node, source))
+
+
+def _request_path_outcomes(
+    statements: Sequence[ast.stmt],
+    request_returns: frozenset[int],
+    source: StaticSourceEvidence,
+) -> frozenset[str]:
+    """Terminal outcomes for a tiny return/raise/if subset of one helper."""
+    outcomes = {"fallthrough"}
+    for statement in statements:
+        if not _is_statically_reachable(statement, source):
+            continue
+        next_outcomes = set(outcomes) - {"fallthrough"}
+        if "fallthrough" not in outcomes:
+            return frozenset(next_outcomes)
+        if isinstance(statement, ast.Return):
+            next_outcomes.add(
+                "request" if id(statement) in request_returns else "other"
+            )
+        elif isinstance(statement, ast.Raise):
+            next_outcomes.add("raise")
+        elif isinstance(statement, ast.If):
+            condition = _literal_condition_value(statement.test)
+            branches: list[Sequence[ast.stmt]]
+            if condition is True:
+                branches = [statement.body]
+            elif condition is False:
+                branches = [statement.orelse]
+            else:
+                branches = [statement.body, statement.orelse]
+            for branch in branches:
+                next_outcomes.update(
+                    _request_path_outcomes(branch, request_returns, source)
+                    if branch
+                    else {"fallthrough"}
+                )
+        elif isinstance(
+            statement,
+            (
+                ast.For,
+                ast.AsyncFor,
+                ast.While,
+                ast.Try,
+                ast.TryStar,
+                ast.With,
+                ast.AsyncWith,
+                ast.Match,
+            ),
+        ):
+            next_outcomes.add("other")
+        else:
+            next_outcomes.add("fallthrough")
+        outcomes = next_outcomes
+    return frozenset(outcomes)
+
+
+def _name_returns_by_projection(
+    name: str,
+    assignment: ast.Assign | ast.AnnAssign,
+    callable_node: ast.FunctionDef | ast.AsyncFunctionDef,
+    source: StaticSourceEvidence,
+) -> bool:
+    """One response binding reaches return without rebinding, calls, or escape.
+
+    The assignment and return must share one ordered statement list. Joining
+    mutually exclusive branch assignments needs control-flow analysis this
+    shallow first read deliberately does not attempt, so that shape remains
+    unverified rather than guessed safe.
+    """
+    location = _statement_list_location(assignment, callable_node, source)
+    if location is None:
+        return False
+    writes = [
+        node
+        for node in _callable_body_nodes(callable_node)
+        if isinstance(node, ast.Name)
+        and node.id == name
+        and isinstance(node.ctx, (ast.Store, ast.Del))
+        and _is_statically_reachable(node, source)
+        and (write_location := _statement_list_location(node, callable_node, source))
+        is not None
+        and write_location[:2] == location[:2]
+    ]
+    if len(writes) != 1 or source.parents.get(id(writes[0])) is not assignment:
+        return False
+    returned = False
+    for reference in _callable_body_nodes(callable_node):
+        if not (
+            isinstance(reference, ast.Name)
+            and reference.id == name
+            and isinstance(reference.ctx, ast.Load)
+            and _is_statically_reachable(reference, source)
+        ):
+            continue
+        reference_location = _statement_list_location(reference, callable_node, source)
+        if reference_location is None or reference_location[:2] != location[:2]:
+            continue
+        if not _statement_precedes_reference(
+            assignment, reference, callable_node, source
+        ):
+            return False
+        child: ast.AST = reference
+        while (parent := source.parents.get(id(child))) is not None:
+            if isinstance(parent, (ast.Attribute, ast.Subscript)):
+                if parent.value is not child or not isinstance(parent.ctx, ast.Load):
+                    return False
+                child = parent
+                continue
+            if isinstance(parent, ast.Return) and parent.value is child:
+                returned = True
+                break
+            return False
+    return returned
+
+
+def _project_shadows_import(module: str, source: StaticSourceEvidence) -> bool:
+    """Whether the declared project root can satisfy a top-level import."""
+    top_level = module.split(".", 1)[0]
+    return (source.root / f"{top_level}.py").exists() or (
+        source.root / top_level
+    ).exists()
+
+
+def _statement_list_location(
+    node: ast.AST,
+    scope: ast.AST,
+    source: StaticSourceEvidence,
+) -> tuple[ast.AST, str, int] | None:
+    """Locate the nearest ordered statement list containing ``node``."""
+    child = node
+    while (parent := source.parents.get(id(child))) is not None:
+        for field_name, value in ast.iter_fields(parent):
+            if (
+                isinstance(value, list)
+                and child in value
+                and all(isinstance(item, ast.stmt) for item in value)
+            ):
+                return parent, field_name, value.index(child)
+        if parent is scope:
+            return None
+        child = parent
+    return None
+
+
+def _statement_precedes_reference(
+    statement: ast.stmt,
+    reference: ast.AST,
+    scope: ast.AST,
+    source: StaticSourceEvidence,
+) -> bool:
+    """Both nodes execute in the same ordered branch, statement first."""
+    left = _statement_list_location(statement, scope, source)
+    right = _statement_list_location(reference, scope, source)
+    return bool(
+        left is not None
+        and right is not None
+        and left[:2] == right[:2]
+        and left[2] <= right[2]
+    )
 
 
 def _single_literal_initializer(
@@ -9003,12 +9535,290 @@ def _call_contributes_to_return(
             or isinstance(node, ast.keyword)
             and node in parent.keywords
         ):
-            if not _call_argument_contributes(parent, node, selected, source):
+            if not _call_argument_contributes(parent, node, call, selected, source):
                 return False
             node = parent
             continue
         return False
     return False
+
+
+def _call_await_matches_target(
+    call: ast.Call,
+    target: ast.FunctionDef | ast.AsyncFunctionDef,
+    selected: ast.FunctionDef | ast.AsyncFunctionDef,
+    source: StaticSourceEvidence,
+) -> bool:
+    """A helper body executes now only under Python's matching await shape."""
+    awaited = isinstance(source.parents.get(id(call)), ast.Await)
+    if isinstance(target, ast.AsyncFunctionDef):
+        return isinstance(selected, ast.AsyncFunctionDef) and awaited
+    return not awaited
+
+
+def _call_is_eager_in_returned_expression(
+    call: ast.Call,
+    callable_node: ast.FunctionDef | ast.AsyncFunctionDef,
+    source: StaticSourceEvidence,
+) -> bool:
+    """The call is evaluated while constructing this callable's return."""
+    child: ast.AST = call
+    while (parent := source.parents.get(id(child))) is not None:
+        if isinstance(parent, ast.Return):
+            return parent.value is child
+        if isinstance(
+            parent,
+            (
+                ast.FunctionDef,
+                ast.AsyncFunctionDef,
+                ast.ClassDef,
+                ast.Lambda,
+                ast.ListComp,
+                ast.SetComp,
+                ast.DictComp,
+                ast.GeneratorExp,
+                ast.BoolOp,
+                ast.IfExp,
+            ),
+        ):
+            return False
+        if isinstance(parent, ast.stmt):
+            return False
+        child = parent
+    return False
+
+
+def _call_is_an_intermediate_argument(
+    call: ast.Call,
+    callable_node: ast.FunctionDef | ast.AsyncFunctionDef,
+    source: StaticSourceEvidence,
+) -> bool:
+    """Whether another call consumes this helper result before the return."""
+    child: ast.AST = call
+    parent = source.parents.get(id(child))
+    if isinstance(parent, ast.Await) and parent.value is child:
+        child = parent
+        parent = source.parents.get(id(child))
+    if isinstance(parent, ast.keyword) and parent.value is child:
+        child = parent
+        parent = source.parents.get(id(child))
+    return bool(
+        isinstance(parent, ast.Call)
+        and (
+            child in parent.args
+            or isinstance(child, ast.keyword)
+            and child in parent.keywords
+        )
+        and _direct_callable_statement(parent, callable_node, source) is not None
+    )
+
+
+def _reference_only_routes_a_request(
+    reference: ast.Name,
+    callable_node: ast.FunctionDef | ast.AsyncFunctionDef,
+    source: StaticSourceEvidence,
+) -> bool:
+    """A read may choose a request branch without exposing the payload.
+
+    This is intentionally a control-expression subset, not general expression
+    flow.  It covers ordinary guards such as ``if PROVIDERS[model] == ...``;
+    calls, projections of the parameter itself, assignments, and returned
+    values remain escapes unless the exact reference is independently proved
+    inside an external request argument.
+    """
+    child: ast.AST = reference
+    while (parent := source.parents.get(id(child))) is not None:
+        if (
+            isinstance(parent, ast.Subscript)
+            and parent.slice is child
+            and isinstance(parent.ctx, ast.Load)
+        ):
+            child = parent
+            continue
+        if isinstance(parent, ast.Compare) and (
+            parent.left is child or child in parent.comparators
+        ):
+            child = parent
+            continue
+        if isinstance(parent, ast.BoolOp) and child in parent.values:
+            child = parent
+            continue
+        if (
+            isinstance(parent, ast.UnaryOp)
+            and isinstance(parent.op, ast.Not)
+            and parent.operand is child
+        ):
+            child = parent
+            continue
+        if isinstance(parent, ast.If) and parent.test is child:
+            return True
+        if parent is callable_node or isinstance(
+            parent,
+            (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda),
+        ):
+            return False
+        return False
+    return False
+
+
+def _request_parameter_is_intact(
+    name: str,
+    callable_node: ast.FunctionDef | ast.AsyncFunctionDef,
+    request_references: frozenset[int],
+    source: StaticSourceEvidence,
+) -> bool:
+    """The payload reaches a request without mutation, aliasing, or escape."""
+    if not _callable_parameter_is_unshadowed(name, callable_node):
+        return False
+    for reference in _callable_body_nodes(callable_node):
+        if not (
+            isinstance(reference, ast.Name)
+            and reference.id == name
+            and isinstance(reference.ctx, ast.Load)
+            and _is_statically_reachable(reference, source)
+        ):
+            continue
+        if id(reference) in request_references or _reference_only_routes_a_request(
+            reference, callable_node, source
+        ):
+            continue
+        child: ast.AST = reference
+        while (parent := source.parents.get(id(child))) is not None:
+            if isinstance(parent, ast.Raise):
+                break
+            if parent is callable_node or isinstance(
+                parent,
+                (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda),
+            ):
+                parent = None
+                break
+            child = parent
+        if isinstance(parent, ast.Raise):
+            # An informative validation error may quote the rejected value.
+            # That branch returns no request, so this read cannot replace or
+            # erase the payload on a successful request path.
+            continue
+        return False
+    return True
+
+
+def _request_parameters(
+    callable_node: ast.FunctionDef | ast.AsyncFunctionDef,
+    source: StaticSourceEvidence,
+) -> frozenset[str]:
+    """Parameters reaching every returned external request path."""
+    parameters = frozenset(_callable_parameter_names(callable_node))
+    request_calls: list[tuple[ast.Call, tuple[ast.Return, ...]]] = []
+    for call in _callable_body_nodes(callable_node):
+        if not (
+            isinstance(call, ast.Call)
+            and _is_statically_reachable(call, source)
+            and not any(isinstance(argument, ast.Starred) for argument in call.args)
+            and not any(keyword.arg is None for keyword in call.keywords)
+            and isinstance(call.func, ast.Attribute)
+            and _request_receiver_has_external_constructor(
+                call.func.value, callable_node, source
+            )
+            and (returned := _request_result_return_nodes(call, callable_node, source))
+        ):
+            continue
+        request_calls.append((call, returned))
+    request_returns = frozenset(
+        id(returned)
+        for _, returned_nodes in request_calls
+        for returned in returned_nodes
+    )
+    outcomes = _request_path_outcomes(callable_node.body, request_returns, source)
+    if (
+        not request_calls
+        or "request" not in outcomes
+        or outcomes - {"request", "raise"}
+    ):
+        return frozenset()
+    used_by_call: list[set[str]] = []
+    request_references: dict[str, set[int]] = {name: set() for name in parameters}
+    for call, _ in request_calls:
+        used: set[str] = set()
+        for argument in (
+            *call.args,
+            *(keyword.value for keyword in call.keywords if keyword.arg is not None),
+        ):
+            for name in parameters:
+                embedded = {
+                    id(reference)
+                    for reference in ast.walk(argument)
+                    if (
+                        isinstance(reference, ast.Name)
+                        and isinstance(reference.ctx, ast.Load)
+                        and reference.id == name
+                        and _is_statically_reachable(reference, source)
+                        and _node_is_structurally_embedded(reference, argument, source)
+                    )
+                }
+                if embedded:
+                    used.add(name)
+                    request_references[name].update(embedded)
+        used_by_call.append(used)
+    used_on_every_path = set.intersection(*used_by_call)
+    return frozenset(
+        name
+        for name in used_on_every_path
+        if _request_parameter_is_intact(
+            name,
+            callable_node,
+            frozenset(request_references[name]),
+            source,
+        )
+    )
+
+
+def _argument_for_parameter(
+    call: ast.Call,
+    target: ast.FunctionDef | ast.AsyncFunctionDef,
+    parameter: str,
+) -> ast.expr | None:
+    positional = (*target.args.posonlyargs, *target.args.args)
+    for index, argument in enumerate(call.args):
+        if index < len(positional) and positional[index].arg == parameter:
+            return argument
+    return next(
+        (keyword.value for keyword in call.keywords if keyword.arg == parameter),
+        None,
+    )
+
+
+def _argument_is_caller_controlled(
+    argument: ast.expr | None,
+    callable_node: ast.FunctionDef | ast.AsyncFunctionDef,
+    dynamic_parameters: frozenset[str],
+    source: StaticSourceEvidence,
+) -> bool:
+    """A bare input or one direct config read supplies this helper argument."""
+    if not isinstance(argument, ast.Name):
+        return False
+    if argument.id in dynamic_parameters:
+        return True
+    writes = [
+        node
+        for node in _callable_body_nodes(callable_node)
+        if isinstance(node, ast.Name)
+        and node.id == argument.id
+        and isinstance(node.ctx, (ast.Store, ast.Del))
+        and _is_statically_reachable(node, source)
+    ]
+    if len(writes) != 1 or isinstance(writes[0].ctx, ast.Del):
+        return False
+    assignment = source.parents.get(id(writes[0]))
+    value = (
+        assignment.value
+        if isinstance(assignment, (ast.Assign, ast.AnnAssign))
+        else None
+    )
+    return bool(
+        value is not None
+        and _config_read_key(value, dynamic_parameters) is not None
+        and _statement_precedes_reference(assignment, argument, callable_node, source)
+    )
 
 
 def _callables_on_the_call_path(
@@ -9022,12 +9832,13 @@ def _callables_on_the_call_path(
     functions below, in the same file the reader already parsed. That sentence
     was false, and a false sentence is worse than a narrow one.
 
-    The widening stays static and definite. A helper is followed only when its
-    return value contributes to the caller's return and an intact parameter is
-    passed into it. That proves both reachability and caller control without a
-    runtime call graph. This first-readiness check crosses one helper boundary,
-    not an arbitrary chain. Imports, attributes, fixed arguments, discarded
-    helper results, shadowed names, and nested closures earn nothing.
+    Ordinary helpers still need to contribute to the selected return. One
+    additional bounded shape follows the request boundary directly: a helper
+    eagerly called inside that returned expression, when its parameters enter a
+    consumed attribute call rooted in a direct external constructor import.
+    This proves source-level request wiring without interpreting a separate
+    builder or the later response parser, and without pretending imported code
+    was executed.
     """
     definitions = {
         node.name: node
@@ -9037,6 +9848,9 @@ def _callables_on_the_call_path(
     selected = source.selected_callable
     if not _module_callable_is_current(selected, source):
         return []
+    request_builder_calls = {
+        id(call) for call, _, _ in _request_argument_builders(source)
+    }
     helper_calls: list[tuple[ast.Call, ast.FunctionDef | ast.AsyncFunctionDef]] = []
     for node in _callable_body_nodes(selected):
         if (
@@ -9044,6 +9858,8 @@ def _callables_on_the_call_path(
             or not isinstance(node.func, ast.Name)
             or not _is_statically_reachable(node, source)
             or _callable_binds(node.func.id, selected)
+            or id(node) in request_builder_calls
+            or _call_is_an_intermediate_argument(node, selected, source)
         ):
             continue
         target = definitions.get(node.func.id)
@@ -9054,6 +9870,26 @@ def _callables_on_the_call_path(
             and _call_contributes_to_return(node, target, selected, source)
         ):
             helper_calls.append((node, target))
+    anchored = [
+        (node, definitions[node.func.id], request_parameters)
+        for node in _callable_body_nodes(selected)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and (target := definitions.get(node.func.id)) is not None
+        and (request_parameters := _request_parameters(target, source))
+        and _is_statically_reachable(node, source)
+        and not _callable_binds(node.func.id, selected)
+        and _module_callable_is_current(target, source)
+        and _call_matches_static_signature(node, target)
+        and _call_await_matches_target(node, target, selected, source)
+        and _call_is_eager_in_returned_expression(node, selected, source)
+    ]
+    helper_calls.extend((call, target) for call, target, _ in anchored)
+    helper_calls = list(
+        {
+            (id(call), id(target)): (call, target) for call, target in helper_calls
+        }.values()
+    )
     forwarding_edges = [
         (call, target, _forwarded_parameter_references(call, target))
         for call, target in helper_calls
@@ -9104,6 +9940,20 @@ def _callables_on_the_call_path(
             continue
         helper, known = helpers.setdefault(id(target), (target, set()))
         known.update(forwarded)
+    for call, target, request_parameters in anchored:
+        controlled = {
+            parameter
+            for parameter in request_parameters
+            if _argument_is_caller_controlled(
+                _argument_for_parameter(call, target, parameter),
+                selected,
+                frozenset(initial),
+                source,
+            )
+        }
+        if controlled:
+            helper, known = helpers.setdefault(id(target), (target, set()))
+            known.update(controlled)
     return [(selected, frozenset(initial))] + [
         (helper, frozenset(parameters)) for helper, parameters in helpers.values()
     ]
@@ -9151,6 +10001,33 @@ def _callable_store_count(
     )
 
 
+def _pristine_direct_config_read(
+    value: ast.expr,
+    assignment: ast.Assign | ast.AnnAssign,
+    callable_node: ast.FunctionDef | ast.AsyncFunctionDef,
+    source: StaticSourceEvidence,
+) -> str | None:
+    """Read one setting before the caller's mapping has gone anywhere else."""
+    value_nodes = {id(node) for node in ast.walk(value)}
+    assignment_position = (assignment.lineno, assignment.col_offset)
+    for parameter in _callable_parameter_names(callable_node):
+        key = _config_read_key(value, frozenset({parameter}))
+        if key is None:
+            continue
+        earlier_use = any(
+            isinstance(reference, ast.Name)
+            and reference.id == parameter
+            and isinstance(reference.ctx, (ast.Load, ast.Store, ast.Del))
+            and id(reference) not in value_nodes
+            and (reference.lineno, reference.col_offset) <= assignment_position
+            and _is_statically_reachable(reference, source)
+            for reference in _callable_body_nodes(callable_node)
+        )
+        if not earlier_use:
+            return key
+    return None
+
+
 def _direct_config_holders(
     knob: str,
     callable_node: ast.FunctionDef | ast.AsyncFunctionDef,
@@ -9164,12 +10041,16 @@ def _direct_config_holders(
             continue
         value = node.value
         names = _assignment_names(node)
+        read = (
+            _config_read_key(value, dynamic_parameters) if value is not None else None
+        )
+        if value is not None and read is None:
+            read = _pristine_direct_config_read(value, node, callable_node, source)
         if (
             value is None
             or len(names) != 1
             or not _is_statically_reachable(node, source)
-            or (_config_read_key(value, dynamic_parameters) or "").casefold()
-            != knob.casefold()
+            or (read or "").casefold() != knob.casefold()
         ):
             continue
         name = names[0]
@@ -9191,11 +10072,100 @@ def _holder_reaches_later_return(
     guard_index = body.index(guard)
     if assignment_index >= guard_index:
         return False
-    return _name_reaches_return(
-        holder,
-        callable_node,
-        source,
-        after_line=guard.end_lineno or guard.lineno,
+    guard_nodes = {id(node) for node in ast.walk(guard)}
+    reachable_returns = [
+        node
+        for node in _callable_body_nodes(callable_node)
+        if isinstance(node, ast.Return)
+        and node.lineno > (guard.end_lineno or guard.lineno)
+        and _is_statically_reachable(node, source)
+    ]
+    structural_return_references = {
+        id(reference)
+        for returned in reachable_returns
+        if returned.value is not None
+        for reference in ast.walk(returned.value)
+        if isinstance(reference, ast.Name)
+        and reference.id == holder
+        and isinstance(reference.ctx, ast.Load)
+        and _node_is_structurally_embedded(reference, returned.value, source)
+    }
+    all_holder_reads = [
+        reference
+        for reference in _callable_body_nodes(callable_node)
+        if isinstance(reference, ast.Name)
+        and reference.id == holder
+        and isinstance(reference.ctx, ast.Load)
+        and _is_statically_reachable(reference, source)
+    ]
+    if (
+        len(reachable_returns) == 1
+        and source.parents.get(id(reachable_returns[0])) is callable_node
+        and structural_return_references
+        and all(
+            id(reference) in guard_nodes
+            or id(reference) in structural_return_references
+            for reference in all_holder_reads
+        )
+    ):
+        return True
+    definitions = {
+        node.name: node
+        for node in source.tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    verified_request_references: set[int] = set()
+    for reference in all_holder_reads:
+        if not (reference.lineno > (guard.end_lineno or guard.lineno)):
+            continue
+        child: ast.AST = reference
+        while (parent := source.parents.get(id(child))) is not None:
+            if isinstance(parent, ast.keyword) and parent.value is child:
+                child = parent
+                continue
+            if isinstance(parent, ast.Call):
+                if not isinstance(parent.func, ast.Name):
+                    break
+                target = definitions.get(parent.func.id)
+                argument = child
+                argument_value = (
+                    argument.value if isinstance(argument, ast.keyword) else argument
+                )
+                parameter = (
+                    _call_argument_parameter(parent, argument, target)
+                    if target is not None
+                    else None
+                )
+                if (
+                    target is not None
+                    and not any(
+                        isinstance(call_argument, ast.Starred)
+                        for call_argument in parent.args
+                    )
+                    and not any(keyword.arg is None for keyword in parent.keywords)
+                    and isinstance(argument_value, ast.expr)
+                    and _node_is_structurally_embedded(
+                        reference, argument_value, source
+                    )
+                    and not _callable_binds(parent.func.id, callable_node)
+                    and _module_callable_is_current(target, source)
+                    and _call_matches_static_signature(parent, target)
+                    and parameter in _request_parameters(target, source)
+                    and _call_is_eager_in_returned_expression(
+                        parent, callable_node, source
+                    )
+                ):
+                    verified_request_references.add(id(reference))
+                break
+            if isinstance(parent, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+                break
+            child = parent
+    return bool(
+        verified_request_references
+        and all(
+            id(reference) in guard_nodes or id(reference) in verified_request_references
+            for reference in all_holder_reads
+        )
     )
 
 
@@ -9258,21 +10228,518 @@ def _selection_reaches_return(
     callable_node: ast.FunctionDef | ast.AsyncFunctionDef,
     source: StaticSourceEvidence,
 ) -> bool:
-    """Accept a returned selection directly or through one stable local."""
-    if _node_reaches_return(selection, callable_node, source):
-        return True
+    """Accept a selection only while its exact value survives to return."""
+    return _selection_reaches_request_builder_return(
+        selection, callable_node, source
+    ) or _selection_reaches_verified_request(selection, callable_node, source)
+
+
+def _selection_reaches_verified_request(
+    selection: ast.Subscript,
+    callable_node: ast.FunctionDef | ast.AsyncFunctionDef,
+    source: StaticSourceEvidence,
+) -> bool:
+    """A structural selection supplies a proved external request input."""
+    definitions = {
+        node.name: node
+        for node in source.tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    for call in _callable_body_nodes(callable_node):
+        if not (
+            isinstance(call, ast.Call)
+            and _is_statically_reachable(call, source)
+            and not any(isinstance(argument, ast.Starred) for argument in call.args)
+            and not any(keyword.arg is None for keyword in call.keywords)
+        ):
+            continue
+        for argument in (*call.args, *call.keywords):
+            expression = (
+                argument.value if isinstance(argument, ast.keyword) else argument
+            )
+            if not _node_is_structurally_embedded(selection, expression, source):
+                continue
+            if _request_call_consumes_argument(call, callable_node, source):
+                return True
+            if not (
+                isinstance(call.func, ast.Name)
+                and not _callable_binds(call.func.id, callable_node)
+                and (target := definitions.get(call.func.id)) is not None
+                and _module_callable_is_current(target, source)
+                and _call_matches_static_signature(call, target)
+                and _call_await_matches_target(call, target, callable_node, source)
+                and _call_is_eager_in_returned_expression(call, callable_node, source)
+            ):
+                continue
+            parameter = _call_argument_parameter(call, argument, target)
+            if parameter in _request_parameters(target, source):
+                return True
+    return False
+
+
+def _parameter_reaches_structural_return(
+    name: str,
+    callable_node: ast.FunctionDef | ast.AsyncFunctionDef,
+    source: StaticSourceEvidence,
+) -> bool:
+    """One helper input survives whole to its sole reachable return."""
+    accepted_references: set[int] = set()
+    preserving_return = False
+    reachable_returns = [
+        node
+        for node in _callable_body_nodes(callable_node)
+        if isinstance(node, ast.Return) and _is_statically_reachable(node, source)
+    ]
+    for reference in _callable_body_nodes(callable_node):
+        if not (
+            isinstance(reference, ast.Name)
+            and reference.id == name
+            and isinstance(reference.ctx, ast.Load)
+            and _is_statically_reachable(reference, source)
+        ):
+            continue
+        statement = _direct_callable_statement(reference, callable_node, source)
+        if (
+            isinstance(statement, ast.Return)
+            and statement.value is not None
+            and reachable_returns == [statement]
+            and _node_is_structurally_embedded(reference, statement.value, source)
+        ):
+            accepted_references.add(id(reference))
+            preserving_return = True
+            continue
+        if (
+            isinstance(statement, (ast.Assign, ast.AnnAssign))
+            and statement.value is not None
+            and _node_is_structurally_embedded(reference, statement.value, source)
+        ):
+            names = _assignment_names(statement)
+            if (
+                len(names) == 1
+                and _callable_store_count(names[0], callable_node) == 1
+                and _builder_local_reaches_return(
+                    names[0],
+                    statement,
+                    callable_node,
+                    source,
+                    allow_string_join=False,
+                )
+            ):
+                accepted_references.add(id(reference))
+                preserving_return = True
+    return bool(
+        preserving_return
+        and _request_parameter_is_intact(
+            name,
+            callable_node,
+            frozenset(accepted_references),
+            source,
+        )
+    )
+
+
+def _safe_selected_forwarding_references(
+    source: StaticSourceEvidence,
+) -> frozenset[int]:
+    """Bare caller parameters forwarded only to inspectable, intact helpers.
+
+    The selected callable may send the same config to a prompt builder and a
+    response parser.  That is not an aliasing problem by itself: both helpers
+    are in the file already being read, and each receiving parameter can be
+    checked for mutation or escape.  An opaque destination remains a refusal.
+    """
+    definitions = {
+        node.name: node
+        for node in source.tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    allowed: set[int] = set()
+    for call in _callable_body_nodes(source.selected_callable):
+        if not (
+            isinstance(call, ast.Call)
+            and isinstance(call.func, ast.Name)
+            and _is_statically_reachable(call, source)
+            and not _callable_binds(call.func.id, source.selected_callable)
+            and (target := definitions.get(call.func.id)) is not None
+            and _module_callable_is_current(target, source)
+            and _call_matches_static_signature(call, target)
+        ):
+            continue
+        for reference, parameter in _forwarded_parameter_references(call, target):
+            if _callable_parameter_is_unshadowed(
+                parameter,
+                target,
+                require_mapping_safety=True,
+            ):
+                allowed.add(id(reference))
+    return frozenset(allowed)
+
+
+def _request_argument_builders(
+    source: StaticSourceEvidence,
+) -> list[
+    tuple[
+        ast.Call,
+        ast.FunctionDef | ast.AsyncFunctionDef,
+        frozenset[str],
+    ]
+]:
+    """One-hop helpers whose exact result supplies a verified request input.
+
+    This is intentionally separate from ``_callables_on_the_call_path``.  A
+    prompt builder is evidence only for selections that independently survive
+    to its return; admitting it to the general helper walk would make unrelated
+    calls and guards inside that helper look like request wiring.
+    """
+    selected = source.selected_callable
+    if not _module_callable_is_current(selected, source):
+        return []
+    definitions = {
+        node.name: node
+        for node in source.tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    safe_forwards = _safe_selected_forwarding_references(source)
+    safe_selected = {
+        name
+        for name in _callable_parameter_names(selected)
+        if _selected_callable_parameter_is_unshadowed(name, source, safe_forwards)
+    }
+    found: dict[
+        int,
+        tuple[
+            ast.Call,
+            ast.FunctionDef | ast.AsyncFunctionDef,
+            set[str],
+        ],
+    ] = {}
+    for request_call in _callable_body_nodes(selected):
+        if not (
+            isinstance(request_call, ast.Call)
+            and isinstance(request_call.func, ast.Name)
+            and _is_statically_reachable(request_call, source)
+            and not _callable_binds(request_call.func.id, selected)
+            and (request_target := definitions.get(request_call.func.id)) is not None
+            and (request_parameters := _request_parameters(request_target, source))
+            and _module_callable_is_current(request_target, source)
+            and _call_matches_static_signature(request_call, request_target)
+            and _call_await_matches_target(
+                request_call, request_target, selected, source
+            )
+            and _call_is_eager_in_returned_expression(request_call, selected, source)
+        ):
+            continue
+        for request_parameter in request_parameters:
+            producer_call = _argument_for_parameter(
+                request_call, request_target, request_parameter
+            )
+            if not (
+                isinstance(producer_call, ast.Call)
+                and isinstance(producer_call.func, ast.Name)
+                and not _callable_binds(producer_call.func.id, selected)
+                and (producer := definitions.get(producer_call.func.id)) is not None
+                and producer is not request_target
+                and isinstance(producer, ast.FunctionDef)
+                and _module_callable_is_current(producer, source)
+                and _call_matches_static_signature(producer_call, producer)
+                and not any(
+                    isinstance(node, (ast.Yield, ast.YieldFrom))
+                    for node in _callable_body_nodes(producer)
+                )
+            ):
+                continue
+            forwarded = {
+                target_parameter
+                for reference, target_parameter in _forwarded_parameter_references(
+                    producer_call, producer
+                )
+                if reference.id in safe_selected and id(reference) in safe_forwards
+            }
+            if not forwarded:
+                continue
+            _, helper, known = found.setdefault(
+                id(producer_call), (producer_call, producer, set())
+            )
+            known.update(forwarded)
+    return [
+        (call, helper, frozenset(parameters))
+        for call, helper, parameters in found.values()
+    ]
+
+
+def _selection_has_distinct_string_outputs(
+    selection: ast.Subscript, source: StaticSourceEvidence
+) -> bool:
+    """Whether a selected flat module table contains distinct literal strings."""
+    if not isinstance(selection.value, ast.Name):
+        return False
+    for binding in source.tree.body:
+        if not (
+            isinstance(binding, (ast.Assign, ast.AnnAssign))
+            and selection.value.id in _assignment_names(binding)
+            and binding.value is not None
+            and _module_binding_is_current(binding, selection.value.id, source)
+        ):
+            continue
+        values: tuple[Any, ...] | None = None
+        if isinstance(binding.value, ast.Dict):
+            effective: dict[Any, Any] = {}
+            for key, value in zip(
+                binding.value.keys, binding.value.values, strict=True
+            ):
+                if not (
+                    isinstance(key, ast.Constant)
+                    and isinstance(value, ast.Constant)
+                    and isinstance(value.value, str)
+                ):
+                    return False
+                try:
+                    effective[key.value] = value.value
+                except TypeError:
+                    return False
+            values = tuple(effective.values())
+        else:
+            literal = _literal_scalar_options(binding.value)
+            if literal is not None and all(isinstance(value, str) for value in literal):
+                values = literal
+        return bool(
+            values is not None and len(values) >= 2 and len(set(values)) == len(values)
+        )
+    return False
+
+
+def _expression_is_static_string(
+    expression: ast.expr, source: StaticSourceEvidence
+) -> bool:
+    """A syntax-only expression that produces text without calling customer code."""
+    return bool(
+        isinstance(expression, ast.JoinedStr)
+        or (isinstance(expression, ast.Constant) and isinstance(expression.value, str))
+        or (
+            isinstance(expression, ast.Subscript)
+            and _selection_has_distinct_string_outputs(expression, source)
+        )
+    )
+
+
+def _mutation_preserves_string_accumulator(
+    call: ast.Call,
+    initializer: ast.List,
+    source: StaticSourceEvidence,
+) -> bool:
+    """A list growth operation that adds only statically text-valued items."""
+    if not _mutation_guarantees_growth(call, initializer):
+        return False
+    assert isinstance(call.func, ast.Attribute)
+    if call.func.attr == "append":
+        return _expression_is_static_string(call.args[0], source)
+    if call.func.attr == "insert":
+        return _expression_is_static_string(call.args[1], source)
+    extension = call.args[0]
+    if isinstance(extension, ast.Constant):
+        return isinstance(extension.value, str) and bool(extension.value)
+    return bool(
+        isinstance(extension, (ast.List, ast.Tuple))
+        and not any(isinstance(element, ast.Starred) for element in extension.elts)
+        and all(
+            _expression_is_static_string(element, source) for element in extension.elts
+        )
+    )
+
+
+def _builder_local_reaches_return(
+    name: str,
+    assignment: ast.Assign | ast.AnnAssign,
+    callable_node: ast.FunctionDef | ast.AsyncFunctionDef,
+    source: StaticSourceEvidence,
+    *,
+    allow_string_join: bool,
+) -> bool:
+    """A once-bound value survives whole, or in one intact joined list."""
+    if any(
+        isinstance(
+            node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
+        )
+        and _expression_uses_name(node, name)
+        for node in _callable_body_nodes(callable_node)
+    ):
+        return False
+    initializer = assignment.value
+    list_accumulator = bool(
+        isinstance(initializer, ast.List)
+        and not any(isinstance(element, ast.Starred) for element in initializer.elts)
+        and all(
+            _expression_is_static_string(element, source)
+            for element in initializer.elts
+        )
+    )
+    preserving_return: ast.Return | None = None
+    for reference in _callable_body_nodes(callable_node):
+        if not (
+            isinstance(reference, ast.Name)
+            and reference.id == name
+            and isinstance(reference.ctx, ast.Load)
+            and _is_statically_reachable(reference, source)
+        ):
+            continue
+        if reference.lineno <= (assignment.end_lineno or assignment.lineno):
+            return False
+        child: ast.AST = reference
+        while (parent := source.parents.get(id(child))) is not None:
+            if isinstance(parent, (ast.List, ast.Tuple)) and child in parent.elts:
+                if any(isinstance(element, ast.Starred) for element in parent.elts):
+                    return False
+                child = parent
+                continue
+            if isinstance(parent, ast.Dict) and child in parent.values:
+                if any(not isinstance(key, ast.Constant) for key in parent.keys):
+                    return False
+                keys = [key.value for key in parent.keys]
+                try:
+                    if len(set(keys)) != len(keys):
+                        return False
+                except TypeError:
+                    return False
+                child = parent
+                continue
+            if isinstance(parent, ast.Return) and parent.value is child:
+                preserving_return = parent
+                break
+            if isinstance(parent, ast.Attribute) and parent.value is child:
+                call = source.parents.get(id(parent))
+                if not isinstance(call, ast.Call) or call.func is not parent:
+                    return False
+                if (
+                    list_accumulator
+                    and isinstance(initializer, ast.List)
+                    and _mutation_preserves_string_accumulator(
+                        call, initializer, source
+                    )
+                ):
+                    break
+                return False
+            if isinstance(parent, ast.Call):
+                if not (
+                    allow_string_join
+                    and list_accumulator
+                    and isinstance(parent.func, ast.Attribute)
+                    and parent.func.attr == "join"
+                    and isinstance(parent.func.value, ast.Constant)
+                    and isinstance(parent.func.value.value, str)
+                    and len(parent.args) == 1
+                    and parent.args[0] is child
+                    and not parent.keywords
+                    and isinstance(
+                        returned_parent := source.parents.get(id(parent)), ast.Return
+                    )
+                    and returned_parent.value is parent
+                ):
+                    return False
+                preserving_return = returned_parent
+                break
+            return False
+    reachable_returns = [
+        node
+        for node in _callable_body_nodes(callable_node)
+        if isinstance(node, ast.Return) and _is_statically_reachable(node, source)
+    ]
+    return bool(
+        preserving_return is not None
+        and reachable_returns == [preserving_return]
+        and source.parents.get(id(preserving_return)) is callable_node
+    )
+
+
+def _selection_reaches_request_builder_return(
+    selection: ast.Subscript,
+    callable_node: ast.FunctionDef | ast.AsyncFunctionDef,
+    source: StaticSourceEvidence,
+) -> bool:
+    """A selection survives one request builder without transform guessing."""
+    if not _is_statically_reachable(selection, source):
+        return False
     statement = _direct_callable_statement(selection, callable_node, source)
-    if not isinstance(statement, (ast.Assign, ast.AnnAssign)):
+    if isinstance(statement, ast.Return) and statement.value is not None:
+        reachable_returns = [
+            node
+            for node in _callable_body_nodes(callable_node)
+            if isinstance(node, ast.Return) and _is_statically_reachable(node, source)
+        ]
+        return bool(
+            reachable_returns == [statement]
+            and source.parents.get(id(statement)) is callable_node
+            and _node_is_structurally_embedded(selection, statement.value, source)
+        )
+    if (
+        not isinstance(statement, (ast.Assign, ast.AnnAssign))
+        or statement.value is None
+    ):
+        return False
+    if not _node_is_structurally_embedded(selection, statement.value, source):
         return False
     names = _assignment_names(statement)
     if len(names) != 1 or _callable_store_count(names[0], callable_node) != 1:
         return False
-    return _name_reaches_return(
+    return _builder_local_reaches_return(
         names[0],
+        statement,
         callable_node,
         source,
-        after_line=statement.end_lineno or statement.lineno,
+        allow_string_join=_selection_has_distinct_string_outputs(selection, source),
     )
+
+
+def _request_builder_collections(knob: str, source: StaticSourceEvidence) -> list[str]:
+    """Declared alternatives visibly preserved by one exact prompt producer."""
+    declared = {
+        name
+        for node in source.tree.body
+        if isinstance(node, (ast.Assign, ast.AnnAssign))
+        for name in _assignment_names(node)
+    }
+    selected: list[str] = []
+    for _, builder, dynamic_parameters in _request_argument_builders(source):
+        knob_reads = sum(
+            1
+            for node in _callable_body_nodes(builder)
+            if (read := _config_read_key(node, dynamic_parameters)) is not None
+            and read.casefold() == knob.casefold()
+        )
+        if knob_reads != 1:
+            continue
+        holders = _direct_config_holders(knob, builder, dynamic_parameters, source)
+        selections = [
+            node
+            for node in _callable_body_nodes(builder)
+            if isinstance(node, ast.Subscript)
+            and _is_statically_reachable(node, source)
+            and isinstance(node.value, ast.Name)
+            and node.value.id in declared
+            and not _callable_binds(node.value.id, builder)
+            and _selector_reads_knob(
+                node.slice, knob, holders, dynamic_parameters, node
+            )
+        ]
+        # One setting read routed through two selected positions can cancel
+        # itself (two distinct tables can still concatenate to one fixed text).
+        # This shallow proof therefore follows one selected occurrence only.
+        if len(selections) != 1:
+            continue
+        selection = selections[0]
+        if isinstance(selection.slice, ast.Name) and selection.slice.id in holders:
+            holder = selection.slice.id
+            if any(
+                isinstance(reference, ast.Name)
+                and reference.id == holder
+                and isinstance(reference.ctx, ast.Load)
+                and reference is not selection.slice
+                and _is_statically_reachable(reference, source)
+                for reference in _callable_body_nodes(builder)
+            ):
+                continue
+        if _selection_reaches_request_builder_return(selection, builder, source):
+            selected.append(selection.value.id)
+    return selected
 
 
 def _module_collections_this_knob_selects(
@@ -9286,11 +10753,11 @@ def _module_collections_this_knob_selects(
         depth = config.get("retrieval", 0)                   # then guards it
         if depth not in CONTEXT_DEPTHS: raise
 
-    Either one establishes that the setting reaches the request: the first
-    chooses the text that goes into the prompt, the second refuses a value the
-    declared set does not contain. Reporting "could not verify how they reach
-    the call" about code like this was false, and no project could reach the
-    top band while it stood.
+    Either can establish an observable setting only with a preserved outcome:
+    the selected value must survive structurally to the sole return or a
+    verified request, while the exact guard must be followed by the accepted
+    value surviving through the same narrow paths. The guard or selection by
+    itself is inventory, not wiring.
 
     The binding's identifier is not required to resemble the setting. The
     reader learns the pair from the expression, so `FORMAT_INSTRUCTIONS` keyed
@@ -9307,25 +10774,40 @@ def _module_collections_this_knob_selects(
         holders = _direct_config_holders(
             knob, callable_node, dynamic_parameters, source
         )
+        knob_reads = sum(
+            1
+            for node in _callable_body_nodes(callable_node)
+            if (read := _config_read_key(node, dynamic_parameters)) is not None
+            and read.casefold() == knob.casefold()
+        )
+        selections = [
+            node
+            for node in _callable_body_nodes(callable_node)
+            if isinstance(node, ast.Subscript)
+            and _is_statically_reachable(node, source)
+            and isinstance(node.value, ast.Name)
+            and node.value.id in declared
+            and not _callable_binds(node.value.id, callable_node)
+            and _selector_reads_knob(
+                node.slice, knob, holders, dynamic_parameters, node
+            )
+        ]
+        # A pair of individually distinct selections can cancel when combined.
+        # Follow exactly one read into exactly one selected occurrence; more
+        # needs runtime evidence rather than algebra guessed from syntax.
+        if knob_reads == 1 and len(selections) == 1:
+            selection = selections[0]
+            if _selection_reaches_return(selection, callable_node, source):
+                selected.append(selection.value.id)
         for node in _callable_body_nodes(callable_node):
             if not _is_statically_reachable(node, source):
                 continue
-            if (
-                isinstance(node, ast.Subscript)
-                and isinstance(node.value, ast.Name)
-                and node.value.id in declared
-                and not _callable_binds(node.value.id, callable_node)
-                and _selector_reads_knob(
-                    node.slice, knob, holders, dynamic_parameters, node
-                )
-                and _selection_reaches_return(node, callable_node, source)
-            ):
-                selected.append(node.value.id)
             guarded = _guarded_collection(
                 node, holders, declared, callable_node, source
             )
             if guarded is not None:
                 selected.append(guarded)
+    selected.extend(_request_builder_collections(knob, source))
     return selected
 
 
@@ -9432,6 +10914,30 @@ def values_are_in_checked_source(
         repr(value) for value in _binding_values_for_knob(knob, lines, source)
     }
     return [str(value) for value in values if repr(value) not in bound_values]
+
+
+def _cited_source_declares_values(
+    values: Sequence[Any], lines: Sequence[int], source: StaticSourceEvidence
+) -> bool:
+    """Whether cited executable syntax contains the options, apart from wiring."""
+    cited = set(lines)
+    found: set[str] = set()
+    for node in ast.walk(source.tree):
+        if not (
+            isinstance(node, (ast.Assign, ast.AnnAssign))
+            and node.value is not None
+            and _node_lines(node) & cited
+            and _is_statically_reachable(node, source)
+        ):
+            continue
+        literal = (
+            _literal_mapping_keys(node.value)
+            if isinstance(node.value, ast.Dict)
+            else _literal_scalar_options(node.value)
+        )
+        if literal is not None:
+            found.update(map(repr, literal))
+    return {repr(value) for value in values} <= found
 
 
 def discovered_knob_from_entry(
@@ -9544,11 +11050,16 @@ def discovered_knob_from_entry(
             # ...}`, which is the only one of the two that holds an option
             # value. "Quote the options" was already being obeyed off the wrong
             # line, so naming the line is the only part that changes an outcome.
-            return DiscoveredKnob(
-                name,
-                "categorical",
-                evidence,
-                uncredited_reason=(
+            if _cited_source_declares_values(values, checked_lines, source):
+                reason = (
+                    "the cited executable source shows the declared options, but "
+                    "this deliberately narrow static read could not verify that "
+                    "changing this setting changes the request on the selected "
+                    "agent path; no source defect is inferred, and the enhanced "
+                    "run can settle this dimension"
+                )
+            else:
+                reason = (
                     "declares "
                     + ", ".join(repr(value) for value in unevidenced)
                     + " which the cited executable selected-agent call path does "
@@ -9557,7 +11068,12 @@ def discovered_knob_from_entry(
                     "the source already has; quote the line that spells the "
                     "options out and use them on the local call path; record those "
                     "physical lines in this parameter's 'source_lines'"
-                ),
+                )
+            return DiscoveredKnob(
+                name,
+                "categorical",
+                evidence,
+                uncredited_reason=reason,
                 unverified=True,
             )
         distinct = len({repr(value) for value in values})
@@ -9959,13 +11475,18 @@ def agent_facts_from_discovery(
     selected_agent: Path | None = None,
     selected_agent_callable: str | None = None,
 ) -> AgentFacts:
-    """Read the assistant's read of the agent, and nothing about wiring.
+    """Read an assistant-authored inventory, optionally checked against source.
 
     Returns `AgentFacts` with `knobs` and `wired` untouched on purpose. This
     document is not a config space and must never be promoted into one: the
     `wired` attestation is what the guide refuses to take from a historical
     file, and building one here out of parameters read from source would
     re-create exactly that, one input over.
+
+    Static credit is deliberately narrower: it can establish that a selected
+    alternative reaches the selected callable's returned path or one bounded
+    external request boundary. It does not establish runtime availability,
+    final-answer sensitivity, or evaluation improvement.
     """
     if not isinstance(document, dict):
         raise AgentDiscoveryInputError(
@@ -10196,7 +11717,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help=(
             "identifier of the inventory-selected top-level Python callable; "
             "required with --agent-knobs, --agent-source-root, and --selected-agent. "
-            "Static source credit follows only this callable's direct body."
+            "Static source credit is anchored here and follows only bounded, "
+            "inspectable same-file paths from this callable."
         ),
     )
     parser.add_argument(
