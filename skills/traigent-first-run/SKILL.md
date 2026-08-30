@@ -29,7 +29,8 @@ Load each reference when its stage begins:
 
 Use [`scripts/preflight.py`](scripts/preflight.py) for the free static preflight. Use
 [`scripts/readiness.py`](scripts/readiness.py) as a mandatory gate, never only when it seems
-useful: score all three pillars at the start of every guided run before any creation or repair,
+useful: score all three pillars at the start of every guided run before any Agent, Dataset, or
+Evaluation component creation or repair,
 again as a required step of local validation, again after each repair or creation, and once more
 after the run, to measure the space it searched. Use
 [`scripts/calibrate_evaluator.py`](scripts/calibrate_evaluator.py) for the separate,
@@ -251,9 +252,25 @@ outside the project wait for stage 5; if the sole candidate fails, record why an
 host. Stage 5 remains authoritative for the connected run.
 
 Run the bundled static preflight with `--defer-missing-sdk` over whatever dataset was discovered,
-omitting `--dataset` when none exists, then run `scripts/readiness.py` on that preflight JSON
-without `--calibration`: it has no current-run calibration result, earns no calibration points, leaves probe spread unmeasured,
-and raises no validation cap. When rows exist, do the row-level sanity check in
+omitting `--dataset` when none exists. Then include every safe measurement that can finish now in
+the first readiness card. When task intent is anchored and inspection finds a resolved deterministic
+evaluator, construct or revalidate its current-run case matrix and semantic-coverage review, then
+apply the evaluator-execution scope gate from stage 4. If the verdict is `sufficient` and the
+complete path does not execute candidate-generated code or SQL, is local-only, side-effect-free,
+standard-library-only, and expected to return in seconds, run fresh credential-stripped calibration now and pass its result to
+`scripts/readiness.py --calibration`. This validates an existing component; it does not create or
+repair one, needs no provider approval under the action table, and lets the opening card report
+what the run can actually establish. Before launching it, tell the user that this local check imports
+the inspected evaluator. Pass `--allow-execution` as the assistant's explicit acknowledgement only
+after the inspection above; the flag is not safety evidence and bypasses no scope gate. This notice
+adds no stop-and-wait. The evaluator-method name and `--kind deterministic` are not safety evidence.
+Never reuse a result from an earlier run or a pre-existing artifact.
+
+Otherwise run readiness without `--calibration` and name the concrete deferral: unresolved
+semantics, no defensible probe matrix, an uninstalled local dependency, a slow, uncertain, external,
+or executing path, or an LLM judge that needs paid approval. Missing calibration is then unmeasured,
+not a failed evaluator; the `evaluator-unvalidated` ceiling limits the readiness claim to 45 until
+the ruler is actually checked. When rows exist, do the row-level sanity check in
 `references/evaluation-and-dataset.md` here and pass it as `--row-review`: it is your own read, it
 spends nothing, and no generated row competes with it yet. Apply the run-scoped evaluator-method rule above to both
 scripts, and apply the run-scoped task-kind rule to readiness only, and the origin rule with it.
@@ -281,7 +298,11 @@ After task intent is anchored, every file a
  `traigent-runs/readiness/<YYYYMMDDTHHMMSSZ>/`, a fresh directory per scoring so a later one never
 reads an earlier one's. Never delete them, and name that directory to the user beside the card in
  that project-relative form, never expanded to an absolute path: they may want to keep, share, or
- remove it. Two halves, one pass, and
+ remove it. The canonical `traigent-runs/calibration-cases.json` and
+ `traigent-runs/calibration-results.json` are evaluator-validation evidence owned by
+ `references/evaluation-and-dataset.md`, not readiness-directory artifacts. When opening
+ calibration creates them, name both paths beside the readiness directory before showing the card.
+ Two halves, one pass, and
 neither is optional where an agent was found. For a selected top-level Python function, include
 `--agent-source-root`, `--selected-agent`, and `--selected-agent-callable`; `source_lines` must show values on its
 verified selected-call path. Otherwise leave source credit unestablished and use the advisory route. A thin Python adapter is
@@ -321,10 +342,12 @@ re-score that quietly drops the flag reports the agent pillar falling from what 
 established to nothing, and that fall reaches the customer as an honest change in their project.
 `references/component-creation.md` owns the shape.
 The opening score is not skippable, always reports all three pillars, and is the score this run
-reports for the project. Show it before anything is created or repaired.
+reports for the project. Show it before any Agent, Dataset, or Evaluation component is created or
+repaired; current-run validation evidence may be prepared first as the gate above requires.
 
-Say that the score reads the project and changes nothing of the customer's - and, when rows exist,
-that it wrote its own row review, naming where. A claim of no writes is refuted by one `ls`.
+Say that the scoring command reads the project and changes nothing of the customer's. Name the
+evidence the guided run wrote before it: its row review when rows exist, and both calibration
+artifacts when opening calibration ran. A claim of no writes is refuted by one `ls`.
 Show its rendered card verbatim,
 then explain its score, band, and cap reasons without internal ids. Describe an existing but
 unmeasured component as not yet measured. Presentation detail lives in the glossary:
@@ -487,7 +510,7 @@ provider key, and before any SDK-specific check.
 
 Follow this order:
 
-1. Define the calibration case matrix and thresholds from the task semantics, then record the
+1. Define or revalidate the calibration case matrix and thresholds from the task semantics, then record the
    assistant-performed semantic-coverage review in `references/evaluation-and-dataset.md`, grounded
    in the strongest available product evidence. Record its evidence, materially distinct paths,
    mode/threshold rationale, gaps, and `sufficient` or `ambiguous` verdict. Use the outcome-class
@@ -517,8 +540,13 @@ Follow this order:
    resolved evaluator call path identifies code/SQL execution, record the `containment` stop and
    end this guide before calibration, environment setup, credentials, provider calls, or paid work.
    Otherwise, run deterministic calibration only after a `sufficient`
-   semantic-coverage verdict. Its non-executing path must be fully inspected, local-only, and
-   side-effect-free, and runs in the credential-stripped calibration subprocess.
+   semantic-coverage verdict. Its path must be fully inspected, must not execute
+   candidate-generated code or SQL, and must be local-only and
+   side-effect-free, and runs in the credential-stripped calibration subprocess. When the opening
+   gate already produced that fresh result, reuse it here unless the evaluator, cases, semantic
+   evidence, or execution path changed; do not execute the same calibration twice merely because
+   the flow reached this step. Run here anything the opening gate truthfully deferred and can now
+   establish.
 5. Re-run `scripts/readiness.py` on the fresh preflight JSON plus any applicable calibration
    result. Omit every config-space file found before this run's enhanced search here just as at the
    opening gate. This score is required even when a low score or cap is expected. Record its gate
@@ -617,6 +645,9 @@ create or select. `evaluator-generated` and `agent-generated` route through the 
 rules and nothing else - carry the substitute's provenance into the words as well as the card, and say the
 result measures the substitute rather than their product. Neither is a repair: this run created the
 component on purpose, the run continues, and what the ceiling refuses is the claim, not the work.
+`evaluator-unvalidated` routes through the opening/stage-4 calibration gate above: measure it once
+when that gate establishes eligibility, or keep the ceiling and name the concrete deferral. It is
+an evidence boundary, not a repair finding.
 `evaluator-timeout` is neither a repair to route nor the invalid-evaluator
 paragraph: calibration ran and did not finish, which establishes nothing about this evaluator and
 does not make it invalid - slow and broken look identical from here. Settle it while gaps are still
@@ -1033,7 +1064,8 @@ The first run is complete only when:
 - The starting state and provenance of all three components are recorded.
 - Material quality limitations were explained with evidence and a repair/continue/pause choice.
 - Any repaired component was revalidated before its status changed.
-- The opening readiness score was computed before any creation or repair, recorded with its band
+- The opening readiness score was computed before any Agent, Dataset, or Evaluation component was
+  created or repaired, recorded with its band
   and caps, and is the only readiness number the report gives.
 - All missing components were built around the existing ones.
 - Dataset, agent, and evaluator compatibility passed.

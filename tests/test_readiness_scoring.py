@@ -1216,10 +1216,15 @@ class EvaluationScoringTests(unittest.TestCase):
         exact_value = next(
             s.value for s in exact.subscores if s.name == "reproducibility"
         )
+        exact_evidence = next(
+            s.evidence for s in exact.subscores if s.name == "reproducibility"
+        )
         judge_value = next(
             s.value for s in judge.subscores if s.name == "reproducibility"
         )
         self.assertGreater(exact_value, judge_value)
+        self.assertEqual(exact_evidence, "deterministic scoring rule")
+        self.assertNotIn("free to run", exact_evidence)
 
     def test_a_deterministic_method_can_still_be_the_wrong_ruler(self) -> None:
         """Exact-match on free text is reproducible and a poor fit."""
@@ -1282,10 +1287,10 @@ class EvaluationScoringTests(unittest.TestCase):
         self.assertEqual(cap.action_kind, "repair-evaluator")
         self.assertNotIn("does not parse", cap.reason)
 
-    def test_a_declared_method_without_calibration_loses_only_evidence_credit(
+    def test_a_declared_method_without_calibration_keeps_a_claim_ceiling(
         self,
     ) -> None:
-        """A method name earns no behavioral credit and invents no hard cap."""
+        """A method name earns no behavioral credit and cannot lift the claim."""
         facts = MODULE.EvaluationFacts(
             present=True,
             method="exact",
@@ -1294,9 +1299,12 @@ class EvaluationScoringTests(unittest.TestCase):
         )
         pillar, caps = MODULE.score_evaluation(facts)
         conditions = [cap.condition for cap in caps]
-        self.assertNotIn("evaluator-unvalidated", conditions)
+        self.assertIn("evaluator-unvalidated", conditions)
         self.assertNotIn("evaluator-unresolved", conditions)
         self.assertNotIn("evaluator-invalid", conditions)
+        cap = next(cap for cap in caps if cap.condition == "evaluator-unvalidated")
+        self.assertEqual(cap.ceiling, MODULE.EVALUATOR_UNVALIDATED_CEILING)
+        self.assertFalse(cap.blocks)
         calibration = next(sub for sub in pillar.subscores if sub.name == "calibration")
         spread = next(sub for sub in pillar.subscores if sub.name == "probe-spread")
         self.assertFalse(calibration.measured)
@@ -1305,6 +1313,78 @@ class EvaluationScoringTests(unittest.TestCase):
         self.assertFalse(spread.withheld)
         self.assertEqual(pillar.score, 53)
         self.assertLess(pillar.confidence, MODULE.MIN_CONFIDENCE_FOR_TOP_BANDS)
+
+    def test_only_a_complete_behavioral_check_set_clears_the_claim_ceiling(
+        self,
+    ) -> None:
+        incomplete = MODULE.EvaluationFacts(
+            present=True,
+            method="exact",
+            task_kind="closed-label",
+            parses=True,
+            calibration_present=True,
+            calibration_supplied=True,
+            calibration_complete=True,
+            checks=({"good_passes": True},),
+        )
+        complete = MODULE.replace(
+            incomplete,
+            checks=(
+                {
+                    "good_passes": True,
+                    "bad_fails": True,
+                    "non_constant": True,
+                },
+            ),
+            probe_scores=((1.0, 0.0),),
+        )
+
+        incomplete_pillar, incomplete_caps = MODULE.score_evaluation(incomplete)
+        complete_pillar, complete_caps = MODULE.score_evaluation(complete)
+
+        self.assertIn(
+            "evaluator-unvalidated", [cap.condition for cap in incomplete_caps]
+        )
+        self.assertFalse(
+            next(
+                sub for sub in incomplete_pillar.subscores if sub.name == "calibration"
+            ).measured
+        )
+        self.assertNotIn(
+            "evaluator-unvalidated", [cap.condition for cap in complete_caps]
+        )
+        self.assertTrue(
+            next(
+                sub for sub in complete_pillar.subscores if sub.name == "calibration"
+            ).measured
+        )
+
+    def test_uncalibrated_evidence_cannot_inflate_the_overall_score_or_band(
+        self,
+    ) -> None:
+        uncalibrated_pillar, uncalibrated_caps = MODULE.score_evaluation(
+            MODULE.EvaluationFacts(
+                present=True,
+                method="exact",
+                task_kind="closed-label",
+                parses=True,
+            )
+        )
+        full = [
+            MODULE.combine(name, [MODULE.SubScore("measured", 1.0, 1.0, True, "")])
+            for name in ("dataset", "agent")
+        ]
+        score = MODULE.aggregate(
+            [*full, uncalibrated_pillar],
+            uncalibrated_caps,
+            (),
+            dict(MODULE.DEFAULT_WEIGHTS),
+        )
+
+        self.assertGreater(score.weighted_average, score.overall)
+        self.assertEqual(score.overall, MODULE.EVALUATOR_UNVALIDATED_CEILING)
+        self.assertEqual(score.band, "PARTIAL")
+        self.assertIn("evaluator-unvalidated", [cap.condition for cap in score.caps])
 
     def test_a_proven_parse_failure_remains_a_negative_finding(self) -> None:
         facts = MODULE.EvaluationFacts(
@@ -1362,6 +1442,7 @@ class EvaluationScoringTests(unittest.TestCase):
         _, caps = MODULE.score_evaluation(facts)
         conditions = [cap.condition for cap in caps]
         self.assertIn("evaluator-invalid", conditions)
+        self.assertNotIn("evaluator-unvalidated", conditions)
         self.assertNotIn("evaluator-unresolved", conditions)
         self.assertNotIn("evaluator-absent", conditions)
         invalid_cap = next(c for c in caps if c.condition == "evaluator-invalid")
@@ -3533,7 +3614,7 @@ class CliTests(unittest.TestCase):
                 self.assertEqual(checks[name]["value"], 0.0)
                 if checks[name]["applicable"]:
                     self.assertIn(
-                        "nothing here verified it, so it earns no points",
+                        "not independently verified; excluded from this score",
                         checks[name]["evidence"],
                     )
 
@@ -3593,7 +3674,7 @@ class CliTests(unittest.TestCase):
                 self.assertFalse(checks[name]["measured"])
                 if checks[name]["applicable"]:
                     self.assertIn(
-                        "nothing here verified it, so it earns no points",
+                        "not independently verified; excluded from this score",
                         checks[name]["evidence"],
                     )
 
@@ -5629,20 +5710,23 @@ class TheCapOrderingIsWrittenDownAndCheckedTests(unittest.TestCase):
         customer's domain, which on collected data can be wrong.
 
         The third is ordered by its band instead, and the module says so where
-        it is defined: `evaluator-timeout` opens "answers the wrong question"
-        and `agent-no-varying-knobs` is equal to it because neither is broken
-        and neither compares anything. Both are read off the input, so the
-        counted-before-inferred rule has nothing to separate them with.
+        it is defined: `evaluator-timeout` opens "answers the wrong question",
+        then `evaluator-unvalidated`, then `agent-no-varying-knobs`. The timeout
+        is an observed failed attempt; the unvalidated method has no complete
+        behavioral evidence; the fixed search space compares nothing. All
+        three bound the claim equally without saying the connected component
+        is defective.
 
-        Six ties on the merged tree rather than three. This test arrived with
-        the branch that ranked the unsound-answer cap, whose base carried
-        neither the silent-provenance rungs nor the middle answer-key rung nor
-        the unrecognised-shape condition, so the three ties those conditions
-        make were invisible to it. They are not new decisions: each is recorded
-        beside its ceiling in the module, and each falls under one of the two
-        rules already stated above - counted before inferred, or a shared band
-        edge that is a coincidence rather than a cause. Pinning them here is
-        what stops the next merge from reordering one silently.
+        Seven tied ceiling groups on the merged tree rather than three. This
+        test arrived with the branch that ranked the unsound-answer cap, whose
+        base carried neither the silent-provenance rungs nor the middle
+        answer-key rung nor the unrecognised-shape condition, so the three ties
+        those conditions make were invisible to it. They are not new
+        decisions: each is recorded beside its ceiling in the module, and each
+        falls under one of the two rules already stated above - counted before
+        inferred, or a shared band edge that is a coincidence rather than a
+        cause. Pinning them here is what stops the next merge from reordering
+        one silently.
         """
         ranked = [
             condition
@@ -5666,7 +5750,11 @@ class TheCapOrderingIsWrittenDownAndCheckedTests(unittest.TestCase):
                 # produces none.
                 25: ["evaluator-invalid", "dataset-shape-unrecognised"],
                 40: ["evaluator-absent", "evaluator-unresolved"],
-                45: ["evaluator-timeout", "agent-no-varying-knobs"],
+                45: [
+                    "evaluator-timeout",
+                    "evaluator-unvalidated",
+                    "agent-no-varying-knobs",
+                ],
                 # One split defect read from each end: the same rows on both
                 # sides, and every scoreable row on one. Neither breaks the
                 # material and both leave the run comparing nothing, so they
@@ -5930,26 +6018,46 @@ class TheDeclaredCapOrderDecidesTheRunTests(unittest.TestCase):
         )
 
     def test_the_tied_ceiling_is_broken_by_the_declared_order(self) -> None:
-        """45 is carried by two conditions, and only one can be recommended."""
+        """All three 45 ceilings follow one order and one recommendation."""
         self.assertEqual(
-            MODULE.CAP_CEILING["evaluator-timeout"],
-            MODULE.CAP_CEILING["agent-no-varying-knobs"],
-            "this test exists for a tie; these two no longer tie",
+            {
+                MODULE.CAP_CEILING["evaluator-timeout"],
+                MODULE.CAP_CEILING["evaluator-unvalidated"],
+                MODULE.CAP_CEILING["agent-no-varying-knobs"],
+            },
+            {45},
+            "this test exists for a three-way tie",
         )
         for order in (
-            ("evaluator-timeout", "agent-no-varying-knobs"),
-            ("agent-no-varying-knobs", "evaluator-timeout"),
+            (
+                "evaluator-timeout",
+                "evaluator-unvalidated",
+                "agent-no-varying-knobs",
+            ),
+            (
+                "agent-no-varying-knobs",
+                "evaluator-unvalidated",
+                "evaluator-timeout",
+            ),
         ):
             with self.subTest(built_in=order):
                 score = self._score(*order)
                 self.assertEqual(
                     [cap.condition for cap in score.caps],
-                    ["evaluator-timeout", "agent-no-varying-knobs"],
+                    [
+                        "evaluator-timeout",
+                        "evaluator-unvalidated",
+                        "agent-no-varying-knobs",
+                    ],
                 )
                 self.assertEqual(score.recommended_action, "bound-evaluator-cost")
                 self.assertEqual(
                     [gap.split(":")[0] for gap in score.gaps],
-                    ["evaluator-timeout", "agent-no-varying-knobs"],
+                    [
+                        "evaluator-timeout",
+                        "evaluator-unvalidated",
+                        "agent-no-varying-knobs",
+                    ],
                 )
 
     def test_moving_a_condition_in_the_declaration_moves_the_recommendation(
@@ -9375,6 +9483,133 @@ class StaticAgentSourceEvidenceTests(unittest.TestCase):
         self.assertGreater(pillar.score, 0)
         self.assertFalse(any(cap.condition == "agent-no-varying-knobs" for cap in caps))
 
+    def test_mapping_keys_are_options_only_when_mapped_literals_differ(self) -> None:
+        cases = (
+            ({"plain": "same", "rich": "same"}, False),
+            ({"plain": "brief", "rich": "detailed"}, True),
+        )
+        for mapping, expected_credit in cases:
+            with self.subTest(
+                mapping=mapping
+            ), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                (root / "agent.py").write_text(
+                    f"STYLES = {mapping!r}\n"
+                    "def run(text, config):\n"
+                    '    return STYLES[config.get("style", "plain")] + text\n',
+                    encoding="utf-8",
+                )
+                facts = MODULE.agent_facts_from_discovery(
+                    {
+                        "source": "agent.py",
+                        "knobs": {
+                            "style": {
+                                "values": ["plain", "rich"],
+                                "source_lines": [1],
+                                "evidence": "the selected path reads this literal table",
+                            }
+                        },
+                    },
+                    source_root=root,
+                    selected_agent=root / "agent.py",
+                    selected_agent_callable="run",
+                )
+
+            self.assertEqual(facts.discovered[0].credited, expected_credit)
+
+    def test_duplicate_mapping_keys_use_only_runtime_effective_entries(self) -> None:
+        cases = (
+            ("{'plain': 'a', 'rich': 'b', 'plain': 'b'}", False),
+            ("{'plain': 'a', 'rich': 'b', 'plain': 'c'}", True),
+        )
+        for mapping_source, expected_credit in cases:
+            with self.subTest(
+                mapping_source=mapping_source
+            ), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                (root / "agent.py").write_text(
+                    f"STYLES = {mapping_source}\n"
+                    "def run(text, config):\n"
+                    '    return STYLES[config.get("style", "plain")] + text\n',
+                    encoding="utf-8",
+                )
+                facts = MODULE.agent_facts_from_discovery(
+                    {
+                        "source": "agent.py",
+                        "knobs": {
+                            "style": {
+                                "values": ["plain", "rich"],
+                                "source_lines": [1],
+                                "evidence": "the selected path reads this literal table",
+                            }
+                        },
+                    },
+                    source_root=root,
+                    selected_agent=root / "agent.py",
+                    selected_agent_callable="run",
+                )
+
+            self.assertEqual(facts.discovered[0].credited, expected_credit)
+
+    def test_mutable_mapping_values_cannot_impersonate_stable_options(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "agent.py").write_text(
+                "STYLES = {'plain': ['a'], 'rich': ['b']}\n"
+                "STYLES['plain'].clear()\n"
+                "STYLES['plain'].append('b')\n"
+                "def run(text, config):\n"
+                '    return STYLES[config.get("style", "plain")]\n',
+                encoding="utf-8",
+            )
+            facts = MODULE.agent_facts_from_discovery(
+                {
+                    "source": "agent.py",
+                    "knobs": {
+                        "style": {
+                            "values": ["plain", "rich"],
+                            "source_lines": [1],
+                            "evidence": "the selected path reads this table",
+                        }
+                    },
+                },
+                source_root=root,
+                selected_agent=root / "agent.py",
+                selected_agent_callable="run",
+            )
+
+        self.assertFalse(facts.discovered[0].credited)
+        self.assertTrue(facts.discovered[0].unverified)
+
+    def test_selected_table_fallback_still_requires_its_cited_line(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "agent.py").write_text(
+                "STYLES = {'plain': 'a', 'rich': 'b'}\n"
+                "UNRELATED = 1\n"
+                "def run(text, config):\n"
+                '    return STYLES[config.get("style", "plain")] + text\n',
+                encoding="utf-8",
+            )
+            facts = MODULE.agent_facts_from_discovery(
+                {
+                    "source": "agent.py",
+                    "knobs": {
+                        "style": {
+                            "values": ["plain", "rich"],
+                            "source_lines": [2],
+                            "evidence": "the cited line is executable but unrelated",
+                        }
+                    },
+                },
+                source_root=root,
+                selected_agent=root / "agent.py",
+                selected_agent_callable="run",
+            )
+
+        self.assertFalse(facts.discovered[0].credited)
+        self.assertTrue(facts.discovered[0].unverified)
+
     def test_python_equality_cannot_turn_one_bound_value_into_two_options(self) -> None:
         """Source membership uses the same representation as the distinct count."""
         with tempfile.TemporaryDirectory() as directory:
@@ -9848,6 +10083,14 @@ class StaticAgentSourceEvidenceTests(unittest.TestCase):
                 '    styles = {"plain": "a", "rich": "b"}\n'
                 '    return styles[config.get("style", "plain")]\n',
             ),
+            "a nested request table mutated before selection": (
+                "model",
+                ("a", "b"),
+                "CONFIGS = [{'model': 'a'}, {'model': 'b'}]\n"
+                "CONFIGS[0]['model'] = 'b'\n"
+                "def run(text, choice):\n"
+                "    return provider(text, **CONFIGS[choice])\n",
+            ),
             "a selection the function has already returned past": (
                 "style",
                 ("plain", "rich"),
@@ -9977,6 +10220,83 @@ class StaticAgentSourceEvidenceTests(unittest.TestCase):
                 '    return "fixed"\n'
                 "def run(text, config):\n"
                 "    return ignore(build(config))\n",
+            ),
+            "a helper mention discarded by constant tuple selection": (
+                "style",
+                ("plain", "rich"),
+                'STYLES = {"plain": "a", "rich": "b"}\n'
+                "def build(config):\n"
+                '    return STYLES[config.get("style", "plain")]\n'
+                "def discard(value):\n"
+                '    return (value, "fixed")[1]\n'
+                "def run(text, config):\n"
+                "    return discard(build(config))\n",
+            ),
+            "a helper mention discarded by a missing dictionary key": (
+                "style",
+                ("plain", "rich"),
+                'STYLES = {"plain": "a", "rich": "b"}\n'
+                "def build(config):\n"
+                '    return STYLES[config.get("style", "plain")]\n'
+                "def discard(value):\n"
+                '    return {"kept": value}.get("missing", "fixed")\n'
+                "def run(text, config):\n"
+                "    return discard(build(config))\n",
+            ),
+            "a helper mention discarded by list pop": (
+                "style",
+                ("plain", "rich"),
+                'STYLES = {"plain": "a", "rich": "b"}\n'
+                "def build(config):\n"
+                '    return STYLES[config.get("style", "plain")]\n'
+                "def discard(value):\n"
+                '    return [value, "fixed"].pop()\n'
+                "def run(text, config):\n"
+                "    return discard(build(config))\n",
+            ),
+            "a helper mention discarded through reversed selection": (
+                "style",
+                ("plain", "rich"),
+                'STYLES = {"plain": "a", "rich": "b"}\n'
+                "def build(config):\n"
+                '    return STYLES[config.get("style", "plain")]\n'
+                "def discard(value):\n"
+                '    return list(reversed([value, "fixed"]))[0]\n'
+                "def run(text, config):\n"
+                "    return discard(build(config))\n",
+            ),
+            "a helper mention discarded through a constructor projection": (
+                "style",
+                ("plain", "rich"),
+                'STYLES = {"plain": "a", "rich": "b"}\n'
+                "def build(config):\n"
+                '    return STYLES[config.get("style", "plain")]\n'
+                "def discard(value):\n"
+                '    return list([value, "fixed"])[1]\n'
+                "def run(text, config):\n"
+                "    return discard(build(config))\n",
+            ),
+            "a helper mention discarded through an opaque projection": (
+                "style",
+                ("plain", "rich"),
+                'STYLES = {"plain": "a", "rich": "b"}\n'
+                "def build(config):\n"
+                '    return STYLES[config.get("style", "plain")]\n'
+                "def discard(value):\n"
+                '    return identity([value, "fixed"])[1]\n'
+                "def run(text, config):\n"
+                "    return discard(build(config))\n",
+            ),
+            "a helper mention passed to an unused format argument": (
+                "style",
+                ("plain", "rich"),
+                'STYLES = {"plain": "a", "rich": "b"}\n'
+                "def build(config):\n"
+                '    return STYLES[config.get("style", "plain")]\n'
+                "def discard(value):\n"
+                '    return "fixed".format(value)\n'
+                "def run(text, config):\n"
+                "    return discard(build(config))\n",
             ),
             "a composed helper whose local receiver overwrites its input": (
                 "style",
@@ -10441,8 +10761,8 @@ class StaticAgentSourceEvidenceTests(unittest.TestCase):
             self.assertFalse(facts.discovered[0].credited)
             self.assertTrue(facts.discovered[0].unverified)
 
-    def test_composed_config_agent_credits_every_source_backed_setting(self) -> None:
-        """Case 46's shape proves the widening, not its predeclared config file."""
+    def test_nested_composition_credits_every_source_backed_setting(self) -> None:
+        """Nested returned calls preserve each verified selected-path setting."""
         source = (
             'MODELS = {"fast": "a", "careful": "b"}\n'
             'STYLES = {"plain": "say", "rubric": "classify"}\n'
@@ -10651,20 +10971,47 @@ class StaticAgentSourceEvidenceTests(unittest.TestCase):
             )
             self.assertTrue(facts.discovered[0].credited)
 
-    def test_literal_config_dictionary_key_is_a_binding_for_its_knob(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            (root / "agent.py").write_text(
-                'REQUEST_CONFIGS = [{"model": "fast"}, {"model": "slow"}]\n'
-                "def call(choice):\n    return provider(**REQUEST_CONFIGS[choice])\n"
-            )
-            facts = MODULE.agent_facts_from_discovery(
-                self._document("mapping reaches kwargs", source_lines=[1]),
-                source_root=root,
-                selected_agent=root / "agent.py",
-                selected_agent_callable="call",
-            )
-            self.assertTrue(facts.discovered[0].credited)
+    def test_mutable_request_inventories_are_not_opening_source_proof(self) -> None:
+        cases = (
+            (
+                'MODELS = [{"model": "fast"}, {"model": "slow"}]\n'
+                "def call(choice):\n"
+                "    return provider(model=MODELS[choice])\n"
+            ),
+            (
+                'MODELS = [{"model": "fast"}, {"model": "slow"}]\n'
+                "alias = MODELS[0]\n"
+                'alias["model"] = "slow"\n'
+                "def call(choice):\n"
+                "    return provider(model=MODELS[choice])\n"
+            ),
+            (
+                'MODELS = [{"model": "fast"}, {"model": "slow"}]\n'
+                "def call(choice):\n"
+                "    alias = MODELS[0]\n"
+                '    alias["model"] = "slow"\n'
+                "    return provider(model=MODELS[choice])\n"
+            ),
+            (
+                'MODELS = [["fast"], ["slow"]]\n'
+                "def call(choice):\n"
+                "    return provider(model=MODELS[choice])\n"
+            ),
+        )
+        for source_text in cases:
+            with self.subTest(
+                source_text=source_text
+            ), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                (root / "agent.py").write_text(source_text)
+                facts = MODULE.agent_facts_from_discovery(
+                    self._document("mutable mapping inventory", source_lines=[1]),
+                    source_root=root,
+                    selected_agent=root / "agent.py",
+                    selected_agent_callable="call",
+                )
+            self.assertFalse(facts.discovered[0].credited)
+            self.assertTrue(facts.discovered[0].unverified)
 
     def test_malformed_out_of_root_and_mismatched_references_refuse(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

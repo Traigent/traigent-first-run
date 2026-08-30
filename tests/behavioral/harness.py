@@ -36,6 +36,44 @@ PREFLIGHT = ROOT / "skills" / "traigent-first-run" / "scripts" / "preflight.py"
 CALIBRATE = (
     ROOT / "skills" / "traigent-first-run" / "scripts" / "calibrate_evaluator.py"
 )
+SAFE_OPENING_SCENARIO = "safe-opening-calibration"
+SAFE_OPENING_PROJECT = HERE / "outcomes" / "clean-proceed" / "project"
+CLOSED_LABEL_OUTCOME_CLASSES = frozenset(
+    {"near-miss labels", "an absent label", "case and whitespace"}
+)
+SAFE_OPENING_AGENT = '''"""Local request builder with four source-backed choices."""
+
+MODELS = {"small": "local-small", "large": "local-large"}
+PROMPT_STYLES = {"plain": "Route this request.", "careful": "Check the request, then route it."}
+CONTEXT_DEPTHS = (0, 2)
+OUTPUT_FORMATS = {"label": "Return one label.", "json": "Return a JSON label object."}
+HISTORY = ("a billing example", "an account example")
+
+
+def run(message, config):
+    model = config.get("model", "small")
+    if model not in MODELS:
+        raise ValueError("unknown model")
+    depth = config.get("retrieval", 0)
+    if depth not in CONTEXT_DEPTHS:
+        raise ValueError("unknown context depth")
+    return {
+        "model": MODELS[model],
+        "prompt": PROMPT_STYLES[config.get("prompt_style", "plain")],
+        "context": HISTORY[:depth],
+        "output": OUTPUT_FORMATS[config.get("output_format", "label")],
+        "message": message,
+    }
+'''
+UNSAFE_EXECUTION_EVALUATOR = '''"""Deterministic evaluator that executes candidate code."""
+
+
+def score_code(*, output, expected, input_data, metadata):
+    del input_data, metadata
+    namespace = {}
+    exec(output, {"__builtins__": {}}, namespace)
+    return float(namespace.get("answer") == expected)
+'''
 REQUIRED_CONTRACT_KEYS = {
     "id",
     "user_request",
@@ -837,6 +875,7 @@ def score_command(
     audit_log: Path,
     preflight_stdout: str,
     calibration: Path | None = None,
+    extra_args: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     """Score readiness from preflight JSON on stdin, plus calibration if present.
 
@@ -848,6 +887,7 @@ def score_command(
     argv = [sys.executable, str(READINESS), "--preflight", "-"]
     if calibration is not None:
         argv.extend(("--calibration", str(calibration)))
+    argv.extend(extra_args)
     argv.append("--json")
     result = run_command(argv, project, audit_log, stdin_text=preflight_stdout)
     score = json.loads(result["stdout"])
@@ -1107,6 +1147,31 @@ def calibration_case_invariants(path: Path) -> None:
             )
 
 
+def safe_opening_calibration_case_invariants(path: Path) -> None:
+    """The modeled opening matrix must justify its sufficient verdict."""
+    calibration_case_invariants(path)
+    cases = json.loads(path.read_text())
+    declared = {
+        item
+        for case in cases
+        for item in case.get("outcome_classes", [])
+        if isinstance(item, str)
+    }
+    missing = CLOSED_LABEL_OUTCOME_CLASSES - declared
+    if missing:
+        raise ContractError(
+            f"safe opening matrix omits closed-label outcomes: {sorted(missing)}"
+        )
+    labels = {case["expected"].casefold() for case in cases}
+    probe_outputs = {
+        str(value).strip().casefold()
+        for case in cases
+        for value in case.get("probes", {}).values()
+    }
+    if not (probe_outputs - labels):
+        raise ContractError("safe opening matrix has no absent-label probe")
+
+
 def partial_missing_dataset(
     contract: dict[str, Any], project: Path, audit_log: Path, scenario_dir: Path
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], str]:
@@ -1118,7 +1183,7 @@ def partial_missing_dataset(
         raise ContractError("partial readiness did not preserve the two real anchors")
     append_event(events, "readiness", real_ready=2, create=["dataset"])
 
-    # Opening readiness gate: scored before anything is created or repaired, so
+    # Opening readiness gate: scored before any component is created or repaired, so
     # the record holds one score of material this run did not write.
     opening_preflight = opening_preflight_command(project, audit_log)
     opening = score_command(project, audit_log, opening_preflight["stdout"])
@@ -1313,6 +1378,11 @@ def weak_invalid(
         raise ContractError(
             "weak evaluator fixture no longer demonstrates exact-string grading"
         )
+    append_event(
+        events,
+        "calibration_deferred",
+        reason="evaluator semantics are invalid; repair before execution",
+    )
     findings = [
         {
             "component": "agent",
@@ -1498,6 +1568,13 @@ def validate_semantics(contract: dict[str, Any], evidence: dict[str, Any]) -> No
             raise ContractError("provider-work evidence contradicted its declaration")
         if ("paid_work" in event_types) != assertions["paid_work"]:
             raise ContractError("paid-work evidence contradicted its declaration")
+        if any(
+            Path(command["argv"][1]).name == CALIBRATE.name
+            for command in evidence["commands"]
+        ):
+            raise ContractError(
+                "weak/invalid scenario must defer calibration until repair"
+            )
         choices = next(
             event for event in evidence["events"] if event["type"] == "question"
         )
@@ -1616,6 +1693,411 @@ def run_once(
     return evidence
 
 
+def run_safe_opening_calibration_once(
+    pass_number: int,
+    work_root: Path,
+    evidence_root: Path,
+    network_probe: dict[str, str],
+) -> dict[str, Any]:
+    """Exercise the eligible opening-calibration branch on a complete project.
+
+    Eligibility is a reviewed property of this committed scenario, not an
+    inference from ``--kind deterministic`` or the evaluator-method name. The
+    evaluator is local, stdlib-only and side-effect-free; the container's
+    socket guard and the project manifest below independently refuse network or
+    project writes. This scenario proves the eligible branch; its explicit
+    output-to-exec path proves the complementary defer-before-execution branch.
+    """
+    project = work_root / f"pass-{pass_number}" / SAFE_OPENING_SCENARIO
+    project.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(SAFE_OPENING_PROJECT, project)
+    # This modeled project has a real current agent search space. It replaces
+    # the reused project's single-purpose router before the starting manifest
+    # is taken; it is customer material for this scenario, not a guided-run
+    # repair or a historical config-space assertion.
+    (project / "agent.py").write_text(SAFE_OPENING_AGENT)
+    source_cases_path = project / "calibration-cases.json"
+    source_cases = json.loads(source_cases_path.read_text())
+    source_cases[0]["outcome_classes"] = ["case and whitespace"]
+    source_cases[1]["outcome_classes"] = ["near-miss labels"]
+    source_cases[1]["probes"]["partial"] = "cancellations"
+    source_cases[2]["outcome_classes"] = ["an absent label"]
+    source_cases[2]["probes"]["bad"] = "unknown"
+    source_cases_path.write_text(json.dumps(source_cases, indent=2) + "\n")
+    safe_opening_calibration_case_invariants(source_cases_path)
+    (project / ".env").write_text("")
+    run_dir = project / "traigent-runs"
+    run_dir.mkdir()
+    enforce_project_permissions(project, ["traigent-runs", "traigent-runs/**"])
+    # Git cannot preserve 0600, but preflight correctly refuses a readable
+    # credentials file. This empty one is part of the prepared starting state,
+    # not a write made by the modeled run.
+    (project / ".env").chmod(0o600)
+
+    before = tree_manifest(project)
+    audit_log = work_root / f"audit-{SAFE_OPENING_SCENARIO}-{pass_number}.jsonl"
+    commands: list[dict[str, Any]] = []
+    events: list[dict[str, Any]] = []
+
+    preflight = run_command(
+        [
+            sys.executable,
+            str(PREFLIGHT),
+            "--env",
+            str(project / ".env"),
+            "--dataset",
+            str(project / "evaluation-dataset.jsonl"),
+            "--evaluator",
+            str(project / "evaluator.py"),
+            "--evaluator-method",
+            "normalized-exact",
+            "--defer-missing-sdk",
+            "--json",
+        ],
+        project,
+        audit_log,
+    )
+    preflight["parsed"] = json.loads(preflight["stdout"])
+    if any(item["status"] == "FAIL" for item in preflight["parsed"]):
+        raise ContractError("complete-project opening preflight failed")
+    commands.append(preflight)
+
+    cases_path = run_dir / "calibration-cases.json"
+    calibration_path = run_dir / "calibration-results.json"
+    if cases_path.exists() or calibration_path.exists():
+        raise ContractError("opening calibration artifacts must start absent")
+    shutil.copyfile(project / "calibration-cases.json", cases_path)
+    safe_opening_calibration_case_invariants(cases_path)
+    review = {
+        "reviewer": "coding assistant",
+        "evidence": [
+            "agent.py",
+            "evaluator.py",
+            "evaluation-dataset.jsonl",
+            "calibration-cases.json",
+        ],
+        "branches": ["billing", "cancellation", "technical-support"],
+        "outcome_classes": sorted(CLOSED_LABEL_OUTCOME_CLASSES),
+        "score_mode": "binary",
+        "threshold_rationale": (
+            "Normalized expected labels pass; near misses, other declared labels, "
+            "and an absent label fail."
+        ),
+        "verdict": "sufficient",
+        "known_gap": "Synthetic cases are not customer-traffic evidence.",
+    }
+    append_event(events, "semantic_review", **review)
+    calibration = run_command(
+        [
+            sys.executable,
+            str(CALIBRATE),
+            "--scorer",
+            "evaluator.py:score_intent",
+            "--cases",
+            f"@{cases_path}",
+            "--kind",
+            "deterministic",
+            "--allow-execution",
+            "--json",
+        ],
+        project,
+        audit_log,
+    )
+    calibration["parsed"] = json.loads(calibration["stdout"])
+    if not calibration["parsed"].get("passed"):
+        raise ContractError("safe deterministic opening calibration failed")
+    commands.append(calibration)
+    calibration_path.write_text(
+        json.dumps(calibration["parsed"], indent=2, sort_keys=True) + "\n"
+    )
+    artifact_digest = sha256_bytes(calibration_path.read_bytes())
+    append_event(
+        events,
+        "opening_calibration",
+        passed=True,
+        case_count=len(calibration["parsed"]["cases"]),
+        artifact_sha256=artifact_digest,
+        provider_access=False,
+    )
+    review_index = next(
+        index
+        for index, event in enumerate(events)
+        if event["type"] == "semantic_review"
+    )
+    calibration_index = next(
+        index
+        for index, event in enumerate(events)
+        if event["type"] == "opening_calibration"
+    )
+    if review["verdict"] != "sufficient" or review_index >= calibration_index:
+        raise ContractError(
+            "semantic matrix review must be sufficient and precede opening execution"
+        )
+
+    readiness_dir = run_dir / "readiness" / "20260830T000000Z"
+    readiness_dir.mkdir(parents=True)
+    agent_read_path = readiness_dir / "agent-knobs.json"
+    agent_read_path.write_text(
+        json.dumps(
+            {
+                "source": "agent.py",
+                "knobs": {
+                    "model": {
+                        "values": ["small", "large"],
+                        "source_lines": [3],
+                        "evidence": "agent.py:3 declares both models; run selects one",
+                    },
+                    "prompt_style": {
+                        "values": ["plain", "careful"],
+                        "source_lines": [4],
+                        "evidence": "agent.py:4 declares both prompts; run selects one",
+                    },
+                    "retrieval": {
+                        "values": [0, 2],
+                        "source_lines": [5],
+                        "evidence": "agent.py:5 declares both depths; run slices history",
+                    },
+                    "output_format": {
+                        "values": ["label", "json"],
+                        "source_lines": [6],
+                        "evidence": "agent.py:6 declares both formats; run selects one",
+                    },
+                },
+                "build": {
+                    "prompt": {
+                        "present": True,
+                        "few_shot": 0,
+                        "evidence": "agent.py:19 assembles a prompt",
+                    },
+                    "output-contract": {
+                        "present": True,
+                        "evidence": "agent.py:21 fixes the output instruction",
+                    },
+                    "control-flow": {
+                        "loop": False,
+                        "evidence": "agent.py:10-23 is straight-line and bounded",
+                    },
+                    "tools": {
+                        "used": False,
+                        "evidence": "agent.py:1-23 declares and calls no tools",
+                    },
+                },
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n"
+    )
+    score_args = (
+        "--agent-knobs",
+        str(agent_read_path),
+        "--agent-source-root",
+        str(project),
+        "--selected-agent",
+        str(project / "agent.py"),
+        "--selected-agent-callable",
+        "run",
+        "--evaluator-method",
+        "normalized-exact",
+        "--evaluator-origin",
+        "brought",
+        "--agent-origin",
+        "brought",
+        "--task-kind",
+        "closed-label",
+    )
+    opening = score_command(
+        project,
+        audit_log,
+        preflight["stdout"],
+        calibration=calibration_path,
+        extra_args=score_args,
+    )
+    commands.append(opening)
+    opening_score = opening["parsed"]
+    evaluation = next(
+        pillar for pillar in opening_score["pillars"] if pillar["name"] == "evaluation"
+    )
+    evaluation_checks = {check["name"]: check for check in evaluation["subscores"]}
+    if opening_score["band"] != "EXCELLENT" or evaluation["score"] != 100:
+        raise ContractError(
+            "complete, calibrated project must open with an evidence-backed "
+            "EXCELLENT band and fully measured evaluation pillar"
+        )
+    if any(
+        not evaluation_checks[name]["measured"]
+        for name in ("calibration", "probe-spread", "reproducibility", "task-fit")
+    ):
+        raise ContractError(
+            "opening score did not consume every calibrated evaluation check"
+        )
+    if "evaluator-unvalidated" in cap_conditions(opening_score):
+        raise ContractError("opening score ignored its fresh calibration artifact")
+    append_event(events, "opening_readiness_score", **score_event_fields(opening_score))
+
+    # Stage 4 revalidates the unchanged inputs by reusing this run's fresh
+    # artifact. It may score again, but it must not execute the evaluator twice.
+    stage_4 = score_command(
+        project,
+        audit_log,
+        preflight["stdout"],
+        calibration=calibration_path,
+        extra_args=score_args,
+    )
+    commands.append(stage_4)
+    if stage_4["parsed"] != opening_score:
+        raise ContractError(
+            "unchanged stage-4 revalidation must preserve the opening card"
+        )
+    calibration_executions = sum(
+        Path(command["argv"][1]).name == CALIBRATE.name for command in commands
+    )
+    if calibration_executions != 1:
+        raise ContractError(
+            "opening and stage-4 revalidation must share one calibration execution"
+        )
+    if sha256_bytes(calibration_path.read_bytes()) != artifact_digest:
+        raise ContractError("stage-4 revalidation changed the calibration artifact")
+    append_event(
+        events,
+        "stage_4_revalidation",
+        calibration_reused=True,
+        calibration_executions=calibration_executions,
+        card_unchanged=True,
+    )
+
+    # The opposite path is selected from an inspected call path, not from the
+    # word "deterministic" or an evaluator-method label. Candidate output flows
+    # directly into exec, so even an offline evaluator is unsafe to run at the
+    # opening gate. Record the provisional card without invoking it.
+    unsafe_project = work_root / f"pass-{pass_number}" / "unsafe-execution-evaluator"
+    unsafe_project.mkdir()
+    (unsafe_project / "evaluator.py").write_text(UNSAFE_EXECUTION_EVALUATOR)
+    syntax = ast.parse(UNSAFE_EXECUTION_EVALUATOR)
+    candidate_execution_calls = [
+        node
+        for node in ast.walk(syntax)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "exec"
+        and node.args
+        and isinstance(node.args[0], ast.Name)
+        and node.args[0].id == "output"
+    ]
+    if len(candidate_execution_calls) != 1:
+        raise ContractError(
+            "unsafe execution scenario lost its reviewed output-to-exec call path"
+        )
+    unsafe_audit_log = work_root / (
+        f"audit-unsafe-execution-evaluator-{pass_number}.jsonl"
+    )
+    unsafe_preflight = run_command(
+        [
+            sys.executable,
+            str(PREFLIGHT),
+            "--evaluator",
+            str(unsafe_project / "evaluator.py"),
+            "--evaluator-method",
+            "execution",
+            "--defer-missing-sdk",
+            "--json",
+        ],
+        unsafe_project,
+        unsafe_audit_log,
+    )
+    unsafe_preflight["parsed"] = json.loads(unsafe_preflight["stdout"])
+    unsafe_opening = score_command(
+        unsafe_project,
+        unsafe_audit_log,
+        unsafe_preflight["stdout"],
+        extra_args=(
+            "--evaluator-method",
+            "execution",
+            "--evaluator-origin",
+            "brought",
+            "--task-kind",
+            "code",
+        ),
+    )
+    unsafe_commands = [unsafe_preflight, unsafe_opening]
+    if any(
+        Path(command["argv"][1]).name == CALIBRATE.name for command in unsafe_commands
+    ):
+        raise ContractError("candidate-executing evaluator must not run at opening")
+    if "evaluator-unvalidated" not in cap_conditions(unsafe_opening["parsed"]):
+        raise ContractError(
+            "deferred execution evaluator must remain unvalidated on its opening card"
+        )
+    commands.extend(unsafe_commands)
+    append_event(
+        events,
+        "opening_calibration_deferred",
+        reason="candidate output reaches built-in exec",
+        reviewed_call_path="score_code output -> exec",
+        calibration_executions=0,
+    )
+    append_event(
+        events,
+        "connected_boundary",
+        customer_result=False,
+        requires_live_validation=["sdk", "provider", "backend", "portal"],
+    )
+    stop_reason = "offline_contract_complete_connected_run_required"
+    append_event(events, "stop", reason=stop_reason)
+
+    after = tree_manifest(project)
+    writes = manifest_changes(before, after)
+    validate_writes(
+        {
+            "allowed_writes": [
+                "traigent-runs/calibration-cases.json",
+                "traigent-runs/calibration-results.json",
+                "traigent-runs/readiness",
+                "traigent-runs/readiness/20260830T000000Z",
+                "traigent-runs/readiness/20260830T000000Z/agent-knobs.json",
+            ]
+        },
+        writes,
+    )
+    attempts = read_audit_events(audit_log) + read_audit_events(unsafe_audit_log)
+    if attempts:
+        raise ContractError(
+            f"safe opening calibration attempted network access: {attempts!r}"
+        )
+    evidence = {
+        "schema_version": 1,
+        "kind": "offline-behavioral-contract",
+        "scenario": SAFE_OPENING_SCENARIO,
+        "claim_scope": "pre-network orchestration only; not a customer optimization result",
+        "behavior_digest": behavior_manifest()["digest"],
+        "fixture_manifest": before,
+        "events": events,
+        "commands": commands,
+        "network": {"kernel_probe": network_probe, "attempts": attempts},
+        "writes": writes,
+        "artifacts": {
+            entry["path"]: entry for entry in after if entry["path"] in writes
+        },
+        "protected_before": {},
+        "protected_after": {},
+        "stop_reason": stop_reason,
+        "live_validation_required": [
+            "coding-assistant eligibility judgment",
+            "installed SDK",
+            "provider and backend",
+            "cost and quota",
+            "portal persistence and links",
+            "visible baseline, enhanced, and holdout results",
+        ],
+    }
+    write_evidence_bundle(
+        evidence,
+        evidence_root / SAFE_OPENING_SCENARIO / f"pass-{pass_number}",
+        project,
+    )
+    return evidence
+
+
 def require_isolation() -> dict[str, str]:
     if os.environ.get("TRAIGENT_OFFLINE_ISOLATED") != "1":
         raise ContractError(
@@ -1643,7 +2125,12 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--scenario",
-        choices=sorted(path.name for path in SCENARIOS.iterdir() if path.is_dir()),
+        choices=sorted(
+            {
+                SAFE_OPENING_SCENARIO,
+                *(path.name for path in SCENARIOS.iterdir() if path.is_dir()),
+            }
+        ),
     )
     parser.add_argument("--evidence-dir", type=Path, default=Path("/work/evidence"))
     return parser.parse_args()
@@ -1656,7 +2143,11 @@ def main() -> int:
     network_probe = require_isolation()
     selected = sorted(path for path in SCENARIOS.iterdir() if path.is_dir())
     if args.scenario:
-        selected = [SCENARIOS / args.scenario]
+        selected = (
+            []
+            if args.scenario == SAFE_OPENING_SCENARIO
+            else [SCENARIOS / args.scenario]
+        )
     with tempfile.TemporaryDirectory(prefix="traigent-contract-") as directory:
         work_root = Path(directory)
         summaries = []
@@ -1674,6 +2165,25 @@ def main() -> int:
             summaries.append(
                 {
                     "scenario": scenario_dir.name,
+                    "stop_reason": first["stop_reason"],
+                    "writes": first["writes"],
+                    "evidence_sha256": sha256_bytes(canonical_json(first).encode()),
+                }
+            )
+        if args.all or args.scenario == SAFE_OPENING_SCENARIO:
+            first = run_safe_opening_calibration_once(
+                1, work_root, args.evidence_dir, network_probe
+            )
+            second = run_safe_opening_calibration_once(
+                2, work_root, args.evidence_dir, network_probe
+            )
+            if first != second:
+                raise ContractError(
+                    f"scenario is not reproducible: {SAFE_OPENING_SCENARIO}"
+                )
+            summaries.append(
+                {
+                    "scenario": SAFE_OPENING_SCENARIO,
                     "stop_reason": first["stop_reason"],
                     "writes": first["writes"],
                     "evidence_sha256": sha256_bytes(canonical_json(first).encode()),

@@ -33,7 +33,7 @@ lawfully never entered, keeping its `[ ]` checkbox. SKILL.md owns every stage's 
 - Semantic-coverage evidence, verdict (`sufficient`/`ambiguous`), and known gaps:
 - Quality advisory, user choice, and revalidation result if applicable:
 - Row ids repaired into the working copy, and row ids generated to fill a gap:
-- Opening readiness score before any creation or repair - overall, band, binding caps, and the one ask's gaps, answer, and any path given or missed:
+- Opening readiness score before any Agent, Dataset, or Evaluation component creation or repair - overall, band, binding caps, and the one ask's gaps, answer, and any path given or missed:
 - Revalidation gate results - which caps cleared, and on what evidence:
 
 ## Shared comparison

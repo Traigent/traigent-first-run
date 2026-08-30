@@ -143,14 +143,16 @@ tuning in whichever direction your product needs, so that it rewards, say, how a
 rather than which words it reuses.
 
 It is deliberately modest about itself. It runs before any optimization, from evidence on your own
-machine, so it estimates rather than measures. A check this tool could not compute is marked
-unmeasured and excluded rather than scored zero; a check the run was asked for and did not supply
-is marked unmeasured too, but keeps its weight and earns nothing, so withholding it can never pay.
-The card says how much of each pillar it actually observed, and
-`EVALUATION 53/100 (2 of 4 checks measured)` is what an opening card prints before calibration:
-no validation credit, full method-fit and reproducibility credit, and no claim that the evaluator
-failed. A low score never stops the run; it decides which gaps are worth
-explaining and which are worth fixing first.
+machine. Static checks estimate what the project appears ready to do; when a deterministic
+evaluator's complete path is proven safe, local, and fast, the assistant also runs its calibration
+before showing the opening card. A check this tool could not compute is marked unmeasured and
+excluded rather than scored zero; a check the run was asked for and did not supply is marked
+unmeasured too, but keeps its weight and earns nothing, so withholding it can never pay. The card
+says how much of each pillar it actually observed. A deferred calibration leaves
+`EVALUATION 53/100 (2 of 4 checks measured)` and limits the readiness claim to 45 until the ruler is
+validated; a fresh passing calibration can measure all four checks before that first card. A low
+score never stops the run; it decides which gaps are worth explaining and which are worth fixing
+first.
 
 That is also why the band can sit below the number. A pillar measured thinly cannot carry a strong
 verdict, so `89/100 WORKABLE` is not a contradiction even though 89 falls inside the Strong range -
@@ -162,11 +164,12 @@ No settings document exists before the search, so the agent pillar is read from 
 agent's own code instead - which parameters it may already vary, each against a checked relative
 source line under the local project root. Static parsing rejects comments, docstrings, TODOs, and
 example-only bindings. Verified source alternatives earn opening search-space credit but do not
-prove final wiring; the later request-difference proof controls paid grids. The same read answers four more questions
-about how the agent is built: whether it carries a prompt and worked examples, whether anything
-pins down the shape of its answer, whether it ends and on what, and whether the tools it declares
-can be reached. Each is a fact with a line of your code behind it, and a question the read cannot
-settle is reported as unsettled rather than counted against you. Two things the pillar is not
+prove final wiring; the later request-difference proof controls paid grids. The same read records
+four assistant observations about how the agent is built: whether it carries a prompt and worked
+examples, whether anything pins down the shape of its answer, whether it ends and on what, and
+whether the tools it declares can be reached. Their source citations stay visible, but the opening
+score excludes them until an independent check verifies them; an observation the read cannot settle
+is likewise reported as unsettled rather than as a defect. Two things the pillar is not
 allowed to guess at are named on the card instead: whether your dataset and your evaluation method
 are wired into the agent, which this run builds afterwards and checks against the installed SDK.
 A source read that finds no usable dimension blocks the paid run because a search would compare one

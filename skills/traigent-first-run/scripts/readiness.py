@@ -13,18 +13,20 @@ dataset and `calibrate_evaluator.py --json` for the evaluator - plus a config
 space describing the agent's knobs, and returns one 0-100 score per pillar and
 an aggregate.
 
-The score is deliberately modest about itself. It runs before any optimization,
-from local evidence only, so it estimates rather than measures: a sub-score this
-module could not compute is marked unmeasured and excluded rather than scored
-zero, while one this run was asked for and did not supply is marked unmeasured
-and kept in the denominator (`SubScore.withheld`), so silence cannot outscore an
-honest answer. The user-facing evidence coverage reports both as unchecked and
-says how much of the pillar was actually observed.
+The score is deliberately modest about itself. It runs before any optimization
+from local evidence: static inspection estimates structure, while a supplied
+current-run calibration measures evaluator behavior. A sub-score this module
+could not compute is marked unmeasured and excluded rather than scored zero,
+while one this run was asked for and did not supply is marked unmeasured and kept
+in the denominator (`SubScore.withheld`), so silence cannot outscore an honest
+answer. The user-facing evidence coverage reports both as unchecked and says how
+much of the pillar was actually observed.
 The config space's 'wired' list is the one input that is weaker than that: it is
-an attestation, taken at its word and never verified, because nothing here reads
-the agent's code. Declaring a knob is not a statement that the agent consumes
-it, so a document that never names its wired knobs has attested no wiring and
-that pillar reports nothing to search.
+an attestation, taken at its word rather than inferred from code. Separate
+selected-source evidence can verify supported call-path shapes, but the config
+space declaration alone cannot prove final wrapper wiring. Declaring a knob is
+not a statement that the agent consumes it, so a document that never names its
+wired knobs has attested no wiring and that pillar reports nothing to search.
 """
 
 from __future__ import annotations
@@ -777,6 +779,9 @@ ACTION_FOR_CONDITION: dict[str, str] = {
     "agent-generated": "connect-real-agent",
     "evaluator-unresolved": "repair-evaluator",
     "evaluator-invalid": "repair-evaluator",
+    # Calibration is evidence collection, not a repair: no execution has
+    # established that the connected evaluator is defective.
+    "evaluator-unvalidated": PROCEED,
     "evaluator-timeout": "bound-evaluator-cost",
     "agent-no-varying-knobs": "vary-knobs",
 }
@@ -935,6 +940,7 @@ ROUTE_CATEGORY: dict[str, str] = {
     # probes that ran, and this one was never read.
     "evaluator-unresolved": DIAGNOSTIC,
     "evaluator-invalid": CREATION_OR_REPAIR,
+    "evaluator-unvalidated": CLAIM_SCOPING,
     "evaluator-timeout": CREATION_OR_REPAIR,
     # Conditional, and classified the same way `dataset-below-measurable-size`
     # above already is: by what the result IS, not by whether the run waits.
@@ -1055,6 +1061,10 @@ EVALUATOR_TIMEOUT_CEILING = 45
 # First of the "answers the wrong question" band, so above every ceiling in the
 # band below it. Everything is connected and valid; this run simply did not
 # finish, and re-running within a bound is all that is asked.
+EVALUATOR_UNVALIDATED_CEILING = 45
+# A declared method describes intended semantics, but only a complete current-
+# run calibration establishes the connected evaluator's behavior. The ceiling
+# bounds that unverified claim without calling the evaluator defective.
 AGENT_NO_VARYING_KNOBS_CEILING = 45
 # Equal to the timeout for the same reason: nothing is broken, and the run
 # compares nothing. An optimization with one configuration is a single
@@ -1257,6 +1267,7 @@ CAP_SEVERITY_ORDER: tuple[tuple[str, tuple[tuple[str, int], ...]], ...] = (
         "answers the wrong question",
         (
             ("evaluator-timeout", EVALUATOR_TIMEOUT_CEILING),
+            ("evaluator-unvalidated", EVALUATOR_UNVALIDATED_CEILING),
             ("agent-no-varying-knobs", AGENT_NO_VARYING_KNOBS_CEILING),
             ("dataset-tune-holdout-overlap", SPLIT_OVERLAP_CEILING),
             ("dataset-tuning-split-empty", TUNING_SPLIT_EMPTY_CEILING),
@@ -1422,6 +1433,11 @@ CAP_NO_IMPLICATION: dict[str, str] = {
     ),
     "evaluator-unresolved": (
         "present-but-unnamed excludes absent, and no dataset condition follows from it"
+    ),
+    "evaluator-unvalidated": (
+        "a declared method without completed calibration is mutually exclusive "
+        "with the unnamed and timeout routes and says nothing about data or "
+        "search-space conditions"
     ),
     "evaluator-timeout": "a run that did not finish says nothing about the material",
     "agent-no-varying-knobs": "about the search space, which no dataset fact implies",
@@ -2016,6 +2032,11 @@ class EvaluationFacts:
     # empty payload must not masquerade as the complete measurement the guide
     # requires before it relies on an evaluator.
     calibration_complete: bool | None = None
+    # The calibrator's aggregate verdict. Structural completeness says the
+    # evidence can be read; this says whether every authored behavioral check
+    # actually passed. Direct scorer callers may leave it unknown and are then
+    # judged from their check dictionaries.
+    calibration_passed: bool | None = None
     checks: tuple[dict[str, bool], ...] = ()
     probe_scores: tuple[tuple[float, ...], ...] = ()
     timed_out: bool = False
@@ -2241,8 +2262,8 @@ def band_for(
     uncalibrated evaluation pillar at 0.45 average to 0.81, clear of the 0.75
     gate, and the run reported 89 STRONG with a 100/100 evaluation pillar that
     had observed two of its four checks. An uncalibrated evaluator is the exact
-    thin evidence this guard exists to refuse - and it is the ordinary state of
-    the opening card, which runs before any calibration exists.
+    thin evidence this guard exists to refuse, whether calibration was deferred
+    at opening or unavailable later.
     """
     band = BAND_ORDER[-1]
     for threshold, name in BAND_THRESHOLDS:
@@ -4387,28 +4408,25 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
         return combine("evaluation", subs), caps
 
     calibration_complete = facts.calibration_complete
-    if calibration_complete is None:
-        # Direct callers predate the artifact adapter. Their facts count only
-        # when every case carries the complete behavioral check set too; a
-        # partial dictionary is evidence that calibration was attempted, not
-        # evidence that the evaluator was validated.
-        calibration_complete = bool(facts.checks) and all(
-            CALIBRATION_REQUIRED_CHECKS <= checks.keys()
-            and all(
-                isinstance(checks[name], bool) for name in CALIBRATION_REQUIRED_CHECKS
-            )
-            for checks in facts.checks
-        )
+    # The adapter's completion flag and the payload must agree. Direct callers
+    # can construct `EvaluationFacts` too, so `calibration_complete=True` beside
+    # an empty or partial check set cannot clear a behavioral-evidence ceiling.
+    checks_complete = bool(facts.checks) and all(
+        CALIBRATION_REQUIRED_CHECKS <= checks.keys()
+        and all(isinstance(checks[name], bool) for name in CALIBRATION_REQUIRED_CHECKS)
+        for checks in facts.checks
+    )
+    calibration_complete = (
+        checks_complete
+        if calibration_complete is None
+        else calibration_complete and checks_complete
+    )
 
     if calibration_complete and facts.checks:
         gating_failed = [
             index
             for index, checks in enumerate(facts.checks)
-            if (
-                not checks.get("good_passes", True)
-                or not checks.get("non_constant", True)
-                or not checks.get("bad_fails", True)
-            )
+            if any(value is False for value in checks.values())
         ]
         per_case: list[float] = []
         for checks in facts.checks:
@@ -4425,14 +4443,15 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
                 f"{min(per_case):.0%} of checks passed",
             )
         )
-        if gating_failed:
+        if facts.calibration_passed is False or gating_failed:
             caps.append(
                 Cap(
                     "evaluator-invalid",
                     EVALUATOR_INVALID_CEILING,
-                    "The evaluator rejects a right answer, scores a wrong answer "
-                    "as well as a right one, or returns a constant. Every number "
-                    "below it is unreliable.",
+                    "The completed calibration failed at least one authored "
+                    "behavioral check, so this evaluator has not demonstrated "
+                    "that it ranks the task correctly. Every number below it "
+                    "is unreliable.",
                 )
             )
     else:
@@ -4517,9 +4536,9 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
                 20.0,
                 True,
                 (
-                    "deterministic and free to run"
+                    "deterministic scoring rule"
                     if deterministic
-                    else f"{facts.method} varies between runs and costs money"
+                    else f"{facts.method} can vary between runs and may require paid calls"
                 ),
             )
         )
@@ -4566,6 +4585,22 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
                 "evaluator-timeout",
                 EVALUATOR_TIMEOUT_CEILING,
                 "The evaluator did not finish within its timeout.",
+            )
+        )
+    # A method name establishes intended semantics, not the connected file's
+    # behavior. Missing or incomplete current-run evidence therefore bounds
+    # the readiness claim without saying the evaluator failed. A timeout has
+    # its own equally strict and more specific ceiling.
+    if facts.method is not None and not calibration_complete and not facts.timed_out:
+        caps.append(
+            Cap(
+                "evaluator-unvalidated",
+                EVALUATOR_UNVALIDATED_CEILING,
+                f"An evaluator method ({facts.method}) was declared, but no "
+                "complete current-run calibration measured the connected "
+                "evaluator, so this card cannot claim that it distinguishes "
+                "answers. Complete calibration to establish that evidence.",
+                blocks=False,
             )
         )
     return combine("evaluation", subs), caps
@@ -6846,7 +6881,8 @@ def evaluation_facts_from_calibration(
         cases = [payload]
     checks: list[dict[str, bool]] = []
     probes: list[tuple[float, ...]] = []
-    calibration_complete = bool(cases)
+    reported_passed = payload.get("passed")
+    calibration_complete = bool(cases) and isinstance(reported_passed, bool)
     for case in cases:
         if not isinstance(case, dict):
             calibration_complete = False
@@ -6881,6 +6917,9 @@ def evaluation_facts_from_calibration(
         # line is the proof - `payload is None` returned above.
         calibration_supplied=True,
         calibration_complete=calibration_complete,
+        calibration_passed=(
+            reported_passed if isinstance(reported_passed, bool) else None
+        ),
         checks=tuple(checks),
         probe_scores=tuple(probes),
         timed_out=bool(payload.get("timed_out")),
@@ -7715,37 +7754,44 @@ def _name_matches_knob(binding: str, knob: str) -> bool:
     return all(token in normalized for token in wanted)
 
 
-def _literal_values(node: ast.AST) -> tuple[Any, ...] | None:
-    """Return literal alternatives without evaluating customer code."""
+def _literal_scalar_options(node: ast.AST) -> tuple[Any, ...] | None:
+    """Read one flat inventory of immutable scalar alternatives.
+
+    Nested lists and dictionaries are mutable request structures with aliasing
+    behavior this first-readiness check intentionally does not analyze. They
+    remain visible to the later request-difference proof but earn no static
+    opening credit.
+    """
     if isinstance(node, ast.Constant):
         return (node.value,)
-    if isinstance(node, (ast.List, ast.Tuple, ast.Set)):
-        values: list[Any] = []
-        for element in node.elts:
-            literal = _literal_values(element)
-            if literal is None or len(literal) != 1:
-                return None
-            values.extend(literal)
-        return tuple(values)
-    if isinstance(node, ast.Dict):
-        values: list[Any] = []
-        for value in node.values:
-            literal = _literal_values(value)
-            if literal is None or len(literal) != 1:
-                return None
-            values.extend(literal)
-        return tuple(values)
+    if isinstance(node, (ast.List, ast.Tuple, ast.Set)) and all(
+        isinstance(element, ast.Constant) for element in node.elts
+    ):
+        return tuple(element.value for element in node.elts)
     return None
 
 
 def _literal_mapping_keys(node: ast.Dict) -> tuple[Any, ...] | None:
-    """Dictionary keys are choices for a named table such as `STYLES`."""
-    keys: list[Any] = []
-    for key in node.keys:
-        if not isinstance(key, ast.Constant):
+    """Return effective keys only when they select distinct literal values.
+
+    Python keeps the last entry for a duplicate literal key. Apply that same
+    replacement rule here before counting effects; raw AST entries can appear
+    different even when the mapping that exists at runtime cannot vary.
+    """
+    effective: dict[Any, Any] = {}
+    for key, value in zip(node.keys, node.values, strict=True):
+        if not isinstance(key, ast.Constant) or not isinstance(value, ast.Constant):
             return None
-        keys.append(key.value)
-    return tuple(keys)
+        try:
+            effective[key.value] = value.value
+        except TypeError:
+            return None
+    # Several labels that all produce the same value are aliases, not options
+    # a search can compare. Representation matches the source-membership check
+    # below, preserving type distinctions without executing customer code.
+    if len({repr(value) for value in effective.values()}) < 2:
+        return ()
+    return tuple(effective)
 
 
 def _node_lines(node: ast.AST) -> set[int]:
@@ -8126,22 +8172,44 @@ def _selected_callable_binds(name: str, source: StaticSourceEvidence) -> bool:
 def _module_binding_reference_is_safe(
     node: ast.Name, source: StaticSourceEvidence
 ) -> bool:
-    """A module choice table may only be indexed, read, or compared."""
+    """A module choice table may only be read through a non-mutating path.
+
+    Inspect the whole access chain. Looking only at the first ``TABLE[...]``
+    misses writes such as ``TABLE[0]["model"] = ...`` and mutators such as
+    ``TABLE[0].clear()`` because the inner subscript itself still has Load
+    context.
+    """
     parent = source.parents.get(id(node))
-    if (
-        isinstance(parent, ast.Subscript)
-        and parent.value is node
-        and isinstance(parent.ctx, ast.Load)
-    ):
-        return True
+    current: ast.AST = node
+    selected = False
+    while isinstance(parent, ast.Subscript) and parent.value is current:
+        if not isinstance(parent.ctx, ast.Load):
+            return False
+        selected = True
+        current = parent
+        parent = source.parents.get(id(current))
+    if selected:
+        # A method call on the selected object may mutate nested state. Narrow
+        # static credit to ordinary value consumption. ``str.format`` is the
+        # one supported transform: choice mappings only accept immutable
+        # scalar literals, and formatting a selected string cannot mutate the
+        # table or its value.
+        return not (
+            isinstance(parent, ast.Attribute)
+            and parent.value is current
+            and parent.attr != "format"
+        )
     if (
         isinstance(parent, ast.Attribute)
         and parent.value is node
         and parent.attr == "get"
-        and isinstance(source.parents.get(id(parent)), ast.Call)
-        and source.parents[id(parent)].func is parent
+        and isinstance(call := source.parents.get(id(parent)), ast.Call)
+        and call.func is parent
     ):
-        return True
+        return not (
+            isinstance(consumer := source.parents.get(id(call)), ast.Attribute)
+            and consumer.value is call
+        )
     if isinstance(parent, ast.FormattedValue) and parent.value is node:
         return True
     return isinstance(parent, ast.Compare) and any(
@@ -8209,7 +8277,6 @@ def _binding_reaches_call_path(
     binding: str,
     knob: str,
     *,
-    mapping: bool,
     binding_node: ast.Assign | ast.AnnAssign,
     source: StaticSourceEvidence,
 ) -> bool:
@@ -8238,7 +8305,6 @@ def _binding_reaches_call_path(
                 call,
                 binding,
                 knob,
-                mapping=mapping,
                 dynamic_parameters=dynamic_parameters,
                 source=source,
             ):
@@ -8251,18 +8317,14 @@ def _call_uses_binding(
     binding: str,
     knob: str,
     *,
-    mapping: bool,
     dynamic_parameters: frozenset[str],
     source: StaticSourceEvidence,
 ) -> bool:
     for keyword in call.keywords:
-        expected = keyword.arg is None if mapping else keyword.arg == knob
-        if expected and _expression_varies_binding(
+        if keyword.arg == knob and _expression_varies_binding(
             keyword.value, binding, dynamic_parameters
         ):
             return True
-    if mapping:
-        return False
     # A positional argument carries the value exactly as a keyword does. Only
     # same-file module definitions are resolved; imported signatures are unknown.
     parameters = _module_function_parameters(source, call.func)
@@ -8349,6 +8411,57 @@ def _callable_binds(name: str, node: ast.FunctionDef | ast.AsyncFunctionDef) -> 
     return False
 
 
+def _literal_composite_selected_children(
+    container: ast.AST, selector: ast.AST
+) -> tuple[ast.AST, ...] | None:
+    """Resolve a literal container's constant selection without executing it.
+
+    ``None`` means the selector is dynamic and this narrow check cannot decide.
+    An empty tuple means the expression cannot select a child. Python's normal
+    last-key-wins and negative-index rules are mirrored for the literal subset.
+    """
+    if isinstance(container, (ast.Tuple, ast.List)):
+        if any(isinstance(element, ast.Starred) for element in container.elts):
+            return ()
+        if isinstance(selector, ast.Constant) and isinstance(selector.value, int):
+            try:
+                return (container.elts[selector.value],)
+            except IndexError:
+                return ()
+        if isinstance(selector, ast.Slice):
+            parts: list[int | None] = []
+            for part in (selector.lower, selector.upper, selector.step):
+                if part is None:
+                    parts.append(None)
+                elif isinstance(part, ast.Constant) and isinstance(part.value, int):
+                    parts.append(part.value)
+                else:
+                    return None
+            if parts[2] == 0:
+                return ()
+            return tuple(container.elts[slice(*parts)])
+        return None
+    if isinstance(container, ast.Dict):
+        if not isinstance(selector, ast.Constant):
+            return None
+        effective: dict[Any, ast.AST] = {}
+        for key, value in zip(container.keys, container.values, strict=True):
+            if not isinstance(key, ast.Constant):
+                return ()
+            try:
+                effective[key.value] = value
+            except TypeError:
+                return ()
+        try:
+            selected = effective.get(selector.value)
+        except TypeError:
+            return ()
+        return (selected,) if selected is not None else ()
+    if isinstance(container, ast.Set):
+        return ()
+    return None
+
+
 def _node_reaches_return(
     node: ast.AST,
     callable_node: ast.FunctionDef | ast.AsyncFunctionDef,
@@ -8366,21 +8479,49 @@ def _node_reaches_return(
         if isinstance(parent, ast.keyword) and parent.value is child:
             child = parent
             continue
-        if isinstance(parent, ast.Call) and (
-            child in parent.args
-            or isinstance(child, ast.keyword)
-            and child in parent.keywords
-        ):
-            if not _call_argument_contributes(
-                parent,
-                child,
-                callable_node,
-                source,
-                follow_same_file_call=follow_same_file_call,
-            ):
+        if isinstance(parent, ast.Call):
+            is_argument = child in parent.args or (
+                isinstance(child, ast.keyword) and child in parent.keywords
+            )
+            if is_argument:
+                # While proving a same-file wrapper, an arbitrary transform is
+                # not evidence that its input survives. A narrow set of calls
+                # can still prove contribution: inspected same-file helpers,
+                # opaque call sinks, and a constant-string join that consumes
+                # every item in its input.
+                if not _call_argument_contributes(
+                    parent,
+                    child,
+                    callable_node,
+                    source,
+                    follow_same_file_call=follow_same_file_call,
+                ):
+                    return False
+                child = parent
+                continue
+            if parent.func is child:
+                preserving_receiver = isinstance(
+                    child, ast.Attribute
+                ) and child.attr in {
+                    "strip",
+                    "lstrip",
+                    "rstrip",
+                    "lower",
+                    "upper",
+                    "casefold",
+                }
+                if not follow_same_file_call and not preserving_receiver:
+                    return False
+                child = parent
+                continue
+            if not follow_same_file_call:
                 return False
-            child = parent
-            continue
+        if isinstance(parent, (ast.Tuple, ast.List, ast.Dict, ast.Set)):
+            selection = source.parents.get(id(parent))
+            if isinstance(selection, ast.Subscript) and selection.value is parent:
+                selected = _literal_composite_selected_children(parent, selection.slice)
+                if selected is not None and child not in selected:
+                    return False
         if isinstance(
             parent, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
         ):
@@ -8505,7 +8646,17 @@ def _call_argument_contributes(
     if isinstance(call.func, ast.Lambda):
         return False
     if not isinstance(call.func, ast.Name):
-        return True
+        if follow_same_file_call:
+            return True
+        return bool(
+            isinstance(call.func, ast.Attribute)
+            and call.func.attr == "join"
+            and isinstance(call.func.value, ast.Constant)
+            and isinstance(call.func.value.value, str)
+            and len(call.args) == 1
+            and argument is call.args[0]
+            and not call.keywords
+        )
     if _callable_binds(call.func.id, selected):
         return False
     target = next(
@@ -8518,6 +8669,13 @@ def _call_argument_contributes(
         None,
     )
     if target is None:
+        # An opaque call can establish wiring only while its result is carried
+        # whole. Once that result is indexed, neither a constructor name nor an
+        # unknown helper proves which input child survived the projection.
+        if not follow_same_file_call and _call_result_is_subscripted(
+            call, selected, source
+        ):
+            return False
         return True
     if not follow_same_file_call:
         return False
@@ -8534,6 +8692,35 @@ def _call_argument_contributes(
             follow_same_file_call=False,
         )
     )
+
+
+def _call_result_is_subscripted(
+    call: ast.Call,
+    callable_node: ast.FunctionDef | ast.AsyncFunctionDef,
+    source: StaticSourceEvidence,
+) -> bool:
+    """Whether an opaque result is narrowed before this helper returns it."""
+    child: ast.AST = call
+    while (parent := source.parents.get(id(child))) is not None:
+        if parent is callable_node or isinstance(parent, ast.Return):
+            return False
+        if isinstance(parent, ast.Subscript) and parent.value is child:
+            return True
+        if isinstance(parent, ast.Call):
+            is_argument = child in parent.args or (
+                isinstance(child, ast.keyword) and child in parent.keywords
+            )
+            if is_argument:
+                child = parent
+                continue
+            if parent.func is child:
+                return True
+        if isinstance(
+            parent, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
+        ):
+            return False
+        child = parent
+    return False
 
 
 def _single_literal_initializer(
@@ -9146,7 +9333,6 @@ def _names_reach_call_path(
     names: Sequence[str],
     knob: str,
     *,
-    mapping: bool,
     binding_node: ast.Assign | ast.AnnAssign,
     source: StaticSourceEvidence,
 ) -> bool:
@@ -9154,26 +9340,11 @@ def _names_reach_call_path(
         _binding_reaches_call_path(
             name,
             knob,
-            mapping=mapping,
             binding_node=binding_node,
             source=source,
         )
         for name in names
     )
-
-
-def _dict_values_for_knob(mapping: ast.Dict, knob: str) -> list[Any]:
-    found: list[Any] = []
-    for key, value in zip(mapping.keys, mapping.values):
-        if (
-            isinstance(key, ast.Constant)
-            and isinstance(key.value, str)
-            and key.value.casefold() == knob.casefold()
-        ):
-            literal = _literal_values(value)
-            if literal is not None:
-                found.extend(literal)
-    return found
 
 
 def _values_from_cited_binding(
@@ -9185,37 +9356,31 @@ def _values_from_cited_binding(
     if value is None:
         return []
     names = _assignment_names(node)
-    mapping_used = _names_reach_call_path(
-        names, knob, mapping=True, binding_node=node, source=source
-    )
     found: list[Any] = []
-    # A table of request dictionaries is a genuine configuration mapping only
-    # when a non-constant selection is expanded into a call.
-    if isinstance(value, (ast.List, ast.Tuple)) and mapping_used:
-        for item in value.elts:
-            if isinstance(item, ast.Dict):
-                found.extend(_dict_values_for_knob(item, knob))
     matching_names = [name for name in names if _name_matches_knob(name, knob)]
     if matching_names and _names_reach_call_path(
-        matching_names, knob, mapping=False, binding_node=node, source=source
+        matching_names, knob, binding_node=node, source=source
     ):
         literal = (
             _literal_mapping_keys(value)
             if isinstance(value, ast.Dict)
-            else _literal_values(value)
+            else _literal_scalar_options(value)
         )
         if literal is not None:
             found.extend(literal)
-    if isinstance(value, ast.Dict) and mapping_used:
-        found.extend(_dict_values_for_knob(value, knob))
     return found
 
 
-def _selected_collection_values(knob: str, source: StaticSourceEvidence) -> list[Any]:
+def _selected_collection_values(
+    knob: str, lines: Sequence[int], source: StaticSourceEvidence
+) -> list[Any]:
     chosen = set(_module_collections_this_knob_selects(knob, source))
+    cited = set(lines)
     found: list[Any] = []
     for node in source.tree.body:
         if not isinstance(node, (ast.Assign, ast.AnnAssign)) or node.value is None:
+            continue
+        if not (_node_lines(node) & cited):
             continue
         selected = sorted(set(_assignment_names(node)) & chosen)
         if not selected or not _module_binding_is_current(node, selected[0], source):
@@ -9223,7 +9388,7 @@ def _selected_collection_values(knob: str, source: StaticSourceEvidence) -> list
         literal = (
             _literal_mapping_keys(node.value)
             if isinstance(node.value, ast.Dict)
-            else _literal_values(node.value)
+            else _literal_scalar_options(node.value)
         )
         if literal is not None:
             found.extend(literal)
@@ -9235,10 +9400,11 @@ def _binding_values_for_knob(
 ) -> tuple[Any, ...]:
     """Read literal alternatives from a cited executable config binding.
 
-    A value must come from either a binding whose identifier names the knob
-    (`MODELS = [...]`) or a literal configuration mapping keyed by the knob
-    (`CONFIG = {"model": [...]}`).  Text presence is intentionally not enough:
-    it would allow comments, docstrings, or `NOTE = "fast slow"` to impersonate
+    A value must come from a cited flat scalar inventory whose identifier names
+    the knob (`MODELS = [...]`), or from a cited scalar-valued option table the
+    selected setting actually indexes. Mutable request dictionaries and nested
+    containers are intentionally outside this shallow check. Text presence is
+    not enough: comments, docstrings, or `NOTE = "fast slow"` cannot impersonate
     the paid dimension this first-run score reports.
     """
     cited = set(lines)
@@ -9256,7 +9422,7 @@ def _binding_values_for_knob(
     # from the expression rather than from a name resemblance. This is the
     # branch that reads wiring the way a person reads it: the setting indexes a
     # declared table, or is refused unless the declared table contains it.
-    return tuple(found or _selected_collection_values(knob, source))
+    return tuple(found or _selected_collection_values(knob, lines, source))
 
 
 def values_are_in_checked_source(
@@ -9932,8 +10098,8 @@ def build_declarations_are_unmeasured(
             else replace(
                 signal,
                 points=0.0,
-                evidence="your assistant read this and nothing here verified "
-                "it, so it earns no points - " + signal.evidence,
+                evidence="not independently verified; excluded from this score. "
+                "Assistant observation: " + signal.evidence,
                 measured=False,
             )
         )

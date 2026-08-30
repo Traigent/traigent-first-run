@@ -1,12 +1,12 @@
-# 0066 - prune the unvalidated cap
+# 0067 - prune the unvalidated cap
 
-follows: 0065
-follows-resident-measured: 86_740
-follows-total-measured: 433_454
+follows: 0066
+follows-resident-measured: 86_760
+follows-total-measured: 433_474
 resident-ceiling: 86_700
-resident-measured: 86_589
+resident-measured: 86_609
 total-ceiling: 433_400
-total-measured: 433_368
+total-measured: 433_388
 
 The opening score no longer needs a phase marker or a separate hard ceiling for
 missing calibration. Removing that machinery and its duplicated routing prose
