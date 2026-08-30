@@ -9625,6 +9625,95 @@ class StaticAgentSourceEvidenceTests(unittest.TestCase):
                 self.assertFalse(facts.discovered[0].credited)
                 self.assertTrue(facts.discovered[0].unverified)
 
+    def test_a_setting_is_credited_from_the_shapes_agents_actually_write(
+        self,
+    ) -> None:
+        """Both directions, because a reader can fail either way.
+
+        The reader used to credit one shape - a module binding whose NAME
+        resembled the setting, passed as a keyword argument named after it, on
+        a call that was itself the returned expression. Agents delegate, pass
+        positionally, and name their tables for what they hold, so the card
+        told projects it could not see settings written plainly in the file it
+        had just parsed.
+
+        Widening a scorer is where over-crediting starts, so the refusals are
+        half of this test and not an afterthought. Each one is a shape that
+        LOOKS like wiring to a text search and is not: a value read and
+        dropped, a table that is local rather than declared, a selection after
+        the function has returned, and a helper nothing calls.
+        """
+        credited = {
+            "a table selected by the setting": (
+                "style",
+                'STYLES = {"plain": "a", "rich": "b"}\n'
+                "def run(text, config):\n"
+                '    return STYLES[config.get("style", "plain")] + text\n',
+                ("plain", "rich"),
+            ),
+            "a guard refusing an undeclared value": (
+                "depth",
+                "DEPTHS = (0, 2, 4)\n"
+                "def run(text, config):\n"
+                '    d = config.get("depth", 0)\n'
+                "    if d not in DEPTHS:\n"
+                '        raise ValueError("no")\n'
+                "    return text * d\n",
+                (0, 2, 4),
+            ),
+            "a selection made in a helper this agent calls": (
+                "style",
+                'STYLES = {"plain": "a", "rich": "b"}\n'
+                "def build(text, config):\n"
+                '    return STYLES[config.get("style", "plain")] + text\n'
+                "def run(text, config):\n"
+                "    return build(text, config)\n",
+                ("plain", "rich"),
+            ),
+        }
+        refused = {
+            "a value read and never used": (
+                'STYLES = {"plain": "a", "rich": "b"}\n'
+                "def run(text, config):\n"
+                '    unused = config.get("style", "plain")\n'
+                "    return text\n"
+            ),
+            "a local table rather than a declared one": (
+                "def run(text, config):\n"
+                '    styles = {"plain": "a", "rich": "b"}\n'
+                '    return styles[config.get("style", "plain")]\n'
+            ),
+            "a selection the function has already returned past": (
+                'STYLES = {"plain": "a", "rich": "b"}\n'
+                "def run(text, config):\n"
+                "    return text\n"
+                '    return STYLES[config.get("style", "plain")]\n'
+            ),
+            "a helper nothing calls": (
+                'STYLES = {"plain": "a", "rich": "b"}\n'
+                "def orphan(config):\n"
+                '    return STYLES[config.get("style", "plain")]\n'
+                "def run(text, config):\n"
+                "    return text\n"
+            ),
+        }
+
+        def values(source: str, knob: str) -> tuple:
+            with tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                (root / "agent.py").write_text(source, encoding="utf-8")
+                evidence = MODULE.static_source_evidence(
+                    "agent.py", root, root / "agent.py", "run"
+                )
+                return MODULE._binding_values_for_knob(knob, [], evidence)
+
+        for label, (knob, source, expected) in credited.items():
+            with self.subTest(credits=label):
+                self.assertEqual(values(source, knob), expected)
+        for label, source in refused.items():
+            with self.subTest(refuses=label):
+                self.assertEqual(values(source, "style"), ())
+
     def test_expression_indices_are_not_a_static_choice_flow(self) -> None:
         """Constant arithmetic and ternaries are fixed defaults, not selectors."""
         for selector in ("0 + 0", "0 if True else 1"):
