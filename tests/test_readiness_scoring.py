@@ -3509,7 +3509,7 @@ class CliTests(unittest.TestCase):
                 self.assertEqual(checks[name]["value"], 0.0)
                 if checks[name]["applicable"]:
                     self.assertIn(
-                        "not measured from source-read declarations",
+                        "nothing here verified it, so it earns no points",
                         checks[name]["evidence"],
                     )
 
@@ -3569,7 +3569,7 @@ class CliTests(unittest.TestCase):
                 self.assertFalse(checks[name]["measured"])
                 if checks[name]["applicable"]:
                     self.assertIn(
-                        "not measured from source-read declarations",
+                        "nothing here verified it, so it earns no points",
                         checks[name]["evidence"],
                     )
 

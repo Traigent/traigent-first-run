@@ -187,6 +187,9 @@ heading.
 
 ## Guided flow
 
+Announce only the five stages above, as `Stage N/5`. The numbered sections below are
+this guide's structure, not those stages: never show their numbers.
+
 ### 1. Inspect quietly
 
 Perform safe, read-only discovery without asking for approval:

@@ -5875,16 +5875,39 @@ def render_card(
     for pillar in score.pillars:
         colour = band_color(palette, pillar.score)
         headline_suffix = f"  {pillar.score}/100"
-        if pillar.confidence < MIN_CONFIDENCE_FOR_TOP_BANDS:
+        # The count is named whenever ANY check went unmeasured, not only when
+        # the weighted confidence is low. Those are different questions, and
+        # gating on the second hid the first exactly where it mattered most:
+        # `search-space` carries 100 of the agent pillar's 130 weight, so one
+        # measured check out of five still reads as high confidence, and the
+        # card printed a bare `AGENT 0/100`. On the bank's one all-real project
+        # - a working agent whose four settings the same card cites by line -
+        # that zero was read as a verdict on the agent. It is a verdict on one
+        # question of five; the other four say in their own evidence lines,
+        # two rows below, that nothing here verified them.
+        #
+        # Scoring is untouched. The pillar keeps its weight and its value, so
+        # `LessEvidenceMayNotOutscoreMore` still holds and the ceiling that
+        # names what would lift it is unaffected. Only the sentence changes,
+        # which is where this module already says the epistemic caveat belongs.
+        #
+        # Counted over APPLICABLE checks only, both halves. A question that
+        # does not apply to this agent - tool wiring where it declares no
+        # tools - is `measured=False` too, so counting it would fire this on a
+        # fully measured pillar and report "4 of 5" about nothing missing.
+        # `combine` already renormalizes over the applicable ones; this is the
+        # same set, said out loud.
+        applicable_checks = [sub for sub in pillar.subscores if sub.applicable]
+        if any(not sub.measured for sub in applicable_checks):
             # A renormalized score over half the checks is not the same claim as
             # a full one, and "(partly checked)" proved too quiet to carry that
             # next to a full bar and a round number: an uncalibrated evaluator
             # read as 100/100 with two of four checks observed. The count is
             # named instead, because "2 of 4 checks" is a fact the reader can
             # act on where an internal weight ratio is not.
-            measured = sum(1 for sub in pillar.subscores if sub.measured)
+            measured = sum(1 for sub in applicable_checks if sub.measured)
             headline_suffix += (
-                f"  {palette.dim}({measured} of {len(pillar.subscores)} checks"
+                f"  {palette.dim}({measured} of {len(applicable_checks)} checks"
                 f" measured){palette.reset}"
             )
         lines.append(
@@ -8737,6 +8760,16 @@ def build_declarations_are_unmeasured(
     reachability, or termination proof, so the customer-facing CLI must not
     turn a plausible declaration into points. A later score may only measure a
     build fact from an input that actually verifies that fact.
+
+    The document is written by the assistant being scored, which is the whole
+    reason: paying points for it would let any run certify its own agent.
+
+    The sentence says that now. It used to read "not measured from source-read
+    declarations - one call per input, so it ends", which denies a measurement
+    and states one in the same breath: a customer reads four findings, each
+    cited to a line of their own file, and a score of zero beneath them, and
+    concludes the tool thinks their agent is bad. It does not. It thinks
+    nothing about their agent here, because nothing at this gate verified it.
     """
     if build is None:
         return None
@@ -8747,8 +8780,8 @@ def build_declarations_are_unmeasured(
             else replace(
                 signal,
                 points=0.0,
-                evidence="not measured from source-read declarations - "
-                + signal.evidence,
+                evidence="your assistant read this and nothing here verified "
+                "it, so it earns no points - " + signal.evidence,
                 measured=False,
             )
         )
