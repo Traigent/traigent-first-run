@@ -189,11 +189,16 @@ heading.
 ## Guided flow
 
 Announce only the five stages above, as `Stage N/5`. The numbered sections below are
-this guide's structure, not those stages: never show their numbers.
+this guide's structure, not those stages: never show their numbers, or their titles.
+Section 1 is stage 1, sections 2-5 are stage 2, 6 is stage 3, 7 is stage 4, 8 is
+stage 5 - so a `Next` between free checks and the baseline reads Baseline, not the
+title of section 5.
 
 ### 1. Inspect quietly
 
-Perform safe, read-only discovery without asking for approval:
+Print "Opening message" below verbatim, before any tool call: as a rule ninety
+lines above this step it was read late, after inspect and readiness had run.
+Then perform safe, read-only discovery without asking for approval:
 
 - Identify the project language, Python version, dependency system, and every existing virtual
   environment - not the first one found. A tree can hold several, under names no convention
