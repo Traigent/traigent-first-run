@@ -643,20 +643,37 @@ def reported_bool(value: object) -> bool | None:
     return value if type(value) is bool else None
 
 
-def readable_check_table(case_checks: object) -> bool:
-    """Whether one calibration case's checks can be read as verdicts at all.
+def check_table_defect(case_checks: object) -> str | None:
+    """Why one calibration case's checks cannot be read, or None if they can.
 
-    Defined once and called from both sides -- the adapter that decides
+    A reason rather than a bool, because the card has to SAY which of these it
+    hit. Returning one flag for three different defects is what let a payload
+    missing `non_constant` -- every value a real bool -- be reported as
+    "reported a check value this score cannot read", sending the reader to
+    audit a table in which every value is fine.
+
+    Defined once and called from both sides: the adapter that decides
     `calibration_complete`, and the scorer that decides `checks_complete`.
     Those were the same predicate written out twice, which is not a spare copy
-    but a second place to be wrong: both spellings already carried the same
+    but a second place to be wrong -- both spellings already carried the same
     required-names-only bug, so the duplicate did not catch it, it repeated it.
     """
-    return (
-        isinstance(case_checks, dict)
-        and CALIBRATION_REQUIRED_CHECKS <= case_checks.keys()
-        and all(type(value) is bool for value in case_checks.values())
+    if not isinstance(case_checks, dict):
+        return "reported something that is not a table of checks"
+    missing = CALIBRATION_REQUIRED_CHECKS - case_checks.keys()
+    if missing:
+        return f"did not report {', '.join(sorted(missing))}"
+    unreadable = sorted(
+        name for name, value in case_checks.items() if type(value) is not bool
     )
+    if unreadable:
+        return f"reported a value this score cannot read for {', '.join(unreadable)}"
+    return None
+
+
+def readable_check_table(case_checks: object) -> bool:
+    """The yes/no form, for the two places that only need the verdict."""
+    return check_table_defect(case_checks) is None
 
 
 @dataclass(frozen=True)
@@ -1957,7 +1974,7 @@ class DatasetFacts:
     integrity_failed: bool = False
     # True only when EVERY row is generated. Mixtures are read from the counts
     # below; asking "is this dataset synthetic" of a mixture has no true answer.
-    synthetic: bool = False
+    synthetic: bool | None = False
     generated_outputs: bool = False
     # Row counts by provenance class. All zero means the preflight JSON predates
     # them, and `score_provenance` reads `sources` instead rather than taking
@@ -3249,7 +3266,7 @@ def score_provenance(
         # same rows and is kept, so a count-free fixture that says every row is
         # generated is still scored generated rather than merely unread.
         counted = facts.rows
-        if facts.synthetic:
+        if facts.synthetic is True:
             synthesised_rows = facts.rows
         else:
             undeclared_rows = facts.rows
@@ -4629,31 +4646,26 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
         # did not.
         if facts.timed_out is True:
             evidence = "calibration ran but did not finish"
-        elif any(
-            checks and not readable_check_table(checks) for checks in facts.checks
+        elif defects := [
+            reason
+            for checks in facts.checks
+            if checks and (reason := check_table_defect(checks))
+        ]:
+            # Quoted, not re-derived. The arm this replaced asserted ONE of the
+            # three defects for all of them, so a payload merely missing
+            # `non_constant` was reported as holding an unreadable value and
+            # the reader was sent to audit a table where every value was fine.
+            evidence = f"calibration {defects[0]}"
+        elif (
+            any(checks for checks in facts.checks) and facts.calibration_passed is None
         ):
-            # The state the type check created, and it landed on the arm below
-            # -- which says the payload reported no verdict, over payloads that
-            # reported one. The customer was told to supply something they had
-            # already supplied, while the value actually at fault was named
-            # nowhere on the card or in --json. Same lesson as the comment
-            # above: a new state needs its own sentence, not the nearest one.
-            # `checks and ...`: an EMPTY table holds no unreadable value, and
-            # it already has its own sentence two arms down. The existing
-            # deferred-evidence test caught that borrowing immediately.
-            evidence = "calibration reported a check value this score cannot read"
-        elif any(checks for checks in facts.checks):
-            # A state this branch gained when the verdict became part of
-            # completeness, and it landed on the arm below, which says the
-            # payload reported no checks over a payload that reported three.
-            # The comment above is an essay on exactly this -- "say what this
-            # score can see, not what it infers", and "it could also be flatly
-            # self-contradicting" -- so the new state needed its own sentence
-            # rather than the nearest existing one. `any(checks for ...)` and
-            # not `facts.checks`: a case carrying an empty checks dict makes
-            # the tuple truthy while reporting nothing, and that one really is
-            # the sentence below.
             evidence = "calibration reported checks but no overall verdict"
+        elif any(checks for checks in facts.checks):
+            # A verdict DID arrive, so the arm above would be a falsehood. What
+            # is missing is a case this scorer could not read at all -- a
+            # non-dict entry, or one with no `checks` key -- which the adapter
+            # drops, so nothing downstream can see it except by this gap.
+            evidence = "calibration reported a case this score could not read"
         elif facts.calibration_supplied:
             evidence = "calibration ran but reported no checks"
         else:
@@ -5882,7 +5894,7 @@ def provenance_assumption(
     undeclared = dataset_facts.undeclared_rows
     if not counted:
         counted = dataset_facts.rows
-        undeclared = 0 if dataset_facts.synthetic else dataset_facts.rows
+        undeclared = 0 if dataset_facts.synthetic is True else dataset_facts.rows
     if not undeclared:
         return None
     # One shape, because there is only one. The second branch that used to be
@@ -6506,10 +6518,11 @@ def _answer_dominance_status(statuses: dict[str, str]) -> str | None:
 
 def evaluator_shape_from_preflight(
     records: Sequence[dict[str, Any]],
-) -> tuple[bool, bool | None]:
+) -> tuple[bool | None, bool | None]:
     """Read preflight's static `evaluator-shape` check, if one ran.
 
-    Returns `(present, parses)`. `present` is a measured fact - preflight
+    Returns `(present, parses)`, each `None` when the field carries no
+    readable verdict. `present` is a measured fact - preflight
     found a file at the path it was given - not a declaration; `parses` is
     `None` when no such check ran (not "it failed"), `True` when the file
     parsed as valid Python, `False` when it did not. preflight never imports
@@ -6519,7 +6532,12 @@ def evaluator_shape_from_preflight(
     shape = _metrics_by_check(records).get("evaluator-shape")
     if not shape:
         return False, None
-    return bool(shape.get("exists")), shape.get("parses")
+    # `bool()` here told a customer to repair a file preflight had just said
+    # does not exist: `{"exists": "false"}` read as present, which swaps
+    # `evaluator-absent` for `evaluator-unresolved` and its remedy with it.
+    # `parses` was already three-state and is now read the same way, so a
+    # non-boolean lands on "no honest reading" rather than on True.
+    return reported_bool(shape.get("exists")), reported_bool(shape.get("parses"))
 
 
 class PreflightInputError(ValueError):
@@ -7029,8 +7047,11 @@ def dataset_facts_from_preflight(records: Sequence[dict[str, Any]]) -> DatasetFa
             metrics.get("dataset-split-family", {}).get("holdout_forms")
         ),
         integrity_failed=structurally_failed or _failed(statuses, "dataset-ids"),
-        synthetic=bool(provenance.get("synthetic")),
-        generated_outputs=bool(provenance.get("generated_outputs")),
+        # Same three-answer read as everything else off this payload:
+        # `{"synthetic": "false"}` flipped the cap from "no row of this dataset
+        # was observed" to "the dataset is generated", on a string.
+        synthetic=reported_bool(provenance.get("synthetic")),
+        generated_outputs=reported_bool(provenance.get("generated_outputs")),
         placeholder_rows=_row_count(
             metrics.get("dataset-output-placeholders", {}).get("placeholder_rows"),
             "placeholder_rows",
@@ -7062,7 +7083,7 @@ def evaluation_facts_from_calibration(
     *,
     method: str | None = None,
     task_kind: str | None = None,
-    evaluator_present: bool = False,
+    evaluator_present: bool | None = False,
     evaluator_parses: bool | None = None,
     origin: str | None = None,
 ) -> EvaluationFacts:
@@ -7077,7 +7098,7 @@ def evaluation_facts_from_calibration(
     """
     if payload is None:
         return EvaluationFacts(
-            present=method is not None or evaluator_present,
+            present=method is not None or evaluator_present is True,
             method=method,
             task_kind=task_kind,
             parses=evaluator_parses,
@@ -7125,14 +7146,25 @@ def evaluation_facts_from_calibration(
         if isinstance(scores, dict):
             # `bool` subclasses `int`, so {"good": true, "bad": false} became
             # (1.0, 0.0) and earned full behavioural-separation credit from a
-            # payload holding no scores. Same guard as line 2424 and four
-            # others; this was the one place in the file without it.
+            # payload holding no scores. `json.loads` also accepts bare NaN and
+            # Infinity, and {"good": NaN} printed "scores a right answer nan
+            # above a wrong one" at a full 15/15. The producer already enforces
+            # both -- calibrate_evaluator raises on a non-finite score and on
+            # one outside [0, 1] -- so this reader was the half of the contract
+            # that had been left off.
             numeric = [
                 float(value)
                 for value in scores.values()
-                if isinstance(value, (int, float)) and not isinstance(value, bool)
+                if isinstance(value, (int, float))
+                and not isinstance(value, bool)
+                and math.isfinite(value)
+                and 0.0 <= value <= 1.0
             ]
-            if numeric:
+            # All or nothing. Keeping the survivors of a half-readable dict
+            # reported {"good": NaN, "bad": 0.0} as a MEASURED zero spread --
+            # a measurement, made over one number, standing in for a pair. A
+            # case whose scores cannot all be read has not measured anything.
+            if numeric and len(numeric) == len(scores):
                 probes.append(tuple(numeric))
     return EvaluationFacts(
         present=True,
