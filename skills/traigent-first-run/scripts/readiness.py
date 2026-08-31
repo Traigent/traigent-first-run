@@ -4412,9 +4412,20 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
     # The adapter's completion flag and the payload must agree. Direct callers
     # can construct `EvaluationFacts` too, so `calibration_complete=True` beside
     # an empty or partial check set cannot clear a behavioral-evidence ceiling.
+    # EVERY value, not only the three required names. The type check used to
+    # cover the required set and nothing else, so an optional check reported as
+    # `"false"`, `1`, `[1]` or `{}` was clamped to True by the adapter and
+    # earned the calibration its full forty points -- a malformed table scoring
+    # as a passing one. `--calibration` reads arbitrary JSON an assistant hands
+    # over, so this is the shape this function exists to survive.
+    #
+    # Malformed lands on incomplete, which is the honest third answer: not a
+    # pass, and not a failure either. Convicting on it would repeat the earlier
+    # mistake in the other direction, since a value nobody can read is not
+    # evidence that the evaluator is broken.
     checks_complete = bool(facts.checks) and all(
         CALIBRATION_REQUIRED_CHECKS <= checks.keys()
-        and all(isinstance(checks[name], bool) for name in CALIBRATION_REQUIRED_CHECKS)
+        and all(type(value) is bool for value in checks.values())
         for checks in facts.checks
     )
     # `calibration_passed` belongs to this invariant too, but only one way
@@ -7039,7 +7050,18 @@ def evaluation_facts_from_calibration(
             continue
         case_checks = case.get("checks")
         if isinstance(case_checks, dict):
-            # Load-bearing, and the reason is downstream identity: both
+            # Stored as reported, which is safe only because the completeness
+            # invariant below now type-checks EVERY value. Both
+            # `observed_failure` and `gating_failed` ask `value is False`, so a
+            # raw `0`, `""`, `None` or `"false"` matches neither a pass nor a
+            # failure -- and lands on incomplete, at the 45 ceiling, which is
+            # the honest answer for a value nobody can read.
+            #
+            # An earlier attempt at this dropped unreadable values from a
+            # per-case RATIO instead, which gave them free credit and moved a
+            # broken evaluator from 25 BLOCKED to 72 WORKABLE. The difference
+            # is where the unreadable value lands: excluded from a score then,
+            # refused as incomplete now. The clamp that replaced it read: both
             # `observed_failure` and `gating_failed` ask `value is False`, which
             # `0` and `""` are not. Without this clamp a check reported as `0`
             # is neither a pass nor a failure -- it is simply not counted -- so
@@ -7049,9 +7071,15 @@ def evaluation_facts_from_calibration(
             # blocking `evaluator-invalid`; without it, pillar 85 and no cap at
             # all, which is a broken evaluator being told to spend money.
             #
-            # The completeness invariant below type-checks only the three
-            # REQUIRED names, so nothing else stands between an optional
-            # check's raw payload value and that identity test. An earlier
+            # The completeness invariant below now type-checks every value,
+            # not only the three required names -- without that, an optional
+            # check reported as `"false"`, `1`, `[1]` or `{}` was clamped to
+            # True here and scored the calibration its full forty points, a
+            # malformed table reading as a passing one. Malformed lands on
+            # incomplete, which is the honest third answer: not a pass, and not
+            # a failure either, since a value nobody can read is no evidence
+            # that the evaluator is broken. This clamp stays under it so the
+            # `is False` identity downstream never meets a raw value. An earlier
             # version of this comment justified the clamp by a per-case ratio
             # and its `sum()`; the commit that made the calibration subscore
             # binary deleted both, which would leave a maintainer grepping for
@@ -7063,14 +7091,11 @@ def evaluation_facts_from_calibration(
             # test in tests/test_calibrate_evaluator.py. The tri-state the
             # calibrator does emit is `permutation_probe["distinguished"]`, a
             # sibling of `checks` that this adapter never reads.
-            checks.append({key: bool(value) for key, value in case_checks.items()})
+            checks.append(dict(case_checks))
         if not (
             isinstance(case_checks, dict)
             and CALIBRATION_REQUIRED_CHECKS <= case_checks.keys()
-            and all(
-                isinstance(case_checks[name], bool)
-                for name in CALIBRATION_REQUIRED_CHECKS
-            )
+            and all(type(value) is bool for value in case_checks.values())
         ):
             calibration_complete = False
         scores = case.get("scores")

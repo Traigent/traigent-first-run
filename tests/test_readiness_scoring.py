@@ -1537,22 +1537,28 @@ class EvaluationScoringTests(unittest.TestCase):
         # wrong sentence once one ran and failed.
         self.assertEqual([cap.condition for cap in caps], ["evaluator-invalid"])
 
-    def test_a_falsey_non_boolean_check_still_disqualifies(self) -> None:
-        """The adapter's bool() clamp, pinned through the real adapter.
+    def test_a_malformed_check_value_is_unreadable_not_passing(self) -> None:
+        """Three answers, and malformed is the third one.
 
-        `observed_failure` and `gating_failed` both ask `value is False`, and
-        `0` and `""` are not. Without the clamp such a check is neither a pass
-        nor a failure -- it is not counted -- so a disqualifying calibration
-        scores full credit and the card says proceed. Removing the clamp used
-        to leave all 1323 tests green, which is how a maintainer reading a
-        stale comment would have concluded it was safe to relax.
-
-        Driven through `evaluation_facts_from_calibration` rather than by
-        constructing facts by hand, because the clamp lives in the adapter and
-        a hand-built EvaluationFacts reaches around it.
+        Renamed from `a_falsey_non_boolean_check_still_disqualifies`, which
+        landed `0` and `""` on evaluator-invalid. That was half right: they must
+        never earn credit, but convicting on them says the evaluator is broken
+        on the strength of a value nobody can read. The type check now covers
+        every value rather than the three required names, so an optional check
+        reported as `"false"`, `1`, `[1]`, `{}`, `None`, `0` or `""` makes the
+        calibration incomplete -- the 45 ceiling, not the 25 one, and not the
+        full forty points it used to score when the adapter clamped it to True.
         """
         passing = {"good_passes": True, "bad_fails": True, "non_constant": True}
-        for label, value in (("zero", 0), ("empty string", ""), ("false", False)):
+        for label, value in (
+            ("a string", "false"),
+            ("an int", 1),
+            ("a list", [1]),
+            ("an object", {"a": 1}),
+            ("null", None),
+            ("zero", 0),
+            ("an empty string", ""),
+        ):
             with self.subTest(label):
                 facts = MODULE.evaluation_facts_from_calibration(
                     {
@@ -1570,13 +1576,30 @@ class EvaluationScoringTests(unittest.TestCase):
                 pillar, caps = MODULE.score_evaluation(facts)
                 self.assertEqual(
                     [cap.condition for cap in caps],
-                    ["evaluator-invalid"],
-                    f"a check reported as {value!r} did not disqualify",
+                    ["evaluator-unvalidated"],
+                    f"{value!r} was read as a verdict",
                 )
                 calibration = next(
                     sub for sub in pillar.subscores if sub.name == "calibration"
                 )
                 self.assertEqual(calibration.value, 0.0)
+
+        # And a real False still convicts, which is the line between the two.
+        facts = MODULE.evaluation_facts_from_calibration(
+            {
+                "passed": True,
+                "cases": [
+                    {
+                        "checks": {**passing, "partial_fails": False},
+                        "scores": {"good": 1.0, "bad": 0.0},
+                    }
+                ],
+            },
+            method="exact",
+            task_kind="closed-label",
+        )
+        _pillar, caps = MODULE.score_evaluation(facts)
+        self.assertEqual([cap.condition for cap in caps], ["evaluator-invalid"])
 
     def test_a_reported_overall_failure_convicts_when_every_check_passed(self) -> None:
         """The calibrator's own verdict has to be read, not inferred from checks.
