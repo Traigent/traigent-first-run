@@ -157,8 +157,9 @@ first.
 That is also why the band can sit below the number. A pillar measured thinly cannot carry a strong
 verdict, so `89/100 WORKABLE` is not a contradiction even though 89 falls inside the Strong range -
 it is the card declining to call a project Strong on evidence it has not seen. The card names which
-pillar is thin - `EVALUATION 53/100 (2 of 4 checks measured)` - and calibrating the evaluator is
-what fills that one in.
+pillar is thin - `EVALUATION 69/100 (2 of 4 checks measured)` - and declaring `--evaluator-method`
+is what fills that one in: without it neither the reproducibility check nor the task-fit check can
+run, and the pillar's confidence of 0.55 is what holds 89 at Workable.
 
 No settings document exists before the search, so the agent pillar is read from the selected
 agent's own code instead - which parameters it may already vary, each against a checked relative

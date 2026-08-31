@@ -5746,6 +5746,13 @@ class SkillPackageTests(unittest.TestCase):
         for profile in READINESS.METHOD_PROFILES.values():
             kinds.update(profile["fits"])
         task_kinds: list[str | None] = [None, "no-such-kind", *sorted(kinds)]
+        # The first four omit `good_passes`, so none of them satisfies
+        # CALIBRATION_REQUIRED_CHECKS and none reaches the complete-calibration
+        # branch at all. This helper calls itself exhaustive over the inputs
+        # that select a branch, and for two revisions it swept every branch
+        # except the one that decides whether a calibrated evaluator is
+        # disqualified. The last two are complete sets, one passing and one
+        # failing, and `calibration_passed` is swept beside them below.
         check_sets: tuple[tuple[dict[str, bool], ...], ...] = (
             (),
             ({"non_constant": True, "bad_fails": True},),
@@ -5753,6 +5760,20 @@ class SkillPackageTests(unittest.TestCase):
             (
                 {"non_constant": True, "bad_fails": True},
                 {"non_constant": False, "bad_fails": True},
+            ),
+            (
+                {
+                    "good_passes": True,
+                    "bad_fails": True,
+                    "non_constant": True,
+                },
+            ),
+            (
+                {
+                    "good_passes": False,
+                    "bad_fails": True,
+                    "non_constant": True,
+                },
             ),
         )
         probe_sets: tuple[tuple[tuple[float, ...], ...], ...] = (
@@ -5771,6 +5792,7 @@ class SkillPackageTests(unittest.TestCase):
             probes,
             timed_out,
             parses,
+            calibration_passed,
         ) in itertools.product(
             (False, True),
             (None, *sorted(READINESS.METHOD_PROFILES)),
@@ -5780,6 +5802,7 @@ class SkillPackageTests(unittest.TestCase):
             check_sets,
             probe_sets,
             (False, True),
+            (None, True, False),
             (None, True, False),
         ):
             swept.append(
@@ -5794,6 +5817,7 @@ class SkillPackageTests(unittest.TestCase):
                         probe_scores=probes,
                         timed_out=timed_out,
                         parses=parses,
+                        calibration_passed=calibration_passed,
                     )
                 )
             )
@@ -5971,7 +5995,7 @@ class SkillPackageTests(unittest.TestCase):
         readme = " ".join((ROOT / "README.md").read_text().casefold().split())
         for phrase in (
             "the card names which pillar is thin",
-            "calibrating the evaluator is what fills that one in",
+            "declaring `--evaluator-method` is what fills that one in",
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, readme)
@@ -6043,16 +6067,36 @@ class SkillPackageTests(unittest.TestCase):
                     "the README prints an evaluation card no state of the "
                     "scorer produces",
                 )
-        # And it is the CEILING at that coverage, which is the whole reason the
-        # line is worth teaching: swept exhaustively below, no state measuring
-        # two of four reads higher. A scorer change that moves either number
-        # fails here rather than quietly outdating the paragraph.
+        # The README teaches TWO cards at this coverage and they are different
+        # states, so each is checked against the thing it illustrates.
+        #
+        # The deferred-calibration line above is `pillar` itself, already
+        # asserted. The band-below-the-number paragraph needs the CEILING at
+        # this coverage instead, because its whole point is that a number high
+        # enough to look Strong is still held down by thin evidence -- and the
+        # deferred card cannot illustrate that, since its own 45 ceiling puts it
+        # in Partial long before confidence gets a say.
+        #
+        # These two were asserted equal until the sweep above learned to build a
+        # complete calibration. They were equal only because it could not: with
+        # every check set missing `good_passes`, no swept state ever reached the
+        # complete-calibration branch, so the deferred card WAS the best the
+        # model could see. The paragraph consequently taught a pair the scorer
+        # cannot print -- `89/100 WORKABLE` beside an EVALUATION line that
+        # always carries a 45 ceiling -- and this test passed over it.
         best_at_coverage = max(
             candidate.score
             for candidate, _ in self._reachable_evaluation_pillars()
             if sum(1 for sub in candidate.subscores if sub.measured) == observed
         )
-        self.assertEqual(pillar.score, best_at_coverage)
+        self.assertGreater(best_at_coverage, pillar.score)
+        self.assertIn(
+            f"`evaluation {best_at_coverage}/100 "
+            f"({observed} of {len(pillar.subscores)} checks measured)`",
+            readme,
+            "the band-below-the-number paragraph no longer teaches the ceiling "
+            "at this coverage, so a reader cannot get there from the card",
+        )
         # The sentence beside it, on the same evidence: a withheld check is
         # marked unmeasured like any other and still keeps its weight, so
         # supplying nothing cannot beat supplying a poor answer.
