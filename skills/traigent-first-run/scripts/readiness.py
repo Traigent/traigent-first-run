@@ -4433,7 +4433,10 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
     # already refuses a non-boolean `passed` for exactly this reason; deriving
     # it again here is what makes that refusal hold for the direct callers this
     # re-derivation exists to catch.
-    observed_failure = facts.calibration_passed is False or any(
+    # `calibration_passed is False` is deliberately NOT a disjunct here: it
+    # already satisfies `isinstance(..., bool)` below, so adding it would be a
+    # second spelling of the same clearance and could never change the answer.
+    observed_failure = any(
         value is False for checks in facts.checks for value in checks.values()
     )
     checks_complete = checks_complete and (
@@ -4451,11 +4454,21 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
             for index, checks in enumerate(facts.checks)
             if any(value is False for value in checks.values())
         ]
-        per_case: list[float] = []
-        for checks in facts.checks:
-            values = [bool(value) for value in checks.values()]
-            per_case.append(sum(values) / len(values) if values else 0.0)
-        blended = 0.5 * (sum(per_case) / len(per_case)) + 0.5 * min(per_case)
+        # This check is binary, and saying so is the honest shape.
+        #
+        # It used to award `0.5 * mean + 0.5 * min` of the per-case pass ratio,
+        # so a calibration whose evaluator rejects a correct answer still kept
+        # most of its points -- the card printed `EVALUATION 96/100` with a
+        # green tick on "checked on known-good and known-bad" directly above the
+        # cap saying that same calibration disqualified the evaluator. Once a
+        # disqualifying result scores zero, every input that could have lowered
+        # that ratio is already zeroed by it, so the blend could only ever
+        # evaluate to 1.0. Keeping the arithmetic would have left a weighting
+        # formula in the file that no input can exercise, and a reader would
+        # reasonably believe the ratio still moved the score.
+        #
+        # The question being scored is whether calibration established that this
+        # evaluator ranks the task correctly. It did or it did not.
         # A disqualifying calibration scores zero on this check, and the two
         # ways to be disqualified are named apart because they tell the reader
         # to do different things.
@@ -4496,15 +4509,15 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
         subs.append(
             SubScore(
                 "calibration",
-                0.0 if disqualified else round(40.0 * blended, 2),
+                0.0 if disqualified else 40.0,
                 40.0,
                 True,
                 (
                     f"{len(facts.checks)} calibration case(s); "
                     f"the calibration did not establish this evaluator"
                     if disqualified
-                    else f"{len(facts.checks)} calibration case(s); weakest case "
-                    f"{min(per_case):.0%} of checks passed"
+                    else f"{len(facts.checks)} calibration case(s); "
+                    f"every authored check passed"
                 ),
             )
         )

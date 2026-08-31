@@ -1177,7 +1177,18 @@ class EvaluationScoringTests(unittest.TestCase):
         _, caps = MODULE.score_evaluation(facts)
         self.assertIn("evaluator-invalid", [cap.condition for cap in caps])
 
-    def test_weakest_case_drags_the_calibration_score(self) -> None:
+    def test_one_failing_case_disqualifies_the_whole_calibration(self) -> None:
+        """Renamed from `weakest_case_drags`, because dragging is gone.
+
+        The subscore used to be `0.5 * mean + 0.5 * min` of the per-case pass
+        ratio, and this test compared a mixed run against a clean one. Once a
+        disqualifying calibration scores zero, every input that could lower that
+        ratio is already zeroed, so the blend can only evaluate to 1.0 and the
+        subscore takes exactly two values. The old assertion still passed --
+        0.0 is less than 40.0 -- while measuring nothing it was written for.
+        What is worth pinning now is that one bad case among good ones is not
+        averaged away.
+        """
         strong = MODULE.EvaluationFacts(
             calibration_passed=True,
             present=True,
@@ -1206,7 +1217,12 @@ class EvaluationScoringTests(unittest.TestCase):
             for s in MODULE.score_evaluation(mixed)[0].subscores
             if s.name == "calibration"
         )
-        self.assertLess(mixed_value, strong_value)
+        self.assertEqual(strong_value, 40.0)
+        self.assertEqual(mixed_value, 0.0)
+        self.assertEqual(
+            [cap.condition for cap in MODULE.score_evaluation(mixed)[1]],
+            ["evaluator-invalid"],
+        )
 
     def test_deterministic_method_outscores_a_judge_on_reproducibility(self) -> None:
         exact = MODULE.score_evaluation(
@@ -1400,6 +1416,44 @@ class EvaluationScoringTests(unittest.TestCase):
         self.assertIn("every itemised check passed", reported[0].reason)
         self.assertIn("failed at least one authored", itemised[0].reason)
         self.assertNotEqual(reported[0].reason, itemised[0].reason)
+
+    def test_a_failed_check_outranks_a_bare_reported_failure(self) -> None:
+        """Both routes at once: the specific finding is the one to report.
+
+        Branch precedence was untested, so a mutant that reversed it printed
+        "reported an overall failure while every itemised check passed" over a
+        payload with a failing check -- demonstrably false -- and the whole
+        suite stayed green.
+        """
+        _pillar, caps = self._calibrated(
+            calibration_passed=False,
+            checks=({"good_passes": False, "bad_fails": True, "non_constant": True},),
+        )
+        self.assertEqual([cap.condition for cap in caps], ["evaluator-invalid"])
+        self.assertIn("failed at least one authored", caps[0].reason)
+        self.assertNotIn("every itemised check passed", caps[0].reason)
+
+    def test_the_reader_is_told_where_to_look_and_what_the_score_means(self) -> None:
+        """The instruction is the point of the split, so pin the instruction.
+
+        Pinning only "every itemised check passed" leaves the sentence that
+        sends the reader somewhere -- and the subscore's own evidence line --
+        free to be reworded into nothing while the test stays green.
+        """
+        _reported_pillar, reported = self._calibrated(calibration_passed=False)
+        self.assertIn(
+            "Read that output before trusting any number below.", reported[0].reason
+        )
+        itemised_pillar, itemised = self._calibrated(
+            checks=({"good_passes": False, "bad_fails": True, "non_constant": True},)
+        )
+        self.assertIn("Every number below it is unreliable.", itemised[0].reason)
+        calibration = next(
+            sub for sub in itemised_pillar.subscores if sub.name == "calibration"
+        )
+        self.assertIn(
+            "the calibration did not establish this evaluator", calibration.evidence
+        )
 
     def test_a_disqualified_calibration_scores_nothing_for_it(self) -> None:
         """No partial credit for the checks that passed on the way to failing.
