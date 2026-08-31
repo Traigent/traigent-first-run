@@ -4445,16 +4445,24 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
     # JSON handed over by an assistant, so a truncated or foreign table is the
     # case this function exists to survive.
     #
-    # An ITEMISED failing check, and only that. A bare `passed: false` is a
-    # verdict with nothing behind it: `{"cases": []}` and `{"checks": {}}` both
-    # carry one, and admitting them here made a payload with no measured checks
-    # convict at 25 -- or, when there were no cases at all, clear the ceiling
-    # and earn no evaluation cap whatsoever, which is worse than what it
-    # replaced. A complete table reporting `passed: false` still convicts, one
-    # branch down, where the verdict is read against checks that exist.
+    # Two ways to have seen a failure, and the second needs its own clause.
+    #
+    # An itemised check came back False -- we looked at the table and saw it.
+    # Or the calibrator, which is the thing that actually ran this evaluator,
+    # reported an overall failure over a table that reported something. A
+    # truncated table is a reason to trust that verdict MORE, not to spend
+    # money: `{"passed": false, "cases": [{"checks": {"good_passes": true}}]}`
+    # routed to `proceed` at 45 until this clause existed, while the same
+    # payload with a complete table convicts at 25.
+    #
+    # `and any(checks ...)` is what keeps the earlier correction: a bare
+    # `passed: false` with nothing behind it -- `{"cases": []}`, or a case
+    # carrying an empty check dict -- is a verdict with no measurement, and
+    # admitting THOSE convicted a payload with no measured checks at 25 or,
+    # with no cases at all, cleared the ceiling and earned no evaluation cap.
     observed_failure = any(
         value is False for checks in facts.checks for value in checks.values()
-    )
+    ) or (facts.calibration_passed is False and any(checks for checks in facts.checks))
     established = checks_complete and isinstance(facts.calibration_passed, bool)
     if calibration_complete is not None:
         established = established and calibration_complete
@@ -4463,9 +4471,22 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
     # structural flag still ANDed over the top, so the leniency survived a fix
     # aimed straight at it: the adapter marks a table missing a required name
     # incomplete, and `False and anything` is False however the rest reads.
-    calibration_complete = observed_failure or established
+    # Two names, because they answer two questions and one variable answering
+    # both silently changed three readers that never asked the second.
+    #
+    # `disqualifying` is "is there enough here to convict" -- the conviction
+    # branch below, where an observed failure counts on its own. `established`
+    # stays what it always was: did a COMPLETE calibration happen. Folding the
+    # first into the second handed the probe-spread measurement, its withheld
+    # flag and the unvalidated cap a meaning none of them asked for, so a
+    # failing calibration measured probe spread at 15/15 and the card printed a
+    # green tick on "separates good answers from bad" directly above the cap
+    # disqualifying that same calibration -- verbatim the defect this file
+    # records at the calibration subscore as the reason that one was made
+    # binary.
+    disqualifying = observed_failure or established
 
-    if calibration_complete and facts.checks:
+    if disqualifying and facts.checks:
         gating_failed = [
             index
             for index, checks in enumerate(facts.checks)
@@ -4668,7 +4689,7 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
             )
         )
 
-    if calibration_complete and facts.probe_scores:
+    if established and facts.probe_scores:
         spreads = [max(case) - min(case) for case in facts.probe_scores if case]
         widest = max(spreads) if spreads else 0.0
         subs.append(
@@ -4694,7 +4715,7 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
                 # evidence is already charged by the calibration subscore;
                 # spread remains unknown rather than charging the same absence
                 # a second time.
-                withheld=bool(calibration_complete),
+                withheld=bool(established),
             )
         )
 
@@ -4710,7 +4731,16 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
     # behavior. Missing or incomplete current-run evidence therefore bounds
     # the readiness claim without saying the evaluator failed. A timeout has
     # its own equally strict and more specific ceiling.
-    if facts.method is not None and not calibration_complete and not facts.timed_out:
+    # `not disqualifying` as well: once a calibration has been convicted, "no
+    # complete current-run calibration measured the connected evaluator" is the
+    # wrong sentence -- one ran, and it failed. Reachable only on the truncated
+    # table the conviction rule now admits, so this pairing is new with it.
+    if (
+        facts.method is not None
+        and not established
+        and not disqualifying
+        and not facts.timed_out
+    ):
         caps.append(
             Cap(
                 "evaluator-unvalidated",

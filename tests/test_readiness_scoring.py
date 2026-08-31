@@ -1506,6 +1506,37 @@ class EvaluationScoringTests(unittest.TestCase):
                 fit = next(sub for sub in pillar.subscores if sub.name == "task-fit")
                 self.assertEqual(fit.evidence, f"{expected} - fit is unverified")
 
+    def test_a_disqualified_calibration_measures_no_probe_spread(self) -> None:
+        """Conviction and completeness are separate questions.
+
+        One variable answered both for a while, so an observed failure made the
+        calibration look COMPLETE to three readers that had only ever asked the
+        structural question -- and a failing calibration measured probe spread
+        at full credit, putting a green tick on "separates good answers from
+        bad" directly above the cap disqualifying that same calibration. That
+        is the defect this file records beside the calibration subscore as the
+        reason that one was made binary, one row down.
+        """
+        facts = MODULE.evaluation_facts_from_calibration(
+            {
+                "cases": [
+                    {
+                        "checks": {"good_passes": False},
+                        "scores": {"good": 1.0, "bad": 0.0},
+                    }
+                ]
+            },
+            method="exact",
+            task_kind="closed-label",
+        )
+        pillar, caps = MODULE.score_evaluation(facts)
+        spread = next(sub for sub in pillar.subscores if sub.name == "probe-spread")
+        self.assertFalse(spread.measured, "a disqualified calibration measured spread")
+        self.assertEqual(spread.value, 0.0)
+        # And exactly one cap: "no complete calibration measured it" is the
+        # wrong sentence once one ran and failed.
+        self.assertEqual([cap.condition for cap in caps], ["evaluator-invalid"])
+
     def test_a_falsey_non_boolean_check_still_disqualifies(self) -> None:
         """The adapter's bool() clamp, pinned through the real adapter.
 
