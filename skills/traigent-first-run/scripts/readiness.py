@@ -43,6 +43,7 @@ import sys
 import textwrap
 import tokenize
 import traceback
+import weakref
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any, Iterable, Iterator, Literal, Sequence
@@ -4416,6 +4417,31 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
         and all(isinstance(checks[name], bool) for name in CALIBRATION_REQUIRED_CHECKS)
         for checks in facts.checks
     )
+    # `calibration_passed` belongs to this invariant too, but only one way
+    # round, and the asymmetry is the whole point.
+    #
+    # Evidence of FAILURE is conclusive on its own: a check came back False, or
+    # the calibrator said it failed, and we looked and saw it. That convicts
+    # with or without the rest of the result -- demanding a verdict there would
+    # downgrade a demonstrably broken evaluator from `evaluator-invalid` (25) to
+    # `evaluator-unvalidated` (45), which is the wrong direction to be lenient.
+    #
+    # Evidence of SUCCESS is not conclusive without the calibrator's own
+    # verdict. Every itemised check passing says nothing about the checks it
+    # never itemised, so a result with no boolean `passed` has not established
+    # this evaluator and cannot clear a behavioral-evidence ceiling. The adapter
+    # already refuses a non-boolean `passed` for exactly this reason; deriving
+    # it again here is what makes that refusal hold for the direct callers this
+    # re-derivation exists to catch.
+    # `calibration_passed is False` is deliberately NOT a disjunct here: it
+    # already satisfies `isinstance(..., bool)` below, so adding it would be a
+    # second spelling of the same clearance and could never change the answer.
+    observed_failure = any(
+        value is False for checks in facts.checks for value in checks.values()
+    )
+    checks_complete = checks_complete and (
+        observed_failure or isinstance(facts.calibration_passed, bool)
+    )
     calibration_complete = (
         checks_complete
         if calibration_complete is None
@@ -4428,30 +4454,79 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
             for index, checks in enumerate(facts.checks)
             if any(value is False for value in checks.values())
         ]
-        per_case: list[float] = []
-        for checks in facts.checks:
-            values = [bool(value) for value in checks.values()]
-            per_case.append(sum(values) / len(values) if values else 0.0)
-        blended = 0.5 * (sum(per_case) / len(per_case)) + 0.5 * min(per_case)
+        # This check is binary, and saying so is the honest shape.
+        #
+        # It used to award `0.5 * mean + 0.5 * min` of the per-case pass ratio,
+        # so a calibration whose evaluator rejects a correct answer still kept
+        # most of its points -- the card printed `EVALUATION 96/100` with a
+        # green tick on "checked on known-good and known-bad" directly above the
+        # cap saying that same calibration disqualified the evaluator. Once a
+        # disqualifying result scores zero, every input that could have lowered
+        # that ratio is already zeroed by it, so the blend could only ever
+        # evaluate to 1.0. Keeping the arithmetic would have left a weighting
+        # formula in the file that no input can exercise, and a reader would
+        # reasonably believe the ratio still moved the score.
+        #
+        # The question being scored is whether calibration established that this
+        # evaluator ranks the task correctly. It did or it did not.
+        # A disqualifying calibration scores zero on this check, and the two
+        # ways to be disqualified are named apart because they tell the reader
+        # to do different things.
+        #
+        # Proportional credit here was the defect: a calibration whose evaluator
+        # rejects a correct answer still passed most of its checks, so the card
+        # printed `EVALUATION 96/100` with a green tick on "checked on
+        # known-good and known-bad" directly above a cap saying that same
+        # calibration disqualified the evaluator. At the extreme -- an overall
+        # failure the calibrator did not itemise -- every check passed and the
+        # pillar read a clean 100/100 beside a blocking cap. The check being
+        # scored is "did calibration establish this evaluator ranks the task
+        # correctly", and when the answer is no there is no partial credit to
+        # award for the checks that happened to pass on the way there.
+        if gating_failed:
+            disqualified = (
+                "the completed calibration failed at least one authored "
+                "behavioral check, so this evaluator has not demonstrated that "
+                "it ranks the task correctly. Every number below it is "
+                "unreliable."
+            )
+        elif facts.calibration_passed is False:
+            # Not the same finding, and not a rewording of it. Every itemised
+            # check passed and the calibrator still returned an overall
+            # failure, so whatever disqualified this evaluator is in the
+            # calibration output rather than in the check table -- and telling
+            # the reader a check failed would send them to look at a table
+            # where nothing is wrong.
+            disqualified = (
+                "the completed calibration reported an overall failure while "
+                "every itemised check passed, so what disqualified this "
+                "evaluator is recorded in the calibration output rather than "
+                "in the check table. Read that output before trusting any "
+                "number below."
+            )
+        else:
+            disqualified = None
         subs.append(
             SubScore(
                 "calibration",
-                round(40.0 * blended, 2),
+                0.0 if disqualified else 40.0,
                 40.0,
                 True,
-                f"{len(facts.checks)} calibration case(s); weakest case "
-                f"{min(per_case):.0%} of checks passed",
+                (
+                    f"{len(facts.checks)} calibration case(s); "
+                    f"the calibration did not establish this evaluator"
+                    if disqualified
+                    else f"{len(facts.checks)} calibration case(s); "
+                    f"every authored check passed"
+                ),
             )
         )
-        if facts.calibration_passed is False or gating_failed:
+        if disqualified:
             caps.append(
                 Cap(
                     "evaluator-invalid",
                     EVALUATOR_INVALID_CEILING,
-                    "The completed calibration failed at least one authored "
-                    "behavioral check, so this evaluator has not demonstrated "
-                    "that it ranks the task correctly. Every number below it "
-                    "is unreliable.",
+                    disqualified[0].upper() + disqualified[1:],
                 )
             )
     else:
@@ -6890,6 +6965,21 @@ def evaluation_facts_from_calibration(
             continue
         case_checks = case.get("checks")
         if isinstance(case_checks, dict):
+            # This clamp is the only value-domain guard on an OPTIONAL check --
+            # the completeness invariant below type-checks the three required
+            # names and nothing else -- so the ratio downstream must never see a
+            # raw payload value. Relaxing it to a tri-state, so an undecidable
+            # check could be excluded rather than counted as failing, moved a
+            # check reported as `0` or `""` from a blocking `evaluator-invalid`
+            # to no cap at all: 25 NOT READY BLOCKED became 72 WORKABLE OK,
+            # and the instruction flipped from repair-your-evaluator to spend
+            # money. It also let a numeric value through into `sum()`, scoring
+            # the calibration 430 out of a maximum of 40. See the contract test
+            # in tests/test_calibrate_evaluator.py: `checks` values are
+            # comparison expressions and are always real booleans, so there is
+            # no undecidable check here to make room for. The tri-state the
+            # calibrator does emit is `permutation_probe["distinguished"]`, a
+            # sibling of `checks` that this adapter never reads.
             checks.append({key: bool(value) for key, value in case_checks.items()})
         if not (
             isinstance(case_checks, dict)
@@ -7541,6 +7631,24 @@ BUILD_ONLY_KNOB_FIELDS = frozenset({"determined", "reason"})
 AGENT_KNOBS_DOCUMENT_FIELDS = frozenset({"knobs", "source", "build"})
 
 
+def _source_analysis_cache(source: "StaticSourceEvidence") -> dict[str, Any]:
+    """A scratch table living on one parsed source, for answers it fully determines.
+
+    Three of the reader's analyses - the call path, the request-argument
+    builders, and the safely forwarded selected parameters - take the parsed
+    source and nothing else. They were being recomputed once per declared knob
+    (twice, for the builders), which multiplied the whole static read by the
+    number of parameters the author recorded. Caching on the instance rather
+    than in a module-level dict means the entry cannot outlive the source it
+    describes, and cannot be reached by a later run over a different file.
+    """
+    cache = source.__dict__.get("_analysis_cache")
+    if cache is None:
+        cache = {}
+        object.__setattr__(source, "_analysis_cache", cache)
+    return cache
+
+
 @dataclass(frozen=True)
 class StaticSourceEvidence:
     """A selected-agent source file checked without importing or executing it."""
@@ -7866,6 +7974,17 @@ def _literal_branch_is_dead(parent: ast.AST, child: ast.AST) -> bool:
 
 
 def _is_statically_reachable(node: ast.AST, source: StaticSourceEvidence) -> bool:
+    """Memoised wrapper over the reachability walk."""
+    cache = _source_analysis_cache(source).setdefault("reachable", {})
+    answer = cache.get(node)
+    if answer is None:
+        answer = cache[node] = _compute_is_statically_reachable(node, source)
+    return answer
+
+
+def _compute_is_statically_reachable(
+    node: ast.AST, source: StaticSourceEvidence
+) -> bool:
     """Reject syntactically dead code without trying to execute the agent.
 
     This is deliberately a small syntactic check, not a control-flow engine.
@@ -8397,8 +8516,20 @@ def _module_function_parameters(
     return None
 
 
-def _callable_body_nodes(node: ast.AST) -> Iterator[ast.AST]:
-    """Every node in one callable's own body, not entering nested definitions."""
+# One walk per callable, reused for the rest of the run.
+#
+# This body walk is the reader's inner loop: forty-odd call sites ask for it,
+# several of them once per candidate call name inside a loop that is itself run
+# once per declared knob. The tree is parsed once and never mutated, so two
+# calls with the same node cannot disagree - the walk was simply being paid
+# again for an answer already computed. A weak key lets the entry die with the
+# tree that owns it instead of outliving the run in a module-level dict.
+_CALLABLE_BODY_NODES: "weakref.WeakKeyDictionary[ast.AST, tuple[ast.AST, ...]]" = (
+    weakref.WeakKeyDictionary()
+)
+
+
+def _walk_callable_body(node: ast.AST) -> Iterator[ast.AST]:
     pending = list(getattr(node, "body", []))
     while pending:
         current = pending.pop()
@@ -8408,6 +8539,15 @@ def _callable_body_nodes(node: ast.AST) -> Iterator[ast.AST]:
         ):
             continue
         pending.extend(reversed(list(ast.iter_child_nodes(current))))
+
+
+def _callable_body_nodes(node: ast.AST) -> tuple[ast.AST, ...]:
+    """Every node in one callable's own body, not entering nested definitions."""
+    cached = _CALLABLE_BODY_NODES.get(node)
+    if cached is None:
+        cached = tuple(_walk_callable_body(node))
+        _CALLABLE_BODY_NODES[node] = cached
+    return cached
 
 
 def _callable_parameter_names(
@@ -8429,25 +8569,43 @@ def _callable_parameter_names(
     return tuple(names)
 
 
+_CALLABLE_BOUND_NAMES: "weakref.WeakKeyDictionary[ast.AST, frozenset[str]]" = (
+    weakref.WeakKeyDictionary()
+)
+
+
+def _callable_bound_names(
+    node: ast.FunctionDef | ast.AsyncFunctionDef,
+) -> frozenset[str]:
+    """Every name this callable binds, collected in one pass over its body.
+
+    The per-name question below used to be answered by its own walk, so a
+    callable with forty call sites paid forty walks of its whole body to learn
+    forty facts that one walk establishes. The set is exactly the union of the
+    three ways the previous scan could return True, so membership in it and a
+    hit in that scan are the same answer.
+    """
+    cached = _CALLABLE_BOUND_NAMES.get(node)
+    if cached is not None:
+        return cached
+    names = set(_callable_parameter_names(node))
+    for child in _callable_body_nodes(node):
+        if isinstance(child, ast.Name) and isinstance(child.ctx, ast.Store):
+            names.add(child.id)
+        elif isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            names.add(child.name)
+        elif isinstance(child, (ast.Import, ast.ImportFrom)):
+            names.update(
+                alias.asname or alias.name.split(".")[0] for alias in child.names
+            )
+    bound = frozenset(names)
+    _CALLABLE_BOUND_NAMES[node] = bound
+    return bound
+
+
 def _callable_binds(name: str, node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
     """Whether Python resolves ``name`` inside this call rather than at module level."""
-    if name in _callable_parameter_names(node):
-        return True
-    for child in _callable_body_nodes(node):
-        if (
-            isinstance(child, ast.Name)
-            and child.id == name
-            and isinstance(child.ctx, ast.Store)
-        ):
-            return True
-        if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            if child.name == name:
-                return True
-        if isinstance(child, (ast.Import, ast.ImportFrom)) and any(
-            (alias.asname or alias.name.split(".")[0]) == name for alias in child.names
-        ):
-            return True
-    return False
+    return name in _callable_bound_names(node)
 
 
 def _literal_composite_selected_children(
@@ -9843,6 +10001,18 @@ def _argument_is_caller_controlled(
 def _callables_on_the_call_path(
     source: StaticSourceEvidence,
 ) -> list[tuple[ast.FunctionDef | ast.AsyncFunctionDef, frozenset[str]]]:
+    """The selected callable and the same-file helpers it actually calls."""
+    cache = _source_analysis_cache(source)
+    if "call_path" not in cache:
+        cache["call_path"] = tuple(_compute_callables_on_the_call_path(source))
+    # A fresh list per caller: the cached answer is shared, and a caller that
+    # appended to it would be editing the next knob's input.
+    return list(cache["call_path"])
+
+
+def _compute_callables_on_the_call_path(
+    source: StaticSourceEvidence,
+) -> list[tuple[ast.FunctionDef | ast.AsyncFunctionDef, frozenset[str]]]:
     """The selected callable and the same-file helpers it actually calls.
 
     Real agents delegate: `run` orchestrates while a helper builds the prompt
@@ -10393,6 +10563,16 @@ def _parameter_reaches_structural_return(
 def _safe_selected_forwarding_references(
     source: StaticSourceEvidence,
 ) -> frozenset[int]:
+    """Bare caller parameters forwarded only to inspectable, intact helpers."""
+    cache = _source_analysis_cache(source)
+    if "safe_forwards" not in cache:
+        cache["safe_forwards"] = _compute_safe_selected_forwarding_references(source)
+    return cache["safe_forwards"]
+
+
+def _compute_safe_selected_forwarding_references(
+    source: StaticSourceEvidence,
+) -> frozenset[int]:
     """Bare caller parameters forwarded only to inspectable, intact helpers.
 
     The selected callable may send the same config to a prompt builder and a
@@ -10428,6 +10608,22 @@ def _safe_selected_forwarding_references(
 
 
 def _request_argument_builders(
+    source: StaticSourceEvidence,
+) -> list[
+    tuple[
+        ast.Call,
+        ast.FunctionDef | ast.AsyncFunctionDef,
+        frozenset[str],
+    ]
+]:
+    """One-hop helpers whose exact result supplies a verified request input."""
+    cache = _source_analysis_cache(source)
+    if "request_builders" not in cache:
+        cache["request_builders"] = tuple(_compute_request_argument_builders(source))
+    return list(cache["request_builders"])
+
+
+def _compute_request_argument_builders(
     source: StaticSourceEvidence,
 ) -> list[
     tuple[

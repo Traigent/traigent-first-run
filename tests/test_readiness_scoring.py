@@ -1177,8 +1177,20 @@ class EvaluationScoringTests(unittest.TestCase):
         _, caps = MODULE.score_evaluation(facts)
         self.assertIn("evaluator-invalid", [cap.condition for cap in caps])
 
-    def test_weakest_case_drags_the_calibration_score(self) -> None:
+    def test_one_failing_case_disqualifies_the_whole_calibration(self) -> None:
+        """Renamed from `weakest_case_drags`, because dragging is gone.
+
+        The subscore used to be `0.5 * mean + 0.5 * min` of the per-case pass
+        ratio, and this test compared a mixed run against a clean one. Once a
+        disqualifying calibration scores zero, every input that could lower that
+        ratio is already zeroed, so the blend can only evaluate to 1.0 and the
+        subscore takes exactly two values. The old assertion still passed --
+        0.0 is less than 40.0 -- while measuring nothing it was written for.
+        What is worth pinning now is that one bad case among good ones is not
+        averaged away.
+        """
         strong = MODULE.EvaluationFacts(
+            calibration_passed=True,
             present=True,
             calibration_present=True,
             checks=(
@@ -1187,6 +1199,7 @@ class EvaluationScoringTests(unittest.TestCase):
             ),
         )
         mixed = MODULE.EvaluationFacts(
+            calibration_passed=True,
             present=True,
             calibration_present=True,
             checks=(
@@ -1204,7 +1217,12 @@ class EvaluationScoringTests(unittest.TestCase):
             for s in MODULE.score_evaluation(mixed)[0].subscores
             if s.name == "calibration"
         )
-        self.assertLess(mixed_value, strong_value)
+        self.assertEqual(strong_value, 40.0)
+        self.assertEqual(mixed_value, 0.0)
+        self.assertEqual(
+            [cap.condition for cap in MODULE.score_evaluation(mixed)[1]],
+            ["evaluator-invalid"],
+        )
 
     def test_deterministic_method_outscores_a_judge_on_reproducibility(self) -> None:
         exact = MODULE.score_evaluation(
@@ -1318,6 +1336,7 @@ class EvaluationScoringTests(unittest.TestCase):
         self,
     ) -> None:
         incomplete = MODULE.EvaluationFacts(
+            calibration_passed=True,
             present=True,
             method="exact",
             task_kind="closed-label",
@@ -1358,6 +1377,172 @@ class EvaluationScoringTests(unittest.TestCase):
                 sub for sub in complete_pillar.subscores if sub.name == "calibration"
             ).measured
         )
+
+    def _calibrated(self, **kwargs: object) -> tuple[object, list[object]]:
+        """A complete, passing calibration, overridable one field at a time."""
+        passing = {"good_passes": True, "bad_fails": True, "non_constant": True}
+        facts = dict(
+            present=True,
+            method="normalized-exact",
+            task_kind="closed-label",
+            calibration_present=True,
+            calibration_supplied=True,
+            calibration_passed=True,
+            checks=(dict(passing),),
+            probe_scores=((1.0, 0.0),),
+        )
+        facts.update(kwargs)
+        return MODULE.score_evaluation(MODULE.EvaluationFacts(**facts))
+
+    def test_a_reported_overall_failure_convicts_when_every_check_passed(self) -> None:
+        """The calibrator's own verdict has to be read, not inferred from checks.
+
+        A calibrator can fail on something it never itemises into the per-case
+        check table -- a permutation or exception probe -- and report that only
+        through `passed`. Before this test, nothing in the suite observed that
+        field: the one case that named the behaviour set a failing check too, so
+        both arms of the `or` fired and neither could be isolated. Deleting the
+        `calibration_passed` arm scored this input EXCELLENT with no cap.
+        """
+        _pillar, caps = self._calibrated(calibration_passed=False)
+        self.assertEqual([cap.condition for cap in caps], ["evaluator-invalid"])
+
+    def test_a_reported_failure_does_not_claim_a_check_failed(self) -> None:
+        """The two ways to be disqualified send the reader to different places."""
+        _p, reported = self._calibrated(calibration_passed=False)
+        _p2, itemised = self._calibrated(
+            checks=({"good_passes": False, "bad_fails": True, "non_constant": True},)
+        )
+        self.assertIn("every itemised check passed", reported[0].reason)
+        self.assertIn("failed at least one authored", itemised[0].reason)
+        self.assertNotEqual(reported[0].reason, itemised[0].reason)
+
+    def test_a_failed_check_outranks_a_bare_reported_failure(self) -> None:
+        """Both routes at once: the specific finding is the one to report.
+
+        Branch precedence was untested, so a mutant that reversed it printed
+        "reported an overall failure while every itemised check passed" over a
+        payload with a failing check -- demonstrably false -- and the whole
+        suite stayed green.
+        """
+        _pillar, caps = self._calibrated(
+            calibration_passed=False,
+            checks=({"good_passes": False, "bad_fails": True, "non_constant": True},),
+        )
+        self.assertEqual([cap.condition for cap in caps], ["evaluator-invalid"])
+        self.assertIn("failed at least one authored", caps[0].reason)
+        self.assertNotIn("every itemised check passed", caps[0].reason)
+
+    def test_the_reader_is_told_where_to_look_and_what_the_score_means(self) -> None:
+        """The instruction is the point of the split, so pin the instruction.
+
+        Pinning only "every itemised check passed" leaves the sentence that
+        sends the reader somewhere -- and the subscore's own evidence line --
+        free to be reworded into nothing while the test stays green.
+        """
+        _reported_pillar, reported = self._calibrated(calibration_passed=False)
+        self.assertIn(
+            "Read that output before trusting any number below.", reported[0].reason
+        )
+        itemised_pillar, itemised = self._calibrated(
+            checks=({"good_passes": False, "bad_fails": True, "non_constant": True},)
+        )
+        self.assertIn("Every number below it is unreliable.", itemised[0].reason)
+        calibration = next(
+            sub for sub in itemised_pillar.subscores if sub.name == "calibration"
+        )
+        self.assertIn(
+            "the calibration did not establish this evaluator", calibration.evidence
+        )
+
+    def test_a_disqualified_calibration_scores_nothing_for_it(self) -> None:
+        """No partial credit for the checks that passed on the way to failing.
+
+        Proportional credit printed `EVALUATION 96/100` with a green tick on
+        "checked on known-good and known-bad" directly above the cap saying that
+        same calibration disqualified the evaluator.
+        """
+        for label, kwargs in (
+            ("reported failure", {"calibration_passed": False}),
+            (
+                "failed check",
+                {
+                    "checks": (
+                        {
+                            "good_passes": False,
+                            "bad_fails": True,
+                            "non_constant": True,
+                        },
+                    )
+                },
+            ),
+        ):
+            with self.subTest(label):
+                pillar, _caps = self._calibrated(**kwargs)
+                calibration = next(
+                    sub for sub in pillar.subscores if sub.name == "calibration"
+                )
+                self.assertTrue(calibration.measured)
+                self.assertEqual(calibration.value, 0.0)
+
+    def test_a_failing_check_convicts_without_a_reported_verdict(self) -> None:
+        """Evidence of failure is conclusive on its own.
+
+        The completeness rule is deliberately one-way. Requiring the verdict
+        here too would downgrade a demonstrably broken evaluator from
+        `evaluator-invalid` (25) to `evaluator-unvalidated` (45).
+        """
+        _pillar, caps = self._calibrated(
+            calibration_passed=None,
+            checks=({"good_passes": False, "bad_fails": True, "non_constant": True},),
+        )
+        self.assertEqual([cap.condition for cap in caps], ["evaluator-invalid"])
+
+    def test_a_passing_check_set_without_a_verdict_cannot_acquit(self) -> None:
+        """Evidence of success is not conclusive without the whole result.
+
+        Every itemised check passing says nothing about the checks the
+        calibrator never itemised, so a truncated artifact carrying no `passed`
+        has not established this evaluator.
+        """
+        _pillar, caps = self._calibrated(calibration_passed=None)
+        self.assertEqual([cap.condition for cap in caps], ["evaluator-unvalidated"])
+
+    def test_a_failing_optional_check_disqualifies_too(self) -> None:
+        """The gate reads every authored check, not only the three required ones.
+
+        A calibrator may author checks beyond the required set -- partial
+        separation, equivalence -- and one of those coming back False is a
+        failure. Narrowing the scan to CALIBRATION_REQUIRED_CHECKS scored this
+        input EXCELLENT with no cap.
+        """
+        _pillar, caps = self._calibrated(
+            checks=(
+                {
+                    "good_passes": True,
+                    "bad_fails": True,
+                    "non_constant": True,
+                    "partial_fails": False,
+                },
+            )
+        )
+        self.assertEqual([cap.condition for cap in caps], ["evaluator-invalid"])
+
+    def test_a_direct_caller_cannot_declare_a_non_boolean_check_set_complete(
+        self,
+    ) -> None:
+        """The scorer re-derives completeness because direct callers exist.
+
+        `evaluation_facts_from_calibration` refuses this shape already, so it is
+        only reachable by constructing EvaluationFacts directly -- which is the
+        case the re-derivation is documented to defend, and therefore the only
+        way to test that it still does.
+        """
+        _pillar, caps = self._calibrated(
+            calibration_complete=True,
+            checks=({"good_passes": "yes", "bad_fails": "yes", "non_constant": "yes"},),
+        )
+        self.assertEqual([cap.condition for cap in caps], ["evaluator-unvalidated"])
 
     def test_uncalibrated_evidence_cannot_inflate_the_overall_score_or_band(
         self,
@@ -6553,6 +6738,10 @@ class SilenceMustNotOutscoreAnHonestAnswerTests(unittest.TestCase):
                 present=True,
                 method="normalized-exact",
                 calibration_present=True,
+                # A calibrator always reports its own overall verdict beside the
+                # itemised checks, and a passing check set no longer clears the
+                # behavioral-evidence ceiling without it.
+                calibration_passed=True,
                 checks=(
                     {"good_passes": True, "bad_fails": True, "non_constant": True},
                 ),
@@ -11966,6 +12155,7 @@ class TheAgentPillarReadsTheAgentTests(unittest.TestCase):
                 answerable_rows=200,
             ),
             MODULE.EvaluationFacts(
+                calibration_passed=True,
                 present=True,
                 method="normalized-exact",
                 task_kind="closed-label",
@@ -12540,6 +12730,9 @@ class WhoWroteItBoundsWhatItMayClaimTests(unittest.TestCase):
             task_kind="closed-label",
             calibration_present=True,
             calibration_supplied=True,
+            # See the sibling helper above: the calibrator's own verdict is part
+            # of a complete result, not an optional extra.
+            calibration_passed=True,
             checks=(
                 {
                     "good_passes": True,
