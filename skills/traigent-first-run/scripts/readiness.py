@@ -43,6 +43,7 @@ import sys
 import textwrap
 import tokenize
 import traceback
+import weakref
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any, Iterable, Iterator, Literal, Sequence
@@ -7615,6 +7616,24 @@ BUILD_ONLY_KNOB_FIELDS = frozenset({"determined", "reason"})
 AGENT_KNOBS_DOCUMENT_FIELDS = frozenset({"knobs", "source", "build"})
 
 
+def _source_analysis_cache(source: "StaticSourceEvidence") -> dict[str, Any]:
+    """A scratch table living on one parsed source, for answers it fully determines.
+
+    Three of the reader's analyses - the call path, the request-argument
+    builders, and the safely forwarded selected parameters - take the parsed
+    source and nothing else. They were being recomputed once per declared knob
+    (twice, for the builders), which multiplied the whole static read by the
+    number of parameters the author recorded. Caching on the instance rather
+    than in a module-level dict means the entry cannot outlive the source it
+    describes, and cannot be reached by a later run over a different file.
+    """
+    cache = source.__dict__.get("_analysis_cache")
+    if cache is None:
+        cache = {}
+        object.__setattr__(source, "_analysis_cache", cache)
+    return cache
+
+
 @dataclass(frozen=True)
 class StaticSourceEvidence:
     """A selected-agent source file checked without importing or executing it."""
@@ -7940,6 +7959,17 @@ def _literal_branch_is_dead(parent: ast.AST, child: ast.AST) -> bool:
 
 
 def _is_statically_reachable(node: ast.AST, source: StaticSourceEvidence) -> bool:
+    """Memoised wrapper over the reachability walk."""
+    cache = _source_analysis_cache(source).setdefault("reachable", {})
+    answer = cache.get(node)
+    if answer is None:
+        answer = cache[node] = _compute_is_statically_reachable(node, source)
+    return answer
+
+
+def _compute_is_statically_reachable(
+    node: ast.AST, source: StaticSourceEvidence
+) -> bool:
     """Reject syntactically dead code without trying to execute the agent.
 
     This is deliberately a small syntactic check, not a control-flow engine.
@@ -8471,8 +8501,20 @@ def _module_function_parameters(
     return None
 
 
-def _callable_body_nodes(node: ast.AST) -> Iterator[ast.AST]:
-    """Every node in one callable's own body, not entering nested definitions."""
+# One walk per callable, reused for the rest of the run.
+#
+# This body walk is the reader's inner loop: forty-odd call sites ask for it,
+# several of them once per candidate call name inside a loop that is itself run
+# once per declared knob. The tree is parsed once and never mutated, so two
+# calls with the same node cannot disagree - the walk was simply being paid
+# again for an answer already computed. A weak key lets the entry die with the
+# tree that owns it instead of outliving the run in a module-level dict.
+_CALLABLE_BODY_NODES: "weakref.WeakKeyDictionary[ast.AST, tuple[ast.AST, ...]]" = (
+    weakref.WeakKeyDictionary()
+)
+
+
+def _walk_callable_body(node: ast.AST) -> Iterator[ast.AST]:
     pending = list(getattr(node, "body", []))
     while pending:
         current = pending.pop()
@@ -8482,6 +8524,15 @@ def _callable_body_nodes(node: ast.AST) -> Iterator[ast.AST]:
         ):
             continue
         pending.extend(reversed(list(ast.iter_child_nodes(current))))
+
+
+def _callable_body_nodes(node: ast.AST) -> tuple[ast.AST, ...]:
+    """Every node in one callable's own body, not entering nested definitions."""
+    cached = _CALLABLE_BODY_NODES.get(node)
+    if cached is None:
+        cached = tuple(_walk_callable_body(node))
+        _CALLABLE_BODY_NODES[node] = cached
+    return cached
 
 
 def _callable_parameter_names(
@@ -8503,25 +8554,43 @@ def _callable_parameter_names(
     return tuple(names)
 
 
+_CALLABLE_BOUND_NAMES: "weakref.WeakKeyDictionary[ast.AST, frozenset[str]]" = (
+    weakref.WeakKeyDictionary()
+)
+
+
+def _callable_bound_names(
+    node: ast.FunctionDef | ast.AsyncFunctionDef,
+) -> frozenset[str]:
+    """Every name this callable binds, collected in one pass over its body.
+
+    The per-name question below used to be answered by its own walk, so a
+    callable with forty call sites paid forty walks of its whole body to learn
+    forty facts that one walk establishes. The set is exactly the union of the
+    three ways the previous scan could return True, so membership in it and a
+    hit in that scan are the same answer.
+    """
+    cached = _CALLABLE_BOUND_NAMES.get(node)
+    if cached is not None:
+        return cached
+    names = set(_callable_parameter_names(node))
+    for child in _callable_body_nodes(node):
+        if isinstance(child, ast.Name) and isinstance(child.ctx, ast.Store):
+            names.add(child.id)
+        elif isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            names.add(child.name)
+        elif isinstance(child, (ast.Import, ast.ImportFrom)):
+            names.update(
+                alias.asname or alias.name.split(".")[0] for alias in child.names
+            )
+    bound = frozenset(names)
+    _CALLABLE_BOUND_NAMES[node] = bound
+    return bound
+
+
 def _callable_binds(name: str, node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
     """Whether Python resolves ``name`` inside this call rather than at module level."""
-    if name in _callable_parameter_names(node):
-        return True
-    for child in _callable_body_nodes(node):
-        if (
-            isinstance(child, ast.Name)
-            and child.id == name
-            and isinstance(child.ctx, ast.Store)
-        ):
-            return True
-        if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            if child.name == name:
-                return True
-        if isinstance(child, (ast.Import, ast.ImportFrom)) and any(
-            (alias.asname or alias.name.split(".")[0]) == name for alias in child.names
-        ):
-            return True
-    return False
+    return name in _callable_bound_names(node)
 
 
 def _literal_composite_selected_children(
@@ -9917,6 +9986,18 @@ def _argument_is_caller_controlled(
 def _callables_on_the_call_path(
     source: StaticSourceEvidence,
 ) -> list[tuple[ast.FunctionDef | ast.AsyncFunctionDef, frozenset[str]]]:
+    """The selected callable and the same-file helpers it actually calls."""
+    cache = _source_analysis_cache(source)
+    if "call_path" not in cache:
+        cache["call_path"] = tuple(_compute_callables_on_the_call_path(source))
+    # A fresh list per caller: the cached answer is shared, and a caller that
+    # appended to it would be editing the next knob's input.
+    return list(cache["call_path"])
+
+
+def _compute_callables_on_the_call_path(
+    source: StaticSourceEvidence,
+) -> list[tuple[ast.FunctionDef | ast.AsyncFunctionDef, frozenset[str]]]:
     """The selected callable and the same-file helpers it actually calls.
 
     Real agents delegate: `run` orchestrates while a helper builds the prompt
@@ -10467,6 +10548,16 @@ def _parameter_reaches_structural_return(
 def _safe_selected_forwarding_references(
     source: StaticSourceEvidence,
 ) -> frozenset[int]:
+    """Bare caller parameters forwarded only to inspectable, intact helpers."""
+    cache = _source_analysis_cache(source)
+    if "safe_forwards" not in cache:
+        cache["safe_forwards"] = _compute_safe_selected_forwarding_references(source)
+    return cache["safe_forwards"]
+
+
+def _compute_safe_selected_forwarding_references(
+    source: StaticSourceEvidence,
+) -> frozenset[int]:
     """Bare caller parameters forwarded only to inspectable, intact helpers.
 
     The selected callable may send the same config to a prompt builder and a
@@ -10502,6 +10593,22 @@ def _safe_selected_forwarding_references(
 
 
 def _request_argument_builders(
+    source: StaticSourceEvidence,
+) -> list[
+    tuple[
+        ast.Call,
+        ast.FunctionDef | ast.AsyncFunctionDef,
+        frozenset[str],
+    ]
+]:
+    """One-hop helpers whose exact result supplies a verified request input."""
+    cache = _source_analysis_cache(source)
+    if "request_builders" not in cache:
+        cache["request_builders"] = tuple(_compute_request_argument_builders(source))
+    return list(cache["request_builders"])
+
+
+def _compute_request_argument_builders(
     source: StaticSourceEvidence,
 ) -> list[
     tuple[
