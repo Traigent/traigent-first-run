@@ -4433,20 +4433,37 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
     # already refuses a non-boolean `passed` for exactly this reason; deriving
     # it again here is what makes that refusal hold for the direct callers this
     # re-derivation exists to catch.
-    # `calibration_passed is False` is deliberately NOT a disjunct here: it
-    # already satisfies `isinstance(..., bool)` below, so adding it would be a
-    # second spelling of the same clearance and could never change the answer.
+    # The asymmetry has to apply to the WHOLE gate, not just the verdict half.
+    #
+    # It was written as `structural and (failure or verdict)`, which still
+    # demanded a structurally complete check table before it would convict. So
+    # a payload carrying `passed: false` AND a check that came back false, but
+    # missing one of the three required names, was scored
+    # `evaluator-unvalidated` (45, proceed) instead of `evaluator-invalid`
+    # (25, repair-evaluator) -- the exact leniency the comment above forbids,
+    # in the branch the comment is attached to. `--calibration` reads arbitrary
+    # JSON handed over by an assistant, so a truncated or foreign table is the
+    # case this function exists to survive.
+    #
+    # An ITEMISED failing check, and only that. A bare `passed: false` is a
+    # verdict with nothing behind it: `{"cases": []}` and `{"checks": {}}` both
+    # carry one, and admitting them here made a payload with no measured checks
+    # convict at 25 -- or, when there were no cases at all, clear the ceiling
+    # and earn no evaluation cap whatsoever, which is worse than what it
+    # replaced. A complete table reporting `passed: false` still convicts, one
+    # branch down, where the verdict is read against checks that exist.
     observed_failure = any(
         value is False for checks in facts.checks for value in checks.values()
     )
-    checks_complete = checks_complete and (
-        observed_failure or isinstance(facts.calibration_passed, bool)
-    )
-    calibration_complete = (
-        checks_complete
-        if calibration_complete is None
-        else calibration_complete and checks_complete
-    )
+    established = checks_complete and isinstance(facts.calibration_passed, bool)
+    if calibration_complete is not None:
+        established = established and calibration_complete
+    # One expression, and `observed_failure` sits OUTSIDE every conjunct on
+    # purpose. Folding it in beside the verdict left the adapter's own
+    # structural flag still ANDed over the top, so the leniency survived a fix
+    # aimed straight at it: the adapter marks a table missing a required name
+    # incomplete, and `False and anything` is False however the rest reads.
+    calibration_complete = observed_failure or established
 
     if calibration_complete and facts.checks:
         gating_failed = [
@@ -4547,6 +4564,18 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
         # did not.
         if facts.timed_out:
             evidence = "calibration ran but did not finish"
+        elif any(checks for checks in facts.checks):
+            # A state this branch gained when the verdict became part of
+            # completeness, and it landed on the arm below, which says the
+            # payload reported no checks over a payload that reported three.
+            # The comment above is an essay on exactly this -- "say what this
+            # score can see, not what it infers", and "it could also be flatly
+            # self-contradicting" -- so the new state needed its own sentence
+            # rather than the nearest existing one. `any(checks for ...)` and
+            # not `facts.checks`: a case carrying an empty checks dict makes
+            # the tuple truthy while reporting nothing, and that one really is
+            # the sentence below.
+            evidence = "calibration reported checks but no overall verdict"
         elif facts.calibration_supplied:
             evidence = "calibration ran but reported no checks"
         else:
@@ -4584,13 +4613,28 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
             )
         )
     else:
+        # Name the input that is actually missing. This arm fires when EITHER
+        # the method or the task kind is absent -- fit is a property of the
+        # pair -- and it used to blame the task kind unconditionally. A
+        # customer who declared `--task-kind` and not `--evaluator-method` was
+        # told to declare a task kind they had already given, and the number
+        # did not move when they did. The README's own worked example is that
+        # state.
+        if facts.method is None and facts.task_kind is None:
+            unverified = "neither evaluation method nor task kind declared"
+        elif facts.method is None:
+            unverified = "evaluation method not declared"
+        elif facts.task_kind is None:
+            unverified = "task kind not declared"
+        else:
+            unverified = f"{facts.method} has no fit profile to check"
         subs.append(
             SubScore(
                 "task-fit",
                 0.0,
                 25.0,
                 False,
-                "task kind not declared - fit is unverified",
+                f"{unverified} - fit is unverified",
                 # Withheld, not unavailable: the run is asked for
                 # `--task-kind` and chose not to answer. Renormalized away, not
                 # answering scored the pillar 100 against 83 for declaring a
@@ -6965,19 +7009,28 @@ def evaluation_facts_from_calibration(
             continue
         case_checks = case.get("checks")
         if isinstance(case_checks, dict):
-            # This clamp is the only value-domain guard on an OPTIONAL check --
-            # the completeness invariant below type-checks the three required
-            # names and nothing else -- so the ratio downstream must never see a
-            # raw payload value. Relaxing it to a tri-state, so an undecidable
-            # check could be excluded rather than counted as failing, moved a
-            # check reported as `0` or `""` from a blocking `evaluator-invalid`
-            # to no cap at all: 25 NOT READY BLOCKED became 72 WORKABLE OK,
-            # and the instruction flipped from repair-your-evaluator to spend
-            # money. It also let a numeric value through into `sum()`, scoring
-            # the calibration 430 out of a maximum of 40. See the contract test
-            # in tests/test_calibrate_evaluator.py: `checks` values are
-            # comparison expressions and are always real booleans, so there is
-            # no undecidable check here to make room for. The tri-state the
+            # Load-bearing, and the reason is downstream identity: both
+            # `observed_failure` and `gating_failed` ask `value is False`, which
+            # `0` and `""` are not. Without this clamp a check reported as `0`
+            # is neither a pass nor a failure -- it is simply not counted -- so
+            # a disqualifying calibration scores full credit. Measured through
+            # tests/test_readiness_scoring.py, which drives one optional check
+            # reported as `0` at this adapter: with the clamp, pillar 45 and a
+            # blocking `evaluator-invalid`; without it, pillar 85 and no cap at
+            # all, which is a broken evaluator being told to spend money.
+            #
+            # The completeness invariant below type-checks only the three
+            # REQUIRED names, so nothing else stands between an optional
+            # check's raw payload value and that identity test. An earlier
+            # version of this comment justified the clamp by a per-case ratio
+            # and its `sum()`; the commit that made the calibration subscore
+            # binary deleted both, which would leave a maintainer grepping for
+            # machinery that is not there and concluding the clamp is stale.
+            # That test fails if the clamp is relaxed.
+            #
+            # There is nothing undecidable here to make room for: every value
+            # in `checks` is a comparison expression, pinned by the contract
+            # test in tests/test_calibrate_evaluator.py. The tri-state the
             # calibrator does emit is `permutation_probe["distinguished"]`, a
             # sibling of `checks` that this adapter never reads.
             checks.append({key: bool(value) for key, value in case_checks.items()})

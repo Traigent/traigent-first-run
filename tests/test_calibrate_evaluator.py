@@ -2694,42 +2694,69 @@ class TheCheckTableIsBooleanAllTheWayDownTests(unittest.TestCase):
         }
         interesting = (0.0, 0.05, 0.2, 0.5, 0.8, 0.95, 1.0)
         seen = 0
+        # `equivalent_good` is swept independently of `good`. Pinning the two
+        # together left the gap between them constant, and two emitted checks
+        # key on exactly that gap -- so a check reading it could return a raw
+        # float and this sweep would never see one.
         for mode in module.SCORE_MODES:
             for good in interesting:
-                for bad in interesting:
-                    for partial in interesting:
-                        checks = module.calibration_checks(
-                            {
-                                "good": good,
-                                "equivalent_good": good,
-                                "partial": partial,
-                                "bad": bad,
-                            },
-                            mode,
-                            thresholds,
-                        )
-                        for name, value in checks.items():
-                            seen += 1
-                            self.assertIs(
-                                type(value),
-                                bool,
-                                f"{mode}/{name} emitted {value!r} "
-                                f"({type(value).__name__}), which readiness.py "
-                                f"would clamp with bool()",
+                for equivalent in interesting:
+                    for bad in interesting:
+                        for partial in interesting:
+                            checks = module.calibration_checks(
+                                {
+                                    "good": good,
+                                    "equivalent_good": equivalent,
+                                    "partial": partial,
+                                    "bad": bad,
+                                },
+                                mode,
+                                thresholds,
                             )
+                            for name, value in checks.items():
+                                seen += 1
+                                self.assertIs(
+                                    type(value),
+                                    bool,
+                                    f"{mode}/{name} emitted {value!r} "
+                                    f"({type(value).__name__}), which "
+                                    f"readiness.py would clamp with bool()",
+                                )
         self.assertGreater(seen, 0, "no check values were produced to inspect")
 
-    def test_the_source_declares_the_same_contract(self) -> None:
-        """The sweep above cannot reach a branch a future edit adds."""
+    def test_every_returned_check_is_built_from_a_comparison(self) -> None:
+        """What the sweep cannot reach: a branch, or a shape, added later.
+
+        This asserted the return ANNOTATION text and nothing else, which is a
+        claim no interpreter enforces -- changing a check to `int(...)` left it
+        reporting ok while only the sweep went red, and a check the sweep's
+        fixture could not reach would have had no cover at all. It now reads
+        the returned dict literals: every value has to BE a comparison, which
+        is what makes the emitted value a real bool in the first place.
+        """
         source = SCRIPT.read_text(encoding="utf-8")
-        tree = ast.parse(source)
         function = next(
             node
-            for node in ast.walk(tree)
+            for node in ast.walk(ast.parse(source))
             if isinstance(node, ast.FunctionDef) and node.name == "calibration_checks"
         )
-        self.assertIsInstance(function.returns, ast.Subscript)
         self.assertEqual(ast.unparse(function.returns), "dict[str, bool]")
+        pairs = 0
+        for node in ast.walk(function):
+            if not isinstance(node, ast.Dict):
+                continue
+            for key, value in zip(node.keys, node.values):
+                if key is None:  # ``**common`` spread, checked at its own literal
+                    continue
+                pairs += 1
+                self.assertIsInstance(
+                    value,
+                    (ast.Compare, ast.BoolOp, ast.UnaryOp),
+                    f"check {ast.unparse(key)} at line {value.lineno} is "
+                    f"{ast.unparse(value)}, which is not a comparison and so "
+                    f"need not be a bool",
+                )
+        self.assertGreater(pairs, 0, "no check literals were found to inspect")
 
 
 class NoInternalFailureReachesTheUserAsATracebackTests(unittest.TestCase):

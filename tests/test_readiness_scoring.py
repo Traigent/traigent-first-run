@@ -1394,6 +1394,159 @@ class EvaluationScoringTests(unittest.TestCase):
         facts.update(kwargs)
         return MODULE.score_evaluation(MODULE.EvaluationFacts(**facts))
 
+    def test_a_failing_check_convicts_even_on_an_incomplete_table(self) -> None:
+        """The asymmetry has to survive the adapter's own structural flag.
+
+        `--calibration` reads arbitrary JSON an assistant hands over, so a
+        truncated or foreign check table is the case this scorer exists to
+        survive. A payload carrying a failing check but missing one of the
+        three required names was scored `evaluator-unvalidated` (45, proceed)
+        rather than `evaluator-invalid` (25, repair-evaluator) -- lenient in
+        exactly the direction the rule's own comment forbids -- because
+        `observed_failure` was folded in beside the verdict while the adapter's
+        structural flag stayed ANDed over the top.
+        """
+        for label, payload in (
+            (
+                "failing check and a reported failure",
+                {"passed": False, "cases": [{"checks": {"good_passes": False}}]},
+            ),
+            (
+                "failing check with no verdict at all",
+                {"cases": [{"checks": {"good_passes": False}}]},
+            ),
+        ):
+            with self.subTest(label):
+                facts = MODULE.evaluation_facts_from_calibration(
+                    payload, method="exact", task_kind="closed-label"
+                )
+                _pillar, caps = MODULE.score_evaluation(facts)
+                self.assertEqual(
+                    [(cap.condition, cap.ceiling) for cap in caps],
+                    [("evaluator-invalid", 25)],
+                )
+
+    def test_a_passing_incomplete_table_still_cannot_acquit(self) -> None:
+        """The other direction of the same rule, so it cannot over-convict."""
+        facts = MODULE.evaluation_facts_from_calibration(
+            {"passed": True, "cases": [{"checks": {"good_passes": True}}]},
+            method="exact",
+            task_kind="closed-label",
+        )
+        _pillar, caps = MODULE.score_evaluation(facts)
+        self.assertEqual([cap.condition for cap in caps], ["evaluator-unvalidated"])
+
+    def test_the_deferred_evidence_line_describes_the_state_it_is_in(self) -> None:
+        """Three distinguishable states, three sentences, none borrowed.
+
+        Making the verdict part of completeness created a new way to land here
+        -- checks reported, verdict absent -- and it landed on the sentence
+        saying the payload reported no checks, over a payload that reported
+        three. The comment above this branch is an essay on exactly that.
+        """
+        passing = {"good_passes": True, "bad_fails": True, "non_constant": True}
+        for label, payload, expected in (
+            (
+                "checks reported, verdict absent",
+                {"cases": [{"checks": passing}]},
+                "calibration reported checks but no overall verdict",
+            ),
+            (
+                "no cases at all",
+                {"cases": []},
+                "calibration ran but reported no checks",
+            ),
+            (
+                "a case carrying an empty check table",
+                {"cases": [{"checks": {}}]},
+                "calibration ran but reported no checks",
+            ),
+        ):
+            with self.subTest(label):
+                facts = MODULE.evaluation_facts_from_calibration(
+                    payload, method="exact", task_kind="closed-label"
+                )
+                pillar, _caps = MODULE.score_evaluation(facts)
+                calibration = next(
+                    sub for sub in pillar.subscores if sub.name == "calibration"
+                )
+                self.assertEqual(calibration.evidence, expected)
+
+    def test_unverified_task_fit_names_the_input_that_is_missing(self) -> None:
+        """Fit is a property of the pair, so the card must say which half.
+
+        It blamed the task kind unconditionally, so a customer who declared
+        `--task-kind` and not `--evaluator-method` -- the README's own worked
+        example -- was told to declare a task kind they had already given, and
+        the number did not move when they did.
+        """
+        passing = {"good_passes": True, "bad_fails": True, "non_constant": True}
+        for label, method, task_kind, expected in (
+            (
+                "only the method missing",
+                None,
+                "closed-label",
+                "evaluation method not declared",
+            ),
+            ("only the task kind missing", "exact", None, "task kind not declared"),
+            (
+                "both missing",
+                None,
+                None,
+                "neither evaluation method nor task kind declared",
+            ),
+        ):
+            with self.subTest(label):
+                facts = MODULE.evaluation_facts_from_calibration(
+                    {"passed": True, "cases": [{"checks": passing}]},
+                    method=method,
+                    task_kind=task_kind,
+                )
+                pillar, _caps = MODULE.score_evaluation(facts)
+                fit = next(sub for sub in pillar.subscores if sub.name == "task-fit")
+                self.assertEqual(fit.evidence, f"{expected} - fit is unverified")
+
+    def test_a_falsey_non_boolean_check_still_disqualifies(self) -> None:
+        """The adapter's bool() clamp, pinned through the real adapter.
+
+        `observed_failure` and `gating_failed` both ask `value is False`, and
+        `0` and `""` are not. Without the clamp such a check is neither a pass
+        nor a failure -- it is not counted -- so a disqualifying calibration
+        scores full credit and the card says proceed. Removing the clamp used
+        to leave all 1323 tests green, which is how a maintainer reading a
+        stale comment would have concluded it was safe to relax.
+
+        Driven through `evaluation_facts_from_calibration` rather than by
+        constructing facts by hand, because the clamp lives in the adapter and
+        a hand-built EvaluationFacts reaches around it.
+        """
+        passing = {"good_passes": True, "bad_fails": True, "non_constant": True}
+        for label, value in (("zero", 0), ("empty string", ""), ("false", False)):
+            with self.subTest(label):
+                facts = MODULE.evaluation_facts_from_calibration(
+                    {
+                        "passed": True,
+                        "cases": [
+                            {
+                                "checks": {**passing, "partial_fails": value},
+                                "scores": {"good": 1.0, "bad": 0.0},
+                            }
+                        ],
+                    },
+                    method="exact",
+                    task_kind="closed-label",
+                )
+                pillar, caps = MODULE.score_evaluation(facts)
+                self.assertEqual(
+                    [cap.condition for cap in caps],
+                    ["evaluator-invalid"],
+                    f"a check reported as {value!r} did not disqualify",
+                )
+                calibration = next(
+                    sub for sub in pillar.subscores if sub.name == "calibration"
+                )
+                self.assertEqual(calibration.value, 0.0)
+
     def test_a_reported_overall_failure_convicts_when_every_check_passed(self) -> None:
         """The calibrator's own verdict has to be read, not inferred from checks.
 
@@ -1441,6 +1594,10 @@ class EvaluationScoringTests(unittest.TestCase):
         free to be reworded into nothing while the test stays green.
         """
         _reported_pillar, reported = self._calibrated(calibration_passed=False)
+        # Asserted before indexing: a mutation that drops the cap would
+        # otherwise surface as IndexError, and a crash is indistinguishable
+        # from the refusal the test is looking for.
+        self.assertTrue(reported, "no cap fired for a reported overall failure")
         self.assertIn(
             "Read that output before trusting any number below.", reported[0].reason
         )
