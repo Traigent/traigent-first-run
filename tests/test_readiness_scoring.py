@@ -1486,9 +1486,7 @@ class EvaluationScoringTests(unittest.TestCase):
         """
         _pillar, caps = self._calibrated(
             calibration_complete=True,
-            checks=(
-                {"good_passes": "yes", "bad_fails": "yes", "non_constant": "yes"},
-            ),
+            checks=({"good_passes": "yes", "bad_fails": "yes", "non_constant": "yes"},),
         )
         self.assertEqual([cap.condition for cap in caps], ["evaluator-unvalidated"])
 
