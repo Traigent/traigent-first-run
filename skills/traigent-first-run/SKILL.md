@@ -189,11 +189,15 @@ heading.
 ## Guided flow
 
 Announce only the five stages above, as `Stage N/5`. The numbered sections below are
-this guide's structure, not those stages: never show their numbers.
+this guide's structure, not those stages: never show their numbers or their titles.
+`Done / Now / Next` names those five stages - a `Next` reading "isolated SDK
+environment" names a section the customer was never given.
 
 ### 1. Inspect quietly
 
-Perform safe, read-only discovery without asking for approval:
+Unless this run is resuming - which opens with where it stands instead - print
+"Opening message" above verbatim before anything else. Then perform safe,
+read-only discovery without asking for approval:
 
 - Identify the project language, Python version, dependency system, and every existing virtual
   environment - not the first one found. A tree can hold several, under names no convention
@@ -820,8 +824,12 @@ account request:
   created no portal experiment.
 - Do not disclose the held-out score before stage 8.
 
-This checkpoint is a valid place to stop. If the user stops, preserve the local result and report
-the run as baseline-only, not as a completed Traigent optimization.
+This checkpoint is a valid place to stop, and saying so without saying what stopping costs is not
+a neutral presentation. A baseline-only run has measured one fixed grid on the user's own machine:
+they have not seen Traigent choose a trial, have no portal experiment or link, no recommendation
+across both runs, and no held-out score - the four things stages 4 and 5 exist to show. Name those
+when the baseline leaves headroom, and recommend continuing. If the user stops anyway, preserve the
+local result and report the run as baseline-only, not as a completed Traigent optimization.
 
 Now check whether the dataset and evaluator distinguish configurations. If not, stop before the search
 and recommend the evidenced repair before any connected preview. If the baseline is nearly perfect with no
