@@ -632,6 +632,50 @@ DETERMINISTIC_METHODS = {
 CALIBRATION_REQUIRED_CHECKS = frozenset({"good_passes", "bad_fails", "non_constant"})
 
 
+def reported_bool(value: object) -> bool | None:
+    """A JSON value read as a verdict, or None when it carries none.
+
+    Three answers, not two. `bool(value)` reads the string "false" as True and
+    0 as a reported failure, and those are the same mistake pointing opposite
+    ways: a verdict invented out of a value that holds none. Callers ask
+    `is True` / `is False`, so an unreadable value matches neither.
+    """
+    return value if type(value) is bool else None
+
+
+def check_table_defect(case_checks: object) -> str | None:
+    """Why one calibration case's checks cannot be read, or None if they can.
+
+    A reason rather than a bool, because the card has to SAY which of these it
+    hit. Returning one flag for three different defects is what let a payload
+    missing `non_constant` -- every value a real bool -- be reported as
+    "reported a check value this score cannot read", sending the reader to
+    audit a table in which every value is fine.
+
+    Defined once and called from both sides: the adapter that decides
+    `calibration_complete`, and the scorer that decides `checks_complete`.
+    Those were the same predicate written out twice, which is not a spare copy
+    but a second place to be wrong -- both spellings already carried the same
+    required-names-only bug, so the duplicate did not catch it, it repeated it.
+    """
+    if not isinstance(case_checks, dict):
+        return "reported something that is not a table of checks"
+    missing = CALIBRATION_REQUIRED_CHECKS - case_checks.keys()
+    if missing:
+        return f"did not report {', '.join(sorted(missing))}"
+    unreadable = sorted(
+        name for name, value in case_checks.items() if type(value) is not bool
+    )
+    if unreadable:
+        return f"reported a value this score cannot read for {', '.join(unreadable)}"
+    return None
+
+
+def readable_check_table(case_checks: object) -> bool:
+    """The yes/no form, for the two places that only need the verdict."""
+    return check_table_defect(case_checks) is None
+
+
 @dataclass(frozen=True)
 class SubScore:
     name: str
@@ -1930,7 +1974,7 @@ class DatasetFacts:
     integrity_failed: bool = False
     # True only when EVERY row is generated. Mixtures are read from the counts
     # below; asking "is this dataset synthetic" of a mixture has no true answer.
-    synthetic: bool = False
+    synthetic: bool | None = False
     generated_outputs: bool = False
     # Row counts by provenance class. All zero means the preflight JSON predates
     # them, and `score_provenance` reads `sources` instead rather than taking
@@ -2038,9 +2082,9 @@ class EvaluationFacts:
     # actually passed. Direct scorer callers may leave it unknown and are then
     # judged from their check dictionaries.
     calibration_passed: bool | None = None
-    checks: tuple[dict[str, bool], ...] = ()
+    checks: tuple[dict[str, object], ...] = ()
     probe_scores: tuple[tuple[float, ...], ...] = ()
-    timed_out: bool = False
+    timed_out: bool | None = None
     # Whether the evaluator source parses as Python, from preflight's static
     # `ast.parse`-only check (never import, never execution). None means that
     # check never ran - not that it passed. `present=True` with `method=None`
@@ -3222,7 +3266,7 @@ def score_provenance(
         # same rows and is kept, so a count-free fixture that says every row is
         # generated is still scored generated rather than merely unread.
         counted = facts.rows
-        if facts.synthetic:
+        if facts.synthetic is True:
             synthesised_rows = facts.rows
         else:
             undeclared_rows = facts.rows
@@ -4383,7 +4427,7 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
     calibration_engaged = (
         facts.calibration_present
         or facts.calibration_supplied
-        or facts.timed_out
+        or facts.timed_out is True
         or bool(facts.checks)
     )
     if facts.parses is False or (facts.method is None and not calibration_engaged):
@@ -4412,10 +4456,19 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
     # The adapter's completion flag and the payload must agree. Direct callers
     # can construct `EvaluationFacts` too, so `calibration_complete=True` beside
     # an empty or partial check set cannot clear a behavioral-evidence ceiling.
+    # EVERY value, not only the three required names. The type check used to
+    # cover the required set and nothing else, so an optional check reported as
+    # `"false"`, `1`, `[1]` or `{}` was clamped to True by the adapter and
+    # earned the calibration its full forty points -- a malformed table scoring
+    # as a passing one. `--calibration` reads arbitrary JSON an assistant hands
+    # over, so this is the shape this function exists to survive.
+    #
+    # Malformed lands on incomplete, which is the honest third answer: not a
+    # pass, and not a failure either. Convicting on it would repeat the earlier
+    # mistake in the other direction, since a value nobody can read is not
+    # evidence that the evaluator is broken.
     checks_complete = bool(facts.checks) and all(
-        CALIBRATION_REQUIRED_CHECKS <= checks.keys()
-        and all(isinstance(checks[name], bool) for name in CALIBRATION_REQUIRED_CHECKS)
-        for checks in facts.checks
+        readable_check_table(checks) for checks in facts.checks
     )
     # `calibration_passed` belongs to this invariant too, but only one way
     # round, and the asymmetry is the whole point.
@@ -4433,22 +4486,60 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
     # already refuses a non-boolean `passed` for exactly this reason; deriving
     # it again here is what makes that refusal hold for the direct callers this
     # re-derivation exists to catch.
-    # `calibration_passed is False` is deliberately NOT a disjunct here: it
-    # already satisfies `isinstance(..., bool)` below, so adding it would be a
-    # second spelling of the same clearance and could never change the answer.
+    # The asymmetry has to apply to the WHOLE gate, not just the verdict half.
+    #
+    # It was written as `structural and (failure or verdict)`, which still
+    # demanded a structurally complete check table before it would convict. So
+    # a payload carrying `passed: false` AND a check that came back false, but
+    # missing one of the three required names, was scored
+    # `evaluator-unvalidated` (45, proceed) instead of `evaluator-invalid`
+    # (25, repair-evaluator) -- the exact leniency the comment above forbids,
+    # in the branch the comment is attached to. `--calibration` reads arbitrary
+    # JSON handed over by an assistant, so a truncated or foreign table is the
+    # case this function exists to survive.
+    #
+    # Two ways to have seen a failure, and the second needs its own clause.
+    #
+    # An itemised check came back False -- we looked at the table and saw it.
+    # Or the calibrator, which is the thing that actually ran this evaluator,
+    # reported an overall failure over a table that reported something. A
+    # truncated table is a reason to trust that verdict MORE, not to spend
+    # money: `{"passed": false, "cases": [{"checks": {"good_passes": true}}]}`
+    # routed to `proceed` at 45 until this clause existed, while the same
+    # payload with a complete table convicts at 25.
+    #
+    # `and any(checks ...)` is what keeps the earlier correction: a bare
+    # `passed: false` with nothing behind it -- `{"cases": []}`, or a case
+    # carrying an empty check dict -- is a verdict with no measurement, and
+    # admitting THOSE convicted a payload with no measured checks at 25 or,
+    # with no cases at all, cleared the ceiling and earned no evaluation cap.
     observed_failure = any(
         value is False for checks in facts.checks for value in checks.values()
-    )
-    checks_complete = checks_complete and (
-        observed_failure or isinstance(facts.calibration_passed, bool)
-    )
-    calibration_complete = (
-        checks_complete
-        if calibration_complete is None
-        else calibration_complete and checks_complete
-    )
+    ) or (facts.calibration_passed is False and any(checks for checks in facts.checks))
+    established = checks_complete and isinstance(facts.calibration_passed, bool)
+    if calibration_complete is not None:
+        established = established and calibration_complete
+    # One expression, and `observed_failure` sits OUTSIDE every conjunct on
+    # purpose. Folding it in beside the verdict left the adapter's own
+    # structural flag still ANDed over the top, so the leniency survived a fix
+    # aimed straight at it: the adapter marks a table missing a required name
+    # incomplete, and `False and anything` is False however the rest reads.
+    # Two names, because they answer two questions and one variable answering
+    # both silently changed three readers that never asked the second.
+    #
+    # `disqualifying` is "is there enough here to convict" -- the conviction
+    # branch below, where an observed failure counts on its own. `established`
+    # stays what it always was: did a COMPLETE calibration happen. Folding the
+    # first into the second handed the probe-spread measurement, its withheld
+    # flag and the unvalidated cap a meaning none of them asked for, so a
+    # failing calibration measured probe spread at 15/15 and the card printed a
+    # green tick on "separates good answers from bad" directly above the cap
+    # disqualifying that same calibration -- verbatim the defect this file
+    # records at the calibration subscore as the reason that one was made
+    # binary.
+    disqualifying = observed_failure or established
 
-    if calibration_complete and facts.checks:
+    if disqualifying and facts.checks:
         gating_failed = [
             index
             for index, checks in enumerate(facts.checks)
@@ -4483,9 +4574,17 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
         # scored is "did calibration establish this evaluator ranks the task
         # correctly", and when the answer is no there is no partial credit to
         # award for the checks that happened to pass on the way there.
+        # "completed" and "every itemised check" are claims about the table,
+        # and the table can now hold a value nobody can read. Saying either one
+        # over such a table tells the reader the opposite of the finding, and
+        # both sentences below were newly wrong the moment unreadable became a
+        # state. The cap is still correct -- a real False was seen -- so this
+        # changes what the reader is told, not who is convicted.
+        tables_readable = all(readable_check_table(checks) for checks in facts.checks)
+        completed = "completed" if tables_readable else "partly unreadable"
         if gating_failed:
             disqualified = (
-                "the completed calibration failed at least one authored "
+                f"the {completed} calibration failed at least one authored "
                 "behavioral check, so this evaluator has not demonstrated that "
                 "it ranks the task correctly. Every number below it is "
                 "unreliable."
@@ -4498,11 +4597,11 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
             # the reader a check failed would send them to look at a table
             # where nothing is wrong.
             disqualified = (
-                "the completed calibration reported an overall failure while "
-                "every itemised check passed, so what disqualified this "
-                "evaluator is recorded in the calibration output rather than "
-                "in the check table. Read that output before trusting any "
-                "number below."
+                f"the {completed} calibration reported an overall failure "
+                f"while {'every itemised check passed' if tables_readable else 'every check this score could read passed'}, "
+                "so what disqualified this evaluator is recorded in the "
+                "calibration output rather than in the check table. Read that "
+                "output before trusting any number below."
             )
         else:
             disqualified = None
@@ -4545,8 +4644,28 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
         # This module already draws the distinction correctly a hundred lines
         # away - "spread is unverified, not absent". This was the one place it
         # did not.
-        if facts.timed_out:
+        if facts.timed_out is True:
             evidence = "calibration ran but did not finish"
+        elif defects := [
+            reason
+            for checks in facts.checks
+            if checks and (reason := check_table_defect(checks))
+        ]:
+            # Quoted, not re-derived. The arm this replaced asserted ONE of the
+            # three defects for all of them, so a payload merely missing
+            # `non_constant` was reported as holding an unreadable value and
+            # the reader was sent to audit a table where every value was fine.
+            evidence = f"calibration {defects[0]}"
+        elif (
+            any(checks for checks in facts.checks) and facts.calibration_passed is None
+        ):
+            evidence = "calibration reported checks but no overall verdict"
+        elif any(checks for checks in facts.checks):
+            # A verdict DID arrive, so the arm above would be a falsehood. What
+            # is missing is a case this scorer could not read at all -- a
+            # non-dict entry, or one with no `checks` key -- which the adapter
+            # drops, so nothing downstream can see it except by this gap.
+            evidence = "calibration reported a case this score could not read"
         elif facts.calibration_supplied:
             evidence = "calibration ran but reported no checks"
         else:
@@ -4584,13 +4703,28 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
             )
         )
     else:
+        # Name the input that is actually missing. This arm fires when EITHER
+        # the method or the task kind is absent -- fit is a property of the
+        # pair -- and it used to blame the task kind unconditionally. A
+        # customer who declared `--task-kind` and not `--evaluator-method` was
+        # told to declare a task kind they had already given, and the number
+        # did not move when they did. The README's own worked example is that
+        # state.
+        if facts.method is None and facts.task_kind is None:
+            unverified = "neither evaluation method nor task kind declared"
+        elif facts.method is None:
+            unverified = "evaluation method not declared"
+        elif facts.task_kind is None:
+            unverified = "task kind not declared"
+        else:
+            unverified = f"{facts.method} has no fit profile to check"
         subs.append(
             SubScore(
                 "task-fit",
                 0.0,
                 25.0,
                 False,
-                "task kind not declared - fit is unverified",
+                f"{unverified} - fit is unverified",
                 # Withheld, not unavailable: the run is asked for
                 # `--task-kind` and chose not to answer. Renormalized away, not
                 # answering scored the pillar 100 against 83 for declaring a
@@ -4624,7 +4758,7 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
             )
         )
 
-    if calibration_complete and facts.probe_scores:
+    if established and facts.probe_scores:
         spreads = [max(case) - min(case) for case in facts.probe_scores if case]
         widest = max(spreads) if spreads else 0.0
         subs.append(
@@ -4650,11 +4784,11 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
                 # evidence is already charged by the calibration subscore;
                 # spread remains unknown rather than charging the same absence
                 # a second time.
-                withheld=bool(calibration_complete),
+                withheld=bool(established),
             )
         )
 
-    if facts.timed_out:
+    if facts.timed_out is True:
         caps.append(
             Cap(
                 "evaluator-timeout",
@@ -4666,7 +4800,16 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
     # behavior. Missing or incomplete current-run evidence therefore bounds
     # the readiness claim without saying the evaluator failed. A timeout has
     # its own equally strict and more specific ceiling.
-    if facts.method is not None and not calibration_complete and not facts.timed_out:
+    # `not disqualifying` as well: once a calibration has been convicted, "no
+    # complete current-run calibration measured the connected evaluator" is the
+    # wrong sentence -- one ran, and it failed. Reachable only on the truncated
+    # table the conviction rule now admits, so this pairing is new with it.
+    if (
+        facts.method is not None
+        and not established
+        and not disqualifying
+        and facts.timed_out is not True
+    ):
         caps.append(
             Cap(
                 "evaluator-unvalidated",
@@ -5751,7 +5894,7 @@ def provenance_assumption(
     undeclared = dataset_facts.undeclared_rows
     if not counted:
         counted = dataset_facts.rows
-        undeclared = 0 if dataset_facts.synthetic else dataset_facts.rows
+        undeclared = 0 if dataset_facts.synthetic is True else dataset_facts.rows
     if not undeclared:
         return None
     # One shape, because there is only one. The second branch that used to be
@@ -6375,10 +6518,11 @@ def _answer_dominance_status(statuses: dict[str, str]) -> str | None:
 
 def evaluator_shape_from_preflight(
     records: Sequence[dict[str, Any]],
-) -> tuple[bool, bool | None]:
+) -> tuple[bool | None, bool | None]:
     """Read preflight's static `evaluator-shape` check, if one ran.
 
-    Returns `(present, parses)`. `present` is a measured fact - preflight
+    Returns `(present, parses)`, each `None` when the field carries no
+    readable verdict. `present` is a measured fact - preflight
     found a file at the path it was given - not a declaration; `parses` is
     `None` when no such check ran (not "it failed"), `True` when the file
     parsed as valid Python, `False` when it did not. preflight never imports
@@ -6388,7 +6532,12 @@ def evaluator_shape_from_preflight(
     shape = _metrics_by_check(records).get("evaluator-shape")
     if not shape:
         return False, None
-    return bool(shape.get("exists")), shape.get("parses")
+    # `bool()` here told a customer to repair a file preflight had just said
+    # does not exist: `{"exists": "false"}` read as present, which swaps
+    # `evaluator-absent` for `evaluator-unresolved` and its remedy with it.
+    # `parses` was already three-state and is now read the same way, so a
+    # non-boolean lands on "no honest reading" rather than on True.
+    return reported_bool(shape.get("exists")), reported_bool(shape.get("parses"))
 
 
 class PreflightInputError(ValueError):
@@ -6898,8 +7047,11 @@ def dataset_facts_from_preflight(records: Sequence[dict[str, Any]]) -> DatasetFa
             metrics.get("dataset-split-family", {}).get("holdout_forms")
         ),
         integrity_failed=structurally_failed or _failed(statuses, "dataset-ids"),
-        synthetic=bool(provenance.get("synthetic")),
-        generated_outputs=bool(provenance.get("generated_outputs")),
+        # Same three-answer read as everything else off this payload:
+        # `{"synthetic": "false"}` flipped the cap from "no row of this dataset
+        # was observed" to "the dataset is generated", on a string.
+        synthetic=reported_bool(provenance.get("synthetic")),
+        generated_outputs=reported_bool(provenance.get("generated_outputs")),
         placeholder_rows=_row_count(
             metrics.get("dataset-output-placeholders", {}).get("placeholder_rows"),
             "placeholder_rows",
@@ -6931,7 +7083,7 @@ def evaluation_facts_from_calibration(
     *,
     method: str | None = None,
     task_kind: str | None = None,
-    evaluator_present: bool = False,
+    evaluator_present: bool | None = False,
     evaluator_parses: bool | None = None,
     origin: str | None = None,
 ) -> EvaluationFacts:
@@ -6946,7 +7098,7 @@ def evaluation_facts_from_calibration(
     """
     if payload is None:
         return EvaluationFacts(
-            present=method is not None or evaluator_present,
+            present=method is not None or evaluator_present is True,
             method=method,
             task_kind=task_kind,
             parses=evaluator_parses,
@@ -6955,7 +7107,7 @@ def evaluation_facts_from_calibration(
     cases = payload.get("cases")
     if not isinstance(cases, list):
         cases = [payload]
-    checks: list[dict[str, bool]] = []
+    checks: list[dict[str, object]] = []
     probes: list[tuple[float, ...]] = []
     reported_passed = payload.get("passed")
     calibration_complete = bool(cases) and isinstance(reported_passed, bool)
@@ -6965,39 +7117,54 @@ def evaluation_facts_from_calibration(
             continue
         case_checks = case.get("checks")
         if isinstance(case_checks, dict):
-            # This clamp is the only value-domain guard on an OPTIONAL check --
-            # the completeness invariant below type-checks the three required
-            # names and nothing else -- so the ratio downstream must never see a
-            # raw payload value. Relaxing it to a tri-state, so an undecidable
-            # check could be excluded rather than counted as failing, moved a
-            # check reported as `0` or `""` from a blocking `evaluator-invalid`
-            # to no cap at all: 25 NOT READY BLOCKED became 72 WORKABLE OK,
-            # and the instruction flipped from repair-your-evaluator to spend
-            # money. It also let a numeric value through into `sum()`, scoring
-            # the calibration 430 out of a maximum of 40. See the contract test
-            # in tests/test_calibrate_evaluator.py: `checks` values are
-            # comparison expressions and are always real booleans, so there is
-            # no undecidable check here to make room for. The tri-state the
+            # Stored as reported. That is safe only because
+            # `readable_check_table` type-checks EVERY value: both
+            # `observed_failure` and `gating_failed` ask `value is False`, so a
+            # raw `0`, `""`, `None` or `"false"` matches neither a pass nor a
+            # failure and lands on incomplete, at the 45 ceiling -- the honest
+            # answer for a value nobody can read.
+            #
+            # Two earlier attempts got this wrong in opposite directions, which
+            # is why the current shape is worth stating plainly. Dropping
+            # unreadable values from a per-case ratio gave them free credit and
+            # moved a broken evaluator from 25 BLOCKED to 72 WORKABLE. Clamping
+            # them with `bool()` convicted at 25 instead -- and read `"false"`,
+            # `1`, `[1]` and `{}` as True, scoring a malformed table its full
+            # forty points, which is the defect that made the type check
+            # necessary. Neither the ratio nor the clamp still exists; do not
+            # go looking for them.
+            #
+            # There is nothing undecidable here to make room for: every value
+            # in `checks` is a comparison expression, pinned by the contract
+            # test in tests/test_calibrate_evaluator.py. The tri-state the
             # calibrator does emit is `permutation_probe["distinguished"]`, a
             # sibling of `checks` that this adapter never reads.
-            checks.append({key: bool(value) for key, value in case_checks.items()})
-        if not (
-            isinstance(case_checks, dict)
-            and CALIBRATION_REQUIRED_CHECKS <= case_checks.keys()
-            and all(
-                isinstance(case_checks[name], bool)
-                for name in CALIBRATION_REQUIRED_CHECKS
-            )
-        ):
+            checks.append(dict(case_checks))
+        if not readable_check_table(case_checks):
             calibration_complete = False
         scores = case.get("scores")
         if isinstance(scores, dict):
+            # `bool` subclasses `int`, so {"good": true, "bad": false} became
+            # (1.0, 0.0) and earned full behavioural-separation credit from a
+            # payload holding no scores. `json.loads` also accepts bare NaN and
+            # Infinity, and {"good": NaN} printed "scores a right answer nan
+            # above a wrong one" at a full 15/15. The producer already enforces
+            # both -- calibrate_evaluator raises on a non-finite score and on
+            # one outside [0, 1] -- so this reader was the half of the contract
+            # that had been left off.
             numeric = [
                 float(value)
                 for value in scores.values()
                 if isinstance(value, (int, float))
+                and not isinstance(value, bool)
+                and math.isfinite(value)
+                and 0.0 <= value <= 1.0
             ]
-            if numeric:
+            # All or nothing. Keeping the survivors of a half-readable dict
+            # reported {"good": NaN, "bad": 0.0} as a MEASURED zero spread --
+            # a measurement, made over one number, standing in for a pair. A
+            # case whose scores cannot all be read has not measured anything.
+            if numeric and len(numeric) == len(scores):
                 probes.append(tuple(numeric))
     return EvaluationFacts(
         present=True,
@@ -7008,12 +7175,14 @@ def evaluation_facts_from_calibration(
         # line is the proof - `payload is None` returned above.
         calibration_supplied=True,
         calibration_complete=calibration_complete,
-        calibration_passed=(
-            reported_passed if isinstance(reported_passed, bool) else None
-        ),
+        calibration_passed=reported_bool(reported_passed),
         checks=tuple(checks),
         probe_scores=tuple(probes),
-        timed_out=bool(payload.get("timed_out")),
+        # `bool()` here read the string "false" as a timeout and raised a
+        # BLOCKING cap over a calibration that had passed every check. Same
+        # rule as `calibration_passed` directly above, which this should always
+        # have matched -- one field over, in the same constructor.
+        timed_out=reported_bool(payload.get("timed_out")),
         parses=evaluator_parses,
         origin=origin,
     )

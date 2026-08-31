@@ -2276,7 +2276,17 @@ class EvaluatorPresenceAdapterTests(unittest.TestCase):
         self.assertNotIn("evaluator-absent", caps)
 
     def test_incomplete_calibration_earns_no_behavioral_credit(self) -> None:
-        """A payload is not proof unless it contains all measured checks."""
+        """A verdict with no measurement behind it earns no behavioral credit.
+
+        The third payload this used to sweep --
+        `{"cases": [{"checks": {"good_passes": true}}], "passed": false}` -- was
+        moved to `test_a_reported_failure_over_a_partial_table_convicts`. It is
+        the one case here where the calibrator DID measure something and then
+        reported failure, and pinning it to `evaluator-unvalidated` was pinning
+        a run that spends money on an evaluator its own calibrator failed.
+        These two remain: no cases at all, and a case whose check table is
+        empty. Both are a verdict with nothing behind it.
+        """
         with tempfile.TemporaryDirectory() as directory:
             evaluator = Path(directory) / "evaluator.py"
             evaluator.write_text(
@@ -2286,7 +2296,6 @@ class EvaluatorPresenceAdapterTests(unittest.TestCase):
             for payload in (
                 {"cases": [], "passed": False},
                 {"cases": [{"checks": {}}], "passed": False},
-                {"cases": [{"checks": {"good_passes": True}}], "passed": False},
             ):
                 with self.subTest(payload=payload):
                     calibration = Path(directory) / "calibration.json"
@@ -2322,6 +2331,65 @@ class EvaluatorPresenceAdapterTests(unittest.TestCase):
                     )
                     self.assertFalse(calibration_score["measured"])
                     self.assertTrue(calibration_score["withheld"])
+                    self.assertEqual(calibration_score["value"], 0.0)
+
+    def test_a_reported_failure_over_a_partial_table_convicts(self) -> None:
+        """The calibrator ran this evaluator and said it failed.
+
+        A truncated check table is a reason to trust that verdict more, not a
+        reason to spend money. This payload routed to `evaluator-unvalidated`
+        (45, proceed) until the completeness rule read the verdict as evidence
+        in its own right, while the same payload with a complete table
+        convicted at 25 -- and the comment governing that code had promised
+        both routes convict since before either was written.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            evaluator = Path(directory) / "evaluator.py"
+            evaluator.write_text(
+                "def score(output, expected):\n"
+                "    return 1.0 if output == expected else 0.0\n"
+            )
+            for payload in (
+                {"cases": [{"checks": {"good_passes": True}}], "passed": False},
+                {
+                    "cases": [{"checks": {"good_passes": True, "bad_fails": True}}],
+                    "passed": False,
+                },
+            ):
+                with self.subTest(payload=payload):
+                    calibration = Path(directory) / "calibration.json"
+                    calibration.write_text(json.dumps(payload))
+                    score = _score_evaluator(
+                        evaluator,
+                        (
+                            "--evaluator-method",
+                            "exact",
+                            "--calibration",
+                            str(calibration),
+                        ),
+                    )
+                    caps = _evaluation_caps(score)
+                    self.assertIn("evaluator-invalid", caps)
+                    self.assertNotIn("evaluator-unvalidated", caps)
+                    invalid = _cap(score, "evaluator-invalid")
+                    self.assertEqual(
+                        invalid["ceiling"],
+                        MODULE.EVALUATOR_INVALID_CEILING,
+                    )
+                    self.assertTrue(invalid["blocks"])
+                    self.assertEqual(invalid["action_kind"], "repair-evaluator")
+                    evaluation = next(
+                        pillar
+                        for pillar in score["pillars"]
+                        if pillar["name"] == "evaluation"
+                    )
+                    calibration_score = next(
+                        subscore
+                        for subscore in evaluation["subscores"]
+                        if subscore["name"] == "calibration"
+                    )
+                    self.assertTrue(calibration_score["measured"])
+                    self.assertFalse(calibration_score["withheld"])
                     self.assertEqual(calibration_score["value"], 0.0)
 
     def test_calibration_that_rejects_a_known_good_answer_is_invalid(self) -> None:
