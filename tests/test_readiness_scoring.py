@@ -1537,6 +1537,130 @@ class EvaluationScoringTests(unittest.TestCase):
         # wrong sentence once one ran and failed.
         self.assertEqual([cap.condition for cap in caps], ["evaluator-invalid"])
 
+    def test_the_scorer_refuses_an_unreadable_table_on_its_own(self) -> None:
+        """The scorer half of the invariant, pinned without the adapter.
+
+        `readable_check_table` is called from two places, and a test that goes
+        through the adapter proves only the conjunction: revert the scorer's
+        call alone and such a test stays green. So this one builds the facts
+        directly, the way a caller that never touched JSON would, and requires
+        the scorer to refuse credit on its own.
+        """
+        facts = MODULE.EvaluationFacts(
+            present=True,
+            method="exact",
+            task_kind="closed-label",
+            calibration_present=True,
+            calibration_supplied=True,
+            calibration_complete=True,  # the adapter is TELLING it everything is fine
+            calibration_passed=True,
+            checks=({"good_passes": True, "bad_fails": True, "non_constant": "yes"},),
+            probe_scores=((1.0, 0.0),),
+        )
+        pillar, caps = MODULE.score_evaluation(facts)
+        calibration = next(sub for sub in pillar.subscores if sub.name == "calibration")
+        self.assertEqual(calibration.value, 0.0, "an unreadable table earned credit")
+        self.assertEqual([cap.condition for cap in caps], ["evaluator-unvalidated"])
+
+    def test_the_adapter_refuses_an_unreadable_table_on_its_own(self) -> None:
+        """The adapter half, pinned at the boundary rather than through scoring."""
+        facts = MODULE.evaluation_facts_from_calibration(
+            {
+                "passed": True,
+                "cases": [
+                    {
+                        "checks": {
+                            "good_passes": True,
+                            "bad_fails": True,
+                            "non_constant": 1,
+                        },
+                        "scores": {"good": 1.0, "bad": 0.0},
+                    }
+                ],
+            },
+            method="exact",
+            task_kind="closed-label",
+        )
+        self.assertIs(facts.calibration_complete, False)
+
+    def test_a_timeout_flag_nobody_can_read_is_not_a_timeout(self) -> None:
+        """The sibling that sat thirty lines below the fix and was missed.
+
+        `bool(payload.get("timed_out"))` read the string "false" as True and
+        raised a BLOCKING cap over a calibration that had passed every check --
+        exactly the conviction-on-an-unreadable-value the check-table fix was
+        written to stop. Only a real True is a timeout.
+        """
+        passing = {"good_passes": True, "bad_fails": True, "non_constant": True}
+
+        def caps_for(**extra):
+            facts = MODULE.evaluation_facts_from_calibration(
+                {
+                    "passed": True,
+                    "cases": [
+                        {"checks": dict(passing), "scores": {"good": 1.0, "bad": 0.0}}
+                    ],
+                    **extra,
+                },
+                method="exact",
+                task_kind="closed-label",
+            )
+            return facts, [cap.condition for cap in MODULE.score_evaluation(facts)[1]]
+
+        for label, value in (
+            ("the string false", "false"),
+            ("the string no", "no"),
+            ("an int", 1),
+            ("an empty string", ""),
+        ):
+            with self.subTest(label):
+                facts, conditions = caps_for(timed_out=value)
+                self.assertIsNone(facts.timed_out, f"{value!r} was read as a verdict")
+                self.assertNotIn("evaluator-timeout", conditions)
+
+        facts, conditions = caps_for(timed_out=True)
+        self.assertIs(facts.timed_out, True)
+        self.assertIn("evaluator-timeout", conditions)
+
+        facts, conditions = caps_for(timed_out=False)
+        self.assertIs(facts.timed_out, False)
+        self.assertNotIn("evaluator-timeout", conditions)
+
+    def test_booleans_are_not_probe_scores(self) -> None:
+        """`bool` subclasses `int`, so True scored 1.0 and earned full credit.
+
+        {"good": true, "bad": false} became (1.0, 0.0) and bought the whole
+        15-point behavioural-separation subscore off a payload containing no
+        scores at all -- the same manufacture-a-measurement shape as the check
+        table. Withheld is the honest answer; invented is not.
+        """
+        passing = {"good_passes": True, "bad_fails": True, "non_constant": True}
+
+        def spread_for(scores):
+            facts = MODULE.evaluation_facts_from_calibration(
+                {
+                    "passed": True,
+                    "cases": [{"checks": dict(passing), "scores": scores}],
+                },
+                method="exact",
+                task_kind="closed-label",
+            )
+            pillar, _caps = MODULE.score_evaluation(facts)
+            return facts, next(
+                sub for sub in pillar.subscores if sub.name == "probe-spread"
+            )
+
+        facts, spread = spread_for({"good": True, "bad": False})
+        self.assertEqual(facts.probe_scores, (), "booleans were read as scores")
+        self.assertEqual(spread.value, 0.0)
+        self.assertFalse(spread.measured)
+
+        # The positive control, so a guard that refuses everything fails too.
+        facts, spread = spread_for({"good": 1.0, "bad": 0.0})
+        self.assertEqual(facts.probe_scores, ((1.0, 0.0),))
+        self.assertEqual(spread.value, spread.maximum)
+        self.assertTrue(spread.measured)
+
     def test_a_malformed_check_value_is_unreadable_not_passing(self) -> None:
         """Three answers, and malformed is the third one.
 
