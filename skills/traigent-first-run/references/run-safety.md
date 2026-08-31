@@ -127,7 +127,11 @@ Ask before any private content leaves the machine, even when the provider key al
 
 Before a Traigent key request, link current [pricing](https://portal.traigent.ai/pricing),
 [terms](https://portal.traigent.ai/terms), and [privacy](https://portal.traigent.ai/privacy). Do
-not copy their prices or claims. They do not establish training use of submitted material: make no
+not copy their prices or claims. State what the pinned SDK's telemetry contract says a connected
+run sends - tuned configuration keys and values, numeric scores, run state - and what it says is
+excluded: prompts, dataset rows, expected answers, model responses. That is the documented
+contract, not a packet audit, and it is what the user is entitled to before deciding. Report it
+and stop there. They do not establish training use of submitted material: make no
 claim. Stop before key handoff; ask Traigent for its canonical training-use policy. Nothing local
 clears this: it holds until Traigent provides one.
 

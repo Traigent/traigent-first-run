@@ -22111,6 +22111,38 @@ class TheAgentIsFoundBeforeWhatGradesItTests(unittest.TestCase):
             "#### Opening readiness gate", 1
         )[0]
 
+    def test_the_greeting_is_the_first_thing_step_one_asks_for(self) -> None:
+        """Placement, which content pinning never covered.
+
+        The Opening message is read in several places, so its WORDS were
+        pinned. Where it is printed was not, and it lived as one bullet among
+        a dozen presentation rules ninety lines above this step - so one run
+        greeted first and another inspected, scored, and greeted only when it
+        stopped for a provider key. Both read the same document.
+
+        Asserted inside section 1's own slice: the instruction has to precede
+        the discovery it precedes, and it has to spare a resumed run, which
+        opens with where it stands instead.
+        """
+        normalized = " ".join(self._stage_one().casefold().split())
+        # Asserted before indexing: `.index` raises ValueError when the
+        # instruction is absent, and a crash reads the same as the refusal
+        # this is looking for -- which is the state the pre-PR document was in.
+        self.assertIn(
+            'print "opening message"',
+            normalized,
+            "section 1 never tells the assistant to greet the customer",
+        )
+        self.assertIn("read-only discovery", normalized)
+        greeting = normalized.index('print "opening message"')
+        discovery = normalized.index("read-only discovery")
+        self.assertLess(
+            greeting,
+            discovery,
+            "step 1 starts discovering before it greets the customer",
+        )
+        self.assertIn("resuming", normalized[:greeting])
+
     def test_the_agent_leads_and_the_guidance_says_why(self) -> None:
         normalized = " ".join(self._stage_one().casefold().split())
         agent = normalized.index("smallest scoreable agent function")
