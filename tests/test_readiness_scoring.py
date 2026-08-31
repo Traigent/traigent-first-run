@@ -1490,25 +1490,6 @@ class EvaluationScoringTests(unittest.TestCase):
         )
         self.assertEqual([cap.condition for cap in caps], ["evaluator-unvalidated"])
 
-    def test_an_undecided_optional_check_is_not_a_failure(self) -> None:
-        """calibrate_evaluator.py emits null for a probe it could not decide.
-
-        Its own comment says calling that a pass or a failure "would invent a
-        result out of an exception". Coercing it to False did exactly that one
-        module downstream, and blocked the customer at 25 on a check nobody ran.
-        """
-        _pillar, caps = self._calibrated(
-            checks=(
-                {
-                    "good_passes": True,
-                    "bad_fails": True,
-                    "non_constant": True,
-                    "permutation_distinguished": None,
-                },
-            )
-        )
-        self.assertEqual([cap.condition for cap in caps], [])
-
     def test_uncalibrated_evidence_cannot_inflate_the_overall_score_or_band(
         self,
     ) -> None:

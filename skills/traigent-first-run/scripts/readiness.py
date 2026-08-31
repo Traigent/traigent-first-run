@@ -2038,7 +2038,7 @@ class EvaluationFacts:
     # actually passed. Direct scorer callers may leave it unknown and are then
     # judged from their check dictionaries.
     calibration_passed: bool | None = None
-    checks: tuple[dict[str, bool | None], ...] = ()
+    checks: tuple[dict[str, bool], ...] = ()
     probe_scores: tuple[tuple[float, ...], ...] = ()
     timed_out: bool = False
     # Whether the evaluator source parses as Python, from preflight's static
@@ -4453,7 +4453,7 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
         ]
         per_case: list[float] = []
         for checks in facts.checks:
-            values = [value for value in checks.values() if value is not None]
+            values = [bool(value) for value in checks.values()]
             per_case.append(sum(values) / len(values) if values else 0.0)
         blended = 0.5 * (sum(per_case) / len(per_case)) + 0.5 * min(per_case)
         # A disqualifying calibration scores zero on this check, and the two
@@ -6942,7 +6942,7 @@ def evaluation_facts_from_calibration(
     cases = payload.get("cases")
     if not isinstance(cases, list):
         cases = [payload]
-    checks: list[dict[str, bool | None]] = []
+    checks: list[dict[str, bool]] = []
     probes: list[tuple[float, ...]] = []
     reported_passed = payload.get("passed")
     calibration_complete = bool(cases) and isinstance(reported_passed, bool)
@@ -6952,20 +6952,22 @@ def evaluation_facts_from_calibration(
             continue
         case_checks = case.get("checks")
         if isinstance(case_checks, dict):
-            # `bool(value)` here turned an unestablished check into a failing
-            # one. calibrate_evaluator.py already emits null for a probe it
-            # could not decide -- its own comment says calling that a pass or a
-            # failure "would invent a result out of an exception" -- and
-            # coercing it to False did exactly that, one module downstream, and
-            # blocked the customer at 25 on a check nobody ran. A required check
-            # that is not boolean still fails the completeness invariant below,
-            # so this only widens what an OPTIONAL authored check may report.
-            checks.append(
-                {
-                    key: value if isinstance(value, bool) else None
-                    for key, value in case_checks.items()
-                }
-            )
+            # This clamp is the only value-domain guard on an OPTIONAL check --
+            # the completeness invariant below type-checks the three required
+            # names and nothing else -- so the ratio downstream must never see a
+            # raw payload value. Relaxing it to a tri-state, so an undecidable
+            # check could be excluded rather than counted as failing, moved a
+            # check reported as `0` or `""` from a blocking `evaluator-invalid`
+            # to no cap at all: 25 NOT READY BLOCKED became 72 WORKABLE OK,
+            # and the instruction flipped from repair-your-evaluator to spend
+            # money. It also let a numeric value through into `sum()`, scoring
+            # the calibration 430 out of a maximum of 40. See the contract test
+            # in tests/test_calibrate_evaluator.py: `checks` values are
+            # comparison expressions and are always real booleans, so there is
+            # no undecidable check here to make room for. The tri-state the
+            # calibrator does emit is `permutation_probe["distinguished"]`, a
+            # sibling of `checks` that this adapter never reads.
+            checks.append({key: bool(value) for key, value in case_checks.items()})
         if not (
             isinstance(case_checks, dict)
             and CALIBRATION_REQUIRED_CHECKS <= case_checks.keys()

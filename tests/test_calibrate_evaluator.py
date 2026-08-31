@@ -2652,6 +2652,86 @@ class PermutationProbeTests(unittest.TestCase):
         self.assertNotIn("permutation_question", payload)
 
 
+class TheCheckTableIsBooleanAllTheWayDownTests(unittest.TestCase):
+    """readiness.py clamps every `checks` value with `bool()`, and may.
+
+    That clamp is the only value-domain guard on an OPTIONAL check -- the
+    completeness invariant there type-checks the three required names and
+    nothing else -- so relaxing it is only safe if this script cannot emit a
+    value the clamp would mis-read. It was relaxed once, on the belief that a
+    probe this script could not decide arrives here as null, and a check
+    reported as `0` or `""` went from a blocking `evaluator-invalid` to no cap
+    at all: 25 NOT READY BLOCKED became 72 WORKABLE OK, and the instruction
+    flipped from repair-your-evaluator to spend money.
+
+    The belief was about the wrong field. `permutation_probe["distinguished"]`
+    IS tri-state and its comment does say that deciding it "would invent a
+    result out of an exception" -- but it is a sibling of `checks`, not a
+    member, and the readiness adapter never reads it. Every value in `checks`
+    is a comparison expression.
+
+    So this pins the contract rather than the belief: if a check value ever
+    stops being a real bool, this fails, and that is the moment the consumer's
+    clamp has to be revisited -- not before.
+    """
+
+    @staticmethod
+    def _module():
+        spec = importlib.util.spec_from_file_location("first_run_calibrate", SCRIPT)
+        module = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        sys.modules[spec.name] = module
+        spec.loader.exec_module(module)
+        return module
+
+    def test_every_emitted_check_value_is_a_real_bool(self) -> None:
+        module = self._module()
+        thresholds = {
+            "good_minimum": module.GOOD_MINIMUM,
+            "bad_maximum": module.BAD_MAXIMUM,
+            "equivalence_tolerance": module.EQUIVALENCE_TOLERANCE,
+            "separation_margin": module.SEPARATION_MARGIN,
+        }
+        interesting = (0.0, 0.05, 0.2, 0.5, 0.8, 0.95, 1.0)
+        seen = 0
+        for mode in module.SCORE_MODES:
+            for good in interesting:
+                for bad in interesting:
+                    for partial in interesting:
+                        checks = module.calibration_checks(
+                            {
+                                "good": good,
+                                "equivalent_good": good,
+                                "partial": partial,
+                                "bad": bad,
+                            },
+                            mode,
+                            thresholds,
+                        )
+                        for name, value in checks.items():
+                            seen += 1
+                            self.assertIs(
+                                type(value),
+                                bool,
+                                f"{mode}/{name} emitted {value!r} "
+                                f"({type(value).__name__}), which readiness.py "
+                                f"would clamp with bool()",
+                            )
+        self.assertGreater(seen, 0, "no check values were produced to inspect")
+
+    def test_the_source_declares_the_same_contract(self) -> None:
+        """The sweep above cannot reach a branch a future edit adds."""
+        source = SCRIPT.read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        function = next(
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.FunctionDef) and node.name == "calibration_checks"
+        )
+        self.assertIsInstance(function.returns, ast.Subscript)
+        self.assertEqual(ast.unparse(function.returns), "dict[str, bool]")
+
+
 class NoInternalFailureReachesTheUserAsATracebackTests(unittest.TestCase):
     """An unexpected error printed a traceback where the calibration goes.
 
