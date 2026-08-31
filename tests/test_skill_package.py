@@ -6065,6 +6065,10 @@ class SkillPackageTests(unittest.TestCase):
                 opening,
                 calibration_present=True,
                 calibration_complete=True,
+                # A complete calibration carries the calibrator's own verdict
+                # beside the itemised checks; a passing check set alone no
+                # longer clears the behavioral-evidence ceiling.
+                calibration_passed=True,
                 checks=(
                     {
                         "good_passes": True,

@@ -2037,7 +2037,7 @@ class EvaluationFacts:
     # actually passed. Direct scorer callers may leave it unknown and are then
     # judged from their check dictionaries.
     calibration_passed: bool | None = None
-    checks: tuple[dict[str, bool], ...] = ()
+    checks: tuple[dict[str, bool | None], ...] = ()
     probe_scores: tuple[tuple[float, ...], ...] = ()
     timed_out: bool = False
     # Whether the evaluator source parses as Python, from preflight's static
@@ -4416,6 +4416,28 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
         and all(isinstance(checks[name], bool) for name in CALIBRATION_REQUIRED_CHECKS)
         for checks in facts.checks
     )
+    # `calibration_passed` belongs to this invariant too, but only one way
+    # round, and the asymmetry is the whole point.
+    #
+    # Evidence of FAILURE is conclusive on its own: a check came back False, or
+    # the calibrator said it failed, and we looked and saw it. That convicts
+    # with or without the rest of the result -- demanding a verdict there would
+    # downgrade a demonstrably broken evaluator from `evaluator-invalid` (25) to
+    # `evaluator-unvalidated` (45), which is the wrong direction to be lenient.
+    #
+    # Evidence of SUCCESS is not conclusive without the calibrator's own
+    # verdict. Every itemised check passing says nothing about the checks it
+    # never itemised, so a result with no boolean `passed` has not established
+    # this evaluator and cannot clear a behavioral-evidence ceiling. The adapter
+    # already refuses a non-boolean `passed` for exactly this reason; deriving
+    # it again here is what makes that refusal hold for the direct callers this
+    # re-derivation exists to catch.
+    observed_failure = facts.calibration_passed is False or any(
+        value is False for checks in facts.checks for value in checks.values()
+    )
+    checks_complete = checks_complete and (
+        observed_failure or isinstance(facts.calibration_passed, bool)
+    )
     calibration_complete = (
         checks_complete
         if calibration_complete is None
@@ -4430,28 +4452,67 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
         ]
         per_case: list[float] = []
         for checks in facts.checks:
-            values = [bool(value) for value in checks.values()]
+            values = [value for value in checks.values() if value is not None]
             per_case.append(sum(values) / len(values) if values else 0.0)
         blended = 0.5 * (sum(per_case) / len(per_case)) + 0.5 * min(per_case)
+        # A disqualifying calibration scores zero on this check, and the two
+        # ways to be disqualified are named apart because they tell the reader
+        # to do different things.
+        #
+        # Proportional credit here was the defect: a calibration whose evaluator
+        # rejects a correct answer still passed most of its checks, so the card
+        # printed `EVALUATION 96/100` with a green tick on "checked on
+        # known-good and known-bad" directly above a cap saying that same
+        # calibration disqualified the evaluator. At the extreme -- an overall
+        # failure the calibrator did not itemise -- every check passed and the
+        # pillar read a clean 100/100 beside a blocking cap. The check being
+        # scored is "did calibration establish this evaluator ranks the task
+        # correctly", and when the answer is no there is no partial credit to
+        # award for the checks that happened to pass on the way there.
+        if gating_failed:
+            disqualified = (
+                "the completed calibration failed at least one authored "
+                "behavioral check, so this evaluator has not demonstrated that "
+                "it ranks the task correctly. Every number below it is "
+                "unreliable."
+            )
+        elif facts.calibration_passed is False:
+            # Not the same finding, and not a rewording of it. Every itemised
+            # check passed and the calibrator still returned an overall
+            # failure, so whatever disqualified this evaluator is in the
+            # calibration output rather than in the check table -- and telling
+            # the reader a check failed would send them to look at a table
+            # where nothing is wrong.
+            disqualified = (
+                "the completed calibration reported an overall failure while "
+                "every itemised check passed, so what disqualified this "
+                "evaluator is recorded in the calibration output rather than "
+                "in the check table. Read that output before trusting any "
+                "number below."
+            )
+        else:
+            disqualified = None
         subs.append(
             SubScore(
                 "calibration",
-                round(40.0 * blended, 2),
+                0.0 if disqualified else round(40.0 * blended, 2),
                 40.0,
                 True,
-                f"{len(facts.checks)} calibration case(s); weakest case "
-                f"{min(per_case):.0%} of checks passed",
+                (
+                    f"{len(facts.checks)} calibration case(s); "
+                    f"the calibration did not establish this evaluator"
+                    if disqualified
+                    else f"{len(facts.checks)} calibration case(s); weakest case "
+                    f"{min(per_case):.0%} of checks passed"
+                ),
             )
         )
-        if facts.calibration_passed is False or gating_failed:
+        if disqualified:
             caps.append(
                 Cap(
                     "evaluator-invalid",
                     EVALUATOR_INVALID_CEILING,
-                    "The completed calibration failed at least one authored "
-                    "behavioral check, so this evaluator has not demonstrated "
-                    "that it ranks the task correctly. Every number below it "
-                    "is unreliable.",
+                    disqualified[0].upper() + disqualified[1:],
                 )
             )
     else:
@@ -6880,7 +6941,7 @@ def evaluation_facts_from_calibration(
     cases = payload.get("cases")
     if not isinstance(cases, list):
         cases = [payload]
-    checks: list[dict[str, bool]] = []
+    checks: list[dict[str, bool | None]] = []
     probes: list[tuple[float, ...]] = []
     reported_passed = payload.get("passed")
     calibration_complete = bool(cases) and isinstance(reported_passed, bool)
@@ -6890,7 +6951,20 @@ def evaluation_facts_from_calibration(
             continue
         case_checks = case.get("checks")
         if isinstance(case_checks, dict):
-            checks.append({key: bool(value) for key, value in case_checks.items()})
+            # `bool(value)` here turned an unestablished check into a failing
+            # one. calibrate_evaluator.py already emits null for a probe it
+            # could not decide -- its own comment says calling that a pass or a
+            # failure "would invent a result out of an exception" -- and
+            # coercing it to False did exactly that, one module downstream, and
+            # blocked the customer at 25 on a check nobody ran. A required check
+            # that is not boolean still fails the completeness invariant below,
+            # so this only widens what an OPTIONAL authored check may report.
+            checks.append(
+                {
+                    key: value if isinstance(value, bool) else None
+                    for key, value in case_checks.items()
+                }
+            )
         if not (
             isinstance(case_checks, dict)
             and CALIBRATION_REQUIRED_CHECKS <= case_checks.keys()
