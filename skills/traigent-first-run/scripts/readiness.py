@@ -4338,13 +4338,15 @@ def score_dataset(
     # is the half a customer acts on.
     #
     # A CLAUSE and not a clamp, deliberately. Bounding the count on that check's
-    # notion of sameness was built and measured, and it reported four comparable
-    # examples over 120 genuinely different support tickets sharing an
-    # instruction prefix - a false red on ordinary data, which is worse than a
-    # generous number on repetitive data. What is safe is saying what was found
-    # and what this count did with it: no value moves, no ceiling is raised, and
-    # the sentence is true of every dataset where the check fired, however that
-    # check is later made sharper.
+    # notion of sameness was built and measured over 120 genuinely different
+    # support tickets sharing an instruction prefix, and it reported four
+    # comparable examples - a false red on ordinary data, which is worse than a
+    # generous number on repetitive data. Source:
+    # tests/test_readiness_adapter.py#WhichRowsMayBeSubtractedFromTheComparisonCountTests,
+    # whose fixtures reproduce that figure and the three beside it. What is safe
+    # is saying what was found and what this count did with it: no value moves,
+    # no ceiling is raised, and the sentence is true of every dataset where the
+    # check fired, however that check is later made sharper.
     #
     # It reports what was FOUND and what this count DID, and claims nothing
     # about the overlap between them. "Some of these may not be separate
@@ -4354,10 +4356,22 @@ def score_dataset(
     # clause fires whenever the check fired, with no test for whether the
     # exact pass already covered it - a test this scorer cannot make, because
     # the near finding carries no count of its own.
+    #
+    # It REFERS to that check rather than restating its wording. The threshold
+    # and the sentence describing it belong to the `DIVERSITY_CHECKS` entry that
+    # certifies on `near_duplicate_status`, which prints them on its own line of
+    # the same card; retyping them here would put the phrase twice on adjacent
+    # lines with nothing holding the two copies equal, and would be a fourth
+    # home for a number that already has three. What this line owes the reader
+    # is the connection between that finding and this number, not the finding.
+    #
+    # No "above": the card lists sub-scores in whatever order the pillar holds
+    # them and this evidence is also read from JSON, where there is no line
+    # above. A direction the layout could falsify is a false sentence waiting
+    # for a re-order.
     if facts.near_duplicate_status in ("WARN", "FAIL"):
         evidence = (
-            f"{evidence}; the repeated-rows check found rows at least "
-            f"{NEAR_DUPLICATE_PERCENT}% similar to another row, and this count "
+            f"{evidence}; the repeated-rows check fired, and this count "
             "subtracts exact repeats only"
         )
     subs.append(SubScore("power", round(points, 2), 25.0, True, evidence))

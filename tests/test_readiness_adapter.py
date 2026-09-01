@@ -3619,12 +3619,19 @@ class WhichRowsMayBeSubtractedFromTheComparisonCountTests(unittest.TestCase):
     """What "the same row" is allowed to mean when it lowers a customer's score.
 
     `resolved_by_distinct` bounds the comparison count by preflight's count of
-    DIFFERENT rows, and that count is exact-after-normalization. It works: 40
-    whole-row copies planted among 132 questions are found and reported as 100.
-    What it cannot see is a row REWORDED - six questions written out fifty times
-    each as `... (variant N)` are 300 byte-distinct rows, and the card called
-    them a `substantial comparison set` while the line two rows above it said
-    `rows at least 70% similar to another row`.
+    DIFFERENT rows, and that count is exact-after-normalization. On the fixture
+    below it does its job: 40 whole-row copies planted among 132 questions are
+    found and reported as 100. That is a statement about this fixture rather
+    than about the mechanism, which has a second gap of its own - the distinct
+    count is taken over ALL tuning rows while the number it bounds counts only
+    the LABELLED ones, so a split mixing the two can carry byte-identical
+    repeats through a comparison that subtracted nothing. Pre-existing, filed
+    as traigent-first-run#356, and not addressed here.
+
+    What the count cannot see at all is a row REWORDED - six questions written
+    out fifty times each as `... (variant N)` are 300 byte-distinct rows, and
+    the card called them a `substantial comparison set` while the line two rows
+    above it said `rows at least 70% similar to another row`.
 
     The obvious fix is to bound the count on the near-duplicate reading instead.
     It was built and measured, and it is refused. Every figure below is measured
@@ -3634,7 +3641,7 @@ class WhichRowsMayBeSubtractedFromTheComparisonCountTests(unittest.TestCase):
         reworded 300 rows          honest 6     bound says   6   correct
         120 distinct tickets, raw  honest 120   bound says 120   correct
         the same 120 under a
-        60-word instruction        honest 120   bound says   4   FALSE RED
+        64-word instruction        honest 120   bound says   4   FALSE RED
         the same 120 with that
         text as a SUFFIX           honest 120   bound says   4   FALSE RED
 
@@ -3661,6 +3668,22 @@ class WhichRowsMayBeSubtractedFromTheComparisonCountTests(unittest.TestCase):
     scorer and already deducting seven diversity points. Saying what the repeat
     check found, and what this count did about it, moves no value, raises no
     ceiling, and cannot false-red whatever the check later becomes.
+
+    THE CLAUSE ONLY REACHES WHAT THE CHECK CATCHES, AND THAT IS LESS THAN THIS
+    CLASS MIGHT SUGGEST. It hangs off `dataset-near-duplicates`, which decides
+    at 70% similarity, so a reworded repeat that lands under the line is
+    invisible to it - and this repository ships one. Measured on
+    `tests/behavioral/outcomes/clean-proceed/project/evaluation-dataset.jsonl`,
+    the canonical CLEAN outcome: 36 tuning rows resolving to 24 questions, with
+    `[case 025]`...`[case 036]` repeating `[case 001]`...`[case 012]` word for
+    word apart from the number. `dataset-duplicates` PASS, `dataset-near-
+    duplicates` PASS at a maximum pairwise similarity of 0.6923 - 0.0077 under
+    the line - so the card prints `36 examples - limited comparison set` with no
+    clause at all, beside a diversity line affirming `no repeated questions at
+    70% similarity or more`. `asking-answer-key` holds the same rows. The
+    numeral-suffix rewording this class condemns is exactly the shape that slips
+    under the check the clause depends on, and the fix for that is a sharper
+    check, not a louder sentence.
     """
 
     # 34 subjects x 4 measures is 136 phrasings, of which the fixture uses 132.
@@ -3885,7 +3908,7 @@ class WhichRowsMayBeSubtractedFromTheComparisonCountTests(unittest.TestCase):
     TICKETS = BILLING + TECHNICAL + ACCOUNT + REFUND
     CATEGORIES = ("billing", "technical", "account", "refund")
     # The wrapper a real prompted classification dataset carries on every row.
-    # Sixty words of it, which is ordinary, and it is what makes 120 different
+    # Sixty-four words of it, which is ordinary, and it is what makes 120 different
     # tickets look alike to a measure that reads runs of words.
     INSTRUCTION = (
         "You are an experienced customer support triage assistant working for "
@@ -3900,8 +3923,7 @@ class WhichRowsMayBeSubtractedFromTheComparisonCountTests(unittest.TestCase):
     # and asserted both ways, because a clause that appears everywhere says as
     # little as one that appears nowhere.
     CAVEAT = (
-        "the repeated-rows check found rows at least 70% similar to another "
-        "row, and this count subtracts exact repeats only"
+        "the repeated-rows check fired, and this count subtracts exact repeats only"
     )
 
     @classmethod
@@ -4004,6 +4026,12 @@ class WhichRowsMayBeSubtractedFromTheComparisonCountTests(unittest.TestCase):
             score = _score(dataset)
         return _dataset_subscore(score, "power")["evidence"]
 
+    def _caps(self, rows: list[dict]) -> list[str]:
+        with tempfile.TemporaryDirectory() as raw:
+            dataset = _write_jsonl(Path(raw), "dataset.jsonl", rows)
+            score = _score(dataset)
+        return [cap["condition"] for cap in score["caps"]]
+
     def _near_duplicate_status(self, rows: list[dict]) -> str:
         with tempfile.TemporaryDirectory() as raw:
             dataset = _write_jsonl(Path(raw), "dataset.jsonl", rows)
@@ -4067,6 +4095,15 @@ class WhichRowsMayBeSubtractedFromTheComparisonCountTests(unittest.TestCase):
         # And the card says what was found, on the dataset where saying it costs
         # a good corpus nothing.
         self.assertIn(self.CAVEAT, evidence)
+        # The ceiling, asserted rather than inferred. A count of four raises
+        # `dataset-below-measurable-size` and drops the overall score from 30 to
+        # 23, and THAT is the harm the whole class argues about - a number is
+        # advisory, a ceiling stops a run. The band assertion above happens to
+        # catch the same mutant today, which is why these were once dropped as
+        # redundant; redundancy against one mutant is not the same as saying
+        # nothing about the consequence, and this class had said nothing.
+        self.assertNotIn("dataset-below-measurable-size", self._caps(rows))
+        self.assertNotIn("dataset-coarse-resolution", self._caps(rows))
 
     def test_a_reworded_dataset_is_still_scored_on_its_rows(self) -> None:
         """PINS A VALUE THAT IS KNOWN TO BE WRONG, so that fixing it goes red.
@@ -4117,15 +4154,33 @@ class WhichRowsMayBeSubtractedFromTheComparisonCountTests(unittest.TestCase):
         # pass cannot tell the scorer whether the near check found more.
         self.assertIn(self.CAVEAT, self._evidence(self._copied_rows()))
 
-    def test_the_printed_similarity_line_is_the_one_preflight_decides_on(self) -> None:
-        """The clause quotes a percentage, so it may not carry its own copy of it.
+    def test_the_clause_refers_to_the_repeat_check_rather_than_restating_it(
+        self,
+    ) -> None:
+        """The threshold has three homes already; this may not be a fourth.
 
-        A literal here would be a fourth home for a number that already has
-        three, and a clause saying 70% over a check that decided at some other
-        figure is a false sentence about the customer's own file.
+        `DIVERSITY_CHECKS` owns the sentence describing the similarity line and
+        prints it on its own row of the same card. A copy here would put the
+        phrase twice on one card with nothing holding the two equal, and a copy
+        that went stale would state a threshold the check did not decide on.
+        So the clause carries no number, and the card carries the phrase once.
         """
-        self.assertIn(f"{MODULE.NEAR_DUPLICATE_PERCENT}% similar", self.CAVEAT)
-        self.assertIn(self.CAVEAT, self._evidence(self._ticket_rows(self.INSTRUCTION)))
+        self.assertNotIn("%", self.CAVEAT)
+        self.assertNotIn(str(MODULE.NEAR_DUPLICATE_PERCENT), self.CAVEAT)
+        rows = self._ticket_rows(self.INSTRUCTION)
+        self.assertIn(self.CAVEAT, self._evidence(rows))
+        with tempfile.TemporaryDirectory() as raw:
+            dataset = _write_jsonl(Path(raw), "dataset.jsonl", rows)
+            card = _score(dataset)
+        printed = " ".join(
+            sub["evidence"] for pillar in card["pillars"] for sub in pillar["subscores"]
+        )
+        self.assertEqual(
+            printed.count(f"{MODULE.NEAR_DUPLICATE_PERCENT}% similar"),
+            1,
+            "the similarity line is printed more than once on one card, so two "
+            "copies of one threshold can drift apart between adjacent rows",
+        )
 
 
 if __name__ == "__main__":

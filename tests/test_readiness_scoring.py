@@ -1127,9 +1127,21 @@ class DatasetScoringTests(unittest.TestCase):
                         )
 
     def test_a_fully_labelled_dataset_keeps_its_evidence_string(self) -> None:
-        """Nothing was clamped, so nothing about the sentence may change."""
+        """Nothing was clamped, so nothing about the sentence may change.
+
+        `near_duplicate_status="PASS"` is stated rather than left to the
+        dataclass default. The power evidence gains a clause when that status is
+        WARN or FAIL, so an omitted field made this pin depend on `None` staying
+        the default - it would have passed for the wrong reason on a fixture
+        nobody meant to be about repetition, and broken on one that was.
+        """
         pillar, _ = MODULE.score_dataset(
-            MODULE.DatasetFacts(exists=True, rows=100, labelled_rows=100)
+            MODULE.DatasetFacts(
+                exists=True,
+                rows=100,
+                labelled_rows=100,
+                near_duplicate_status="PASS",
+            )
         )
         power = next(s for s in pillar.subscores if s.name == "power")
         self.assertEqual(power.value, 18.4)
