@@ -847,19 +847,41 @@ Six rules make the subset honest:
 5. **Name the bound to the user.** Report the subset size beside the full row count ("18 tuning
    and 10 held-out rows of your 4,812 for this first run"). Never let a bounded run read as though
    the whole dataset was evaluated.
-6. **Draw distinct rows.** Two rows carrying the same input and the same expected answer are one
-   example's worth of evidence and two rows' worth of spend: every configuration scores them alike,
-   so the second buys a provider call in every trial and no comparison at all. Draw rows that differ
-   from each other, and where a split holds fewer distinct rows than the subset size, draw the
-   distinct ones and price and report that number rather than padding back to 18 with repeats. Match
-   exactly on the input and the expected answer rather than judging similarity: byte-identical rows
-   are the same row under any reading, while rows that merely read alike are routinely two real
-   questions, and a bounded budget must not be cut on that guess.
+6. **Draw distinct inputs, and let their count set the size.** The agent produces one output per
+   input, so two rows carrying the same input are scored as a fixed pair by every configuration and
+   separate none of them - whatever expected answers they carry. The second is a provider call in
+   every trial and no comparison at all. Distinctness here is therefore counted the one way
+   preflight already counts it and the card already prints it: **different normalized inputs**,
+   reported as `tuning_distinct_rows` beside the tuning size. Do not re-key it on the expected
+   answer as well - a multi-reference split of 60 questions under two accepted golds is 60
+   different examples, not 120, and re-keying would say 120 while the card says 60.
 
-   Against the band floor, distinctness may thin a band and may never empty one. Take every distinct
-   row a band has, keep the band present even where that is a single row, and name the short bands
-   in the run report beside the sample-size limitation. A thin band is reported; an absent band is
-   the careless trim the next paragraph warns about, and de-duplication is never the reason for one.
+   Distinct **across the whole draw**, not within one band: a row already drawn under one band buys
+   nothing when another band offers the same input again. Work the bands in turn, take up to four
+   inputs each band has not already contributed, and stop at eighteen or at the tuning split's
+   distinct-input count, whichever is smaller. Price and report that number, because it is what the
+   run buys.
+
+   **When a band cannot reach four, the draw is short by that much, and the shortfall is not made up
+   from the bands that can.** An extra `easy` input is not a `hard` one, so topping the count back
+   to eighteen from elsewhere spends the budget on the spread the floor exists to protect.
+   De-duplication removes no question - every distinct input a band holds stays eligible - so a band
+   that contributes nothing is a band whose inputs were all already drawn under another band's tag.
+   That is the dataset tagging one question two ways, which is a finding about the data; report it,
+   with the short bands, beside the sample-size limitation.
+
+   Exact inputs, never resemblance: byte-identical rows are the same row under any reading, while
+   rows that merely read alike are routinely two real questions, and a bounded budget must not be
+   cut on that guess. What that choice costs belongs in the report rather than in a footnote. A
+   dataset whose repeats were REWORDED - one question written out fifty times with a serial number
+   or a `(variant N)` suffix - is fifty different inputs to this rule and to the comparison count on
+   the card, and the run pays for every one of them. `dataset-near-duplicates` is the check that
+   sees that shape; when it fires, say in the run report that the drawn rows may repeat each other
+   in wording and that neither the draw nor the comparison count has subtracted them.
+
+   This rule governs the tuning draw. A held-out split holding fewer distinct inputs is topped up to
+   its composition under "Held-out set and claims" below, never drawn short - ten there is exact in
+   both directions, and this rule does not reach it.
 
 Keeping at least four rows from every band is what protects the spread: a careless trim to 18 that
 drops a band costs difficulty points and prints a spread complaint about a dataset that has all four.

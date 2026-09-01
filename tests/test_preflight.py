@@ -3257,5 +3257,130 @@ class EveryRowCountIsAccountedForTests(unittest.TestCase):
         self.assertEqual(MODULE.row_counts(None), {})
 
 
+class TheSubsetProposalCountsDifferentQuestionsTests(unittest.TestCase):
+    """The number the bounded-draw rule names has to be the number preflight emits.
+
+    `references/evaluation-and-dataset.md` rule 6 tells an assistant to draw
+    distinct inputs and to read their count off `tuning_distinct_rows`. That is
+    a guidance sentence pointing at a metric key, and the two can drift apart
+    silently: the sentence is prose and the key is emitted by this script. These
+    run the real check and assert the numbers the rule depends on, so a rename
+    or a re-keying here fails beside the document rather than a release later.
+
+    The re-keying matters most and is the reason the rule says "inputs" twice.
+    A multi-reference split - one question with two accepted golds - is two rows
+    carrying one input. Keyed on the input it is one question, which is what the
+    agent will be asked and what any configuration can be separated on. Keyed on
+    the pair it is two, and a draw sized from that number buys a second call per
+    trial that no comparison can use.
+    """
+
+    def setUp(self) -> None:
+        MODULE.RESULTS.clear()
+
+    def scan(self, rows: list[dict]) -> dict:
+        with tempfile.TemporaryDirectory() as directory:
+            dataset = Path(directory) / "eval.jsonl"
+            dataset.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+            MODULE.check_dataset(dataset)
+        return {result.check: result for result in MODULE.RESULTS}
+
+    def test_a_multi_reference_split_counts_its_questions_not_its_rows(self) -> None:
+        """Sixty questions under two accepted golds are sixty different examples.
+
+        The fixture is built from the shape rather than from any count this
+        script computes: 60 questions written out, each once per accepted gold.
+        Whatever `tuning_distinct_rows` reports has to be the number of
+        questions, because that is what a configuration can be told apart on.
+        """
+        rows = []
+        for index in range(60):
+            for gold in ("yes", "affirmative"):
+                rows.append(
+                    {
+                        "id": f"q{index}-{gold}",
+                        "input": f"is claim number {index} supported by the passage",
+                        "output": gold,
+                        "split": "tuning",
+                    }
+                )
+        rows += [
+            {
+                "id": f"hold-{index}",
+                "input": f"does exhibit {index} contradict the filing",
+                "output": "no",
+                "split": "holdout",
+            }
+            for index in range(12)
+        ]
+        tuning = self.scan(rows)["dataset-tuning-size"]
+        self.assertEqual(tuning.metrics["tuning_rows"], 120)
+        self.assertEqual(
+            tuning.metrics["tuning_distinct_rows"],
+            60,
+            "the card would tell a reader 120 while the bounded-draw rule sends "
+            "them to this key for the count the run should buy",
+        )
+
+    def test_the_subset_proposal_never_exceeds_the_questions_asked(self) -> None:
+        """A file of 400 rows asking 12 questions may not be proposed 18 rows.
+
+        Both numbers used to travel in one payload - `subset cap: 18` beside a
+        distinct count of 12 - with nothing saying which governed, while the
+        difference is six calls per configuration in every trial.
+        """
+        rows = [
+            {
+                "id": f"row-{index}",
+                "input": f"question number {index % 12} about the quarterly filing",
+                "output": f"answer {index % 12}",
+            }
+            for index in range(400)
+        ]
+        finding = self.scan(rows)["dataset-first-run-rows"]
+        self.assertEqual(finding.metrics["usable_rows"], 400)
+        self.assertEqual(finding.metrics["distinct_rows"], 12)
+        self.assertEqual(
+            finding.metrics["first_run_rows"],
+            12,
+            "the proposal is above the questions this file asks, so it prices "
+            "calls no comparison can use",
+        )
+        self.assertIn("12 different inputs among them", finding.detail)
+
+    def test_a_file_of_different_questions_keeps_the_full_proposal(self) -> None:
+        """The other direction: the bound may not shrink an honest dataset.
+
+        Pinned separately from the existing usable-rows test because that one
+        would pass unchanged if the new bound were wired to always clamp - its
+        fixture has no repeats to distinguish the two behaviours.
+        """
+        rows = [
+            {
+                "id": f"row-{index}",
+                "input": f"question number {index} about the quarterly filing",
+                "output": f"answer {index}",
+            }
+            for index in range(400)
+        ]
+        finding = self.scan(rows)["dataset-first-run-rows"]
+        self.assertEqual(finding.metrics["distinct_rows"], 400)
+        self.assertEqual(finding.metrics["first_run_rows"], 18)
+        self.assertNotIn("different inputs among them", finding.detail)
+
+    def test_the_bound_is_applied_and_not_merely_reported(self) -> None:
+        """The helper itself, at the boundary the emit cannot reach.
+
+        A caller with no distinct count gets the row-based answer rather than a
+        wrong one, and a caller with one is bounded by it. Asserted directly
+        because the emit above can only exercise whole datasets.
+        """
+        self.assertEqual(MODULE.first_run_row_count(400), 18)
+        self.assertEqual(MODULE.first_run_row_count(400, 400), 18)
+        self.assertEqual(MODULE.first_run_row_count(400, 12), 12)
+        self.assertEqual(MODULE.first_run_row_count(40, 40), 40)
+        self.assertEqual(MODULE.first_run_row_count(40, 7), 7)
+
+
 if __name__ == "__main__":
     unittest.main()

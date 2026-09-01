@@ -959,13 +959,25 @@ def dataset_field_value(row: dict[str, Any], field_path: str) -> tuple[bool, Any
     return True, value
 
 
-def first_run_row_count(usable_rows: int) -> int:
-    """Return the rows each paid first-run configuration scores."""
-    return (
+def first_run_row_count(usable_rows: int, distinct_rows: int | None = None) -> int:
+    """Return the rows each paid first-run configuration scores.
+
+    Bounded by the DIFFERENT questions the file asks, not only by how many rows
+    it holds. The agent produces one output per input, so a repeated input is
+    scored as a fixed pair by every configuration and separates none of them:
+    proposing eighteen rows to a file asking twelve questions proposes six calls
+    per configuration, in every trial, that no comparison can use.
+
+    `distinct_rows` is optional so that a caller holding only a row count still
+    gets the old answer rather than a wrong one. Absent, the bound is the rows -
+    which is what an uncounted file honestly supports.
+    """
+    proposed = (
         FIRST_RUN_TUNING_ROWS
         if usable_rows > BOUNDED_SUBSET_ABOVE_ROWS
         else usable_rows
     )
+    return proposed if distinct_rows is None else min(proposed, distinct_rows)
 
 
 def normalize_dataset_row(
@@ -2273,14 +2285,38 @@ def check_dataset(
             WARN,
             f"{len(rows)} rows is a wiring check, not a credible score",
         )
-    first_run_rows = first_run_row_count(len(rows))
+    # Built here rather than beside the duplicate finding it also feeds, because
+    # the proposal below is the first number in this file that a repeated row
+    # makes wrong. One pass, two readers, and they cannot disagree about how many
+    # different questions this dataset asks.
+    normalized_inputs: dict[str, list[int]] = {}
+    for index, row in enumerate(rows, 1):
+        normalized_inputs.setdefault(normalized_identity(row["input"]), []).append(
+            index
+        )
+    distinct_inputs = len(normalized_inputs)
+    first_run_rows = first_run_row_count(len(rows), distinct_inputs)
+    # The cap named the walkthrough's eighteen whatever the file held, so a
+    # dataset of 400 rows asking 12 questions was proposed an 18-row subset in
+    # the same JSON that reports `tuning_distinct_rows: 12`. Two numbers, one
+    # question, and nothing saying which governs - while the difference is six
+    # rows per configuration in every trial.
+    distinct_clause = (
+        ""
+        if distinct_inputs == len(rows)
+        else f" ({distinct_inputs} different inputs among them)"
+    )
     emit(
         "dataset-first-run-rows",
         PASS,
         f"proposed first-run subset cap: {first_run_rows} usable rows per "
-        f"configuration from {len(rows)} usable rows; select and record the "
-        "actual row ids before baseline approval",
-        {"first_run_rows": first_run_rows, "usable_rows": len(rows)},
+        f"configuration from {len(rows)} usable rows{distinct_clause}; select "
+        "and record the actual row ids before baseline approval",
+        {
+            "first_run_rows": first_run_rows,
+            "usable_rows": len(rows),
+            "distinct_rows": distinct_inputs,
+        },
     )
 
     input_types = {type(row["input"]).__name__ for row in rows}
@@ -2303,11 +2339,6 @@ def check_dataset(
     )
     emit_dataset_id_findings(present_row_records)
 
-    normalized_inputs: dict[str, list[int]] = {}
-    for index, row in enumerate(rows, 1):
-        normalized_inputs.setdefault(normalized_identity(row["input"]), []).append(
-            index
-        )
     exact_duplicates = [
         positions for positions in normalized_inputs.values() if len(positions) > 1
     ]
