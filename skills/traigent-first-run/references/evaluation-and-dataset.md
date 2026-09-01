@@ -20,7 +20,7 @@ Select the lowest-complexity method that measures the real task:
 | JSON or structured extraction | Parse/schema gate plus field-level correctness |
 | Numeric value | Numeric comparison with a justified tolerance |
 | Sets or unordered collections | Order-insensitive set comparison |
-| Code or SQL | Normalized or structural comparison of the answer as text, or a parser gate |
+| Code or SQL | Composite (`--evaluator-method composite`): a parser gate, then comparison over canonical form - aliases, case and spacing resolved before matching |
 | Tool/action workflow | Final-state or side-effect check in an isolated environment |
 | Retrieval/grounded answer | Citation/grounding checks plus semantic correctness |
 | Summary, explanation, writing, story | Rubric-based LLM judge, optionally preceded by deterministic gates |

@@ -79,8 +79,11 @@ Evaluator (evaluation method, scorer)
   Plain: the rule or program that decides whether an answer is right, and how
   right.
   Precise: the function that maps (agent output, expected output) to a score.
-  Kinds: exact match, execution match (run the SQL/code and compare results),
-  unit tests, overlap metrics (F1), or an LLM-as-judge that reads a rubric.
+  Kinds: exact match, comparison over canonical form - how a query or code
+  answer is graded here, with aliases, case and spacing resolved before
+  matching - overlap metrics (F1), or an LLM-as-judge that reads a rubric.
+  Running the answer to grade it, as execution match and unit tests do, ends
+  this guide instead.
   Ask like this: "How do you (or should we) decide whether an answer is correct?"
 
 Evaluation (grading)
