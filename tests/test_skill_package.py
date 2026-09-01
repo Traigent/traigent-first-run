@@ -23103,7 +23103,7 @@ class TheAskIsLastAndNamesWhatIsLackingTests(unittest.TestCase):
         )
 
     def test_a_task_choice_is_put_as_the_job_and_not_as_a_category(self) -> None:
-        """"Extraction" names a shape of problem; nobody has that problem."""
+        """ "Extraction" names a shape of problem; nobody has that problem."""
         skill = self._skill()
         self.assertIn("each put as the job itself", skill)
         self.assertIn("pull the total and the date out of a receipt", skill)

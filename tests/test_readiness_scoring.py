@@ -4,10 +4,12 @@ import ast
 import contextlib
 import importlib.util
 import io
+import itertools
 import json
 import re
 import sys
 import tempfile
+import typing
 import unittest
 from dataclasses import asdict, replace
 from pathlib import Path
@@ -2161,7 +2163,7 @@ class EvaluationScoringTests(unittest.TestCase):
         self.assertEqual(pillar.score, round(100 * 45 / 85))
 
     def test_a_poor_fit_says_which_method_which_output_and_why(self) -> None:
-        """"set-f1 is a poor ruler for code-sql output" asserted and stopped.
+        """ "set-f1 is a poor ruler for code-sql output" asserted and stopped.
 
         A customer cannot check that, cannot usefully disagree with it, and
         cannot tell a real mismatch from an opinion about their evaluator. The
@@ -2170,9 +2172,7 @@ class EvaluationScoringTests(unittest.TestCase):
         test on two of their own rows.
         """
         pillar, _caps = MODULE.score_evaluation(
-            MODULE.EvaluationFacts(
-                present=True, method="set-f1", task_kind="code-sql"
-            )
+            MODULE.EvaluationFacts(present=True, method="set-f1", task_kind="code-sql")
         )
         fit = next(sub for sub in pillar.subscores if sub.name == "task-fit")
         self.assertEqual(
@@ -8317,6 +8317,37 @@ if __name__ == "__main__":
     unittest.main()
 
 
+def _prose_literals(function: ast.AST) -> list[str]:
+    """The sentences a function prints, from its own body.
+
+    Whitespace-normalized, because two of these renderers re-wrap what they
+    print - `blocker_lines` through `textwrap.wrap`, the card through its own
+    indent - so the literal as written never appears in the artifact as
+    written.
+
+    Docstrings are excluded: they are the only strings in these functions that
+    are addressed to us rather than to a reader. The three-word floor drops the
+    fragments an f-string leaves between its interpolations - `"/100 "`, `"| "`
+    - which carry no vocabulary to police and cannot be searched for usefully.
+    """
+    docstrings = {
+        id(node.value)
+        for node in ast.walk(function)
+        if isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant)
+    }
+    literals = []
+    for node in ast.walk(function):
+        if (
+            isinstance(node, ast.Constant)
+            and isinstance(node.value, str)
+            and id(node) not in docstrings
+        ):
+            text = " ".join(node.value.split())
+            if len(text) >= 12 and text.count(" ") >= 2:
+                literals.append(text)
+    return literals
+
+
 class TheCardSpeaksTheUsersLanguageTests(unittest.TestCase):
     """The card is the most-read artifact and it printed internal check ids.
 
@@ -8525,6 +8556,256 @@ class TheCardSpeaksTheUsersLanguageTests(unittest.TestCase):
             if isinstance(inner, ast.Constant) and isinstance(inner.value, str)
         ]
 
+    #: The functions whose OWN literals reach a reader, named so that
+    #: `test_the_rendered_scan_reaches_every_renderer_literal` fails on a
+    #: renderer sentence nothing below renders, rather than passing over it.
+    RENDERERS = (
+        "build_plan",
+        "render_text",
+        "blocker_lines",
+        "render_card",
+        "render_markdown",
+        "assumption_sentence",
+        "task_fit_evidence",
+        "readable_kinds",
+    )
+
+    #: Renderer sentences no state of this module can produce, each with the
+    #: reason it is unreachable rather than merely unrendered. An entry here is
+    #: a line no scan below reads, so it has to say why nothing reaches it - and
+    #: the completeness test fails on a stale entry too, so a sentence that
+    #: becomes reachable cannot stay exempt.
+    UNREACHABLE_RENDERER_LINES = {
+        "Repair invalid components around the real anchors": (
+            "`build_plan`'s final else. Every state with a `limited` or "
+            "`invalid` component is taken by the first branch and every state "
+            "with a `demo` one by the third, so the fall-through sees only "
+            "`real` and `missing` - and each of those eight combinations is "
+            "claimed by a branch above it. Kept as a total function rather "
+            "than deleted, so a sixth component state cannot make `action` "
+            "undefined; unreachable while there are five."
+        ),
+    }
+
+    def _rendered_customer_text(self) -> list[str]:
+        """Every line these renderers put in front of a customer.
+
+        Read off the ARTIFACT, where `_customer_facing_strings` reads off the
+        declarations that feed it - `Cap` and `SubScore` arguments, `help=`,
+        three named tables. A renderer's own f-strings are in none of those
+        places, so the jargon rules below were not enforced on the card's
+        closing line, which `render_card` appends to every card ever printed.
+        Rendering the states instead means a sentence is covered because it
+        reaches a reader, not because it was written in a place a scan knew to
+        look.
+        """
+        texts: list[str] = []
+
+        # The plan renderer over every starting state, so each of `build_plan`'s
+        # action sentences is rendered by the branch that chooses it.
+        for combination in itertools.product(
+            typing.get_args(MODULE.ComponentState), repeat=len(MODULE.COMPONENTS)
+        ):
+            texts.append(MODULE.render_text(MODULE.build_plan(*combination)))
+
+        # The card and the durable report over the states they branch on.
+        for score in self._scores_the_renderers_branch_on():
+            for unicode_ok in (True, False):
+                texts.append(
+                    MODULE.render_card(
+                        score, palette=MODULE.PLAIN, unicode_ok=unicode_ok
+                    )
+                )
+            texts.append(MODULE.render_markdown(score))
+            texts.append(MODULE.render_markdown(score, timestamp="2026-01-01"))
+
+        # Two sentence builders whose fallback arm no state in this tree can
+        # reach: both are total functions guarding a table a completeness test
+        # keeps full, so they are called directly rather than left unread.
+        texts.append(MODULE.task_fit_evidence("no-such-method", "free-text", ()))
+        texts.append(MODULE.readable_kinds(()))
+        return texts
+
+    def _scores_the_renderers_branch_on(self) -> list[object]:
+        """One score per branch the two renderers take.
+
+        Built rather than scored, because the question here is which SENTENCES
+        can print, and a branch like "a ceiling that binds nothing" is reached
+        by a combination of numbers rather than by a project. The scored path
+        is covered by the rest of this file; this is the rendering path.
+        """
+        rows = (
+            MODULE.SubScore("power", 20.0, 25.0, True, "180 rows to compare on"),
+            MODULE.SubScore(
+                "calibration", 0.0, 40.0, False, "no calibration payload reached"
+            ),
+        )
+        pillars = [
+            MODULE.combine(name, rows) for name in ("dataset", "evaluation", "agent")
+        ]
+        knob = MODULE.KnobScore(
+            name="temperature",
+            kind="numeric",
+            distinct_values=3,
+            effective_values=3,
+            span=0.6,
+            resolution=0.5,
+            coverage=0.4,
+            quality=0.7,
+            span_ratio=0.6,
+        )
+
+        def caps(*, blocks: bool) -> list[object]:
+            """Every cap of this kind the module will actually construct.
+
+            `Cap.__post_init__` refuses combinations its routing forbids - a
+            condition under which nothing was measured may not both decline to
+            block and let the run present a result - so the refused ones are
+            skipped rather than invented. A low ceiling binds the score and a
+            high one cannot, which is what `binds` reads to choose between
+            "LIMITED TO" and "WOULD LIMIT TO", and between the report's two
+            effect clauses.
+            """
+            built = []
+            for condition in sorted(MODULE.ACTION_FOR_CONDITION):
+                for ceiling in (10, 99):
+                    for asks in (False, True):
+                        try:
+                            built.append(
+                                MODULE.Cap(
+                                    condition,
+                                    ceiling,
+                                    f"{condition} reason",
+                                    blocks=blocks,
+                                    asks=asks,
+                                )
+                            )
+                        except ValueError:
+                            continue
+            self.assertTrue(built, f"no cap with blocks={blocks} can be built")
+            return built
+
+        blocking = caps(blocks=True)
+        advisory = caps(blocks=False)
+        assumption = MODULE.ProvenanceAssumption(
+            undeclared_rows=4,
+            scored_rows=10,
+            scored_as_generated=52,
+            if_declared_collected=71,
+        )
+        every_row_silent = replace(assumption, undeclared_rows=10)
+
+        weights = dict(MODULE.DEFAULT_WEIGHTS)
+        plain = MODULE.aggregate(pillars, [], (), weights)
+        scores = [
+            plain,
+            # One blocker and several, because the sentence is written twice:
+            # "one thing has to be cleared" against "3 things have".
+            MODULE.aggregate(pillars, blocking[:1], (knob,), weights),
+            MODULE.aggregate(pillars, blocking, (knob,), weights),
+            MODULE.aggregate(pillars, advisory, (knob,), weights),
+            # A pillar carrying no check at all, and one whose checks all rest
+            # on the same fact, which the card collapses to a single line.
+            MODULE.aggregate(
+                [
+                    MODULE.Pillar("dataset", 50, 1.0, ()),
+                    MODULE.combine(
+                        "evaluation",
+                        tuple(
+                            MODULE.SubScore(name, 1.0, 2.0, True, "one shared finding")
+                            for name in ("calibration", "method-fit")
+                        ),
+                    ),
+                ],
+                [],
+                (),
+                weights,
+            ),
+            replace(plain, provenance_assumption=assumption),
+            replace(plain, provenance_assumption=every_row_silent),
+            replace(plain, band_limited_by_confidence=True),
+            replace(plain, gaps=("a ranked gap",)),
+        ]
+        return scores
+
+    def test_the_rendered_scan_reaches_every_renderer_literal(self) -> None:
+        """The scan's reach, asserted rather than assumed.
+
+        Without this, narrowing the matrix above silently narrows both rules
+        below, which is the exact failure it was written for: a scan that could
+        not see the last line of every card enforced nothing there while
+        reading as though it did.
+        """
+        source = Path(MODULE.__file__).read_text(encoding="utf-8")
+        rendered = {" ".join(text.split()) for text in self._rendered_customer_text()}
+        joined = "\n".join(rendered)
+        functions = {
+            node.name: node
+            for node in ast.walk(ast.parse(source))
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        }
+        self.assertEqual(
+            set(self.RENDERERS) - set(functions),
+            set(),
+            "RENDERERS names a function this module no longer defines",
+        )
+
+        unreached: list[str] = []
+        matched_exemptions: set[str] = set()
+        for name in self.RENDERERS:
+            for literal in _prose_literals(functions[name]):
+                exemption = next(
+                    (key for key in self.UNREACHABLE_RENDERER_LINES if key in literal),
+                    None,
+                )
+                if exemption is not None:
+                    matched_exemptions.add(exemption)
+                    continue
+                if literal not in joined:
+                    unreached.append(f"{name}: {literal!r}")
+        self.assertEqual(
+            unreached,
+            [],
+            "these renderer sentences reach a customer and no state above "
+            "renders them, so the rules below are not enforced on them - "
+            "render the state that prints each, or record it in "
+            "UNREACHABLE_RENDERER_LINES with the reason nothing can",
+        )
+        self.assertEqual(
+            set(self.UNREACHABLE_RENDERER_LINES) - matched_exemptions,
+            set(),
+            "an exemption names a sentence this module no longer has; a stale "
+            "one exempts nothing and hides the next real gap",
+        )
+
+    def _everything_the_customer_reads(self) -> list[str]:
+        """The two readings joined, because each sees what the other cannot.
+
+        The declaration scan reaches strings no state renders - a `Cap` reason
+        for a condition this tree cannot reach, the `--help` a customer prints
+        instead of running. The rendered scan reaches the renderers' own
+        sentences, which are declared nowhere the first scan looks. Neither is
+        a superset, so the rules read both.
+        """
+        return self._customer_facing_strings() + self._rendered_customer_text()
+
+    def test_the_card_closing_line_is_inside_the_scan(self) -> None:
+        """Named on its own, because it is the line that proved the gap.
+
+        `render_card` appends it unconditionally, so if any line is read by
+        every customer it is this one - and the declaration-side scan could not
+        see it.
+        """
+        scanned = "\n".join(
+            " ".join(text.split())
+            for text in self._customer_facing_strings() + self._rendered_customer_text()
+        )
+        self.assertIn(
+            "Local pre-run planning estimate, not a probability or measured "
+            "optimization result.",
+            scanned,
+        )
+
     def test_no_line_the_customer_reads_says_known_good_and_known_bad(self) -> None:
         """The owner flagged this phrase twice, on two different runs.
 
@@ -8533,7 +8814,7 @@ class TheCardSpeaksTheUsersLanguageTests(unittest.TestCase):
         the evaluator was run over answers whose verdict is already known, and
         the label now says that instead.
         """
-        for text in self._customer_facing_strings():
+        for text in self._everything_the_customer_reads():
             with self.subTest(text=text[:60]):
                 self.assertNotIn("known-good", text)
                 self.assertNotIn("known-bad", text)
@@ -8543,7 +8824,7 @@ class TheCardSpeaksTheUsersLanguageTests(unittest.TestCase):
         )
 
     def test_no_line_the_customer_reads_calls_a_scorer_a_ruler(self) -> None:
-        """"Ruler" is this project's internal metaphor for an evaluator.
+        """ "Ruler" is this project's internal metaphor for an evaluator.
 
         It reads as a measuring stick to the people who wrote it and as nothing
         at all to a customer meeting it on their first card - which is where it
@@ -8551,7 +8832,7 @@ class TheCardSpeaksTheUsersLanguageTests(unittest.TestCase):
         module may keep the word in its own reasoning; it may not spend it on
         the reader.
         """
-        for text in self._customer_facing_strings():
+        for text in self._everything_the_customer_reads():
             with self.subTest(text=text[:60]):
                 self.assertNotRegex(text, r"\bruler\b")
 
