@@ -605,7 +605,7 @@ METHOD_PROFILES: dict[str, dict[str, Any]] = {
     "composite": {
         "reproducibility": 0.5,
         "cost": 0.5,
-        "fits": ("free-text", "structured", "code-sql", "routing"),
+        "fits": ("free-text", "structured", "code-sql", "code", "routing"),
     },
 }
 TASK_KINDS = (

@@ -20,7 +20,7 @@ Select the lowest-complexity method that measures the real task:
 | JSON or structured extraction | Parse/schema gate plus field-level correctness |
 | Numeric value | Numeric comparison with a justified tolerance |
 | Sets or unordered collections | Order-insensitive set comparison |
-| Code or SQL | Normalized or structural comparison of the answer as text, or a parser gate |
+| Code or SQL | Composite (`--evaluator-method composite`): a parser gate, then comparison over canonical form - aliases, case and spacing resolved before matching |
 | Tool/action workflow | Final-state or side-effect check in an isolated environment |
 | Retrieval/grounded answer | Citation/grounding checks plus semantic correctness |
 | Summary, explanation, writing, story | Rubric-based LLM judge, optionally preceded by deterministic gates |
@@ -28,6 +28,12 @@ Select the lowest-complexity method that measures the real task:
 Do not use exact-string comparison where multiple semantically correct answers are possible. Do
 not use an LLM judge when deterministic product logic can express correctness. Do not optimize a
 metric merely because it is easy to implement.
+
+Canonical form reaches surface: case, whitespace, a trailing semicolon, paren padding, and aliases
+resolved back to the columns they stand for. It does not reach a different join or subquery shape
+that returns the same rows. Write `equivalent_good` as a surface variant the canonical form
+resolves, and record a differently-shaped equivalent as a known coverage gap rather than widening
+the scorer until it passes.
 
 When the user's existing evaluator is present, preserve it and explain "correct" in one sentence.
 Validate it; do not silently redesign it.
