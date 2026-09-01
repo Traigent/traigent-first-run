@@ -1,8 +1,9 @@
 # The guidance byte budget, and how to raise it
 
-`tests/test_skill_package.py` enforces two ceilings over the assistant-facing
+`tests/test_skill_package.py` enforces three ceilings over the assistant-facing
 documents: RESIDENT (`GUIDE.md` + `SKILL.md`, in context from the first turn to
-the last) and TOTAL (every document a full guided run loads). The ceilings are
+the last), TOTAL (every document a full guided run loads), and DOCUMENT (the
+largest single one, because a sum cannot see one file stepping alone). The ceilings are
 not in the test. They are in this directory, one file per raise.
 
 ## Raising a ceiling
@@ -42,7 +43,8 @@ Rules the suite enforces:
   entries too, so a relation such as `0053 -> 0052` is frozen rather than
   grandfathered.
 * **No two entries may follow the same entry.** See below.
-* An entry declares `resident-ceiling:`, `total-ceiling:`, or both, and beside
+* An entry declares `resident-ceiling:`, `total-ceiling:`, `document-ceiling:`,
+  or any combination of them, and beside
   each one the `-measured:` figure it was set against. The measurement must be
   under the ceiling it buys, and it may not fall below the last measurement of
   the same budget earlier in the chain unless the entry is lowering that

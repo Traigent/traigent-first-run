@@ -1,6 +1,6 @@
 ---
 name: traigent-first-run
-description: Guide a professional first Traigent optimization for non-executing comparison evaluators, such as classification, extraction, and short-answer QA. Use when a user asks to try Traigent, get started with Traigent, run a first optimization, optimize an agent for the first time, set up Traigent, or opens the Traigent/traigent-first-run repository. Inspect what already exists, preserve real components, diagnose limitations with concrete evidence, offer repair and revalidation before spending, create only the missing pieces as one coherent system, distinguish demonstration substitutes from production readiness, preserve the user's baseline or generate a credible small sweep, run one broader bounded optimization, and report what the result does and does not prove.
+description: Guide a professional first Traigent optimization for non-executing comparison evaluators, such as classification, extraction, short-answer QA, and query or code text compared rather than run. Use when a user asks to try Traigent, get started with Traigent, run a first optimization, optimize an agent for the first time, set up Traigent, or opens the Traigent/traigent-first-run repository. Inspect what already exists, preserve real components, diagnose limitations with concrete evidence, offer repair and revalidation before spending, create only the missing pieces as one coherent system, distinguish demonstration substitutes from production readiness, preserve the user's baseline or generate a credible small sweep, run one broader bounded optimization, and report what the result does and does not prove.
 license: Apache-2.0
 ---
 
@@ -97,6 +97,8 @@ rule.
   project-root `.gitignore`; otherwise do not create `.gitignore`. Never overwrite source material.
 - Do not put educational or advanced-skill links in the active run. Offer links after the result.
 - Keep internal check IDs, SDK internals, and optimization jargon out of user-facing progress.
+- Put the one ask last. Card, board and evidence first, then the question - never a marker,
+  heading or summary of it above them. The reader acts on it, so it ends the message.
 - Open with the five-stage journey in "Opening message" below. At boundaries/long work, use
   `Stage <n>/5 · <name>` and `Done / Now / Next`. Show observed readiness score, rows checked,
   calls/trials, cost, or time; keep finished stages as compact checkmarks. Label estimates; never
@@ -122,7 +124,7 @@ approval.
 | Create or update a minimal `.env` | Proceed only after free checks, and only through `references/run-safety.md`'s ordered handoff, which selects the file. Preserve existing values and comments, append only its missing provider key, and require mode `0600` before opening. Before writing, run that reference's git-tracked-file safety check and its ignore verification; it owns the exact commands and exit-code handling, and stop before secret entry if either check fails. Outside Git, do not create `.gitignore`. Never copy or request a duplicate key. Add or request the Traigent key only after the baseline checkpoint. |
 | Repair a working copy after the user chooses repair | Proceed only within the agreed repair scope, then revalidate from the failed gate. |
 | Change real labels, expected answers, examples, or rubric policy | Show the exact judgment-dependent change and obtain explicit approval. |
-| Execute an evaluator or mock check | Proceed without provider approval only after inspection proves a non-executing evaluator path is local-only or every mock model call is intercepted, with no external side effects. A path that executes or imports candidate output as code, shells out with it, or submits it to a code/SQL engine is outside this first-run guide: stop before execution and follow `run-safety.md`'s manual-containment route. |
+| Execute an evaluator or mock check | Proceed without provider approval only after inspection proves a non-executing evaluator path is local-only or every mock model call is intercepted, with no external side effects. A path that executes or imports candidate output as code, shells out with it, or submits it to a code/SQL engine is outside this first-run guide; what is outside is that path, never the task whose answer is code or SQL: stop before execution and follow `run-safety.md`'s manual-containment route. |
 | Make provider, private-data, connected Traigent, or external calls other than the narrow dependency fetch | Obtain stage-specific approval for recipients/data, scope, runtime, and ceiling: baseline first; connected optimization after its checkpoint. |
 | Perform destructive or production-affecting actions | Obtain separate explicit approval for the exact action. |
 
@@ -257,7 +259,12 @@ host. Stage 5 remains authoritative for the connected run.
 
 Run the bundled static preflight with `--defer-missing-sdk` over whatever dataset was discovered,
 omitting `--dataset` when none exists. Then include every safe measurement that can finish now in
-the first readiness card. When task intent is anchored and inspection finds a resolved deterministic
+the first readiness card. When `existing-traigent-use` reports a declaration, or a Traigent key is
+already configured, say so in the readiness turn: Traigent was set up in this project before this
+run started, so this may not be a first run, and this run still charges for its own baseline and
+search. Never read that as a blocker or a reason to stop - the evidence cannot tell an install apart
+from a finished optimization, and the decision is theirs at the stage 6 approval, which already
+stops. When task intent is anchored and inspection finds a resolved deterministic
 evaluator, construct or revalidate its current-run case matrix and semantic-coverage review, then
 apply the evaluator-execution scope gate from stage 4. If the verdict is `sufficient` and the
 complete path does not execute candidate-generated code or SQL, is local-only, side-effect-free,
@@ -274,7 +281,7 @@ Otherwise run readiness without `--calibration` and name the concrete deferral: 
 semantics, no defensible probe matrix, an uninstalled local dependency, a slow, uncertain, external,
 or executing path, or an LLM judge that needs paid approval. Missing calibration is then unmeasured,
 not a failed evaluator; the `evaluator-unvalidated` ceiling limits the readiness claim to 45 until
-the ruler is actually checked. When rows exist, do the row-level sanity check in
+the evaluation method is actually checked. When rows exist, do the row-level sanity check in
 `references/evaluation-and-dataset.md` here and pass it as `--row-review`: it is your own read, it
 spends nothing, and no generated row competes with it yet. Apply the run-scoped evaluator-method rule above to both
 scripts, and apply the run-scoped task-kind rule to readiness only, and the origin rule with it.
@@ -397,12 +404,18 @@ conversation; recording it is a write and waits for the answer.
    - ❗ **Agent** - no production agent is connected.
    - ❗ **Dataset** - no real examples are connected.
    - ❗ **Evaluation** - no validated grading method is connected.
-2. State that the coding assistant will create coherent walkthrough substitutes after the user
-   chooses the task, and that synthetic results demonstrate workflow rather than production
-   performance. Carry the four things "One ask for every gap" below requires - including the
-   `I have it` answer and its path - on this same question, so it stays one and not two.
+2. Say plainly what is lacking, in the customer's own three words - dataset, agent, evaluation
+   method - and that the coding assistant will create each after the user chooses the task, and
+   that synthetic results demonstrate workflow rather than production performance. Where the
+   inventory found request/response logs or accepted traces, say they are built from those: "I
+   will create the dataset, the evaluation method and the agent from your logs" is a different
+   offer from "I will write them", and the second undersells material they already have. Carry the
+   four things "One ask for every gap" below requires - including the `I have it` answer and its
+   path - on this same question, so it stays one and not two.
 3. Ask exactly one task-intent question: **"What should the walkthrough agent do?"** Offer at
-   most three short choices and recommend a structured, deterministically scoreable task.
+   most three short choices, each put as the job itself - "pull the total and the date out of a
+   receipt" - never as a category name like extraction or classification, and recommend a
+   structured, deterministically scoreable task. This question is the last thing in the message.
 4. **STOP and wait for the answer.** Do not continue setup in the same turn.
 
 Before that answer, make zero writes:
@@ -455,7 +468,8 @@ weakness are one decision about what this run will measure. That question carrie
 
 1. What the inventory did not find, named plainly and all of it at once - what was searched for and
    not seen, never what the project does not have - and, on the same line, what it found too little
-   of to compare on.
+   of to compare on. Name the pieces themselves, in the words the customer uses for them: dataset,
+   agent, evaluation method.
 2. That this run can build each missing piece from what exists. Offer a dataset top-up only when
    its cap has `asks: true`; otherwise name the limitation, but do not offer rows.
 3. What that costs, in terms the score already uses: what this run writes stays a substitute, never
@@ -465,8 +479,9 @@ weakness are one decision about what this run will measure. That question carrie
    brought is a second. `I have it` with a path is never counted among them.
 
 Then stop and wait, and ask nothing else here; what this run writes is shown at the pre-spend
-approval in stage 6, which is the other checkpoint and the last moment changing it is free. A path
-given here names material that was in the project all along, so re-run the opening gate over it and
+approval in stage 6, which is the other checkpoint and the last moment changing it is free. It
+closes the message: the board and the cost sit above it, and no summary of it sits above them.
+A path given here names material that was in the project all along, so re-run the opening gate over it and
 read that as the opening score; the record waits for this answer in any gap run, for the reason the
 zero-anchor gate above already gives for its own.
 When nothing anchors task intent at all this is not a second question - the zero-anchor gate above
@@ -558,8 +573,9 @@ Follow this order:
    dependency, record the preflight-only result now and re-run the score immediately after that
    calibration.
 
-A missing Traigent SDK is `SKIP` in this deferred pre-install pass; an installed unsupported SDK is
-a failure, and an optional provider package may defer only its own check. The rendered readiness
+A missing Traigent SDK is `SKIP` in this deferred pre-install pass; an installed package that is not
+the SDK is a failure, while a release other than the tested one is reported and never stops the run;
+an optional provider package may defer only its own check. The rendered readiness
 card is the summary. Do not separately explain passed calibration/mock wiring unless action is
 needed or the user asks; neither is agent accuracy or an optimization result.
 
@@ -688,9 +704,9 @@ Only after the standard-library-only component checks:
    `references/run-safety.md`, naming its absolute path before touching it. Preserve every existing
    environment. The reference owns creation, recovery, and activation mechanics; never fall back
    to a shared or dependent environment.
-3. Install the exact declared dependencies under the narrow authorization above: use the project's
-   compatible exact declarations, or otherwise the exact pins in
-   `assets/requirements-first-run.txt`. Never use an unversioned `pip install traigent`.
+3. Install the exact declared dependencies under the narrow authorization above: the exact pins in
+   `assets/requirements-first-run.txt`, never the project's own declarations. Never use an
+   unversioned `pip install traigent`.
    Keep this unattended step foregrounded, explain the wait, and do not delegate it; the safety
    reference owns the rationale. Then re-run `scripts/preflight.py` in that environment without
    `--defer-missing-sdk`; `sdk-version: PASS` is required before continuing. On `FAIL`, preserve
@@ -741,6 +757,11 @@ approval also carries the pre-spend card in `references/run-safety.md`: what the
 was filled, absolute paths to what was written, the easiest and hardest rows, what the evaluation
 method counts as correct, and one proceed-or-fix answer. It is content on the approval that already
 stops, never a second pause, and approving the spend is not approving the material.
+
+When the opening gate found Traigent already set up here, that approval carries it too, beside the
+figure: what was found, and that this run charges for its own baseline and search whether or not
+they have optimized here already. One line on the approval that already stops, which is the last
+moment stopping is free.
 
 Immediately before the paid baseline, show a short run card with model ids, each varying knob and
 its explicit values, one plain-language note per knob, and the total combination count. The

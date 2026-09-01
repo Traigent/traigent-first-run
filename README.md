@@ -149,8 +149,8 @@ before showing the opening card. A check this tool could not compute is marked u
 excluded rather than scored zero; a check the run was asked for and did not supply is marked
 unmeasured too, but keeps its weight and earns nothing, so withholding it can never pay. The card
 says how much of each pillar it actually observed. A deferred calibration leaves
-`EVALUATION 53/100 (2 of 4 checks measured)` and limits the readiness claim to 45 until the ruler is
-validated; a fresh passing calibration can measure all four checks before that first card. A low
+`EVALUATION 53/100 (2 of 4 checks measured)` and limits the readiness claim to 45 until the
+evaluation method is validated; a fresh passing calibration can measure all four checks before that first card. A low
 score never stops the run; it decides which gaps are worth explaining and which are worth fixing
 first.
 
@@ -181,7 +181,7 @@ the separate pre-approval request-difference proof decides whether a paid grid m
 current-run Enhanced config-space artifact is the closing evidence of what actually ran.
 
 Some conditions cap the whole score instead of costing a few points, because an average can hide a
-broken ruler - an evaluator that scores a wrong answer as well as a right one, a tuning set that
+broken evaluator - one that scores a wrong answer as well as a right one, a tuning set that
 shares examples with the held-out set, a dataset that is mostly or entirely generated, or simply
 too few comparable examples for a stable comparison. What a cap does to the score is bound it: a
 cap is a ceiling on the number, not a deduction and not a refusal to score. The walkthrough carries

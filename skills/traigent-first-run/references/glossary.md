@@ -88,7 +88,7 @@ Evaluation (grading)
 
 Calibration (of the evaluator)
   Plain: checking that the evaluator gives a high score to good answers and a
-  low score to bad ones - that the ruler actually measures the right thing.
+  low score to bad ones - that it actually measures the right thing.
   Note: an evaluator that passes everything, or one that gives a wrong answer a
   good score, is broken even if it is fast and repeatable.
 
@@ -197,13 +197,13 @@ The lines under each pillar on the card
     same answer every time     - whether re-grading the same output gives the
                                  same score. An evaluator that drifts makes
                                  every comparison noisier.
-    checked on known-good and known-bad - whether the evaluator was tried
-                                 against answers already known to be right and
-                                 wrong. Until it is, nothing establishes it can
-                                 tell them apart.
-    separates good answers from bad - how far apart it scored those known-good
-                                 and known-bad answers. A narrow gap means the
-                                 grade barely reflects quality.
+    tried on answers already known right and wrong - whether the evaluator
+                                 was run over answers you already know the
+                                 verdict for. Until it is, nothing establishes
+                                 it can tell them apart.
+    separates good answers from bad - how far apart it scored those already-
+                                 known right and wrong answers. A narrow gap
+                                 means the grade barely reflects quality.
   Agent:
     how many settings-combinations there are to try - the size of the search
                                  space: every combination of the values you
@@ -283,13 +283,14 @@ The lines under each pillar on the card
                                  second number too; when it would not, the
                                  card omits it.
 
-  Why two lines are blank at the start: they are "checked on known-good and
-  known-bad" and "separates good answers from bad", which both come from
-  calibrating the evaluator - that happens later in the run, so at the opening
-  score they have not been done yet. Both are named as not measured, and neither is
-  something you were supposed to bring. Unmeasured is not free, though: a
-  check the run will do later keeps its weight, so the pillar reads under 100
-  until calibration. That is why 2 of 4 measured is not 100.
+  Why two lines are blank at the start: they are "tried on answers already
+  known right and wrong" and "separates good answers from bad", which both come
+  from calibrating the evaluator - that happens later in the run, so at the
+  opening score they have not been done yet. Neither is something you were
+  supposed to bring, and the two are not charged alike. The first keeps its
+  weight and earns nothing, so it does hold the pillar under 100 until
+  calibration is done. The second is left out of the total altogether and
+  deducts nothing, which is why the card says so on the line itself.
 
   No settings document ever reaches an opening score. Every config-space file
   found before this run's search is omitted; an earlier run's is circular

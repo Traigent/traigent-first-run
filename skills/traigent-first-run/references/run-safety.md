@@ -49,9 +49,12 @@ sub-agents, which not every supported assistant provides.
   a fully pinned, hash-checked requirements file and wheels; stop if fulfilling it requires source
   builds, additional undeclared top-level packages, or code execution. A user or environment
   install-approval policy still takes precedence.
-- If the project has no compatible exact SDK declaration, install the tested pins from
-  `assets/requirements-first-run.txt`. Never run an unversioned `pip install traigent`: on an
-  unsupported interpreter, package resolution can select the unrelated obsolete `0.0.1` release.
+- Install the tested pins from `assets/requirements-first-run.txt`, whatever the project declares
+  for itself; the dedicated environment exists so this run uses the stack it was measured on, and
+  the project's own pin is left alone rather than installed or edited. Never run an unversioned
+  `pip install traigent`: on an unsupported interpreter, package resolution can select the
+  unrelated obsolete `0.0.1` release, which carries none of the optimizer and which the preflight
+  refuses by name.
 - Before creating the environment or installing anything, run every available bundled component
   check whose complete path needs only the Python standard library and local project files.
 - Verify installed packages and public signatures before generating SDK integration code.
@@ -251,7 +254,7 @@ what was examined and an absent class stays visible:
 | a classification | near-miss labels, an absent label, case and whitespace |
 | free text | omission, contradiction, added claims not in the input |
 | structured (JSON/schema) | missing optional field, wrong type, extra field, null vs absent |
-| code or SQL | out of scope for this first-run guide; stop before evaluator execution and use the manual-containment route below |
+| code or SQL | wrong table or column, missing or extra condition, join and grouping shape, ordering and row limits, formatting that changes no result |
 
 Binding is first because a token comparison cannot see a correct value paired to the wrong key.
 The deterministic permutation probe asks about that one class mechanically; the rest still needs
@@ -260,7 +263,8 @@ the recorded semantic review.
 Identify execution evaluators from their complete call path. A scorer enters that path when it
 executes or imports candidate/model output as code, shells out with it, or submits it to a code or
 SQL engine. That is a scope stop for this first-run guide, not a sandbox request: do not run that
-evaluator in calibration, mock, baseline, optimization, or validation.
+evaluator in calibration, mock, baseline, optimization, or validation. The manual-containment route
+below is the only next step it has.
 
 ## Static and mock validation
 
@@ -285,11 +289,13 @@ local quality view; they are not aliases, rewrites, or proof of SDK acceptance.
 ### Execution evaluators are out of scope
 
 This first-run guide supports non-executing comparison evaluators. It does not ship, select, or
-validate a sandbox for candidate/model output that is executed as code or SQL. A virtual
-environment, stripped credentials, an ordinary subprocess, a timeout, or mock flags do not make
-that execution safe.
+validate a sandbox for candidate/model output that is executed as code or SQL. What ends here is
+the evaluator that runs the answer, never the task that produced it: an agent whose answer is code
+or SQL stays in scope, graded by the comparison `references/evaluation-and-dataset.md` selects
+for it. A virtual environment, stripped credentials, an ordinary subprocess, a timeout, or mock
+flags do not make that execution safe.
 
-When the resolved evaluator call path identifies that path, preserve the project, run only
+When the resolved evaluator call path is an executing one, preserve the project, run only
 read-only static inspection that does not import or execute it, record a `stopped` `containment`
 event, and end this guide before calibration, environment setup, credentials, provider calls, or
 paid work.

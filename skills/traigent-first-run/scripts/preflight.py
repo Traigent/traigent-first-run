@@ -21,14 +21,59 @@ import traceback
 from collections import Counter
 from dataclasses import asdict, dataclass
 from fractions import Fraction
-from importlib.metadata import PackageNotFoundError, version
+from importlib.metadata import PackageNotFoundError, files, version
 from pathlib import Path
 from typing import Any, Iterable, Sequence
 
 PASS, FAIL, WARN, SKIP = "PASS", "FAIL", "WARN", "SKIP"
 SUPPORTED_PYTHON_MIN = (3, 11)
 SUPPORTED_PYTHON_MAX = (3, 14)
-SUPPORTED_TRAIGENT_VERSION = "0.26.0"
+# The release this walkthrough was measured on, and the one its own
+# requirements file installs. It is a statement about what was tested, NOT a
+# requirement: an exact-equality gate here refused every other release,
+# including releases NEWER than this one, so a customer who had kept the SDK
+# up to date was turned away by the product for being ahead of it. The SDK
+# ships faster than this constant can be bumped, so equality guaranteed the
+# guide would break on every release until somebody edited this line.
+TESTED_TRAIGENT_VERSION = "0.26.0"
+# The modules every code block in this guide imports without first checking
+# for them (`references/sdk-execution.md`, the wrapper's import block).
+#
+# This is what the old exact-version comparison was really standing in front
+# of, and the only failure it caught that mattered: the name `traigent` on the
+# package index also carries an obsolete `0.0.1` placeholder release, which
+# `run-safety.md` records that resolution can select on an unsupported
+# interpreter. That release ships eight recorded files, no optimizer, and
+# prints a "placeholder" line on import - measured by installing it. Every
+# real release from 0.10.0 onward ships both modules below, measured by
+# reading the wheel of every release the index offers, so no version number
+# separates a working SDK from a broken one and a version comparison was the
+# wrong question. Asking for the modules is the right one: it refuses the
+# placeholder, accepts every real release, and cannot go stale on a bump.
+#
+# Read from the installed distribution's own file record - never imported.
+# Importing to find out what is installed would execute a third-party package
+# inside a check whose whole contract is that it does not.
+# Held as path segments and joined at the point of use. Written out as whole
+# strings, a package-name-then-directory pair reads to this repository's own
+# public-package scan as a reference to a private repository named after that
+# directory, which is that check doing its job on a shape that looks like one.
+SDK_DISTRIBUTION = "traigent"
+REQUIRED_SDK_MODULES = (
+    ("api", "decorators.py"),
+    ("core", "objectives.py"),
+)
+# Where a Python project says what it depends on. Read as text, never parsed
+# as TOML and never executed - the question is only whether a name appears.
+DEPENDENCY_DECLARATIONS = ("requirements.txt", "pyproject.toml", "setup.py")
+# `traigent` as a requirement name in its own right. The boundaries are what
+# keep a longer package name that merely starts the same way, a dotted
+# attribute, and a `traigent.ai` link or e-mail address from counting as a
+# dependency on the SDK. A requirement is never followed by a dot - the shapes
+# are the bare name, a version specifier and an extras bracket - so excluding
+# one costs nothing and drops the most likely false reading, which is a
+# customer who linked our website.
+TRAIGENT_REQUIREMENT = re.compile(r"(?<![\w.-])traigent(?![\w.-])", re.IGNORECASE)
 # How long a word sequence has to be before repeating it means anything.
 #
 # The comparison below is Jaccard over overlapping n-word sequences, not over
@@ -538,7 +583,44 @@ def check_python() -> None:
         )
 
 
+def sdk_module_path(parts: Sequence[str]) -> str:
+    """One recorded module path inside the installed distribution."""
+    return "/".join((SDK_DISTRIBUTION, *parts))
+
+
+def installed_sdk_is_the_optimizer() -> bool | None:
+    """Whether the installed `traigent` ships the modules this run imports.
+
+    Metadata only. `files()` reads the record the installer wrote, so nothing
+    here imports the package or runs a line of it.
+
+    `None` is "the distribution listed no files", which happens and is not
+    evidence of absence. A missing record must not read as a missing SDK, so
+    the caller treats `None` the way it treats a present one.
+    """
+    try:
+        recorded = files("traigent")
+    except PackageNotFoundError:  # pragma: no cover - the caller checked first
+        return None
+    if not recorded:
+        return None
+    present = {str(path) for path in recorded}
+    return all(sdk_module_path(parts) in present for parts in REQUIRED_SDK_MODULES)
+
+
 def check_sdk(*, defer_missing: bool = False) -> None:
+    """Is the Traigent SDK here, and is it the Traigent SDK?
+
+    Deliberately not "is it the exact release we tested". See
+    `TESTED_TRAIGENT_VERSION`: a newer release is the customer being current,
+    not the customer being wrong, and refusing one is the worst first
+    impression this guide can make. Every difference from the tested release
+    is reported and none of them stops the run.
+
+    The status stays PASS rather than WARN for a reason a reader should be
+    able to check: `--strict` turns any WARN into exit 1, so a WARN here would
+    reintroduce the stop this function exists to remove.
+    """
     try:
         installed = version("traigent")
     except PackageNotFoundError:
@@ -555,15 +637,105 @@ def check_sdk(*, defer_missing: bool = False) -> None:
                 "traigent is not installed in the active interpreter",
             )
         return
-    if installed != SUPPORTED_TRAIGENT_VERSION:
+    if installed_sdk_is_the_optimizer() is False:
         emit(
             "sdk-version",
             FAIL,
-            f"traigent {installed} is unsupported for this tested first run; "
-            f"install traigent=={SUPPORTED_TRAIGENT_VERSION}",
+            f"the installed traigent {installed} does not contain the "
+            "optimizer or the evaluation options this run uses, so it is not "
+            "the Traigent SDK - the package name also carries an old "
+            f"placeholder release. Install traigent=={TESTED_TRAIGENT_VERSION} "
+            "in this run's own environment",
+            {"installed": installed, "is_optimizer": False},
+        )
+        return
+    if installed == TESTED_TRAIGENT_VERSION:
+        emit(
+            "sdk-version",
+            PASS,
+            f"traigent {installed}",
+            {"installed": installed, "tested": TESTED_TRAIGENT_VERSION},
         )
     else:
-        emit("sdk-version", PASS, f"traigent {installed}")
+        emit(
+            "sdk-version",
+            PASS,
+            f"traigent {installed}; this walkthrough was measured on "
+            f"{TESTED_TRAIGENT_VERSION}, and nothing it does needs that exact "
+            "release, so the run continues. Where these notes describe what "
+            f"the SDK stores or sends, they describe {TESTED_TRAIGENT_VERSION}",
+            {"installed": installed, "tested": TESTED_TRAIGENT_VERSION},
+        )
+
+
+def check_existing_traigent_use(root: Path) -> None:
+    """Did this project already adopt Traigent before the walkthrough arrived?
+
+    Asked because the walkthrough costs money and is deliberately a reduced
+    form of the product: somebody who has already optimized this project would
+    be paying a second time to be shown less. They should get to decide that
+    with the fact in front of them.
+
+    It reads the project's own dependency declarations and nothing else,
+    because a declaration is the only signal here whose OWNER is unambiguous.
+    The alternative - "is `traigent` importable" - cannot carry the claim:
+
+    * It answers for one interpreter. The opening gate runs under the host
+      `python3` in every case but one, so a project environment that has the
+      SDK is invisible to it, and a machine-wide install shows up identically
+      whether or not it has anything to do with this project.
+    * Its provenance only holds before this run installs anything. After the
+      dedicated environment exists, "the SDK is here" is as likely to be our
+      doing as theirs.
+
+    A declaration has neither problem. It belongs to the project rather than
+    to an interpreter, and this run never writes one - the whole guide's
+    writes are `traigent-runs/` and a `.gitignore` line - so a `traigent`
+    requirement in these files was always put there by the customer.
+
+    It is inventory, never a gate. The status is PASS whichever way it comes
+    out, so nothing here can stop a run: a customer may well want a first run
+    on a project that already lists the SDK, and refusing them on this
+    evidence would be refusing them for having bought the product. The cost of
+    reading it wrong is one extra sentence, which is the right cost for a
+    signal this indirect.
+    """
+    declared: list[str] = []
+    for name in DEPENDENCY_DECLARATIONS:
+        path = root / name
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            # Unreadable is not "absent", but it is also not a finding, and a
+            # first run must not stall on somebody's file permissions.
+            continue
+        # Comments are prose, and prose mentioning the SDK is not a dependency
+        # on it. `setup.py` is read as text and never executed: running a
+        # stranger's program to find out what it depends on is not a read.
+        code = "\n".join(line.split("#", 1)[0] for line in text.splitlines())
+        if TRAIGENT_REQUIREMENT.search(code):
+            declared.append(name)
+    if not declared:
+        emit(
+            "existing-traigent-use",
+            PASS,
+            "this project does not list traigent among its dependencies",
+            {"declared_in": []},
+        )
+        return
+    emit(
+        "existing-traigent-use",
+        PASS,
+        f"this project already lists traigent in {', '.join(declared)}, so "
+        "the SDK was set up here before this walkthrough started and this may "
+        "not be a first run at all. The walkthrough is a shorter, guided "
+        "version of what the SDK already does for you, and it still charges "
+        "for its own baseline and its own search - the approval before any "
+        "spending names that figure. Worth continuing to see the guided "
+        "comparison, or to onboard a different project; worth stopping if "
+        "this project is already tuned",
+        {"declared_in": declared},
+    )
 
 
 def check_keys(env: dict[str, str | None]) -> None:
@@ -2651,6 +2823,15 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--env", default=".env", help="path to the local .env")
     parser.add_argument(
+        "--project-root",
+        default=".",
+        help=(
+            "the user's project directory, read only for the dependency "
+            "declarations that say whether Traigent was already set up here "
+            "(default: the working directory)"
+        ),
+    )
+    parser.add_argument(
         "--models", default="", help="comma-separated LiteLLM model ids"
     )
     parser.add_argument("--dataset", help="JSONL dataset to validate")
@@ -2757,6 +2938,7 @@ def run() -> int:
     check_env_permissions(env_path)
     check_python()
     check_sdk(defer_missing=args.defer_missing_sdk)
+    check_existing_traigent_use(Path(args.project_root))
     check_keys(env)
     check_cost_settings(env, file_values)
 

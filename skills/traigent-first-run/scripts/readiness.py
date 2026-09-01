@@ -619,6 +619,90 @@ TASK_KINDS = (
     "short-answer",
     "structured",
 )
+
+# Why a method that does not fit this output kind does not fit it.
+#
+# The card line this feeds used to read "<method> is a poor ruler for <kind>
+# output", which is a verdict with the working left out: a customer cannot
+# check it, cannot usefully disagree with it, and has no way to tell a real
+# mismatch from this scorer being opinionated about their evaluator. It also
+# spent an internal metaphor - "ruler" - on the one line whose whole job is to
+# be checkable against their own answers.
+#
+# Each entry says what the method actually compares and what that gets wrong,
+# in terms the reader can test on two of their own rows. `{kind}` is the
+# declared task kind, interpolated so the sentence names their output rather
+# than a category.
+#
+# Keyed by METHOD and complete over `METHOD_PROFILES`, because that is where
+# the fact lives: what `set-f1` compares is the same whether it was pointed at
+# SQL or at prose, and one reason per (method, kind) pair would be a hundred
+# strings that can disagree with each other about one method. The kind supplies
+# only the noun, and `METHOD_PROFILES[...]["fits"]` supplies what the method is
+# for - so the line ends by naming the outputs it does suit rather than leaving
+# the reader with a refusal and nowhere to go.
+METHOD_MISMATCH_REASONS: dict[str, str] = {
+    "exact": (
+        "requires the answer to match the expected text character for "
+        "character, so a right {kind} answer written any other way is scored "
+        "as wrong"
+    ),
+    "normalized-exact": (
+        "compares the answer with the expected text once case and spacing are "
+        "normalised, so a right {kind} answer worded differently is still "
+        "scored as wrong"
+    ),
+    "numeric-tolerance": (
+        "reads both answers as numbers and compares them within a tolerance, "
+        "so a {kind} answer that is not a number cannot be scored at all"
+    ),
+    "set-f1": (
+        "scores by how many words two answers share, so a wrong {kind} answer "
+        "differing by a single name or value still shares nearly every word "
+        "with the right one and scores close to it"
+    ),
+    "schema": (
+        "checks the answer's structure against a schema and never its "
+        "content, so a {kind} answer with the right shape and the wrong "
+        "content is scored as correct"
+    ),
+    "execution": (
+        "runs the answer and compares what it produces, so a {kind} answer "
+        "that is not runnable cannot be scored at all"
+    ),
+    "routing": (
+        "compares the chosen route with the expected one, so a {kind} answer "
+        "that is not one of a fixed set of routes cannot be scored"
+    ),
+    "fuzzy": (
+        "scores by how alike two strings look character by character, so a "
+        "wrong {kind} answer that reads almost like the right one scores "
+        "almost as well"
+    ),
+    "embedding": (
+        "compares two answers by overall meaning using a model, so a {kind} "
+        "answer that has to be right in its exact details is scored on the "
+        "gist instead"
+    ),
+    "llm-judge-pointwise": (
+        "asks a model to grade the answer on its own, so a {kind} answer is "
+        "scored on that model's opinion rather than on a rule you can check"
+    ),
+    "llm-judge-pairwise": (
+        "asks a model which of two answers is better, so a {kind} answer gets "
+        "a comparison against another answer rather than the verdict on "
+        "itself that this output needs"
+    ),
+    "llm-judge-rubric": (
+        "asks a model to grade the answer against a written rubric, so a "
+        "{kind} answer is scored on that model's reading of the rubric rather "
+        "than on a rule you can check"
+    ),
+    "composite": (
+        "blends several checks into one number, so it is only as good for "
+        "{kind} output as the checks inside it, which this score cannot see"
+    ),
+}
 DETERMINISTIC_METHODS = {
     "exact",
     "normalized-exact",
@@ -1766,7 +1850,7 @@ CHECK_DISPLAY_NAMES: dict[str, str] = {
     "diversity": "repeated or dominant answers",
     "provenance": "where the rows came from",
     # evaluation
-    "calibration": "checked on known-good and known-bad",
+    "calibration": "tried on answers already known right and wrong",
     "task-fit": "right kind of check for this output",
     "reproducibility": "same answer every time",
     "probe-spread": "separates good answers from bad",
@@ -1790,6 +1874,34 @@ def display_name(check: str) -> str:
     to fail - in the author's run, not the user's.
     """
     return CHECK_DISPLAY_NAMES.get(check, check)
+
+
+def readable_kinds(kinds: Sequence[str]) -> str:
+    """The task kinds a method suits, as something a sentence can end on."""
+    if not kinds:
+        return "no output kind this score knows"
+    if len(kinds) == 1:
+        return kinds[0]
+    return f"{', '.join(kinds[:-1])} or {kinds[-1]}"
+
+
+def task_fit_evidence(method: str, task_kind: str, fits: Sequence[str]) -> str:
+    """The card's sentence for a method that does not suit this output.
+
+    Falls back to the bare verdict rather than raising, for the reason
+    `display_name` falls back: a missing entry costs the reader an explanation,
+    and a scorer that refuses to render its own card costs them the result. The
+    completeness test over `METHOD_PROFILES` is what makes the fallback
+    unreachable in this tree.
+    """
+    reason = METHOD_MISMATCH_REASONS.get(method)
+    if reason is None:
+        return f"{method} is the wrong kind of check for {task_kind} output"
+    return (
+        f"{method} is the wrong kind of check for {task_kind} output: it "
+        f"{reason.format(kind=task_kind)}; {method} fits "
+        f"{readable_kinds(fits)} output"
+    )
 
 
 def binds(cap: Cap, overall: int) -> bool:
@@ -3585,8 +3697,9 @@ ORIGIN_CAPS: dict[str, Cap] = {
     "evaluation": Cap(
         "evaluator-generated",
         EVALUATOR_GENERATED_CEILING,
-        "This run wrote the evaluator, so the score reports agreement with a "
-        "ruler nobody outside this run has checked against your task. Your "
+        "This run wrote the evaluator, so the score reports agreement with an "
+        "evaluation method nobody outside this run has checked against your "
+        "task. Your "
         "rows and your answers are real; what grades them is a stand-in until "
         "your own scoring is connected or a person confirms this one marks the "
         "way you would.",
@@ -4676,7 +4789,18 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
                 0.0,
                 40.0,
                 False,
-                evidence,
+                # The consequence, said on the line itself, because the marker
+                # does not carry it and a reader cannot infer it. Two unmeasured
+                # checks sit next to each other in this pillar and only one of
+                # them costs anything: this one keeps its weight
+                # (`withheld=True`) and the spread check below is renormalized
+                # away. Printing the same `?` beside both left the customer to
+                # guess which, and the guess that gets made is that every blank
+                # line is a deduction - so the card was read as charging for a
+                # measurement the run had not reached yet. Neither line is
+                # allowed to be silent about which it is any more.
+                f"{evidence}; it costs points until a complete calibration is "
+                "measured",
                 # The score describes the evidence connected to this run, not
                 # everything that may exist elsewhere. A complete calibration
                 # result earns these points; one that was not found or passed
@@ -4698,7 +4822,9 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
                 (
                     f"{facts.method} suits {facts.task_kind} output"
                     if fits
-                    else f"{facts.method} is a poor ruler for {facts.task_kind} output"
+                    else task_fit_evidence(
+                        facts.method, facts.task_kind, profile["fits"]
+                    )
                 ),
             )
         )
@@ -4728,7 +4854,7 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
                 # Withheld, not unavailable: the run is asked for
                 # `--task-kind` and chose not to answer. Renormalized away, not
                 # answering scored the pillar 100 against 83 for declaring a
-                # kind the method is a poor ruler for.
+                # kind the method is the wrong kind of check for.
                 withheld=True,
             )
         )
@@ -4771,20 +4897,36 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
             )
         )
     else:
+        # A complete calibration that omits its scores must not outscore one
+        # that reports a narrow spread honestly. When no complete calibration
+        # exists at all, however, its missing evidence is already charged by
+        # the calibration subscore; spread remains unknown rather than charging
+        # the same absence a second time.
+        #
+        # Two states, and until now one sentence for both - which made the more
+        # common of them read as an accusation. At the opening score there is
+        # no calibration yet, this check is renormalized out of the pillar, and
+        # it deducts NOTHING; the card still printed it beside a `?`, next to a
+        # sibling `?` that does deduct, and said nothing either way. A line
+        # shown at a stage where it cannot yet be measured has to say what it is
+        # costing, and here the honest answer is nothing.
+        spread_withheld = bool(established)
         subs.append(
             SubScore(
                 "probe-spread",
                 0.0,
                 15.0,
                 False,
-                "not yet measured how far apart it scores a right and a wrong answer",
-                # A complete calibration that omits its scores must not
-                # outscore one that reports a narrow spread honestly. When no
-                # complete calibration exists at all, however, its missing
-                # evidence is already charged by the calibration subscore;
-                # spread remains unknown rather than charging the same absence
-                # a second time.
-                withheld=bool(established),
+                (
+                    "calibration completed without reporting how far apart it "
+                    "scores a right and a wrong answer; it costs points until "
+                    "those scores are reported"
+                    if spread_withheld
+                    else "not yet measured how far apart it scores a right and "
+                    "a wrong answer - this is measured at calibration, later in "
+                    "the run, and no points are deducted for it here"
+                ),
+                withheld=spread_withheld,
             )
         )
 
@@ -12156,9 +12298,9 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         choices=COMPONENT_ORIGINS,
         help=(
             "who wrote the evaluator: 'brought' for the customer's own, "
-            "'generated' for one this run created. A generated ruler bounds "
-            "what the score may claim and never stops the run; there is nothing "
-            "here to measure, so it is declared"
+            "'generated' for one this run created. A generated evaluation "
+            "method bounds what the score may claim and never stops the run; "
+            "there is nothing here to measure, so it is declared"
         ),
     )
     parser.add_argument(

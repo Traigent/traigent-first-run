@@ -79,11 +79,11 @@ def assistant_facing_documents() -> list[Path]:
 GUIDANCE_BUDGET_LEDGER = Path(__file__).resolve().parent / "guidance_budget"
 BUDGET_ENTRY_NAME = re.compile(r"^(\d{4})-[a-z0-9][a-z0-9-]*\.md$")
 BUDGET_FIGURE = re.compile(
-    r"^(resident|total)-(ceiling|measured): (\d[\d_]*)$", re.MULTILINE
+    r"^(resident|total|document)-(ceiling|measured): (\d[\d_]*)$", re.MULTILINE
 )
 BUDGET_FOLLOWS = re.compile(r"^follows: (\d{4})$", re.MULTILINE)
 BUDGET_FOLLOWS_MEASURED = re.compile(
-    r"^follows-(resident|total)-measured: (\d[\d_]*)$", re.MULTILINE
+    r"^follows-(resident|total|document)-measured: (\d[\d_]*)$", re.MULTILINE
 )
 # A raise is a decision, so an entry that states a number and not a reason is
 # the thing this ledger exists to refuse. The floor is not a guess: the
@@ -529,6 +529,42 @@ def guidance_budget_ceilings(
     for entry in guidance_budget_chain(entries):
         ceilings.update(entry.ceilings)
     return ceilings
+
+
+def guidance_budget_measured(document_bytes: dict[Path, int]) -> dict[str, int]:
+    """Every budget the package is weighed on, derived from one measurement.
+
+    Defined once because the pair of them was derived twice: the ceiling
+    check and the newest-entry check each rebuilt `resident` and `total`
+    from their own copy of the same mapping, so a third budget would have
+    arrived with two homes on the day it was added. That is the rule
+    CLAUDE.md states for the guidance, applied to the checks over it, and
+    `assistant_facing_documents` above exists for the same reason.
+
+    DOCUMENT is the largest single file, and it is here because the pair
+    could not see the step that prompted it. Eleven consecutive entries,
+    0041 through 0051, added 5_388 bytes between them; the next single entry
+    put 38_532 into one reference -- seven times the eleven together, and half
+    again that document's own size -- while resident moved 240 bytes and total
+    stayed under its ceiling. Both sums were honest and neither was the fact -
+    the step was found by reading the ledger by hand afterwards.
+    A sum cannot tell one document growing by a third from forty growing a
+    little, and those are different decisions to weigh.
+
+    The mapping is a parameter rather than read here, so the budgets can be
+    exercised on an invented package as well as on the committed one.
+    """
+    # No `default=`: an empty corpus is a broken caller, and a budget that
+    # reports zero for it would pass every ceiling while measuring nothing.
+    return {
+        "resident": sum(
+            size
+            for path, size in document_bytes.items()
+            if path in {ROOT / "GUIDE.md", SKILL}
+        ),
+        "total": sum(document_bytes.values()),
+        "document": max(document_bytes.values()),
+    }
 
 
 SKILL_PREFIX = "skills/traigent-first-run/"
@@ -4455,6 +4491,91 @@ class SkillPackageTests(unittest.TestCase):
         ]
         self.assertEqual(positions, sorted(positions))
 
+    def test_the_project_pin_is_left_alone_rather_than_installed(self) -> None:
+        """One environment, one stack, and the customer's file untouched.
+
+        The install step used to offer two routes - "the project's compatible
+        exact declarations, or otherwise the exact pins" - and never said what
+        compatible meant. A project pinning any other release read as the
+        first route, so the run installed that release into the dedicated
+        environment and then met a preflight demanding the tested one: a stop
+        produced entirely by this instruction's own ambiguity. The dedicated
+        environment exists precisely so the two pins never have to agree.
+
+        Pinned in all three homes because the ambiguity was stated in all
+        three, and a route that survives in one of them is the contradiction
+        coming back. What each home says is split the way this repository
+        splits everything else: the flow names the one route, the safety
+        reference owns the rule and why, and the entry point states the
+        customer-facing conclusion.
+        """
+        stage_five = " ".join(
+            SKILL.read_text()
+            .casefold()
+            .split("### 5.", 1)[1]
+            .split("### 6.", 1)[0]
+            .split()
+        )
+        safety = " ".join(RUN_SAFETY.read_text().casefold().split())
+        guide = " ".join((ROOT / "GUIDE.md").read_text().casefold().split())
+        for label, text, phrase in (
+            ("skill", stage_five, "never the project's own declarations"),
+            ("safety", safety, "whatever the project declares for itself"),
+            ("safety", safety, "the project's own pin is left alone"),
+            ("safety", safety, "rather than installed or edited"),
+            ("guide", guide, "never edits your own dependency files"),
+        ):
+            with self.subTest(document=label, phrase=phrase):
+                self.assertIn(phrase, text)
+        # The route that produced the contradiction may not come back under
+        # its old words either.
+        for label, text in (
+            ("skill", stage_five),
+            ("safety", safety),
+            ("guide", guide),
+        ):
+            with self.subTest(document=label):
+                self.assertNotIn("compatible exact", text)
+
+    def test_an_existing_traigent_setup_informs_the_spend_and_never_blocks(
+        self,
+    ) -> None:
+        """A customer who already has Traigent here is told, not turned away.
+
+        The walkthrough charges for its own baseline and its own search and is
+        deliberately a reduced form of the product, so somebody who already
+        adopted the SDK in this project may be paying a second time to be
+        shown less. That is worth saying and not worth refusing over: the
+        evidence cannot separate "installed it and never ran it" from
+        "already tuned this", and a stop built on it would refuse a run the
+        customer legitimately wants.
+
+        So it lands twice, and neither is a new question: once in the opening
+        readiness turn, and once as a line on the stage 6 approval that
+        already stops - which is the last moment stopping is free, and the
+        only checkpoint before money moves.
+        """
+        skill = " ".join(SKILL.read_text().casefold().split())
+        # The deferred pass describes the same rule and used to contradict it:
+        # "an installed unsupported SDK is a failure" was written when any
+        # other release was one.
+        self.assertIn(
+            "a release other than the tested one is reported and never stops the run",
+            skill,
+        )
+        self.assertNotIn("an installed unsupported sdk is a failure", skill)
+        for phrase in (
+            "when `existing-traigent-use` reports a declaration",
+            "traigent was set up in this project before this run started",
+            "so this may not be a first run",
+            "never read that as a blocker or a reason to stop",
+            "the decision is theirs at the stage 6 approval",
+            "that approval carries it too",
+            "charges for its own baseline and search",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, skill)
+
     def test_the_install_step_reruns_preflight_without_the_defer_flag(self) -> None:
         """The deferred SKIP promises a verification that has to land somewhere.
 
@@ -7070,19 +7191,62 @@ class SkillPackageTests(unittest.TestCase):
         ):
             self.assertIn(phrase, plan_text)
 
-    def test_code_and_sql_evaluators_are_out_of_scope_for_first_run(self) -> None:
-        """The guide stops safely rather than inventing a sandbox it cannot ship."""
+    def test_a_code_or_sql_answer_is_reviewed_not_declared_out_of_scope(self) -> None:
+        """What ends this guide is the evaluator that runs the answer.
+
+        A real first run told a customer whose project does natural language to
+        SQL that their task was out of scope for this guide, and stopped
+        without building anything. Nothing in the package supports that
+        sentence: `readiness.py` carries `code-sql` among its task kinds, offers
+        it on `--task-kind`, and prints "composite suits code-sql output" when
+        the ruler fits, which `tests/test_readiness_scoring.py` pins beside the
+        code.
+
+        The sentence came from this row. Every other row in the inventory names
+        the classes a semantic review has to cover for that answer shape, so the
+        row's subject is the ANSWER, and a scope stop written into it is read as
+        a statement about the customer's work rather than about their scorer.
+        The stop is real and belongs one section below, where its subject is the
+        evaluator.
+        """
         text = RUN_SAFETY.read_text().casefold()
         outcome_table = text.split("for skill's semantic-coverage review", 1)[1].split(
             "binding is first", 1
         )[0]
+        row = next(
+            line
+            for line in outcome_table.splitlines()
+            if line.startswith("| code or sql")
+        )
+        self.assertNotIn(
+            "out of scope",
+            row,
+            "this row says what a review of a code or SQL answer must cover; a "
+            "scope stop written here reads as the customer's task being "
+            "unsupported, which is what one run told a customer it was",
+        )
+        # It carries coverage classes like every other row, so a query answer is
+        # no longer the one shape the review has nothing to say about.
+        for phrase in ("table or column", "condition", "join", "ordering"):
+            with self.subTest(coverage=phrase):
+                self.assertIn(phrase, row)
+
+        scope = " ".join(
+            text.split("### execution evaluators are out of scope", 1)[1]
+            .split("### deterministic calibration", 1)[0]
+            .split()
+        )
         for phrase in (
-            "code or sql",
-            "out of scope for this first-run guide",
-            "stop before evaluator execution",
+            "the evaluator that runs the answer, never the task that produced it",
+            "stays in scope, graded by the comparison",
         ):
-            with self.subTest(phrase=phrase):
-                self.assertIn(phrase, outcome_table)
+            with self.subTest(separation=phrase):
+                self.assertIn(
+                    phrase,
+                    scope,
+                    "the section that owns the stop has to say what it does "
+                    "not stop, or the stop is read as covering the task",
+                )
 
     def test_execution_evaluators_stop_before_first_run_execution(self) -> None:
         """The scope boundary is explicit, early, and does not invent a product feature."""
@@ -11633,8 +11797,17 @@ class SkillPackageTests(unittest.TestCase):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, normalized)
 
-    def test_preflight_supports_exactly_the_release_the_pin_installs(self) -> None:
-        self.assertEqual(PREFLIGHT.SUPPORTED_TRAIGENT_VERSION, pinned_sdk_version())
+    def test_preflight_names_the_release_the_pin_actually_installs(self) -> None:
+        """The constant is a claim about what was measured, not a requirement.
+
+        It used to be both, and the second half is gone: the preflight no
+        longer refuses a release for differing from this number. What it still
+        does is print it, so a user on a different release is told which one
+        the walkthrough was measured on - and that sentence is wrong the
+        moment this constant and the requirements file disagree, which is what
+        this still pins.
+        """
+        self.assertEqual(PREFLIGHT.TESTED_TRAIGENT_VERSION, pinned_sdk_version())
 
     def test_sync_shell_hands_the_resolved_store_to_the_cli_with_run_dir_unset(
         self,
@@ -19347,6 +19520,22 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
     # (decision, phrases asserting one answer, phrases asserting the opposite)
     CONTRADICTIONS = (
         (
+            # Two different limits were collapsed into one sentence, and a
+            # customer read the wrong one. The guide will not run an evaluator
+            # that executes the answer - that is the whole of the limit. It has
+            # never been a limit on what the agent's answer may be: `code-sql`
+            # is scored like any other declared kind. Refused here is the
+            # pairing that produced the claim - a scope stop written into a row
+            # whose subject is the answer shape, and an evaluation table
+            # offering a code answer only the method this guide stops for.
+            "whether a task whose answer is code or SQL is in scope",
+            ("never the task that produced it",),
+            (
+                "code or sql | out of scope",
+                "| code | parser/compile gate plus unit or execution tests |",
+            ),
+        ),
+        (
             "when the Traigent key is required",
             ("only after that checkpoint, ask for the traigent key",),
             (
@@ -20870,8 +21059,8 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
 
         self.assertEqual(
             sorted(guidance_budget_ceilings()),
-            ["resident", "total"],
-            "the ledger no longer declares both ceilings, so one of the two "
+            ["document", "resident", "total"],
+            "the ledger no longer declares every ceiling, so one of the three "
             "budgets is unenforced",
         )
 
@@ -20910,11 +21099,8 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         }
         # Resident = read up front and never dropped. The references are loaded
         # per stage and can leave; these cannot.
-        resident = sum(
-            size
-            for path, size in document_bytes.items()
-            if path in {ROOT / "GUIDE.md", SKILL}
-        )
+        measured = guidance_budget_measured(document_bytes)
+        resident = measured["resident"]
         ceilings = guidance_budget_ceilings()
         self.assertLess(
             resident,
@@ -20929,7 +21115,7 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         )
         # Count the actual UTF-8 files, not Unicode code points or a
         # whitespace-normalized proxy. The ceiling in #104 is a byte ceiling.
-        total = sum(document_bytes.values())
+        total = measured["total"]
         budget = ceilings["total"]
         self.assertLess(
             total,
@@ -20941,6 +21127,74 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
             "why the addition earns it. If two branches just merged, this is "
             f"the arithmetic neither could do alone - {total} is the number "
             "that matters, not either side's.",
+        )
+        # The third budget, and the one the pair above cannot see. Both are
+        # sums, so a reference that takes 38KB in one step reads as a small
+        # fraction of TOTAL and barely moves RESIDENT - which is
+        # exactly what 0052 did, and it was found by adding up ledger entries
+        # afterwards rather than by anything failing. This one names the file.
+        largest = max(document_bytes, key=lambda path: document_bytes[path])
+        self.assertLess(
+            measured["document"],
+            ceilings["document"],
+            f"{largest.relative_to(ROOT)} is {measured['document']} bytes "
+            f"against a {ceilings['document']} per-document ceiling. This "
+            "budget is per file on purpose: the two sums above cannot tell one "
+            "document growing by a third from forty growing a little, and the "
+            "stage that loads this one now carries every byte of it at once. "
+            "Move detail to the reference that owns that stage, or raise the "
+            "ceiling deliberately with an entry in tests/guidance_budget/ "
+            "stating which document grew and what the growth buys.",
+        )
+
+    def test_a_single_document_that_steps_is_visible_where_the_sums_are_not(
+        self,
+    ) -> None:
+        """The case RESIDENT and TOTAL answer identically, and DOCUMENT does not.
+
+        Two packages weighing exactly the same: one where every reference
+        grew a little, one where a single reference took the whole increase.
+        Neither sum can separate them - that is arithmetic rather than an
+        oversight - and the second is what 0052 actually was. It passed both
+        ceilings and was found by adding ledger entries up by hand.
+
+        Both directions, because a per-document figure that refused the level
+        package too would be measuring size rather than concentration: the
+        spread package stays under a ceiling the stepped one crosses, on
+        identical totals.
+        """
+        guide, skill = ROOT / "GUIDE.md", SKILL
+        references = [SKILL_ROOT / "references" / f"{name}.md" for name in "abcdef"]
+        ceiling = 40_000
+        spread = {guide: 8_000, skill: 35_000} | {path: 30_000 for path in references}
+        # The same bytes, all of the growth in one file.
+        stepped = {guide: 8_000, skill: 35_000} | {
+            path: 12_000 for path in references[1:]
+        }
+        stepped[references[0]] = sum(spread[path] for path in references) - 12_000 * (
+            len(references) - 1
+        )
+
+        level_measure = guidance_budget_measured(spread)
+        step_measure = guidance_budget_measured(stepped)
+        for budget in ("resident", "total"):
+            self.assertEqual(
+                level_measure[budget],
+                step_measure[budget],
+                f"the fixture only says anything while {budget} cannot tell "
+                "these two packages apart",
+            )
+        self.assertLess(
+            level_measure["document"],
+            ceiling,
+            "the spread package is the control: no single document is over "
+            "the ceiling, so nothing here may refuse it",
+        )
+        self.assertGreater(
+            step_measure["document"],
+            ceiling,
+            "the stepped package puts a third of the guide in one file on the "
+            "same total, which is the whole thing this budget exists to see",
         )
 
     def test_the_newest_ledger_entry_measured_the_tree_it_ships_with(self) -> None:
@@ -20968,17 +21222,9 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         This does not replace the ceiling check. A wrong-but-lower figure
         passes that one and is still a false record of what was weighed.
         """
-        document_bytes = {
-            path: len(path.read_bytes()) for path in assistant_facing_documents()
-        }
-        live = {
-            "resident": sum(
-                size
-                for path, size in document_bytes.items()
-                if path in {ROOT / "GUIDE.md", SKILL}
-            ),
-            "total": sum(document_bytes.values()),
-        }
+        live = guidance_budget_measured(
+            {path: len(path.read_bytes()) for path in assistant_facing_documents()}
+        )
 
         newest = guidance_budget_chain()[-1]
 
@@ -21435,6 +21681,51 @@ class GuidanceBudgetLedgerRulesTests(unittest.TestCase):
             guidance_budget_ceilings(entries),
             {"resident": 61_500, "total": 240_000},
         )
+
+    def test_a_document_ceiling_is_read_and_carried_like_the_other_two(self) -> None:
+        """A third budget has to obey these rules, not sit alongside them.
+
+        The fields are a closed set, so a new budget is only real once the
+        parser reads it, the chain carries it into the ceiling in force, and
+        the same refusals reach it. An entry introducing one has no earlier
+        measurement to be monotone against, which is why the first ledger
+        below is accepted while stating a predecessor figure for it.
+
+        The reversal is the second ledger: a figure at or above the ceiling
+        it buys is the ordinary breach, and the third budget is refused for
+        it exactly as the first two are.
+        """
+        entries = self.ledger(
+            **{
+                "0001-inherited-ledger.md": self.root(),
+                "0002-per-document.md": self.entry(
+                    "0002 - per document",
+                    follows=1,
+                    follows_measured={"document": 128_943},
+                    document_ceiling=129_000,
+                    document_measured=128_943,
+                ),
+            }
+        )
+        self.assertEqual(guidance_budget_defects(entries), [])
+        self.assertEqual(
+            guidance_budget_ceilings(entries),
+            {"resident": 61_500, "total": 228_750, "document": 129_000},
+        )
+
+        breached = self.ledger(
+            **{
+                "0001-inherited-ledger.md": self.root(),
+                "0002-per-document.md": self.entry(
+                    "0002 - per document",
+                    follows=1,
+                    follows_measured={"document": 129_000},
+                    document_ceiling=129_000,
+                    document_measured=129_000,
+                ),
+            }
+        )
+        self.assertDefect(breached, "against its own document-ceiling")
 
     def test_a_new_entry_binds_the_predecessor_measurement_it_used(self) -> None:
         """A predecessor index without its measured state goes stale silently.
@@ -23007,6 +23298,109 @@ class TheUnusableBranchHasItsOwnQuestionTests(unittest.TestCase):
         creation = self._creation()
         self.assertIn("the build route is the way to continue", creation)
         self.assertIn("re-validate, then carry on", creation)
+
+
+class TheAskIsLastAndNamesWhatIsLackingTests(unittest.TestCase):
+    """Five watched runs opened on the decision and buried the evidence.
+
+    Every one of them led with a one-line statement of the choice - "reply A or
+    B", "pick the walkthrough task" - above the welcome, the stage line, the
+    card and all of the evidence. The rules that existed forbade anything
+    AFTER the standing exit and said nothing about what may come before the
+    card, so a summary at the top broke no stated rule and every run wrote one.
+    Read in that order the customer meets the decision before the material
+    arguing for it, and the card reads as backfill for a verdict already
+    taken.
+
+    The second half is what the ask says. "What the inventory did not find" was
+    stated as a situation rather than as the three things, and the task choices
+    were offered as categories - extraction, classification - which name a
+    shape of problem rather than a job anybody has. Both are the same defect as
+    the card's own jargon rule, one surface over.
+    """
+
+    def _skill(self) -> str:
+        return " ".join(SKILL.read_text().casefold().split())
+
+    def _creation(self) -> str:
+        return " ".join(
+            (SKILL_ROOT / "references" / "component-creation.md")
+            .read_text()
+            .casefold()
+            .split()
+        )
+
+    def test_the_resident_contract_puts_the_ask_last(self) -> None:
+        """Where the reader already is, which is the lesson of 0069.
+
+        The operating contract is read before any stage and is where the other
+        presentation rules live, so the ordering rule sits beside them rather
+        than only in the reference that words the ask.
+        """
+        skill = self._skill()
+        self.assertIn("put the one ask last", skill)
+        self.assertIn("card, board and evidence first, then the question", skill)
+        self.assertIn("never a marker, heading or summary of it above them", skill)
+
+    def test_both_ask_sites_say_the_question_ends_the_message(self) -> None:
+        """Stated at each ask as well, because a run reaches one, not the list."""
+        skill = self._skill()
+        self.assertIn("this question is the last thing in the message", skill)
+        self.assertIn("no summary of it sits above them", skill)
+
+    def test_nothing_may_announce_the_ask_above_the_card(self) -> None:
+        """The reference already forbade a line after it and not one before."""
+        creation = self._creation()
+        self.assertIn("nothing announces it above the card", creation)
+        self.assertIn(
+            "no marker line, no heading, no one-line summary of the choice at "
+            "the top",
+            creation,
+        )
+        self.assertIn("the ask goes lowermost", creation)
+
+    def test_the_gap_is_named_as_the_pieces_and_not_as_a_situation(self) -> None:
+        """Three words the customer already uses, in place of a category."""
+        skill = self._skill()
+        creation = self._creation()
+        self.assertIn(
+            "name the pieces themselves, in the words the customer uses for "
+            "them: dataset, agent, evaluation method",
+            skill,
+        )
+        self.assertIn(
+            "here is what is lacking: dataset, agent, evaluation method",
+            creation,
+        )
+
+    def test_the_zero_anchor_ask_names_what_it_builds_and_from_what(self) -> None:
+        """Logs already in the project are material, and saying so is the offer.
+
+        A run holding request/response logs offered three task labels and never
+        said the three missing pieces would be built from them. "I will write
+        them" and "I will build them from your own traffic" are different
+        offers, and the first is the one that undersells what they have.
+        """
+        skill = self._skill()
+        self.assertIn(
+            "say plainly what is lacking, in the customer's own three words - "
+            "dataset, agent, evaluation method",
+            skill,
+        )
+        self.assertIn(
+            "i will create the dataset, the evaluation method and the agent "
+            "from your logs",
+            skill,
+        )
+
+    def test_a_task_choice_is_put_as_the_job_and_not_as_a_category(self) -> None:
+        """ "Extraction" names a shape of problem; nobody has that problem."""
+        skill = self._skill()
+        self.assertIn("each put as the job itself", skill)
+        self.assertIn("pull the total and the date out of a receipt", skill)
+        self.assertIn(
+            "never as a category name like extraction or classification", skill
+        )
 
 
 class TheReadHappensAndAFailedReadIsAQuestionTests(unittest.TestCase):
