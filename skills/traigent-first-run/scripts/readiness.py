@@ -4329,6 +4329,51 @@ def score_dataset(
             "no tuning set and held-out set, so the result would be "
             f"measured on the same rows the search used; {evidence}"
         )
+    # The card contradicted itself and this is the sentence that stops it.
+    #
+    # `dataset-near-duplicates` fires and prints `rows at least 70% similar to
+    # another row` two lines above, while this line reported 150 rows spelling
+    # six questions as a `substantial comparison set`. Both came off the same
+    # preflight payload, a reader has no way to reconcile them, and the number
+    # is the half a customer acts on.
+    #
+    # A CLAUSE and not a clamp, deliberately. Bounding the count on that check's
+    # notion of sameness was built and measured over 120 genuinely different
+    # support tickets sharing an instruction prefix, and it reported four
+    # comparable examples - a false red on ordinary data, which is worse than a
+    # generous number on repetitive data. Source:
+    # tests/test_readiness_adapter.py#WhichRowsMayBeSubtractedFromTheComparisonCountTests,
+    # whose fixtures reproduce that figure and the three beside it. What is safe
+    # is saying what was found and what this count did with it: no value moves,
+    # no ceiling is raised, and the sentence is true of every dataset where the
+    # check fired, however that check is later made sharper.
+    #
+    # It reports what was FOUND and what this count DID, and claims nothing
+    # about the overlap between them. "Some of these may not be separate
+    # comparisons" would be false on a file whose only similar rows are the
+    # exact copies this count has already removed; "subtracts exact repeats
+    # only" is what `resolved_by_distinct` above does on every input. So the
+    # clause fires whenever the check fired, with no test for whether the
+    # exact pass already covered it - a test this scorer cannot make, because
+    # the near finding carries no count of its own.
+    #
+    # It REFERS to that check rather than restating its wording. The threshold
+    # and the sentence describing it belong to the `DIVERSITY_CHECKS` entry that
+    # certifies on `near_duplicate_status`, which prints them on its own line of
+    # the same card; retyping them here would put the phrase twice on adjacent
+    # lines with nothing holding the two copies equal, and would be a fourth
+    # home for a number that already has three. What this line owes the reader
+    # is the connection between that finding and this number, not the finding.
+    #
+    # No "above": the card lists sub-scores in whatever order the pillar holds
+    # them and this evidence is also read from JSON, where there is no line
+    # above. A direction the layout could falsify is a false sentence waiting
+    # for a re-order.
+    if facts.near_duplicate_status in ("WARN", "FAIL"):
+        evidence = (
+            f"{evidence}; the repeated-rows check fired, and this count "
+            "subtracts exact repeats only"
+        )
     subs.append(SubScore("power", round(points, 2), 25.0, True, evidence))
     # The whole dataset, on the same scoreable footing the branches above use
     # for their own side of a split. This is what a top-up would add to, and it
