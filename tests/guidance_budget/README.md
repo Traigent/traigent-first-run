@@ -1,8 +1,9 @@
 # The guidance byte budget, and how to raise it
 
-`tests/test_skill_package.py` enforces two ceilings over the assistant-facing
+`tests/test_skill_package.py` enforces three ceilings over the assistant-facing
 documents: RESIDENT (`GUIDE.md` + `SKILL.md`, in context from the first turn to
-the last) and TOTAL (every document a full guided run loads). The ceilings are
+the last), TOTAL (every document a full guided run loads), and DOCUMENT (the
+largest single one, because a sum cannot see one file stepping alone). The ceilings are
 not in the test. They are in this directory, one file per raise.
 
 ## Raising a ceiling

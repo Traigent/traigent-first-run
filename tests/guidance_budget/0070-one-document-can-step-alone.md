@@ -8,8 +8,9 @@ document-measured: 128_943
 RESIDENT and TOTAL are both sums, and a sum hides where its bytes went. Eleven
 consecutive raises, 0041 through 0051, moved this package by 4_680 bytes
 between them. The raise directly after them moved a single reference by an
-order of magnitude more in one step, while RESIDENT did not shift at all and
-TOTAL stayed inside the number it had just bought. Nothing went red, and the
+order of magnitude more in one step -- 38_532 bytes into a single reference,
+half again its own size -- while RESIDENT moved 240 bytes and TOTAL stayed
+inside the number it had just bought. Nothing went red, and the
 step was visible only because somebody added the older entries up by hand
 afterwards and noticed.
 

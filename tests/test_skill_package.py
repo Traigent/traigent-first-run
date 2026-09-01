@@ -544,8 +544,8 @@ def guidance_budget_measured(document_bytes: dict[Path, int]) -> dict[str, int]:
     DOCUMENT is the largest single file, and it is here because the pair
     could not see the step that prompted it. Eleven consecutive entries,
     0041 through 0051, added 4_680 bytes between them; the next single entry
-    put 32_776 into one reference while resident did not move at all and
-    total stayed under its ceiling. Both sums were honest and neither was
+    put 38_532 into one reference -- half again its own size -- while resident
+    moved 240 bytes and total stayed under its ceiling. Both sums were honest and neither was
     the fact - the step was found by reading the ledger by hand afterwards.
     A sum cannot tell one document growing by a third from forty growing a
     little, and those are different decisions to weigh.
@@ -20975,8 +20975,8 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
             "that matters, not either side's.",
         )
         # The third budget, and the one the pair above cannot see. Both are
-        # sums, so a reference that takes 33KB in one step reads as a small
-        # fraction of TOTAL and does not touch RESIDENT at all - which is
+        # sums, so a reference that takes 38KB in one step reads as a small
+        # fraction of TOTAL and barely moves RESIDENT - which is
         # exactly what 0052 did, and it was found by adding up ledger entries
         # afterwards rather than by anything failing. This one names the file.
         largest = max(document_bytes, key=lambda path: document_bytes[path])
