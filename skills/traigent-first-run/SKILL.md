@@ -259,7 +259,12 @@ host. Stage 5 remains authoritative for the connected run.
 
 Run the bundled static preflight with `--defer-missing-sdk` over whatever dataset was discovered,
 omitting `--dataset` when none exists. Then include every safe measurement that can finish now in
-the first readiness card. When task intent is anchored and inspection finds a resolved deterministic
+the first readiness card. When `existing-traigent-use` reports a declaration, or a Traigent key is
+already configured, say so in the readiness turn: Traigent was set up in this project before this
+run started, so this may not be a first run, and this run still charges for its own baseline and
+search. Never read that as a blocker or a reason to stop - the evidence cannot tell an install apart
+from a finished optimization, and the decision is theirs at the stage 6 approval, which already
+stops. When task intent is anchored and inspection finds a resolved deterministic
 evaluator, construct or revalidate its current-run case matrix and semantic-coverage review, then
 apply the evaluator-execution scope gate from stage 4. If the verdict is `sufficient` and the
 complete path does not execute candidate-generated code or SQL, is local-only, side-effect-free,
@@ -568,8 +573,9 @@ Follow this order:
    dependency, record the preflight-only result now and re-run the score immediately after that
    calibration.
 
-A missing Traigent SDK is `SKIP` in this deferred pre-install pass; an installed unsupported SDK is
-a failure, and an optional provider package may defer only its own check. The rendered readiness
+A missing Traigent SDK is `SKIP` in this deferred pre-install pass; an installed package that is not
+the SDK is a failure, while a release other than the tested one is reported and never stops the run;
+an optional provider package may defer only its own check. The rendered readiness
 card is the summary. Do not separately explain passed calibration/mock wiring unless action is
 needed or the user asks; neither is agent accuracy or an optimization result.
 
@@ -698,9 +704,9 @@ Only after the standard-library-only component checks:
    `references/run-safety.md`, naming its absolute path before touching it. Preserve every existing
    environment. The reference owns creation, recovery, and activation mechanics; never fall back
    to a shared or dependent environment.
-3. Install the exact declared dependencies under the narrow authorization above: use the project's
-   compatible exact declarations, or otherwise the exact pins in
-   `assets/requirements-first-run.txt`. Never use an unversioned `pip install traigent`.
+3. Install the exact declared dependencies under the narrow authorization above: the exact pins in
+   `assets/requirements-first-run.txt`, never the project's own declarations. Never use an
+   unversioned `pip install traigent`.
    Keep this unattended step foregrounded, explain the wait, and do not delegate it; the safety
    reference owns the rationale. Then re-run `scripts/preflight.py` in that environment without
    `--defer-missing-sdk`; `sdk-version: PASS` is required before continuing. On `FAIL`, preserve
@@ -751,6 +757,11 @@ approval also carries the pre-spend card in `references/run-safety.md`: what the
 was filled, absolute paths to what was written, the easiest and hardest rows, what the evaluation
 method counts as correct, and one proceed-or-fix answer. It is content on the approval that already
 stops, never a second pause, and approving the spend is not approving the material.
+
+When the opening gate found Traigent already set up here, that approval carries it too, beside the
+figure: what was found, and that this run charges for its own baseline and search whether or not
+they have optimized here already. One line on the approval that already stops, which is the last
+moment stopping is free.
 
 Immediately before the paid baseline, show a short run card with model ids, each varying knob and
 its explicit values, one plain-language note per knob, and the total combination count. The

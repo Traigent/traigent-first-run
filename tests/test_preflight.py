@@ -24,6 +24,20 @@ sys.modules[SPEC.name] = MODULE
 SPEC.loader.exec_module(MODULE)
 
 
+def quiet_env_file(directory: Path) -> Path:
+    """An `.env` that raises no WARN of its own.
+
+    `--strict` exits 1 on any WARN, so a test asserting that some check does
+    not end the run has to remove every OTHER reason the run could end. A
+    missing file and an empty credential inventory are both WARNs, and a test
+    that let either stand would pass or fail for reasons it never named.
+    """
+    env_path = directory / ".env"
+    env_path.write_text("OPENAI_API_KEY=sk-not-a-real-key\n")
+    env_path.chmod(0o600)
+    return env_path
+
+
 def synthetic_rows() -> list[dict]:
     difficulties = ("easy", "medium", "hard", "very-hard")
     rows = []
@@ -143,13 +157,16 @@ class StaticPreflightTests(unittest.TestCase):
             "a clean .env was reported as carrying a persisted figure",
         )
 
-    def test_sdk_check_accepts_only_the_tested_version(self) -> None:
+    def test_sdk_check_accepts_the_tested_version(self) -> None:
         with mock.patch.object(
-            MODULE, "version", return_value=MODULE.SUPPORTED_TRAIGENT_VERSION
+            MODULE, "version", return_value=MODULE.TESTED_TRAIGENT_VERSION
         ):
             MODULE.check_sdk()
         result = next(item for item in MODULE.RESULTS if item.check == "sdk-version")
         self.assertEqual(result.status, MODULE.PASS)
+        # The tested release earns no note, because there is nothing to say
+        # about it. The note below exists to explain a difference.
+        self.assertNotIn("measured on", result.detail)
 
     def test_sdk_check_can_defer_an_expected_preinstall_absence(self) -> None:
         with mock.patch.object(
@@ -225,17 +242,275 @@ class StaticPreflightTests(unittest.TestCase):
         self.assertEqual(result.status, MODULE.FAIL)
         self.assertIn("0700", result.detail)
 
-    def test_sdk_check_rejects_obsolete_and_unvalidated_versions(self) -> None:
-        for installed in ("0.0.1", "0.24.0", "0.25.1"):
+    def test_a_release_that_is_not_the_tested_one_does_not_stop_the_run(self) -> None:
+        """Being on a different release is not a defect, and newer least of all.
+
+        This replaces a check that required the installed release to equal the
+        tested one exactly. That comparison refused 0.24.0 and 0.27.0 with the
+        same words, so a customer who had kept the SDK current was told by the
+        product that their copy of the product was unsupported - and the SDK
+        ships faster than the constant could be bumped, which made the refusal
+        a certainty on every release rather than a risk.
+
+        Older and newer are both asserted. Newer is the one that matters and
+        the one that had no test at all, because at the time the gate was
+        written there was no release above the pin to write it against.
+        """
+        for installed in ("0.24.0", "0.25.0", "0.27.0", "1.0.0"):
             with self.subTest(installed=installed):
                 MODULE.RESULTS.clear()
-                with mock.patch.object(MODULE, "version", return_value=installed):
+                with mock.patch.object(
+                    MODULE, "version", return_value=installed
+                ), mock.patch.object(
+                    MODULE, "installed_sdk_is_the_optimizer", return_value=True
+                ):
                     MODULE.check_sdk()
                 result = next(
                     item for item in MODULE.RESULTS if item.check == "sdk-version"
                 )
-                self.assertEqual(result.status, MODULE.FAIL)
-                self.assertIn("install traigent==0.26.0", result.detail)
+                self.assertEqual(result.status, MODULE.PASS, result.detail)
+                self.assertIn(installed, result.detail)
+                # Named, not hidden: the run continues and the user is told
+                # which release it is actually on.
+                self.assertIn(MODULE.TESTED_TRAIGENT_VERSION, result.detail)
+
+    def test_a_version_difference_survives_strict_mode(self) -> None:
+        """PASS rather than WARN, and this is why.
+
+        `--strict` turns any WARN into exit 1. A WARN here would have been the
+        same stop wearing a softer word, so the status is asserted against the
+        flag that would have converted it back.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            env_path = quiet_env_file(Path(directory))
+            with mock.patch.object(
+                sys,
+                "argv",
+                [
+                    str(SCRIPT),
+                    "--env",
+                    str(env_path),
+                    "--project-root",
+                    directory,
+                    "--strict",
+                    "--json",
+                ],
+            ), mock.patch.object(
+                MODULE, "version", return_value="0.99.0"
+            ), mock.patch.object(
+                MODULE, "installed_sdk_is_the_optimizer", return_value=True
+            ):
+                captured = io.StringIO()
+                with redirect_stdout(captured):
+                    exit_code = MODULE.main()
+        records = json.loads(captured.getvalue())
+        sdk = next(item for item in records if item["check"] == "sdk-version")
+        self.assertEqual(sdk["status"], MODULE.PASS)
+        self.assertEqual(
+            [item["check"] for item in records if item["status"] != MODULE.PASS],
+            [],
+            "a newer SDK raised something for --strict to exit on",
+        )
+        self.assertEqual(exit_code, 0, "a newer SDK ended the run under --strict")
+
+    def test_the_placeholder_release_is_still_refused(self) -> None:
+        """The one real failure the version comparison was standing in for.
+
+        `traigent 0.0.1` on the package index is an unrelated placeholder that
+        resolution can select; installing it and importing it prints a
+        "placeholder" line and exposes no optimizer. Every real release from
+        0.10.0 onward ships both modules below, so this is asked as "is the
+        optimizer here" rather than as a version number - which is both the
+        true question and one that cannot go stale on a release.
+        """
+        with mock.patch.object(
+            MODULE, "version", return_value="0.0.1"
+        ), mock.patch.object(
+            MODULE, "installed_sdk_is_the_optimizer", return_value=False
+        ):
+            MODULE.check_sdk()
+        result = next(item for item in MODULE.RESULTS if item.check == "sdk-version")
+        self.assertEqual(result.status, MODULE.FAIL)
+        self.assertIn("does not contain the optimizer", result.detail)
+        self.assertIn(f"traigent=={MODULE.TESTED_TRAIGENT_VERSION}", result.detail)
+
+    def test_a_distribution_with_no_file_record_is_not_read_as_absent(self) -> None:
+        """Missing evidence is not evidence of a missing SDK.
+
+        `files()` returns `None` for a distribution that recorded no file
+        list. Treating that as "the optimizer is absent" would refuse a real
+        install for an installer's bookkeeping, which is exactly the class of
+        false stop this change exists to remove.
+        """
+        with mock.patch.object(MODULE, "files", return_value=None):
+            self.assertIsNone(MODULE.installed_sdk_is_the_optimizer())
+        with mock.patch.object(
+            MODULE, "version", return_value="0.26.0"
+        ), mock.patch.object(MODULE, "files", return_value=None):
+            MODULE.check_sdk()
+        result = next(item for item in MODULE.RESULTS if item.check == "sdk-version")
+        self.assertEqual(result.status, MODULE.PASS)
+
+    def test_the_optimizer_probe_reads_metadata_and_never_imports(self) -> None:
+        """A check whose contract is "runs nothing" may not import the SDK.
+
+        Asserted by the module list, because the alternative - importing
+        `traigent` to see what it has - would execute a third-party package
+        inside the one script that promises it does not.
+        """
+        # Built from the module's own parts rather than spelled out, for the
+        # reason recorded beside `REQUIRED_SDK_MODULES`: a literal
+        # `<package>/<directory>` pair reads to this repository's public-package
+        # scan as a private repository reference.
+        package_init = MODULE.sdk_module_path(["__init__.py"])
+        recorded = [
+            package_init,
+            *(MODULE.sdk_module_path(parts) for parts in MODULE.REQUIRED_SDK_MODULES),
+        ]
+        with mock.patch.object(MODULE, "files", return_value=recorded):
+            self.assertTrue(MODULE.installed_sdk_is_the_optimizer())
+        with mock.patch.object(MODULE, "files", return_value=[package_init]):
+            self.assertFalse(MODULE.installed_sdk_is_the_optimizer())
+
+    def test_an_existing_traigent_dependency_is_reported_with_its_cost(self) -> None:
+        """Say what was found, what it probably means, and what continuing costs.
+
+        The walkthrough charges for its own baseline and its own search, and
+        it is deliberately a reduced form of the product. Somebody who already
+        put the SDK in this project may be about to pay a second time to be
+        shown less, and they can only weigh that if the run says so.
+        """
+        for name, text in (
+            ("requirements.txt", "traigent==0.26.0\nrequests\n"),
+            ("pyproject.toml", 'dependencies = ["traigent>=0.25", "httpx"]\n'),
+            ("setup.py", 'setup(install_requires=["traigent"])\n'),
+        ):
+            with self.subTest(declaration=name):
+                MODULE.RESULTS.clear()
+                with tempfile.TemporaryDirectory() as directory:
+                    (Path(directory) / name).write_text(text)
+                    MODULE.check_existing_traigent_use(Path(directory))
+                result = next(
+                    item
+                    for item in MODULE.RESULTS
+                    if item.check == "existing-traigent-use"
+                )
+                self.assertEqual(result.metrics["declared_in"], [name])
+                self.assertIn(name, result.detail)
+                # The three things the sentence owes the reader.
+                self.assertIn("before this walkthrough started", result.detail)
+                self.assertIn("may not be a first run", result.detail)
+                self.assertIn("charges for its own baseline", result.detail)
+
+    def test_an_existing_traigent_setup_never_stops_the_run(self) -> None:
+        """Detect, explain, and let them decide - never refuse.
+
+        A hard stop would be wrong on this evidence and would cost real runs:
+        a customer may want a guided run on a project that lists the SDK, may
+        have installed it and never optimized anything, or may be onboarding a
+        second project. The declaration cannot tell those apart from a project
+        that is already tuned, so it may inform a decision and never make one.
+
+        Pinned against `--strict`, which is the only way a non-FAIL status in
+        this file has ever become an exit code.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            (Path(directory) / "requirements.txt").write_text("traigent==0.26.0\n")
+            env_path = quiet_env_file(Path(directory))
+            with mock.patch.object(
+                sys,
+                "argv",
+                [
+                    str(SCRIPT),
+                    "--env",
+                    str(env_path),
+                    "--project-root",
+                    directory,
+                    "--defer-missing-sdk",
+                    "--strict",
+                    "--json",
+                ],
+            ), mock.patch.object(
+                MODULE, "version", side_effect=MODULE.PackageNotFoundError
+            ):
+                captured = io.StringIO()
+                with redirect_stdout(captured):
+                    exit_code = MODULE.main()
+        records = json.loads(captured.getvalue())
+        found = next(
+            item for item in records if item["check"] == "existing-traigent-use"
+        )
+        self.assertEqual(
+            found["status"],
+            MODULE.PASS,
+            "an existing Traigent setup became a blocking status",
+        )
+        self.assertEqual(
+            [
+                item["check"]
+                for item in records
+                if item["status"] not in (MODULE.PASS, MODULE.SKIP)
+            ],
+            [],
+            "an existing Traigent setup raised something for --strict to exit on",
+        )
+        self.assertEqual(
+            exit_code, 0, "an existing Traigent setup ended the run under --strict"
+        )
+
+    def test_the_word_traigent_in_prose_is_not_a_dependency(self) -> None:
+        """A comment about the SDK is not a project that uses it.
+
+        The finding is inventory, so a false one costs a sentence rather than
+        a run - but a sentence telling somebody they have already optimized a
+        project they have never optimized is still wrong, and the two shapes
+        that produce it are a comment and a different package whose name
+        starts the same way.
+        """
+        for name, text in (
+            ("requirements.txt", "# consider traigent later\nrequests\n"),
+            ("requirements.txt", "traigent-first-run==1.0\n"),
+            # Both halves of the boundary: a hyphen above, a bare word
+            # character here, since either one makes it a different package.
+            ("pyproject.toml", 'dependencies = ["traigentkit"]\n'),
+            # Linking our website is not depending on our SDK, and this is the
+            # likeliest way for a project to say the word without meaning it.
+            ("pyproject.toml", 'urls = {Home = "https://traigent.ai"}\n'),
+            ("setup.py", 'setup(author_email="dev@traigent.ai")\n'),
+            ("requirements.txt", "requests\n"),
+        ):
+            with self.subTest(text=text):
+                MODULE.RESULTS.clear()
+                with tempfile.TemporaryDirectory() as directory:
+                    (Path(directory) / name).write_text(text)
+                    MODULE.check_existing_traigent_use(Path(directory))
+                result = next(
+                    item
+                    for item in MODULE.RESULTS
+                    if item.check == "existing-traigent-use"
+                )
+                self.assertEqual(result.status, MODULE.PASS)
+                self.assertEqual(result.metrics["declared_in"], [])
+                self.assertIn("does not list traigent", result.detail)
+
+    def test_an_unreadable_declaration_does_not_end_a_first_run(self) -> None:
+        """Somebody's filesystem is not a reason to refuse a run.
+
+        A directory where a file was expected, rather than a mode of 0000:
+        the read fails the same way and it fails for every user, where a
+        permission bit does not stop root and would have made this pass
+        without exercising anything.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            (Path(directory) / "requirements.txt").mkdir()
+            with self.assertRaises(OSError):
+                (Path(directory) / "requirements.txt").read_text()
+            MODULE.check_existing_traigent_use(Path(directory))
+        result = next(
+            item for item in MODULE.RESULTS if item.check == "existing-traigent-use"
+        )
+        self.assertEqual(result.status, MODULE.PASS)
+        self.assertEqual(result.metrics["declared_in"], [])
 
     def test_provider_credentials_are_inventory_not_route_selection(self) -> None:
         MODULE.check_keys(

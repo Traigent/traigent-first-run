@@ -83,8 +83,9 @@ first-run environment, uses the exact packages and versions declared at the top 
 package-declared dependencies, fetches package artifacts only, and permits no
 project/provider/Traigent code execution or private-data transfer. If it cannot be prepared, stop
 with its path and recommend inspection or user-requested removal and recreation. Do not fall back.
-A project without compatible exact declarations uses the skill's pinned first-run requirements;
-never run an unversioned `pip install traigent`.
+The run installs the skill's pinned first-run requirements into that environment whatever your
+project declares for itself, and never edits your own dependency files; never run an unversioned
+`pip install traigent`.
 A user or environment install policy still takes precedence and may require approval. Provider,
 connected Traigent, private-data, and all other external calls remain behind their stated
 approval gates.
