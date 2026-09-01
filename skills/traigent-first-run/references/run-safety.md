@@ -49,9 +49,12 @@ sub-agents, which not every supported assistant provides.
   a fully pinned, hash-checked requirements file and wheels; stop if fulfilling it requires source
   builds, additional undeclared top-level packages, or code execution. A user or environment
   install-approval policy still takes precedence.
-- If the project has no compatible exact SDK declaration, install the tested pins from
-  `assets/requirements-first-run.txt`. Never run an unversioned `pip install traigent`: on an
-  unsupported interpreter, package resolution can select the unrelated obsolete `0.0.1` release.
+- Install the tested pins from `assets/requirements-first-run.txt`, whatever the project declares
+  for itself; the dedicated environment exists so this run uses the stack it was measured on, and
+  the project's own pin is left alone rather than installed or edited. Never run an unversioned
+  `pip install traigent`: on an unsupported interpreter, package resolution can select the
+  unrelated obsolete `0.0.1` release, which carries none of the optimizer and which the preflight
+  refuses by name.
 - Before creating the environment or installing anything, run every available bundled component
   check whose complete path needs only the Python standard library and local project files.
 - Verify installed packages and public signatures before generating SDK integration code.

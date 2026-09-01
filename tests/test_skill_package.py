@@ -4455,6 +4455,91 @@ class SkillPackageTests(unittest.TestCase):
         ]
         self.assertEqual(positions, sorted(positions))
 
+    def test_the_project_pin_is_left_alone_rather_than_installed(self) -> None:
+        """One environment, one stack, and the customer's file untouched.
+
+        The install step used to offer two routes - "the project's compatible
+        exact declarations, or otherwise the exact pins" - and never said what
+        compatible meant. A project pinning any other release read as the
+        first route, so the run installed that release into the dedicated
+        environment and then met a preflight demanding the tested one: a stop
+        produced entirely by this instruction's own ambiguity. The dedicated
+        environment exists precisely so the two pins never have to agree.
+
+        Pinned in all three homes because the ambiguity was stated in all
+        three, and a route that survives in one of them is the contradiction
+        coming back. What each home says is split the way this repository
+        splits everything else: the flow names the one route, the safety
+        reference owns the rule and why, and the entry point states the
+        customer-facing conclusion.
+        """
+        stage_five = " ".join(
+            SKILL.read_text()
+            .casefold()
+            .split("### 5.", 1)[1]
+            .split("### 6.", 1)[0]
+            .split()
+        )
+        safety = " ".join(RUN_SAFETY.read_text().casefold().split())
+        guide = " ".join((ROOT / "GUIDE.md").read_text().casefold().split())
+        for label, text, phrase in (
+            ("skill", stage_five, "never the project's own declarations"),
+            ("safety", safety, "whatever the project declares for itself"),
+            ("safety", safety, "the project's own pin is left alone"),
+            ("safety", safety, "rather than installed or edited"),
+            ("guide", guide, "never edits your own dependency files"),
+        ):
+            with self.subTest(document=label, phrase=phrase):
+                self.assertIn(phrase, text)
+        # The route that produced the contradiction may not come back under
+        # its old words either.
+        for label, text in (
+            ("skill", stage_five),
+            ("safety", safety),
+            ("guide", guide),
+        ):
+            with self.subTest(document=label):
+                self.assertNotIn("compatible exact", text)
+
+    def test_an_existing_traigent_setup_informs_the_spend_and_never_blocks(
+        self,
+    ) -> None:
+        """A customer who already has Traigent here is told, not turned away.
+
+        The walkthrough charges for its own baseline and its own search and is
+        deliberately a reduced form of the product, so somebody who already
+        adopted the SDK in this project may be paying a second time to be
+        shown less. That is worth saying and not worth refusing over: the
+        evidence cannot separate "installed it and never ran it" from
+        "already tuned this", and a stop built on it would refuse a run the
+        customer legitimately wants.
+
+        So it lands twice, and neither is a new question: once in the opening
+        readiness turn, and once as a line on the stage 6 approval that
+        already stops - which is the last moment stopping is free, and the
+        only checkpoint before money moves.
+        """
+        skill = " ".join(SKILL.read_text().casefold().split())
+        # The deferred pass describes the same rule and used to contradict it:
+        # "an installed unsupported SDK is a failure" was written when any
+        # other release was one.
+        self.assertIn(
+            "a release other than the tested one is reported and never stops the run",
+            skill,
+        )
+        self.assertNotIn("an installed unsupported sdk is a failure", skill)
+        for phrase in (
+            "when `existing-traigent-use` reports a declaration",
+            "traigent was set up in this project before this run started",
+            "so this may not be a first run",
+            "never read that as a blocker or a reason to stop",
+            "the decision is theirs at the stage 6 approval",
+            "that approval carries it too",
+            "charges for its own baseline and search",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, skill)
+
     def test_the_install_step_reruns_preflight_without_the_defer_flag(self) -> None:
         """The deferred SKIP promises a verification that has to land somewhere.
 
@@ -11633,8 +11718,17 @@ class SkillPackageTests(unittest.TestCase):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, normalized)
 
-    def test_preflight_supports_exactly_the_release_the_pin_installs(self) -> None:
-        self.assertEqual(PREFLIGHT.SUPPORTED_TRAIGENT_VERSION, pinned_sdk_version())
+    def test_preflight_names_the_release_the_pin_actually_installs(self) -> None:
+        """The constant is a claim about what was measured, not a requirement.
+
+        It used to be both, and the second half is gone: the preflight no
+        longer refuses a release for differing from this number. What it still
+        does is print it, so a user on a different release is told which one
+        the walkthrough was measured on - and that sentence is wrong the
+        moment this constant and the requirements file disagree, which is what
+        this still pins.
+        """
+        self.assertEqual(PREFLIGHT.TESTED_TRAIGENT_VERSION, pinned_sdk_version())
 
     def test_sync_shell_hands_the_resolved_store_to_the_cli_with_run_dir_unset(
         self,
