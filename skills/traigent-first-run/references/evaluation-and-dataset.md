@@ -819,7 +819,7 @@ rows by default**, at least four from each of the four difficulty bands (`easy`,
 `very-hard`), so the subset keeps the spread that makes a result informative rather than landing on
 one cluster - plus the held-out ten below, drawn to their own composition.
 
-Five rules make the subset honest:
+Six rules make the subset honest:
 
 1. **Score the dataset, not the subset.** All readiness scores - the opening gate, each repair or
    validation gate, and the post-run read - run on the **whole** dataset. The subset is chosen
@@ -847,6 +847,19 @@ Five rules make the subset honest:
 5. **Name the bound to the user.** Report the subset size beside the full row count ("18 tuning
    and 10 held-out rows of your 4,812 for this first run"). Never let a bounded run read as though
    the whole dataset was evaluated.
+6. **Draw distinct rows.** Two rows carrying the same input and the same expected answer are one
+   example's worth of evidence and two rows' worth of spend: every configuration scores them alike,
+   so the second buys a provider call in every trial and no comparison at all. Draw rows that differ
+   from each other, and where a split holds fewer distinct rows than the subset size, draw the
+   distinct ones and price and report that number rather than padding back to 18 with repeats. Match
+   exactly on the input and the expected answer rather than judging similarity: byte-identical rows
+   are the same row under any reading, while rows that merely read alike are routinely two real
+   questions, and a bounded budget must not be cut on that guess.
+
+   Against the band floor, distinctness may thin a band and may never empty one. Take every distinct
+   row a band has, keep the band present even where that is a single row, and name the short bands
+   in the run report beside the sample-size limitation. A thin band is reported; an absent band is
+   the careless trim the next paragraph warns about, and de-duplication is never the reason for one.
 
 Keeping at least four rows from every band is what protects the spread: a careless trim to 18 that
 drops a band costs difficulty points and prints a spread complaint about a dataset that has all four.

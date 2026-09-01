@@ -7175,9 +7175,14 @@ class SkillPackageTests(unittest.TestCase):
         # approve a run that never happens - and a number that large may simply
         # get a no.
         self.assertIn("scope the run before pricing it", skill_text)
+        # "that subset" until the draw became distinct-preferring, at which
+        # point the drawn count and the 18-row default stopped being the same
+        # number and a sentence naming neither could price either. Which of them
+        # the estimate is built from is
+        # `TheBoundedDrawSpendsOnDifferentRowsTests`; the ordering below is this
+        # test's, and it only needs a stable anchor in that sentence.
         self.assertIn(
-            "estimate runtime and spend from that subset, not from the full row count",
-            skill_text,
+            "estimate runtime and spend from the rows actually drawn", skill_text
         )
         subset_at = skill_text.index("scope the run before pricing it")
         self.assertGreater(
@@ -7185,7 +7190,7 @@ class SkillPackageTests(unittest.TestCase):
         )
         self.assertLess(
             subset_at,
-            skill_text.index("estimate runtime and spend from that subset"),
+            skill_text.index("estimate runtime and spend from the rows actually drawn"),
         )
 
     def test_closing_motivation_is_grounded_in_the_opening_gaps(self) -> None:
@@ -24766,6 +24771,162 @@ class TrackingRecoveryTests(unittest.TestCase):
         self.assertIn("rather than restarting the phase to recover the link", recovery)
         self.assertIn("re-deciding whether to continue", recovery)
         self.assertNotIn("report the degradation", readiness.casefold())
+
+
+class TheBoundedDrawSpendsOnDifferentRowsTests(unittest.TestCase):
+    """The subset rules said where rows come from, never that they differ.
+
+    Five rules governed the bounded first-run subset - which split, which band,
+    recorded how, named to the user - and a draw satisfying every one of them
+    could put the same question in the eighteen several times. Every
+    configuration scores two identical rows identically, so the second buys a
+    provider call in each trial and separates no two configurations: at the
+    twelve-trial default, a tuning split of 120 rows holding 12 distinct
+    questions forces at least six repeats into the draw, and 216 calls are paid
+    for what 144 would have measured.
+
+    This is the half of the repetition problem that can be fixed without a
+    judgement call, and the reason is that selection can demand EXACT equality.
+    Two byte-identical rows are one row under any reading, so the strict test
+    has no false positive to trade against. The scoring bound could not use it -
+    a customer who rewords their questions defeats exact matching - and the
+    looser similarity measure that would catch them reported four comparable
+    examples over 120 genuinely different support tickets under a shared
+    instruction prefix, which is why it was refused rather than shipped
+    (`WhichRowsMayBeSubtractedFromTheComparisonCountTests` in
+    `tests/test_readiness_adapter.py` carries that measurement).
+
+    So these pin the narrow rule and its edge. The band floor and distinctness
+    now meet, and the paragraph beneath them already warns that a trim costing a
+    band prints a spread complaint about a dataset that has all four - so a rule
+    that went silent on the collision would have handed an author a live way to
+    cause exactly that. Thinning is allowed, emptying is not, and the tests
+    below refuse a document that stops saying so.
+    """
+
+    RULE_COUNTS = {"four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8}
+
+    def dataset_document(self) -> str:
+        return (SKILL_ROOT / "references" / "evaluation-and-dataset.md").read_text()
+
+    def subset_section(self) -> str:
+        document = self.dataset_document()
+        opening = "## First-run subset for a large dataset"
+        self.assertIn(opening, document)
+        return document.split(opening, 1)[1].split("\n## ", 1)[0]
+
+    def normalized(self, text: str) -> str:
+        return " ".join(text.casefold().split())
+
+    def test_the_draw_is_asked_for_rows_that_differ_from_each_other(self) -> None:
+        """The missing property, stated where the draw is described.
+
+        Asserted on the subset section rather than the whole document: the word
+        "distinct" appears throughout this file about datasets and answers, so a
+        document-wide search would pass on a sentence that has nothing to do
+        with which rows a paid run buys.
+        """
+        section = self.normalized(self.subset_section())
+        self.assertIn("draw distinct rows", section)
+        self.assertIn(
+            "one example's worth of evidence and two rows' worth of spend", section
+        )
+        self.assertIn("draw rows that differ from each other", section)
+
+    def test_a_split_short_of_distinct_rows_is_drawn_short_not_padded(self) -> None:
+        """The instruction for the case that makes the rule bite.
+
+        A split with fewer distinct rows than the subset size is where a naive
+        draw is forced into repeats, so the document has to say what to do
+        instead of leaving the default number standing.
+        """
+        section = self.normalized(self.subset_section())
+        self.assertIn(
+            "where a split holds fewer distinct rows than the subset size, draw the "
+            "distinct ones and price and report that number rather than padding back "
+            "to 18 with repeats",
+            section,
+        )
+
+    def test_the_test_for_sameness_here_is_exact_and_not_similarity(self) -> None:
+        """The line this rule may not cross, written into the rule.
+
+        Exact equality is what makes selection safe to automate; a similarity
+        judgment at the same place would refuse a customer's dataset on a guess,
+        and that was measured elsewhere and refused. A document that dropped
+        this sentence would read as licence to de-duplicate on resemblance.
+        """
+        section = self.normalized(self.subset_section())
+        self.assertIn(
+            "match exactly on the input and the expected answer rather than judging "
+            "similarity",
+            section,
+        )
+        self.assertIn("byte-identical rows are the same row under any reading", section)
+        self.assertIn("a bounded budget must not be cut on that guess", section)
+
+    def test_de_duplication_may_thin_a_band_and_may_never_empty_one(self) -> None:
+        """The collision, answered rather than left for the reader.
+
+        The band floor and distinctness disagree whenever a band's rows are
+        copies of each other. Both halves are pinned, because either alone is a
+        different instruction: "may thin" without "may never empty" licenses the
+        trim the next paragraph warns about, and "may never empty" without "may
+        thin" sends an author back to padding.
+        """
+        section = self.normalized(self.subset_section())
+        self.assertIn("distinctness may thin a band and may never empty one", section)
+        self.assertIn("keep the band present even where that is a single row", section)
+        self.assertIn("name the short bands in the run report", section)
+        self.assertIn(
+            "de-duplication is never the reason for one",
+            section,
+            "the document no longer rules out an empty band caused by "
+            "de-duplication, which is the one collision this rule creates",
+        )
+
+    def test_the_flow_prices_the_rows_actually_drawn(self) -> None:
+        """Stage 6 named a number that can now differ from what is bought.
+
+        "18 rows by default" and "that subset" were unambiguous only while the
+        two were always equal. The estimate has to name which of them it is
+        built from, or the resident flow and the reference disagree about what
+        the user is approving.
+        """
+        skill = self.normalized(SKILL.read_text())
+        self.assertIn("and distinct from one another", skill)
+        self.assertIn(
+            "estimate runtime and spend from the rows actually drawn, which is below "
+            "18 where a split holds fewer distinct rows, never from the full row count",
+            skill,
+        )
+        # The superseded wording priced a number the run may not use.
+        self.assertNotIn(
+            "estimate runtime and spend from that subset, not from the full row count",
+            skill,
+        )
+
+    def test_the_stated_rule_count_is_the_number_of_rules(self) -> None:
+        """A label that counts nothing goes stale the first time anyone adds a rule.
+
+        Derived from the list rather than compared against a constant: the
+        expectation is what the document's own numbered items add up to, so this
+        keeps holding for a seventh rule and fails on a sixth left labelled five.
+        """
+        section = self.subset_section()
+        stated = re.search(r"^(\w+) rules make the subset honest:$", section, re.M)
+        self.assertIsNotNone(stated, "the subset rules lost their counted preamble")
+        items = re.findall(r"^(\d+)\. \*\*", section, re.M)
+        self.assertEqual(
+            [str(number) for number in range(1, len(items) + 1)],
+            items,
+            "the subset rules are not numbered 1..n, so no count describes them",
+        )
+        self.assertEqual(
+            self.RULE_COUNTS.get(stated.group(1).casefold()),
+            len(items),
+            f"the section says {stated.group(1)!r} rules and lists {len(items)}",
+        )
 
 
 if __name__ == "__main__":
