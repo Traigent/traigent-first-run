@@ -23206,6 +23206,109 @@ class TheUnusableBranchHasItsOwnQuestionTests(unittest.TestCase):
         self.assertIn("re-validate, then carry on", creation)
 
 
+class TheAskIsLastAndNamesWhatIsLackingTests(unittest.TestCase):
+    """Five watched runs opened on the decision and buried the evidence.
+
+    Every one of them led with a one-line statement of the choice - "reply A or
+    B", "pick the walkthrough task" - above the welcome, the stage line, the
+    card and all of the evidence. The rules that existed forbade anything
+    AFTER the standing exit and said nothing about what may come before the
+    card, so a summary at the top broke no stated rule and every run wrote one.
+    Read in that order the customer meets the decision before the material
+    arguing for it, and the card reads as backfill for a verdict already
+    taken.
+
+    The second half is what the ask says. "What the inventory did not find" was
+    stated as a situation rather than as the three things, and the task choices
+    were offered as categories - extraction, classification - which name a
+    shape of problem rather than a job anybody has. Both are the same defect as
+    the card's own jargon rule, one surface over.
+    """
+
+    def _skill(self) -> str:
+        return " ".join(SKILL.read_text().casefold().split())
+
+    def _creation(self) -> str:
+        return " ".join(
+            (SKILL_ROOT / "references" / "component-creation.md")
+            .read_text()
+            .casefold()
+            .split()
+        )
+
+    def test_the_resident_contract_puts_the_ask_last(self) -> None:
+        """Where the reader already is, which is the lesson of 0069.
+
+        The operating contract is read before any stage and is where the other
+        presentation rules live, so the ordering rule sits beside them rather
+        than only in the reference that words the ask.
+        """
+        skill = self._skill()
+        self.assertIn("put the one ask last", skill)
+        self.assertIn("card, board and evidence first, then the question", skill)
+        self.assertIn("never a marker, heading or summary of it above them", skill)
+
+    def test_both_ask_sites_say_the_question_ends_the_message(self) -> None:
+        """Stated at each ask as well, because a run reaches one, not the list."""
+        skill = self._skill()
+        self.assertIn("this question is the last thing in the message", skill)
+        self.assertIn("no summary of it sits above them", skill)
+
+    def test_nothing_may_announce_the_ask_above_the_card(self) -> None:
+        """The reference already forbade a line after it and not one before."""
+        creation = self._creation()
+        self.assertIn("nothing announces it above the card", creation)
+        self.assertIn(
+            "no marker line, no heading, no one-line summary of the choice at "
+            "the top",
+            creation,
+        )
+        self.assertIn("the ask goes lowermost", creation)
+
+    def test_the_gap_is_named_as_the_pieces_and_not_as_a_situation(self) -> None:
+        """Three words the customer already uses, in place of a category."""
+        skill = self._skill()
+        creation = self._creation()
+        self.assertIn(
+            "name the pieces themselves, in the words the customer uses for "
+            "them: dataset, agent, evaluation method",
+            skill,
+        )
+        self.assertIn(
+            "here is what is lacking: dataset, agent, evaluation method",
+            creation,
+        )
+
+    def test_the_zero_anchor_ask_names_what_it_builds_and_from_what(self) -> None:
+        """Logs already in the project are material, and saying so is the offer.
+
+        A run holding request/response logs offered three task labels and never
+        said the three missing pieces would be built from them. "I will write
+        them" and "I will build them from your own traffic" are different
+        offers, and the first is the one that undersells what they have.
+        """
+        skill = self._skill()
+        self.assertIn(
+            "say plainly what is lacking, in the customer's own three words - "
+            "dataset, agent, evaluation method",
+            skill,
+        )
+        self.assertIn(
+            "i will create the dataset, the evaluation method and the agent "
+            "from your logs",
+            skill,
+        )
+
+    def test_a_task_choice_is_put_as_the_job_and_not_as_a_category(self) -> None:
+        """"Extraction" names a shape of problem; nobody has that problem."""
+        skill = self._skill()
+        self.assertIn("each put as the job itself", skill)
+        self.assertIn("pull the total and the date out of a receipt", skill)
+        self.assertIn(
+            "never as a category name like extraction or classification", skill
+        )
+
+
 class TheReadHappensAndAFailedReadIsAQuestionTests(unittest.TestCase):
     """A ceiling is for a fact about the project, not about our reach.
 
