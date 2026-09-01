@@ -1,12 +1,12 @@
-# 0070 - the ask goes last, and names the pieces it is asking about
+# 0072 - the ask goes last, and names the pieces it is asking about
 
-follows: 0069
-follows-resident-measured: 90_015
-follows-total-measured: 437_285
-resident-ceiling: 91_050
-resident-measured: 90_966
-total-ceiling: 438_950
-total-measured: 438_834
+follows: 0071
+follows-resident-measured: 90_134
+follows-total-measured: 437_841
+resident-ceiling: 91_100
+resident-measured: 91_085
+total-ceiling: 439_400
+total-measured: 439_390
 
 Five watched runs of this guide opened on the decision. Each began with a
 single line stating the choice - reply A or B, pick the walkthrough task -

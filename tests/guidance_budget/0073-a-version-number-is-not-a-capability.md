@@ -1,12 +1,12 @@
-# 0070 - a version number is not a capability, and an existing customer is not an error
+# 0073 - a version number is not a capability, and an existing customer is not an error
 
-follows: 0069
-follows-total-measured: 437_285
-follows-resident-measured: 90_015
-resident-ceiling: 91_050
-resident-measured: 90_940
-total-ceiling: 438_550
-total-measured: 438_432
+follows: 0072
+follows-total-measured: 439_390
+follows-resident-measured: 91_085
+resident-ceiling: 92_050
+resident-measured: 92_010
+total-ceiling: 440_550
+total-measured: 440_537
 
 Two refusals paid for these bytes, and removing one of them is what funds most
 of the text. The install step offered two routes into the dedicated

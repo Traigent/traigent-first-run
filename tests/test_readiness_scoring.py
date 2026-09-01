@@ -2161,7 +2161,7 @@ class EvaluationScoringTests(unittest.TestCase):
         self.assertEqual(pillar.score, round(100 * 45 / 85))
 
     def test_a_poor_fit_says_which_method_which_output_and_why(self) -> None:
-        """"set-f1 is a poor ruler for code-sql output" asserted and stopped.
+        """ "set-f1 is a poor ruler for code-sql output" asserted and stopped.
 
         A customer cannot check that, cannot usefully disagree with it, and
         cannot tell a real mismatch from an opinion about their evaluator. The
@@ -2170,9 +2170,7 @@ class EvaluationScoringTests(unittest.TestCase):
         test on two of their own rows.
         """
         pillar, _caps = MODULE.score_evaluation(
-            MODULE.EvaluationFacts(
-                present=True, method="set-f1", task_kind="code-sql"
-            )
+            MODULE.EvaluationFacts(present=True, method="set-f1", task_kind="code-sql")
         )
         fit = next(sub for sub in pillar.subscores if sub.name == "task-fit")
         self.assertEqual(
@@ -8543,7 +8541,7 @@ class TheCardSpeaksTheUsersLanguageTests(unittest.TestCase):
         )
 
     def test_no_line_the_customer_reads_calls_a_scorer_a_ruler(self) -> None:
-        """"Ruler" is this project's internal metaphor for an evaluator.
+        """ "Ruler" is this project's internal metaphor for an evaluator.
 
         It reads as a measuring stick to the people who wrote it and as nothing
         at all to a customer meeting it on their first card - which is where it
