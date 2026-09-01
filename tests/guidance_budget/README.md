@@ -43,7 +43,8 @@ Rules the suite enforces:
   entries too, so a relation such as `0053 -> 0052` is frozen rather than
   grandfathered.
 * **No two entries may follow the same entry.** See below.
-* An entry declares `resident-ceiling:`, `total-ceiling:`, or both, and beside
+* An entry declares `resident-ceiling:`, `total-ceiling:`, `document-ceiling:`,
+  or any combination of them, and beside
   each one the `-measured:` figure it was set against. The measurement must be
   under the ceiling it buys, and it may not fall below the last measurement of
   the same budget earlier in the chain unless the entry is lowering that

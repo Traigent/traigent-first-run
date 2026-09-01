@@ -543,10 +543,11 @@ def guidance_budget_measured(document_bytes: dict[Path, int]) -> dict[str, int]:
 
     DOCUMENT is the largest single file, and it is here because the pair
     could not see the step that prompted it. Eleven consecutive entries,
-    0041 through 0051, added 4_680 bytes between them; the next single entry
-    put 38_532 into one reference -- half again its own size -- while resident
-    moved 240 bytes and total stayed under its ceiling. Both sums were honest and neither was
-    the fact - the step was found by reading the ledger by hand afterwards.
+    0041 through 0051, added 5_388 bytes between them; the next single entry
+    put 38_532 into one reference -- seven times the eleven together, and half
+    again that document's own size -- while resident moved 240 bytes and total
+    stayed under its ceiling. Both sums were honest and neither was the fact -
+    the step was found by reading the ledger by hand afterwards.
     A sum cannot tell one document growing by a third from forty growing a
     little, and those are different decisions to weigh.
 
