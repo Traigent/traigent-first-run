@@ -79,11 +79,11 @@ def assistant_facing_documents() -> list[Path]:
 GUIDANCE_BUDGET_LEDGER = Path(__file__).resolve().parent / "guidance_budget"
 BUDGET_ENTRY_NAME = re.compile(r"^(\d{4})-[a-z0-9][a-z0-9-]*\.md$")
 BUDGET_FIGURE = re.compile(
-    r"^(resident|total)-(ceiling|measured): (\d[\d_]*)$", re.MULTILINE
+    r"^(resident|total|document)-(ceiling|measured): (\d[\d_]*)$", re.MULTILINE
 )
 BUDGET_FOLLOWS = re.compile(r"^follows: (\d{4})$", re.MULTILINE)
 BUDGET_FOLLOWS_MEASURED = re.compile(
-    r"^follows-(resident|total)-measured: (\d[\d_]*)$", re.MULTILINE
+    r"^follows-(resident|total|document)-measured: (\d[\d_]*)$", re.MULTILINE
 )
 # A raise is a decision, so an entry that states a number and not a reason is
 # the thing this ledger exists to refuse. The floor is not a guess: the
@@ -529,6 +529,41 @@ def guidance_budget_ceilings(
     for entry in guidance_budget_chain(entries):
         ceilings.update(entry.ceilings)
     return ceilings
+
+
+def guidance_budget_measured(document_bytes: dict[Path, int]) -> dict[str, int]:
+    """Every budget the package is weighed on, derived from one measurement.
+
+    Defined once because the pair of them was derived twice: the ceiling
+    check and the newest-entry check each rebuilt `resident` and `total`
+    from their own copy of the same mapping, so a third budget would have
+    arrived with two homes on the day it was added. That is the rule
+    CLAUDE.md states for the guidance, applied to the checks over it, and
+    `assistant_facing_documents` above exists for the same reason.
+
+    DOCUMENT is the largest single file, and it is here because the pair
+    could not see the step that prompted it. Eleven consecutive entries,
+    0041 through 0051, added 4_680 bytes between them; the next single entry
+    put 32_776 into one reference while resident did not move at all and
+    total stayed under its ceiling. Both sums were honest and neither was
+    the fact - the step was found by reading the ledger by hand afterwards.
+    A sum cannot tell one document growing by a third from forty growing a
+    little, and those are different decisions to weigh.
+
+    The mapping is a parameter rather than read here, so the budgets can be
+    exercised on an invented package as well as on the committed one.
+    """
+    # No `default=`: an empty corpus is a broken caller, and a budget that
+    # reports zero for it would pass every ceiling while measuring nothing.
+    return {
+        "resident": sum(
+            size
+            for path, size in document_bytes.items()
+            if path in {ROOT / "GUIDE.md", SKILL}
+        ),
+        "total": sum(document_bytes.values()),
+        "document": max(document_bytes.values()),
+    }
 
 
 SKILL_PREFIX = "skills/traigent-first-run/"
@@ -20870,8 +20905,8 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
 
         self.assertEqual(
             sorted(guidance_budget_ceilings()),
-            ["resident", "total"],
-            "the ledger no longer declares both ceilings, so one of the two "
+            ["document", "resident", "total"],
+            "the ledger no longer declares every ceiling, so one of the three "
             "budgets is unenforced",
         )
 
@@ -20910,11 +20945,8 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         }
         # Resident = read up front and never dropped. The references are loaded
         # per stage and can leave; these cannot.
-        resident = sum(
-            size
-            for path, size in document_bytes.items()
-            if path in {ROOT / "GUIDE.md", SKILL}
-        )
+        measured = guidance_budget_measured(document_bytes)
+        resident = measured["resident"]
         ceilings = guidance_budget_ceilings()
         self.assertLess(
             resident,
@@ -20929,7 +20961,7 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         )
         # Count the actual UTF-8 files, not Unicode code points or a
         # whitespace-normalized proxy. The ceiling in #104 is a byte ceiling.
-        total = sum(document_bytes.values())
+        total = measured["total"]
         budget = ceilings["total"]
         self.assertLess(
             total,
@@ -20941,6 +20973,74 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
             "why the addition earns it. If two branches just merged, this is "
             f"the arithmetic neither could do alone - {total} is the number "
             "that matters, not either side's.",
+        )
+        # The third budget, and the one the pair above cannot see. Both are
+        # sums, so a reference that takes 33KB in one step reads as a small
+        # fraction of TOTAL and does not touch RESIDENT at all - which is
+        # exactly what 0052 did, and it was found by adding up ledger entries
+        # afterwards rather than by anything failing. This one names the file.
+        largest = max(document_bytes, key=lambda path: document_bytes[path])
+        self.assertLess(
+            measured["document"],
+            ceilings["document"],
+            f"{largest.relative_to(ROOT)} is {measured['document']} bytes "
+            f"against a {ceilings['document']} per-document ceiling. This "
+            "budget is per file on purpose: the two sums above cannot tell one "
+            "document growing by a third from forty growing a little, and the "
+            "stage that loads this one now carries every byte of it at once. "
+            "Move detail to the reference that owns that stage, or raise the "
+            "ceiling deliberately with an entry in tests/guidance_budget/ "
+            "stating which document grew and what the growth buys.",
+        )
+
+    def test_a_single_document_that_steps_is_visible_where_the_sums_are_not(
+        self,
+    ) -> None:
+        """The case RESIDENT and TOTAL answer identically, and DOCUMENT does not.
+
+        Two packages weighing exactly the same: one where every reference
+        grew a little, one where a single reference took the whole increase.
+        Neither sum can separate them - that is arithmetic rather than an
+        oversight - and the second is what 0052 actually was. It passed both
+        ceilings and was found by adding ledger entries up by hand.
+
+        Both directions, because a per-document figure that refused the level
+        package too would be measuring size rather than concentration: the
+        spread package stays under a ceiling the stepped one crosses, on
+        identical totals.
+        """
+        guide, skill = ROOT / "GUIDE.md", SKILL
+        references = [SKILL_ROOT / "references" / f"{name}.md" for name in "abcdef"]
+        ceiling = 40_000
+        spread = {guide: 8_000, skill: 35_000} | {path: 30_000 for path in references}
+        # The same bytes, all of the growth in one file.
+        stepped = {guide: 8_000, skill: 35_000} | {
+            path: 12_000 for path in references[1:]
+        }
+        stepped[references[0]] = sum(spread[path] for path in references) - 12_000 * (
+            len(references) - 1
+        )
+
+        level_measure = guidance_budget_measured(spread)
+        step_measure = guidance_budget_measured(stepped)
+        for budget in ("resident", "total"):
+            self.assertEqual(
+                level_measure[budget],
+                step_measure[budget],
+                f"the fixture only says anything while {budget} cannot tell "
+                "these two packages apart",
+            )
+        self.assertLess(
+            level_measure["document"],
+            ceiling,
+            "the spread package is the control: no single document is over "
+            "the ceiling, so nothing here may refuse it",
+        )
+        self.assertGreater(
+            step_measure["document"],
+            ceiling,
+            "the stepped package puts a third of the guide in one file on the "
+            "same total, which is the whole thing this budget exists to see",
         )
 
     def test_the_newest_ledger_entry_measured_the_tree_it_ships_with(self) -> None:
@@ -20968,17 +21068,9 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         This does not replace the ceiling check. A wrong-but-lower figure
         passes that one and is still a false record of what was weighed.
         """
-        document_bytes = {
-            path: len(path.read_bytes()) for path in assistant_facing_documents()
-        }
-        live = {
-            "resident": sum(
-                size
-                for path, size in document_bytes.items()
-                if path in {ROOT / "GUIDE.md", SKILL}
-            ),
-            "total": sum(document_bytes.values()),
-        }
+        live = guidance_budget_measured(
+            {path: len(path.read_bytes()) for path in assistant_facing_documents()}
+        )
 
         newest = guidance_budget_chain()[-1]
 
@@ -21435,6 +21527,51 @@ class GuidanceBudgetLedgerRulesTests(unittest.TestCase):
             guidance_budget_ceilings(entries),
             {"resident": 61_500, "total": 240_000},
         )
+
+    def test_a_document_ceiling_is_read_and_carried_like_the_other_two(self) -> None:
+        """A third budget has to obey these rules, not sit alongside them.
+
+        The fields are a closed set, so a new budget is only real once the
+        parser reads it, the chain carries it into the ceiling in force, and
+        the same refusals reach it. An entry introducing one has no earlier
+        measurement to be monotone against, which is why the first ledger
+        below is accepted while stating a predecessor figure for it.
+
+        The reversal is the second ledger: a figure at or above the ceiling
+        it buys is the ordinary breach, and the third budget is refused for
+        it exactly as the first two are.
+        """
+        entries = self.ledger(
+            **{
+                "0001-inherited-ledger.md": self.root(),
+                "0002-per-document.md": self.entry(
+                    "0002 - per document",
+                    follows=1,
+                    follows_measured={"document": 128_943},
+                    document_ceiling=129_000,
+                    document_measured=128_943,
+                ),
+            }
+        )
+        self.assertEqual(guidance_budget_defects(entries), [])
+        self.assertEqual(
+            guidance_budget_ceilings(entries),
+            {"resident": 61_500, "total": 228_750, "document": 129_000},
+        )
+
+        breached = self.ledger(
+            **{
+                "0001-inherited-ledger.md": self.root(),
+                "0002-per-document.md": self.entry(
+                    "0002 - per document",
+                    follows=1,
+                    follows_measured={"document": 129_000},
+                    document_ceiling=129_000,
+                    document_measured=129_000,
+                ),
+            }
+        )
+        self.assertDefect(breached, "against its own document-ceiling")
 
     def test_a_new_entry_binds_the_predecessor_measurement_it_used(self) -> None:
         """A predecessor index without its measured state goes stale silently.
