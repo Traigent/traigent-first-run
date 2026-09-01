@@ -629,8 +629,10 @@ last. Nothing follows it, and no route carries a decision of its own.
 
 That shape is the shape of every choice this run puts to the customer, not only this one. Wherever
 they are offered named routes - the task-intent question, a creation or repair route, the baseline
-spend approval - the routes are lettered from `A`, exactly one is marked recommended, and a set of
-named routes is never compressed into a yes/no. Bold words with no letter and no mark are a second
+spend approval, the connected-stage preview - the routes are lettered from `A`, exactly one is
+marked recommended, and a set of named routes is never compressed into a yes/no. A route this run
+names and prices is a route the customer can take by replying: naming one and giving no answer form
+leaves them a choice they cannot make, which is worse than an unmarked pair. Bold words with no letter and no mark are a second
 form for the same act, and a customer who meets two forms in one run reads the difference as
 meaning something it does not. The unnumbered `I have it` line is the part that does not travel: it
 answers where material is, so it rides on the asks about material and never on an approval to
@@ -937,8 +939,10 @@ fault, at this moment; no other stage's offer is changed by them. Declining stay
 answerable and is answered without reproach: preserve what was measured, report the run as
 baseline-only, and never suggest they were wrong to stop.
 
-Preview the connected step with the final reply-ready line and approval rules in
-`references/run-safety.md`. Its explicit approval remains required before its key, probe, sync, or calls.
+Preview the connected step with the final reply-ready block and approval rules in
+`references/run-safety.md`. Its lettered routes are the last thing in that message, below the
+disclosure prose rather than inside it. Its explicit approval remains required before its key,
+probe, sync, or calls.
 
 Present `Stage 4/5 · Optimize` with the checklist in `references/run-safety.md`: explain
 managed selection, portal history, bounded calls/cost, and deeper insights as conditional
@@ -1141,7 +1145,7 @@ result a wider run would find.
 
 A menu offered *instead of* a recommendation is the same as no recommendation; put extras later.
 
-End with the final reply-ready line in `references/run-safety.md`; `continue` never bypasses
+End with the final reply-ready block in `references/run-safety.md`; `continue` never bypasses
 approval.
 
 Those state-specific moves are the ones this run measured. Separately, and only after the result,

@@ -6702,7 +6702,17 @@ class SkillPackageTests(unittest.TestCase):
 
         for phrase in (
             "recommended next: continue with traigent optimization because <observed reason>",
-            "continue with this bounded traigent run?",
+            # Was "continue with this bounded traigent run?". That pin existed
+            # to keep a specific question FORM, and the form is now the defect:
+            # closing on one yes/no left continuing as the only answerable
+            # thing on a card that had already named stopping and priced it
+            # four ways. The customer read it as having been offered nothing,
+            # "even not what to type to proceed". What the pin was protecting -
+            # a preview that ends on an answerable offer - survives and is
+            # stronger, so the literal moves to the shape that now carries it.
+            # The other four phrases here protect other rules that merely sat
+            # beside it, and are untouched.
+            "each one answerable by replying",
             "do not manufacture urgency",
             "reply-ready line",
             "it approves nothing unless",
@@ -24536,6 +24546,208 @@ class OneShapeAndOneMarkForEveryChoiceTests(unittest.TestCase):
         self.assertIn(
             "offer it as an optional no-lift-possible verification run", safety
         )
+
+    #: An instruction to close a customer-facing message on one quoted
+    #: question. It is the shape that produced the defect: a card that had
+    #: already named a second route and priced it ended on a single yes/no, so
+    #: only one of the two could be answered.
+    CLOSING_QUESTION = re.compile(r"end[^.]{0,90}with `[^`]*\?`", re.IGNORECASE)
+
+    @classmethod
+    def _instructs_a_closing_question(cls, text: str) -> list[str]:
+        return sorted(set(cls.CLOSING_QUESTION.findall(" ".join(text.split()))))
+
+    def test_the_connected_preview_ends_on_lettered_answerable_routes(self) -> None:
+        """One answerable route and one describable one is worse than a menu.
+
+        The card names stopping and prices it four ways, then closes on a
+        single yes/no about continuing - so the route it argued hardest about
+        is the one the customer cannot take. Read cold, it looked like no
+        options had been offered at all, not even what to type to proceed.
+        """
+        safety = self._flat(RUN_SAFETY)
+        self.assertIn(
+            "every offered connected preview ends on its routes, in the shape "
+            "skill.md states for every named-route choice",
+            safety,
+        )
+        self.assertIn("lettered from `a`, exactly one marked", safety)
+        self.assertIn("each one answerable by replying", safety)
+        self.assertIn(
+            "a route this guide names and prices is a route the customer can "
+            "take by replying",
+            safety,
+        )
+        # Both routes carry a reply form, and the decline names its own.
+        self.assertIn("reply `continue` and i will <next safe step>", safety)
+        self.assertIn("**b. stop here and keep the baseline result.**", safety)
+        self.assertIn("reply `stop` and i will preserve the local result", safety)
+        # The mark is the same rule as the pre-spend card's, conditions and all.
+        self.assertIn(
+            "the mark on `a` follows the pre-spend card's rule and is the same "
+            "rule, not a second one",
+            safety,
+        )
+        self.assertIn("where it is withheld, say why beside `a`", safety)
+        self.assertIn("the connected-stage preview", self._flat(SKILL))
+
+    def test_the_answerable_block_is_separable_from_the_disclosure(self) -> None:
+        """Present is not the same as findable.
+
+        `Reply continue` was there. It sat at the tail of a long paragraph,
+        below recipients, the data contract, pricing links and key scopes, and
+        did not read as an instruction - which is the same finding as the ask
+        ordering work one stage earlier, at a different altitude: the question
+        has to BE the last thing, not be inside it.
+        """
+        safety = self._flat(RUN_SAFETY)
+        self.assertIn(
+            "render it as its own block, after the disclosure prose, with "
+            "nothing following it",
+            safety,
+        )
+        self.assertIn(
+            "a reply form sitting in the tail of a long paragraph is not an "
+            "instruction",
+            safety,
+        )
+        self.assertIn(
+            "its lettered routes are the last thing in that message, below the "
+            "disclosure prose rather than inside it",
+            self._flat(SKILL),
+        )
+        # The standing bounds line is the `I have it` equivalent: it answers
+        # how big rather than what to do, so it is never numbered among them.
+        self.assertIn(
+            "the last line is not a third route: it answers how big rather "
+            "than what to do",
+            safety,
+        )
+
+    def test_the_closing_question_check_reads_an_instruction_and_not_a_rule(
+        self,
+    ) -> None:
+        """The guard, probed both ways before anything is trusted to it.
+
+        The rules that forbid the shape have to keep saying the words. A check
+        that also flagged "do not compress them into a yes/no question" would
+        make the prohibition unstatable, which is how a guard ends up deleting
+        the paragraph that explains it.
+        """
+        instruction = (
+            "End every offered connected preview with `Continue with this "
+            "bounded Traigent run?`; that reply opens no paid work."
+        )
+        self.assertEqual(len(self._instructs_a_closing_question(instruction)), 1)
+        for allowed in (
+            'Do **not** compress them into a "Shall I go ahead?" yes/no question.',
+            'Ask exactly one task-intent question: **"What should the '
+            'walkthrough agent do?"** This question is the last thing in the '
+            "message.",
+            "End with the final reply-ready block in `references/run-safety.md`.",
+        ):
+            with self.subTest(allowed=allowed[:40]):
+                self.assertEqual(self._instructs_a_closing_question(allowed), [])
+
+    def test_no_document_ends_a_customer_choice_on_one_quoted_question(
+        self,
+    ) -> None:
+        """Scoped to every guidance document, not to the preview that failed."""
+        documents = assistant_facing_documents()
+        self.assertTrue(documents, "no guidance documents were found to check")
+        for path in documents:
+            with self.subTest(document=path.name):
+                self.assertEqual(
+                    self._instructs_a_closing_question(path.read_text()),
+                    [],
+                    "this document tells a customer-facing message to close on "
+                    "one quoted question, so only one route can be answered",
+                )
+
+    #: A tie is a statement about resolution, and resolution comes from rows.
+    #: Pairing one with a reason to spend inverts the caution the frontier
+    #: section already carries.
+    TIE_PHRASES = ("statistical tie", "statistically indistinguishable")
+    HEADROOM_PHRASES = ("room to move", "headroom", "reason to spend", "worth spending")
+
+    @classmethod
+    def _sells_a_tie_as_headroom(cls, text: str) -> list[str]:
+        flat = " ".join(text.casefold().split())
+        offending = []
+        for sentence in re.split(r"(?<=[.:;])\s+", flat):
+            if any(tie in sentence for tie in cls.TIE_PHRASES) and any(
+                room in sentence for room in cls.HEADROOM_PHRASES
+            ):
+                offending.append(sentence)
+        return sorted(offending)
+
+    def test_the_tie_check_reads_the_sale_and_leaves_the_caution_alone(
+        self,
+    ) -> None:
+        """Both directions, because the caution says the same words backwards.
+
+        The frontier section has to keep saying that several configurations are
+        statistically indistinguishable at this size. A guard that flagged that
+        sentence would delete the very bound this rule rests on.
+        """
+        sold = (
+            "8 of the 18 rows were solved by no configuration and the top three "
+            "are a statistical tie - both are things a wider search has room to "
+            "move."
+        )
+        self.assertEqual(len(self._sells_a_tie_as_headroom(sold)), 1)
+        caution = (
+            "A point reaching the frontier is not evidence its score held: "
+            "several configurations are statistically indistinguishable at this "
+            "size, so the one that matched the incumbent's number may simply "
+            "have measured lucky."
+        )
+        self.assertEqual(self._sells_a_tie_as_headroom(caution), [])
+
+    def test_a_tie_is_a_limit_and_never_a_reason_to_spend(self) -> None:
+        """A run inverted the frontier caution into a selling point.
+
+        "The top three are a statistical tie, and both are things a wider
+        search has room to move" is backwards: if three configurations cannot
+        be told apart on 18 rows, more configurations over the same 18 rows
+        cannot tell them apart either. Resolution comes from rows.
+        """
+        safety = self._flat(RUN_SAFETY)
+        self.assertIn(
+            "what may fill `<observed reason>` is a finding a wider search has "
+            "room to move",
+            safety,
+        )
+        self.assertIn("a statistical tie among the top configurations is not", safety)
+        self.assertIn(
+            "adding candidates adds nothing to separate them with - resolution "
+            "comes from rows, never from more things to rank",
+            safety,
+        )
+        self.assertIn(
+            "where it is the binding one recommend more or harder rows first",
+            safety,
+        )
+        self.assertIn("it is never a reason to spend", safety)
+        # The caution it inverts is still stated where it belongs.
+        self.assertIn(
+            "several configurations are statistically indistinguishable at this "
+            "size",
+            safety,
+        )
+
+    def test_no_document_offers_a_tie_at_this_size_as_headroom(self) -> None:
+        """Scoped to every guidance document, not to the sentence that failed."""
+        documents = assistant_facing_documents()
+        self.assertTrue(documents, "no guidance documents were found to check")
+        for path in documents:
+            with self.subTest(document=path.name):
+                self.assertEqual(
+                    self._sells_a_tie_as_headroom(path.read_text()),
+                    [],
+                    "this document pairs a tie at this sample size with a "
+                    "reason to spend, which inverts what a tie means",
+                )
 
 
 class TheReadHappensAndAFailedReadIsAQuestionTests(unittest.TestCase):

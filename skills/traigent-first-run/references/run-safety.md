@@ -664,17 +664,54 @@ on - a finding about their own dataset that no other part of this run produces. 
 measured opportunity exists, so the preview still carries a stated reason instead of an unmarked
 pair. Neither may be written as an expected gain: they are what the run shows and what it tells
 them, never what it will improve, and the no-lift wording below is unchanged by them.
+
+What may fill `<observed reason>` is a finding a wider search has room to move. Rows that no
+configuration solved is one, because more configurations is the thing that could solve them. A
+statistical tie among the top configurations is not, and the frontier section below already says
+why in the opposite direction: it names one as a bound on what this run may claim. A run read that
+bound as an opportunity and sold it. At this sample size a tie says the rows cannot separate the
+configurations already tried, and adding candidates adds nothing to separate them with - resolution
+comes from rows, never from more things to rank. Name it as a limit on what the result may claim,
+and where it is the binding one recommend more or harder rows first. It is never a reason to spend.
 When the dataset and evaluator are sound but the baseline showed no measured quality or cost headroom,
 recommend harder realistic cases first. If the customer explicitly wants a verified portal/enhanced
 comparison anyway, offer it as an optional no-lift-possible verification run: say that it is not expected
 to find a gain and that declining leaves the honest baseline-only result intact. An invalid or
 non-discriminating dataset/evaluator has already stopped before this preview and gets the evidenced repair
-instead. End every offered connected preview with `Continue with this bounded Traigent run?`; that reply
-opens no paid work without the explicit approval below, and never promise improvement.
+instead. Never promise improvement.
 
-Final reply-ready line: `Recommended next: <action> — <measured reason>. Reply "continue" and I
-will <next safe step>.` For controlled work, `continue` opens a preview; it approves nothing unless
-that preview disclosed recipients, effects, bounds, and cost.
+Every offered connected preview ends on its routes, in the shape SKILL.md states for every
+named-route choice: lettered from `A`, exactly one marked, and each one answerable by replying.
+This preview used to close on a single yes/no question about continuing, which left it with one
+route the customer could take and one they could only read about - the card names stopping and
+prices it four ways, and then never says how to take it. That is worse than the unmarked pair the
+pre-spend card had, where both answers were at least available. A route this guide names and prices
+is a route the customer can take by replying.
+
+Final reply-ready block. Render it as its own block, after the disclosure prose, with nothing
+following it: a reply form sitting in the tail of a long paragraph is not an instruction, and a run
+that put one there was read as having offered no options at all - not even what to type to proceed.
+
+> **A. <action>** *(recommended - <measured reason>)*
+> Reply `continue` and I will <next safe step>.
+>
+> **B. Stop here and keep the baseline result.**
+> Reply `stop` and I will preserve the local result and report the run as baseline-only rather than
+> as a completed Traigent optimization.
+>
+> Or reply with a smaller trial cap or a lower ceiling and I will re-price this same step.
+
+Route `A` carries the reply-ready line `Recommended next: <action> — <measured reason>.`, which
+stays a direct evidence-based statement rather than a question. The last line is not a third route:
+it answers how big rather than what to do, so it rides last and unnumbered exactly as `I have it`
+does on the asks about material, and nothing follows it. Replying to either route
+opens no paid work without the explicit approval below. For controlled work, `continue` opens a
+preview; it approves nothing unless that preview disclosed recipients, effects, bounds, and cost.
+
+The mark on `A` follows the pre-spend card's rule and is the same rule, not a second one: withheld
+while the card carries a `FIX BEFORE PAID RUN`, while any cap blocks, and where the run as scoped
+cannot answer the question it is being paid to answer. Where it is withheld, say why beside `A`
+rather than leaving both routes bare.
 
 Keep the default `$5.00` ceiling across both approvals. If a stage exceeds the remaining ceiling or
 is materially long, recommend a smaller slice or fewer trials; expand only if the user prefers.

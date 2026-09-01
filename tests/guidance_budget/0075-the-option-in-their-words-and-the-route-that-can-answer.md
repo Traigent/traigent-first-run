@@ -3,13 +3,13 @@
 follows: 0074
 follows-resident-measured: 92_003
 follows-total-measured: 441_185
-resident-ceiling: 96_000
-resident-measured: 95_915
-total-ceiling: 449_000
-total-measured: 448_880
+resident-ceiling: 96_400
+resident-measured: 96_246
+total-ceiling: 452_000
+total-measured: 451_784
 
-Five rules bought here, all of them found by watching somebody read what a run
-had already written, and four of them are one rule arriving in four places. The
+Seven rules bought here, all of them found by watching somebody read what a
+run had already written, and five of them are one rule arriving in five places. The
 first is register. The intent gate said a choice must be the job and never a
 category, and a run obeying that offered "pull the metric, the time range, and
 the grouping out of a plain-English data request" to a customer whose entire
@@ -53,6 +53,21 @@ and the mark is withheld under a blocking cap or where the run as scoped cannot
 answer what it is paid for. A single shape for named-route choices is stated
 once in the resident document, with the standing exit and a lone proposed action
 excluded by scope rather than by exemption.
+
+A live run then showed the same absence one message later, in its worst form.
+The connected preview closed on a single yes/no about continuing, on a card
+that had already named stopping and priced it four ways - so the route it
+argued hardest about was the one the customer had no way to take, and reading
+it cold the reaction was that no options had been offered at all, not even what
+to type to proceed. Worse than an unmarked pair, where both answers are at
+least available. That preview now ends on lettered routes with a reply form on
+each, rendered as their own block below the disclosure prose rather than as a
+sentence inside its last paragraph, since a reply form buried among recipients,
+data contracts and key scopes is not an instruction. The same run also inverted
+a caution into a sale - a tie among the top configurations offered as room a
+wider search could move - so the reference now says which findings may fill
+that slot and why a tie is not one: resolution comes from rows, and adding
+candidates gives nothing more to tell them apart with.
 
 Last, the baseline checkpoint, where the guidance's word order became the
 output's emphasis order. Told to say stopping is valid and then to recommend
