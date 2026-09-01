@@ -23009,6 +23009,67 @@ class TheUnusableBranchHasItsOwnQuestionTests(unittest.TestCase):
         self.assertIn("re-validate, then carry on", creation)
 
 
+_ASK_NOUN = r"(?:ask|question|decision|choice|marker line)"
+_MATERIAL = r"(?:card|board|evidence|result|score|welcome|stage line|material)"
+
+#: A sentence that puts a question above the material behind it, in each of the
+#: shapes the five watched runs actually wrote it.
+_ASK_ABOVE_SHAPES = (
+    re.compile(
+        rf"\b{_ASK_NOUN}\b[^.]{{0,80}}\b(?:above|before|over)\b[^.]{{0,40}}\b{_MATERIAL}\b"
+    ),
+    re.compile(
+        rf"\b(?:lead|leads|open|opens|begin|begins|start|starts)\b"
+        rf"[^.]{{0,50}}\b{_ASK_NOUN}\b"
+    ),
+    re.compile(
+        rf"\b{_ASK_NOUN}\b[^.]{{0,60}}\b(?:goes first|comes first|first line|"
+        rf"at the top|topmost|uppermost|first thing)\b"
+    ),
+    re.compile(r"\b(?:summary|heading|marker)\b[^.]{0,60}\bat the top\b"),
+)
+
+#: Read only in front of the match, never behind it. A hedge that arrives after
+#: the instruction does not undo it - "lead with the ask above the card; do not
+#: bury it" is still the instruction - and a whole-sentence search would accept
+#: exactly that. `pairs_the_readiness_scores` reads its own hedge the same way.
+_ASK_ABOVE_HEDGE = re.compile(
+    r"\b(?:never|not|no|nothing|neither|nor|avoid|refuse|refuses|forbid|forbids|"
+    r"forbidden|instead of|rather than|must not|do not|does not|cannot|may not|"
+    r"without|stop|stops)\b"
+)
+
+#: The rule's own permitted case. An ask with no result yet above it is the
+#: shape this rule allows, so a sentence describing THAT is not an offence -
+#: which is a property of the wording, not an exemption granted to a document.
+_ASK_BEFORE_ANY_RESULT = re.compile(r"\bbefore any (?:result|output|stage)\b")
+
+
+def places_an_ask_above_its_evidence(sentence: str) -> bool:
+    """Whether this sentence tells a run to put a question above its material.
+
+    The failure this answers is precise, and it is the one five watched runs
+    produced: the ask lands above the material that argues for it, the customer
+    scrolls past it into the detail, and misses it. A sentence FORBIDDING that
+    reads almost identically to one requiring it - both name an ask, a card and
+    a direction - so the hedge is what separates them, and it is read only in
+    front of the match for the reason given above the pattern.
+    """
+    flat = " ".join(sentence.split()).casefold()
+    if _ASK_BEFORE_ANY_RESULT.search(flat):
+        return False
+    for pattern in _ASK_ABOVE_SHAPES:
+        match = pattern.search(flat)
+        if match is None:
+            continue
+        if _ASK_ABOVE_HEDGE.search(flat[: match.start()]):
+            continue
+        if _ASK_ABOVE_HEDGE.search(match.group(0)):
+            continue
+        return True
+    return False
+
+
 class TheAskIsLastAndNamesWhatIsLackingTests(unittest.TestCase):
     """Five watched runs opened on the decision and buried the evidence.
 
@@ -23039,23 +23100,132 @@ class TheAskIsLastAndNamesWhatIsLackingTests(unittest.TestCase):
             .split()
         )
 
-    def test_the_resident_contract_puts_the_ask_last(self) -> None:
-        """Where the reader already is, which is the lesson of 0069.
+    #: The rule as one affirmative sentence. Matched at a sentence boundary and
+    #: with its full stop, so a wording that keeps the words and drops the claim
+    #: - "an ask that follows a result sits below it is not a rule this guide
+    #: keeps" - is not the same string.
+    RULE = "an ask that follows a result sits below it."
 
-        The operating contract is read before any stage and is where the other
-        presentation rules live, so the ordering rule sits beside them rather
-        than only in the reference that words the ask.
+    #: The permitted case, stated so the conditional rule cannot be quietly
+    #: reduced back to the blanket one it replaced. An ask with nothing above it
+    #: to miss is not the failure this rule exists to stop.
+    RULE_EXCEPTION = "an ask before any result"
+
+    def _section(self, text: str, heading: str, next_heading: str) -> str:
+        """One section of a document, by the headings that bound it."""
+        self.assertIn(heading, text, f"{heading} is no longer a heading")
+        self.assertIn(next_heading, text, f"{next_heading} is no longer a heading")
+        body = text.split(heading, 1)[1].split(next_heading, 1)[0]
+        return " ".join(body.casefold().split())
+
+    def _contract(self) -> str:
+        return self._section(
+            SKILL.read_text(), "## Operating contract", "## Action authorization"
+        )
+
+    def _zero_anchor_gate(self) -> str:
+        return self._section(
+            SKILL.read_text(),
+            "#### Zero-anchor intent gate",
+            "### 2. Show readiness once",
+        )
+
+    def _one_ask(self) -> str:
+        return self._section(
+            SKILL.read_text(),
+            "#### One ask for every gap",
+            "### 3. Complete the system",
+        )
+
+    def test_the_resident_contract_states_the_rule_where_it_governs(self) -> None:
+        """In the section that governs the stop, not merely in the file.
+
+        The rule used to be asserted with three whole-file `assertIn`s, which
+        say a sequence of characters exists somewhere in 82KB and nothing about
+        where. Moved to the end of the file, or into the middle of the gate
+        steps, `SKILL.md` stayed byte-identical and every ordering test stayed
+        green - so the tests pinned the sentence and not the rule. The
+        operating contract is read before any stage and is where the other
+        presentation rules live; that is the only place this one enforces
+        anything.
         """
-        skill = self._skill()
-        self.assertIn("put the one ask last", skill)
-        self.assertIn("card, board and evidence first, then the question", skill)
-        self.assertIn("never a marker, heading or summary of it above them", skill)
+        contract = self._contract()
+        self.assertIn(self.RULE, contract)
+        self.assertIn("never a marker, heading or summary of it above them", contract)
+        # Both halves, because the rule is conditional. An ask that arrives
+        # before any result may open the message: nothing sits above it for the
+        # reader to scroll past, which is the whole of what went wrong.
+        self.assertIn(self.RULE_EXCEPTION, contract)
+        self.assertIn("may open the message", contract)
+
+    def test_the_rule_is_stated_and_not_merely_quoted(self) -> None:
+        """A negation keeps every word and drops the instruction.
+
+        "An ask that follows a result sits below it is not a rule this guide
+        keeps" contains `RULE`'s words in `RULE`'s order, so a substring check
+        cannot tell it from the rule. Requiring the claim to BEGIN a sentence
+        and to END at a full stop is what separates them, and it is the cheapest
+        property that does.
+        """
+        contract = self._contract()
+        stated = re.compile(rf"(?:^|[.;:]\s|- ){re.escape(self.RULE)}(?:\s|$)")
+        self.assertRegex(
+            contract,
+            stated,
+            "the rule's words are in the contract but not as its own "
+            "affirmative sentence; a clause inside a larger sentence can say "
+            "the opposite with the same words",
+        )
+
+        # The check, run against the wording it exists to refuse.
+        for negation in (
+            f"{self.RULE[:-1]} is not a rule this guide keeps.",
+            f"it is not true that {self.RULE}",
+            f"do not assume {self.RULE}",
+        ):
+            with self.subTest(negation=negation):
+                self.assertNotRegex(negation, stated)
 
     def test_both_ask_sites_say_the_question_ends_the_message(self) -> None:
-        """Stated at each ask as well, because a run reaches one, not the list."""
-        skill = self._skill()
-        self.assertIn("this question is the last thing in the message", skill)
-        self.assertIn("no summary of it sits above them", skill)
+        """Stated at each stop as well, because a run reaches one, not the list.
+
+        Section-scoped for the reason above: "somewhere in the file" was true of
+        both sentences after either had been moved into the other's section, or
+        into the completion criteria, where no run reads them.
+        """
+        self.assertIn(
+            "this question is the last thing in the message", self._zero_anchor_gate()
+        )
+        self.assertIn("no summary of it sits above them", self._one_ask())
+
+    def test_the_gate_puts_its_question_under_the_board_it_rests_on(self) -> None:
+        """The ordering, as position rather than as a sentence about position.
+
+        This is the one half of the rule this package can check by looking:
+        inside the gate, the three component lines are the output, and the
+        question about them is written below all three. It is still a document
+        and not a rendered message - see
+        `TheCalibrationQuestionFollowsItsVerdictTests` for the ask this repo
+        actually prints - but a rule that has to hold in a document can at
+        least be read out of the document's own order.
+        """
+        gate = self._zero_anchor_gate()
+        question = "what should the walkthrough agent do?"
+        self.assertIn(question, gate)
+        for component in ("❗ **agent**", "❗ **dataset**", "❗ **evaluation**"):
+            with self.subTest(component=component):
+                self.assertIn(component, gate)
+                self.assertLess(
+                    gate.index(component),
+                    gate.index(question),
+                    "the board is the output the question rests on, so the "
+                    "question is written below it",
+                )
+        self.assertLess(
+            gate.index(question),
+            gate.index("stop and wait for the answer"),
+            "the stop follows the question it is stopping for",
+        )
 
     def test_nothing_may_announce_the_ask_above_the_card(self) -> None:
         """The reference already forbade a line after it and not one before."""
@@ -23067,6 +23237,97 @@ class TheAskIsLastAndNamesWhatIsLackingTests(unittest.TestCase):
             creation,
         )
         self.assertIn("the ask goes lowermost", creation)
+
+    #: Sentences that match the shapes above and are not instructions. Each says
+    #: why, and a stale entry fails below - an exemption that stops describing
+    #: anything hides the next real one.
+    NAMES_THE_FAILURE_RATHER_THAN_REQUIRING_IT = {
+        "that way round the customer meets the decision before the material": (
+            "component-creation.md, stating the consequence this rule exists to "
+            "prevent. It sits directly under the prohibition it explains, and "
+            "the sentence describes what goes wrong rather than asking for it."
+        ),
+    }
+
+    def test_no_guidance_sentence_puts_an_ask_above_its_evidence(self) -> None:
+        """The rule, enforced against its own negation rather than restated.
+
+        A bullet reading "lead with a one-line DECISION: marker stating the ask,
+        above the card" placed beside the rule left all six ordering tests
+        green: nothing compared the two statements, and the only thing that
+        noticed was the byte ledger, whose failure message asks you to correct
+        the entry rather than the tree. Correcting it gave a fully green suite
+        shipping the contradiction. This is the check that was missing.
+        """
+        offenders = []
+        for path in assistant_facing_documents():
+            for sentence in sentences(path.read_text()):
+                flat = " ".join(sentence.split()).casefold()
+                if not places_an_ask_above_its_evidence(sentence):
+                    continue
+                if any(
+                    key in flat
+                    for key in self.NAMES_THE_FAILURE_RATHER_THAN_REQUIRING_IT
+                ):
+                    continue
+                offenders.append(f"{path.name}: {flat[:160]}")
+        self.assertEqual(
+            offenders,
+            [],
+            "a document tells a run to put the question above the material "
+            "that argues for it, which is the ordering the operating contract "
+            "forbids - the customer scrolls past the ask into the detail and "
+            "misses it",
+        )
+
+    def test_every_named_exception_still_describes_a_sentence(self) -> None:
+        """A stale exemption exempts nothing and hides the next real one."""
+        corpus = " ".join(
+            " ".join(path.read_text().casefold().split())
+            for path in assistant_facing_documents()
+        )
+        for key, reason in self.NAMES_THE_FAILURE_RATHER_THAN_REQUIRING_IT.items():
+            with self.subTest(exception=key):
+                self.assertIn(key, corpus, f"exemption no longer matches: {reason}")
+
+    def test_the_ask_placement_check_can_tell_the_two_directions_apart(self) -> None:
+        """The check, run against both directions of its own subject.
+
+        Without this the check could be satisfied by a predicate that never
+        fires, which is the defect one level up from the one it was written
+        for. The refused set is the wording of the five runs; the accepted set
+        is this package's own rules, which name the same three things and mean
+        the opposite.
+        """
+        must_refuse = (
+            "Lead with a one-line DECISION: marker stating the ask, above the card.",
+            "Put the ask at the top so the reader meets the decision first.",
+            "Open with the question, then show the card that argues for it.",
+            "A one-line summary of the choice goes at the top of the message.",
+            "State the decision before the readiness card.",
+            "The ask comes first, above the board and the evidence.",
+        )
+        must_accept = (
+            "An ask that follows a result sits below it.",
+            "Never a marker, heading or summary of it above them.",
+            "An ask before any result, like approval to install, may open the message.",
+            "Nothing announces it above the card - no marker line, no heading.",
+            "This question is the last thing in the message.",
+            "Show readiness once, then ask.",
+        )
+        for sentence in must_refuse:
+            with self.subTest(refuse=sentence):
+                self.assertTrue(
+                    places_an_ask_above_its_evidence(sentence),
+                    "this is the ordering the rule forbids and the check " "passed it",
+                )
+        for sentence in must_accept:
+            with self.subTest(accept=sentence):
+                self.assertFalse(
+                    places_an_ask_above_its_evidence(sentence),
+                    "this is the rule itself, or the case it allows, and the "
+                    "check called it an offence",
+                )
 
     def test_the_gap_is_named_as_the_pieces_and_not_as_a_situation(self) -> None:
         """Three words the customer already uses, in place of a category."""

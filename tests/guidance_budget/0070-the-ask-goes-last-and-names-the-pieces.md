@@ -4,9 +4,9 @@ follows: 0069
 follows-resident-measured: 90_015
 follows-total-measured: 437_285
 resident-ceiling: 91_050
-resident-measured: 90_966
+resident-measured: 91_036
 total-ceiling: 438_950
-total-measured: 438_834
+total-measured: 438_904
 
 Five watched runs of this guide opened on the decision. Each began with a
 single line stating the choice - reply A or B, pick the walkthrough task -
