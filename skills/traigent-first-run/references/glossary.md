@@ -88,7 +88,7 @@ Evaluation (grading)
 
 Calibration (of the evaluator)
   Plain: checking that the evaluator gives a high score to good answers and a
-  low score to bad ones - that the ruler actually measures the right thing.
+  low score to bad ones - that it actually measures the right thing.
   Note: an evaluator that passes everything, or one that gives a wrong answer a
   good score, is broken even if it is fast and repeatable.
 

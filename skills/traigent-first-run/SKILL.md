@@ -97,6 +97,8 @@ rule.
   project-root `.gitignore`; otherwise do not create `.gitignore`. Never overwrite source material.
 - Do not put educational or advanced-skill links in the active run. Offer links after the result.
 - Keep internal check IDs, SDK internals, and optimization jargon out of user-facing progress.
+- Put the one ask last. Card, board and evidence first, then the question - never a marker,
+  heading or summary of it above them. The reader acts on it, so it ends the message.
 - Open with the five-stage journey in "Opening message" below. At boundaries/long work, use
   `Stage <n>/5 · <name>` and `Done / Now / Next`. Show observed readiness score, rows checked,
   calls/trials, cost, or time; keep finished stages as compact checkmarks. Label estimates; never
@@ -274,7 +276,7 @@ Otherwise run readiness without `--calibration` and name the concrete deferral: 
 semantics, no defensible probe matrix, an uninstalled local dependency, a slow, uncertain, external,
 or executing path, or an LLM judge that needs paid approval. Missing calibration is then unmeasured,
 not a failed evaluator; the `evaluator-unvalidated` ceiling limits the readiness claim to 45 until
-the ruler is actually checked. When rows exist, do the row-level sanity check in
+the evaluation method is actually checked. When rows exist, do the row-level sanity check in
 `references/evaluation-and-dataset.md` here and pass it as `--row-review`: it is your own read, it
 spends nothing, and no generated row competes with it yet. Apply the run-scoped evaluator-method rule above to both
 scripts, and apply the run-scoped task-kind rule to readiness only, and the origin rule with it.
@@ -397,12 +399,18 @@ conversation; recording it is a write and waits for the answer.
    - ❗ **Agent** - no production agent is connected.
    - ❗ **Dataset** - no real examples are connected.
    - ❗ **Evaluation** - no validated grading method is connected.
-2. State that the coding assistant will create coherent walkthrough substitutes after the user
-   chooses the task, and that synthetic results demonstrate workflow rather than production
-   performance. Carry the four things "One ask for every gap" below requires - including the
-   `I have it` answer and its path - on this same question, so it stays one and not two.
+2. Say plainly what is lacking, in the customer's own three words - dataset, agent, evaluation
+   method - and that the coding assistant will create each after the user chooses the task, and
+   that synthetic results demonstrate workflow rather than production performance. Where the
+   inventory found request/response logs or accepted traces, say they are built from those: "I
+   will create the dataset, the evaluation method and the agent from your logs" is a different
+   offer from "I will write them", and the second undersells material they already have. Carry the
+   four things "One ask for every gap" below requires - including the `I have it` answer and its
+   path - on this same question, so it stays one and not two.
 3. Ask exactly one task-intent question: **"What should the walkthrough agent do?"** Offer at
-   most three short choices and recommend a structured, deterministically scoreable task.
+   most three short choices, each put as the job itself - "pull the total and the date out of a
+   receipt" - never as a category name like extraction or classification, and recommend a
+   structured, deterministically scoreable task. This question is the last thing in the message.
 4. **STOP and wait for the answer.** Do not continue setup in the same turn.
 
 Before that answer, make zero writes:
@@ -455,7 +463,8 @@ weakness are one decision about what this run will measure. That question carrie
 
 1. What the inventory did not find, named plainly and all of it at once - what was searched for and
    not seen, never what the project does not have - and, on the same line, what it found too little
-   of to compare on.
+   of to compare on. Name the pieces themselves, in the words the customer uses for them: dataset,
+   agent, evaluation method.
 2. That this run can build each missing piece from what exists. Offer a dataset top-up only when
    its cap has `asks: true`; otherwise name the limitation, but do not offer rows.
 3. What that costs, in terms the score already uses: what this run writes stays a substitute, never
@@ -465,8 +474,9 @@ weakness are one decision about what this run will measure. That question carrie
    brought is a second. `I have it` with a path is never counted among them.
 
 Then stop and wait, and ask nothing else here; what this run writes is shown at the pre-spend
-approval in stage 6, which is the other checkpoint and the last moment changing it is free. A path
-given here names material that was in the project all along, so re-run the opening gate over it and
+approval in stage 6, which is the other checkpoint and the last moment changing it is free. It
+closes the message: the board and the cost sit above it, and no summary of it sits above them.
+A path given here names material that was in the project all along, so re-run the opening gate over it and
 read that as the opening score; the record waits for this answer in any gap run, for the reason the
 zero-anchor gate above already gives for its own.
 When nothing anchors task intent at all this is not a second question - the zero-anchor gate above

@@ -45,7 +45,9 @@ The matrix below says what gets built. This is what the user was told before it 
 owns that it is one question, when it is asked, and what it has to carry. Here is what it sounds
 like and what happens to the answer.
 
-Say it in their words, naming only what this run looked for and did not find:
+Say it in their words, naming only what this run looked for and did not find - and name the pieces
+themselves rather than the situation: "here is what is lacking: dataset, agent, evaluation method"
+is a sentence a customer can act on, where "the inventory is incomplete" is not.
 
 > Your agent is here and it runs. Searching outward from it, I did not find any set of examples to
 > score it on, or anything that says what a right answer looks like - they may well exist somewhere
@@ -228,6 +230,11 @@ decision, and one was the whole design - a question that is free to answer is st
 has to notice, weigh and answer before the one that matters. Numbering it turns a standing exit into
 one option among three, and the pause beside it into another, which is how a way forward and a way
 out become a list of ways to stop.
+
+And nothing ANNOUNCES it above the card either - no marker line, no heading, no one-line summary of
+the choice at the top. That way round the customer meets the decision before the material that
+justifies it and answers a question the evidence has not argued for yet. The ask goes lowermost:
+last on screen, and last read.
 
 ### When a path arrives
 
