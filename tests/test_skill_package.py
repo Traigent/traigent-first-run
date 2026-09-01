@@ -11306,7 +11306,13 @@ class SkillPackageTests(unittest.TestCase):
             "**two rows: the easiest and the hardest.**",
             "**what the evaluation method counts as correct.**",
             "**where we are.** `stage 3/5 · baseline`",
-            "**proceed, or fix.** two named outcomes and no default",
+            # Was "two named outcomes and no default". The card's own guide
+            # holds one section over that an unmarked pair is a menu, and two
+            # live runs closed on exactly that - the rule was written for the
+            # build route and never applied to the spend approval, which is
+            # the same act of choosing.
+            "**proceed, or fix.** two lettered routes with the recommendation "
+            "on one of them",
             "approving the spend is not approving the material, and silence is neither",
             # the ladder, so an unlabelled pick is not passed off as measured
             "pick the pair by the ladder in `references/evaluation-and-dataset.md`",
@@ -12105,7 +12111,13 @@ class SkillPackageTests(unittest.TestCase):
             "cost or latency as `not measured`",
             "no generalization or production-improvement claim exists yet",
             "this phase created no portal experiment",
-            "this checkpoint is a valid place to stop",
+            # Was "this checkpoint is a valid place to stop". A run rendered
+            # that faithfully and put the bold on stopping with the
+            # recommendation trailing in plain text at the end of the
+            # paragraph. Declining is still here - it is pinned on its own
+            # below - but the emphasis now sits on the recommended route.
+            "this checkpoint asks for the next spend, and its recommended "
+            "answer is to continue",
             "baseline-only, not as a completed traigent optimization",
             "only after that checkpoint, ask for the traigent key",
             "full access rather than the read-only default",
@@ -23554,6 +23566,133 @@ class TheUnusableBranchHasItsOwnQuestionTests(unittest.TestCase):
         self.assertIn("the build route is the way to continue", creation)
         self.assertIn("re-validate, then carry on", creation)
 
+    #: Words for one pillar's material. A rule about which route gets the mark
+    #: that reaches for any of them has been narrowed to the finding of the day,
+    #: and the next instance arrives in a different pillar. Written out here so
+    #: this check has an expectation the document cannot supply for it.
+    ONE_PILLAR_WORDS = (
+        "agent",
+        "dataset",
+        "evaluator",
+        "holdout",
+        "rows",
+        "split",
+    )
+
+    @classmethod
+    def _narrowed_to_one_pillar(cls, paragraph: str) -> list[str]:
+        flat = " ".join(paragraph.casefold().split())
+        return sorted(
+            word for word in cls.ONE_PILLAR_WORDS if re.search(rf"\b{word}\b", flat)
+        )
+
+    def _paragraph_containing(self, phrase: str) -> str:
+        """The one paragraph of the creation reference that states `phrase`."""
+        raw = (SKILL_ROOT / "references" / "component-creation.md").read_text()
+        blocks = [
+            " ".join(block.casefold().split())
+            for block in raw.split("\n\n")
+            if phrase in " ".join(block.casefold().split())
+        ]
+        self.assertEqual(
+            len(blocks),
+            1,
+            f"expected exactly one paragraph stating {phrase!r}, found "
+            f"{len(blocks)}",
+        )
+        return blocks[0]
+
+    def test_the_mark_goes_to_the_route_that_can_produce_the_result(self) -> None:
+        """Continue-over-pause cannot choose between two routes that continue.
+
+        A run offered a build on a dataset of 300 rows that resolved to six
+        distinct questions, and a build that also wrote more questions into a
+        working copy. Both continued, so the rule that was written had nothing
+        to say, and the mark went to the one that left the customer's files
+        alone - the route the same card had just reported could not rank
+        anything. The customer was recommended a comparison that was
+        arithmetically incapable of separating its own configurations.
+        """
+        creation = self._creation()
+        self.assertIn("when more than one route continues", creation)
+        self.assertIn(
+            "the mark goes to the route that can produce the result the run is "
+            "being paid for",
+            creation,
+        )
+        self.assertIn(
+            "a route that continues into a measurement this same card has "
+            "already reported as unable to answer the question is not the one "
+            "to mark",
+            creation,
+        )
+        # The property that did NOT separate them, named, because it is the one
+        # the run reached for: both routes wrote only to a working copy.
+        self.assertIn(
+            "leaving the customer's material untouched does not settle it",
+            creation,
+        )
+
+    def test_the_continue_over_pause_rule_survives_underneath_it(self) -> None:
+        """The narrower rule chooses among continuing routes; it adds no pause.
+
+        Read as a replacement, "recommend what can produce the result" would
+        make a pause recommendable the moment no continuing route looks strong,
+        which is the outcome this walkthrough exists to avoid and the reason
+        the older rule was written.
+        """
+        creation = self._creation()
+        self.assertIn(
+            "pausing is always available and needs no push, while the run "
+            "stopping is the outcome the walkthrough exists to avoid",
+            creation,
+        )
+        self.assertIn(
+            "pausing is never the marked route, and this only narrows which of "
+            "the continuing ones is",
+            creation,
+        )
+
+    def test_the_rule_is_stated_as_the_property_and_not_as_this_finding(
+        self,
+    ) -> None:
+        """Written about datasets, it would be re-derived for the next pillar.
+
+        The instance was a comparison set. The rule has to be about a route
+        continuing into a measurement the card has already called unable to
+        answer, whatever raised it - so the paragraph that states it may not be
+        phrased in one pillar's material.
+        """
+        paragraph = self._paragraph_containing("when more than one route continues")
+        self.assertEqual(
+            self._narrowed_to_one_pillar(paragraph),
+            [],
+            "the rule that decides which continuing route is marked is written "
+            "in one pillar's words, so the next pillar's instance is not "
+            "covered by it",
+        )
+
+    def test_the_generality_check_reads_a_narrowed_rule_and_a_general_one(
+        self,
+    ) -> None:
+        """The guard above, probed both ways before anything is trusted to it.
+
+        A check that only ever returns nothing would pass on a rule rewritten
+        about datasets tomorrow; a check that flagged the general wording would
+        push the next author into naming a pillar to get past it.
+        """
+        general = (
+            "When more than one route continues, the mark goes to the route "
+            "that can produce the result the run is being paid for, whichever "
+            "finding the card raised."
+        )
+        narrowed = (
+            "When more than one route continues, the mark goes to the route "
+            "that adds rows so the dataset can rank anything."
+        )
+        self.assertEqual(self._narrowed_to_one_pillar(general), [])
+        self.assertEqual(self._narrowed_to_one_pillar(narrowed), ["dataset", "rows"])
+
 
 _ASK_NOUN = r"(?:ask|question|decision|choice|marker line)"
 _MATERIAL = r"(?:card|board|evidence|result|score|welcome|stage line|material)"
@@ -23919,6 +24058,483 @@ class TheAskIsLastAndNamesWhatIsLackingTests(unittest.TestCase):
         self.assertIn("pull the total and the date out of a receipt", skill)
         self.assertIn(
             "never as a category name like extraction or classification", skill
+        )
+
+    #: Words that belong to the practice a task comes from rather than to any
+    #: particular customer's project. Written out here rather than read off the
+    #: guidance: a list taken from the document it is used to check asserts that
+    #: the document agrees with itself. The binding runs the other way below -
+    #: the guidance is required to name every one of these - so the two cannot
+    #: drift apart without a test saying so.
+    PRACTICE_WORDS = (
+        "canonical form",
+        "entity",
+        "grouping",
+        "intent",
+        "metric",
+        "schema",
+        "time range",
+    )
+
+    #: The two options real runs wrote, kept verbatim. The first is the defect:
+    #: three practice words offered to a customer whose whole project was one
+    #: text note, who was then asked which of them was nearest their work. The
+    #: second is the same gate getting it right on a project of log lines, and
+    #: it is here so the check below can be shown not to reject it - a guard
+    #: that refuses acceptable copy costs more than the copy it was aimed at.
+    JARGON_OPTION = (
+        "pull the metric, the time range, and the grouping out of a "
+        "plain-English data request"
+    )
+    PLAIN_OPTION = (
+        "Turn a plain-English question about your singers database into a SQL "
+        "query (recommended - it is what your logs already show, and it grades "
+        "deterministically)"
+    )
+
+    @classmethod
+    def _practice_words(cls, text: str) -> list[str]:
+        flat = " ".join(text.casefold().split())
+        return sorted(
+            word
+            for word in cls.PRACTICE_WORDS
+            if re.search(rf"\b{re.escape(word)}\b", flat)
+        )
+
+    @staticmethod
+    def _offered_options() -> list[tuple[Path, str, str]]:
+        """Every lettered route or choice the guidance writes out for a reader.
+
+        Read off the corpus rather than listed, which is the whole point: a
+        rule pinned to the one example that failed leaves its siblings free to
+        carry the same defect, and this package has had exactly that twice.
+        Customer-facing wording is quoted in this package, so a quoted line
+        opening on a route letter identifies the class, and the quoted lines
+        after it are the rest of that route.
+        """
+        quoted = re.compile(r"^\s*>\s?(.*)$")
+        opener = re.compile(r"^(?:[-*]\s+)?\*{0,2}([A-D])(?:\.|\)|\s*\(|\*{2})")
+        found: list[tuple[Path, str, str]] = []
+        for path in assistant_facing_documents():
+            letter: str | None = None
+            body: list[str] = []
+            for line in path.read_text(encoding="utf-8").splitlines():
+                quote = quoted.match(line)
+                text = quote.group(1).strip() if quote else ""
+                start = opener.match(text) if text else None
+                if start or not quote or not text:
+                    if letter is not None:
+                        found.append((path, letter, " ".join(body)))
+                    letter, body = (start.group(1), [text]) if start else (None, [])
+                    continue
+                if letter is not None:
+                    body.append(text)
+            if letter is not None:
+                found.append((path, letter, " ".join(body)))
+        return found
+
+    def test_the_register_check_reads_both_of_the_options_that_were_written(
+        self,
+    ) -> None:
+        """The guard itself, probed in both directions before it is trusted.
+
+        One half is the defect it exists for. The other half matters as much:
+        a check that also refuses the option this gate got right would push the
+        next author away from the wording this rule is trying to produce.
+        """
+        self.assertEqual(
+            self._practice_words(self.JARGON_OPTION),
+            ["grouping", "metric", "time range"],
+        )
+        self.assertEqual(self._practice_words(self.PLAIN_OPTION), [])
+
+    def test_no_option_the_guidance_offers_is_written_in_practice_words(
+        self,
+    ) -> None:
+        """Scoped to every offered option, not to the one that was wrong."""
+        options = self._offered_options()
+        self.assertGreaterEqual(
+            len(options),
+            3,
+            "no offered options were found, so this check proves nothing - "
+            "the scan below has stopped matching the way they are written",
+        )
+        for path, letter, text in options:
+            with self.subTest(document=path.name, option=letter):
+                self.assertEqual(
+                    self._practice_words(text),
+                    [],
+                    "this option is offered to a customer in words that belong "
+                    "to the practice the task comes from, not to their project",
+                )
+
+    def test_a_task_choice_is_written_in_the_customer_s_own_words(self) -> None:
+        """The register rule, where the reader writing the options already is.
+
+        The gate is evaluated before any reference loads, so a rule about how
+        these options are worded has to be in the resident document or it does
+        not reach the moment they are written. It binds every choice rather
+        than one task kind: the run that prompted this offered analytics words,
+        and the next one will offer some other trade's.
+        """
+        text = SKILL.read_text()
+        gate = text.split("#### Zero-anchor intent gate", 1)[1].split(
+            "### 2. Show readiness once", 1
+        )[0]
+        gate = " ".join(gate.casefold().split())
+        self.assertIn("write every choice in the customer's own words", gate)
+        self.assertIn(
+            "a word that belongs to the practice a task comes from rather than "
+            "to their project",
+            gate,
+        )
+        self.assertIn("where their material has no word for a thing", gate)
+        for word in self.PRACTICE_WORDS:
+            with self.subTest(word=word):
+                self.assertIn(
+                    word,
+                    gate,
+                    "the check below refuses this word in an offered option "
+                    "and the guidance never tells an author it is refused",
+                )
+
+    def test_a_recommended_task_names_the_evidence_in_their_material(self) -> None:
+        """A recommendation that fits every project has not read any of them.
+
+        "Structured and deterministically scoreable" is a property of the task.
+        It is true before the project is opened, so a recommendation resting on
+        it alone is the same sentence on every run. The one this gate got right
+        named what in the customer's own material picked it, and that is the
+        half the rule was missing.
+        """
+        text = SKILL.read_text()
+        gate = text.split("#### Zero-anchor intent gate", 1)[1].split(
+            "### 2. Show readiness once", 1
+        )[0]
+        gate = " ".join(gate.casefold().split())
+        self.assertIn(
+            "in that same sentence name what in their material makes it the one "
+            "to pick",
+            gate,
+        )
+        self.assertIn(
+            "a recommendation resting only on a property of the task recommends "
+            "the same thing in every project alike",
+            gate,
+        )
+        # And the reference that carries the no-preference default defers to it,
+        # rather than reading as licence to offer the category by name.
+        creation = self._creation()
+        self.assertIn(
+            '"classification" and "extraction" are how this document names the '
+            "shape; they are never how the customer is offered it",
+            creation,
+        )
+
+
+class OneShapeAndOneMarkForEveryChoiceTests(unittest.TestCase):
+    """Five watched runs, and the same rule missing from three of them.
+
+    The creation reference already holds that two routes with nothing marked is
+    a menu, and that a menu offered instead of a recommendation is the same as
+    no recommendation. It was written for the build route and applied nowhere
+    else. The baseline spend approval is an unmarked pair; it renders bold
+    words where every other ask renders lettered routes; and the baseline
+    checkpoint put its bold on stopping with the recommendation trailing in
+    plain text at the end of the paragraph.
+    """
+
+    #: Instructions to offer a choice with nothing marked. The rule that names
+    #: the defect - "two routes with nothing marked is a menu" - is not one of
+    #: these, and the probe below shows it is not caught by them.
+    UNMARKED_PAIR_INSTRUCTIONS = (
+        "and no default",
+        "neither route is marked",
+        "no recommended default",
+        "with no default",
+    )
+
+    @classmethod
+    def _instructs_an_unmarked_pair(cls, text: str) -> list[str]:
+        flat = " ".join(text.casefold().split())
+        return sorted(
+            phrase for phrase in cls.UNMARKED_PAIR_INSTRUCTIONS if phrase in flat
+        )
+
+    @staticmethod
+    def _flat(path: Path) -> str:
+        return " ".join(path.read_text().casefold().split())
+
+    def _checkpoint(self) -> str:
+        """The baseline checkpoint paragraph, by the sentences that bound it."""
+        text = self._flat(SKILL)
+        opening = "this checkpoint asks for the next spend"
+        closing = (
+            "now check whether the dataset and evaluator distinguish configurations"
+        )
+        self.assertIn(opening, text)
+        self.assertIn(closing, text)
+        return text.split(opening, 1)[1].split(closing, 1)[0]
+
+    def test_the_unmarked_pair_check_reads_an_instruction_and_not_the_rule(
+        self,
+    ) -> None:
+        """The guard, probed both ways before anything is trusted to it.
+
+        A check that also flagged the sentence naming the defect would make the
+        rule unstatable, which is worse than the defect: the next author would
+        delete the paragraph that explains why the mark is there.
+        """
+        self.assertEqual(
+            self._instructs_an_unmarked_pair(
+                "Two named outcomes and no default. Proceeding approves this."
+            ),
+            ["and no default"],
+        )
+        self.assertEqual(
+            self._instructs_an_unmarked_pair(
+                "Two routes with nothing marked is a menu, and this guide holds "
+                "that a menu offered instead of a recommendation is the same as "
+                "no recommendation. An unstated default is what that looks like."
+            ),
+            [],
+        )
+
+    def test_no_document_instructs_a_choice_with_nothing_marked(self) -> None:
+        """Scoped to every guidance document, not to the approval that failed."""
+        documents = assistant_facing_documents()
+        self.assertTrue(documents, "no guidance documents were found to check")
+        for path in documents:
+            with self.subTest(document=path.name):
+                self.assertEqual(
+                    self._instructs_an_unmarked_pair(path.read_text()),
+                    [],
+                    "this document tells the assistant to offer a choice with "
+                    "nothing marked, which its own guide calls no recommendation",
+                )
+
+    def test_the_spend_approval_marks_the_route_that_continues(self) -> None:
+        """The rule reaches the approval, with the reasoning it already uses."""
+        safety = self._flat(RUN_SAFETY)
+        self.assertIn(
+            "two lettered routes with the recommendation on one of them", safety
+        )
+        self.assertIn("`a.` proceed, marked recommended, and `b.` fix", safety)
+        self.assertIn(
+            "fixing needs no push, stays available at any time and costs nothing, "
+            "while the run not happening is the outcome this walkthrough exists "
+            "to avoid",
+            safety,
+        )
+        self.assertIn(
+            "a bounded taste of the workflow at a priced ceiling rather than a "
+            "full search",
+            safety,
+        )
+
+    def test_the_mark_is_withheld_where_proceeding_cannot_answer(self) -> None:
+        """ "When possible" has to be a condition, not a courtesy.
+
+        A rule that only ever pushes toward proceeding is worse than none: it
+        would mark the route on a card that already carries a blocking cap, and
+        on a run scoped so that it cannot answer what it is being paid for -
+        which is the same condition the creation reference states for choosing
+        among routes that continue, so it is stated once and applied twice.
+        """
+        safety = self._flat(RUN_SAFETY)
+        self.assertIn("marked only where it can be taken", safety)
+        for condition in (
+            "while the card carries a `fix before paid run`",
+            "while any cap blocks",
+            "where the run as scoped cannot answer the question it is being "
+            "paid to answer",
+        ):
+            with self.subTest(condition=condition):
+                self.assertIn(condition, safety)
+        self.assertIn(
+            "where it is withheld, say why in the sentence beside proceeding",
+            safety,
+        )
+        # One rule, not two: the approval names the reference that states it
+        # rather than restating a second version to be reconciled.
+        self.assertIn(
+            "on the same condition that reference states for choosing among "
+            "routes that continue",
+            safety,
+        )
+        self.assertIn(
+            "the baseline spend approval is this same rule at a later stage",
+            self._flat(SKILL_ROOT / "references" / "component-creation.md"),
+        )
+
+    def test_one_shape_is_stated_once_for_every_named_route_choice(self) -> None:
+        """Two shapes in one run read as a distinction the guide never made."""
+        skill = self._flat(SKILL)
+        self.assertIn(
+            "that shape is the shape of every choice this run puts to the "
+            "customer, not only this one",
+            skill,
+        )
+        self.assertIn(
+            "the routes are lettered from `a`, exactly one is marked " "recommended",
+            skill,
+        )
+        self.assertIn(
+            "bold words with no letter and no mark are a second form for the "
+            "same act",
+            skill,
+        )
+        # The two carve-outs are real distinctions, not exemptions: the
+        # standing exit answers a different question, and a single proposed
+        # action is not a set of routes to letter.
+        self.assertIn(
+            "it answers where material is, so it rides on the asks about "
+            "material and never on an approval to spend",
+            skill,
+        )
+        self.assertIn(
+            "a single proposed action with no alternative route beside it is "
+            "not a route list",
+            skill,
+        )
+
+    def test_the_checkpoint_leads_with_the_recommendation(self) -> None:
+        """The guidance's sentence order is the output's emphasis order.
+
+        Written stop-first, a live run rendered a bold headline saying stopping
+        was a valid choice above a plain closing clause saying to continue.
+        The order is therefore part of the instruction, and it is asserted as
+        an order rather than as a pair of present sentences.
+        """
+        checkpoint = self._checkpoint()
+        self.assertIn(
+            "lead with that, and put the mark on it: the order this paragraph "
+            "is written in is the order a run reproduces",
+            checkpoint,
+        )
+        self.assertLess(
+            checkpoint.index("state the case as what continuing produces"),
+            checkpoint.index("declining stays available"),
+            "the decline is written above the case for continuing, which is "
+            "the emphasis order the defect came from",
+        )
+        # This checkpoint is after the paid baseline, so declining is not the
+        # free exit the earlier approval was.
+        self.assertIn("this is also not the free exit", checkpoint)
+        self.assertIn("the last moment stopping is free", self._flat(SKILL))
+
+    def test_the_case_for_continuing_does_not_rest_on_measured_headroom(
+        self,
+    ) -> None:
+        """A conditional recommendation is an unmarked pair on the other branch.
+
+        "Name those when the baseline leaves headroom, and recommend
+        continuing" says nothing at all on a nearly perfect baseline, which is
+        exactly where a customer is left with two routes and no mark.
+        """
+        checkpoint = self._checkpoint()
+        self.assertNotIn("when the baseline leaves headroom, and recommend", checkpoint)
+        self.assertIn(
+            "two of them are reasons that hold on every sound baseline and rest "
+            "on no number",
+            checkpoint,
+        )
+        self.assertIn(
+            "measured headroom strengthens that case where the baseline leaves "
+            "some; it never creates it",
+            checkpoint,
+        )
+        # And the gain frame, which is the accurate one and the one that
+        # invites a decision rather than pushing it.
+        self.assertIn(
+            "state the case as what continuing produces rather than as what "
+            "stopping costs",
+            checkpoint,
+        )
+
+    def test_the_decline_route_survives_the_stronger_recommendation(self) -> None:
+        """The over-correction, which would be the worse defect of the two.
+
+        The next phase spends more money and needs an explicit approval. A
+        checkpoint that recommends continuing and leaves no answerable way to
+        decline is a consent defect, and a guard that only pushes toward
+        continuing would never see it.
+        """
+        checkpoint = self._checkpoint()
+        self.assertIn(
+            "declining stays available and stays plainly answerable", checkpoint
+        )
+        self.assertIn(
+            "a checkpoint that does not let a customer decline is a consent "
+            "defect and not a stronger recommendation",
+            checkpoint,
+        )
+        self.assertIn(
+            "preserve the local result and report the run as baseline-only",
+            checkpoint,
+        )
+
+    def test_the_case_claims_capability_and_information_and_never_a_gain(
+        self,
+    ) -> None:
+        """Three limits, each stated, because a stronger case invites all three."""
+        checkpoint = self._checkpoint()
+        for limit in (
+            "claim the search will improve anything",
+            "promise what the held-out score will be",
+            "suggest that a customer who stops has made a mistake",
+        ):
+            with self.subTest(limit=limit):
+                self.assertIn(limit, checkpoint)
+        self.assertIn("the honest claim is capability and information", checkpoint)
+        # The two rules this paragraph must survive, unchanged, in the text
+        # that follows it.
+        skill = self._flat(SKILL)
+        self.assertIn(
+            "offer the connected step as an optional, no-lift-possible "
+            "verification run, never as an expected gain",
+            skill,
+        )
+        self.assertIn(
+            "an accuracy-only search with walkthrough material requires a "
+            "workflow-demonstration label",
+            skill,
+        )
+
+    def test_the_connected_preview_states_reasons_that_hold_without_headroom(
+        self,
+    ) -> None:
+        """The same conditional, one stage later, as the whole justification.
+
+        The preview's reply-ready line rests on `<observed reason>`. On a
+        baseline that measured no opportunity that clause has nothing to put in
+        it, and the preview is then recommending with no reason stated.
+        """
+        safety = self._flat(RUN_SAFETY)
+        self.assertIn(
+            "that observed reason is one reason among several and never the "
+            "whole of the case",
+            safety,
+        )
+        for standing in (
+            "the only way the customer sees managed selection run against their "
+            "own agent",
+            "whether the selected configuration holds up on rows it was not "
+            "chosen on",
+        ):
+            with self.subTest(reason=standing):
+                self.assertIn(standing, safety)
+        self.assertIn(
+            "never what it will improve, and the no-lift wording below is "
+            "unchanged by them",
+            safety,
+        )
+        # The no-headroom route itself is untouched: the standing reasons are
+        # what the optional verification is offered ON, never a replacement for
+        # the harder-cases recommendation that governs there.
+        self.assertIn("recommend harder realistic cases first", safety)
+        self.assertIn(
+            "offer it as an optional no-lift-possible verification run", safety
         )
 
 

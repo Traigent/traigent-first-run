@@ -8522,6 +8522,157 @@ class TheCardSpeaksTheUsersLanguageTests(unittest.TestCase):
         )
         self.assertIn("examples to compare on", card)
 
+    @staticmethod
+    def _rendered(pillar: object) -> str:
+        return MODULE.render_card(
+            MODULE.aggregate([pillar], [], (), dict(MODULE.DEFAULT_WEIGHTS)),
+            palette=MODULE.Palette(),
+            unicode_ok=False,
+        )
+
+    # Check names invented here rather than taken from `CHECK_DISPLAY_NAMES`,
+    # so what these tests expect on the card is what this file wrote and not
+    # what the module already believes. `display_name` falls back to the
+    # internal name for a check it does not know, which is the documented
+    # behaviour these fixtures ride on: the label the card must print is then
+    # the literal string in the fixture, and an assertion about it cannot be
+    # satisfied by the module agreeing with itself.
+    def test_a_reason_several_checks_share_is_said_once(self) -> None:
+        """The mixed pillar, which the all-identical rule could not see.
+
+        A project with no agent to read scored five agent checks: four rested
+        on one unread source and the fifth on a document that never arrived.
+        Not one pillar-wide fact, so the collapse never fired and the same
+        sentence printed four times - the customer reads it four times and
+        learns it once. The odd one out is the whole point of the fixture: a
+        rule that only fires when a pillar is uniform is one degree short of
+        the state that actually occurs.
+        """
+        pillar = MODULE.Pillar(
+            name="agent",
+            score=0,
+            confidence=0.0,
+            subscores=(
+                MODULE.SubScore("alpha", 0.0, 10.0, False, "one unread source"),
+                MODULE.SubScore("bravo", 0.0, 10.0, False, "one unread source"),
+                MODULE.SubScore("charlie", 0.0, 10.0, False, "one unread source"),
+                MODULE.SubScore("delta", 0.0, 10.0, False, "a document never sent"),
+                MODULE.SubScore("echo", 0.0, 10.0, False, "one unread source"),
+            ),
+        )
+        card = self._rendered(pillar)
+        self.assertEqual(card.count("one unread source"), 1)
+        self.assertEqual(card.count("a document never sent"), 1)
+        lines = [line for line in card.splitlines() if line.strip()]
+        head = next(
+            index for index, line in enumerate(lines) if "one unread source" in line
+        )
+        # Listed under the finding they share, in the order the pillar carries
+        # them, so the reader can see which questions went unanswered for it.
+        self.assertEqual(
+            [line.strip() for line in lines[head + 1 : head + 5]],
+            ["alpha", "bravo", "charlie", "echo"],
+        )
+        # And the check with a reason of its own keeps its own row, label and
+        # finding together. Losing this is how a de-duplication pass turns into
+        # a pillar that reports one reason and drops the rest.
+        solo = [line for line in lines if "a document never sent" in line]
+        self.assertEqual(len(solo), 1)
+        self.assertIn("delta", solo[0])
+
+    def test_one_shared_reason_still_names_the_checks_it_covers(self) -> None:
+        """Said once, and still saying which questions it answered for.
+
+        The first fix for the repeat printed the finding alone. That loses the
+        only thing on the card that says how many different questions went
+        unanswered because of it - a bare "no dataset provided to this score"
+        reads as one gap where five checks are waiting on it.
+        """
+        pillar = MODULE.Pillar(
+            name="dataset",
+            score=0,
+            confidence=0.35,
+            subscores=(
+                MODULE.SubScore("foxtrot", 0.0, 25.0, False, "one reason for all"),
+                MODULE.SubScore("golf", 0.0, 35.0, True, "one reason for all"),
+                MODULE.SubScore("hotel", 0.0, 40.0, False, "one reason for all"),
+            ),
+        )
+        card = self._rendered(pillar)
+        self.assertEqual(card.count("one reason for all"), 1)
+        for name in ("foxtrot", "golf", "hotel"):
+            with self.subTest(check=name):
+                self.assertIn(name, card)
+
+    def test_checks_with_their_own_reasons_keep_their_own_rows(self) -> None:
+        """The other direction, which a de-duplication pass gets wrong.
+
+        Nothing is shared here, so nothing may be grouped. A rule that reaches
+        for the pillar's worst finding and prints that one would pass every
+        assertion above while deleting two findings from the card.
+        """
+        pillar = MODULE.Pillar(
+            name="evaluation",
+            score=40,
+            confidence=1.0,
+            subscores=(
+                MODULE.SubScore("india", 1.0, 2.0, True, "the first finding"),
+                MODULE.SubScore("juliett", 1.0, 2.0, True, "the second finding"),
+                MODULE.SubScore("kilo", 1.0, 2.0, True, "the third finding"),
+            ),
+        )
+        card = self._rendered(pillar)
+        for name, evidence in (
+            ("india", "the first finding"),
+            ("juliett", "the second finding"),
+            ("kilo", "the third finding"),
+        ):
+            with self.subTest(check=name):
+                rows = [line for line in card.splitlines() if evidence in line]
+                self.assertEqual(len(rows), 1)
+                self.assertIn(name, rows[0])
+
+    def test_the_absent_card_never_says_the_same_thing_twice(self) -> None:
+        """The property, on the card a real run of an empty project prints.
+
+        The fixtures above pin the shapes; this pins the artifact, and it is
+        the assertion the original defect would have failed. Written over the
+        card's own lines rather than over any sentence this module declares, so
+        it holds for whatever the evidence strings are tomorrow.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            preflight = Path(directory) / "preflight.json"
+            preflight.write_text("[]", encoding="utf-8")
+            out, err = io.StringIO(), io.StringIO()
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                code = MODULE.run(
+                    ["--preflight", str(preflight), "--ascii", "--color", "never"]
+                )
+        self.assertEqual(code, 0, err.getvalue())
+        card = out.getvalue()
+        self.assertIn("TRAIGENT OPTIMIZATION READINESS", card)
+        # The finding, not the whole row. Each row on the defective card
+        # carried a different label in front of the same sentence, so
+        # comparing rows verbatim reported them all distinct and the repeat
+        # this test exists for would have gone straight past it. The column
+        # gutter is two spaces, so the last segment is what the reader is
+        # being told; the deeper-indented lines are the names a shared finding
+        # covers and are meant to differ.
+        body = [
+            line
+            for line in card.splitlines()
+            if line.startswith("    ") and not line.startswith("        ")
+        ]
+        self.assertTrue(body, "the card printed no check rows to compare")
+        findings = [line.strip().split("  ")[-1].strip() for line in body]
+        repeated = sorted({line for line in findings if findings.count(line) > 1})
+        self.assertEqual(
+            repeated,
+            [],
+            "the card says the same thing more than once, so a reader is being "
+            "shown one fact as several things to fix",
+        )
+
     def _customer_facing_strings(self) -> list[str]:
         """Every string this module can put in front of the customer.
 

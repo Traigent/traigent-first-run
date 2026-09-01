@@ -592,10 +592,25 @@ exist and points at a file that was never created.
   Where the cap's route owns no question of its own, this card is that one home and asks it here.
 - **Where we are.** `Stage 3/5 · Baseline`, so the choice arrives placed in the run rather than
   loose.
-- **Proceed, or fix.** Two named outcomes and no default. Proceeding approves this material as the
-  thing the run will be graded against; fixing returns to the repair route SKILL stage 4 owns and
-  re-runs its gate before anything is spent. Approving the spend is not approving the material, and
-  silence is neither.
+- **Proceed, or fix.** Two lettered routes with the recommendation on one of them, in the shape
+  SKILL.md states for every named-route choice this run offers: `A.` proceed, marked recommended,
+  and `B.` fix. Proceeding approves this material as the thing the run will be graded against;
+  fixing returns to the repair route SKILL stage 4 owns and re-runs its gate before anything is
+  spent. Approving the spend is not approving the material, and silence is neither.
+
+  The mark goes on proceeding for the reason `references/component-creation.md` gives for marking a
+  route that continues, and it holds harder here: fixing needs no push, stays available at any time
+  and costs nothing, while the run not happening is the outcome this walkthrough exists to avoid -
+  and what is approved here is deliberately small, a bounded taste of the workflow at a priced
+  ceiling rather than a full search. An unmarked pair is a menu, and a menu offered instead of a
+  recommendation is no recommendation: a run that meets one supplies the default itself.
+
+  Marked only where it can be taken, on the same condition that reference states for choosing among
+  routes that continue - mark the route that can produce the result being paid for. So the mark is
+  withheld while the card carries a `FIX BEFORE PAID RUN`, while any cap blocks, and where the run
+  as scoped cannot answer the question it is being paid to answer. Where it is withheld, say why in
+  the sentence beside proceeding: an unmarked pair with no reason next to it is the same silence
+  this bullet already refuses.
 
 An asking cap is what this card exists to discharge, and discharging it means the customer meets its
 remedy at the moment they are asked to pay - not that its question is put here a second time.
@@ -640,6 +655,15 @@ combination count> configurations`, or the executed count alone when that total 
 
 Do not manufacture urgency. If baseline and evaluator show a measured quality, cost, or latency
 opportunity, say `Recommended next: continue with Traigent optimization because <observed reason>.`
+That observed reason is one reason among several and never the whole of the case, and a preview
+resting on it alone has nothing left to say on a baseline that measured none. Two reasons hold on
+every sound baseline and neither is a number: continuing is the only way the customer sees managed
+selection run against their own agent, which a local fixed grid by definition does not show, and
+the held-out check reports whether the selected configuration holds up on rows it was not chosen
+on - a finding about their own dataset that no other part of this run produces. Name those where no
+measured opportunity exists, so the preview still carries a stated reason instead of an unmarked
+pair. Neither may be written as an expected gain: they are what the run shows and what it tells
+them, never what it will improve, and the no-lift wording below is unchanged by them.
 When the dataset and evaluator are sound but the baseline showed no measured quality or cost headroom,
 recommend harder realistic cases first. If the customer explicitly wants a verified portal/enhanced
 comparison anyway, offer it as an optional no-lift-possible verification run: say that it is not expected
