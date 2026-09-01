@@ -8198,6 +8198,47 @@ class SkillPackageTests(unittest.TestCase):
             "the guard counts an ordinary mention as a second home",
         )
 
+    def test_the_two_task_kind_vocabularies_are_one_vocabulary(self) -> None:
+        """Two scripts take `--task-kind`, and SKILL.md hands the same value to both.
+
+        `readiness.py` owns the list and `calibrate_evaluator.py` repeats it, so
+        a tenth kind added to the scorer turns the value the guide passes into
+        an argparse refusal - exit 2 - on a calibration stage the flow requires
+        to run. The failure would land in a customer's first run rather than
+        here, and it would read as the calibrator being broken rather than as
+        two lists having drifted.
+
+        Compared as ordered tuples, not as sets: argparse prints the choices in
+        order in its own error message, and one of the two printing them in a
+        different order is the same drift one step less visible.
+        """
+        import ast
+
+        def task_kinds(script: Path) -> tuple[str, ...]:
+            for node in ast.parse(script.read_text()).body:
+                if (
+                    isinstance(node, ast.Assign)
+                    and isinstance(node.targets[0], ast.Name)
+                    and node.targets[0].id == "TASK_KINDS"
+                ):
+                    return tuple(ast.literal_eval(node.value))
+            raise AssertionError(f"{script.name} no longer defines TASK_KINDS")
+
+        scripts = SKILL_ROOT / "scripts"
+        readiness_kinds = task_kinds(scripts / "readiness.py")
+        self.assertEqual(
+            task_kinds(scripts / "calibrate_evaluator.py"),
+            readiness_kinds,
+            "the two --task-kind vocabularies have drifted; the guide passes "
+            "one run-scoped value to both scripts, so a kind one accepts and "
+            "the other refuses stops a stage that must not fail",
+        )
+        # And the flag the guide mandates really is on both, so this compares
+        # two live vocabularies rather than one live and one dead constant.
+        for script in ("readiness.py", "calibrate_evaluator.py"):
+            with self.subTest(script=script):
+                self.assertIn("--task-kind", (scripts / script).read_text())
+
     def test_evaluator_calibration_covers_multiple_cases(self) -> None:
         text = " ".join(
             (SKILL_ROOT / "references" / "evaluation-and-dataset.md")

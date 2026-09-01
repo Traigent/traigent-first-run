@@ -189,6 +189,8 @@ TRAIGENT_FIRST_RUN_SKILL_DIR="/absolute/path/to/the-loaded-skill-directory"
 "$TRAIGENT_FIRST_RUN_PYTHON" "$TRAIGENT_FIRST_RUN_SKILL_DIR/scripts/calibrate_evaluator.py" \
   --scorer traigent-runs/evaluator.py:task_score \
   --cases @traigent-runs/calibration-cases.json \
+  --reply-transform traigent-runs/agent.py:extract_sql \
+  --task-kind code-sql \
   --allow-execution \
   --json > traigent-runs/calibration-results.json
 ```
@@ -202,6 +204,11 @@ the work will finish. Once the estimate is minutes -
 a judge, or any evaluator costing about a minute per call - use the detached form in "When
 calibration runs long" instead: this one can be killed from outside before it writes anything, and
 its warnings arrive on a stderr nobody is reading.
+
+The last two lines are the seam probes below; both examples show a code task with an extraction
+step, which is where they apply. Drop `--reply-transform` where the agent hands its reply over
+unchanged, and drop `--task-kind` on any output kind other than `code` or `code-sql` - the section
+below says why the flag is what arms them, and the script says on stderr when nothing ran.
 
 The calibration adapter must accept the keyword arguments `output`, `expected`, `input_data`, and
 `metadata`. It may translate them into an existing evaluator's unchanged local convention. The
@@ -262,27 +269,48 @@ evaluator - the agent's own extraction or clean-up. Two paid runs were lost in t
 of them the probe set already held the shape that broke it: a `NOT IN` subquery was covered on one
 side of the wiring and never on the other.
 
-So the probes that already exist are put through the step that already exists. Pass the agent's
-reply-to-answer function as `--reply-transform FILE.py:FUNCTION` - one positional argument, the
-model's reply, returning what the evaluator is handed - and omit it where the agent hands its reply
-over unchanged. Pass the run-scoped `--task-kind` as well; on `code` and `code-sql` it adds one more
-probe carrying the case's own good answer inside a markdown code fence. Neither flag buys a provider
-call, and the fenced probe is not an invented fixture: its content is the author's own good answer,
-so the only thing that changed is the wrapper.
+So the answers that already exist are put through the step that already exists, in the one shape
+there is evidence a model sends. Pass the agent's reply-to-answer function as
+`--reply-transform FILE.py:FUNCTION` - one positional argument, the model's reply, returning what
+the evaluator is handed - and omit it where the agent hands its reply over unchanged. Pass the
+run-scoped `--task-kind`; on `code` and `code-sql` it sends the case's own `good` and
+`equivalent_good` answers wrapped in a markdown code fence, which is how a chat model returns code
+unless told otherwise and sometimes when it is. Neither flag buys a provider call, and neither probe
+is an invented fixture: the content is the author's own answer, already scored, so the only thing
+that changed is the wrapper.
 
-At most two probes per case, and one property between them: an answer the authored probes scored
-as right must not arrive as one this evaluator scores as wrong. `damaged` names a probe that did,
-`refused` one the transform or the evaluator raised on, `preserved` the rest. A transform that merely
-changes the string is not damage - trimming, unquoting and case folding all change it and none of
-them changes the verdict, so a check on the string would fire on every well-behaved agent there is.
+**Send only the shape the run has evidence for.** A bare answer is not that shape. A fence-bound
+agent - one whose prompt tells the model to answer inside a ```sql block - correctly returns nothing
+for a reply carrying no fence, and handing it one would report a working agent as a broken one on
+the strength of an assumption nobody stated. That is why no other task kind runs a seam probe at
+all: where this guide has no evidenced reply shape, it has nothing honest to send. Where the agent's
+contract is a shape this check cannot build - a structured-output agent whose model returns JSON -
+omit `--task-kind`, and record that reason where the calibration artifacts are recorded.
 
-`seam_probe_advisory` never changes the authored PASS, for the reason the other generated probes do
-not. It is not a verdict on any model either: the content is an answer this evaluator has already
-accepted, so what failed is the delivery. Read `sent` and `delivered` beside each other - both are
-printed on stderr, so a redirected payload cannot hide them - and settle it before the paid run.
-Every trial is delivered through this same step, and configurations that all score a damaged form
-cannot be told apart. Where the damaged step is code this run wrote, the repair is free and SKILL
-stage 7 owns what may be offered around it.
+Two probes per case, and one property between them: an answer the authored probes scored as right
+must not arrive as one this evaluator scores as wrong. `damaged` names a probe that did, `refused`
+one the step or the evaluator raised on, `preserved` the rest. A step that merely changes the string
+is not damage - trimming, unquoting and case folding all change it and none of them changes the
+verdict, so a check on the string would fire on every well-behaved agent there is. Both answers are
+sent rather than one, because surface variance is what a text-processing step is sensitive to: an
+extractor keyed on an upper-case keyword is right on one authored answer and destructive on the
+lower-case variant the same model emits.
+
+Four things this reports, and each says only what it can. `seam_probe_advisory` is the finding, and
+it never changes the authored PASS. Where a reply step ran, it names what was sent and what was
+delivered. Where none ran, it says so: the fenced string is one this check built, nothing has been
+observed sending one, and the claim is only that this pair could not read a fence if the model sent
+it - so put both strings on the approval and let the customer, who knows their agent, say which it
+returns. `seam_probe_off_domain` replaces the finding when every probe was refused, because a
+refusal cannot separate a broken step from one whose contract excludes this shape, and reporting one
+reading as fact is the mistake this section already refuses once. `seam_probe_skipped` says no probe
+ran and why, so a check that declines itself cannot pass for a check that passed. Unavailable probes
+reach the same `supplemental_probe_advisory` as every other generated probe.
+
+Read what was sent beside what came back - both are printed on stderr, so a redirected payload
+cannot hide them - and settle it before the paid run. Every trial passes through this same step, and
+configurations that all score a damaged form cannot be told apart. Where the damaged step is code
+this run wrote, the repair is free and SKILL stage 7 owns what may be offered around it.
 
 For LLM judges:
 
@@ -637,6 +665,8 @@ nohup "$TRAIGENT_FIRST_RUN_PYTHON" \
   "$TRAIGENT_FIRST_RUN_SKILL_DIR/scripts/calibrate_evaluator.py" \
   --scorer traigent-runs/evaluator.py:task_score \
   --cases @traigent-runs/calibration-cases.json \
+  --reply-transform traigent-runs/agent.py:extract_sql \
+  --task-kind code-sql \
   --allow-execution \
   --json > traigent-runs/calibration-results.json 2> traigent-runs/calibration.log &
 ```

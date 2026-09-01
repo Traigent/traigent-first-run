@@ -421,15 +421,30 @@ def permuted_answer(expected: Any) -> str | None:
 # and the property is the one thing both failures broke: an answer this
 # evaluator calls right must not arrive as one it calls wrong. No new fixture,
 # no shape table, no provider call.
-SEAM_TRANSFORMED_SOURCES = ("good",)
-SEAM_PROBES_PER_CASE = len(SEAM_TRANSFORMED_SOURCES) + 1
-# One transformed source, not four, and the ceiling is what decides it: at the
-# 75-second deterministic allowance, twelve possible calls per case is the most
-# a single case can reserve and still fit the fifteen-minute cap, so a third
-# seam probe would buy coverage by making the budget's own derivation
-# unreachable. `good` is the one to spend it on - it is the case's canonical
-# correct answer, so it is where the structurally awkward shape lives, and
-# `equivalent_good` is by construction a surface variant of it.
+# Both authored answers this evaluator already accepted, and both are sent in
+# the fenced shape rather than as written.
+#
+# Sending a bare answer was the defect in the first version of this check. A
+# reply-transform's documented domain is "the model's reply", and for a
+# fence-bound agent - one whose prompt says to answer with a ```sql block, a
+# common and correct design - a bare answer is a shape it never receives. Such
+# a step legitimately returns "" or raises on one, and this check reported that
+# as the agent damaging a right answer. It was asserting an assumption it had
+# never stated and could not support: that every reply-transform is total on
+# bare text.
+#
+# The fence is the one shape there IS evidence for on a code task, which is the
+# whole reason this finding exists. So it is the only shape sent, and no other
+# task kind runs a seam probe at all: where the guide has no evidenced reply
+# shape, it has nothing honest to hand a reply step.
+#
+# `equivalent_good` takes the second slot rather than a bare `good` taking it.
+# Surface variance is exactly what a text-processing step is sensitive to - an
+# extractor keyed on an upper-case keyword is correct on one authored answer and
+# destructive on the lower-case variant the same model emits, and only the pair
+# can see that.
+SEAM_TRANSFORMED_SOURCES = ("good", "equivalent_good")
+SEAM_PROBES_PER_CASE = len(SEAM_TRANSFORMED_SOURCES)
 # The one shape that is not a guess, and the two kinds where it is not one.
 # Armed by the run-scoped task kind readiness.py already takes, never by
 # inspecting the expected answer: "this looks like SQL" is the sort of
@@ -450,6 +465,25 @@ TASK_KINDS = (
     "structured",
 )
 SEAM_OUTCOMES = ("preserved", "damaged", "refused", "unavailable")
+
+
+def seam_probes_are_off_domain(probes: list[dict[str, Any]]) -> bool:
+    """True when every probe that ran was refused, which establishes nothing.
+
+    A refusal cannot tell "this agent's code is broken" from "this check handed
+    it a shape its own contract excludes", and reporting N refusals as N
+    findings picks the first reading with no evidence for it. A structured-
+    output step - `json.loads(reply)["sql"]` - raises on every fenced string
+    there is, correctly, because its model returns JSON; the customer would
+    have met that on the pre-spend approval as a defect to settle before
+    paying.
+
+    So all-refused is reported as this check being outside its domain rather
+    than as a fault. A refusal sitting among preserved probes stays a finding:
+    there the step demonstrably handles this shape and failed on this content.
+    """
+    ran = [probe for probe in probes if probe["outcome"] != "unavailable"]
+    return bool(ran) and all(probe["outcome"] == "refused" for probe in ran)
 
 
 def fenced_probe_output(good: Any, task_kind: str | None) -> str | None:
@@ -1454,16 +1488,13 @@ def run() -> int:
                     environment=worker_environment,
                     cwd=worker_cwd,
                 )
-            seam_inputs = []
-            if args.reply_transform is not None:
-                seam_inputs.extend(
-                    (source, case["probes"][source])
-                    for source in SEAM_TRANSFORMED_SOURCES
-                )
-            fenced = fenced_probe_output(case["probes"]["good"], args.task_kind)
-            if fenced is not None:
-                seam_inputs.append(("fenced-good", fenced))
-            for source, sent in seam_inputs:
+            seam_inputs = [
+                (source, fenced_probe_output(case["probes"][source], args.task_kind))
+                for source in SEAM_TRANSFORMED_SOURCES
+            ]
+            for source, sent in [
+                (name, value) for name, value in seam_inputs if value is not None
+            ]:
                 attempt = run_supplemental_attempt(
                     {
                         **request_base,
@@ -1556,23 +1587,17 @@ def run() -> int:
                 {
                     "source": probe["source"],
                     "sent": probe["sent"],
+                    "as_written": configured_case["probes"][probe["source"]],
                     "delivered": probe.get("delivered"),
                     "score": probe["score"],
                     "error": probe["error"],
-                    # The authored score this is measured against. For the
-                    # fenced probe that is the good probe's own score: same
-                    # content, one wrapper, so a difference is the wrapper.
-                    "reference_score": case["scores"][
-                        "good" if probe["source"] == "fenced-good" else probe["source"]
-                    ],
+                    # The authored score for this same content. One wrapper is
+                    # the only difference, so a gap between the two is the
+                    # wrapper, or what the reply step did to it - never the
+                    # answer, which this evaluator has already accepted.
+                    "reference_score": case["scores"][probe["source"]],
                     "outcome": seam_probe_outcome(
-                        reference_score=case["scores"][
-                            (
-                                "good"
-                                if probe["source"] == "fenced-good"
-                                else probe["source"]
-                            )
-                        ],
+                        reference_score=case["scores"][probe["source"]],
                         score=probe["score"],
                         error=probe["error"],
                         unavailable=probe["unavailable"],
@@ -1651,35 +1676,106 @@ def run() -> int:
             "label/value binding is a wrong answer that scores full marks. "
             "Confirm which this task is before optimizing against it."
         )
+    all_seam_probes = [
+        probe for case in case_results for probe in case.get("seam_probes", [])
+    ]
+    delivered = args.reply_transform is not None
+    if (
+        args.kind == "deterministic"
+        and not all_seam_probes
+        # Only where a probe was EXPECTED. A calibration that named no reply
+        # step and no code task kind did not ask for this check, and announcing
+        # its absence on every closed-label run would be a line nobody can act
+        # on printed beside the ones they can. What must never be silent is the
+        # other case: flags that read as arming it while nothing runs.
+        and (
+            args.reply_transform is not None
+            or args.task_kind in FENCED_PROBE_TASK_KINDS
+        )
+    ):
+        # A check that quietly declines to run is the failure mode this whole
+        # change exists to remove, so it says so rather than leaving an absent
+        # key to be noticed. --task-kind is what arms it: without an evidenced
+        # reply shape there is nothing honest to hand a reply step.
+        result["seam_probe_skipped"] = (
+            "No seam probe ran"
+            + (
+                ", because --task-kind was not one this check has an evidenced "
+                "reply shape for (code, code-sql)"
+                if args.task_kind not in FENCED_PROBE_TASK_KINDS
+                else ", because no case had a good and equivalent-good probe "
+                "this check could put a fence around"
+            )
+            + ". Nothing was established about how an answer reaches this "
+            "evaluator; do not record this as a pass."
+        )
+        print(f"NOT RUN: {result['seam_probe_skipped']}", file=sys.stderr)
+    if seam_probes_are_off_domain(all_seam_probes):
+        # Not a finding, and deliberately not the advisory: nothing here
+        # separates a broken step from one whose contract excludes this shape.
+        result["seam_probe_off_domain"] = (
+            "Every seam probe was refused by this run's reply step, so this "
+            "check established nothing. A step that rejects every fenced string "
+            "is what a structured-output agent looks like - one whose model "
+            "returns JSON rather than a code block - and it is also what a "
+            "broken step looks like; this cannot tell them apart and does not "
+            "guess. Read it as a check that did not apply, not as a fault, and "
+            "do not carry it to the approval as one. Where the agent's contract "
+            "is not a code fence, omit --task-kind and record why."
+        )
+        print(f"OFF DOMAIN: {result['seam_probe_off_domain']}", file=sys.stderr)
     damaged_seams = [
         (case["name"], probe)
         for case in case_results
         for probe in case.get("seam_probes", [])
         if probe["outcome"] in ("damaged", "refused")
     ]
-    if damaged_seams:
-        result["seam_probe_advisory"] = (
-            "The answer this evaluator is actually handed is not the answer it "
-            "was calibrated on. In: "
-            + "; ".join(
-                f"{name} ({probe['source']}: "
-                + (
-                    f"raised {probe['error']}"
-                    if probe["outcome"] == "refused"
-                    else f"{probe['reference_score']:.4f} as written, "
-                    f"{probe['score']:.4f} as delivered"
-                )
-                + ")"
-                for name, probe in damaged_seams
+    if damaged_seams and "seam_probe_off_domain" not in result:
+        listing = "; ".join(
+            f"{name} ({probe['source']}: "
+            + (
+                f"raised {probe['error']} and returned nothing"
+                if probe["outcome"] == "refused"
+                else f"{probe['reference_score']:.4f} as written, "
+                f"{probe['score']:.4f} " + ("as delivered" if delivered else "fenced")
             )
-            + ". Each of these is an answer the authored probes already scored "
-            "as right, arriving as one this evaluator scores as wrong - so it "
-            "is a fact about the two strings recorded beside it and not a "
-            "verdict on any model. It does not change calibration PASS. Show "
-            "both strings and settle it before the paid run: every trial is "
-            "delivered through this same step, and configurations that all "
-            "score the damaged form cannot be told apart."
+            + ")"
+            for name, probe in damaged_seams
         )
+        if delivered:
+            result["seam_probe_advisory"] = (
+                "The answer this evaluator is handed is not the answer it was "
+                "calibrated on. In: "
+                + listing
+                + ". Each is an answer the authored probes already scored as "
+                "right, put through this run's own reply step in the shape a "
+                "chat model returns code - and coming out as one this evaluator "
+                "scores as wrong, or not coming out at all. That is a fact "
+                "about the two strings recorded beside it, not a verdict on any "
+                "model. It does not change calibration PASS. Show both strings "
+                "and settle it before the paid run: every trial passes through "
+                "this same step, and configurations that all score the damaged "
+                "form cannot be told apart."
+            )
+        else:
+            # No reply step exists in this run, so nothing was "delivered" and
+            # nothing "arrived". The fenced string is one this check BUILT, and
+            # saying otherwise would put two identical strings in front of a
+            # customer under a sentence claiming they differ.
+            result["seam_probe_advisory"] = (
+                "This evaluator scores an answer it has already accepted as "
+                "wrong when that answer carries a markdown code fence. In: "
+                + listing
+                + ". This run has no reply step between the model and the "
+                "evaluator, so the fenced string recorded beside each is one "
+                "this check constructed and not one anything produced: nothing "
+                "here establishes that the model sends a fence, only that this "
+                "pair could not read it if it did. A chat model usually does "
+                "fence code, and has been observed doing so against a prompt "
+                "forbidding it, which is why this is worth showing. It does not "
+                "change calibration PASS. Put both strings on the approval and "
+                "let the customer say which their agent returns."
+            )
     zero_exception_probes = [
         (
             case["name"],
@@ -1729,6 +1825,19 @@ def run() -> int:
             for probe in case.get("exception_probes", [])
             if probe["unavailable"] is not None
         )
+        # The family this list was extended for. It collected from two of three
+        # probe families, and a seam probe lost to the budget went unmentioned
+        # in the very payload whose purpose is that a finding reaches a person -
+        # which is the defect the comment below already records, one family on.
+        unavailable_supplemental_probes.extend(
+            {
+                "case": case["name"],
+                "probe": f"seam:{probe['source']}",
+                **probe["unavailable"],
+            }
+            for probe in case.get("seam_probes", [])
+            if probe["unavailable"] is not None
+        )
     if unavailable_supplemental_probes:
         result["supplemental_probe_unavailable"] = unavailable_supplemental_probes
         result["supplemental_probe_advisory"] = (
@@ -1746,8 +1855,35 @@ def run() -> int:
         print(f"ADVISORY: {result['seam_probe_advisory']}", file=sys.stderr)
         for name, probe in damaged_seams:
             print(f"[{name}] {probe['source']}", file=sys.stderr)
-            print(f"  SENT     : {probe['sent']!r}", file=sys.stderr)
-            print(f"  DELIVERED: {probe['delivered']!r}", file=sys.stderr)
+            if delivered:
+                print(f"  SENT     : {probe['sent']!r}", file=sys.stderr)
+                print(
+                    "  DELIVERED: "
+                    + (
+                        f"nothing - raised {probe['error']}"
+                        if probe["outcome"] == "refused"
+                        else repr(probe["delivered"])
+                    ),
+                    file=sys.stderr,
+                )
+            else:
+                # One string, because there is only one. The bare form is the
+                # authored probe, already listed by the authored phase.
+                print(
+                    f"  AS WRITTEN : {probe['as_written']!r}  "
+                    f"{probe['reference_score']:.4f}",
+                    file=sys.stderr,
+                )
+                print(
+                    f"  CONSTRUCTED: {probe['sent']!r}  "
+                    + (
+                        f"raised {probe['error']}"
+                        if probe["outcome"] == "refused"
+                        else f"{probe['score']:.4f}"
+                    )
+                    + "  (built by this check - not observed)",
+                    file=sys.stderr,
+                )
     if "supplemental_probe_advisory" in result:
         # The summary line goes to stderr in every mode, including --json. The
         # documented invocation redirects stdout into a results file, so an

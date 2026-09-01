@@ -561,10 +561,14 @@ Follow this order:
    Otherwise, run deterministic calibration only after a `sufficient`
    semantic-coverage verdict. Its path must be fully inspected, must not execute
    candidate-generated code or SQL, and must be local-only and
-   side-effect-free, and runs in the credential-stripped calibration subprocess. Pass the agent's own
-   reply-to-answer step as `--reply-transform`, and the run-scoped kind as `--task-kind`, so the
-   probes are scored as an answer arrives rather than as it was typed;
-   `references/evaluation-and-dataset.md` owns the seam probes they add and what those may claim. When the opening
+   side-effect-free, and runs in the credential-stripped calibration subprocess. Where the agent has a
+   reply-to-answer step, pass it as `--reply-transform`, so the probes are scored as an answer
+   arrives rather than as it was typed. Pass `--task-kind` under the same rule that governs it
+   everywhere else - only where project evidence grounds a recognized kind - and omit it where the
+   agent's contract makes the model's reply something this check cannot build, such as a
+   structured-output agent parsing JSON; record that reason with the calibration artifacts.
+   `references/evaluation-and-dataset.md` owns the seam probes those flags add, the one shape they
+   send, and what each may claim. When the opening
    gate already produced that fresh result, reuse it here unless the evaluator, cases, semantic
    evidence, or execution path changed; do not execute the same calibration twice merely because
    the flow reached this step. Run here anything the opening gate truthfully deferred and can now
@@ -873,9 +877,12 @@ mended in a working copy that leaves their files untouched - the routes offered 
 measurement, and `references/component-creation.md` picks which of them carries the mark. This
 narrows that rule at one point and replaces none of it: a route whose own description carries the
 diagnosed fault into a later paid stage is not offered at all, marked or unmarked, because lettering
-it makes a known-bad outcome look considered. Nor is stopping a lettered co-equal of a free repair:
-the customer paid for a measurement this run has just shown measured nothing, so no money is
-protected by taking it. Declining stays plainly answerable and is answered
+it makes a known-bad outcome look considered. On this menu, and on no other, abandoning the run is
+not a co-equal letter beside the free repair: the customer paid for a measurement this run has just
+shown measured nothing, so keeping it is not keeping a result. That is a rule about the routes
+offered for this fault, in this moment. A later stage that letters and prices a stop of its own -
+the connected preview, where stopping keeps a baseline the run still stands behind - is untouched
+by it and keeps its own lettered route. Declining stays plainly answerable and is answered
 without reproach: preserve what was measured, report the run as baseline-only, and never suggest
 they were wrong to stop.
 

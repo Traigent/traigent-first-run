@@ -3,10 +3,10 @@
 follows: 0074
 follows-resident-measured: 92_003
 follows-total-measured: 441_185
-resident-ceiling: 93_600
-resident-measured: 93_402
-total-ceiling: 445_700
-total-measured: 445_270
+resident-ceiling: 94_300
+resident-measured: 94_053
+total-ceiling: 449_100
+total-measured: 448_667
 
 Two paid walkthroughs bought nothing, and one blind spot paid for both. Every
 probe this package mandates is a string somebody typed. The four authored ones
@@ -27,30 +27,32 @@ sitting in the case matrix. A subquery had been written into the probes and was
 scored correctly there; the agent's own unit tests exercised flat queries only;
 the offline plumbing run fed canned text through, so extraction never met a
 realistic reply. Each side was covered on its own. Nobody had a check that put
-one side through the other, and that is what these bytes buy: the probes that
+one side through the other, and that is what these bytes buy: the answers that
 exist are run through the step that exists, and the property asked of the pair
 is the one both failures broke - an answer the scorer already accepted must not
 arrive as one it rejects.
 
-Length here is spent refusing two easier checks. Comparing the reply before and
-after would fire on every well-behaved agent alive, since trimming, unquoting
-and folding case all rewrite text without touching a verdict, so the comparison
-is between scores and it runs one way only: a probe the matrix already marked
-wrong cannot be spoiled by delivery, and reporting it would blame the agent for
-the author's own probe. The finding then stays advisory. A grader unable to read
-a fenced reply is a risk and not a fault where the model never sends one, and
-refusing the run there would turn away customers whose delivery is sound - so it
-reports, shows what was sent beside what was received, and rides the approval
-that already halts before money. Two sentences in the method table pay for the
-prevention half, naming the fence among the surface the recommended comparison
-resolves, so an author writing that scorer is told before the probe tells them.
+Most of the length is spent on what NOT to send, because the first draft of this
+got it wrong and a review caught it. Handing a reply step a bare answer quietly
+asserts that every such step is total on bare text. It is not: an agent whose
+prompt tells the model to answer inside a fenced block correctly returns nothing
+when it meets a reply carrying no fence, and three working agents were reported
+as damaging a right answer on the strength of that unstated premise. So the
+words name the one shape a code task has evidence for, say that no other output
+kind gets a probe at all, and tell an assistant to omit the flag where the
+agent's contract is a shape this cannot build - a model replying in JSON.
+Sentences in the method table pay for the prevention half, naming the fence
+among the surface a recommended comparison resolves, so an author writing that
+scorer is told before any probe tells them.
 
-Three edits sit in the resident document and the rest in the stage reference.
-Two are the flags calibration now receives, which belong where that step is
-ordered rather than where it is explained. The third narrows what may be offered
-once a fault turns out to have a repair costing nothing: a route whose own
-sentence carries the diagnosed fault forward into a later paid stage is not put
-on the menu at all, and abandoning is not a co-equal letter beside a free mend
-when the money has already gone. Declining survives untouched and is answered
-without reproach, because a phase nobody may refuse would be a worse defect than
-a menu nobody should have been shown.
+The rest sits where a rule has to be read, not where it is explained. Two of the
+resident edits are the flags the calibration step now receives, which belong
+beside the ordering of that step. The third narrows what may be offered once a
+fault turns out to have a repair costing nothing: a route whose own sentence
+carries the diagnosed fault forward into a later paid stage is not put on the
+menu, and abandoning is not a co-equal letter beside a free mend when the money
+has already gone. That narrowing is bounded to its own menu in the text and
+pointed at from the document holding the general rule, so neither can be read as
+overruling the other. Declining survives untouched and is answered without
+reproach, because a phase nobody may refuse would be a worse defect than a menu
+nobody should have been shown.
