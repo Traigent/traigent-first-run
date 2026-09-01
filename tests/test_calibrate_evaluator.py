@@ -2359,6 +2359,114 @@ def _load_constants() -> dict:
     )
 
 
+class TheCalibrationQuestionFollowsItsVerdictTests(unittest.TestCase):
+    """The one ask this package actually prints, and where it prints it.
+
+    The ordering rule in SKILL.md - an ask that follows a result sits below it -
+    is guidance a model is asked to follow, and no test can watch a model. This
+    script is the exception: it is the only place in this package where code
+    puts a question to the customer, and it is a question that only makes sense
+    after the verdict it arises from. So this is the one place the rule can be
+    checked by looking at output rather than at a sentence about output.
+
+    What that does and does not establish is worth being exact about. It
+    establishes that the ask this repo RENDERS comes after the material it
+    rests on. It establishes nothing about the asks the guided flow's stages
+    make, which the model writes; those remain enforced by the document rules
+    in `tests/test_skill_package.py` and by nothing stronger.
+
+    The question was also the last customer-visible line in this package still
+    calling an evaluator a ruler, which is the word the card was cleaned of two
+    commits ago - and the `--json` path is the only path any test read, so the
+    printed copy went unchecked.
+    """
+
+    def calibrate(self, directory: str, source: str, *extra: str):
+        """The human path - no `--json`, which is the copy a customer reads."""
+        scorer = Path(directory) / "scorer.py"
+        scorer.write_text(source, encoding="utf-8")
+        case_file = Path(directory) / "cases.json"
+        case_file.write_text(json.dumps(PermutationProbeTests.CASES), encoding="utf-8")
+        return subprocess.run(
+            [
+                sys.executable,
+                str(SCRIPT),
+                "--scorer",
+                f"{scorer}:score",
+                "--cases",
+                f"@{case_file}",
+                "--allow-execution",
+                *extra,
+            ],
+            capture_output=True,
+            text=True,
+        )
+
+    def printed_question(self) -> tuple[str, str]:
+        with tempfile.TemporaryDirectory() as directory:
+            process = self.calibrate(directory, PermutationProbeTests.TOKEN_BAG)
+        self.assertEqual(process.returncode, 0, process.stderr)
+        self.assertIn(
+            "QUESTION:",
+            process.stdout,
+            "the evaluator cannot tell a rearrangement from the answer, so the "
+            "run has a question for the customer and did not print it",
+        )
+        return process.stdout, process.stderr
+
+    def test_the_question_is_printed_below_the_result_it_arises_from(self) -> None:
+        """Position in the artifact, not a sentence claiming a position.
+
+        The customer reads the scores and the verdict, then the question about
+        what the verdict cannot settle. Printed the other way round it is a
+        question about numbers that are not on screen yet, which is the shape
+        the ordering rule exists to refuse.
+        """
+        stdout, _ = self.printed_question()
+        question_at = stdout.index("QUESTION:")
+        # `rindex`, not `index`: the rule is that the ask follows the LAST line
+        # of the output it rests on, so the last per-case verdict has to be
+        # above it too - not merely the first one.
+        for earlier in ("mode=graded", "equivalent_good", "PASS", "OVERALL PASS"):
+            with self.subTest(above=earlier):
+                self.assertIn(earlier, stdout)
+                self.assertLess(
+                    stdout.rindex(earlier),
+                    question_at,
+                    "the question is about what these lines could not settle, "
+                    "so all of them are on screen before it is asked",
+                )
+        # And nothing of the result is left below it.
+        self.assertNotIn("PASS", stdout[question_at:])
+
+    def test_the_check_notices_a_question_hoisted_above_its_result(self) -> None:
+        """The check, run against the ordering it exists to refuse.
+
+        A position assertion that never fails pins nothing, and this file's
+        subject is a script whose output order is one `print` away from
+        changing.
+        """
+        stdout, _ = self.printed_question()
+        question = stdout[stdout.index("QUESTION:") :]
+        hoisted = question + stdout[: stdout.index("QUESTION:")]
+        self.assertLess(hoisted.index("QUESTION:"), hoisted.index("PASS"))
+
+    def test_the_printed_question_speaks_the_customers_language(self) -> None:
+        """The same rule the card is held to, on the other rendered ask.
+
+        `tests/test_readiness_scoring.py` scans what `readiness.py` renders.
+        This is the other script that renders to a customer, and its question
+        is the line that carried the word after the card had lost it.
+        """
+        stdout, _ = self.printed_question()
+        question = stdout[stdout.index("QUESTION:") :].split("\n\n", 1)[0]
+        self.assertNotRegex(question, r"\bruler\b")
+        self.assertNotIn("known-good", question)
+        self.assertNotIn("known-bad", question)
+        # And it still says the thing it is for.
+        self.assertIn("rearrangement", question)
+
+
 class PermutationProbeTests(unittest.TestCase):
     """traigent-first-run#99 - the six checks pass on a binding-blind ruler.
 
