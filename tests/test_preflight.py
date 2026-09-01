@@ -372,6 +372,70 @@ class StaticPreflightTests(unittest.TestCase):
         with mock.patch.object(MODULE, "files", return_value=[package_init]):
             self.assertFalse(MODULE.installed_sdk_is_the_optimizer())
 
+    def test_an_editable_install_of_the_real_sdk_is_not_read_as_absent(
+        self,
+    ) -> None:
+        """PEP 660 records a redirect, not the package tree.
+
+        `pip install -e` writes a `.pth` and a finder module into the record;
+        the modules themselves stay in the checkout and never appear in it.
+        Reading that absence as "not the SDK" refuses a correct install, and
+        refuses it on the machine most likely to have one - a developer's, or
+        the already-has-Traigent customer the existing-use check exists for.
+        The narrower question metadata can answer is whether a recorded
+        package exists that does not carry the optimizer; anything else is
+        unrecognised, and unrecognised may not become a finding.
+        """
+        editable = [
+            f"__editable__.{MODULE.SDK_DISTRIBUTION}-0.26.0.pth",
+            f"__editable___{MODULE.SDK_DISTRIBUTION}_0_26_0_finder.py",
+            f"{MODULE.SDK_DISTRIBUTION}-0.26.0.dist-info/RECORD",
+        ]
+        with mock.patch.object(MODULE, "files", return_value=editable):
+            self.assertIsNone(MODULE.installed_sdk_is_the_optimizer())
+
+    def test_a_gate_that_refused_every_real_release_would_be_caught(self) -> None:
+        """The false-red probe the module-list assertion cannot be.
+
+        That test builds its own fixture from `REQUIRED_SDK_MODULES`, so it
+        asserts `all(x in {x})` and stays green for any list at all, including
+        one naming a module that ships in no release. This pins the record of
+        a real install instead - written out here rather than derived - so a
+        requirement the SDK does not satisfy turns it red.
+        """
+        real_install = [
+            MODULE.sdk_module_path(["__init__.py"]),
+            MODULE.sdk_module_path(["api", "decorators.py"]),
+            MODULE.sdk_module_path(["core", "objectives.py"]),
+            MODULE.sdk_module_path(["api", "__init__.py"]),
+            MODULE.sdk_module_path(["core", "__init__.py"]),
+        ]
+        with mock.patch.object(MODULE, "files", return_value=real_install):
+            self.assertTrue(
+                MODULE.installed_sdk_is_the_optimizer(),
+                "the required-module list no longer matches a real install",
+            )
+
+    def test_a_recorded_package_without_the_optimizer_is_still_refused(
+        self,
+    ) -> None:
+        """The placeholder release keeps failing, which is the point of the gate.
+
+        `0.0.1` on the index is a placeholder that records a package and no
+        optimizer. Widening for editable installs must not widen for this.
+        """
+        placeholder = [
+            MODULE.sdk_module_path(["__init__.py"]),
+            f"{MODULE.SDK_DISTRIBUTION}-0.0.1.dist-info/RECORD",
+        ]
+        with mock.patch.object(MODULE, "files", return_value=placeholder):
+            # `assertIs(..., False)`, never `assertFalse`: `None` is falsy, and
+            # `None` is this function's "cannot tell", which the caller passes.
+            # A mutation that widened the placeholder into "cannot tell" went
+            # green under `assertFalse` - the probe found it, so the assertion
+            # names the value rather than its truthiness.
+            self.assertIs(MODULE.installed_sdk_is_the_optimizer(), False)
+
     def test_an_existing_traigent_dependency_is_reported_with_its_cost(self) -> None:
         """Say what was found, what it probably means, and what continuing costs.
 
