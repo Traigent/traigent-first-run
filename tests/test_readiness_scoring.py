@@ -1443,6 +1443,13 @@ class EvaluationScoringTests(unittest.TestCase):
         -- checks reported, verdict absent -- and it landed on the sentence
         saying the payload reported no checks, over a payload that reported
         three. The comment above this branch is an essay on exactly that.
+
+        Every one of the three now ends on what the deferral COSTS, which is
+        the second half of the same honesty: this check keeps its weight and
+        earns nothing, so a customer reading the `?` beside it is looking at a
+        deduction. The clause is asserted on all three rather than once,
+        because a state that loses it is a state that goes back to being
+        silent about the charge.
         """
         passing = {"good_passes": True, "bad_fails": True, "non_constant": True}
         for label, payload, expected in (
@@ -1470,7 +1477,11 @@ class EvaluationScoringTests(unittest.TestCase):
                 calibration = next(
                     sub for sub in pillar.subscores if sub.name == "calibration"
                 )
-                self.assertEqual(calibration.evidence, expected)
+                self.assertEqual(
+                    calibration.evidence,
+                    f"{expected}; it costs points until a complete "
+                    "calibration is measured",
+                )
 
     def test_unverified_task_fit_names_the_input_that_is_missing(self) -> None:
         """Fit is a property of the pair, so the card must say which half.
@@ -2070,6 +2081,136 @@ class EvaluationScoringTests(unittest.TestCase):
         self.assertEqual(len(matrix.checks), 1)
         self.assertEqual(len(single.checks), 1)
         self.assertEqual(matrix.probe_scores, single.probe_scores)
+
+    def test_an_unmeasured_evaluation_check_says_whether_it_costs_points(
+        self,
+    ) -> None:
+        """A `?` marker says a check did not run and nothing says what it cost.
+
+        The two of them sit next to each other in this pillar and are charged
+        differently: the calibration check is `withheld`, so it keeps its full
+        weight and earns nothing, while the spread check at the opening score is
+        renormalized out of the pillar and deducts nothing at all. Printing the
+        same marker beside both, with neither line saying which, left the
+        customer to guess - and the guess that gets made is that every blank
+        line is a deduction, which reads the card as charging for a measurement
+        the run has not reached yet.
+
+        Keyed off `withheld` rather than off the state that produced it, so the
+        sentence and the arithmetic cannot drift apart: a line that starts
+        costing points has to start saying so, and one that stops has to stop.
+        """
+        opening = MODULE.EvaluationFacts(
+            present=True, method="set-f1", task_kind="code-sql"
+        )
+        passing = {"good_passes": True, "bad_fails": True, "non_constant": True}
+        calibrated_without_scores = MODULE.EvaluationFacts(
+            present=True,
+            method="set-f1",
+            task_kind="extraction",
+            calibration_present=True,
+            calibration_complete=True,
+            calibration_passed=True,
+            checks=(passing,),
+        )
+        for label, facts in (
+            ("nothing calibrated yet", opening),
+            ("calibrated, no probe scores", calibrated_without_scores),
+        ):
+            pillar, _caps = MODULE.score_evaluation(facts)
+            for sub in pillar.subscores:
+                if sub.measured:
+                    continue
+                with self.subTest(label, check=sub.name):
+                    if sub.withheld:
+                        self.assertIn(
+                            "costs points",
+                            sub.evidence,
+                            "an unmeasured check that keeps its weight does "
+                            "not say that it does",
+                        )
+                    else:
+                        self.assertIn(
+                            "no points are deducted",
+                            sub.evidence,
+                            "an unmeasured check that is renormalized away "
+                            "does not say that it costs nothing",
+                        )
+
+    def test_the_opening_spread_line_deducts_nothing_and_says_so(self) -> None:
+        """The exact line the owner objected to, and the arithmetic under it.
+
+        The pillar is scored over the measured weight plus the withheld weight,
+        so a check that is neither is simply not in the denominator. Asserting
+        the number as well as the sentence is what stops the sentence becoming
+        a comfortable falsehood the day somebody sets `withheld=True` here.
+        """
+        pillar, _caps = MODULE.score_evaluation(
+            MODULE.EvaluationFacts(
+                present=True, method="set-f1", task_kind="extraction"
+            )
+        )
+        spread = next(sub for sub in pillar.subscores if sub.name == "probe-spread")
+        self.assertFalse(spread.measured)
+        self.assertFalse(spread.withheld)
+        self.assertIn("measured at calibration", spread.evidence)
+        self.assertIn("no points are deducted for it here", spread.evidence)
+        # Reproducibility (20 of 20) and task fit (25 of 25) are measured; the
+        # calibration check is withheld and keeps its 40. The spread check's 15
+        # is absent from both halves, which is what "deducts nothing" means.
+        self.assertEqual(pillar.score, round(100 * 45 / 85))
+
+    def test_a_poor_fit_says_which_method_which_output_and_why(self) -> None:
+        """"set-f1 is a poor ruler for code-sql output" asserted and stopped.
+
+        A customer cannot check that, cannot usefully disagree with it, and
+        cannot tell a real mismatch from an opinion about their evaluator. The
+        line now names what the method compares, what that gets wrong on this
+        output, and what the method is actually for - three claims they can
+        test on two of their own rows.
+        """
+        pillar, _caps = MODULE.score_evaluation(
+            MODULE.EvaluationFacts(
+                present=True, method="set-f1", task_kind="code-sql"
+            )
+        )
+        fit = next(sub for sub in pillar.subscores if sub.name == "task-fit")
+        self.assertEqual(
+            fit.evidence,
+            "set-f1 is the wrong kind of check for code-sql output: it scores "
+            "by how many words two answers share, so a wrong code-sql answer "
+            "differing by a single name or value still shares nearly every "
+            "word with the right one and scores close to it; set-f1 fits "
+            "extraction or structured output",
+        )
+        # The verdict is unchanged: this is how the finding reads, not what it
+        # is worth.
+        self.assertEqual(fit.value, 8.0)
+
+    def test_every_method_can_say_why_it_does_not_fit(self) -> None:
+        """A method with no reason falls back to the bare verdict.
+
+        Which is the assertion that was the whole defect, so the table is held
+        complete over `METHOD_PROFILES` rather than over the pairs anyone
+        happened to write a test for. Each reason names the output kind it was
+        asked about, so the sentence describes the customer's output and not a
+        category.
+        """
+        self.assertEqual(
+            sorted(MODULE.METHOD_MISMATCH_REASONS), sorted(MODULE.METHOD_PROFILES)
+        )
+        for method, profile in sorted(MODULE.METHOD_PROFILES.items()):
+            unfitting = [
+                kind for kind in MODULE.TASK_KINDS if kind not in profile["fits"]
+            ]
+            self.assertTrue(unfitting, f"{method} fits every task kind")
+            for kind in unfitting:
+                with self.subTest(method=method, kind=kind):
+                    line = MODULE.task_fit_evidence(method, kind, profile["fits"])
+                    self.assertTrue(line.startswith(f"{method} is the wrong kind"))
+                    self.assertIn(f"{kind} output", line)
+                    self.assertIn(f"{method} fits ", line)
+                    self.assertNotIn("{kind}", line)
 
 
 # The document the walkthrough's generated wrapper writes: the enhanced space,
@@ -8337,6 +8478,82 @@ class TheCardSpeaksTheUsersLanguageTests(unittest.TestCase):
             unicode_ok=False,
         )
         self.assertIn("examples to compare on", card)
+
+    def _customer_facing_strings(self) -> list[str]:
+        """Every string this module can put in front of the customer.
+
+        Built from the constructors that reach the card - `Cap` reasons,
+        `SubScore` evidence - plus the tables the card reads its labels and its
+        sentences out of, and the `--help` text a customer can print. Read off
+        the module rather than quoted, so a new label or evidence sentence is
+        covered the day it is written.
+
+        Deliberately NOT every string in the file. This module argues with
+        itself at length in comments, docstrings and internal declaration
+        tables, and the words hunted below are its own working vocabulary:
+        forbidding them where the authors reason would forbid the reasoning.
+        The rule is about what is spent on the reader.
+        """
+        source = Path(MODULE.__file__).read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        surfaces: list[ast.AST] = []
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id in {"Cap", "SubScore"}
+            ):
+                surfaces.append(node)
+            elif isinstance(node, ast.keyword) and node.arg == "help":
+                surfaces.append(node.value)
+            elif isinstance(node, (ast.Assign, ast.AnnAssign)):
+                targets = (
+                    node.targets if isinstance(node, ast.Assign) else [node.target]
+                )
+                if any(
+                    isinstance(target, ast.Name)
+                    and target.id
+                    in {"CHECK_DISPLAY_NAMES", "METHOD_MISMATCH_REASONS", "ORIGIN_CAPS"}
+                    for target in targets
+                ):
+                    surfaces.append(node.value)
+        self.assertTrue(surfaces, "found no customer-facing surface to read")
+        return [
+            inner.value
+            for surface in surfaces
+            for inner in ast.walk(surface)
+            if isinstance(inner, ast.Constant) and isinstance(inner.value, str)
+        ]
+
+    def test_no_line_the_customer_reads_says_known_good_and_known_bad(self) -> None:
+        """The owner flagged this phrase twice, on two different runs.
+
+        It is a tester's phrase, not a first-time reader's: it names a fixture
+        convention rather than the thing that was done. What was done is that
+        the evaluator was run over answers whose verdict is already known, and
+        the label now says that instead.
+        """
+        for text in self._customer_facing_strings():
+            with self.subTest(text=text[:60]):
+                self.assertNotIn("known-good", text)
+                self.assertNotIn("known-bad", text)
+        self.assertEqual(
+            MODULE.CHECK_DISPLAY_NAMES["calibration"],
+            "tried on answers already known right and wrong",
+        )
+
+    def test_no_line_the_customer_reads_calls_a_scorer_a_ruler(self) -> None:
+        """"Ruler" is this project's internal metaphor for an evaluator.
+
+        It reads as a measuring stick to the people who wrote it and as nothing
+        at all to a customer meeting it on their first card - which is where it
+        was, on the task-fit line and in the generated-evaluator ceiling. The
+        module may keep the word in its own reasoning; it may not spend it on
+        the reader.
+        """
+        for text in self._customer_facing_strings():
+            with self.subTest(text=text[:60]):
+                self.assertNotRegex(text, r"\bruler\b")
 
 
 class TheScoreStatesWhatItKnowsTests(unittest.TestCase):
