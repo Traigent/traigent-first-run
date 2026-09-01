@@ -605,7 +605,20 @@ def installed_sdk_is_the_optimizer() -> bool | None:
     if not recorded:
         return None
     present = {str(path) for path in recorded}
-    return all(sdk_module_path(parts) in present for parts in REQUIRED_SDK_MODULES)
+    if all(sdk_module_path(parts) in present for parts in REQUIRED_SDK_MODULES):
+        return True
+    # Absence of the modules is only evidence when the record shows a package
+    # to look in. An editable install (PEP 660) records a `.pth` redirect and a
+    # finder module instead of the package tree, so the modules are on disk and
+    # not in the record - reading that as "not the SDK" refuses a correct
+    # install, and refuses it on the machine most likely to have one. The
+    # question this can answer from metadata is narrower than it looks: does a
+    # recorded `traigent/` package exist that does NOT carry the optimizer.
+    # Anything else is unrecognised, and unrecognised is not a finding.
+    package_prefix = SDK_DISTRIBUTION + "/"
+    if any(path.startswith(package_prefix) for path in present):
+        return False
+    return None
 
 
 def check_sdk(*, defer_missing: bool = False) -> None:
