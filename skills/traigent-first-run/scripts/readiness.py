@@ -6444,6 +6444,17 @@ def render_card(
         # information the reader still needs - a bare "no dataset provided to
         # this score" never said that five different things went unanswered
         # because of it.
+        #
+        # Each listed name carries its OWN marker, and that is not decoration.
+        # A group is not always uniform: `dataset` on an empty score shares one
+        # sentence across five checks of which three ARE measured, and printing
+        # the group's worst marker over a bare list said all five went
+        # unmeasured while the headline beside it said "3 of 5 checks measured".
+        # Naming the checks turned an ambiguity into a specific false statement
+        # and erased the distinction `SubScore.measured` exists to carry. The
+        # group marker stays the worst of the set - a reader scanning the left
+        # edge must not be shown the most forgiving one - and each name says
+        # for itself which side of that it fell on.
         if not pillar.subscores:
             # A pillar can carry no checks at all - `aggregate` accepts one and
             # several callers build them. The old loop was a no-op there; the
@@ -6485,7 +6496,10 @@ def render_card(
                 # be shown the most forgiving one of a set.
                 worst = min(subs, key=lambda sub: (sub.measured, sub.value))
                 lines.append(f"    {marker(worst, unicode_ok)} {evidence}")
-                lines.extend(f"        {display_name(sub.name)}" for sub in subs)
+                lines.extend(
+                    f"        {marker(sub, unicode_ok)} {display_name(sub.name)}"
+                    for sub in subs
+                )
         if pillar.name == "agent":
             # The half of #184's answer that is not a number. The pillar widened
             # to cover what a read of the agent's source can establish, and two

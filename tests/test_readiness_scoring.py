@@ -8569,9 +8569,13 @@ class TheCardSpeaksTheUsersLanguageTests(unittest.TestCase):
         )
         # Listed under the finding they share, in the order the pillar carries
         # them, so the reader can see which questions went unanswered for it.
+        # Each name carries its own marker, because a group is not always
+        # uniform and the headline beside it states how many of the pillar's
+        # checks were measured. A bare list under the group's worst marker made
+        # that headline a false statement about which rows it counted.
         self.assertEqual(
             [line.strip() for line in lines[head + 1 : head + 5]],
-            ["alpha", "bravo", "charlie", "echo"],
+            ["? alpha", "? bravo", "? charlie", "? echo"],
         )
         # And the check with a reason of its own keeps its own row, label and
         # finding together. Losing this is how a de-duplication pass turns into
@@ -8603,6 +8607,61 @@ class TheCardSpeaksTheUsersLanguageTests(unittest.TestCase):
         for name in ("foxtrot", "golf", "hotel"):
             with self.subTest(check=name):
                 self.assertIn(name, card)
+
+    def test_a_named_check_carries_its_own_measured_marker(self) -> None:
+        """The headline counts measured checks; the rows have to agree with it.
+
+        The fixture is the shipped one: `echo '[]' | readiness.py --preflight -`
+        printed `DATASET ... (3 of 5 checks measured)` with all five names
+        listed under one unmeasured marker, and the same on EVALUATION. Three
+        checks whose `SubScore.measured` is true were rendered as unmeasured.
+
+        Before the names were printed the pillar said one anonymous sentence
+        and made no per-check claim; naming them turned an ambiguity into a
+        specific false statement and erased the distinction `SubScore.measured`
+        exists to carry. Derived rather than pinned: the expectation is
+        recomputed from the pillar, so a card that stops printing markers, or
+        prints the group's worst one for every name, fails here.
+        """
+        pillar = MODULE.Pillar(
+            name="dataset",
+            score=0,
+            confidence=0.35,
+            subscores=(
+                MODULE.SubScore("foxtrot", 0.0, 25.0, False, "one reason for all"),
+                MODULE.SubScore("golf", 0.0, 35.0, True, "one reason for all"),
+                MODULE.SubScore("hotel", 30.0, 30.0, True, "one reason for all"),
+            ),
+        )
+        card = self._rendered(pillar)
+        rows = [line.strip() for line in card.splitlines() if line.strip()]
+        for sub in pillar.subscores:
+            expected = MODULE.marker(sub, False)
+            with self.subTest(check=sub.name):
+                named = [row for row in rows if row.endswith(f" {sub.name}")]
+                self.assertEqual(len(named), 1, f"{sub.name} is not named once")
+                self.assertEqual(
+                    named[0],
+                    f"{expected} {sub.name}",
+                    "this check is rendered under a marker that contradicts "
+                    "its own `measured` flag, and the pillar headline counts "
+                    "by that flag",
+                )
+        measured = sum(1 for sub in pillar.subscores if sub.measured)
+        headline = next(row for row in rows if "checks measured" in row)
+        self.assertIn(
+            f"({measured} of {len(pillar.subscores)} checks measured)", headline
+        )
+        self.assertEqual(
+            sum(
+                1
+                for sub in pillar.subscores
+                if f"{MODULE.marker(sub, False)} {sub.name}" in rows and sub.measured
+            ),
+            measured,
+            "the card's rows and its own headline disagree about how many "
+            "checks were measured",
+        )
 
     def test_checks_with_their_own_reasons_keep_their_own_rows(self) -> None:
         """The other direction, which a de-duplication pass gets wrong.

@@ -605,12 +605,15 @@ exist and points at a file that was never created.
   ceiling rather than a full search. An unmarked pair is a menu, and a menu offered instead of a
   recommendation is no recommendation: a run that meets one supplies the default itself.
 
-  Marked only where it can be taken, on the same condition that reference states for choosing among
-  routes that continue - mark the route that can produce the result being paid for. So the mark is
-  withheld while the card carries a `FIX BEFORE PAID RUN`, while any cap blocks, and where the run
-  as scoped cannot answer the question it is being paid to answer. Where it is withheld, say why in
-  the sentence beside proceeding: an unmarked pair with no reason next to it is the same silence
-  this bullet already refuses.
+  The mark moves rather than lifting, on the same condition that reference states for choosing among
+  routes that continue - mark the route that can produce the result being paid for. So where the
+  card carries a `FIX BEFORE PAID RUN`, where any cap blocks, or where the run as scoped cannot
+  answer the question it is being paid to answer, fixing is the route that can produce that result:
+  `B.` carries the mark, `A.` proceed stays offered unmarked, and the sentence beside it names the
+  finding that moved it. The mark is never withheld from the pair. An unmarked pair with no
+  recommendation on either route is the same silence this bullet already refuses, and these three
+  states are where it costs most - a run that meets one supplies the default itself, and it has no
+  reason to supply the right one.
 
 An asking cap is what this card exists to discharge, and discharging it means the customer meets its
 remedy at the moment they are asked to pay - not that its question is put here a second time.
@@ -708,10 +711,10 @@ does on the asks about material, and nothing follows it. Replying to either rout
 opens no paid work without the explicit approval below. For controlled work, `continue` opens a
 preview; it approves nothing unless that preview disclosed recipients, effects, bounds, and cost.
 
-The mark on `A` follows the pre-spend card's rule and is the same rule, not a second one: withheld
-while the card carries a `FIX BEFORE PAID RUN`, while any cap blocks, and where the run as scoped
-cannot answer the question it is being paid to answer. Where it is withheld, say why beside `A`
-rather than leaving both routes bare.
+The mark on `A` follows the pre-spend card's rule above. That rule is stated there once and is not
+restated here: where it moves the mark, the route it moves onto - the evidenced repair, or more and
+harder rows before the search - is what `A` is, the bounded run is offered under it unmarked, and
+the sentence beside `A` names the finding that moved it. Stopping is never the marked route.
 
 Keep the default `$5.00` ceiling across both approvals. If a stage exceeds the remaining ceiling or
 is materially long, recommend a smaller slice or fewer trials; expand only if the user prefers.

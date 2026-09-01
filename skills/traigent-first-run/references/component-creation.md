@@ -211,10 +211,13 @@ to arrive. Leaving the customer's material untouched does not settle it either, 
 prompted this is why: both routes wrote only to a working copy, so the property they were sorted on
 was one they shared. State the choice as the property rather than as the finding of the day -
 whichever finding the card raised, the route that clears it is the one marked, and the route that
-leaves it standing is still offered, unmarked. The rule above is unchanged underneath this one:
-pausing is never the marked route, and this only narrows which of the continuing ones is. The
-baseline spend approval is this same rule at a later stage, and `references/run-safety.md` applies
-it there by name rather than stating a second one for a reader to reconcile with this.
+leaves it standing is still offered, unmarked. The mark moves; it is never withheld from the set.
+Withholding it hands back an unmarked pair in the one state where an invented mark does the most
+harm, and the section above records what a blinded run does with one. The rule above is
+unchanged underneath this one: pausing is never the marked route, and this only narrows which of
+the continuing ones is. The baseline spend approval is this same rule at a later stage, and
+`references/run-safety.md` applies it there by name rather than stating a second one for a reader
+to reconcile with this.
 
 The build route is the way to CONTINUE, and its wording has to make that unmistakable. "I build both
 … and re-validate, then carry on" continues; "continue once a valid evaluator is available" is the
@@ -316,7 +319,12 @@ is the default for a user with nothing to anchor on, not a list of what this gui
 "Classification" and "extraction" are how this document names the shape; they are never how the
 customer is offered it. SKILL.md's intent gate owns that wording - the job in their own words, and
 a recommendation that names what in their material picked it - and it binds every option written
-from this default.
+from this default. The run that bought that rule offered, to a project holding one plain text note,
+"pull the metric, the time range, and the grouping out of a plain-English data request" - three
+practice words in one line, to a reader who has none of them and no way to tell which of the three
+choices is nearest their work. The resident gate keeps the rule and the option to copy; the run it
+came from is recorded here, because a worked failure is read once and the rule is applied on every
+run.
 
 Do not create a story-writing or summarization walkthrough with exact-string grading.
 
