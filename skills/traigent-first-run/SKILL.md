@@ -97,8 +97,8 @@ rule.
   project-root `.gitignore`; otherwise do not create `.gitignore`. Never overwrite source material.
 - Do not put educational or advanced-skill links in the active run. Offer links after the result.
 - Keep internal check IDs, SDK internals, and optimization jargon out of user-facing progress.
-- Put the one ask last. Card, board and evidence first, then the question - never a marker,
-  heading or summary of it above them. The reader acts on it, so it ends the message.
+- An ask that follows a result sits below it. Never a marker, heading or summary of it above
+  the card, board or evidence. An ask before any result may open the message.
 - Open with the five-stage journey in "Opening message" below. At boundaries/long work, use
   `Stage <n>/5 · <name>` and `Done / Now / Next`. Show observed readiness score, rows checked,
   calls/trials, cost, or time; keep finished stages as compact checkmarks. Label estimates; never

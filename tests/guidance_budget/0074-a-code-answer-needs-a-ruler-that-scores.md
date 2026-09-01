@@ -1,9 +1,9 @@
 # 0074 - a code answer needs a ruler that scores
 
 follows: 0073
-follows-total-measured: 440_537
+follows-total-measured: 440_530
 total-ceiling: 441_500
-total-measured: 441_192
+total-measured: 441_185
 
 Review of the change entry 0071 records found its replacement route unusable,
 and running the bundled calibrator confirmed it. The selection table had been

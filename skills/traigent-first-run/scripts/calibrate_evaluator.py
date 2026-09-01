@@ -1406,7 +1406,7 @@ def run() -> int:
             "answer from the expected answer itself, in: "
             + ", ".join(case["name"] for case in unresolved)
             + ". That is correct for a task whose order genuinely does not "
-            "matter, and a broken ruler for one where it does - a swapped "
+            "matter, and the wrong check for one where it does - a swapped "
             "label/value binding is a wrong answer that scores full marks. "
             "Confirm which this task is before optimizing against it."
         )
