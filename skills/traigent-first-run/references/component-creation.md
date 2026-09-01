@@ -363,14 +363,24 @@ a document to be reused.
                    "source_lines": [6, 12],
                    "evidence": "The selected agent's style alternatives reach its local call path."}},
  "build": {
-   "prompt": {"present": true, "few_shot": 2,
-              "evidence": "agent.py:5-19 SYSTEM carries two worked examples"},
-   "output-contract": {"present": true, "evidence": "agent.py:24 json.loads(reply) parses it"},
-   "control-flow": {"loop": true, "bounded": true,
-                    "evidence": "agent.py:31 for _ in range(MAX_STEPS)"},
+   "prompt": {"present": true, "few_shot": 2, "source_lines": [4],
+              "evidence": "agent.py:4 SYSTEM carries two worked examples"},
+   "output-contract": {"present": true, "source_lines": [9],
+                       "evidence": "agent.py:9 json.loads(reply) parses it"},
+   "control-flow": {"loop": true, "bounded": true, "source_lines": [8],
+                    "evidence": "agent.py:8 for _ in range(MAX_STEPS)"},
    "tools": {"used": true, "declared": ["search", "fetch"], "unreachable": [],
-             "evidence": "agent.py:12 TOOLS lists both; both resolve in this module"}}}
+             "source_lines": [6],
+             "evidence": "agent.py:6 TOOLS lists both; both resolve in this module"}}}
 ```
+
+Each settled build check carries `source_lines` on the same terms, and for the same reason: the
+`evidence` beside it is prose and is never parsed for a coordinate, so without the structured list
+the build half is the one claim about the customer's code that nothing checks. A check answered
+`"determined": false` carries none - a read that could not settle the question has no line to point
+at. This is also what makes a carried-over document detectable: a read taken from another agent, or
+from this one before it was edited, cites lines the selected source does not have and is refused
+rather than reprinted on the card.
 
 A parameter's `source_lines` are positive physical lines in relative `source`; that file must be
 `--selected-agent` below `--agent-source-root`. `--selected-agent-callable` names the selected

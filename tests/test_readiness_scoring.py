@@ -9933,21 +9933,25 @@ class TheSourceTrioIsOptionalButWholeTests(unittest.TestCase):
                             "prompt": {
                                 "present": True,
                                 "few_shot": 2,
+                                "source_lines": [1],
                                 "evidence": "agent.py:1 SYSTEM carries two examples",
                             },
                             "output-contract": {
                                 "present": True,
+                                "source_lines": [3],
                                 "evidence": "agent.py:3 json.loads(reply) parses it",
                             },
                             "control-flow": {
                                 "loop": False,
                                 "bounded": True,
+                                "source_lines": [2],
                                 "evidence": "agent.py:2 one call, no loop",
                             },
                             "tools": {
                                 "used": False,
                                 "declared": [],
                                 "unreachable": [],
+                                "source_lines": [2],
                                 "evidence": "agent.py:2 no tool is reached",
                             },
                         },
@@ -10748,6 +10752,19 @@ def _read(build=None, knobs=None):
                 ]
             )
         (root / "agent.py").write_text("\n".join(lines) + "\n")
+        # Point every settled build check at a line this synthetic source
+        # really has, the same way the knob evidence above is re-pointed. These
+        # fixtures are about what one ANSWER does to the pillar; the coordinate
+        # is the reader's own contract and is exercised directly by
+        # `TheBuildHalfCitesTheAgentItRead` below.
+        for spec in (document.get("build") or {}).values():
+            if (
+                isinstance(spec, dict)
+                and spec.get("determined") is not False
+                and "source_lines" not in spec
+                and lines
+            ):
+                spec["source_lines"] = [len(lines)]
         return MODULE.agent_facts_from_discovery(
             document,
             source_root=root,
@@ -14043,6 +14060,168 @@ class AFoundAgentDoesNotLookLikeAMissingOneTests(unittest.TestCase):
         )
         self.assertIn("A read of the agent's source reached this score.", read)
         self.assertIn("No read of the agent's source reached this score", missing)
+
+
+class TheBuildHalfCitesTheAgentItReadTests(unittest.TestCase):
+    """A build read is a claim about the customer's code, and nothing checked it.
+
+    The knobs half refuses a document whose `source_lines` fall outside the
+    selected agent. The build half carried no coordinate at all - `evidence` is
+    prose and `checked_source_lines` explains why it stays unparsed - so a read
+    taken from one agent was scored verbatim against another.
+
+    A blinded fixture re-run is where this showed: the run retired its record,
+    restarted at stage 1 for a new opening score, and carried the previous
+    run's `agent-knobs.json` forward byte for byte. Its knobs half would have
+    been refused. Its build half printed on the customer's card as an
+    "Assistant observation" - "there is no loop", citing lines 932-936 of a
+    file with 22 lines in it, over an agent whose body is `while True:`.
+    """
+
+    AGENT = (
+        "MODELS = ['fast', 'slow']\n"
+        "def selected(choice):\n"
+        "    while True:\n"
+        "        return provider(model=MODELS[choice])\n"
+    )
+    # The read a previous run left behind: the shape trunk accepts, describing
+    # an agent that is not this one.
+    CARRIED_OVER = {
+        "prompt": {
+            "present": True,
+            "few_shot": 0,
+            "evidence": "other_agent.py:357-388 build_prompt assembles the instruction",
+        },
+        "output-contract": {
+            "present": True,
+            "evidence": "other_agent.py:390-410 extract_query returns the query text",
+        },
+        "control-flow": {
+            "loop": False,
+            "bounded": True,
+            "evidence": "other_agent.py:932-936 one call and returns; there is no loop",
+        },
+        "tools": {
+            "used": False,
+            "declared": [],
+            "unreachable": [],
+            "evidence": "other_agent.py:932-936 declares and reaches no tools",
+        },
+    }
+
+    @contextlib.contextmanager
+    def _root(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "agent.py").write_text(self.AGENT)
+            yield root
+
+    def _read(self, build, *, checked=True):
+        document = {
+            "source": "agent.py",
+            "knobs": {
+                "model": {
+                    "values": ["fast", "slow"],
+                    "source_lines": [1],
+                    "evidence": "MODELS reaches the selected call path.",
+                }
+            },
+            "build": build,
+        }
+        if not checked:
+            return MODULE.agent_facts_from_discovery(document)
+        with self._root() as root:
+            return MODULE.agent_facts_from_discovery(
+                document,
+                source_root=root,
+                selected_agent=root / "agent.py",
+                selected_agent_callable="selected",
+            )
+
+    def _carried_over(self, **overrides):
+        document = json.loads(json.dumps(self.CARRIED_OVER))
+        for check, extra in overrides.items():
+            document[check].update(extra)
+        return document
+
+    def test_a_build_read_with_no_coordinate_is_refused(self) -> None:
+        """The regression itself: this document scored clean, and should not.
+
+        Nothing in it is malformed by the old contract - it is the exact shape
+        the guide's own example printed - and every sentence in it is about a
+        different program.
+        """
+        with self.assertRaises(MODULE.AgentDiscoveryInputError) as caught:
+            self._read(self._carried_over())
+        self.assertIn("source_lines", str(caught.exception))
+
+    def test_a_build_read_citing_a_line_the_agent_lacks_is_refused(self) -> None:
+        """The carried-over document, once it has to name a coordinate."""
+        with self.assertRaises(MODULE.AgentDiscoveryInputError) as caught:
+            self._read(
+                self._carried_over(
+                    **{
+                        check: {"source_lines": [932]}
+                        for check in MODULE.BUILD_CHECK_ANSWER
+                    }
+                )
+            )
+        message = str(caught.exception)
+        self.assertIn("outside the selected agent source", message)
+        self.assertIn("build check", message)
+
+    def test_a_check_pointing_at_the_agent_it_read_is_scored(self) -> None:
+        """The false-red direction: an honest read of THIS agent still passes.
+
+        Without this the test above would also pass against a reader that
+        refused every build half, which measures nothing.
+        """
+        facts = self._read(
+            self._carried_over(
+                **{check: {"source_lines": [4]} for check in MODULE.BUILD_CHECK_ANSWER}
+            )
+        )
+        self.assertEqual(
+            {signal.name for signal in facts.build},
+            {name for name, _weight in MODULE.AGENT_BUILD_CHECKS},
+        )
+
+    def test_a_check_the_read_could_not_settle_needs_no_coordinate(self) -> None:
+        """`determined: false` has no line to point at, and demanding one would
+        price the honest answer above the confident one."""
+        facts = self._read(
+            self._carried_over(
+                **{
+                    check: {
+                        "determined": False,
+                        "reason": "the prompt is fetched at runtime",
+                        "source_lines": None,
+                    }
+                    for check in MODULE.BUILD_CHECK_ANSWER
+                }
+            )
+            | {
+                check: {
+                    "determined": False,
+                    "reason": "the prompt is fetched at runtime",
+                    "evidence": "agent.py:2",
+                }
+                for check in MODULE.BUILD_CHECK_ANSWER
+            }
+        )
+        self.assertTrue(all(not signal.measured for signal in facts.build))
+
+    def test_the_advisory_route_still_reads_a_build_half(self) -> None:
+        """A non-Python or unselected agent has no source to check against.
+
+        That route is an honest unknown, not a refusal: rejecting it would
+        confuse unsupported inspection with a malformed document.
+        """
+        facts = self._read(self._carried_over(), checked=False)
+        self.assertEqual(
+            {signal.name for signal in facts.build},
+            {name for name, _weight in MODULE.AGENT_BUILD_CHECKS},
+        )
 
 
 class WhoWroteItBoundsWhatItMayClaimTests(unittest.TestCase):

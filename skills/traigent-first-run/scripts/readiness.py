@@ -8306,32 +8306,37 @@ def static_source_evidence(
     )
 
 
-def checked_source_lines(lines: Any, source: StaticSourceEvidence) -> tuple[int, ...]:
+def checked_source_lines(
+    lines: Any, source: StaticSourceEvidence, owner: str = "knob"
+) -> tuple[int, ...]:
     """Validate structured, physical source lines without trusting prose.
 
     `evidence` is explanatory text the assistant authored.  It never carries a
     coordinate because a permissive `path:line` parser can accidentally accept
     malformed suffixes.  The small JSON list below is the complete authority.
+
+    `owner` names who cited them, so a build check's refusal says `build check
+    'tools'` rather than `knob` - the same authority, two callers.
     """
     if not isinstance(lines, list) or not lines:
         raise AgentDiscoveryInputError(
-            "knob 'source_lines' must be a non-empty list of positive line numbers"
+            f"{owner} 'source_lines' must be a non-empty list of positive line numbers"
         )
     if any(
         isinstance(line, bool) or not isinstance(line, int) or line < 1
         for line in lines
     ):
         raise AgentDiscoveryInputError(
-            "knob 'source_lines' must contain only positive integer line numbers"
+            f"{owner} 'source_lines' must contain only positive integer line numbers"
         )
     cited = set(lines)
     if max(cited) > len(source.text_by_line):
         raise AgentDiscoveryInputError(
-            "knob 'source_lines' cites a line outside the selected agent source"
+            f"{owner} 'source_lines' cites a line outside the selected agent source"
         )
     if not cited <= source.executable_lines:
         raise AgentDiscoveryInputError(
-            "knob 'source_lines' cites comment/docstring/non-executable source; "
+            f"{owner} 'source_lines' cites comment/docstring/non-executable source; "
             "cite the executable statement that establishes the value"
         )
     return tuple(sorted(cited))
@@ -11898,11 +11903,25 @@ def discovered_knob_from_entry(
 # knob fields are: a misspelled key is a check that silently answers something
 # nobody wrote.
 BUILD_CHECK_FIELDS: dict[str, frozenset[str]] = {
-    "prompt": frozenset({"present", "few_shot", "evidence", "determined", "reason"}),
-    "output-contract": frozenset({"present", "evidence", "determined", "reason"}),
-    "control-flow": frozenset({"loop", "bounded", "evidence", "determined", "reason"}),
+    "prompt": frozenset(
+        {"present", "few_shot", "evidence", "determined", "reason", "source_lines"}
+    ),
+    "output-contract": frozenset(
+        {"present", "evidence", "determined", "reason", "source_lines"}
+    ),
+    "control-flow": frozenset(
+        {"loop", "bounded", "evidence", "determined", "reason", "source_lines"}
+    ),
     "tools": frozenset(
-        {"used", "declared", "unreachable", "evidence", "determined", "reason"}
+        {
+            "used",
+            "declared",
+            "unreachable",
+            "evidence",
+            "determined",
+            "reason",
+            "source_lines",
+        }
     ),
 }
 
@@ -11947,17 +11966,32 @@ AGENT_KNOBS_EXAMPLE: dict[str, Any] = {
             "values": ["fast", "slow"],
         }
     },
+    # Every check cites the executable line it was read from, in the same
+    # structured list the knobs half uses. The prose beside it is explanation;
+    # `source_lines` is what a later score can check against the source it was
+    # taken from, so a read carried over from another agent - or from this one
+    # before it was edited - is refused instead of reprinted.
     "build": {
-        "prompt": {"present": False, "evidence": "agent.py:5-9 carries no prompt"},
+        "prompt": {
+            "present": False,
+            "evidence": "agent.py:5 carries no prompt",
+            "source_lines": [5],
+        },
         "output-contract": {
             "present": True,
-            "evidence": "agent.py:9 returns a dict with fixed keys",
+            "evidence": "agent.py:5 returns the provider reply unwrapped",
+            "source_lines": [5],
         },
         "control-flow": {
             "loop": False,
-            "evidence": "agent.py:5-9 makes one straight-line return",
+            "evidence": "agent.py:5 makes one straight-line return",
+            "source_lines": [5],
         },
-        "tools": {"used": False, "evidence": "agent.py:5-9 declares and calls none"},
+        "tools": {
+            "used": False,
+            "evidence": "agent.py:5 declares and calls none",
+            "source_lines": [5],
+        },
     },
 }
 
@@ -12034,7 +12068,9 @@ def _build_names(check: str, spec: dict[str, Any], field: str) -> list[str]:
     return [name.strip() for name in value]
 
 
-def build_signal_from_entry(check: str, spec: Any) -> BuildSignal:
+def build_signal_from_entry(
+    check: str, spec: Any, source: StaticSourceEvidence | None = None
+) -> BuildSignal:
     """Read one build check, and refuse a guess rather than scoring it.
 
     Every branch here is #210's rule applied to a second kind of evidence:
@@ -12046,6 +12082,15 @@ def build_signal_from_entry(check: str, spec: Any) -> BuildSignal:
     not just a schema. A read that could not settle a check says so and the
     check leaves the pillar - it is not scored zero, which would say the agent
     lacks the thing rather than that we could not tell.
+
+    Where `source` is available, the pointing is checked rather than taken.
+    `evidence` is prose and stays unparsed - `checked_source_lines` says why -
+    so the structured `source_lines` carries the coordinate, exactly as it does
+    for a knob. Without it this half was the one place an assistant-authored
+    claim about somebody's code reached the card unverified: a document read
+    from one agent scored verbatim against another, citing lines that file does
+    not have, and the card printed "there is no loop" over a `while True:`. The
+    knobs half refused that same document; this half printed it.
     """
     if not isinstance(spec, dict):
         raise AgentDiscoveryInputError(
@@ -12084,6 +12129,21 @@ def build_signal_from_entry(check: str, spec: Any) -> BuildSignal:
             0.0,
             f"not established by this read - {reason.strip()} ({evidence})",
             measured=False,
+        )
+
+    # An undetermined check returned above without one: a read that could not
+    # settle the question has no line to point at, and demanding one would turn
+    # the honest answer into the harder one to give.
+    if source is not None:
+        if "source_lines" not in spec:
+            raise AgentDiscoveryInputError(
+                f"build check {check!r} cites no 'source_lines'; a settled check "
+                "names the executable line it was read from, so a later score can "
+                "check that citation against the agent it was taken from. Use "
+                "'determined': false with a reason where the read could not settle it"
+            )
+        checked_source_lines(
+            spec.get("source_lines"), source, owner=f"build check {check!r}"
         )
 
     weight = AGENT_BUILD_WEIGHT[check]
@@ -12174,7 +12234,9 @@ def build_signal_from_entry(check: str, spec: Any) -> BuildSignal:
     )
 
 
-def agent_build_from_document(build: Any) -> tuple[BuildSignal, ...]:
+def agent_build_from_document(
+    build: Any, source: StaticSourceEvidence | None = None
+) -> tuple[BuildSignal, ...]:
     """Read all four checks, and refuse a document that answers three.
 
     Every check is required, including the ones whose answer is "the agent does
@@ -12202,7 +12264,7 @@ def agent_build_from_document(build: Any) -> tuple[BuildSignal, ...]:
             "different statements about the agent"
         )
     return tuple(
-        build_signal_from_entry(check, build[check])
+        build_signal_from_entry(check, build[check], source)
         for check, _weight in AGENT_BUILD_CHECKS
     )
 
@@ -12322,7 +12384,7 @@ def agent_facts_from_discovery(
         # says the read is not optional. `None` here is the absence, and it
         # costs - see `build_subscores`.
         build=(
-            agent_build_from_document(document["build"])
+            agent_build_from_document(document["build"], source)
             if "build" in document
             else None
         ),
