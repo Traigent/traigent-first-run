@@ -7106,19 +7106,62 @@ class SkillPackageTests(unittest.TestCase):
         ):
             self.assertIn(phrase, plan_text)
 
-    def test_code_and_sql_evaluators_are_out_of_scope_for_first_run(self) -> None:
-        """The guide stops safely rather than inventing a sandbox it cannot ship."""
+    def test_a_code_or_sql_answer_is_reviewed_not_declared_out_of_scope(self) -> None:
+        """What ends this guide is the evaluator that runs the answer.
+
+        A real first run told a customer whose project does natural language to
+        SQL that their task was out of scope for this guide, and stopped
+        without building anything. Nothing in the package supports that
+        sentence: `readiness.py` carries `code-sql` among its task kinds, offers
+        it on `--task-kind`, and prints "composite suits code-sql output" when
+        the ruler fits, which `tests/test_readiness_scoring.py` pins beside the
+        code.
+
+        The sentence came from this row. Every other row in the inventory names
+        the classes a semantic review has to cover for that answer shape, so the
+        row's subject is the ANSWER, and a scope stop written into it is read as
+        a statement about the customer's work rather than about their scorer.
+        The stop is real and belongs one section below, where its subject is the
+        evaluator.
+        """
         text = RUN_SAFETY.read_text().casefold()
         outcome_table = text.split("for skill's semantic-coverage review", 1)[1].split(
             "binding is first", 1
         )[0]
+        row = next(
+            line
+            for line in outcome_table.splitlines()
+            if line.startswith("| code or sql")
+        )
+        self.assertNotIn(
+            "out of scope",
+            row,
+            "this row says what a review of a code or SQL answer must cover; a "
+            "scope stop written here reads as the customer's task being "
+            "unsupported, which is what one run told a customer it was",
+        )
+        # It carries coverage classes like every other row, so a query answer is
+        # no longer the one shape the review has nothing to say about.
+        for phrase in ("table or column", "condition", "join", "ordering"):
+            with self.subTest(coverage=phrase):
+                self.assertIn(phrase, row)
+
+        scope = " ".join(
+            text.split("### execution evaluators are out of scope", 1)[1]
+            .split("### deterministic calibration", 1)[0]
+            .split()
+        )
         for phrase in (
-            "code or sql",
-            "out of scope for this first-run guide",
-            "stop before evaluator execution",
+            "the evaluator that runs the answer, never the task that produced it",
+            "stays in scope, graded by the comparison",
         ):
-            with self.subTest(phrase=phrase):
-                self.assertIn(phrase, outcome_table)
+            with self.subTest(separation=phrase):
+                self.assertIn(
+                    phrase,
+                    scope,
+                    "the section that owns the stop has to say what it does "
+                    "not stop, or the stop is read as covering the task",
+                )
 
     def test_execution_evaluators_stop_before_first_run_execution(self) -> None:
         """The scope boundary is explicit, early, and does not invent a product feature."""
@@ -19382,6 +19425,22 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
 
     # (decision, phrases asserting one answer, phrases asserting the opposite)
     CONTRADICTIONS = (
+        (
+            # Two different limits were collapsed into one sentence, and a
+            # customer read the wrong one. The guide will not run an evaluator
+            # that executes the answer - that is the whole of the limit. It has
+            # never been a limit on what the agent's answer may be: `code-sql`
+            # is scored like any other declared kind. Refused here is the
+            # pairing that produced the claim - a scope stop written into a row
+            # whose subject is the answer shape, and an evaluation table
+            # offering a code answer only the method this guide stops for.
+            "whether a task whose answer is code or SQL is in scope",
+            ("never the task that produced it",),
+            (
+                "code or sql | out of scope",
+                "| code | parser/compile gate plus unit or execution tests |",
+            ),
+        ),
         (
             "when the Traigent key is required",
             ("only after that checkpoint, ask for the traigent key",),

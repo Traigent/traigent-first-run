@@ -283,7 +283,8 @@ When creating an agent:
    it were equivalent to the user's production behavior or imply Traigent created it.
 
 If the user gives no preference, recommend a structured classification or extraction task. It is
-easy to score deterministically and demonstrates optimization without paying for an LLM judge.
+easy to score deterministically and demonstrates optimization without paying for an LLM judge. That
+is the default for a user with nothing to anchor on, not a list of what this guide supports.
 
 Do not create a story-writing or summarization walkthrough with exact-string grading.
 

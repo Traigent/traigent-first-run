@@ -8467,6 +8467,63 @@ class TheScoreStatesWhatItKnowsTests(unittest.TestCase):
                     self.assertNotIn(phrase, evidence)
 
 
+class CodeAndSqlIsScoredLikeAnyOtherTaskKindTests(unittest.TestCase):
+    """`code-sql` is a kind this scorer measures, not one it turns away.
+
+    The guidance used to answer a code or SQL answer with "out of scope for
+    this first-run guide", and a real run repeated that to a customer whose
+    project does natural language to SQL. The scorer never agreed with it, and
+    the corrected wording in `references/run-safety.md` now rests on what is
+    asserted here: the kind is declared, a ruler that does not run the answer
+    fits it, and a project that declares both is scored rather than refused.
+
+    Pinned beside the code because the sentence is only true while this is. A
+    change that left `execution` as the one fitting method would quietly turn
+    the guidance into a recommendation of the single evaluator the guide stops
+    for, which is the shape of the defect the wording was fixed for.
+    """
+
+    def test_code_sql_is_a_declared_task_kind(self) -> None:
+        self.assertIn("code-sql", MODULE.TASK_KINDS)
+
+    def test_a_ruler_that_does_not_run_the_answer_fits_code_sql(self) -> None:
+        fitting = {
+            name
+            for name, profile in MODULE.METHOD_PROFILES.items()
+            if "code-sql" in profile["fits"]
+        }
+        self.assertIn("execution", fitting)
+        self.assertTrue(
+            fitting - {"execution"},
+            "every method fitting code-sql runs the answer, so the guide would "
+            "be offering only the evaluator its own scope stop refuses",
+        )
+
+    def test_a_declared_code_sql_project_is_scored_and_its_fit_is_named(
+        self,
+    ) -> None:
+        facts = MODULE.evaluation_facts_from_calibration(
+            {
+                "passed": True,
+                "cases": [
+                    {
+                        "checks": {
+                            "good_passes": True,
+                            "bad_fails": True,
+                            "non_constant": True,
+                        }
+                    }
+                ],
+            },
+            method="composite",
+            task_kind="code-sql",
+        )
+        pillar, _ = MODULE.score_evaluation(facts)
+        fit = next(sub for sub in pillar.subscores if sub.name == "task-fit")
+        self.assertGreater(pillar.score, 0)
+        self.assertEqual(fit.evidence, "composite suits code-sql output")
+
+
 def _brought(rows: int, **extra) -> "MODULE.DatasetFacts":
     """A healthy dataset of rows the user brought, with nothing generated."""
     defaults = dict(
