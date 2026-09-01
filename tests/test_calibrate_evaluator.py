@@ -1770,7 +1770,7 @@ class TimeoutIsReportableTests(unittest.TestCase):
         five_pair_rate = {
             kind: ceiling / (5 * probes_per_case[kind]) for kind in self.KINDS
         }
-        self.assertEqual(five_pair_rate, {"deterministic": 18, "llm-judge": 45})
+        self.assertEqual(five_pair_rate, {"deterministic": 15, "llm-judge": 45})
         # Both cuts, because the sentence quotes both. One number for both rates
         # was true of the deterministic budget and understated the judge's: 45 is
         # a 40% cut against 75 and exactly half of 90, and it was the judge - the
@@ -1780,7 +1780,7 @@ class TimeoutIsReportableTests(unittest.TestCase):
             round(
                 100 * (1 - five_pair_rate["deterministic"] / per_probe["deterministic"])
             ),
-            76,
+            80,
         )
         self.assertEqual(five_pair_rate["llm-judge"] * 2, per_probe["llm-judge"])
         normalized = " ".join(EVALUATION_REFERENCE.read_text().casefold().split())
@@ -2936,6 +2936,386 @@ class NoInternalFailureReachesTheUserAsATracebackTests(unittest.TestCase):
         self.assertEqual(process.returncode, 2, process.stderr)
         self.assertIn("--allow-execution", process.stderr)
         self.assertNotIn("internal error", process.stderr)
+
+
+class TheSeamBetweenTheProbesAndTheAgentTests(unittest.TestCase):
+    """Both probe sets stop at the evaluator's door; the agent stops there too.
+
+    Two paid runs were lost between them. An extraction step took the LAST
+    `SELECT` in a reply - right for a model that reasons before answering,
+    wrong for every query holding a subquery, whose inner `SELECT` is later in
+    the string - and delivered an unbalanced fragment over the wrong table,
+    honestly scored 0.24. One damaged row in eighteen moved every
+    configuration by about the width of the whole spread, so the ranking was
+    wrong rather than low. Separately, a reply arrived inside a markdown fence
+    and a text comparison read the fence as part of the answer: twelve
+    configurations at 0.000, which ranks nothing.
+
+    Neither probe set could see either one. The authored four are strings the
+    author wrote; the generated ones are built from the expected answer the
+    author also wrote. The subquery WAS in the probe set - it was covered on
+    one side of the wiring and never on the other.
+
+    Every fixture below is written out in full rather than derived from a
+    constant the assertions read: a fixture built from the number it is meant
+    to prove has already let one regression through here.
+    """
+
+    SUBQUERY = (
+        "SELECT name FROM stadium WHERE stadium_id NOT IN "
+        "(SELECT stadium_id FROM concert)"
+    )
+    FLAT = "SELECT name FROM singer"
+
+    CASES = [
+        {
+            "name": "stadiums with no concert",
+            "score_mode": "binary",
+            "expected": (
+                "SELECT name FROM stadium WHERE stadium_id NOT IN "
+                "(SELECT stadium_id FROM concert)"
+            ),
+            "input_data": {"message": "Which stadiums have never held a concert?"},
+            "probes": {
+                "good": (
+                    "SELECT name FROM stadium WHERE stadium_id NOT IN "
+                    "(SELECT stadium_id FROM concert)"
+                ),
+                "equivalent_good": (
+                    "select name from stadium where stadium_id not in "
+                    "(select stadium_id from concert);"
+                ),
+                "partial": "SELECT name FROM stadium",
+                "bad": "SELECT stadium_id FROM concert",
+            },
+        },
+        {
+            "name": "every singer name",
+            "score_mode": "binary",
+            "expected": "SELECT name FROM singer",
+            "input_data": {"message": "List every singer name"},
+            "probes": {
+                "good": "SELECT name FROM singer",
+                "equivalent_good": "select  name  from  singer ;",
+                "partial": "SELECT name, age FROM singer",
+                "bad": "SELECT count(*) FROM singer",
+            },
+        },
+    ]
+
+    SCORER = (
+        "def task_score(*, output, expected, input_data, metadata):\n"
+        "    del input_data, metadata\n"
+        "    got = ' '.join(str(output).split()).casefold().rstrip('; ')\n"
+        "    want = ' '.join(str(expected).split()).casefold().rstrip('; ')\n"
+        "    return 1.0 if got == want else 0.0\n"
+    )
+    # The defect, verbatim in shape: the last statement keyword wins, and a
+    # subquery's keyword is always later than the outer one.
+    TRUNCATING = (
+        "import re\n"
+        "\n"
+        "_STATEMENT = re.compile(r'\\b(?:SELECT|WITH)\\b', re.IGNORECASE)\n"
+        "\n"
+        "\n"
+        "def extract_sql(text):\n"
+        "    starts = [m.start() for m in _STATEMENT.finditer(text)]\n"
+        "    if starts:\n"
+        "        text = text[starts[-1]:]\n"
+        "    return text.strip()\n"
+    )
+    # The repair: fences off first, then the last statement keyword at
+    # parenthesis depth zero.
+    SOUND = (
+        "import re\n"
+        "\n"
+        "_TOKEN = re.compile(r'\\b(?:SELECT|WITH)\\b|[()]', re.IGNORECASE)\n"
+        "\n"
+        "\n"
+        "def extract_sql(text):\n"
+        "    if text.count('```') >= 2:\n"
+        "        body = text.split('```')[1]\n"
+        "        text = body.split(chr(10), 1)[1] if chr(10) in body else body\n"
+        "    depth = 0\n"
+        "    starts = []\n"
+        "    for match in _TOKEN.finditer(text):\n"
+        "        token = match.group(0)\n"
+        "        if token == '(':\n"
+        "            depth += 1\n"
+        "        elif token == ')':\n"
+        "            depth -= 1\n"
+        "        elif depth == 0:\n"
+        "            starts.append(match.start())\n"
+        "    if starts:\n"
+        "        text = text[starts[-1]:]\n"
+        "    return text.strip()\n"
+    )
+    # Changes every string it is given and changes no verdict.
+    RESHAPING = (
+        "def extract_sql(text):\n"
+        "    return '  ' + ' '.join(text.split()).upper() + '  '\n"
+    )
+    RAISING = (
+        "def extract_sql(text):\n"
+        "    raise ValueError('no statement found in reply')\n"
+    )
+
+    @staticmethod
+    def _module():
+        spec = importlib.util.spec_from_file_location(
+            "first_run_calibrate_seam", SCRIPT
+        )
+        module = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        sys.modules[spec.name] = module
+        spec.loader.exec_module(module)
+        return module
+
+    def calibrate(self, directory, *extra, transform=None):
+        """Run one calibration in `directory` and return (process, payload)."""
+        root = Path(directory)
+        scorer = root / "scorer.py"
+        scorer.write_text(self.SCORER)
+        cases = root / "cases.json"
+        cases.write_text(json.dumps(self.CASES))
+        command = [
+            sys.executable,
+            str(SCRIPT),
+            "--scorer",
+            f"{scorer}:task_score",
+            "--cases",
+            f"@{cases}",
+            "--allow-execution",
+            "--timeout",
+            "120",
+            "--json",
+            *extra,
+        ]
+        if transform is not None:
+            agent = root / "agent.py"
+            agent.write_text(transform)
+            command += ["--reply-transform", f"{agent}:extract_sql"]
+        process = subprocess.run(command, capture_output=True, text=True)
+        payload = json.loads(process.stdout) if process.stdout.strip() else {}
+        return process, payload
+
+    @staticmethod
+    def _seam(payload, case_name, source):
+        case = next(item for item in payload["cases"] if item["name"] == case_name)
+        return next(probe for probe in case["seam_probes"] if probe["source"] == source)
+
+    def test_a_transform_that_truncates_a_subquery_is_reported(self) -> None:
+        """The probe set already held the shape; nothing crossed it with the agent."""
+        with tempfile.TemporaryDirectory() as directory:
+            process, payload = self.calibrate(
+                directory, "--task-kind", "code-sql", transform=self.TRUNCATING
+            )
+        probe = self._seam(payload, "stadiums with no concert", "good")
+        self.assertEqual(probe["outcome"], "damaged", process.stderr)
+        self.assertEqual(probe["reference_score"], 1.0)
+        self.assertEqual(probe["score"], 0.0)
+        self.assertEqual(
+            probe["sent"],
+            "SELECT name FROM stadium WHERE stadium_id NOT IN "
+            "(SELECT stadium_id FROM concert)",
+        )
+        self.assertEqual(probe["delivered"], "SELECT stadium_id FROM concert)")
+        self.assertIn("seam_probe_advisory", payload)
+
+    def test_a_sound_transform_reports_nothing(self) -> None:
+        """The half that keeps this from being a tax on healthy customers.
+
+        A guard that fires on an agent whose delivery is correct would stop
+        more runs than it saves, and the repository has an explicit history of
+        checks that trained authors to work around them.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            process, payload = self.calibrate(
+                directory, "--task-kind", "code-sql", transform=self.SOUND
+            )
+        self.assertNotIn("seam_probe_advisory", payload, process.stderr)
+        outcomes = {
+            probe["outcome"]
+            for case in payload["cases"]
+            for probe in case["seam_probes"]
+        }
+        self.assertEqual(outcomes, {"preserved"})
+
+    def test_a_transform_that_only_reshapes_the_string_is_not_damage(self) -> None:
+        """Trimming, upper-casing and re-spacing change every string and no verdict."""
+        with tempfile.TemporaryDirectory() as directory:
+            process, payload = self.calibrate(directory, transform=self.RESHAPING)
+        self.assertNotIn("seam_probe_advisory", payload, process.stderr)
+        probe = self._seam(payload, "every singer name", "good")
+        self.assertNotEqual(probe["delivered"], probe["sent"])
+        self.assertEqual(probe["outcome"], "preserved")
+
+    def test_a_pair_that_cannot_read_a_fence_is_reported(self) -> None:
+        """No transform at all: the evaluator itself meets the shape a model sends."""
+        with tempfile.TemporaryDirectory() as directory:
+            process, payload = self.calibrate(directory, "--task-kind", "code-sql")
+        probe = self._seam(payload, "every singer name", "fenced-good")
+        self.assertEqual(probe["outcome"], "damaged", process.stderr)
+        self.assertEqual(probe["sent"], "```sql\nSELECT name FROM singer\n```")
+        self.assertEqual(probe["delivered"], "```sql\nSELECT name FROM singer\n```")
+        self.assertEqual(probe["reference_score"], 1.0)
+        self.assertEqual(probe["score"], 0.0)
+
+    def test_a_pair_that_reads_a_fence_reports_nothing(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            process, payload = self.calibrate(
+                directory, "--task-kind", "code-sql", transform=self.SOUND
+            )
+        probe = self._seam(payload, "every singer name", "fenced-good")
+        self.assertEqual(probe["outcome"], "preserved", process.stderr)
+        self.assertEqual(probe["delivered"], "SELECT name FROM singer")
+
+    def test_the_advisory_never_stops_a_run_and_never_moves_pass(self) -> None:
+        """The mutation the owner asked for by name.
+
+        A bare-SQL agent whose evaluator cannot read a fence is a real finding
+        and not a fault: the model may never send one. So the advisory reports,
+        the authored verdict is untouched, and the exit code stays the authored
+        verdict's - which is what keeps a healthy customer from being stopped
+        by a risk rather than by a defect.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            process, payload = self.calibrate(directory, "--task-kind", "code-sql")
+        self.assertIn("seam_probe_advisory", payload)
+        self.assertTrue(payload["passed"], process.stderr)
+        self.assertEqual(process.returncode, 0, process.stderr)
+
+    def test_both_strings_reach_stderr_even_though_stdout_is_redirected(self) -> None:
+        """The documented invocation redirects stdout into a file."""
+        with tempfile.TemporaryDirectory() as directory:
+            process, _ = self.calibrate(
+                directory, "--task-kind", "code-sql", transform=self.TRUNCATING
+            )
+        self.assertIn("SENT     : ", process.stderr)
+        self.assertIn("DELIVERED: ", process.stderr)
+        self.assertIn("'SELECT stadium_id FROM concert)'", process.stderr)
+
+    def test_a_transform_that_raises_is_a_refusal_and_not_an_unavailable_probe(
+        self,
+    ) -> None:
+        """A crash in the run's own agent code is evidence, not missing evidence."""
+        with tempfile.TemporaryDirectory() as directory:
+            process, payload = self.calibrate(directory, transform=self.RAISING)
+        probe = self._seam(payload, "every singer name", "good")
+        self.assertEqual(probe["outcome"], "refused", process.stderr)
+        self.assertIsNone(probe["unavailable"])
+        self.assertIn("ValueError", probe["error"])
+        self.assertIn("seam_probe_advisory", payload)
+
+    def test_seam_probes_are_refused_against_a_judge(self) -> None:
+        """A judge's probes are provider calls, and nobody approved these."""
+        with tempfile.TemporaryDirectory() as directory:
+            process, _ = self.calibrate(
+                directory, "--kind", "llm-judge", "--task-kind", "code-sql"
+            )
+        self.assertEqual(process.returncode, 2)
+        self.assertIn("nobody approved", process.stderr)
+
+    def test_the_fenced_probe_is_built_only_where_the_shape_is_not_a_guess(
+        self,
+    ) -> None:
+        """Two task kinds, and no table of shapes nobody has asked for."""
+        module = self._module()
+        self.assertEqual(
+            module.fenced_probe_output("SELECT 1", "code-sql"),
+            "```sql\nSELECT 1\n```",
+        )
+        self.assertEqual(
+            module.fenced_probe_output("print(1)", "code"), "```\nprint(1)\n```"
+        )
+        for kind in (
+            "closed-label",
+            "extraction",
+            "free-text",
+            "numeric",
+            "routing",
+            "short-answer",
+            "structured",
+            None,
+        ):
+            with self.subTest(task_kind=kind):
+                self.assertIsNone(module.fenced_probe_output("SELECT 1", kind))
+        for good in (["a", "b"], {"x": 1}, 3, "", "   ", "```sql\nSELECT 1\n```"):
+            with self.subTest(good=good):
+                self.assertIsNone(module.fenced_probe_output(good, "code-sql"))
+
+    def test_the_outcome_ladder_only_reports_right_arriving_as_wrong(self) -> None:
+        """One direction, on purpose.
+
+        A probe the authored phase already scored badly cannot be damaged by
+        delivery - there is nothing to damage - and calling it damaged would
+        report the author's own bad probe as the agent's fault.
+        """
+        module = self._module()
+        thresholds = {"good_minimum": 0.8, "bad_maximum": 0.2}
+        verdict = module.seam_probe_outcome
+        self.assertEqual(
+            verdict(
+                reference_score=1.0,
+                score=0.0,
+                error=None,
+                unavailable=None,
+                thresholds=thresholds,
+            ),
+            "damaged",
+        )
+        self.assertEqual(
+            verdict(
+                reference_score=0.0,
+                score=0.0,
+                error=None,
+                unavailable=None,
+                thresholds=thresholds,
+            ),
+            "preserved",
+        )
+        self.assertEqual(
+            verdict(
+                reference_score=1.0,
+                score=1.0,
+                error=None,
+                unavailable=None,
+                thresholds=thresholds,
+            ),
+            "preserved",
+        )
+        self.assertEqual(
+            verdict(
+                reference_score=1.0,
+                score=None,
+                error="ValueError: x",
+                unavailable=None,
+                thresholds=thresholds,
+            ),
+            "refused",
+        )
+        self.assertEqual(
+            verdict(
+                reference_score=1.0,
+                score=None,
+                error=None,
+                unavailable={"reason": "timeout", "detail": "x"},
+                thresholds=thresholds,
+            ),
+            "unavailable",
+        )
+
+    def test_the_budget_reserves_for_every_seam_probe_it_can_place(self) -> None:
+        """A wait quoted before the flags are chosen has to cover them all."""
+        module = self._module()
+        self.assertEqual(
+            module.DETERMINISTIC_SUPPLEMENTAL_PROBES_PER_CASE,
+            1 + module.SEAM_PROBES_PER_CASE + len(module.EXCEPTION_PROBE_KINDS),
+        )
+        self.assertEqual(
+            module.SEAM_PROBES_PER_CASE,
+            len(module.SEAM_TRANSFORMED_SOURCES) + 1,
+        )
 
 
 if __name__ == "__main__":

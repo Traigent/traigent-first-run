@@ -20,7 +20,7 @@ Select the lowest-complexity method that measures the real task:
 | JSON or structured extraction | Parse/schema gate plus field-level correctness |
 | Numeric value | Numeric comparison with a justified tolerance |
 | Sets or unordered collections | Order-insensitive set comparison |
-| Code or SQL | Composite (`--evaluator-method composite`): a parser gate, then comparison over canonical form - aliases, case and spacing resolved before matching |
+| Code or SQL | Composite (`--evaluator-method composite`): a parser gate, then comparison over canonical form - a markdown code fence, aliases, case and spacing resolved before matching |
 | Tool/action workflow | Final-state or side-effect check in an isolated environment |
 | Retrieval/grounded answer | Citation/grounding checks plus semantic correctness |
 | Summary, explanation, writing, story | Rubric-based LLM judge, optionally preceded by deterministic gates |
@@ -29,8 +29,10 @@ Do not use exact-string comparison where multiple semantically correct answers a
 not use an LLM judge when deterministic product logic can express correctness. Do not optimize a
 metric merely because it is easy to implement.
 
-Canonical form reaches surface: case, whitespace, a trailing semicolon, paren padding, and aliases
-resolved back to the columns they stand for. It does not reach a different join or subquery shape
+Canonical form reaches surface: a markdown code fence, case, whitespace, a trailing semicolon,
+paren padding, and aliases resolved back to the columns they stand for. The fence is named first
+because it is the one an author does not picture: a chat model wraps code in one unless it is told
+otherwise, and sometimes when it is. It does not reach a different join or subquery shape
 that returns the same rows. Write `equivalent_good` as a surface variant the canonical form
 resolves, and record a differently-shaped equivalent as a known coverage gap rather than widening
 the scorer until it passes.
@@ -250,6 +252,37 @@ Read `supplemental_probe_advisory` as unavailable evidence: setup failure, timeo
 exhaustion, or a worker crash prevented one or more generated probes from answering their question.
 It never changes authored PASS. Do not count an unavailable probe as distinguished; inspect or
 rerun it before relying on that supplemental evidence.
+
+### The seam probe
+
+The two sets above are still one half of the wiring. The authored four measure this evaluator
+against strings their author wrote; the generated ones are built from the expected answer, which the
+author also wrote. Neither has been through the step that stands between the model and the
+evaluator - the agent's own extraction or clean-up. Two paid runs were lost in that gap, and in one
+of them the probe set already held the shape that broke it: a `NOT IN` subquery was covered on one
+side of the wiring and never on the other.
+
+So the probes that already exist are put through the step that already exists. Pass the agent's
+reply-to-answer function as `--reply-transform FILE.py:FUNCTION` - one positional argument, the
+model's reply, returning what the evaluator is handed - and omit it where the agent hands its reply
+over unchanged. Pass the run-scoped `--task-kind` as well; on `code` and `code-sql` it adds one more
+probe carrying the case's own good answer inside a markdown code fence. Neither flag buys a provider
+call, and the fenced probe is not an invented fixture: its content is the author's own good answer,
+so the only thing that changed is the wrapper.
+
+At most two probes per case, and one property between them: an answer the authored probes scored
+as right must not arrive as one this evaluator scores as wrong. `damaged` names a probe that did,
+`refused` one the transform or the evaluator raised on, `preserved` the rest. A transform that merely
+changes the string is not damage - trimming, unquoting and case folding all change it and none of
+them changes the verdict, so a check on the string would fire on every well-behaved agent there is.
+
+`seam_probe_advisory` never changes the authored PASS, for the reason the other generated probes do
+not. It is not a verdict on any model either: the content is an answer this evaluator has already
+accepted, so what failed is the delivery. Read `sent` and `delivered` beside each other - both are
+printed on stderr, so a redirected payload cannot hide them - and settle it before the paid run.
+Every trial is delivered through this same step, and configurations that all score a damaged form
+cannot be told apart. Where the damaged step is code this run wrote, the repair is free and SKILL
+stage 7 owns what may be offered around it.
 
 For LLM judges:
 
@@ -561,9 +594,9 @@ the pairing and can have got it wrong. Stated once, here.
 Before the stage starts, say what it does and how long it may take: it runs the user's evaluator
 over a few known-good and known-bad answers to prove it separates them: four probe calls per
 input/expected pair (the authored probes). A deterministic calibration also makes five exception
-probes and, where the expected answer has a distinct ordering, one permutation probe per pair.
-Those advisory probes are still scorer calls, so the default wait reserves for up to ten calls per
-pair. Multiply every call by what one call costs the evaluator and state the number - for a judge,
+probes, up to two seam probes, and, where the expected answer has a distinct ordering, one
+permutation probe per pair. Those advisory probes are still scorer calls, so the default wait
+reserves for up to twelve calls per pair. Multiply every call by what one call costs the evaluator and state the number - for a judge,
 a model call per probe, that is minutes rather than seconds. Finishing matters more than finishing
 fast: an evaluator nobody could measure makes every later number unverifiable.
 
@@ -576,12 +609,12 @@ which the `ADVISORY` line on stderr names.
 onboarding rather than a full-power run: a calibration that has not separated a good answer from a
 bad one in fifteen minutes most probably will not, and the timeout is itself a result to act on.
 The ceiling bounds the wait, not the work. A deterministic matrix needs at least two pairs, and its
-maximum ten calls per pair means the cap already binds at that minimum: the 900-second default is
-45 seconds per possible call rather than the derived 75. A judge remains whole through two pairs;
-at five pairs a deterministic calibration gets 18 seconds per possible call and a judge gets 45;
+maximum twelve calls per pair means the cap already binds at that minimum: the 900-second default
+is 37 seconds per possible call rather than the derived 75. A judge remains whole through two pairs;
+at five pairs a deterministic calibration gets 15 seconds per possible call and a judge gets 45;
 those are cuts against 75 and 90 respectively. Tell a user whose evaluator takes about a minute per call what
-that means for them: even the two-pair deterministic matrix cannot finish all ten possible probes
-per pair inside the default ceiling, and a five-pair matrix cannot finish for either kind. The
+that means for them: even the two-pair deterministic matrix cannot finish all twelve possible
+probes per pair inside the default ceiling, and a five-pair matrix cannot finish for either kind. The
 ceiling is deliberate onboarding scope, not a promise that a slow calibration completes. Their own
 larger `--timeout` is not capped; the ceiling only bounds what this stage chooses on its own.
 

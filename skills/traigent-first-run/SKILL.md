@@ -561,7 +561,10 @@ Follow this order:
    Otherwise, run deterministic calibration only after a `sufficient`
    semantic-coverage verdict. Its path must be fully inspected, must not execute
    candidate-generated code or SQL, and must be local-only and
-   side-effect-free, and runs in the credential-stripped calibration subprocess. When the opening
+   side-effect-free, and runs in the credential-stripped calibration subprocess. Pass the agent's own
+   reply-to-answer step as `--reply-transform`, and the run-scoped kind as `--task-kind`, so the
+   probes are scored as an answer arrives rather than as it was typed;
+   `references/evaluation-and-dataset.md` owns the seam probes they add and what those may claim. When the opening
    gate already produced that fresh result, reuse it here unless the evaluator, cases, semantic
    evidence, or execution path changed; do not execute the same calibration twice merely because
    the flow reached this step. Run here anything the opening gate truthfully deferred and can now
@@ -756,7 +759,10 @@ When this run filled a gap for the walkthrough, or an active cap asks rather tha
 approval also carries the pre-spend card in `references/run-safety.md`: what the gap was and how it
 was filled, absolute paths to what was written, the easiest and hardest rows, what the evaluation
 method counts as correct, and one proceed-or-fix answer. It is content on the approval that already
-stops, never a second pause, and approving the spend is not approving the material.
+stops, never a second pause, and approving the spend is not approving the material. A standing
+`seam_probe_advisory` rides that same approval whether or not the card does: what the evaluator
+scored the answer as written and as delivered, and both strings. This is the last moment the
+delivery costs nothing to fix.
 
 When the opening gate found Traigent already set up here, that approval carries it too, beside the
 figure: what was found, and that this run charges for its own baseline and search whether or not
@@ -861,6 +867,17 @@ no-lift-possible verification run, never as an expected gain. If they decline it
 baseline-only result. An accuracy-only search with walkthrough material requires a workflow-demonstration
 label. A cost objective may proceed at equal accuracy only when materially lower cost remains
 possible; report any gain as cost and still flag weak evidence.
+
+Where that repair is one this run can make for nothing - a fault in code this run wrote, or one
+mended in a working copy that leaves their files untouched - the routes offered are ways to a sound
+measurement, and `references/component-creation.md` picks which of them carries the mark. This
+narrows that rule at one point and replaces none of it: a route whose own description carries the
+diagnosed fault into a later paid stage is not offered at all, marked or unmarked, because lettering
+it makes a known-bad outcome look considered. Nor is stopping a lettered co-equal of a free repair:
+the customer paid for a measurement this run has just shown measured nothing, so no money is
+protected by taking it. Declining stays plainly answerable and is answered
+without reproach: preserve what was measured, report the run as baseline-only, and never suggest
+they were wrong to stop.
 
 Preview the connected step with the final reply-ready line and approval rules in
 `references/run-safety.md`. Its explicit approval remains required before its key, probe, sync, or calls.
