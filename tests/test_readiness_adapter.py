@@ -3615,5 +3615,518 @@ class DuplicatedRowsBuyNoResolutionTests(unittest.TestCase):
         self.assertIn("carries no distinct_rows count", process.stderr)
 
 
+class WhichRowsMayBeSubtractedFromTheComparisonCountTests(unittest.TestCase):
+    """What "the same row" is allowed to mean when it lowers a customer's score.
+
+    `resolved_by_distinct` bounds the comparison count by preflight's count of
+    DIFFERENT rows, and that count is exact-after-normalization. It works: 40
+    whole-row copies planted among 132 questions are found and reported as 100.
+    What it cannot see is a row REWORDED - six questions written out fifty times
+    each as `... (variant N)` are 300 byte-distinct rows, and the card called
+    them a `substantial comparison set` while the line two rows above it said
+    `rows at least 70% similar to another row`.
+
+    The obvious fix is to bound the count on the near-duplicate reading instead.
+    It was built and measured, and it is refused. Every figure below is measured
+    on the fixtures in this class, at 70% Jaccard over three-word runs with an
+    identical expected answer required:
+
+        reworded 300 rows          honest 6     bound says   6   correct
+        120 distinct tickets, raw  honest 120   bound says 120   correct
+        the same 120 under a
+        60-word instruction        honest 120   bound says   4   FALSE RED
+        the same 120 with that
+        text as a SUFFIX           honest 120   bound says   4   FALSE RED
+
+    Four, over 120 genuinely different support tickets: the card would call that
+    dataset `a wiring check, not a score` and raise a ceiling over the run. A
+    false red on ordinary data is worse than a generous number on repetitive
+    data, because the generous number is advisory and the ceiling stops a run.
+
+    What is NOT claimed here is that the separation is impossible. Two repairs
+    clear every fixture above - discounting three-word runs that appear in more
+    than half the corpus, and stripping the shared opening `family_offset`
+    already computes for `dataset-split-family`, whose own docstring calls an
+    instruction prefix "the ordinary case rather than a corner". The first holds
+    at every cut from 0.9 to 0.3 and collapses at 0.1, where the reworded rows
+    go back to reporting all 300 as different; the second clears a prefix and
+    still reports 4 on the same boilerplate moved to the end of the row. Both
+    are one threshold picked against five corpora somebody wrote for this test,
+    and the failure is silent and in the punishing direction, so neither is
+    validated enough to lower a customer's score on. That is the reason this
+    ships no bound - not that no signal exists.
+
+    What ships instead is a CLAUSE. The complaint was a card that contradicted
+    itself, and `facts.near_duplicate_status` was already carried into the
+    scorer and already deducting seven diversity points. Saying what the repeat
+    check found, and what this count did about it, moves no value, raises no
+    ceiling, and cannot false-red whatever the check later becomes.
+    """
+
+    # 34 subjects x 4 measures is 136 phrasings, of which the fixture uses 132.
+    # Written out rather than generated from anything the scorer imports: a
+    # fixture built from the constant an assertion reads is a test that passes
+    # for every value of it.
+    SUBJECTS = (
+        "singers",
+        "albums",
+        "concerts",
+        "stadiums",
+        "countries",
+        "cities",
+        "tracks",
+        "playlists",
+        "labels",
+        "producers",
+        "venues",
+        "tours",
+        "awards",
+        "genres",
+        "instruments",
+        "studios",
+        "engineers",
+        "festivals",
+        "sponsors",
+        "tickets",
+        "refunds",
+        "invoices",
+        "shipments",
+        "returns",
+        "warehouses",
+        "couriers",
+        "suppliers",
+        "contracts",
+        "employees",
+        "shifts",
+        "departments",
+        "budgets",
+        "regions",
+        "currencies",
+    )
+    MEASURES = ("count", "average rating", "total revenue", "earliest date")
+    COLUMNS = {
+        "count": "COUNT(*)",
+        "average rating": "AVG(rating)",
+        "total revenue": "SUM(revenue)",
+        "earliest date": "MIN(created_at)",
+    }
+
+    # Six questions, each written out fifty times with a `(variant N)` suffix
+    # and the identical expected answer - the shape that was reported, and the
+    # one no exact count can see.
+    REWORDED = (
+        (
+            "How many orders were placed by customers in the state of "
+            "California during the last full calendar quarter",
+            "SELECT COUNT(*) FROM orders WHERE state = 'CA'",
+        ),
+        (
+            "What is the total revenue collected from every subscription "
+            "invoice that was paid in the previous financial year",
+            "SELECT SUM(amount) FROM invoices WHERE status = 'paid'",
+        ),
+        (
+            "Which five products generated the largest gross margin across "
+            "all warehouse regions last month",
+            "SELECT product_id FROM sales ORDER BY margin DESC LIMIT 5",
+        ),
+        (
+            "List every employee who has not submitted a timesheet for any "
+            "week since the start of the current year",
+            "SELECT id FROM employees WHERE timesheet_id IS NULL",
+        ),
+        (
+            "What is the average number of days between an order being placed "
+            "and the same order being delivered",
+            "SELECT AVG(delivered_at - placed_at) FROM orders",
+        ),
+        (
+            "Show the monthly count of new support tickets opened by "
+            "enterprise accounts over the past two years",
+            "SELECT date_trunc('month', opened_at) FROM tickets",
+        ),
+    )
+
+    # 120 support tickets, thirty per category, each a different problem a
+    # person would recognise as its own. Not five passes over twenty-four texts
+    # with a week number appended, which is what this fixture was: two rows
+    # differing only in a numeral are answered identically by any classifier,
+    # so the earlier version was itself an instance of the defect and its tests
+    # forbade the scorer from noticing.
+    BILLING = (
+        "my card was charged twice for the same monthly plan",
+        "the invoice pdf will not open in my browser at all",
+        "I was billed after cancelling my subscription last week",
+        "the price on my receipt does not match the checkout page",
+        "please explain the pro rata line on this month statement",
+        "a currency conversion fee appeared that I never agreed to",
+        "our purchase order number is missing from every invoice",
+        "the tax rate applied looks wrong for our registered address",
+        "we need invoices sent to accounts payable and not to me",
+        "the annual plan renewed at a higher rate without warning",
+        "your system charged a card we removed months ago",
+        "the discount code from your sales team was never applied",
+        "billing emails go to a colleague who left the company",
+        "we are on net thirty terms but got a dunning notice",
+        "the seat overage line has no breakdown I can audit",
+        "an unfamiliar charge from a region we do not operate in",
+        "the receipt shows a plan name we have never subscribed to",
+        "payment failed silently and nobody told us for a fortnight",
+        "we want to switch from monthly to annual mid cycle",
+        "the vat number on our invoices is missing a digit",
+        "a credit note was promised in march and never issued",
+        "your billing portal rejects our corporate amex outright",
+        "the usage graph and the invoice disagree by four thousand calls",
+        "we were charged for a workspace that was archived in january",
+        "the first invoice arrived three weeks after the trial ended",
+        "estimated charges in the console never match the final bill",
+        "we cannot download invoices older than twelve months",
+        "the plan comparison page quotes a price the checkout ignores",
+        "our card expires next month and there is no way to update it",
+        "a failed payment locked the account before anyone was emailed",
+    )
+    TECHNICAL = (
+        "the app crashes whenever I open the reporting dashboard",
+        "exports keep timing out on datasets larger than ten megabytes",
+        "single sign on redirects me back to the login screen",
+        "notifications stopped arriving on my phone after the update",
+        "the search box returns nothing even for exact titles",
+        "uploading a csv fails with an unhelpful server error",
+        "webhooks stopped firing at about three in the morning",
+        "the api returns five hundred on any request with a filter",
+        "charts render blank in firefox but fine in chrome",
+        "our nightly sync has been stuck at ninety percent for days",
+        "the mobile app logs out every time it goes to background",
+        "date pickers show the wrong month in australian timezones",
+        "bulk edit silently drops changes past the hundredth row",
+        "the websocket connection drops every ninety seconds",
+        "pdf reports come out with overlapping text in the header",
+        "rate limits trigger far below the documented threshold",
+        "the sandbox environment returns production data occasionally",
+        "keyboard navigation skips the entire left hand menu",
+        "attachments over five megabytes vanish without an error",
+        "the integration with our warehouse stopped authenticating",
+        "scheduled jobs run twice whenever daylight saving shifts",
+        "the audit log is missing every event from last tuesday",
+        "our custom domain shows a certificate warning in safari",
+        "pagination returns the same page for every cursor value",
+        "the editor loses unsaved work when a session token expires",
+        "sorting by date puts december before january every time",
+        "the diff view shows changes that were never made",
+        "importing from the legacy format truncates unicode names",
+        "background workers pile up until the queue has to be flushed",
+        "the health endpoint reports green while the app is down",
+    )
+    ACCOUNT = (
+        "I cannot change the email address on my profile",
+        "two factor codes are rejected even though the clock is right",
+        "please merge the duplicate workspace someone created",
+        "I need to transfer ownership of a project to a colleague",
+        "my teammate cannot see the folder I shared with her",
+        "the seat count on our plan is wrong after an offboarding",
+        "our admin left and nobody else has administrator rights",
+        "invitations expire before new joiners can accept them",
+        "the role picker offers permissions our tier does not include",
+        "deleting a member removed their comments from every thread",
+        "we need to rename the organisation after an acquisition",
+        "sso group mapping puts contractors in the finance group",
+        "the password reset link keeps saying it has already been used",
+        "a departed employee still receives our weekly digest",
+        "we cannot enforce two factor for the whole organisation",
+        "guest accounts can see internal projects they should not",
+        "the activity feed attributes my actions to another user",
+        "moving a project between teams lost all its permissions",
+        "our domain capture claims users we did not invite",
+        "the api key list shows keys nobody in the team recognises",
+        "a suspended account still counts towards our seat limit",
+        "profile photos revert to the default after every login",
+        "we need an export of who accessed what for our auditors",
+        "the invite email lands in spam for everyone on outlook",
+        "changing a workspace slug broke every bookmarked link",
+        "there is no way to see which seats are actually being used",
+        "our security team needs session length shortened to an hour",
+        "the account recovery flow asks for a phone we never gave",
+        "team members added by sso cannot be removed manually",
+        "the ownership transfer completed but the old owner kept access",
+    )
+    REFUND = (
+        "I would like a refund for the annual plan bought yesterday",
+        "we were double charged when renewing two workspaces at once",
+        "the trial converted early and I want the difference back",
+        "a chargeback was raised in error and I want to reverse it",
+        "please refund the overage from last month unexpected spike",
+        "I cancelled within the window and still want my money back",
+        "we paid for twenty seats and only ever activated three",
+        "the outage last quarter should come with a service credit",
+        "a duplicate subscription ran alongside ours for six months",
+        "our finance team paid an invoice that had already been settled",
+        "the upgrade was a mistake made by an intern the same hour",
+        "we want the unused portion back after downgrading early",
+        "a refund was approved in july and has never arrived",
+        "the amount refunded is short by the payment processing fee",
+        "we were billed in dollars after switching to euro pricing",
+        "a promotional month was charged despite the offer letter",
+        "the renewal happened while our cancellation ticket was open",
+        "please refund the sandbox workspace we were told was free",
+        "we paid twice because the first attempt showed as failed",
+        "the enterprise quote was signed lower than what we were charged",
+        "our nonprofit discount was applied a full year too late",
+        "a data migration we never received was billed as a service",
+        "the partial month after termination should not have been billed",
+        "we want the deposit back now that the pilot has ended",
+        "the wrong entity was invoiced and paid it before we noticed",
+        "an add on we disabled kept billing for another two cycles",
+        "the credit from the previous refund was never usable",
+        "we cancelled the trial and were still charged the setup fee",
+        "the annual commitment was cancelled under the thirty day clause",
+        "refund issued to a closed card and nobody can tell us where it went",
+    )
+
+    TICKETS = BILLING + TECHNICAL + ACCOUNT + REFUND
+    CATEGORIES = ("billing", "technical", "account", "refund")
+    # The wrapper a real prompted classification dataset carries on every row.
+    # Sixty words of it, which is ordinary, and it is what makes 120 different
+    # tickets look alike to a measure that reads runs of words.
+    INSTRUCTION = (
+        "You are an experienced customer support triage assistant working for "
+        "a software company that sells a subscription analytics product to "
+        "business teams. Read the following customer support ticket carefully "
+        "and decide which single category it belongs to, choosing only from "
+        "billing, technical, account and refund, and reply with the category "
+        "name on its own with no other words or punctuation. The ticket "
+        "text follows: "
+    )
+    # The sentence the card gains when the repeat check fired. Stated once here
+    # and asserted both ways, because a clause that appears everywhere says as
+    # little as one that appears nowhere.
+    CAVEAT = (
+        "the repeated-rows check found rows at least 70% similar to another "
+        "row, and this count subtracts exact repeats only"
+    )
+
+    @classmethod
+    def _questions(cls) -> list[tuple[str, str]]:
+        asked = [
+            (
+                f"How many {subject} do we have and what is the "
+                f"{measure} across them",
+                f"SELECT {cls.COLUMNS[measure]} FROM {subject}",
+            )
+            for subject in cls.SUBJECTS
+            for measure in cls.MEASURES
+        ]
+        return asked[:132]
+
+    @classmethod
+    def _copied_rows(cls) -> list[dict]:
+        """132 different questions, 40 of them copied whole into the tuning side.
+
+        140 rows to tune on - 100 originals and 40 exact copies of the first
+        forty - and 32 held back. A comparison on that tuning side can resolve
+        100 different examples, and no arithmetic in the scorer is needed to
+        know it: the fixture says which forty were copied.
+        """
+        questions = cls._questions()
+        rows = [
+            {
+                "id": f"tune-{index}",
+                "input": question,
+                "output": answer,
+                "source": "collected",
+                "split": "tuning",
+            }
+            for index, (question, answer) in enumerate(questions[:100])
+        ]
+        rows += [
+            {
+                "id": f"tune-copy-{index}",
+                "input": question,
+                "output": answer,
+                "source": "collected",
+                "split": "tuning",
+            }
+            for index, (question, answer) in enumerate(questions[:40])
+        ]
+        rows += [
+            {
+                "id": f"hold-{index}",
+                "input": question,
+                "output": answer,
+                "source": "collected",
+                "split": "holdout",
+            }
+            for index, (question, answer) in enumerate(questions[100:])
+        ]
+        return rows
+
+    @classmethod
+    def _ticket_rows(cls, instruction: str = "") -> list[dict]:
+        """120 different tickets over four categories, 60 each side of the split.
+
+        Thirty tickets per category, every one of them its own problem, so the
+        honest comparison count is 120 and the honest tuning count is 60. That
+        is the property the tests below rest on, and it is a property of the
+        text rather than of any measure applied to it: no two of these rows can
+        be answered by one another.
+        """
+        return [
+            {
+                "id": f"ticket-{index}",
+                "input": f"{instruction}{ticket}",
+                "output": cls.CATEGORIES[index // 30],
+                "source": "collected",
+                "split": "tuning" if index % 2 == 0 else "holdout",
+            }
+            for index, ticket in enumerate(cls.TICKETS)
+        ]
+
+    @classmethod
+    def _reworded_rows(cls) -> list[dict]:
+        """300 rows spelling six questions, split 150 to tune on / 150 held back."""
+        rows = []
+        for question_index, (question, answer) in enumerate(cls.REWORDED):
+            for copy in range(50):
+                suffix = "" if copy == 0 else f" (variant {copy})"
+                rows.append(
+                    {
+                        "id": f"q{question_index}-v{copy}",
+                        "input": f"{question}{suffix}",
+                        "output": answer,
+                        "source": "collected",
+                        "split": "tuning" if copy < 25 else "holdout",
+                    }
+                )
+        return rows
+
+    def _evidence(self, rows: list[dict]) -> str:
+        with tempfile.TemporaryDirectory() as raw:
+            dataset = _write_jsonl(Path(raw), "dataset.jsonl", rows)
+            score = _score(dataset)
+        return _dataset_subscore(score, "power")["evidence"]
+
+    def _near_duplicate_status(self, rows: list[dict]) -> str:
+        with tempfile.TemporaryDirectory() as raw:
+            dataset = _write_jsonl(Path(raw), "dataset.jsonl", rows)
+            records = _preflight_records(dataset)
+        return next(
+            record["status"]
+            for record in records
+            if record["check"] == "dataset-near-duplicates"
+        )
+
+    def test_whole_row_copies_are_subtracted_from_the_comparison_count(self) -> None:
+        """The mechanism that works, pinned to the sentence a customer reads.
+
+        Forty of the 140 tuning rows are copies, so the tuning side holds 100
+        different examples. Both numbers are asserted, and the band with them,
+        because a bound that quietly stopped subtracting would still print a
+        plausible sentence about a hundred and forty rows.
+        """
+        evidence = self._evidence(self._copied_rows())
+        self.assertIn("140 to tune on / 32 held back", evidence)
+        self.assertIn("40 of them repeat an input already counted", evidence)
+        self.assertIn(
+            "100 different example(s) are what a comparison can resolve", evidence
+        )
+        self.assertIn("100 examples - substantial comparison set", evidence)
+
+    def test_different_questions_sharing_one_answer_key_are_not_repeats(self) -> None:
+        """Reused labels are what a closed-label task IS, not repetition.
+
+        A hundred and twenty tickets over four categories: thirty rows carry
+        each answer, and every one is a different problem a model can get right
+        or wrong on its own. Nothing may be subtracted, and the repeat check
+        does not fire at all on this text - which is what separates this case
+        from the prefixed one below rather than repeating it. So the caveat must
+        be absent here, or it would be a sentence the card prints unconditionally.
+        """
+        rows = self._ticket_rows()
+        self.assertEqual(self._near_duplicate_status(rows), "PASS")
+        evidence = self._evidence(rows)
+        self.assertIn("60 to tune on / 60 held back", evidence)
+        self.assertIn("60 examples - moderate comparison set", evidence)
+        self.assertNotIn("repeat an input already counted", evidence)
+        self.assertNotIn(self.CAVEAT, evidence)
+
+    def test_an_instruction_shared_by_every_row_is_not_repetition(self) -> None:
+        """The same 120 tickets, wrapped the way a prompted dataset wraps them.
+
+        This is the dataset that refused the bound. The similarity check fires
+        on it - correctly, by its own definition, because the rows DO share more
+        than 70% of their word runs - and the tickets underneath are still 120
+        different problems. So the warning is asserted as present and the
+        comparison count as untouched, in one test: the pair of them is the
+        finding, and either alone reads as the other check being broken.
+        """
+        rows = self._ticket_rows(self.INSTRUCTION)
+        self.assertIn(self._near_duplicate_status(rows), ("WARN", "FAIL"))
+        evidence = self._evidence(rows)
+        self.assertIn("60 to tune on / 60 held back", evidence)
+        self.assertIn("60 examples - moderate comparison set", evidence)
+        self.assertNotIn("repeat an input already counted", evidence)
+        # And the card says what was found, on the dataset where saying it costs
+        # a good corpus nothing.
+        self.assertIn(self.CAVEAT, evidence)
+
+    def test_a_reworded_dataset_is_still_scored_on_its_rows(self) -> None:
+        """PINS A VALUE THAT IS KNOWN TO BE WRONG, so that fixing it goes red.
+
+        Six questions in three hundred rows resolve six comparisons, and the
+        tuning side of this fixture resolves six. The card says 150. That is the
+        defect, it is unfixed, and nothing in the repository reproduced it -
+        so a correct bound could have been written and merged with every test
+        green and no sign that this line had moved.
+
+        The band assertion below is therefore NOT a statement that 150 is
+        right. It is a tripwire: change the comparison count for the better and
+        this test fails, which is the notice to come and delete it. What the
+        card must say truthfully today is the second half - the repeat check
+        fired, and this count only subtracts exact repeats - and that half is
+        asserted as a requirement rather than as a tripwire.
+        """
+        rows = self._reworded_rows()
+        self.assertIn(self._near_duplicate_status(rows), ("WARN", "FAIL"))
+        evidence = self._evidence(rows)
+        self.assertIn(self.CAVEAT, evidence)
+        self.assertIn(
+            "150 examples - substantial comparison set",
+            evidence,
+            "the comparison count on a reworded dataset has changed. If it now "
+            "reports the six questions these 300 rows spell, that is the fix "
+            "this class documents as open: delete this tripwire, and check the "
+            "false-red fixtures above still pass.",
+        )
+
+    def test_the_caveat_is_carried_by_the_repeat_check_and_nothing_else(self) -> None:
+        """One switch, both positions, on datasets that differ only in that switch.
+
+        The two ticket fixtures hold the same 120 problems and the same 4
+        answers; the prefixed one is the same text with a wrapper. Preflight's
+        repeat check is what differs, so a clause that follows it must appear on
+        exactly one of them - and a clause bolted to anything else in the
+        payload would appear on both or neither.
+        """
+        plain = self._ticket_rows()
+        wrapped = self._ticket_rows(self.INSTRUCTION)
+        self.assertEqual(self._near_duplicate_status(plain), "PASS")
+        self.assertIn(self._near_duplicate_status(wrapped), ("WARN", "FAIL"))
+        self.assertNotIn(self.CAVEAT, self._evidence(plain))
+        self.assertIn(self.CAVEAT, self._evidence(wrapped))
+        # And it does not depend on anything having been subtracted: the copied
+        # fixture subtracts forty rows and still carries it, because the exact
+        # pass cannot tell the scorer whether the near check found more.
+        self.assertIn(self.CAVEAT, self._evidence(self._copied_rows()))
+
+    def test_the_printed_similarity_line_is_the_one_preflight_decides_on(self) -> None:
+        """The clause quotes a percentage, so it may not carry its own copy of it.
+
+        A literal here would be a fourth home for a number that already has
+        three, and a clause saying 70% over a check that decided at some other
+        figure is a false sentence about the customer's own file.
+        """
+        self.assertIn(f"{MODULE.NEAR_DUPLICATE_PERCENT}% similar", self.CAVEAT)
+        self.assertIn(self.CAVEAT, self._evidence(self._ticket_rows(self.INSTRUCTION)))
+
+
 if __name__ == "__main__":
     unittest.main()
