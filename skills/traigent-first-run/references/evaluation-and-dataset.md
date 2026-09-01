@@ -29,6 +29,12 @@ Do not use exact-string comparison where multiple semantically correct answers a
 not use an LLM judge when deterministic product logic can express correctness. Do not optimize a
 metric merely because it is easy to implement.
 
+Canonical form reaches surface: case, whitespace, a trailing semicolon, paren padding, and aliases
+resolved back to the columns they stand for. It does not reach a different join or subquery shape
+that returns the same rows. Write `equivalent_good` as a surface variant the canonical form
+resolves, and record a differently-shaped equivalent as a known coverage gap rather than widening
+the scorer until it passes.
+
 When the user's existing evaluator is present, preserve it and explain "correct" in one sentence.
 Validate it; do not silently redesign it.
 

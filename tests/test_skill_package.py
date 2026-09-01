@@ -2454,6 +2454,46 @@ class SkillPackageTests(unittest.TestCase):
         # different alias 0.0 on `equivalent_good`.
         self.assertIn("canonical form", row)
 
+    def test_the_canonical_comparison_states_what_it_cannot_reach(self) -> None:
+        """Naming the method is half a route; its edge is the other half.
+
+        The four-probe gate this document mandates asks the author to write an
+        `equivalent_good` - "semantically correct with a different valid
+        surface form" - and then refuses the evaluator when it scores that
+        probe below the good one. An author told only to compare canonical
+        forms has no way to know which equivalents that reaches, so the probe
+        they invent decides whether their run is blocked. Measured, not
+        guessed: a comparison that resolves case, spacing and aliases accepts
+        an alias-renamed equivalent and passes; nothing that compares text
+        accepts a differently-shaped join returning the same rows.
+
+        The last clause is the one that keeps the gate honest. Faced with a
+        red calibration, the cheap move is to widen the scorer until the probe
+        passes, which is the same escape `score_mode` binary is refused for
+        two sections below.
+        """
+        text = " ".join(
+            (SKILL_ROOT / "references" / "evaluation-and-dataset.md")
+            .read_text()
+            .casefold()
+            .split()
+        )
+        for phrase in (
+            "canonical form reaches surface",
+            "aliases resolved back to the columns they stand for",
+            "does not reach a different join or subquery shape",
+            "record a differently-shaped equivalent as a known coverage gap "
+            "rather than widening the scorer until it passes",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(
+                    phrase,
+                    text,
+                    "an author writing the equivalent-good probe has to be "
+                    "told which equivalents the named method reaches, or the "
+                    "probe they pick decides whether the run is blocked",
+                )
+
     def test_every_relative_markdown_link_in_skill_exists(self) -> None:
         text = SKILL.read_text()
         targets = re.findall(r"\[[^\]]+\]\(([^)]+)\)", text)

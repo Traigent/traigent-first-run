@@ -5,8 +5,8 @@ follows-resident-measured: 90_015
 follows-total-measured: 437_285
 resident-ceiling: 90_300
 resident-measured: 90_134
-total-ceiling: 438_400
-total-measured: 438_080
+total-ceiling: 438_700
+total-measured: 438_496
 
 A customer whose project does natural language to SQL was told their task was
 out of scope for this guide, and the run stopped before building anything. The
@@ -34,7 +34,11 @@ document defines: comparing the answer as text scores a correct query carrying a
 different alias zero on `equivalent_good`, and a parser gate on its own scores
 every syntactically valid query one, failing `bad_fails` and `non_constant`. So
 the row now names the method value to pass and the canonicalization that makes
-it pass - measured, not asserted, on both branches and on the replacement.
+it pass - measured, not asserted, on both branches and on the replacement. It
+also says what a canonical form does and does not reach, because the author who
+is not told picks the `equivalent_good` probe that decides whether their own run
+is blocked, and the cheap answer to a red gate is to widen the scorer until it
+goes green.
 
 The rest is depth. The semantic-coverage row names the failure axes a review of
 a query answer covers, in the register its five sibling rows use, where before
