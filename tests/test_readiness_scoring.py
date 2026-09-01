@@ -8984,17 +8984,36 @@ class CodeAndSqlIsScoredLikeAnyOtherTaskKindTests(unittest.TestCase):
     def test_code_sql_is_a_declared_task_kind(self) -> None:
         self.assertIn("code-sql", MODULE.TASK_KINDS)
 
-    def test_a_ruler_that_does_not_run_the_answer_fits_code_sql(self) -> None:
-        fitting = {
-            name
-            for name, profile in MODULE.METHOD_PROFILES.items()
-            if "code-sql" in profile["fits"]
-        }
-        self.assertIn("execution", fitting)
-        self.assertTrue(
-            fitting - {"execution"},
-            "every method fitting code-sql runs the answer, so the guide would "
-            "be offering only the evaluator its own scope stop refuses",
+    def test_every_task_kind_has_a_ruler_that_does_not_run_the_answer(
+        self,
+    ) -> None:
+        """The invariant, over every kind rather than over the one that failed.
+
+        Scoped to `code-sql`, this passed while `code` - a value the CLI help
+        explicitly instructs - was the only kind in the table whose entire
+        fitting set was `execution`. So the guidance could route a Python-code
+        agent at a comparison and the score the guidance mandates would mark
+        that comparison the wrong ruler, leaving the refused call path as the
+        highest-scoring choice on offer. One kind short of the invariant is
+        the same defect as none of it.
+        """
+        for kind in MODULE.TASK_KINDS:
+            fitting = {
+                name
+                for name, profile in MODULE.METHOD_PROFILES.items()
+                if kind in profile["fits"]
+            }
+            with self.subTest(task_kind=kind):
+                self.assertTrue(
+                    fitting - {"execution"},
+                    f"every method fitting {kind} runs the answer, so the "
+                    "guide can only offer the evaluator its own scope stop "
+                    "refuses",
+                )
+        # Never by dropping `execution`'s own fits, which is the other way to
+        # make the line above true and would break the adapter's recorded card.
+        self.assertEqual(
+            MODULE.METHOD_PROFILES["execution"]["fits"], ("code-sql", "code")
         )
 
     def test_a_declared_code_sql_project_is_scored_and_its_fit_is_named(

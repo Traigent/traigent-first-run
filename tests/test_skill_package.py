@@ -2403,6 +2403,133 @@ class SkillPackageTests(unittest.TestCase):
         self.assertEqual(keys, {"name", "description", "license"})
         self.assertIn("license: Apache-2.0", frontmatter)
 
+    def test_the_routing_description_does_not_narrow_the_supported_surface(
+        self,
+    ) -> None:
+        """The `description:` is matched before anything in this package loads.
+
+        Its limit is the evaluator - non-executing comparison - and it used to
+        illustrate that limit with three task families, which reads as the set
+        of tasks the skill is for. An assistant matching a query-writing
+        request against it did not select this skill, so every corrected
+        sentence downstream arrived too late to be read. That is the whole
+        defect at its cheapest point, and it had no pin: reverting this line
+        turned nothing red.
+        """
+        frontmatter = SKILL.read_text().split("---", 2)[1]
+        description = next(
+            line for line in frontmatter.splitlines() if line.startswith("description:")
+        ).casefold()
+        self.assertIn("non-executing comparison evaluators", description)
+        self.assertIn(
+            "query or code text compared rather than run",
+            description,
+            "the routing line has to name an answer shape beyond the three "
+            "families, or it reads as the list of tasks this guide is for",
+        )
+
+    def test_no_offered_evaluation_runs_the_answer_it_is_grading(self) -> None:
+        """The selection table, read as a rule rather than as known bytes.
+
+        The registry entry beside this refuses the two cells this package
+        actually shipped, and that is all a literal refuses: re-routing a code
+        answer to an executing scorer as "Parser gate plus unit or execution
+        tests" is a different string saying the same thing, and it passed.
+        What is checked here is the property - no cell in the table of
+        preferred evaluations may offer grading by running the candidate
+        answer, however it is spelled - because that is a recommendation of
+        the one call path `references/run-safety.md` stops this guide for.
+        """
+        table = (SKILL_ROOT / "references" / "evaluation-and-dataset.md").read_text()
+        section = table.split("## Evaluation selection", 1)[1].split("\n\n", 3)
+        rows = [
+            line
+            for block in section
+            for line in block.splitlines()
+            if line.startswith("|") and not set(line) <= set("|- ")
+        ]
+        self.assertGreater(len(rows), 5, "read no table, so this proves nothing")
+        executing = (
+            "unit test",
+            "execution test",
+            "execution match",
+            "run the answer",
+            "run the query",
+            "run the sql",
+            "compile and run",
+        )
+        for line in rows:
+            offered = line.split("|")[2].casefold() if line.count("|") > 2 else ""
+            for phrase in executing:
+                with self.subTest(row=line.split("|")[1].strip(), phrase=phrase):
+                    self.assertNotIn(
+                        phrase,
+                        offered,
+                        "this table is where an assistant picks a grading "
+                        "method; a cell offering to run the answer sends the "
+                        "customer at the one path that ends the guide",
+                    )
+
+    def test_the_offered_evaluation_names_the_method_value_to_pass(self) -> None:
+        """Prose that describes a ruler but never names it is half a route.
+
+        No guidance document named an `--evaluator-method` value, so an
+        assistant matched the description against `--help` by hand. For a
+        query answer the literal match is `normalized-exact`, which the score
+        calls a poor ruler for it, and the highest-scoring value on offer is
+        `execution` - the call path this guide stops for. Naming the value is
+        the half of the fix that reaches the flag.
+        """
+        rows = (SKILL_ROOT / "references" / "evaluation-and-dataset.md").read_text()
+        row = next(
+            line for line in rows.splitlines() if line.startswith("| Code or SQL |")
+        )
+        self.assertIn("`--evaluator-method composite`", row)
+        # And the property that makes it pass the mandatory four probes: a
+        # comparison that does not canonicalize scores a correct query with a
+        # different alias 0.0 on `equivalent_good`.
+        self.assertIn("canonical form", row)
+
+    def test_the_canonical_comparison_states_what_it_cannot_reach(self) -> None:
+        """Naming the method is half a route; its edge is the other half.
+
+        The four-probe gate this document mandates asks the author to write an
+        `equivalent_good` - "semantically correct with a different valid
+        surface form" - and then refuses the evaluator when it scores that
+        probe below the good one. An author told only to compare canonical
+        forms has no way to know which equivalents that reaches, so the probe
+        they invent decides whether their run is blocked. Measured, not
+        guessed: a comparison that resolves case, spacing and aliases accepts
+        an alias-renamed equivalent and passes; nothing that compares text
+        accepts a differently-shaped join returning the same rows.
+
+        The last clause is the one that keeps the gate honest. Faced with a
+        red calibration, the cheap move is to widen the scorer until the probe
+        passes, which is the same escape `score_mode` binary is refused for
+        two sections below.
+        """
+        text = " ".join(
+            (SKILL_ROOT / "references" / "evaluation-and-dataset.md")
+            .read_text()
+            .casefold()
+            .split()
+        )
+        for phrase in (
+            "canonical form reaches surface",
+            "aliases resolved back to the columns they stand for",
+            "does not reach a different join or subquery shape",
+            "record a differently-shaped equivalent as a known coverage gap "
+            "rather than widening the scorer until it passes",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(
+                    phrase,
+                    text,
+                    "an author writing the equivalent-good probe has to be "
+                    "told which equivalents the named method reaches, or the "
+                    "probe they pick decides whether the run is blocked",
+                )
+
     def test_every_relative_markdown_link_in_skill_exists(self) -> None:
         text = SKILL.read_text()
         targets = re.findall(r"\[[^\]]+\]\(([^)]+)\)", text)
@@ -7213,17 +7340,22 @@ class SkillPackageTests(unittest.TestCase):
         outcome_table = text.split("for skill's semantic-coverage review", 1)[1].split(
             "binding is first", 1
         )[0]
+        # Every row, not just the one that was wrong. Scoping this to the
+        # `code or sql` row left the same sentence free to be written into any
+        # sibling: the inventory's whole left column is answer shapes, so a
+        # scope stop is misplaced in all of them equally.
+        self.assertNotIn(
+            "out of scope",
+            outcome_table,
+            "this inventory says what a review of each answer shape must "
+            "cover; a scope stop written into any of its rows reads as the "
+            "customer's task being unsupported, which is what one run told a "
+            "customer it was",
+        )
         row = next(
             line
             for line in outcome_table.splitlines()
             if line.startswith("| code or sql")
-        )
-        self.assertNotIn(
-            "out of scope",
-            row,
-            "this row says what a review of a code or SQL answer must cover; a "
-            "scope stop written here reads as the customer's task being "
-            "unsupported, which is what one run told a customer it was",
         )
         # It carries coverage classes like every other row, so a query answer is
         # no longer the one shape the review has nothing to say about.
@@ -7248,6 +7380,53 @@ class SkillPackageTests(unittest.TestCase):
                     "not stop, or the stop is read as covering the task",
                 )
 
+    def test_the_spoken_evaluator_kinds_offer_a_route_that_scores(self) -> None:
+        """The glossary is the menu read out loud, not a neutral taxonomy.
+
+        Its own header says it is loaded on demand at the moment of explanation
+        and is "not a stage of the run", so it arrives independently of the
+        stage reference that owns method selection - the corrected row there
+        need not be in context when this list is. The header also says to
+        phrase a user decision from the "ask like this" line, and this entry's
+        line asks the customer how their answers should be graded.
+
+        So this list is what a customer picks from. It named two families this
+        guide refuses - execution match and unit tests - with nothing marking
+        them, and left out the comparison a query or code answer is actually
+        graded by. Every route on offer ended the run; the one that scores was
+        not on it. Same mechanism as the selection table in
+        `references/evaluation-and-dataset.md`, one document further from the
+        stage that would have corrected it.
+        """
+        entry = " ".join(
+            (SKILL_ROOT / "references" / "glossary.md")
+            .read_text()
+            .split("Evaluator (evaluation method, scorer)", 1)[1]
+            .split("Evaluation (grading)", 1)[0]
+            .casefold()
+            .split()
+        )
+        self.assertIn(
+            "comparison over canonical form",
+            entry,
+            "the kinds a customer hears have to include one that scores here, "
+            "or the list is a menu of routes that all end the run",
+        )
+        # Not merely present somewhere in the entry: the two refused families
+        # carry the consequence in their own sentence, so neither can be read
+        # off this list as an available choice.
+        refusing = next(
+            (part for part in entry.split(".") if "execution match" in part), ""
+        )
+        for phrase in ("unit tests", "ends this guide"):
+            with self.subTest(phrase=phrase):
+                self.assertIn(
+                    phrase,
+                    refusing,
+                    "a method this guide stops for is named to the customer "
+                    "without saying so in the same breath",
+                )
+
     def test_execution_evaluators_stop_before_first_run_execution(self) -> None:
         """The scope boundary is explicit, early, and does not invent a product feature."""
         skill_text = SKILL.read_text()
@@ -7260,6 +7439,10 @@ class SkillPackageTests(unittest.TestCase):
         for phrase in (
             "a path that executes or imports candidate output as code, shells out with it, or submits it to a code/sql engine",
             "outside this first-run guide",
+            # The boundary, beside the refusal. This row is resident and the
+            # reference that carries the depth is not, so a run deciding to
+            # stop has the refusal in context and, without this, not its edge.
+            "never the task whose answer is code or sql",
             "stop before execution",
             "manual-containment route",
         ):
@@ -19533,6 +19716,7 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
             (
                 "code or sql | out of scope",
                 "| code | parser/compile gate plus unit or execution tests |",
+                "execution match (run the sql/code and compare results), unit tests,",
             ),
         ),
         (
