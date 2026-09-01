@@ -4,9 +4,9 @@ follows: 0072
 follows-total-measured: 439_390
 follows-resident-measured: 91_085
 resident-ceiling: 92_050
-resident-measured: 92_010
+resident-measured: 92_003
 total-ceiling: 440_550
-total-measured: 440_537
+total-measured: 440_530
 
 Two refusals paid for these bytes, and removing one of them is what funds most
 of the text. The install step offered two routes into the dedicated
