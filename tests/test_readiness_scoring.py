@@ -8916,6 +8916,11 @@ class TheCardSpeaksTheUsersLanguageTests(unittest.TestCase):
         "blocker_lines",
         "render_card",
         "render_markdown",
+        # Added with the block it renders. A renderer whose lines were left out
+        # of this tuple reaches customers with the rules below enforced on
+        # nothing, which is the gap this scan exists to close - so the block is
+        # named here in the same change that writes it, not in a later one.
+        "accepted_route_shape",
         "assumption_sentence",
         "task_fit_evidence",
         "readable_kinds",
@@ -9082,6 +9087,11 @@ class TheCardSpeaksTheUsersLanguageTests(unittest.TestCase):
             # state in this matrix rendering it, which is the gap this scan
             # exists to close.
             replace(plain, agent_source_read=True),
+            # And the state that draws the accepted route, on both surfaces.
+            # Same reason as the line above it: the block says what a customer
+            # should write instead, so it is exactly the text these rules are
+            # for, and a state nothing renders exempts it from all of them.
+            replace(plain, agent_route_unverified=True),
         ]
         return scores
 
@@ -13648,7 +13658,7 @@ class TheRefusedRouteIsShownAnAcceptedOneTests(unittest.TestCase):
             with self.subTest(quoted=number):
                 self.assertIn(fragment, lines[number - 1])
 
-    def _card(self, agent: str, knob: dict) -> str:
+    def _score(self, agent: str, knob: dict):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "agent.py").write_text(agent, encoding="utf-8")
@@ -13658,13 +13668,18 @@ class TheRefusedRouteIsShownAnAcceptedOneTests(unittest.TestCase):
                 selected_agent=root / "agent.py",
                 selected_agent_callable="answer",
             )
-        score = MODULE.score_run(
+        return MODULE.score_run(
             MODULE.DatasetFacts(),
             MODULE.EvaluationFacts(),
             facts,
             dict(MODULE.DEFAULT_WEIGHTS),
         )
-        return MODULE.render_card(score, unicode_ok=False)
+
+    def _card(self, agent: str, knob: dict) -> str:
+        return MODULE.render_card(self._score(agent, knob), unicode_ok=False)
+
+    def _report(self, agent: str, knob: dict) -> str:
+        return MODULE.render_markdown(self._score(agent, knob))
 
     REFUSED_AGENT = (
         "from openai import OpenAI\n"
@@ -13700,6 +13715,36 @@ class TheRefusedRouteIsShownAnAcceptedOneTests(unittest.TestCase):
         for part in MODULE.ACCEPTED_ROUTE_PARTS:
             with self.subTest(part=part):
                 self.assertIn(part, card)
+
+    def test_the_durable_report_carries_it_too(self) -> None:
+        """The report is the copy a reader keeps, so the remedy is in it.
+
+        A remedy that prints in the terminal and is missing from the durable
+        artifact was already a defect in this module once, for the cap
+        remedies. This block is the same kind of content, so both surfaces
+        carry it and both are asserted, or the next reader fixes it twice.
+        """
+        report = self._report(
+            self.REFUSED_AGENT,
+            {
+                "values": ["fast", "slow"],
+                "source_lines": [3],
+                "evidence": "the table this agent selects from",
+            },
+        )
+        self.assertIn("## A settings route this read can follow", report)
+        for line in MODULE.ACCEPTED_ROUTE_AGENT.splitlines():
+            if line.strip():
+                with self.subTest(line=line):
+                    self.assertIn(line, report)
+        for part in MODULE.ACCEPTED_ROUTE_PARTS:
+            with self.subTest(part=part):
+                self.assertIn(part, report)
+        credited = self._report(
+            MODULE.ACCEPTED_ROUTE_AGENT,
+            json.loads(json.dumps(MODULE.ACCEPTED_ROUTE_KNOB))["model"],
+        )
+        self.assertNotIn("## A settings route this read can follow", credited)
 
     def test_nothing_is_printed_where_no_route_was_refused(self) -> None:
         """Two states that must not draw the block, for different reasons.

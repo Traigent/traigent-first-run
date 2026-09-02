@@ -7225,6 +7225,40 @@ def render_markdown(score: ReadinessScore, timestamp: str | None = None) -> str:
         lines.extend(["## What limits how high this can score", ""])
         lines.extend(cap_line(cap) for cap in limiting)
         lines.append("")
+    if score.agent_route_unverified:
+        # In the durable report as well as on the card, and that is this
+        # module's own rule rather than a preference. A remedy printed in the
+        # terminal and missing from the report was already fixed once here for
+        # the cap remedies, on the argument that the report is the copy a
+        # reader keeps. This block is the same kind of content - what to write
+        # instead - so leaving it in the scrollback would re-open the seam that
+        # fix closed, one input over.
+        lines.extend(["## A settings route this read can follow", ""])
+        lines.extend(
+            [
+                "Printed because naming what failed does not say what would "
+                "pass. It is one accepted shape and not the only one, so read "
+                "it for its parts rather than for its names.",
+                "",
+                "```python",
+                *ACCEPTED_ROUTE_AGENT.splitlines(),
+                "```",
+                "",
+                'And the entry that cites it, inside the document\'s "knobs" map:',
+                "",
+                "```json",
+                *json.dumps(ACCEPTED_ROUTE_KNOB, indent=2).splitlines(),
+                "```",
+                "",
+                "Four parts make that route readable, and this check wants all "
+                "four:",
+                "",
+            ]
+        )
+        lines.extend(
+            f"{index}. {part}" for index, part in enumerate(ACCEPTED_ROUTE_PARTS, 1)
+        )
+        lines.append("")
     if score.gaps:
         lines.extend(["## Ranked gaps", ""])
         for gap in score.gaps:
