@@ -25,7 +25,7 @@ import traceback
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, NamedTuple
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -741,30 +741,54 @@ POLARITY_CLAUSE_BREAK = re.compile(
     r"[,;:()]|\s(?:and|but|so|because|which|while|when|if|unless|after|before|"
     r"though|although|yet|then|rather)\s"
 )
-#: How far back a governor can sit and still be read as governing. Not a
-#: sentence: the sentence-wide read is what let one `no` in a subordinate
-#: clause exempt six natural phrasings of real defects.
-POLARITY_ADJACENT = 90
 
 
 def adjacent_runup(flat: str, at: int) -> str:
     """The words that actually govern the clause starting at `at`.
 
-    Bounded three ways, each of which was a false green: by the sentence, by
-    `POLARITY_ADJACENT` characters, and by the last clause break inside that
-    window. The whole-sentence run-up this replaces meant any negator anywhere
-    ahead of a match exempted it, which is how "Present the two outcomes with
-    no default, which reads as a neutral choice" and five phrasings like it
-    passed every content guard in the suite.
+    Bounded by the sentence and then by the last clause break inside it. The
+    whole-sentence run-up this replaces meant any negator anywhere ahead of a
+    match exempted it, which is how "Present the two outcomes with no default,
+    which reads as a neutral choice" and five phrasings like it passed every
+    content guard in the suite.
+
+    **A parenthetical is not a clause break.** A prohibition may carry a
+    qualifying clause inside itself - "No card may, when the second route is
+    priced, end on `Continue?`" - and cutting at the last comma throws the
+    governing `No card may` away and reads the prohibition as an instruction. A
+    comma is the only signal for both, so the two are told apart by what sits
+    in FRONT of the opening one: a subordinate clause that opens a sentence has
+    nothing before it, and a parenthetical bracketed by two commas has the
+    governor. Where there is a governor, it is read together with the clause
+    the parenthetical interrupts.
+
+    A character window used to bound this as well, at a chosen 90, and
+    traigent-first-run#364 records its cliff: the same sentence one adjective
+    apart was green at 85 characters of run-up and red at 91. It is gone rather
+    than re-derived, because within ONE clause the distance back to a governor
+    is not a signal - "no card may" governs the clause it opens however long
+    that clause runs, and truncating a long clause decapitates a real
+    prohibition. What the window additionally bought was a hedge against
+    `POLARITY_CLAUSE_BREAK` missing a boundary and letting two clauses merge;
+    that hedge is given up here, and a missed boundary now reads as one clause.
     """
     start = 0
     for boundary in POLARITY_SENTENCE_BREAK.finditer(flat, 0, at):
         start = boundary.end()
-    window = flat[max(start, at - POLARITY_ADJACENT) : at]
-    cut = 0
-    for boundary in POLARITY_CLAUSE_BREAK.finditer(window):
-        cut = boundary.end()
-    return window[cut:]
+    sentence = flat[start:at]
+    breaks = [
+        (boundary.start(), boundary.end())
+        for boundary in POLARITY_CLAUSE_BREAK.finditer(sentence)
+    ]
+    if not breaks:
+        return sentence
+    opened, closed = breaks[-1]
+    runup = sentence[closed:]
+    if sentence[opened:closed] == ",":
+        earlier = sentence.rfind(",", 0, opened)
+        if earlier > 0 and sentence[:earlier].strip():
+            return f"{sentence[:earlier].strip()} {runup}".strip()
+    return runup
 
 
 def adjacent_tail(flat: str, end: int) -> str:
@@ -777,10 +801,7 @@ def adjacent_tail(flat: str, end: int) -> str:
     instruction, not a predicate that turns it into a description.
     """
     stop = POLARITY_SENTENCE_BREAK.search(flat, end)
-    window = flat[
-        end : stop.start() if stop else min(len(flat), end + POLARITY_ADJACENT)
-    ]
-    window = window[:POLARITY_ADJACENT]
+    window = flat[end : stop.start() if stop else len(flat)]
     boundary = POLARITY_CLAUSE_BREAK.search(window)
     return window[: boundary.start()] if boundary else window
 
@@ -797,6 +818,15 @@ def adjacent_tail(flat: str, end: int) -> str:
 #: has reached this point should end the card with `Shall I go ahead?`" is an
 #: instruction, and it was exempted. What is left is past-tense and specific,
 #: so recording history costs an author one explicit word.
+#:
+#: `once closed on` is also gone. It was added for the closing-question
+#: scanner, whose match BEGINS at `closed` - and the run-up ends where the
+#: match begins, so it could never fire for the caller it was added for. It
+#: read as a control and was not one, which is the class this repository has
+#: been bitten by. It was not provably inert for the other four callers, so
+#: removing it is a behaviour change and belongs here rather than in a merge;
+#: the sweep in `GuardExemptionsAreNarrowEnoughToCatchTheDefectTests` and the
+#: independent one below it are what measure that it cost nothing.
 GUARD_REPORTED = (
     "used to",
     "no longer",
@@ -804,7 +834,6 @@ GUARD_REPORTED = (
     "was read as",
     "were read as",
     "had already",
-    "once closed on",
 )
 #: Predicates that mean the sentence NAMES the defect rather than issuing it.
 #: "A pair offered with no default is that same menu" is the rule; refusing it
@@ -851,10 +880,17 @@ def guard_issues(text: str, match: str) -> bool:
     prose, and where it does, the fix is to say so there and not to add a token
     here.
 
-    The structural counterpart in this file - `route_blocks()`, which counts
-    marks in the blocks the documents actually render - is the shape these
-    should move to, and traigent-first-run#364 tracks that redesign together
-    with the two blind spots `route_blocks()` itself still has.
+    An independent sweep says the same thing with different numbers:
+    `AnIndependentSweepMeasuresWhatTheseGuardsStillMissTests` runs 60 phrasings
+    nobody tuned these guards against and catches 44 of them, with all 16
+    misses named. Both sweeps are measurements of their own sets.
+
+    The structural counterpart in this file is `markdown_route_blocks()` and
+    the checks over it, which read what the documents RENDER and count rather
+    than asking whether a listed phrasing is present. traigent-first-run#364
+    moved everything that is genuinely about shape onto it; what is left here
+    filters the four scanners whose rule is genuinely about vocabulary, and a
+    word list is the right tool for those and the wrong tool for shape.
     """
     flat = " ".join(text.casefold().split())
     needle = " ".join(match.casefold().split())
@@ -916,7 +952,24 @@ def clause_polarity(text: str, clause: str) -> str:
     if not found:
         return "absent"
     answers = {polarity_of(adjacent_runup(flat, at)) for at in found}
-    return answers.pop() if len(answers) == 1 else "mixed"
+    if len(answers) == 1:
+        return answers.pop()
+    # `mixed` only where a MANDATE disagrees with a PROHIBITION. Answering it
+    # for any disagreement made a forbidden clause unquotable outside its own
+    # sentence: "an earlier draft of this section allowed a set of routes to be
+    # compressed into a yes/no" is `unqualified`, and turning the whole
+    # document's answer to `mixed` on it stops an author explaining the rule -
+    # the same class of false red this filter spent a round removing. An
+    # occurrence that neither forbids nor mandates MENTIONS the clause; the
+    # inversion this exists to catch writes a mandate, and that still answers
+    # `mixed`.
+    if "forbids" in answers and "mandates" in answers:
+        return "mixed"
+    if "forbids" in answers:
+        return "forbids"
+    if "mandates" in answers:
+        return "mandates"
+    return "unqualified"
 
 
 def polarity_of(runup: str) -> str:
@@ -940,17 +993,26 @@ def polarity_of(runup: str) -> str:
 
 
 def prohibition_defects(text: str, clauses: tuple[str, ...]) -> list[str]:
-    """Every way `text` fails to forbid all of `clauses` in one governed statement.
+    """Every way `text` writes one of `clauses` somewhere that does not forbid it.
 
-    A list of prohibitions is one sentence with one governor, and reading each
-    item's own run-up cannot see that: the run-up to the third item is ", or ",
-    which governs nothing. Reading the whole sentence instead is what let an
-    unrelated negator forty words back exempt a real defect. So the shape is
-    asserted rather than inferred - one sentence carries all of them, its head
-    forbids, and no occurrence of any of them is written anywhere else.
+    A list of prohibitions has one governor for the whole list, and reading
+    each item's own run-up cannot see that: the run-up to the third item is
+    ", or ", which governs nothing. So each occurrence is read at the HEAD of
+    its own sentence - the earliest position that sentence writes any of these
+    clauses - which is where the governor of a list sits.
+
+    Every occurrence, everywhere. What this replaces asserted a shape instead:
+    exactly one sentence had to carry all of the clauses, and any occurrence
+    outside that sentence was a defect whatever the sentence around it said.
+    Both halves were wrong in the same direction, and traigent-first-run#364
+    records them. Splitting one prohibition into two sentences that each forbid
+    reddened on "N sentences state all of these limits together", and restating
+    one limit elsewhere AS A PROHIBITION reddened with a diagnostic that said
+    the outside occurrence sat where "nothing says it is forbidden" - which was
+    false about the text, because the check never read its polarity. It reads
+    it now, and says what it found.
     """
     flat = " ".join(text.casefold().split())
-    defects: list[str] = []
     missing = [clause for clause in clauses if not clause_occurrences(flat, clause)]
     if missing:
         return [f"{clause!r} is not written here" for clause in missing]
@@ -960,35 +1022,28 @@ def prohibition_defects(text: str, clauses: tuple[str, ...]) -> list[str]:
         sentences.append((at, flat[at : boundary.start()]))
         at = boundary.end()
     sentences.append((at, flat[at:]))
-    governing = [
-        (offset, sentence)
-        for offset, sentence in sentences
-        if all(clause_occurrences(sentence, clause) for clause in clauses)
-    ]
-    if len(governing) != 1:
-        return [
-            f"{len(governing)} sentences state all of these limits together; "
-            "a prohibition over a list is one sentence with one governor"
-        ]
-    offset, sentence = governing[0]
-    head = min(clause_occurrences(sentence, clause)[0] for clause in clauses)
-    polarity = polarity_of(adjacent_runup(flat, offset + head))
-    if polarity != "forbids":
-        defects.append(
-            f"the sentence stating these limits {polarity} them rather than "
-            "forbidding them"
-        )
+    defects: list[str] = []
     for clause in clauses:
-        outside = [
-            at
-            for at in clause_occurrences(flat, clause)
-            if not offset <= at < offset + len(sentence)
-        ]
-        if outside:
-            defects.append(
-                f"{clause!r} is also written outside that sentence, where "
-                "nothing says it is forbidden"
+        for position in clause_occurrences(flat, clause):
+            offset, sentence = next(
+                (offset, sentence)
+                for offset, sentence in reversed(sentences)
+                if offset <= position
             )
+            head = min(
+                found[0]
+                for found in (clause_occurrences(sentence, other) for other in clauses)
+                if found
+            )
+            polarity = polarity_of(adjacent_runup(flat, offset + head))
+            if polarity == "forbids":
+                continue
+            defect = (
+                f"{clause!r} is written in a sentence that {polarity} it "
+                "rather than forbidding it"
+            )
+            if defect not in defects:
+                defects.append(defect)
     return defects
 
 
@@ -1128,6 +1183,409 @@ def prose_statements(text: str) -> list[str]:
         for sentence in re.split(r"(?<=[.!?])\s+", block)
         if sentence.strip()
     ]
+
+
+#: The rendered recommendation mark, spelled the one way the guidance renders
+#: it. Shape needs exactly one word: a mark is only a mark if a reader can see
+#: it, and this is what a reader sees.
+ROUTE_MARK = "(recommended"
+
+#: A fence toggles code on and off. A lettered line inside a code sample is not
+#: a route offered to anybody.
+_ROUTE_FENCE = re.compile(r"^\s*(?:```|~~~)")
+#: EVERY quote marker on the line, not one. `_ROUTE_OPENER` has no `>`
+#: tolerance of its own - the scan trunk carried did, after stripping one -
+#: so stripping a single marker made a route in a nested blockquote
+#: invisible. `(?:>\s?)+` matches what the census already scans with
+#: `(?:\s*>)*`, which is the point: the two have to see the same lines.
+_ROUTE_QUOTE = re.compile(r"^\s*(?:>\s?)+")
+_ROUTE_BULLET = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+")
+#: The leading token of a rendered route, read on a line whose container
+#: markers have already been stripped. Backticks are deliberately absent: a
+#: sentence citing a letter writes `A.` in a code span, and citing a letter is
+#: not offering a route.
+_ROUTE_OPENER = re.compile(r"^\*{0,2}([A-Z])(?:\.|\)|\s*\(|\*{2})")
+
+
+class RouteLine(NamedTuple):
+    """One source line, with its container markers read off rather than guessed."""
+
+    number: int
+    #: `quote`, `list` or `plain`. The first two carry a marker an author typed
+    #: deliberately; the third is where a wrapped sentence can look like a route.
+    container: str
+    content: str
+
+
+class RouteItem(NamedTuple):
+    """One lettered route: its letter, where it starts, and what it says."""
+
+    letter: str
+    line: int
+    container: str
+    text: str
+
+
+class RouteBlock(NamedTuple):
+    """A run of sibling routes, which is the unit the one-shape rule is about.
+
+    One mark per CHOICE cannot be counted on a route seen alone, so every
+    question this model answers is asked of the block.
+    """
+
+    path: Path
+    items: tuple[RouteItem, ...]
+
+    @property
+    def line(self) -> int:
+        return self.items[0].line
+
+    @property
+    def letters(self) -> str:
+        return "".join(item.letter for item in self.items)
+
+    @property
+    def expected_letters(self) -> str:
+        """`A`, `AB`, `ABC` - the letters a block of this length must carry."""
+        return "".join(chr(ord("A") + step) for step in range(len(self.items)))
+
+    @property
+    def marked(self) -> tuple[RouteItem, ...]:
+        return tuple(item for item in self.items if ROUTE_MARK in item.text.casefold())
+
+    @property
+    def where(self) -> str:
+        return f"{self.path.name}:{self.line}"
+
+    @property
+    def outline(self) -> str:
+        """Every item with its source line, for a message a reader can act on.
+
+        `'AAB' != 'ABC'` says a block is malformed and not which line made it
+        so, and the way this block model can produce a surprising `A` is by
+        SWALLOWING a hard-wrapped prose line that begins `A.` into a run of
+        real routes beside it. Naming the lines turns that from a mystifying
+        red into one whose cause is on the screen. It is a diagnostic and not
+        a fix - traigent-first-run#372 carries the fix.
+        """
+        return " | ".join(
+            f"{item.letter}@{self.path.name}:{item.line} {item.text[:56]!r}"
+            for item in self.items
+        )
+
+
+def route_lines(text: str) -> list[RouteLine]:
+    """Every non-fenced line of a document, with its container marker stripped.
+
+    The whole markdown model this file has, and it is deliberately this small.
+    What it does NOT model, stated so the next reader does not assume it does:
+    nested blockquote depth, nested or indented sublists, indented code blocks,
+    HTML blocks, setext headings, link reference definitions, tables, and any
+    emphasis that is not a leading `**`/`__` on the route letter itself. It
+    reads one line at a time and answers one question - is this line quoted, a
+    list item, or plain prose - because that is the only question the route
+    shape rules need.
+    """
+    lines: list[RouteLine] = []
+    fenced = False
+    for number, raw in enumerate(text.splitlines(), 1):
+        if _ROUTE_FENCE.match(raw):
+            fenced = not fenced
+            continue
+        if fenced:
+            continue
+        quote = _ROUTE_QUOTE.match(raw)
+        rest = raw[quote.end() :] if quote else raw
+        bullet = _ROUTE_BULLET.match(rest)
+        content = rest[bullet.end() :] if bullet else rest
+        container = "quote" if quote else ("list" if bullet else "plain")
+        lines.append(RouteLine(number, container, content.strip()))
+    return lines
+
+
+def markdown_route_blocks(path: Path) -> list[RouteBlock]:
+    """Every block of lettered routes one document renders, in order.
+
+    Read off the rendered blocks rather than off a list of examples, which is
+    the point of traigent-first-run#364: a rule pinned to the one example that
+    failed leaves its siblings free to carry the same defect.
+
+    Three questions this answers that a line-by-line scan could not.
+
+    **Is this line a rendered route or a wrapped sentence?** A markdown-block
+    question, and the previous line's blankness is not the answer to it.
+    `component-creation.md` hard-wraps a sentence onto a line beginning
+    `A. One ask means one decision`, and requiring a blank line above an
+    unquoted opener excluded that at the price of not seeing an unquoted route
+    block appended to a paragraph at all. The answer here is the block: a
+    quoted or bulleted line carries a marker an author typed on purpose, and a
+    plain line counts only where it has a lettered SIBLING - one wrapped
+    sentence is prose, a run of them is a route list.
+
+    **Where does a block end?** At content, not at whitespace. Blank lines -
+    unquoted, or the bare `>` that is a blank line inside a blockquote - only
+    suspend a block; the next lettered line resumes it and anything else ends
+    it. So the two equivalent ways of separating two routes render the same
+    block, and a formatting-only reflow of the connected preview no longer
+    splits one two-route block into two blocks of one.
+
+    **What letters does it carry?** Whatever it carries. Items are grouped by
+    adjacency and the letters are recorded rather than enforced, so `A, C` and
+    `A, B, B` reach the caller as the malformed blocks they are instead of
+    being silently split into blocks that each pass.
+
+    Deliberately not modelled: two route lists separated by nothing but blank
+    lines read as one block. Making the bare `>` and the blank line equivalent
+    is what closes the reflow defect, and it costs exactly this - which is
+    visible as a letter sequence that does not run `A, B, C...`, not as
+    silence.
+    """
+    blocks: list[RouteBlock] = []
+    items: list[RouteItem] = []
+    body: list[str] = []
+    separated = False
+
+    def close() -> None:
+        nonlocal body
+        if items:
+            items[-1] = items[-1]._replace(text=" ".join(body))
+        body = []
+
+    def flush() -> None:
+        nonlocal items, separated
+        close()
+        # A single PLAIN route is a wrapped sentence until something makes it a
+        # route list. A single quoted or bulleted one is a rendered element:
+        # prose does not wrap itself onto a line that acquires a `>` or a `-`.
+        if items and (len(items) > 1 or any(i.container != "plain" for i in items)):
+            blocks.append(RouteBlock(path, tuple(items)))
+        items, separated = [], False
+
+    for line in route_lines(path.read_text(encoding="utf-8")):
+        if not line.content:
+            separated = bool(items)
+            continue
+        start = _ROUTE_OPENER.match(line.content)
+        if start:
+            close()
+            items.append(
+                RouteItem(start.group(1), line.number, line.container, line.content)
+            )
+            body = [line.content]
+            separated = False
+            continue
+        if items and not separated:
+            body.append(line.content)
+            continue
+        if items and line.container == "quote" and items[-1].container == "quote":
+            # "Blank lines suspend, content ends" is right ACROSS containers and
+            # wrong INSIDE one. A blockquote holding two routes may hold an
+            # explanatory sentence between them, and ending the block there
+            # splits one two-route choice into two blocks of one - which is
+            # traigent-first-run#364's third defect at the same seam, reached
+            # through the other separator. Inside one blockquote only a change
+            # of container ends the block. The sentence is not appended to any
+            # route either: it is not part of what the customer is offered, and
+            # the register scan reads these bodies.
+            continue
+        flush()
+    flush()
+    return blocks
+
+
+def corpus_route_blocks() -> list[RouteBlock]:
+    """Every route block the conversation-contract corpus renders."""
+    return [
+        block
+        for path in conversation_contract_documents()
+        for block in markdown_route_blocks(path)
+    ]
+
+
+#: Deliberately wider than `_ROUTE_OPENER`: any line whose first token is a
+#: single capital letter, through any number of quote markers, through a list
+#: bullet, and through emphasis or a code span.
+#:
+#: Written separately rather than reused from the parser, because a census
+#: built out of the parser's own regex can only ever report that the parser
+#: agrees with itself. This is the floor the route scan never had: the
+#: per-document floor it replaces was satisfied by ONE block per document, so
+#: a second block the scan missed in the same file cost nothing.
+#:
+#: WIDER has to mean wider on every arm, or the claim in the sentence above is
+#: false where it matters most. `_ROUTE_OPENER` accepts three closers - `.`/`)`,
+#: ` (`, and `**` - so `A (recommended) proceed`, `**A** proceed` and
+#: `A**bold**` are claimed by the parser, and a census that only knew `.`/`)`
+#: could not see them. No such line exists in the corpus today, which is
+#: exactly what makes the omission the kind that is discovered late.
+ROUTE_LETTER_CANDIDATE = re.compile(
+    r"^(?:\s*>)*\s*(?:[-*+]\s+|\d+[.)]\s+)?(?:\*\*|__|\*|_|`)?\s*"
+    r"([A-Z])(?:(?:\*\*|__|\*|_|`)?\s*[.)]|\s*\(|\*\*)"
+)
+
+
+def route_letter_candidates(path: Path) -> list[tuple[int, str, str]]:
+    """Every line in one document that could be read as opening a route.
+
+    `(line number, letter, the stripped line)`. Fenced code is skipped for the
+    same reason the parser skips it.
+    """
+    found: list[tuple[int, str, str]] = []
+    fenced = False
+    for number, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        if _ROUTE_FENCE.match(raw):
+            fenced = not fenced
+            continue
+        if fenced:
+            continue
+        candidate = ROUTE_LETTER_CANDIDATE.match(raw)
+        if candidate:
+            found.append((number, candidate.group(1), raw.strip()))
+    return found
+
+
+#: A letter CITED in prose - "`A.` proceed, marked recommended, and `B.` fix" -
+#: rather than a route rendered for a customer. The code span is the whole
+#: signal, and it is the reason `_ROUTE_OPENER` refuses backticks: a document
+#: that says which letter carries the mark is specifying a shape, not offering
+#: one.
+ROUTE_LETTER_CITATION = re.compile(r"`([A-Z])[.)]`")
+
+
+class RouteRuleApplication(NamedTuple):
+    """One of the choices SKILL.md's one-shape rule says it governs.
+
+    `named_as` is the wording the rule itself uses, and the test below reads
+    that list out of the rule rather than trusting this tuple: a fifth
+    application added to the guidance with no entry here turns the suite red
+    instead of being silently ungoverned.
+    """
+
+    named_as: str
+    path: Path
+    #: A literal on the line the section starts at, and one on the line it ends
+    #: at. Each must occur on exactly one line of its document, which the test
+    #: asserts rather than assumes.
+    opens: str
+    closes: str
+    #: `block` where the document renders the routes for a customer to read;
+    #: `letters` where it specifies the shape in prose by citing the letters.
+    renders: str
+
+
+#: Where each named application of the one-shape rule actually lives. Four
+#: names, five sections: "a creation or repair route" is one rule with two
+#: homes, and the two documents that own it have disagreed before.
+ROUTE_RULE_APPLICATIONS = (
+    RouteRuleApplication(
+        named_as="the task-intent question",
+        path=SKILL,
+        opens="Ask exactly one task-intent question",
+        closes="**STOP and wait for the answer.**",
+        renders="block",
+    ),
+    RouteRuleApplication(
+        named_as="a creation or repair route",
+        path=SKILL_ROOT / "references" / "component-creation.md",
+        opens="What that sounds like, when the agent and the evaluator are both unusable",
+        closes="Keep that closing structure literal",
+        renders="block",
+    ),
+    RouteRuleApplication(
+        named_as="a creation or repair route",
+        path=SKILL_ROOT / "references" / "evaluation-and-dataset.md",
+        opens="When a material limitation is found, offer:",
+        closes="Make objective, reversible repairs",
+        renders="block",
+    ),
+    RouteRuleApplication(
+        named_as="the baseline spend approval",
+        path=SKILL_ROOT / "references" / "run-safety.md",
+        opens="- **Proceed, or fix.**",
+        closes="An asking cap is what this card exists to discharge",
+        renders="letters",
+    ),
+    RouteRuleApplication(
+        named_as="the connected-stage preview",
+        path=SKILL_ROOT / "references" / "run-safety.md",
+        opens="Final reply-ready block.",
+        closes="Route `A` carries the reply-ready line",
+        renders="block",
+    ),
+)
+
+
+#: Where the one-shape rule lists the choices it governs, and where that list
+#: ends. Both bounds are the rule's own punctuation.
+ROUTE_RULE_OPENING = "wherever they are offered named routes - "
+ROUTE_RULE_CLOSING = " - "
+
+
+def route_rule_named_choices(flat: str) -> set[str]:
+    """The choices the one-shape rule names, read out of the rule's sentence.
+
+    A SET, and a leading conjunction stripped. Read as an ordered list this
+    reddened on an Oxford `and` and on the four names being reordered, neither
+    of which changes a rule - which is the class of false red this redesign
+    exists to stop producing.
+
+    Still a comma split, and that is its stated limit: a choice whose NAME
+    contains a comma or a ` - ` would be torn in half. That fails loudly at the
+    caller, which prints both sides, rather than silently dropping a choice.
+    """
+    listed = flat.split(ROUTE_RULE_OPENING, 1)[1].split(ROUTE_RULE_CLOSING, 1)[0]
+    return {
+        re.sub(r"^(?:and|or)\s+", "", item.strip())
+        for item in listed.split(",")
+        if item.strip()
+    }
+
+
+def application_span(application: RouteRuleApplication) -> tuple[int, int]:
+    """The line range one application occupies, or an assertion about why not.
+
+    Raises rather than returning a guess. A section that has been renamed is
+    the case this exists to make loud: the alternative is a range that silently
+    covers nothing, which reads exactly like a document that renders nothing.
+    """
+    lines = application.path.read_text(encoding="utf-8").splitlines()
+    opens = [n for n, line in enumerate(lines, 1) if application.opens in line]
+    closes = [n for n, line in enumerate(lines, 1) if application.closes in line]
+    if len(opens) != 1 or len(closes) != 1 or closes[0] <= opens[0]:
+        raise AssertionError(
+            f"{application.path.name} no longer bounds "
+            f"{application.named_as!r} between {application.opens!r} and "
+            f"{application.closes!r} (opens at {opens}, closes at {closes}); "
+            "the one-shape rule names this choice and nothing now derives "
+            "what it renders"
+        )
+    return opens[0], closes[0]
+
+
+def application_blocks(application: RouteRuleApplication) -> list[RouteBlock]:
+    """The route blocks rendered inside one application's section."""
+    first, last = application_span(application)
+    return [
+        block
+        for block in markdown_route_blocks(application.path)
+        if first <= block.line <= last
+    ]
+
+
+def application_cited_letters(application: RouteRuleApplication) -> str:
+    """The letters one application's section names in prose, deduplicated.
+
+    In first-seen order, so `A.` ... `B.` ... `B.` ... `A.` reads `AB` and a
+    section that started specifying its routes from `B` does not.
+    """
+    first, last = application_span(application)
+    lines = application.path.read_text(encoding="utf-8").splitlines()
+    seen: list[str] = []
+    for line in lines[first - 1 : last]:
+        for letter in ROUTE_LETTER_CITATION.findall(line):
+            if letter not in seen:
+                seen.append(letter)
+    return "".join(seen)
 
 
 RUN_SAFETY = SKILL_ROOT / "references" / "run-safety.md"
@@ -24636,6 +25094,35 @@ class TheAskIsLastAndNamesWhatIsLackingTests(unittest.TestCase):
         "pull the metric and the date out of each alert your dashboard writes"
         is the register this gate exists to produce, and refusing it would push
         the next author away from it.
+
+        **What the escape actually is.** Narrower than the sentence above reads.
+        A customer-facing option is one short phrase and usually carries NO
+        COMMA at all - none of the three phrasings below has one - so for the
+        options this rule governs the comma scoping is a no-op, and what is
+        left is "one trade word, plus a possessive anywhere in the option".
+        That is the whole escape, and saying it any more tightly than that
+        would be describing a scope this code does not have.
+
+        **Why it stays that way.** traigent-first-run#364 finding 5 asks for
+        the possessive to be bound to the trade word's own noun phrase, on the
+        evidence that "map your columns onto the schema the warehouse expects"
+        and "give the canonical form of each of your product names" are both
+        excused with `your` attached to something else. The
+        binding is not available from the syntax, because the honest phrasing
+        directly above has the same shape: in all three the trade word heads
+        one phrase and the possessive modifies a noun inside another. `Pull the
+        METRIC ... out of each alert YOUR dashboard writes` differs from `Give
+        the CANONICAL FORM of each of YOUR product names` only in which of the
+        two the author meant, and no parse recovers that. A proximity rule
+        inverts the answer rather than fixing it - `your` sits three words from
+        `schema` and seven from `metric` - and so does "the possessive must
+        come first".
+
+        So this stays a comma, and the two phrasings above stay named misses in
+        `AnIndependentSweepMeasuresWhatTheseGuardsStillMissTests` rather than
+        being closed by a rule that would red the option this gate got right.
+        Closing it needs a judgement about whose material the trade word names,
+        which is semantics and not shape.
         """
         flat = " ".join(text.casefold().split())
         found = cls._practice_words(flat)
@@ -24651,92 +25138,19 @@ class TheAskIsLastAndNamesWhatIsLackingTests(unittest.TestCase):
 
     @staticmethod
     def _offered_options() -> list[tuple[Path, str, str]]:
-        """Every lettered route or choice the guidance writes out for a reader."""
-        return [
-            (path, letter, text)
-            for path, options in TheAskIsLastAndNamesWhatIsLackingTests.route_blocks()
-            for letter, text in options
-        ]
+        """Every lettered route the guidance renders, flattened for the register rule.
 
-    @staticmethod
-    def route_blocks() -> list[tuple[Path, list[tuple[str, str]]]]:
-        """Every block of lettered routes the guidance writes out, in order.
-
-        Read off the corpus rather than listed, which is the whole point: a
-        rule pinned to the one example that failed leaves its siblings free to
-        carry the same defect, and this package has had exactly that twice.
-
-        Three things widened after review. The corpus is
-        `conversation_contract_documents()`, because the eight-document one
-        leaves README.md - the single most-read file in a public repository -
-        outside every check that owns this distinction. A route no longer has
-        to be inside a blockquote: this package quotes most customer-facing
-        wording, but "most" is not a property a scan may assume, and a route
-        rendered in a list or in plain bold is the same act. And the letters
-        run A-Z rather than A-D, so a fifth route is not silently unscanned.
-
-        Grouped into blocks rather than returned flat, because the mandate is
-        about a SET: one mark per choice cannot be counted on an option seen
-        alone. A block opens on `A` and runs while the letters keep ascending.
+        The blocks themselves are parsed once, at module scope, by
+        `markdown_route_blocks()`. This class used to own that parser and read
+        it line by line; traigent-first-run#364 moved it to a block model,
+        because "is this line a rendered route or a wrapped sentence" is a
+        question about the block a line sits in.
         """
-        opener = re.compile(
-            r"^\s*(?:>\s?)?(?:[-*]\s+)?\*{0,2}([A-Z])(?:\.|\)|\s*\(|\*{2})"
-        )
-        quoted = re.compile(r"^\s*>\s?(.*)$")
-        found: list[tuple[Path, list[tuple[str, str]]]] = []
-        for path in conversation_contract_documents():
-            options: list[tuple[str, str]] = []
-            letter: str | None = None
-            body: list[str] = []
-
-            def close() -> None:
-                nonlocal letter, body
-                if letter is not None:
-                    options.append((letter, " ".join(body)))
-                letter, body = None, []
-
-            def flush() -> None:
-                nonlocal options
-                if options:
-                    found.append((path, options))
-                options = []
-
-            # A route opener has to START something. Dropping the blockquote
-            # requirement means a wrapped prose line can begin "A. One ask
-            # means one decision", and component-creation.md has exactly that
-            # line - so an unquoted opener counts only where the line before it
-            # was blank or was itself part of this block. Inside a blockquote
-            # the marker already says the line is customer-facing wording.
-            opens = True
-            for line in path.read_text(encoding="utf-8").splitlines():
-                stripped = line.strip()
-                quote = quoted.match(line)
-                text = quote.group(1).strip() if quote else stripped
-                start = opener.match(text) if text else None
-                if start and (quote or opens or letter is not None):
-                    close()
-                    expected = chr(ord("A") + len(options))
-                    if start.group(1) != expected:
-                        flush()
-                    letter, body = start.group(1), [text]
-                    opens = False
-                    continue
-                opens = not stripped
-                if not text:
-                    # A bare `>` is a blank line INSIDE a blockquote: it ends
-                    # the option, never the block. Treating it as the end of
-                    # the block is what split every two-route template in this
-                    # package into two blocks of one, which is exactly the
-                    # shape a one-mark-per-choice count cannot be taken on.
-                    close()
-                    if not quote:
-                        flush()
-                    continue
-                if letter is not None:
-                    body.append(text)
-            close()
-            flush()
-        return found
+        return [
+            (block.path, item.letter, item.text)
+            for block in corpus_route_blocks()
+            for item in block.items
+        ]
 
     def test_the_register_check_reads_both_of_the_options_that_were_written(
         self,
@@ -24773,27 +25187,52 @@ class TheAskIsLastAndNamesWhatIsLackingTests(unittest.TestCase):
     ) -> None:
         """Scoped to every offered option, not to the one that was wrong."""
         options = self._offered_options()
-        # The floor is derived rather than typed. A constant 3 says nothing
-        # about whether the scan still reaches the routes the documents write:
-        # it stays satisfied while the scan silently narrows to one file. Every
-        # document that renders a recommendation mark on a route has to appear
-        # in what the scan found, and the corpus supplies that list.
-        renders_a_route = {
-            path
-            for path in conversation_contract_documents()
-            if "(recommended" in path.read_text(encoding="utf-8").casefold()
-        }
+        # The floor is per CHOICE, not per document. It used to be "every
+        # document that renders a recommendation mark appears in what the scan
+        # found", and one block per document satisfied that - so a second block
+        # the scan missed in the same file cost nothing, which is
+        # traigent-first-run#364's second defect. Every named application of
+        # the one-shape rule that renders a block has to contribute an option
+        # here, and the per-candidate census in
+        # `OneShapeAndOneMarkForEveryChoiceTests` covers the lines no
+        # application claims.
+        rendering = [
+            application
+            for application in ROUTE_RULE_APPLICATIONS
+            if application.renders == "block"
+        ]
         self.assertTrue(
-            renders_a_route,
-            "no document renders a marked route, so this scan has nothing to "
-            "be measured against",
+            rendering,
+            "no choice the one-shape rule names renders a route block, so "
+            "this scan has nothing to be measured against",
         )
-        self.assertEqual(
-            renders_a_route - {path for path, _, _ in options},
-            set(),
-            "a document renders a marked route that this scan did not find, "
-            "so the scan has stopped matching the way routes are written",
-        )
+        for application in rendering:
+            first, last = application_span(application)
+            rendered = [
+                item
+                for block in corpus_route_blocks()
+                if block.path == application.path and first <= block.line <= last
+                for item in block.items
+            ]
+            with self.subTest(
+                choice=application.named_as, document=application.path.name
+            ):
+                self.assertTrue(
+                    rendered,
+                    "this choice renders no route block at all, so the scan "
+                    "has stopped matching the way this document writes routes",
+                )
+                self.assertEqual(
+                    [
+                        item.letter
+                        for item in rendered
+                        if (application.path, item.letter, item.text) not in options
+                    ],
+                    [],
+                    "this choice renders a route the register scan did not "
+                    "reach, so an option is offered to a customer that nothing "
+                    "here reads",
+                )
         for path, letter, text in options:
             with self.subTest(document=path.name, option=letter):
                 self.assertEqual(
@@ -25314,48 +25753,505 @@ class OneShapeAndOneMarkForEveryChoiceTests(unittest.TestCase):
                     "run fills in for itself",
                 )
 
+    @staticmethod
+    def _parsed(markdown: str) -> list[tuple[str, int]]:
+        """One markdown fixture, parsed, as `(letters, marks)` per block."""
+        with tempfile.TemporaryDirectory() as folder:
+            page = Path(folder) / "probe.md"
+            page.write_text(markdown, encoding="utf-8")
+            return [
+                (block.letters, len(block.marked))
+                for block in markdown_route_blocks(page)
+            ]
+
+    @staticmethod
+    def _route_letter_census(
+        paths: list[Path],
+    ) -> tuple[list[tuple[Path, int]], list[tuple[str, int, str]]]:
+        """Every line that could open a route, split into claimed and not.
+
+        The wider scan is `route_letter_candidates()`, written independently of
+        the parser's own opener so that a census cannot report that the parser
+        agrees with itself. Both halves are returned because an empty second
+        half reads the same whether everything is claimed or nothing was
+        looked at, and only the first half can tell those apart.
+        """
+        claimed = {
+            (block.path, item.line)
+            for path in paths
+            for block in markdown_route_blocks(path)
+            for item in block.items
+        }
+        unclaimed = [
+            (path.name, number, line)
+            for path in paths
+            for number, _, line in route_letter_candidates(path)
+            if (path, number) not in claimed
+        ]
+        return sorted(claimed, key=lambda found: (found[0].name, found[1])), unclaimed
+
     def test_every_written_route_block_marks_exactly_one_route(self) -> None:
         """The mandate, derived from the blocks rather than pinned as prose.
 
         "exactly one is marked recommended" was asserted as a substring of
         SKILL.md and nowhere else, so nothing in this suite ever counted a mark
         in a rendered block. This reads the blocks the documents actually
-        write and counts.
+        write and counts, and it asks the other half of the same mandate: the
+        letters have to run from `A` with no gap and no repeat.
         """
-        blocks = TheAskIsLastAndNamesWhatIsLackingTests.route_blocks()
+        blocks = corpus_route_blocks()
         self.assertTrue(blocks, "no written route blocks were found to check")
-        for path, options in blocks:
-            marked = [text for _, text in options if "(recommended" in text.casefold()]
-            with self.subTest(
-                document=path.name, routes="".join(letter for letter, _ in options)
-            ):
+        for block in blocks:
+            with self.subTest(document=block.where, routes=block.letters):
                 self.assertEqual(
-                    len(marked),
+                    len(block.marked),
                     1,
                     "this block of routes does not carry exactly one "
                     "recommendation, which is the shape SKILL.md states for "
                     "every named-route choice this run offers",
                 )
+                self.assertEqual(
+                    block.letters,
+                    block.expected_letters,
+                    "this block's routes are not lettered contiguously from "
+                    "`A`, which is the first half of the same shape rule. A "
+                    "repeated leading letter is usually a hard-wrapped prose "
+                    "line swallowed into the block beside it - "
+                    "traigent-first-run#372. The block reads: "
+                    f"{block.outline}",
+                )
 
-    def test_the_route_block_count_reads_a_marked_block_and_an_unmarked_one(
+    def test_the_block_parser_reads_the_shape_and_not_the_whitespace(self) -> None:
+        r"""The parser, probed on the three defects traigent-first-run#364 reproduced.
+
+        Every fixture is markdown handed to the parser directly, with the
+        expected parse written out beside it rather than computed from
+        anything the parser reads.
+        """
+        # 1. An unquoted block that does not open a paragraph. On trunk this
+        #    was not found AT ALL, so nothing ever noticed it carries no mark;
+        #    inserting a blank line after the lead-in found the same block and
+        #    correctly reddened it. Both spellings now render the same block.
+        without_blank = "Offer two routes:\n**A.** proceed\n**B.** fix\n"
+        with_blank = "Offer two routes:\n\n**A.** proceed\n**B.** fix\n"
+        self.assertEqual(self._parsed(without_blank), [("AB", 0)])
+        self.assertEqual(self._parsed(with_blank), [("AB", 0)])
+
+        # 2. A formatting-only reflow. A bare `>` between two quoted routes and
+        #    an unquoted blank line between them are the same rendered block;
+        #    on trunk the second split it into two blocks of one, so `A` kept
+        #    the mark and passed and `B` had none and failed.
+        bare_marker = (
+            "> **A. proceed** *(recommended - it is priced)*\n"
+            "> Reply `continue` and I will go on.\n"
+            ">\n"
+            "> **B. fix**\n"
+            "> Reply `fix` and I will repair it first.\n"
+        )
+        blank_line = bare_marker.replace("\n>\n", "\n\n")
+        self.assertNotEqual(bare_marker, blank_line)
+        self.assertEqual(self._parsed(bare_marker), [("AB", 1)])
+        self.assertEqual(self._parsed(blank_line), [("AB", 1)])
+
+        # 3. And the false positive the blank-line requirement was bought with.
+        #    A hard-wrapped sentence landing on a line that begins `A.` is
+        #    prose, and it stays prose because it has no lettered sibling.
+        wrapped = (
+            "the question was not after the standing line but inside route\n"
+            "A. One ask means one decision in the whole message.\n"
+        )
+        self.assertEqual(self._parsed(wrapped), [])
+        # The same line inside a blockquote IS a rendered route: a wrapped
+        # sentence does not acquire a `>`.
+        self.assertEqual(self._parsed("> A. One ask means one decision.\n"), [("A", 0)])
+
+        # The letters are recorded and not enforced, so a gap and a repeat
+        # reach the caller as the malformed blocks they are rather than as two
+        # blocks that each pass.
+        self.assertEqual(self._parsed("\n**A.** one\n**C.** three\n"), [("AC", 0)])
+        self.assertEqual(
+            self._parsed("\n**A.** one\n**B.** two\n**B.** again\n"), [("ABB", 0)]
+        )
+        # Content ends a block; whitespace only suspends it.
+        self.assertEqual(
+            self._parsed("\n**A.** one\n\nSomething else entirely.\n\n**B.** two\n"),
+            [],
+        )
+        # A fenced sample is not rendered prose and offers nobody a route.
+        self.assertEqual(self._parsed("```\nA. proceed\nB. fix\n```\n"), [])
+
+        # 4. An explanatory sentence between two routes INSIDE the blockquote.
+        #    "Blank lines suspend, content ends" is right across containers and
+        #    wrong inside one: this is defect 3 again, reached through the
+        #    other separator, and it split one two-route choice into two blocks
+        #    of one. A paragraph explaining a choice is written next to the
+        #    choice, so this shape is ordinary rather than exotic.
+        explained = (
+            "> **A. proceed** *(recommended - it is priced)*\n"
+            "> Reply `continue` and I will go on.\n"
+            ">\n"
+            "> Either way this run is bounded, and priced before it starts.\n"
+            ">\n"
+            "> **B. fix**\n"
+            "> Reply `fix` and I will repair it first.\n"
+        )
+        self.assertEqual(self._parsed(explained), [("AB", 1)])
+        # And the sentence is not folded into either route: the register scan
+        # reads these bodies, and prose about a choice is not part of it.
+        with tempfile.TemporaryDirectory() as folder:
+            page = Path(folder) / "explained.md"
+            page.write_text(explained, encoding="utf-8")
+            (block,) = markdown_route_blocks(page)
+            self.assertNotIn("Either way", block.items[0].text)
+            self.assertNotIn("Either way", block.items[1].text)
+
+        # 5. A nested blockquote. `_ROUTE_OPENER` carries no `>` tolerance of
+        #    its own, so stripping a single marker made these invisible.
+        nested = "> > **A. proceed** *(recommended)*\n" "> >\n" "> > **B. fix**\n"
+        self.assertEqual(self._parsed(nested), [("AB", 1)])
+
+        # The container change still ends a block: unquoted prose after a
+        # quoted block is not part of it, and does not keep it open.
+        self.assertEqual(
+            self._parsed(
+                "> **A. proceed** *(recommended)*\n"
+                "\n"
+                "Route `A` carries the reply-ready line.\n"
+                "\n"
+                "> **B. fix**\n"
+            ),
+            [("A", 1), ("B", 0)],
+        )
+
+    def test_the_route_mark_is_counted_where_a_reader_would_see_it(self) -> None:
+        """The counter itself, on blocks whose answer is written out here."""
+        self.assertEqual(
+            self._parsed(
+                "> **A. proceed** *(recommended - it is priced)*\n> **B. fix**\n"
+            ),
+            [("AB", 1)],
+        )
+        self.assertEqual(self._parsed("> **A. proceed**\n> **B. fix**\n"), [("AB", 0)])
+        self.assertEqual(
+            self._parsed(
+                "> **A. proceed** *(recommended)*\n> **B. fix** *(recommended)*\n"
+            ),
+            [("AB", 2)],
+        )
+
+    #: Lines that open with a route letter and are NOT routes, named rather
+    #: than left as a silent residue. The first three are sentences CITING a
+    #: letter, which is what a document does when it specifies a shape instead
+    #: of offering one; the fourth is the hard-wrapped sentence that made the
+    #: trunk scan require a blank line above an unquoted opener.
+    #:
+    #: Each entry is asserted to still match exactly one unclaimed candidate,
+    #: so an entry that has rotted fails rather than sitting here as dead text.
+    PROSE_LETTER_LINES = (
+        ("component-creation.md", "`A.` and `B.`, then the unnumbered"),
+        ("run-safety.md", "`B.` carries the mark, `A.` proceed stays offered"),
+        ("run-safety.md", "`C.` is stopping; every one of them keeps a letter"),
+        ("component-creation.md", "A. One ask means one decision in the whole message"),
+    )
+
+    def test_every_line_that_could_open_a_route_is_claimed_or_named(self) -> None:
+        """Per-candidate coverage, replacing a floor that counted documents.
+
+        The floor this replaces was "every document that renders a mark appears
+        in what the scan found", and one block per document satisfied it - so a
+        second block the scan missed in the same file cost nothing, which is
+        how #364's first defect stayed invisible even after it was written
+        into a document this suite scans. This walks a deliberately wider scan
+        than the parser's own opener and requires every line it turns up to be
+        claimed by a parsed block or named above with its reason.
+        """
+        documents = conversation_contract_documents()
+        claimed, unclaimed = self._route_letter_census(documents)
+        self.assertTrue(
+            claimed,
+            "no route line was claimed by any block, so this census is "
+            "measuring a scan that has stopped running",
+        )
+        for document, fragment in self.PROSE_LETTER_LINES:
+            with self.subTest(named=fragment[:40]):
+                self.assertEqual(
+                    len(
+                        [
+                            number
+                            for name, number, line in unclaimed
+                            if name == document and fragment in line
+                        ]
+                    ),
+                    1,
+                    "this named prose line no longer matches exactly one "
+                    "unclaimed candidate, so the registry above has rotted "
+                    "and is no longer describing this corpus",
+                )
+        # Parity, which is what "deliberately wider" has to MEAN. A census that
+        # cannot see a shape the parser claims reports that shape as absent,
+        # and an absent line is indistinguishable from a clean corpus.
+        for document in documents:
+            seen = {number for number, _, _ in route_letter_candidates(document)}
+            for number, path in ((n, d) for d, n in claimed if d == document):
+                with self.subTest(parity=f"{path.name}:{number}"):
+                    self.assertIn(
+                        number,
+                        seen,
+                        "the parser claims this line as a route and the "
+                        "candidate census cannot see it, so the census is "
+                        "narrower than the scan it is the floor for",
+                    )
+        residue = [
+            (document, number, line)
+            for document, number, line in unclaimed
+            if not any(
+                document == name and fragment in line
+                for name, fragment in self.PROSE_LETTER_LINES
+            )
+        ]
+        self.assertEqual(
+            residue,
+            [],
+            "these lines open with a route letter and no parsed block claims "
+            "them, so either the guidance renders a route this scan no longer "
+            "reaches or the line is prose and belongs in PROSE_LETTER_LINES",
+        )
+
+    def test_the_candidate_census_reports_a_route_no_block_claims(self) -> None:
+        """The census, probed in both directions on documents it is handed.
+
+        A floor that cannot go red is the shape this repository has been bitten
+        by, and a census reports an empty list both when everything is claimed
+        and when it has stopped looking.
+        """
+        with tempfile.TemporaryDirectory() as folder:
+            claimed_page = Path(folder) / "claimed.md"
+            claimed_page.write_text(
+                "> **A. proceed** *(recommended)*\n> **B. fix**\n", encoding="utf-8"
+            )
+            claimed, unclaimed = self._route_letter_census([claimed_page])
+            self.assertEqual([number for _, number in claimed], [1, 2])
+            self.assertEqual(unclaimed, [])
+
+            prose_page = Path(folder) / "prose.md"
+            prose_page.write_text(
+                "the question was not after the standing line but inside route\n"
+                "A. One ask means one decision in the whole message.\n",
+                encoding="utf-8",
+            )
+            claimed, unclaimed = self._route_letter_census([prose_page])
+            self.assertEqual(claimed, [])
+            self.assertEqual(
+                [(name, number) for name, number, _ in unclaimed],
+                [("prose.md", 2)],
+            )
+
+    def test_the_census_sees_every_opener_shape_the_parser_claims(self) -> None:
+        """The parity above, on the arms the corpus happens not to write.
+
+        `_ROUTE_OPENER` accepts three closers - `.`/`)`, ` (`, and `**` - and
+        the census knew only the first, so `A (recommended) proceed`,
+        `**A** proceed` and `A**bold**` were claimed by the parser and
+        invisible to its floor. No such line exists in the corpus, which is
+        precisely why nothing would have failed: a latent hole in a floor is
+        found by writing the shape down, not by scanning a corpus that does
+        not contain it.
+        """
+        for markdown, letters in (
+            ("> **A.** proceed *(recommended)*\n> **B.** fix\n", "AB"),
+            ("> A) proceed *(recommended)*\n> B) fix\n", "AB"),
+            ("> A (recommended) proceed\n> B (unmarked) fix\n", "AB"),
+            ("> **A** proceed *(recommended)*\n> **B** fix\n", "AB"),
+            ("> A**proceed** *(recommended)*\n> B**fix**\n", "AB"),
+        ):
+            with self.subTest(opener=markdown.splitlines()[0]):
+                with tempfile.TemporaryDirectory() as folder:
+                    page = Path(folder) / "arm.md"
+                    page.write_text(markdown, encoding="utf-8")
+                    blocks = markdown_route_blocks(page)
+                    self.assertEqual(
+                        "".join(block.letters for block in blocks),
+                        letters,
+                        "this opener shape is no longer parsed as a route "
+                        "block, so the fixture below proves nothing",
+                    )
+                    claimed = {item.line for block in blocks for item in block.items}
+                    seen = {number for number, _, _ in route_letter_candidates(page)}
+                    self.assertEqual(
+                        claimed - seen,
+                        set(),
+                        "the parser claims a line the candidate census cannot "
+                        "see, so a route written this way would be invisible "
+                        "to the floor that is supposed to catch it",
+                    )
+
+    def test_every_choice_the_one_shape_rule_names_resolves_to_a_shape(self) -> None:
+        """Per-application coverage, read out of the rule's own sentence.
+
+        The rule names four choices it governs and nothing derived what any of
+        them renders, so a document that stopped rendering one was not red - it
+        was uncovered, and a floor over documents cannot tell those apart. The
+        list is parsed out of the rule rather than typed here, so a fifth
+        application added to the guidance with no entry in
+        `ROUTE_RULE_APPLICATIONS` fails this test instead of going ungoverned.
+        """
+        skill = self._flat(SKILL)
+        # Not `assertIn` on the flattened document: its failure message is the
+        # haystack, and this haystack is 89,506 characters. An excerpt around
+        # the phrase this is looking for says more and fits on a screen.
+        anchor = skill.find("offered named routes")
+        excerpt = (
+            skill[max(0, anchor - 60) : anchor + 200] if anchor >= 0 else skill[:200]
+        )
+        self.assertTrue(
+            ROUTE_RULE_OPENING in skill,
+            f"SKILL.md no longer opens the one-shape rule with "
+            f"{ROUTE_RULE_OPENING!r}, so the choices it names cannot be read "
+            f"out of it. Nearest text: {excerpt!r}",
+        )
+        named = route_rule_named_choices(skill)
+        registered = {application.named_as for application in ROUTE_RULE_APPLICATIONS}
+        self.assertEqual(
+            named,
+            registered,
+            "the one-shape rule names a choice that no entry in "
+            "ROUTE_RULE_APPLICATIONS resolves, or resolves one it does not "
+            "name; either way nothing derives what that choice renders",
+        )
+        for application in ROUTE_RULE_APPLICATIONS:
+            with self.subTest(
+                application=application.named_as, document=application.path.name
+            ):
+                first, last = application_span(application)
+                self.assertLess(first, last)
+                if application.renders == "block":
+                    blocks = application_blocks(application)
+                    self.assertEqual(
+                        len(blocks),
+                        1,
+                        "this choice renders no route block, or renders more "
+                        "than one, so the shape the rule states for it is not "
+                        "derivable from what the document writes",
+                    )
+                    self.assertEqual(
+                        blocks[0].letters,
+                        blocks[0].expected_letters,
+                        "this choice renders routes that are not lettered "
+                        f"contiguously from `A`. The block reads: "
+                        f"{blocks[0].outline}",
+                    )
+                    self.assertEqual(
+                        len(blocks[0].marked),
+                        1,
+                        "this choice renders a route block that does not "
+                        "carry exactly one mark, which contradicts the rule "
+                        "SKILL.md states for it",
+                    )
+                else:
+                    self.assertEqual(
+                        application_blocks(application),
+                        [],
+                        "this choice now renders a route block, so it should "
+                        "be checked as one rather than as a prose citation",
+                    )
+                    cited = application_cited_letters(application)
+                    self.assertTrue(
+                        cited,
+                        "this choice specifies its routes in prose and cites "
+                        "no letters, so nothing says what shape it specifies",
+                    )
+                    self.assertEqual(
+                        cited,
+                        "".join(chr(ord("A") + step) for step in range(len(cited))),
+                        "the letters this choice cites do not run from `A` "
+                        "without a gap, which is the shape the rule states",
+                    )
+
+    def test_the_rule_sentence_is_read_as_a_set_and_not_as_a_sequence(
         self,
     ) -> None:
-        """The counter above, probed both ways on invented blocks."""
-        marked = [
-            ("A", "**A. proceed** *(recommended - it is priced)*"),
-            ("B", "**B. fix**"),
-        ]
-        unmarked = [("A", "**A. proceed**"), ("B", "**B. fix**")]
-        doubled = [
-            ("A", "**A. proceed** *(recommended)*"),
-            ("B", "**B. fix** *(recommended)*"),
-        ]
-        count = lambda options: len(  # noqa: E731
-            [text for _, text in options if "(recommended" in text.casefold()]
+        """The list parse, probed on invented sentences rather than on SKILL.md.
+
+        Read as an ordered list, this reddened on an Oxford `and` and on the
+        four names being reordered - two edits that change no rule, which is
+        the false-red class this redesign exists to stop producing. Read as a
+        set, a name that is ADDED or REMOVED still fails, which is the whole
+        job.
+        """
+        shipped = (
+            "wherever they are offered named routes - the task-intent "
+            "question, a creation or repair route, the baseline spend "
+            "approval, the connected-stage preview - the routes are lettered "
+            "from `a`."
         )
-        self.assertEqual(count(marked), 1)
-        self.assertEqual(count(unmarked), 0)
-        self.assertEqual(count(doubled), 2)
+        four = {
+            "the task-intent question",
+            "a creation or repair route",
+            "the baseline spend approval",
+            "the connected-stage preview",
+        }
+        self.assertEqual(route_rule_named_choices(shipped), four)
+        # An Oxford conjunction is punctuation, not a fifth choice.
+        self.assertEqual(
+            route_rule_named_choices(
+                shipped.replace(
+                    "approval, the connected-stage",
+                    "approval, and the connected-stage",
+                )
+            ),
+            four,
+        )
+        # And the same four in any order are the same four.
+        self.assertEqual(
+            route_rule_named_choices(
+                "wherever they are offered named routes - the connected-stage "
+                "preview, the baseline spend approval, a creation or repair "
+                "route, the task-intent question - the routes are lettered "
+                "from `a`."
+            ),
+            four,
+        )
+        # The direction that must still fail: a choice added, and one removed.
+        self.assertEqual(
+            route_rule_named_choices(
+                shipped.replace(
+                    "approval, the connected-stage",
+                    "approval, the held-out disclosure, the connected-stage",
+                )
+            )
+            - four,
+            {"the held-out disclosure"},
+        )
+        self.assertEqual(
+            four
+            - route_rule_named_choices(
+                shipped.replace("the baseline spend approval, ", "")
+            ),
+            {"the baseline spend approval"},
+        )
+
+    def test_no_route_block_is_rendered_outside_a_named_application(self) -> None:
+        """The other direction: a choice the rule does not know it governs.
+
+        A document that starts offering lettered routes somewhere the one-shape
+        rule never named is what a per-application check cannot see by itself,
+        and it is how a second shape enters a run.
+        """
+        spans = [
+            (application.path, *application_span(application))
+            for application in ROUTE_RULE_APPLICATIONS
+        ]
+        for block in corpus_route_blocks():
+            with self.subTest(block=block.where, routes=block.letters):
+                self.assertTrue(
+                    any(
+                        path == block.path and first <= block.line <= last
+                        for path, first, last in spans
+                    ),
+                    "this block offers lettered routes outside every choice "
+                    "SKILL.md's one-shape rule names, so nothing in the "
+                    "guidance says what shape it is required to have",
+                )
 
     def test_one_shape_is_stated_once_for_every_named_route_choice(self) -> None:
         """Two shapes in one run read as a distinction the guide never made."""
@@ -25871,6 +26767,23 @@ class OneShapeAndOneMarkForEveryChoiceTests(unittest.TestCase):
                             continue
                         if any(token in f"{gap} {tail}" for token in cls.TIE_DENIALS):
                             continue
+                        # The run-up to whichever half comes FIRST, which is
+                        # where a prohibition of this pairing is written. The
+                        # scan had no polarity at all, so the rule's own
+                        # prohibition - "Do not offer within noise as upside" -
+                        # was flagged: `Do not offer` sits in neither the gap
+                        # between the halves nor the tie's sentence tail, which
+                        # are the only two places the denial list reads.
+                        #
+                        # Reading it HERE rather than at the tie is what makes
+                        # it safe. The sale this scan exists for opens "8 of
+                        # the 18 rows were solved by no configuration and the
+                        # top three are a statistical tie", and the clause cut
+                        # in `adjacent_runup` stops that determiner at ` and `
+                        # instead of reading it as a denial.
+                        opening = min(at, found.start())
+                        if polarity_of(adjacent_runup(flat, opening)) == "forbids":
+                            continue
                         if guard_issues_at(flat, at, end, read_polarity=False):
                             offending.add(span)
         return sorted(offending)
@@ -25993,10 +26906,11 @@ class GuardExemptionsAreNarrowEnoughToCatchTheDefectTests(unittest.TestCase):
     Every scanner underneath is a word list, so a defect written in vocabulary
     no list names is not detected, and no count here says otherwise. The
     honest reading of a green result from any of these five is "no listed
-    phrasing is present", never "this document is clean". The one guard in
-    this set that is structural rather than lexical - `route_blocks()`, which
-    counts marks in the blocks the documents actually render - is the shape
-    these should move to, and traigent-first-run#364 tracks it.
+    phrasing is present", never "this document is clean". What is structural
+    rather than lexical now lives in `markdown_route_blocks()` and the checks
+    over it, which read what the documents render; the class below runs a
+    second, independent 60/60 sweep over these same five scanners and names
+    every phrasing they still miss.
     """
 
     #: 21 natural phrasings of real defects. Every one must be caught.
@@ -26286,6 +27200,666 @@ class GuardExemptionsAreNarrowEnoughToCatchTheDefectTests(unittest.TestCase):
             "this phrasing is no longer refused, so delete it from "
             "KNOWN_FALSE_RED and move it into HONEST rather than leaving a "
             "docstring claiming a limitation the code no longer has",
+        )
+
+
+class AnIndependentSweepMeasuresWhatTheseGuardsStillMissTests(unittest.TestCase):
+    """A third set, written against the guards rather than alongside them.
+
+    `GuardExemptionsAreNarrowEnoughToCatchTheDefectTests` above records 21
+    phrasings and 33 paraphrases, and both numbers are properties of those
+    sets: they were written while the exemptions were being narrowed, so the
+    filter has seen every one of them. This set is 60 defect phrasings and 60
+    honest paraphrases, none of them reused from that class, written to ask
+    what the guards do on wording nobody tuned them against.
+
+    **The answer, measured on this branch: 44 of 60 caught, 60 of 60 green.**
+    On the code this branch started from it was 44 and 58 - so the redesign
+    closed both false reds and moved the catch rate by nothing at all.
+
+    That is the honest shape of what a block model buys and does not buy.
+    Every scanner this sweep runs is a word list over prose, and shape work
+    cannot move a word list: 14 of the 16 misses are vocabulary no list names
+    and the remaining 2 are the practice-word escape. What DID move is the
+    structural half, and it is not measurable here, because these are
+    sentences handed to scanners rather than documents rendering blocks -
+    `test_every_written_route_block_marks_exactly_one_route` and the census
+    beside it read what a document renders and count, and they answer for
+    phrasings this sweep has no word for.
+
+    Every miss is named with the reason it is missed, and a miss that starts
+    being caught fails this class rather than quietly improving the number:
+    the point of a measurement kept in the suite is that it cannot drift in
+    either direction without somebody saying so.
+    """
+
+    #: 60 phrasings of real defects. Each carries the reason it is NOT caught,
+    #: or an empty string where it is.
+    DEFECTS = (
+        (
+            "closing",
+            "End the approval with `Are we good to go?`.",
+            "",
+        ),
+        (
+            "closing",
+            "Wrap the card up by closing on `Sound good?`.",
+            "",
+        ),
+        (
+            "closing",
+            "Sign off the preview with `Proceed?`.",
+            "",
+        ),
+        (
+            "closing",
+            "Close every spend card on **Ready when you are?**",
+            "",
+        ),
+        (
+            "closing",
+            "The last line of the message is `Shall we continue?`.",
+            "no closing verb - the scan is anchored on end/close/finish/conclude/sign off, and this sentence has none",
+        ),
+        (
+            "closing",
+            'Finish the connected preview with "Do you want me to run it?".',
+            "",
+        ),
+        (
+            "closing",
+            "End the message with `Go ahead?` and wait for a yes.",
+            "",
+        ),
+        (
+            "closing",
+            "Conclude with `OK to spend?`.",
+            "",
+        ),
+        (
+            "closing",
+            "Close the disclosure block on `Happy to proceed?`.",
+            "",
+        ),
+        (
+            "closing",
+            "End the baseline card with `Want me to keep going?`.",
+            "",
+        ),
+        (
+            "closing",
+            "Have the preview end on `Is that alright?`.",
+            "",
+        ),
+        (
+            "closing",
+            "Every offered card ends on `Shall I start?`.",
+            "",
+        ),
+        (
+            "pair",
+            "Show both options and let the customer decide.",
+            "names no listed phrase; `let the customer decide` is the whole defect and no word list carries it",
+        ),
+        (
+            "pair",
+            "Offer the two routes evenly, with neither one favoured.",
+            "`evenly` and `neither one favoured` are not in UNMARKED_PAIR_INSTRUCTIONS",
+        ),
+        (
+            "pair",
+            "Present the pair and no recommended route.",
+            "",
+        ),
+        (
+            "pair",
+            "Give them two outcomes with no default.",
+            "",
+        ),
+        (
+            "pair",
+            "Render the choice with nothing marked.",
+            "",
+        ),
+        (
+            "pair",
+            "List the routes without marking any of them.",
+            "`without marking any of them` is the same instruction in vocabulary the list does not carry",
+        ),
+        (
+            "pair",
+            "Leave both routes unmarked so the choice stays theirs.",
+            "`both routes unmarked` is not a listed phrase",
+        ),
+        (
+            "pair",
+            "Offer A and B and no recommendation.",
+            "",
+        ),
+        (
+            "pair",
+            "Put the two routes side by side with no steer.",
+            "`no steer` is a synonym for the mark that no list names",
+        ),
+        (
+            "pair",
+            "Neither route is marked.",
+            "",
+        ),
+        (
+            "pair",
+            "Do the pair with no recommended default.",
+            "",
+        ),
+        (
+            "pair",
+            "Give an even choice: no marked route.",
+            "",
+        ),
+        (
+            "lifted",
+            "The mark is dropped where the cap blocks.",
+            "",
+        ),
+        (
+            "lifted",
+            "Withhold the recommendation when the run cannot answer.",
+            "",
+        ),
+        (
+            "lifted",
+            "Leave the mark off the pair under a blocking cap.",
+            "the lift verb follows the noun here and bare `off` is not one of MARK_LIFT_VERB's tokens",
+        ),
+        (
+            "lifted",
+            "The recommendation is suppressed while a `FIX BEFORE PAID RUN` stands.",
+            "",
+        ),
+        (
+            "lifted",
+            "Remove the mark from both routes in that case.",
+            "",
+        ),
+        (
+            "lifted",
+            "The mark is waived where the evaluator is invalid.",
+            "",
+        ),
+        (
+            "lifted",
+            "Hold back the recommendation until the cap clears.",
+            "",
+        ),
+        (
+            "lifted",
+            "Offer the pair with the mark absent.",
+            "",
+        ),
+        (
+            "lifted",
+            "No mark is given to either route there.",
+            "`given` is not a lift verb, and the noun follows the negator rather than preceding the verb",
+        ),
+        (
+            "lifted",
+            "Neither route gets the recommendation under a blocking cap.",
+            "no lift verb at all - the mark is removed by saying who does not get it",
+        ),
+        (
+            "lifted",
+            "Strip the mark from the choice.",
+            "`strip` is not in MARK_LIFT_VERB",
+        ),
+        (
+            "lifted",
+            "The recommendation is taken off where fixing is needed.",
+            "`taken off` is not in MARK_LIFT_VERB, which carries `kept off` and `left off`",
+        ),
+        (
+            "tie",
+            "The top two are indistinguishable at this sample, so a wider search has room to move.",
+            "",
+        ),
+        (
+            "tie",
+            "Several configurations are too close to call, which is upside.",
+            "",
+        ),
+        (
+            "tie",
+            "A tie among the leaders means there is headroom left.",
+            "",
+        ),
+        (
+            "tie",
+            "The leaders are inside the noise, so there is a gain available.",
+            "",
+        ),
+        (
+            "tie",
+            "Statistically indistinguishable results mean the search is worth spending on.",
+            "",
+        ),
+        (
+            "tie",
+            "The scores are within noise, and that is a reason to spend.",
+            "",
+        ),
+        (
+            "tie",
+            "The top three tie, so more trials are worth it.",
+            "bare `tie` is not in TIE_PHRASES, which carries `a tie among` and `tie among the top`",
+        ),
+        (
+            "tie",
+            "Because the frontier points are too close to call there is real upside.",
+            "",
+        ),
+        (
+            "tie",
+            "A statistical tie at the top is something a wider search can take.",
+            "",
+        ),
+        (
+            "tie",
+            "The best three are indistinguishable at this sample, so there is room to improve.",
+            "",
+        ),
+        (
+            "tie",
+            "The ranking is unresolved, so spend more.",
+            "`unresolved` names a tie in vocabulary TIE_PHRASES does not carry",
+        ),
+        (
+            "tie",
+            "Ties among the leaders show room left.",
+            "the plural `ties among` does not contain `tie among`",
+        ),
+        (
+            "practice",
+            "**A.** Pull the entity and the intent out of a support message",
+            "",
+        ),
+        (
+            "practice",
+            "**A.** Group the metric by time range",
+            "",
+        ),
+        (
+            "practice",
+            "**A.** Map your columns onto the schema the warehouse expects",
+            "the practice-word escape excuses one trade word wherever a possessive shares its comma-delimited clause, and a customer option usually has no commas; traigent-first-run#364 finding 5",
+        ),
+        (
+            "practice",
+            "**A.** Give the canonical form of each of your product names",
+            "the same escape - `your` is attached to `product names` and excuses `canonical form`; traigent-first-run#364 finding 5",
+        ),
+        (
+            "practice",
+            "**A.** Normalise every entity in the feed",
+            "",
+        ),
+        (
+            "practice",
+            "**A.** Decide the intent behind each incoming message",
+            "",
+        ),
+        (
+            "practice",
+            "**A.** Turn a request into a grouping over the metric",
+            "",
+        ),
+        (
+            "practice",
+            "**A.** Extract the schema of each uploaded file",
+            "",
+        ),
+        (
+            "practice",
+            "**A.** Resolve the canonical form for every row",
+            "",
+        ),
+        (
+            "practice",
+            "**A.** Bucket each ticket by intent",
+            "",
+        ),
+        (
+            "practice",
+            "**A.** Compute the metric for a chosen time range",
+            "",
+        ),
+        (
+            "practice",
+            "**A.** Attach a grouping to the entity in each record",
+            "",
+        ),
+    )
+
+    #: 60 honest paraphrases: the rules stated correctly, the history of each
+    #: defect written down, and acceptable customer-facing options. Every one
+    #: must stay green - a guard that reds honest prose does not stop the next
+    #: author writing the defect, it stops them explaining it.
+    HONEST = (
+        (
+            "closing",
+            "No approval may end on `Are we good to go?`.",
+        ),
+        (
+            "closing",
+            "Never close a card with `Sound good?`.",
+        ),
+        (
+            "closing",
+            "The preview used to end with `Proceed?`, which left one route takeable.",
+        ),
+        (
+            "closing",
+            "Do not finish the message with `Go ahead?`.",
+        ),
+        (
+            "closing",
+            "A card that ends on `OK to spend?` reads as a single yes/no.",
+        ),
+        (
+            "closing",
+            "Ending a preview on `Shall we continue?` is the defect this section removed.",
+        ),
+        (
+            "closing",
+            "No customer-facing card may close on `Ready?`.",
+        ),
+        (
+            "closing",
+            "The card no longer ends with `Continue?`.",
+        ),
+        (
+            "closing",
+            "Do **not** conclude the approval with `Happy to proceed?`.",
+        ),
+        (
+            "closing",
+            "Never end the connected preview on **Is that alright?**",
+        ),
+        (
+            "closing",
+            "No offered preview may sign off with `Want me to keep going?`.",
+        ),
+        (
+            "closing",
+            "A message that ends on `Shall I start?` looks like a single yes/no.",
+        ),
+        (
+            "pair",
+            "A choice offered with no default is a menu.",
+        ),
+        (
+            "pair",
+            "Never render the pair with nothing marked.",
+        ),
+        (
+            "pair",
+            "Two routes and no recommendation reads as no recommendation.",
+        ),
+        (
+            "pair",
+            "Do not offer a choice with no marked route.",
+        ),
+        (
+            "pair",
+            "An unmarked pair with no default is what that silence looks like.",
+        ),
+        (
+            "pair",
+            "No route list may be offered with nothing marked.",
+        ),
+        (
+            "pair",
+            "The card previously showed the pair with no default.",
+        ),
+        (
+            "pair",
+            "Offering two named outcomes and no recommendation is worse than saying nothing.",
+        ),
+        (
+            "pair",
+            "Never present the routes with no recommended default.",
+        ),
+        (
+            "pair",
+            "A pair with no marked route is the defect this bullet refuses.",
+        ),
+        (
+            "pair",
+            "This guide does not offer the pair with nothing marked.",
+        ),
+        (
+            "pair",
+            "The preview used to present the routes with no default.",
+        ),
+        (
+            "lifted",
+            "The mark is never dropped from the pair.",
+        ),
+        (
+            "lifted",
+            "Never withhold the recommendation; move it to the route that can answer.",
+        ),
+        (
+            "lifted",
+            "The recommendation is not left off under a blocking cap.",
+        ),
+        (
+            "lifted",
+            "The mark is never suppressed; it moves to the route that can answer.",
+        ),
+        (
+            "lifted",
+            "No condition removes the mark from the set.",
+        ),
+        (
+            "lifted",
+            "The mark was previously withheld and now moves instead.",
+        ),
+        (
+            "lifted",
+            "Withholding the mark hands back the unmarked pair a blinded run fills in.",
+        ),
+        (
+            "lifted",
+            "The recommendation is never omitted.",
+        ),
+        (
+            "lifted",
+            "Never leave the mark off a named-route choice.",
+        ),
+        (
+            "lifted",
+            "The mark is not dropped where a cap blocks; it moves to fixing.",
+        ),
+        (
+            "lifted",
+            "A rule that withheld the mark would hand the customer a menu.",
+        ),
+        (
+            "lifted",
+            "The mark is never held back from either route.",
+        ),
+        (
+            "tie",
+            "A tie among the top configurations is not headroom.",
+        ),
+        (
+            "tie",
+            "Being within noise is never a reason to spend.",
+        ),
+        (
+            "tie",
+            "Configurations that are too close to call are not upside.",
+        ),
+        (
+            "tie",
+            "A statistical tie at this size is a limit, not headroom.",
+        ),
+        (
+            "tie",
+            "The preview used to read a tie among the top rows as room to move.",
+        ),
+        (
+            "tie",
+            "Indistinguishable at this sample size means the rows cannot separate them, so it is not upside.",
+        ),
+        (
+            "tie",
+            "Never sell a tie among the leaders as headroom.",
+        ),
+        (
+            "tie",
+            "Do not offer within noise as upside.",
+        ),
+        (
+            "tie",
+            "Several configurations are statistically indistinguishable at this size, which is a bound on what the result may claim.",
+        ),
+        (
+            "tie",
+            "A tie among the top three is the opposite of headroom.",
+        ),
+        (
+            "tie",
+            "Where the tie among the leaders binds, recommend more rows rather than more upside.",
+        ),
+        (
+            "tie",
+            "The run previously sold a statistical tie as a reason to spend.",
+        ),
+        (
+            "practice",
+            "**A.** Turn a plain-English question about your tickets into a SQL query",
+        ),
+        (
+            "practice",
+            "**A.** Sort each email your inbox receives into one of three folders",
+        ),
+        (
+            "practice",
+            "**A.** Pull the total and the date out of a receipt",
+        ),
+        (
+            "practice",
+            "**A.** Answer a question about your product catalogue in one sentence",
+        ),
+        (
+            "practice",
+            "**A.** Decide whether each review your store collects is positive or negative",
+        ),
+        (
+            "practice",
+            "**A.** Rewrite each support reply in your house voice",
+        ),
+        (
+            "practice",
+            "**A.** Find the customer name and the order number in each message",
+        ),
+        (
+            "practice",
+            "**A.** Label the intent of your customers' emails",
+        ),
+        (
+            "practice",
+            "**A.** Pick the right time range for your report",
+        ),
+        (
+            "practice",
+            "**A.** Score the metric your pipeline emits",
+        ),
+        (
+            "practice",
+            "**A.** Summarise each call your support team logs",
+        ),
+        (
+            "practice",
+            "**A.** Check whether each answer your bot gives matches the policy",
+        ),
+    )
+
+    def _scanner(self, name: str):
+        one = OneShapeAndOneMarkForEveryChoiceTests
+        return {
+            "closing": one._instructs_a_closing_question,
+            "pair": one._instructs_an_unmarked_pair,
+            "lifted": one._lifts_the_mark,
+            "tie": one._sells_a_tie_as_headroom,
+            "practice": TheAskIsLastAndNamesWhatIsLackingTests._refused_practice_words,
+        }[name]
+
+    def test_the_set_is_the_size_it_says_it_is(self) -> None:
+        """A sweep that quietly shrank would report a flattering number."""
+        self.assertEqual(len(self.DEFECTS), 60)
+        self.assertEqual(len(self.HONEST), 60)
+        self.assertEqual(len({text for _, text, _ in self.DEFECTS}), 60)
+        self.assertEqual(len({text for _, text in self.HONEST}), 60)
+        # And none of it is reused from the set the exemptions were tuned
+        # against, which is what makes it independent rather than a second run
+        # of the same measurement.
+        tuned = {
+            text
+            for _, text in (
+                *GuardExemptionsAreNarrowEnoughToCatchTheDefectTests.DEFECTS,
+                *GuardExemptionsAreNarrowEnoughToCatchTheDefectTests.HONEST,
+                GuardExemptionsAreNarrowEnoughToCatchTheDefectTests.KNOWN_FALSE_RED,
+            )
+        }
+        self.assertEqual(
+            tuned
+            & ({text for _, text, _ in self.DEFECTS} | {t for _, t in self.HONEST}),
+            set(),
+        )
+
+    def test_every_defect_is_caught_or_named_with_the_reason_it_is_not(
+        self,
+    ) -> None:
+        """44 of 60. The other 16 are named here, not rounded away."""
+        wrong: list[str] = []
+        for scanner, text, reason in self.DEFECTS:
+            caught = bool(self._scanner(scanner)(text))
+            if caught and reason:
+                wrong.append(f"[{scanner}] now caught, so delete its reason: {text!r}")
+            if not caught and not reason:
+                wrong.append(f"[{scanner}] no longer caught: {text!r}")
+        self.assertEqual(
+            wrong,
+            [],
+            "this sweep no longer describes what these scanners do; every "
+            "entry is either caught or carries the reason it is not",
+        )
+        self.assertEqual(
+            len([entry for entry in self.DEFECTS if not entry[2]]),
+            44,
+            "the number of phrasings this set catches has moved; that is a "
+            "result, not a failure - update it here together with the "
+            "class docstring so the recorded measurement stays true",
+        )
+
+    def test_every_honest_paraphrase_stays_green(self) -> None:
+        """60 of 60. Two of these were red before this branch.
+
+        `Never sell a tie among the leaders as headroom.` and `Do not offer
+        within noise as upside.` are the tie rule's own prohibition, and the
+        tie scan had no run-up polarity to read it with.
+        """
+        refused = [
+            (scanner, text)
+            for scanner, text in self.HONEST
+            if self._scanner(scanner)(text)
+        ]
+        self.assertEqual(
+            refused,
+            [],
+            "these are correct statements of the rules, records of the runs "
+            "the rules came from, or acceptable customer-facing options",
         )
 
 
