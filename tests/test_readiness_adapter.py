@@ -2331,7 +2331,14 @@ class EvaluatorPresenceAdapterTests(unittest.TestCase):
                         MODULE.EVALUATOR_UNVALIDATED_CEILING,
                     )
                     self.assertFalse(unvalidated["blocks"])
-                    self.assertEqual(unvalidated["action_kind"], "proceed")
+                    # Not `proceed`, which is what this asserted while a
+                    # deferred card and a calibrated one routed alike. The cap
+                    # still does not block - a verdict with nothing behind it
+                    # is not a conviction - and the remedy now names the check
+                    # that has not run (traigent-first-run#379).
+                    self.assertEqual(
+                        unvalidated["action_kind"], MODULE.COMPLETE_CALIBRATION
+                    )
                     evaluation = next(
                         pillar
                         for pillar in score["pillars"]
@@ -3369,8 +3376,16 @@ class TheFamilyPartitionedSplitReachesTheCardTests(unittest.TestCase):
         self.assertTrue(cap["asks"])
         self.assertEqual(cap["action_kind"], "review-split")
         self.assertEqual(score["status"], "OK")
-        self.assertEqual(score["recommended_action"], "review-split")
         self.assertLessEqual(score["overall"], cap["ceiling"])
+        # This card carries two open questions, and `recommended_action` names
+        # the worse one: it returns the lowest-ceiling asking cap, and nothing
+        # calibrated the evaluator here, so `evaluator-unvalidated` at 45 sits
+        # below this cap at 50 and wins. That ordering is the field's whole
+        # contract; what this test is about is that the split cap reaches the
+        # card, asks, and carries its own remedy - which it does, above.
+        unvalidated = _cap(score, "evaluator-unvalidated")
+        self.assertLess(unvalidated["ceiling"], cap["ceiling"])
+        self.assertEqual(score["recommended_action"], unvalidated["action_kind"])
 
     def test_the_same_rows_split_across_the_families_reach_no_cap(self) -> None:
         """The counterfactual, so the cap is pinned to the LINE and not the rows.

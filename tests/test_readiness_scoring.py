@@ -6514,6 +6514,15 @@ class TheCapOrderingIsWrittenDownAndCheckedTests(unittest.TestCase):
                 45: [
                     "evaluator-timeout",
                     "evaluator-unvalidated",
+                    # The same absent behavioural evidence reached by obeying
+                    # the evaluator-execution scope gate instead of by
+                    # skipping a step. Equal, because a ceiling grades the
+                    # state and having a good reason is not a property of the
+                    # state; ranked directly after the condition it mirrors,
+                    # and the rank decides nothing observable because the two
+                    # are mutually exclusive by construction - one branch
+                    # raises one or the other and no card carries both.
+                    "evaluator-calibration-refused",
                     "agent-no-varying-knobs",
                 ],
                 # One split defect read from each end: the same rows on both
@@ -7895,9 +7904,17 @@ class TheRemedyIsMachineReadableTests(unittest.TestCase):
         self.assertEqual(payload["caps"][0]["action_kind"], "repair-evaluator")
         self.assertEqual(
             payload["schema_version"],
-            2,
+            3,
             "a consumer must be able to tell 'emits no remedy' from 'has none'",
         )
+        # 3 rather than 2, and the reason is a value rather than a key.
+        # `recommended_action` is a slug from a closed set, and a schema-2
+        # consumer read `proceed` for a run whose mandatory calibration was
+        # outstanding. It now reads `complete-calibration`, which that set did
+        # not contain - a reader of 2 no longer working, in the direction that
+        # matters, since `proceed` was routed to "start the paid run".
+        self.assertIn(MODULE.COMPLETE_CALIBRATION, MODULE.ACTION_KINDS)
+        self.assertIn("band_limited_by_unread_answers", payload)
         # And `weighted_average` still means what schema 2 says it means: an
         # average over every declared weight. #201 bumped this to 3 while a
         # pillar could drop out of that denominator; that renormalization is
@@ -9081,6 +9098,12 @@ class TheCardSpeaksTheUsersLanguageTests(unittest.TestCase):
             replace(plain, provenance_assumption=assumption),
             replace(plain, provenance_assumption=every_row_silent),
             replace(plain, band_limited_by_confidence=True),
+            # The other reason a band is held, and it renders on both
+            # surfaces. It has to be here for the reason the agent read states
+            # below are: it is the one hold no cap row explains, so the
+            # sentence carrying its remedy is exactly the text these rules are
+            # for, and a state nothing renders exempts it from all of them.
+            replace(plain, band_limited_by_unread_answers=True),
             replace(plain, gaps=("a ranked gap",)),
             # Both agent read states. `plain` is the unread one by default, so
             # only its opposite has to be named here - and it has to be, or the
@@ -9902,6 +9925,598 @@ class TheUnsoundAnswerCapBoundsRatherThanBlocksTests(unittest.TestCase):
         )
         self.assertIn("among the rows this run tunes", cap.reason)
         self.assertNotIn("28 rows this run", cap.reason)
+
+
+# A 48-row support-routing corpus the customer collected, split 36/12.
+#
+# Written from the shape a real project arrives in rather than from what the
+# floor happens to read: counted rows, a declared split, difficulty tags, a
+# provenance token preflight recognises. It is the same shape as the committed
+# `tests/behavioral/outcomes/clean-proceed` fixture, which is what makes it a
+# fair probe - the corpus that reaches the top of the scale here is the one
+# that reaches it in a real run.
+#
+# Kept as kwargs rather than as a built object so the mutation test below can
+# build the same facts inside a separately imported copy of the module.
+_ROUTING_CORPUS = dict(
+    exists=True,
+    dataset_supplied=True,
+    rows=48,
+    labelled_rows=48,
+    answerable_rows=48,
+    collected_rows=48,
+    tuning_rows=36,
+    holdout_rows=12,
+    tuning_labelled_rows=36,
+    holdout_labelled_rows=12,
+    distinct_rows=48,
+    tuning_distinct_rows=36,
+    tuning_distinct_scoreable_rows=36,
+    difficulty_bands=("easy", "medium", "hard", "very-hard"),
+    difficulty_tagged_rows=48,
+    duplicate_status="PASS",
+    near_duplicate_status="PASS",
+    answer_dominance_status="PASS",
+    sources=("production-support-log",),
+)
+_CALIBRATION_CASE = {"good_passes": True, "bad_fails": True, "non_constant": True}
+# A brought evaluator whose current-run calibration completed and passed.
+_PASSING_CALIBRATION = dict(
+    present=True,
+    method="normalized-exact",
+    task_kind="closed-label",
+    parses=True,
+    origin="brought",
+    calibration_present=True,
+    calibration_supplied=True,
+    calibration_complete=True,
+    calibration_passed=True,
+    checks=(_CALIBRATION_CASE, _CALIBRATION_CASE, _CALIBRATION_CASE),
+    probe_scores=((1.0, 0.0), (1.0, 0.0), (1.0, 0.0)),
+)
+# The customer's own agent, with three knobs a document attests are wired.
+_WIRED_SPACE = dict(
+    max_trials=24,
+    knobs={
+        "temperature": [0.0, 0.5, 1.0],
+        "prompt_style": ["direct", "structured"],
+        "model": ["fast", "large"],
+    },
+    wired=("temperature", "prompt_style", "model"),
+    config_space_supplied=True,
+    origin="brought",
+)
+
+
+def _routing_corpus(**extra) -> "MODULE.DatasetFacts":
+    facts = dict(_ROUTING_CORPUS)
+    facts.update(extra)
+    return MODULE.DatasetFacts(**facts)
+
+
+def _passing_calibration() -> "MODULE.EvaluationFacts":
+    return MODULE.EvaluationFacts(**_PASSING_CALIBRATION)
+
+
+def _wired_space() -> "MODULE.AgentFacts":
+    return MODULE.AgentFacts(**_WIRED_SPACE)
+
+
+def _healthy_score(
+    review: "MODULE.RowReview | None" = None, **dataset_extra
+) -> "MODULE.ReadinessScore":
+    return MODULE.score_run(
+        _routing_corpus(**dataset_extra),
+        _passing_calibration(),
+        _wired_space(),
+        dict(MODULE.DEFAULT_WEIGHTS),
+        review,
+    )
+
+
+class TheTopBandsNeedAReadOfTheAnswersTests(unittest.TestCase):
+    """A verdict the run has not established is the card overclaiming.
+
+    Every dataset check in this scorer is structural. Rotating a corpus's
+    expected answers within their own domains - so each answer stays a valid
+    answer to some other row's question - preserves validity, distinctness, id
+    uniqueness, split disjointness and band coverage, and destroys the only
+    property that decides whether the search can rank anything. Measured: 60 of
+    60 answers execute, 0 error, 0 empty, every dataset check PASS, and the
+    card reached its strongest verdict over material where every configuration
+    scores about the same as every other (traigent-first-run#377).
+
+    So the top two bands ask for a behavioural signal about the ANSWERS, and
+    calibration is not one. Calibration probes the scorer against a hand-built
+    case matrix; on the rotated corpus it passes honestly, which is precisely
+    how the strongest verdict was reached - a lift earned by evidence about a
+    different question.
+
+    These tests pin the DECISION rather than the band name, on the pattern the
+    model-written-answer-key tests set: each one asks the module where its own
+    STRONG band starts instead of asserting a string, so renumbering the bands
+    cannot quietly reopen the claim.
+    """
+
+    def _strong(self) -> int:
+        return MODULE.BAND_ORDER.index("STRONG")
+
+    def test_structure_and_a_passing_calibration_do_not_reach_the_top_bands(
+        self,
+    ) -> None:
+        """The report's own shape: everything measured, nobody read a row."""
+        score = _healthy_score()
+        uncapped, _limited = MODULE.band_for(score.weighted_average, 1.0, 1.0)
+        self.assertGreaterEqual(
+            MODULE.BAND_ORDER.index(uncapped),
+            self._strong(),
+            "the fixture no longer scores into the top bands on its own, so it "
+            "cannot show that the floor is what holds it",
+        )
+        self.assertLess(
+            MODULE.BAND_ORDER.index(score.band),
+            self._strong(),
+            f"scored {score.weighted_average} with no read of the answers and "
+            f"presented as {score.band}",
+        )
+        self.assertTrue(score.band_limited_by_unread_answers)
+        # And nothing was deducted for it. Every measurement behind the number
+        # is real; what is refused is the verdict, not the arithmetic.
+        self.assertEqual(score.overall, score.weighted_average)
+        self.assertEqual(list(score.caps), [])
+
+    def test_a_calibration_that_passes_is_not_a_read_of_the_answer_key(
+        self,
+    ) -> None:
+        """The planted lift, refused for the reason under test.
+
+        `evaluator-unvalidated` lifting on an honest calibration is exactly
+        what let the rotated corpus present at the top of the scale. A signal
+        that says nothing about the answers may not answer the question about
+        the answers, so this asserts the calibration really is complete and
+        passing - the fixture is not silently a deferred one - while the floor
+        still holds.
+        """
+        evaluation = _passing_calibration()
+        pillar, caps = MODULE.score_evaluation(evaluation)
+        self.assertEqual([cap.condition for cap in caps], [])
+        self.assertEqual(pillar.score, 100)
+        self.assertTrue(_healthy_score().band_limited_by_unread_answers)
+
+    def test_a_read_of_every_provided_row_lifts_it(self) -> None:
+        held = _healthy_score()
+        lifted = _healthy_score(_review(reviewed=48))
+        self.assertTrue(held.band_limited_by_unread_answers)
+        self.assertFalse(lifted.band_limited_by_unread_answers)
+        self.assertGreaterEqual(MODULE.BAND_ORDER.index(lifted.band), self._strong())
+        # The lift is the band and nothing else: the review carries no points,
+        # so the number either side of it is the same number.
+        self.assertEqual(lifted.overall, held.overall)
+
+    def test_a_read_of_the_rows_the_run_reads_lifts_it_on_a_corpus_nobody_reads_whole(
+        self,
+    ) -> None:
+        """The variation that makes the floor liftable at real dataset sizes.
+
+        A 4,812-row export is not read end to end by anybody. What the search
+        is graded against is the declared split, the review says which rows
+        those are, and covering them is the whole of what this floor asks.
+        """
+        large = dict(
+            rows=4812,
+            labelled_rows=4812,
+            answerable_rows=4812,
+            collected_rows=4812,
+            distinct_rows=4812,
+        )
+        lifted = _healthy_score(
+            _review(reviewed=60, reviewed_in_run=48, unsound_in_run=0), **large
+        )
+        self.assertFalse(lifted.band_limited_by_unread_answers)
+        self.assertGreaterEqual(MODULE.BAND_ORDER.index(lifted.band), self._strong())
+        # And a read of the same size that never says which rows it covered is
+        # a read of 60 rows out of 4,812, which clears nothing.
+        partial = _healthy_score(_review(reviewed=60), **large)
+        self.assertTrue(partial.band_limited_by_unread_answers)
+
+    def test_a_partial_read_lifts_nothing(self) -> None:
+        """Coverage is the claim, and half of it is not a smaller version of it."""
+        partial = _healthy_score(_review(reviewed=20))
+        self.assertTrue(partial.band_limited_by_unread_answers)
+        self.assertLess(MODULE.BAND_ORDER.index(partial.band), self._strong())
+
+    def test_a_corpus_with_no_answer_key_is_never_held(self) -> None:
+        """A reference-free judge grades inputs; there is no key to read.
+
+        Holding a band for an unread answer key that does not exist would be
+        unliftable by construction, which is the shape this predicate's three
+        no-question branches exist to refuse.
+        """
+        facts = _routing_corpus(answerable_rows=0, labelled_rows=0)
+        self.assertTrue(MODULE.answer_key_read(facts, MODULE.RowReview()))
+
+    def test_a_walkthrough_corpus_this_run_wrote_is_never_held(self) -> None:
+        """The review input refuses generated rows, so no read can be supplied.
+
+        Those rows are bounded by the synthetic ceiling, well below the bands
+        this floor holds, and asking for a read nothing will accept would put
+        an instruction on the card that the reader cannot carry out.
+        """
+        facts = _routing_corpus(collected_rows=0, synthesised_rows=48, synthetic=True)
+        self.assertTrue(MODULE.answer_key_read(facts, MODULE.RowReview()))
+
+    def test_a_payload_predating_the_provenance_counts_is_never_held(self) -> None:
+        """This module does not charge a caller for a field it could not send."""
+        facts = MODULE.DatasetFacts(exists=True, rows=48, labelled_rows=48)
+        self.assertTrue(MODULE.answer_key_read(facts, MODULE.RowReview()))
+
+    def test_a_band_already_at_or_below_the_ceiling_is_not_held_again(self) -> None:
+        """Two reasons to hold one band compose; only the live one is reported.
+
+        A card that reported this hold beside a band already held for thin
+        evidence would print a remedy for a band with nothing left to lift.
+        """
+        edge = MODULE.BAND_ORDER.index(MODULE.ANSWER_KEY_BAND_CEILING)
+        untouched = MODULE.BAND_ORDER[: edge + 1]
+        held = MODULE.BAND_ORDER[edge + 1 :]
+        # Both halves are non-empty, or the loops below assert nothing. Read
+        # off the table rather than counted here, so renumbering the bands
+        # cannot leave this test iterating over an empty list and passing.
+        self.assertEqual(untouched, ["NOT READY", "PARTIAL", "WORKABLE"])
+        self.assertEqual(held, ["STRONG", "EXCELLENT"])
+        for band in untouched:
+            with self.subTest(band=band, expected="unchanged"):
+                self.assertEqual(
+                    MODULE.hold_band_for_unread_answers(band, False), (band, False)
+                )
+        for band in held:
+            with self.subTest(band=band, expected="held"):
+                self.assertEqual(
+                    MODULE.hold_band_for_unread_answers(band, False),
+                    (MODULE.ANSWER_KEY_BAND_CEILING, True),
+                )
+                # And a read of the answers leaves every one of them alone.
+                self.assertEqual(
+                    MODULE.hold_band_for_unread_answers(band, True), (band, False)
+                )
+
+    def test_the_committed_clean_case_shape_keeps_the_card_it_has(self) -> None:
+        """The honest project this must not punish, at its own confidence.
+
+        `outcomes/clean-proceed` scores 81 and is already held at WORKABLE for
+        thin evidence - no task kind was declared, so the evaluation pillar is
+        under the confidence gate. A ceiling on the SCORE would have taken it
+        to 74 and given it a cap; a gate on the BAND leaves every field it
+        publishes exactly where it was.
+        """
+        evaluation = dataclasses.replace(
+            _passing_calibration(), task_kind=None, probe_scores=()
+        )
+        score = MODULE.score_run(
+            _routing_corpus(),
+            evaluation,
+            _wired_space(),
+            dict(MODULE.DEFAULT_WEIGHTS),
+        )
+        self.assertTrue(score.band_limited_by_confidence)
+        self.assertFalse(score.band_limited_by_unread_answers)
+        self.assertEqual(score.overall, score.weighted_average)
+        self.assertEqual(list(score.caps), [])
+        self.assertEqual(score.recommended_action, MODULE.PROCEED)
+
+    def test_removing_the_floor_returns_the_card_that_was_filed(self) -> None:
+        """The mutation, executed - and what no table check can see.
+
+        `answers_read` is a keyword argument computed at one call site, so no
+        registry, ordering or round-trip check in this suite can reach it. The
+        mutation is trunk's own behaviour: pass `True` unconditionally, which
+        is what a scorer that never asks the question does. Both halves are
+        measured against a real copy of the module rather than argued.
+        """
+        source = Path(MODULE.__file__).read_text(encoding="utf-8")
+        live = "answers_read=answer_key_read(dataset_facts, review or RowReview()),"
+        self.assertIn(live, source, "the floor's one call site moved")
+        mutated = source.replace(live, "answers_read=True,", 1)
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "readiness_unfloored.py"
+            path.write_text(mutated, encoding="utf-8")
+            spec = importlib.util.spec_from_file_location("readiness_unfloored", path)
+            unfloored = importlib.util.module_from_spec(spec)
+            sys.modules[spec.name] = unfloored
+            try:
+                spec.loader.exec_module(unfloored)
+            finally:
+                sys.modules.pop(spec.name, None)
+
+        # Half one: every table a check could read is identical, so no
+        # table-level check in this file goes red on the mutated scorer.
+        for table in ("ACTION_FOR_CONDITION", "CAP_CEILING", "ROUTE_CATEGORY"):
+            with self.subTest(table=table):
+                self.assertEqual(getattr(unfloored, table), getattr(MODULE, table))
+        self.assertEqual(unfloored.BAND_THRESHOLDS, MODULE.BAND_THRESHOLDS)
+
+        # Half two: on identical facts the mutated scorer issues the verdict
+        # the report was filed about, and this one does not.
+        reverted = unfloored.score_run(
+            unfloored.DatasetFacts(**_ROUTING_CORPUS),
+            unfloored.EvaluationFacts(**_PASSING_CALIBRATION),
+            unfloored.AgentFacts(**_WIRED_SPACE),
+            dict(unfloored.DEFAULT_WEIGHTS),
+        )
+        kept = _healthy_score()
+        self.assertEqual(reverted.overall, kept.overall)
+        self.assertGreaterEqual(
+            unfloored.BAND_ORDER.index(reverted.band), self._strong()
+        )
+        self.assertLess(MODULE.BAND_ORDER.index(kept.band), self._strong())
+
+
+class ADeferredCalibrationSaysSoInTheFieldConsumersReadTests(unittest.TestCase):
+    """A run that never asked the behavioural question is not one that passed it.
+
+    A correct evaluator and one that never reads its `output` argument produce
+    byte-identical readiness JSON while calibration is outstanding - measured,
+    on two projects differing in that one file. Nothing static separates them,
+    and that half is evidence calibration earns its place rather than a defect
+    in this scorer: calibration convicts the mis-wired scorer on its first
+    probe, and the card goes to `evaluator-invalid` at 25.
+
+    What was filable is that deferral is permitted for six named reasons and
+    the deferred card emitted `recommended_action: "proceed"` - the same slug
+    the calibrated, passing run emits - so the one field a consumer routes on
+    could not tell "asked and passed" from "never asked"
+    (traigent-first-run#379).
+    """
+
+    def _deferred(self) -> "MODULE.ReadinessScore":
+        deferred = MODULE.EvaluationFacts(
+            present=True,
+            method="normalized-exact",
+            task_kind="closed-label",
+            parses=True,
+            origin="brought",
+        )
+        return MODULE.score_run(
+            _routing_corpus(),
+            deferred,
+            _wired_space(),
+            dict(MODULE.DEFAULT_WEIGHTS),
+            _review(reviewed=48),
+        )
+
+    def test_the_outstanding_check_is_named_instead_of_proceed(self) -> None:
+        score = self._deferred()
+        cap = next(c for c in score.caps if c.condition == "evaluator-unvalidated")
+        self.assertEqual(cap.ceiling, MODULE.EVALUATOR_UNVALIDATED_CEILING)
+        self.assertEqual(score.recommended_action, MODULE.COMPLETE_CALIBRATION)
+        self.assertNotEqual(score.recommended_action, MODULE.PROCEED)
+
+    def test_deferring_still_proceeds(self) -> None:
+        """Six named reasons permit it, so the fix is visibility, not a stop."""
+        score = self._deferred()
+        cap = next(c for c in score.caps if c.condition == "evaluator-unvalidated")
+        self.assertFalse(cap.blocks)
+        self.assertTrue(cap.asks)
+        self.assertEqual(score.status, "OK")
+        self.assertEqual(
+            MODULE.ROUTE_CATEGORY["evaluator-unvalidated"], MODULE.CLAIM_SCOPING
+        )
+
+    def test_the_calibrated_run_and_the_deferred_one_no_longer_route_alike(
+        self,
+    ) -> None:
+        """The property the report asked for, stated as a comparison."""
+        calibrated = _healthy_score(_review(reviewed=48))
+        deferred = self._deferred()
+        self.assertEqual(calibrated.recommended_action, MODULE.PROCEED)
+        self.assertNotEqual(deferred.recommended_action, calibrated.recommended_action)
+
+    def test_the_remedy_is_not_a_second_spelling_of_an_existing_one(self) -> None:
+        """`repair-evaluator` accuses a file no probe has read; this does not."""
+        carriers = sorted(
+            condition
+            for condition, remedy in MODULE.ACTION_FOR_CONDITION.items()
+            if remedy == MODULE.COMPLETE_CALIBRATION
+        )
+        self.assertEqual(carriers, ["evaluator-unvalidated"])
+        self.assertIn(MODULE.COMPLETE_CALIBRATION, MODULE.ACTION_KINDS)
+        self.assertNotIn(
+            MODULE.COMPLETE_CALIBRATION, ("repair-evaluator", MODULE.PROCEED)
+        )
+
+    def _outstanding(self, *, scope_refused: bool) -> "MODULE.ReadinessScore":
+        """A text-to-SQL project whose calibration has not happened.
+
+        One base, one field varied, so the comparison below is about the
+        declaration and not about two differently-shaped fixtures. `execution`
+        over `code-sql` is the shape the scope gate is written for: a scorer
+        whose complete path runs the candidate's own SQL.
+        """
+        facts = MODULE.EvaluationFacts(
+            present=True,
+            method="execution",
+            task_kind="code-sql",
+            parses=True,
+            origin="brought",
+            calibration_scope_refused=scope_refused,
+        )
+        return MODULE.score_run(
+            _routing_corpus(),
+            facts,
+            _wired_space(),
+            dict(MODULE.DEFAULT_WEIGHTS),
+            _review(reviewed=48),
+        )
+
+    def _scope_refused(self) -> "MODULE.ReadinessScore":
+        return self._outstanding(scope_refused=True)
+
+    def test_a_run_that_obeyed_the_scope_gate_is_not_told_to_break_it(self) -> None:
+        """The remedy a deferral for safety may not carry.
+
+        SKILL.md calibrates only where the complete path does not execute
+        candidate-generated code or SQL, and routes an evaluator that fails
+        that gate to a separate containment review. `complete-calibration` is
+        then an instruction to do the forbidden thing, so the two states may
+        not share a condition, a sentence or a remedy.
+        """
+        refused = self._scope_refused()
+        conditions = [cap.condition for cap in refused.caps]
+        self.assertIn("evaluator-calibration-refused", conditions)
+        self.assertNotIn("evaluator-unvalidated", conditions)
+        self.assertEqual(
+            refused.recommended_action, MODULE.REVIEW_EVALUATOR_CONTAINMENT
+        )
+        self.assertNotEqual(refused.recommended_action, MODULE.COMPLETE_CALIBRATION)
+        cap = next(c for c in refused.caps if c.condition.endswith("refused"))
+        self.assertIn("outside the scope this guide permits", cap.reason)
+        self.assertIn("not a finding against your project", cap.reason)
+        self.assertNotIn("Complete calibration", cap.reason)
+        # It bounds and does not stop, exactly as the deferral it mirrors.
+        self.assertFalse(cap.blocks)
+        self.assertTrue(cap.asks)
+        self.assertEqual(refused.status, "OK")
+
+    def test_the_declaration_changes_the_ask_and_never_the_number(self) -> None:
+        """An unverified declaration may bound a claim; it may not earn credit.
+
+        Nothing in this module can read whether a scorer's complete path
+        executes its own input, so the flag is a claim about the run. If it
+        moved a score, claiming a refusal would be cheaper than doing the
+        work - the same inversion `SubScore.withheld` exists to refuse, and
+        the same rule the row review is held to.
+        """
+        plain = self._outstanding(scope_refused=False)
+        refused = self._outstanding(scope_refused=True)
+        # The fixture really is in the state under test on both sides.
+        self.assertEqual(
+            [cap.condition for cap in plain.caps], ["evaluator-unvalidated"]
+        )
+        self.assertEqual(
+            [cap.condition for cap in refused.caps], ["evaluator-calibration-refused"]
+        )
+        self.assertEqual(refused.overall, plain.overall)
+        self.assertEqual(refused.weighted_average, plain.weighted_average)
+        self.assertEqual(refused.band, plain.band)
+        self.assertEqual(
+            [(p.name, p.score, p.confidence) for p in refused.pillars],
+            [(p.name, p.score, p.confidence) for p in plain.pillars],
+        )
+        self.assertEqual(
+            MODULE.CAP_CEILING["evaluator-calibration-refused"],
+            MODULE.CAP_CEILING["evaluator-unvalidated"],
+        )
+
+    def test_the_two_calibration_states_are_mutually_exclusive(self) -> None:
+        """One branch raises one or the other, and no card carries both."""
+        for refused in (False, True):
+            with self.subTest(scope_refused=refused):
+                facts = MODULE.EvaluationFacts(
+                    present=True,
+                    method="execution",
+                    parses=True,
+                    calibration_scope_refused=refused,
+                )
+                _pillar, caps = MODULE.score_evaluation(facts)
+                raised = {
+                    cap.condition
+                    for cap in caps
+                    if cap.condition
+                    in ("evaluator-unvalidated", "evaluator-calibration-refused")
+                }
+                self.assertEqual(len(raised), 1, raised)
+        # And a calibration that completed clears both, whatever was declared.
+        established = MODULE.EvaluationFacts(
+            **{**_PASSING_CALIBRATION, "calibration_scope_refused": True}
+        )
+        self.assertEqual(
+            [cap.condition for cap in MODULE.score_evaluation(established)[1]], []
+        )
+
+    def test_the_cli_refuses_a_run_claiming_both_at_once(self) -> None:
+        """Calibrating and being refused permission to calibrate are opposites.
+
+        Accepting the pair would let a card carry the containment sentence
+        over evidence produced by the very path that sentence says was not
+        taken.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            calibration = Path(directory) / "calibration.json"
+            calibration.write_text(json.dumps({"cases": [], "passed": True}))
+            preflight = Path(directory) / "preflight.json"
+            preflight.write_text(json.dumps([]))
+            errors = io.StringIO()
+            with contextlib.redirect_stderr(errors):
+                code = MODULE.run(
+                    [
+                        "--preflight",
+                        str(preflight),
+                        "--calibration",
+                        str(calibration),
+                        "--calibration-scope-refused",
+                        "--evaluator-method",
+                        "execution",
+                        "--json",
+                    ]
+                )
+        self.assertEqual(code, 2)
+        self.assertIn("--calibration-scope-refused", errors.getvalue())
+        self.assertIn("Pass one.", errors.getvalue())
+
+    def test_un_asking_it_returns_proceed_and_no_table_notices(self) -> None:
+        """The mutation, executed, on the pattern the sibling remedy test set.
+
+        `asks` lives on the cap and not in a registry, so every membership,
+        order and round-trip check over the three tables passes on a scorer
+        that has un-asked this cap - which is exactly how the deferred card
+        came to emit `proceed` under a full green suite.
+        """
+        source = Path(MODULE.__file__).read_text(encoding="utf-8")
+        opener = '                "evaluator-unvalidated",\n'
+        self.assertIn(opener, source, "the un-asking mutation point moved")
+        head, _, rest = source.partition(opener)
+        construction, closer, tail = rest.partition("\n            )\n")
+        self.assertIn("asks=True,", construction, "the cap no longer asks")
+        mutated = (
+            head
+            + opener
+            + construction.replace("asks=True,", "asks=False,", 1)
+            + closer
+            + tail
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "readiness_unasked.py"
+            path.write_text(mutated, encoding="utf-8")
+            spec = importlib.util.spec_from_file_location("readiness_unasked", path)
+            unasked = importlib.util.module_from_spec(spec)
+            sys.modules[spec.name] = unasked
+            try:
+                spec.loader.exec_module(unasked)
+            finally:
+                sys.modules.pop(spec.name, None)
+
+        for table in ("ACTION_FOR_CONDITION", "CAP_CEILING", "ROUTE_CATEGORY"):
+            with self.subTest(table=table):
+                self.assertEqual(getattr(unasked, table), getattr(MODULE, table))
+
+        pillars = [
+            unasked.Pillar(name=name, score=60, confidence=1.0, subscores=())
+            for name in ("dataset", "evaluation", "agent")
+        ]
+        cap = unasked.Cap(
+            "evaluator-unvalidated",
+            unasked.EVALUATOR_UNVALIDATED_CEILING,
+            "no complete current-run calibration",
+            blocks=False,
+        )
+        reverted = unasked.aggregate(pillars, [cap], [], dict(unasked.DEFAULT_WEIGHTS))
+        self.assertFalse(cap.asks)
+        self.assertEqual(reverted.recommended_action, unasked.PROCEED)
+        self.assertEqual(
+            self._deferred().recommended_action, MODULE.COMPLETE_CALIBRATION
+        )
 
 
 class MeasuredOpeningInvocationTests(unittest.TestCase):
@@ -16981,6 +17596,14 @@ class WhoWroteItBoundsWhatItMayClaimTests(unittest.TestCase):
             self._evaluation(origins.get("evaluation")),
             replace(agent, origin=origins.get("agent")),
             dict(MODULE.DEFAULT_WEIGHTS),
+            # The row-level read, because "the whole reachable case" now
+            # includes it: the opening method requires it on every scoring
+            # call, and the top two bands are held until it enters. Without it
+            # every card below would be held at WORKABLE for a gap that has
+            # nothing to do with who wrote the evaluator, and the class would
+            # stop measuring origin ceilings at all. It earns no points, so
+            # every number here is the number it always was.
+            _review(reviewed=120),
         )
 
     def test_the_reachable_case_no_longer_scores_as_if_the_ruler_were_real(

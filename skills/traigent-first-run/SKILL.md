@@ -276,7 +276,11 @@ host. Stage 5 remains authoritative for the connected run.
 
 Run the bundled static preflight with `--defer-missing-sdk` over whatever dataset was discovered,
 omitting `--dataset` when none exists. Then include every safe measurement that can finish now in
-the first readiness card. When `existing-traigent-use` reports a declaration, or a Traigent key is
+the first readiness card. When rows carry expected answers, do the row-level sanity check in
+`references/evaluation-and-dataset.md` here and pass it as `--row-review` - on every opening scoring
+call and not only where calibration is deferred: it is your own read, it spends nothing, and no
+generated row competes with it yet. Nothing counted off a dataset can establish that an answer
+answers its own question, and that reference states what the read is worth once it enters. When `existing-traigent-use` reports a declaration, or a Traigent key is
 already configured, say so in the readiness turn: Traigent was set up in this project before this
 run started, so this may not be a first run, and this run still charges for its own baseline and
 search. Never read that as a blocker or a reason to stop - the evidence cannot tell an install apart
@@ -298,9 +302,11 @@ Otherwise run readiness without `--calibration` and name the concrete deferral: 
 semantics, no defensible probe matrix, an uninstalled local dependency, a slow, uncertain, external,
 or executing path, or an LLM judge that needs paid approval. Missing calibration is then unmeasured,
 not a failed evaluator; the `evaluator-unvalidated` ceiling limits the readiness claim to 45 until
-the evaluation method is actually checked. When rows exist, do the row-level sanity check in
-`references/evaluation-and-dataset.md` here and pass it as `--row-review`: it is your own read, it
-spends nothing, and no generated row competes with it yet. Apply the run-scoped evaluator-method rule above to both
+the evaluation method is actually checked, and the card's recommended action names that outstanding
+calibration rather than reading `proceed`. Where the deferral is the evaluator-execution scope gate
+rather than a step this run could take, pass `--calibration-scope-refused` so the card asks for the
+containment review instead of for the calibration the gate forbids; it moves no number, because
+nothing here can check it. Apply the run-scoped evaluator-method rule above to both
 scripts, and apply the run-scoped task-kind rule to readiness only here - narrower than its
 destination rule in `references/evaluation-and-dataset.md`, because this gate's calibration takes no
 seam flags and so establishes nothing about delivery for stage 4 to reuse - and the origin rule with
@@ -738,6 +744,10 @@ component on purpose, the run continues, and what the ceiling refuses is the cla
 `evaluator-unvalidated` routes through the opening/stage-4 calibration gate above: measure it once
 when that gate establishes eligibility, or keep the ceiling and name the concrete deferral. It is
 an evidence boundary, not a repair finding.
+`evaluator-calibration-refused` is that same evidence boundary reached by the scope gate rather than
+by a step nobody took, and it routes to the containment review in `references/run-safety.md`, never
+to running the check here. Say that the ceiling is about missing evidence and not a finding against
+their evaluator, and never present the unsafe route as the way to lift it.
 `evaluator-timeout` is neither a repair to route nor the invalid-evaluator
 paragraph: calibration ran and did not finish, which establishes nothing about this evaluator and
 does not make it invalid - slow and broken look identical from here. Settle it while gaps are still

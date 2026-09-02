@@ -795,9 +795,14 @@ review.
 **It bounds the run and never stops it.** An assistant's opinion may withhold a claim; it may not
 manufacture one, and it may not cancel a paid run the user's own sound rows have earned. A material
 share of `no` verdicts lowers the ceiling to 70 (`dataset-unsound-expected-outputs`) and the run
-proceeds; a clean pass earns no points, no band, and no credit of any kind. What a clean pass does
-earn is a sentence in the readiness evidence line, which costs zero score and names who did the
-checking. An `unsure` is reported there too and never scored, because uncertainty is not a finding.
+proceeds; a clean pass adds no points and no credit of any kind to the score. What a clean pass does
+is leave a sentence in the readiness evidence line, which costs zero score and names who did the
+checking, and release one hold: the top two bands are held at `WORKABLE` however high the score
+until some read of the answers has entered, because a run that never looked is not a run that
+looked and found nothing. Covering the rows the run reads is what releases that hold: every entry
+marked `in_run` where the split is drawn, or every provided row where it is not. A partial read
+releases nothing and says so.
+An `unsure` is reported there too and never scored, because uncertainty is not a finding.
 
 Three things put the ceiling there rather than a stop. The run only ever reads the tuning rows plus
 the held-out ten, so a wrong answer among rows it never opens changes nothing that happens. On

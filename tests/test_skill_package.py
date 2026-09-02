@@ -14643,10 +14643,22 @@ class SkillPackageTests(unittest.TestCase):
         self.assertIn("may withhold a claim; it may not manufacture one", normalized)
         self.assertIn("may not cancel a paid run", normalized)
         self.assertIn(
-            "a clean pass earns no points, no band, and no credit of any kind",
+            "a clean pass adds no points and no credit of any kind to the score",
             normalized,
         )
         self.assertIn("sentence in the readiness evidence line", normalized)
+        # And the one thing a clean pass DOES earn, which is not a point and
+        # not a band the run climbs into: it releases a hold. The top two bands
+        # are held until some read of the answers enters, because a run that
+        # never looked is not a run that looked and found nothing, and the
+        # sentence has to say what covering the rows means or the hold reads as
+        # unliftable (traigent-first-run#377).
+        self.assertIn(
+            "held at `WORKABLE` however high the score until some read of the "
+            "answers has entered",
+            normalized,
+        )
+        self.assertIn("A partial read releases nothing", normalized)
         # 4. A finding is a question, never an edit - and the question has a
         #    shape: every flagged row's id, its quoted content, the reason, and
         #    whether the run will actually read it. Then the user's answer
@@ -15314,7 +15326,7 @@ class SkillPackageTests(unittest.TestCase):
             for condition in re.findall(r'Cap\(\s*"([a-z0-9-]+)"', source)
             if condition.startswith("evaluator-")
         }
-        self.assertEqual(len(conditions), 6)
+        self.assertEqual(len(conditions), 7)
         normalized = " ".join(SKILL.read_text().casefold().split())
         routing = normalized.split(
             "evaluator and agent caps route through the rules that already own them", 1
@@ -15323,6 +15335,9 @@ class SkillPackageTests(unittest.TestCase):
             ("evaluator-unresolved", "inspect, repair, or replace"),
             ("evaluator-invalid", "inspect, repair, or replace"),
             ("evaluator-unvalidated", "opening/stage-4 calibration gate"),
+            # The same evidence boundary reached by the scope gate, routed to
+            # the containment review and never to running the check here.
+            ("evaluator-calibration-refused", "containment review"),
             ("evaluator-timeout", "five-option question"),
             ("evaluator-absent", "create or select"),
             ("evaluator-generated", "walkthrough labeling"),

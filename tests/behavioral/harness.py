@@ -1913,6 +1913,47 @@ def run_safe_opening_calibration_once(
         )
         + "\n"
     )
+    # The row-level read of the answer key, written from the scenario's own
+    # dataset rather than declared, so the coverage claim it makes is one the
+    # rows can be checked against.
+    #
+    # It is here because the opening method now requires it. A dataset whose
+    # expected answers are rotated within their own domains passes every
+    # structural check this package has and destroys the only property that
+    # decides whether the search can rank anything, so the top two bands are
+    # held until somebody has read an input beside its expected answer
+    # (traigent-first-run#377). This scenario's whole point is that a complete,
+    # calibrated project opens at the top of the scale; it now has to do the
+    # read to get there, which is exactly the method under test.
+    row_review_path = readiness_dir / "row-review.json"
+    dataset_rows = [
+        json.loads(line)
+        for line in (project / "evaluation-dataset.jsonl").read_text().splitlines()
+        if line.strip()
+    ]
+    row_review_path.write_text(
+        json.dumps(
+            {
+                "reviewer": "assistant",
+                "rows": [
+                    {
+                        "id": row["id"],
+                        "verdict": "yes",
+                        "origin": "collected",
+                        "in_run": True,
+                        "note": (
+                            f"the expected label {row['output']!r} is the "
+                            "routing answer this message asks for"
+                        ),
+                    }
+                    for row in dataset_rows
+                ],
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n"
+    )
     score_args = (
         "--agent-knobs",
         str(agent_read_path),
@@ -1922,6 +1963,8 @@ def run_safe_opening_calibration_once(
         str(project / "agent.py"),
         "--selected-agent-callable",
         "run",
+        "--row-review",
+        str(row_review_path),
         "--evaluator-method",
         "normalized-exact",
         "--evaluator-origin",
@@ -1958,6 +2001,13 @@ def run_safe_opening_calibration_once(
         )
     if "evaluator-unvalidated" in cap_conditions(opening_score):
         raise ContractError("opening score ignored its fresh calibration artifact")
+    # The other behavioural read, and the reason the band above is reachable.
+    # Calibration establishes the ruler; it says nothing about whether the
+    # expected answers answer their own questions, so an EXCELLENT band that
+    # survived without this flag being False would mean the floor had stopped
+    # holding rather than that this run had cleared it.
+    if opening_score["band_limited_by_unread_answers"]:
+        raise ContractError("opening score ignored its own row-level answer-key read")
     append_event(events, "opening_readiness_score", **score_event_fields(opening_score))
 
     # Stage 4 revalidates the unchanged inputs by reusing this run's fresh
@@ -2080,6 +2130,12 @@ def run_safe_opening_calibration_once(
                 "traigent-runs/readiness",
                 "traigent-runs/readiness/20260830T000000Z",
                 "traigent-runs/readiness/20260830T000000Z/agent-knobs.json",
+                # The row-level read of the answer key, listed one by one
+                # beside its sibling rather than behind a glob: this list is
+                # what the contract is, and a pattern that admits any file
+                # under the readiness directory would stop naming what this
+                # run writes.
+                "traigent-runs/readiness/20260830T000000Z/row-review.json",
             ]
         },
         writes,
