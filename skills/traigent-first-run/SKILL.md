@@ -239,7 +239,12 @@ Declare who wrote the evaluator and the agent on every readiness call, as run-sc
 the method above: `--evaluator-origin` and `--agent-origin`, `brought` for the customer's own and
 `generated` for one this run created. Nothing in a scoring function or an agent's source says who
 typed it, so this is the only way the score can carry what the card's walkthrough section says,
-and it is you rather than the customer who knows - never ask. Omit a flag only where that component
+and it is you rather than the customer who knows - never ask. A customer who says a pre-existing
+agent or evaluator is not something they wrote or vetted has already put it outside `brought`,
+whatever its source reads like or however cleanly it calibrates: a clean read is not consent, and
+silence in the source does not outrank the customer's own words. If this run relies on that file
+anyway, repaired or not, declare it `generated` - the word covers anything standing in for what the
+customer did not bring, not only a file typed from nothing. Omit a flag only where that component
 does not exist yet; nothing has an origin before it is there. Update each the moment this run
 creates that component, so the re-score after a creation stops claiming the customer's own. Omitting
 one is not a neutral choice: it scores a generated component as if it were the customer's, which is
