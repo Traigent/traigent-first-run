@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import builtins
 import difflib
 import io
 import json
@@ -9218,21 +9219,205 @@ def derived_control_flow_loop(source: StaticSourceEvidence) -> bool:
     )
 
 
-def _statements_outside_nested_scopes(node: ast.AST) -> Iterator[ast.AST]:
-    """Walk one node's own body, not the bodies of functions it defines."""
-    pending = list(ast.iter_child_nodes(node))
-    while pending:
-        child = pending.pop()
-        yield child
-        if isinstance(
-            child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
-        ):
+# `try` statements are the only shape here that changes what a `raise` does,
+# and `except*` is not one this walk models: it regroups an exception rather
+# than simply catching it, so a `raise` beneath one is unsettled instead.
+_TRY_STATEMENTS = tuple(
+    kind for kind in (ast.Try, getattr(ast, "TryStar", None)) if kind is not None
+)
+
+_BUILTIN_EXCEPTIONS = {
+    name: value
+    for name, value in vars(builtins).items()
+    if isinstance(value, type) and issubclass(value, BaseException)
+}
+
+
+def _module_bound_names(source: StaticSourceEvidence) -> frozenset[str]:
+    """Every name the selected agent's own file binds anywhere in it."""
+    cache = _source_analysis_cache(source)
+    names = cache.get("module_bound_names")
+    if names is None:
+        bound: set[str] = set()
+        for node in ast.walk(source.tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                bound.add(node.name)
+            elif isinstance(node, (ast.Import, ast.ImportFrom)):
+                bound.update(
+                    alias.asname or alias.name.split(".")[0] for alias in node.names
+                )
+            elif isinstance(node, ast.Name) and isinstance(
+                node.ctx, (ast.Store, ast.Del)
+            ):
+                bound.add(node.id)
+        names = cache["module_bound_names"] = frozenset(bound)
+    return names
+
+
+def _named_exception(
+    name: str, source: StaticSourceEvidence
+) -> type[BaseException] | None:
+    """The builtin exception a bare identifier names, or None if unsettled.
+
+    Builtins are the language's own vocabulary rather than a customer's names,
+    so reading `ValueError` out of them is not the name resolution this module
+    refuses elsewhere. A file that binds the same identifier anywhere is not
+    resolved at all: whatever it means there, it is no longer the builtin.
+    """
+    if name in _module_bound_names(source):
+        return None
+    return _BUILTIN_EXCEPTIONS.get(name)
+
+
+def _raised_exception_name(node: ast.Raise) -> str | None:
+    """The bare identifier a `raise` names, when it names one at all."""
+    raised = node.exc
+    if isinstance(raised, ast.Call):
+        raised = raised.func
+    return raised.id if isinstance(raised, ast.Name) else None
+
+
+def _handler_captures(
+    handler: ast.ExceptHandler, raised: str | None, source: StaticSourceEvidence
+) -> bool | None:
+    """Does this one `except` clause certainly catch that `raise`?
+
+    True and False are both settled answers. None is the answer wherever an
+    identifier in either position is one this walk does not resolve, and it is
+    the answer that must never refuse a document.
+    """
+    if handler.type is None:
+        # A bare `except:` is `except BaseException:` and catches anything.
+        return True
+    elements = (
+        handler.type.elts if isinstance(handler.type, ast.Tuple) else [handler.type]
+    )
+    unsettled = False
+    for element in elements:
+        if not isinstance(element, ast.Name):
+            # `except errors.Timeout:` and friends. Nothing here resolves it.
+            unsettled = True
             continue
-        pending.extend(ast.iter_child_nodes(child))
+        if raised is not None and element.id == raised:
+            # One identifier written twice in one statement, which settles the
+            # relation without resolving either: it also covers the exception
+            # class a customer declared in this very file.
+            return True
+        caught = _named_exception(element.id, source)
+        if caught is None:
+            unsettled = True
+            continue
+        if caught is BaseException:
+            return True
+        thrown = None if raised is None else _named_exception(raised, source)
+        if thrown is None:
+            unsettled = True
+        elif issubclass(thrown, caught):
+            return True
+    return None if unsettled else False
+
+
+def _raise_leaves(
+    node: ast.Raise,
+    protectors: tuple[tuple[ast.ExceptHandler, ...] | None, ...],
+    source: StaticSourceEvidence,
+) -> bool | None:
+    """Does this `raise` get past every `try` between it and the `while`?"""
+    raised = _raised_exception_name(node)
+    for protector in reversed(protectors):
+        if protector is None:
+            return None
+        unsettled = False
+        for handler in protector:
+            captured = _handler_captures(handler, raised, source)
+            if captured is True:
+                return False
+            unsettled = unsettled or captured is None
+        if unsettled:
+            return None
+    return True
+
+
+def _nested_statements(node: ast.stmt) -> Iterator[ast.stmt]:
+    """The statements one statement holds, for the shapes that hold any.
+
+    `if`, `with` and `match` carry statements without changing what captures
+    them, so none of them needs a case of its own above.
+    """
+    for child in ast.iter_child_nodes(node):
+        if isinstance(child, ast.stmt):
+            yield child
+        elif isinstance(child, ast.match_case):
+            yield from child.body
+
+
+def _statements_that_leave_the_while(
+    statements: Iterable[ast.stmt],
+    source: StaticSourceEvidence,
+    *,
+    inner_loop: bool,
+    protectors: tuple[tuple[ast.ExceptHandler, ...] | None, ...],
+) -> Iterator[bool | None]:
+    """One verdict per statement written to leave, walking down from a `while`.
+
+    True it leaves that `while`, False something between them captured it,
+    None this walk cannot tell which. The two arguments carry everything a
+    statement needs to know about what stands between it and the loop: whether
+    a nearer loop has taken over `break`, and which `try` clauses are still
+    live over a `raise`.
+    """
+    for statement in statements:
+        if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            # A nested scope. Its `return` belongs to it, and whether the
+            # `while` ever calls it is not a question this walk can answer.
+            continue
+        if isinstance(statement, ast.Break):
+            yield not inner_loop
+        elif isinstance(statement, ast.Return):
+            yield True
+        elif isinstance(statement, ast.Raise):
+            yield _raise_leaves(statement, protectors, source)
+        if isinstance(statement, (ast.For, ast.AsyncFor, ast.While)):
+            yield from _statements_that_leave_the_while(
+                statement.body, source, inner_loop=True, protectors=protectors
+            )
+            # `else:` on a loop is not inside it. A `break` written there binds
+            # to whatever encloses the loop it is attached to, not to that loop.
+            yield from _statements_that_leave_the_while(
+                statement.orelse, source, inner_loop=inner_loop, protectors=protectors
+            )
+        elif isinstance(statement, _TRY_STATEMENTS):
+            handled = (
+                tuple(statement.handlers) if isinstance(statement, ast.Try) else None
+            )
+            yield from _statements_that_leave_the_while(
+                statement.body,
+                source,
+                inner_loop=inner_loop,
+                protectors=protectors + (handled,),
+            )
+            # Only the `try:` body is protected by these handlers. An `except`
+            # clause's own body, the `else:` and the `finally:` all run with
+            # this statement's handlers already spent or bypassed.
+            for rest in (
+                *(handler.body for handler in statement.handlers),
+                statement.orelse,
+                statement.finalbody,
+            ):
+                yield from _statements_that_leave_the_while(
+                    rest, source, inner_loop=inner_loop, protectors=protectors
+                )
+        else:
+            yield from _statements_that_leave_the_while(
+                _nested_statements(statement),
+                source,
+                inner_loop=inner_loop,
+                protectors=protectors,
+            )
 
 
 def derived_unbounded_while(source: StaticSourceEvidence) -> bool:
-    """Is there a `while` in the selected callable with no way out of its body?
+    """Is there a `while` in the selected callable that nothing in it leaves?
 
     `bounded` is the half of this check that prices the risk - the card turns
     it into "a loop, and a stop condition to point at" - and it was taken on
@@ -9251,12 +9436,51 @@ def derived_unbounded_while(source: StaticSourceEvidence) -> bool:
     disclaiming a determination the author really made. That is the same defect
     the `loop` half above was just relieved of, one check over.
 
-    So the loop test must be a literal truthy constant. `while True:` and
-    `while 1:` cannot end by their condition, so an exit has to be in the body;
-    anything else - a comparison, a name, a call - may end by becoming false and
-    this walk cannot say whether it does.
+    So the loop test has to be one the tree settles as true. That is
+    `_literal_condition_value`, the same tiny literal-only subset the
+    reachability walk uses, which reads `while True:`, `while 1:` and
+    `while 2 > 1:` and refuses to guess at anything else. A comparison against
+    a name, or a call, may end by becoming false and this walk cannot say
+    whether it does.
 
-    And the exits include `raise`. A loop that leaves by raising has left.
+    THE SECOND CONDITION IS A PRINCIPLE, NOT A LIST OF STATEMENT TYPES, and
+    writing it as a list is what this walk got wrong twice:
+
+        a statement leaves the `while` only if nothing between it and the
+        `while` captures it.
+
+    A `break` is captured by any loop that encloses it first, so the `break` in
+    `while True:` over `for c in q: break` ends the `for` and the `while` runs
+    forever. A `raise` is captured by an enclosing `try` whose `except` handles
+    it, so `try: raise StopIteration / except StopIteration: pass` leaves the
+    loop exactly where it was. A `return` is captured only by a function
+    definition, and this walk never enters one. Both earlier revisions counted
+    every `break` and every `raise` at any depth, and each one accepted an
+    agent that never ends while it printed a stop condition on the card.
+
+    Read the capture, not the keyword, and a shape nobody has written down yet
+    is answered by the same sentence.
+
+    UNSETTLED IS NOT REFUSED. Whether an `except` catches a particular `raise`
+    is a question about names: a bare `except:` takes anything, and a customer's
+    own class matched by identifier is settled too, but `except Timeout:`
+    against `raise Timeout()` from an import this walk does not follow is not.
+    Those come back as "cannot tell", which is credited as no exit and refuses
+    nothing - the asymmetry the whole check is built on. Getting that direction
+    right matters more than covering every shape, because the cost of the two
+    errors is not the same: a missed refutation leaves a claim unchecked, and a
+    false one tells an author who read their own agent correctly to write
+    something false about it.
+
+    Two shapes it therefore does not reach, both recorded rather than fixed.
+    `while not False:` is constant-true and is not refused, because the shared
+    literal subset does not fold a `not` and widening it here would change
+    which lines the reachability walk calls dead - a refusing direction, in
+    another check, for a shape nobody writes. And a `while True:` whose only
+    way out is `sys.exit()` is refused although it does leave, because seeing
+    that means resolving a name to the function it calls. The guidance in
+    `references/component-creation.md` names that one, so an author meets it
+    where they write the answer.
 
     `for` is never refuted here: it is bounded by its iterable unless that
     iterable is infinite, which is not a question this walk can answer. One
@@ -9266,11 +9490,15 @@ def derived_unbounded_while(source: StaticSourceEvidence) -> bool:
     for node in _selected_callable_nodes(source):
         if not isinstance(node, ast.While):
             continue
-        if not (isinstance(node.test, ast.Constant) and bool(node.test.value)):
+        if _literal_condition_value(node.test) is not True:
             continue
-        if not any(
-            isinstance(inner, (ast.Break, ast.Return, ast.Raise))
-            for inner in _statements_outside_nested_scopes(node)
+        # `else:` on this `while` is dead - it runs only when the test goes
+        # false, and this test cannot - so nothing written there is an exit.
+        if all(
+            verdict is False
+            for verdict in _statements_that_leave_the_while(
+                node.body, source, inner_loop=False, protectors=()
+            )
         ):
             return True
     return False
@@ -12761,11 +12989,13 @@ def build_signal_from_entry(
                 raise AgentDiscoveryInputError(
                     "build check 'control-flow' declares bounded=True, and "
                     f"{source.display_path} has a loop in "
-                    f"{source.selected_callable.name} whose test is a constant "
-                    "and which has no way out of its body - no break, no "
-                    "return, no raise. The card would print 'a stop condition "
-                    "to point at' over an agent with none - point at the stop "
-                    "condition, or record bounded=False"
+                    f"{source.selected_callable.name} whose test cannot become "
+                    "false and which has no way out of its body. A break "
+                    "inside an inner loop ends that loop rather than this one, "
+                    "and a raise its own except catches never leaves either. "
+                    "The card would print 'a stop condition to point at' over "
+                    "an agent with none - point at the stop condition, or "
+                    "record bounded=False"
                 )
             return BuildSignal(
                 check, weight, f"a loop, and a stop condition to point at ({evidence})"
