@@ -1,9 +1,9 @@
-# 0075 - the build half is settled against the tree
+# 0076 - the build half is settled against the tree
 
-follows: 0074
-follows-total-measured: 441_185
-total-ceiling: 445_000
-total-measured: 444_398
+follows: 0075
+follows-total-measured: 450_786
+total-ceiling: 454_400
+total-measured: 453_999
 
 A blinded fixture re-run spent these bytes before anyone wrote them down. Its
 dataset was rebuilt underneath it, so the recorded invariants no longer matched
