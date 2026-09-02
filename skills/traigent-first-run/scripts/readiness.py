@@ -9485,9 +9485,13 @@ def _module_client_binding(
     for node in ast.walk(source.tree):
         if isinstance(node, ast.Global) and name in node.names:
             return None
+    # `_callable_body_nodes` walks a node's OWN scope and does not descend into
+    # the functions and classes it defines, which is what "the module's own
+    # scope" means here: a `client = ...` inside some function binds that
+    # function's local, not this name.
     binders = [
         node
-        for node in _statements_outside_nested_scopes(source.tree)
+        for node in _callable_body_nodes(source.tree)
         if isinstance(node, _BINDING_CAPABLE_NODES) and _node_binds(name, node)
     ]
     if len(binders) != 1:
