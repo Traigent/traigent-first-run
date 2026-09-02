@@ -201,6 +201,24 @@ and needs no push, while the run stopping is the outcome the walkthrough exists 
 because the sentence beside it already says what the result will not be able to claim, so the
 recommendation cannot oversell.
 
+That rule tells continuing apart from pausing, and it stops there. When more than one route
+continues, it has already done its work and something else has to choose between them: the mark
+goes to the route that can produce the result the run is being paid for. A route that continues
+into a measurement this same card has already reported as unable to answer the question is not the
+one to mark, whatever else recommends it - marking it sells a comparison whose own evidence says it
+cannot separate the things being compared, and the customer pays for a number that was never going
+to arrive. Leaving the customer's material untouched does not settle it either, and the run that
+prompted this is why: both routes wrote only to a working copy, so the property they were sorted on
+was one they shared. State the choice as the property rather than as the finding of the day -
+whichever finding the card raised, the route that clears it is the one marked, and the route that
+leaves it standing is still offered, unmarked. The mark moves; it is never withheld from the set.
+Withholding it hands back an unmarked pair in the one state where an invented mark does the most
+harm, and the section above records what a blinded run does with one. The rule above is
+unchanged underneath this one: pausing is never the marked route, and this only narrows which of
+the continuing ones is. The baseline spend approval is this same rule at a later stage, and
+`references/run-safety.md` applies it there by name rather than stating a second one for a reader
+to reconcile with this.
+
 The build route is the way to CONTINUE, and its wording has to make that unmistakable. "I build both
 … and re-validate, then carry on" continues; "continue once a valid evaluator is available" is the
 pause wearing the build route's letter, and a run that offers it has offered no way forward at all.
@@ -298,6 +316,15 @@ When creating an agent:
 If the user gives no preference, recommend a structured classification or extraction task. It is
 easy to score deterministically and demonstrates optimization without paying for an LLM judge. That
 is the default for a user with nothing to anchor on, not a list of what this guide supports.
+"Classification" and "extraction" are how this document names the shape; they are never how the
+customer is offered it. SKILL.md's intent gate owns that wording - the job in their own words, and
+a recommendation that names what in their material picked it - and it binds every option written
+from this default. The run that bought that rule offered, to a project holding one plain text note,
+"pull the metric, the time range, and the grouping out of a plain-English data request" - three
+practice words in one line, to a reader who has none of them and no way to tell which of the three
+choices is nearest their work. The resident gate keeps the rule and the option to copy; the run it
+came from is recorded here, because a worked failure is read once and the rule is applied on every
+run.
 
 Do not create a story-writing or summarization walkthrough with exact-string grading.
 

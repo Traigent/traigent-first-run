@@ -417,8 +417,20 @@ conversation; recording it is a write and waits for the answer.
    path - on this same question, so it stays one and not two.
 3. Ask exactly one task-intent question: **"What should the walkthrough agent do?"** Offer at
    most three short choices, each put as the job itself - "pull the total and the date out of a
-   receipt" - never as a category name like extraction or classification, and recommend a
-   structured, deterministically scoreable task. This question is the last thing in the message.
+   receipt" - never as a category name like extraction or classification. Write every choice in
+   the customer's own words. A word that belongs to the practice a task comes from rather than to
+   their project - metric, time range, grouping, entity, intent, schema, canonical form - is the
+   category name wearing a job's clothes, and it is unreadable to a customer whose whole project
+   is one text note. Where their material has no word for a thing, say the thing plainly. Then
+   recommend a structured, deterministically scoreable task, and in that same sentence name what
+   in THEIR material makes it the one to pick - "it is what your logs already show, and it grades
+   deterministically". A recommendation resting only on a property of the task recommends the same
+   thing in every project alike, which is what not having read theirs looks like from the outside.
+   This question is the last thing in the message. Both halves, on a project holding log lines:
+
+   > **A.** Turn a plain-English question about your singers database into a SQL query
+   > *(recommended - it is what your logs already show, and it grades deterministically)*
+
 4. **STOP and wait for the answer.** Do not continue setup in the same turn.
 
 Before that answer, make zero writes:
@@ -611,6 +623,16 @@ permission to optimize against a broken grading signal. Letter the routes from `
 build one recommended; close with the unnumbered `I have it` line, which is never a route and always
 last. Nothing follows it, and no route carries a decision of its own.
 `references/component-creation.md` owns the wording.
+
+That shape is the shape of every choice this run puts to the customer, not only this one. Wherever
+they are offered named routes - the task-intent question, a creation or repair route, the baseline
+spend approval, the connected-stage preview - the routes are lettered from `A`, exactly one is
+marked recommended, each is answerable by replying, and a set of named routes is never compressed
+into a yes/no. Bold words with no letter and no mark are a second form for the same act, and a
+customer who meets two forms in one run reads the difference as meaning something it does not. The
+unnumbered `I have it` line is the part that does not travel: it answers where material is, so it
+rides on the asks about material and never on an approval to spend. A single proposed action with no alternative route beside it is not a route list and is not
+what this rule is about.
 
 `readiness.py` emits these decisions as closed `action_kind` values and one
 `recommended_action`: the lowest-ceiling blocking remedy when a cap blocks, otherwise the
@@ -862,13 +884,6 @@ account request:
   created no portal experiment.
 - Do not disclose the held-out score before stage 8.
 
-This checkpoint is a valid place to stop, and saying so without saying what stopping costs is not
-a neutral presentation. A baseline-only run has measured one fixed grid on the user's own machine:
-they have not seen Traigent choose a trial, have no portal experiment or link, no recommendation
-across both runs, and no held-out score - the four things stages 4 and 5 exist to show. Name those
-when the baseline leaves headroom, and recommend continuing. If the user stops anyway, preserve the
-local result and report the run as baseline-only, not as a completed Traigent optimization.
-
 Now check whether the dataset and evaluator distinguish configurations. If not, stop before the search
 and recommend the evidenced repair before any connected preview. If the baseline is nearly perfect with no
 informative failures, report little or no measured quality or cost headroom and recommend harder realistic
@@ -891,8 +906,45 @@ fault, at this moment; no other stage's offer is changed by them. Declining stay
 answerable and is answered without reproach: preserve what was measured, report the run as
 baseline-only, and never suggest they were wrong to stop.
 
-Preview the connected step with the final reply-ready line and approval rules in
-`references/run-safety.md`. Its explicit approval remains required before its key, probe, sync, or calls.
+This checkpoint asks for the next spend, and its recommended answer is to continue. Lead with that,
+and put the mark on it: the order this paragraph is written in is the order a run reproduces, and
+written stop-first it produced a bold headline saying stopping was fine above a plain closing
+clause saying to carry on. The checks above are the only thing that moves the mark, and not one of
+them moves it onto stopping: they decide which continuing route carries it - the evidenced repair,
+or harder rows, before the search rather than instead of it, by the rule
+`references/component-creation.md` states for routes that continue. This is also not the free exit
+- that was the pre-baseline approval, which this guide calls the last moment stopping is free - so
+the baseline is already bought, and continuing is what turns it into the result stages 4 and 5
+exist to show.
+
+State the case as what continuing produces rather than as what stopping costs. The same four facts
+carry either frame, and the gain frame is the accurate one: a run that continues sees Traigent
+choose the trials rather than a fixed grid, gets a portal experiment and its link, a recommendation
+read across both runs, and a held-out score - the four things stages 4 and 5 exist to show, and the
+four a baseline-only run does not have. Two of them are reasons that hold on every sound baseline
+and rest on no number; `references/run-safety.md` writes both out where the connected preview is
+offered on them, and this flow does not restate them. Measured headroom strengthens that case where
+the baseline leaves some; it never creates it, and where there is none the ceiling-effect check
+above governs what the connected step is offered as, with those standing reasons as what it is
+offered on - so the customer is never left an unmarked pair with nothing said beside it.
+
+Declining stays available and stays plainly answerable, and the run says so positively: stopping
+here is a legitimate choice that leaves a real result - a measured baseline on their own material.
+The next phase spends more and requires an explicit approval, so a checkpoint that does not let a
+customer decline is a consent defect and not a stronger recommendation. State its consequence once
+and briefly: if the user stops, preserve the local result and report the run as baseline-only, not
+as a completed Traigent optimization.
+
+Nothing written here may claim the search will improve anything, promise what the held-out score
+will be, or suggest that a customer who stops has made a mistake. The honest claim is capability
+and information - how the product selects, and what a generalisation check says about their own
+rows - and the workflow-demonstration label and the no-expected-gain rule above both stand
+unchanged over it.
+
+Preview the connected step with the final reply-ready block and approval rules in
+`references/run-safety.md`. Its lettered routes are the last thing in that message, below the
+disclosure prose rather than inside it. Its explicit approval remains required before its key,
+probe, sync, or calls.
 
 Present `Stage 4/5 · Optimize` with the checklist in `references/run-safety.md`: explain
 managed selection, portal history, bounded calls/cost, and deeper insights as conditional
@@ -1095,7 +1147,7 @@ result a wider run would find.
 
 A menu offered *instead of* a recommendation is the same as no recommendation; put extras later.
 
-End with the final reply-ready line in `references/run-safety.md`; `continue` never bypasses
+End with the final reply-ready block in `references/run-safety.md`; `continue` never bypasses
 approval.
 
 Those state-specific moves are the ones this run measured. Separately, and only after the result,

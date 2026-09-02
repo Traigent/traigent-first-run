@@ -681,6 +681,317 @@ def conversation_contract_documents() -> list[Path]:
     ]
 
 
+#: Tokens that make what follows them a prohibition, matched on word
+#: boundaries so `do **not** compress` reads the same as `do not compress`.
+#:
+#: Bare `no ` is deliberately absent. It was here, and it is a determiner far
+#: more often than a governor: `when no second route has been priced, end the
+#: preview with \`Continue?\`` and `8 of the 18 rows were solved by no
+#: configuration and the top three are a statistical tie` both read as
+#: prohibitions because of a `no` that governs a noun thirty words away from
+#: the clause being judged. A `no` that governs a CLAUSE is written with a
+#: modal after it, which `POLARITY_NEGATED_SUBJECT` matches and nothing else
+#: does.
+POLARITY_NEGATORS = (
+    "never",
+    "nothing",
+    "neither",
+    "cannot",
+    "not",
+    "no longer",
+)
+POLARITY_NEGATED_SUBJECT = re.compile(
+    r"\bno\s+[\w '`-]{0,40}?\s(?:may|must|shall|can|will|should|is|are)\b"
+)
+#: Tokens that make it a mandate or a permission. Counted together because an
+#: inversion reaches for whichever of the two fits the sentence it is
+#: rewriting: "nothing here may claim" inverts to "everything here must claim",
+#: and "is never compressed into a yes/no" inverts to "may be compressed".
+POLARITY_MANDATORS = (
+    "must",
+    "shall",
+    "always",
+    "is required",
+    "are required",
+    "has to",
+    "have to",
+    "may be",
+    "can be",
+    "is free to",
+    "are free to",
+)
+#: Verbs that flip whatever polarity reached them, so "nothing here may fail to
+#: claim X" is read as the mandate to claim X that it is, wearing a
+#: prohibition's opening words.
+POLARITY_FLIPPERS = (
+    "fail to",
+    "fails to",
+    "omit to",
+    "omits to",
+    "refrain from",
+    "stop short of",
+)
+POLARITY_SENTENCE_BREAK = re.compile(r"(?<=[.!?;])\s")
+#: Where one governor stops and the next begins. A negator or a modal binds
+#: what follows it only until a new clause starts, and this is the list of
+#: things that start one. Commas are in it: "when no second route has been
+#: priced, end the preview with `Continue?`" is an instruction wearing a
+#: subordinate clause's `no`, and the comma is the boundary that says so.
+POLARITY_CLAUSE_BREAK = re.compile(
+    r"[,;:()]|\s(?:and|but|so|because|which|while|when|if|unless|after|before|"
+    r"though|although|yet|then|rather)\s"
+)
+#: How far back a governor can sit and still be read as governing. Not a
+#: sentence: the sentence-wide read is what let one `no` in a subordinate
+#: clause exempt six natural phrasings of real defects.
+POLARITY_ADJACENT = 90
+
+
+def adjacent_runup(flat: str, at: int) -> str:
+    """The words that actually govern the clause starting at `at`.
+
+    Bounded three ways, each of which was a false green: by the sentence, by
+    `POLARITY_ADJACENT` characters, and by the last clause break inside that
+    window. The whole-sentence run-up this replaces meant any negator anywhere
+    ahead of a match exempted it, which is how "Present the two outcomes with
+    no default, which reads as a neutral choice" and five phrasings like it
+    passed every content guard in the suite.
+    """
+    start = 0
+    for boundary in POLARITY_SENTENCE_BREAK.finditer(flat, 0, at):
+        start = boundary.end()
+    window = flat[max(start, at - POLARITY_ADJACENT) : at]
+    cut = 0
+    for boundary in POLARITY_CLAUSE_BREAK.finditer(window):
+        cut = boundary.end()
+    return window[cut:]
+
+
+def adjacent_tail(flat: str, end: int) -> str:
+    """The words immediately after a match, to its first clause break.
+
+    A sentence NAMES a defect with the predicate that follows it - "a pair
+    offered with no default is that same menu" - so the naming check needs a
+    forward window as well as a backward one. Bounded for the same reason:
+    ", which reads as a neutral choice" is a new clause commenting on an
+    instruction, not a predicate that turns it into a description.
+    """
+    stop = POLARITY_SENTENCE_BREAK.search(flat, end)
+    window = flat[
+        end : stop.start() if stop else min(len(flat), end + POLARITY_ADJACENT)
+    ]
+    window = window[:POLARITY_ADJACENT]
+    boundary = POLARITY_CLAUSE_BREAK.search(window)
+    return window[: boundary.start()] if boundary else window
+
+
+#: Run-up tokens that mean a document is REPORTING a shape rather than telling
+#: an assistant to produce it. Guidance in this package explains itself by
+#: quoting what went wrong, so "the preview used to end with `Continue with
+#: this bounded Traigent run?`" is the history of the defect sitting inside the
+#: paragraph that removed it - and a scanner that cannot tell that from an
+#: instruction makes the defect unquotable.
+#:
+#: `a run that`, `the run that` and `one run` were here and are gone. They are
+#: stock phrases in this repository's prose, not reporting markers: "a run that
+#: has reached this point should end the card with `Shall I go ahead?`" is an
+#: instruction, and it was exempted. What is left is past-tense and specific,
+#: so recording history costs an author one explicit word.
+GUARD_REPORTED = (
+    "used to",
+    "no longer",
+    "previously",
+    "was read as",
+    "were read as",
+    "had already",
+    "once closed on",
+)
+#: Predicates that mean the sentence NAMES the defect rather than issuing it.
+#: "A pair offered with no default is that same menu" is the rule; refusing it
+#: deletes the paragraph that explains why the mark is there, which is a worse
+#: outcome than the defect the scan was aimed at. Read in the ADJACENT tail,
+#: never the whole sentence: ", which reads as a neutral choice" hangs off an
+#: instruction and does not turn it into a description.
+GUARD_NAMES_DEFECT = (
+    "is a menu",
+    "is that same menu",
+    "is no recommendation",
+    "is the same as no recommendation",
+    "is the same silence",
+    "reads as",
+    "looks like",
+    "is the defect",
+    "is worse than",
+    "is what that",
+    "is not an instruction",
+)
+
+
+def guard_issues(text: str, match: str) -> bool:
+    """True when `text` ISSUES `match` rather than naming, forbidding or recalling it.
+
+    One filter for five scanners, because the five had one root cause. Every
+    one of them was a substring or regex blocklist with no polarity and no
+    scope, standing over prose whose job is to name the thing it forbids.
+
+    **What this filter does not do.** It reads words, not syntax. Two sweeps
+    over 21 natural phrasings of real defects are recorded in
+    `GuardExemptionsAreNarrowEnoughToCatchTheDefectTests`: the first, with
+    sentence-wide exemptions, caught 12; this one catches all 21, and that
+    number is a measurement of these 21 phrasings and not a proof about
+    unseen ones. Every scanner it filters is a word list underneath, so a
+    defect written in vocabulary no list names is not detected. Treat a green
+    result as "no listed phrasing of this defect is present", never as "this
+    document does not contain this defect".
+
+    The other side of that measurement, stated here too because a one-sided
+    disclosure is its own kind of dishonesty: 32 of 33 honest paraphrases stay
+    green, and the one still refused is named as `KNOWN_FALSE_RED` in that same
+    class rather than dropped from the set. This filter can still red correct
+    prose, and where it does, the fix is to say so there and not to add a token
+    here.
+
+    The structural counterpart in this file - `route_blocks()`, which counts
+    marks in the blocks the documents actually render - is the shape these
+    should move to, and traigent-first-run#364 tracks that redesign together
+    with the two blind spots `route_blocks()` itself still has.
+    """
+    flat = " ".join(text.casefold().split())
+    needle = " ".join(match.casefold().split())
+    at = flat.find(needle)
+    return at >= 0 and guard_issues_at(flat, at, at + len(needle))
+
+
+def guard_issues_at(
+    flat: str, at: int, end: int, *, read_polarity: bool = True
+) -> bool:
+    """`guard_issues` for a caller that already knows where the match sits.
+
+    Separate because the position matters: a scan whose pattern OPENS on a
+    noun and closes on the verb that qualifies it has to be read at the verb,
+    or the qualifier lands inside the match where no run-up can see it.
+    """
+    runup = adjacent_runup(flat, at)
+    if read_polarity and polarity_of(runup) == "forbids":
+        return False
+    if any(token in runup for token in GUARD_REPORTED):
+        return False
+    tail = adjacent_tail(flat, end)
+    return not any(token in f"{runup} {tail}" for token in GUARD_NAMES_DEFECT)
+
+
+def clause_occurrences(text: str, clause: str) -> list[int]:
+    """Every position at which `text` writes `clause`, flattened."""
+    flat = " ".join(text.casefold().split())
+    needle = " ".join(clause.casefold().split())
+    return [match.start() for match in re.finditer(re.escape(needle), flat)]
+
+
+def clause_polarity(text: str, clause: str) -> str:
+    """Whether `text` FORBIDS, MANDATES or merely states `clause`.
+
+    `forbids`, `mandates`, `unqualified`, `absent` when the clause is not
+    written at all, or `mixed` when the document writes it more than once and
+    the occurrences do not agree.
+
+    The defect this exists for is a mechanism, not an instance. Every guard in
+    this file that stood over a prohibition asserted the prohibited clause was
+    PRESENT and asserted nothing else, so the polarity of the sentence around
+    it was unguarded in the one direction that matters. Inverting the shipped
+    "Nothing written here may claim the search will improve anything ... or
+    suggest that a customer who stops has made a mistake" into "Everything
+    written here MUST claim ... and suggest ..." leaves every pinned substring
+    exactly where it was.
+
+    EVERY occurrence is read, which the first version of this did not do. It
+    took `flat.find(needle)` and answered on the first statement alone, so
+    appending "in practice every preview must claim the search will improve
+    anything" AFTER the shipped prohibition left the suite green - the same
+    "a copy elsewhere satisfies the guard" defect this branch had just fixed
+    for the approval card, re-created in the same diff. A document that says
+    both now answers `mixed`, and every caller here demands `forbids`.
+    """
+    flat = " ".join(text.casefold().split())
+    found = clause_occurrences(flat, clause)
+    if not found:
+        return "absent"
+    answers = {polarity_of(adjacent_runup(flat, at)) for at in found}
+    return answers.pop() if len(answers) == 1 else "mixed"
+
+
+def polarity_of(runup: str) -> str:
+    """What the words in front of a clause do to it."""
+    forbids = any(
+        re.search(rf"\b{re.escape(token)}\b", runup) for token in POLARITY_NEGATORS
+    ) or bool(POLARITY_NEGATED_SUBJECT.search(runup))
+    if sum(runup.count(token) for token in POLARITY_FLIPPERS) % 2:
+        # "nothing here may fail to claim X" mandates X. A flip does not leave
+        # the clause unqualified in either direction: it moves it to the other
+        # side, so a prohibition wearing a flipping verb reads as the mandate
+        # it is and a mandate wearing one reads as a prohibition.
+        return "mandates" if forbids else "forbids"
+    if forbids:
+        return "forbids"
+    if any(
+        re.search(rf"\b{re.escape(token)}\b", runup) for token in POLARITY_MANDATORS
+    ):
+        return "mandates"
+    return "unqualified"
+
+
+def prohibition_defects(text: str, clauses: tuple[str, ...]) -> list[str]:
+    """Every way `text` fails to forbid all of `clauses` in one governed statement.
+
+    A list of prohibitions is one sentence with one governor, and reading each
+    item's own run-up cannot see that: the run-up to the third item is ", or ",
+    which governs nothing. Reading the whole sentence instead is what let an
+    unrelated negator forty words back exempt a real defect. So the shape is
+    asserted rather than inferred - one sentence carries all of them, its head
+    forbids, and no occurrence of any of them is written anywhere else.
+    """
+    flat = " ".join(text.casefold().split())
+    defects: list[str] = []
+    missing = [clause for clause in clauses if not clause_occurrences(flat, clause)]
+    if missing:
+        return [f"{clause!r} is not written here" for clause in missing]
+    sentences: list[tuple[int, str]] = []
+    at = 0
+    for boundary in POLARITY_SENTENCE_BREAK.finditer(flat):
+        sentences.append((at, flat[at : boundary.start()]))
+        at = boundary.end()
+    sentences.append((at, flat[at:]))
+    governing = [
+        (offset, sentence)
+        for offset, sentence in sentences
+        if all(clause_occurrences(sentence, clause) for clause in clauses)
+    ]
+    if len(governing) != 1:
+        return [
+            f"{len(governing)} sentences state all of these limits together; "
+            "a prohibition over a list is one sentence with one governor"
+        ]
+    offset, sentence = governing[0]
+    head = min(clause_occurrences(sentence, clause)[0] for clause in clauses)
+    polarity = polarity_of(adjacent_runup(flat, offset + head))
+    if polarity != "forbids":
+        defects.append(
+            f"the sentence stating these limits {polarity} them rather than "
+            "forbidding them"
+        )
+    for clause in clauses:
+        outside = [
+            at
+            for at in clause_occurrences(flat, clause)
+            if not offset <= at < offset + len(sentence)
+        ]
+        if outside:
+            defects.append(
+                f"{clause!r} is also written outside that sentence, where "
+                "nothing says it is forbidden"
+            )
+    return defects
+
+
 CI_WORKFLOWS = sorted((ROOT / ".github" / "workflows").glob("*.y*ml"))
 
 
@@ -6702,15 +7013,38 @@ class SkillPackageTests(unittest.TestCase):
 
         for phrase in (
             "recommended next: continue with traigent optimization because <observed reason>",
-            "continue with this bounded traigent run?",
+            # Was "continue with this bounded traigent run?". That pin existed
+            # to keep a specific question FORM, and the form is now the defect:
+            # closing on one yes/no left continuing as the only answerable
+            # thing on a card that had already named stopping and priced it
+            # four ways. The customer read it as having been offered nothing,
+            # "even not what to type to proceed". What the pin was protecting -
+            # a preview that ends on an answerable offer - survives and is
+            # stronger, so the literal moves to the shape that now carries it.
+            # The other four phrases here protect other rules that merely sat
+            # beside it, and are untouched.
+            "each one answerable by replying",
             "do not manufacture urgency",
             "reply-ready line",
             "it approves nothing unless",
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, guidance)
-        self.assertIn("when the measured results show useful headroom", readme)
-        self.assertIn("or address the strongest observed limitation first", readme)
+        # Was "when the measured results show useful headroom". README.md is
+        # the single most-read file in a public repository and it conditioned
+        # continuing on measured headroom - the exact conditional the guidance
+        # dropped this round, because it says nothing at all on a nearly
+        # perfect baseline and leaves the customer an unmarked pair there. It
+        # now says what the guidance says: continue, and name which continuing
+        # route.
+        self.assertIn("after baseline it recommends continuing", readme)
+        self.assertIn(
+            "the managed search, or addressing the strongest observed "
+            "limitation first where the measured results show no useful "
+            "headroom",
+            readme,
+        )
+        self.assertIn("stopping stays available and answerable either way", readme)
 
     def test_readiness_is_explained_as_progress_without_invented_animation(
         self,
@@ -11311,7 +11645,13 @@ class SkillPackageTests(unittest.TestCase):
             "**two rows: the easiest and the hardest.**",
             "**what the evaluation method counts as correct.**",
             "**where we are.** `stage 3/5 · baseline`",
-            "**proceed, or fix.** two named outcomes and no default",
+            # Was "two named outcomes and no default". The card's own guide
+            # holds one section over that an unmarked pair is a menu, and two
+            # live runs closed on exactly that - the rule was written for the
+            # build route and never applied to the spend approval, which is
+            # the same act of choosing.
+            "**proceed, or fix.** two lettered routes with the recommendation "
+            "on one of them",
             "approving the spend is not approving the material, and silence is neither",
             # the ladder, so an unlabelled pick is not passed off as measured
             "pick the pair by the ladder in `references/evaluation-and-dataset.md`",
@@ -12110,7 +12450,13 @@ class SkillPackageTests(unittest.TestCase):
             "cost or latency as `not measured`",
             "no generalization or production-improvement claim exists yet",
             "this phase created no portal experiment",
-            "this checkpoint is a valid place to stop",
+            # Was "this checkpoint is a valid place to stop". A run rendered
+            # that faithfully and put the bold on stopping with the
+            # recommendation trailing in plain text at the end of the
+            # paragraph. Declining is still here - it is pinned on its own
+            # below - but the emphasis now sits on the recommended route.
+            "this checkpoint asks for the next spend, and its recommended "
+            "answer is to continue",
             "baseline-only, not as a completed traigent optimization",
             "only after that checkpoint, ask for the traigent key",
             "full access rather than the read-only default",
@@ -23559,6 +23905,133 @@ class TheUnusableBranchHasItsOwnQuestionTests(unittest.TestCase):
         self.assertIn("the build route is the way to continue", creation)
         self.assertIn("re-validate, then carry on", creation)
 
+    #: Words for one pillar's material. A rule about which route gets the mark
+    #: that reaches for any of them has been narrowed to the finding of the day,
+    #: and the next instance arrives in a different pillar. Written out here so
+    #: this check has an expectation the document cannot supply for it.
+    ONE_PILLAR_WORDS = (
+        "agent",
+        "dataset",
+        "evaluator",
+        "holdout",
+        "rows",
+        "split",
+    )
+
+    @classmethod
+    def _narrowed_to_one_pillar(cls, paragraph: str) -> list[str]:
+        flat = " ".join(paragraph.casefold().split())
+        return sorted(
+            word for word in cls.ONE_PILLAR_WORDS if re.search(rf"\b{word}\b", flat)
+        )
+
+    def _paragraph_containing(self, phrase: str) -> str:
+        """The one paragraph of the creation reference that states `phrase`."""
+        raw = (SKILL_ROOT / "references" / "component-creation.md").read_text()
+        blocks = [
+            " ".join(block.casefold().split())
+            for block in raw.split("\n\n")
+            if phrase in " ".join(block.casefold().split())
+        ]
+        self.assertEqual(
+            len(blocks),
+            1,
+            f"expected exactly one paragraph stating {phrase!r}, found "
+            f"{len(blocks)}",
+        )
+        return blocks[0]
+
+    def test_the_mark_goes_to_the_route_that_can_produce_the_result(self) -> None:
+        """Continue-over-pause cannot choose between two routes that continue.
+
+        A run offered a build on a dataset of 300 rows that resolved to six
+        distinct questions, and a build that also wrote more questions into a
+        working copy. Both continued, so the rule that was written had nothing
+        to say, and the mark went to the one that left the customer's files
+        alone - the route the same card had just reported could not rank
+        anything. The customer was recommended a comparison that was
+        arithmetically incapable of separating its own configurations.
+        """
+        creation = self._creation()
+        self.assertIn("when more than one route continues", creation)
+        self.assertIn(
+            "the mark goes to the route that can produce the result the run is "
+            "being paid for",
+            creation,
+        )
+        self.assertIn(
+            "a route that continues into a measurement this same card has "
+            "already reported as unable to answer the question is not the one "
+            "to mark",
+            creation,
+        )
+        # The property that did NOT separate them, named, because it is the one
+        # the run reached for: both routes wrote only to a working copy.
+        self.assertIn(
+            "leaving the customer's material untouched does not settle it",
+            creation,
+        )
+
+    def test_the_continue_over_pause_rule_survives_underneath_it(self) -> None:
+        """The narrower rule chooses among continuing routes; it adds no pause.
+
+        Read as a replacement, "recommend what can produce the result" would
+        make a pause recommendable the moment no continuing route looks strong,
+        which is the outcome this walkthrough exists to avoid and the reason
+        the older rule was written.
+        """
+        creation = self._creation()
+        self.assertIn(
+            "pausing is always available and needs no push, while the run "
+            "stopping is the outcome the walkthrough exists to avoid",
+            creation,
+        )
+        self.assertIn(
+            "pausing is never the marked route, and this only narrows which of "
+            "the continuing ones is",
+            creation,
+        )
+
+    def test_the_rule_is_stated_as_the_property_and_not_as_this_finding(
+        self,
+    ) -> None:
+        """Written about datasets, it would be re-derived for the next pillar.
+
+        The instance was a comparison set. The rule has to be about a route
+        continuing into a measurement the card has already called unable to
+        answer, whatever raised it - so the paragraph that states it may not be
+        phrased in one pillar's material.
+        """
+        paragraph = self._paragraph_containing("when more than one route continues")
+        self.assertEqual(
+            self._narrowed_to_one_pillar(paragraph),
+            [],
+            "the rule that decides which continuing route is marked is written "
+            "in one pillar's words, so the next pillar's instance is not "
+            "covered by it",
+        )
+
+    def test_the_generality_check_reads_a_narrowed_rule_and_a_general_one(
+        self,
+    ) -> None:
+        """The guard above, probed both ways before anything is trusted to it.
+
+        A check that only ever returns nothing would pass on a rule rewritten
+        about datasets tomorrow; a check that flagged the general wording would
+        push the next author into naming a pillar to get past it.
+        """
+        general = (
+            "When more than one route continues, the mark goes to the route "
+            "that can produce the result the run is being paid for, whichever "
+            "finding the card raised."
+        )
+        narrowed = (
+            "When more than one route continues, the mark goes to the route "
+            "that adds rows so the dataset can rank anything."
+        )
+        self.assertEqual(self._narrowed_to_one_pillar(general), [])
+        self.assertEqual(self._narrowed_to_one_pillar(narrowed), ["dataset", "rows"])
+
 
 _ASK_NOUN = r"(?:ask|question|decision|choice|marker line)"
 _MATERIAL = r"(?:card|board|evidence|result|score|welcome|stage line|material)"
@@ -23924,6 +24397,1728 @@ class TheAskIsLastAndNamesWhatIsLackingTests(unittest.TestCase):
         self.assertIn("pull the total and the date out of a receipt", skill)
         self.assertIn(
             "never as a category name like extraction or classification", skill
+        )
+
+    #: Words that belong to the practice a task comes from rather than to any
+    #: particular customer's project. Written out here rather than read off the
+    #: guidance: a list taken from the document it is used to check asserts that
+    #: the document agrees with itself. The binding runs the other way below -
+    #: the guidance is required to name every one of these - so the two cannot
+    #: drift apart without a test saying so.
+    PRACTICE_WORDS = (
+        "canonical form",
+        "entity",
+        "grouping",
+        "intent",
+        "metric",
+        "schema",
+        "time range",
+    )
+
+    #: The two options real runs wrote, kept verbatim. The first is the defect:
+    #: three practice words offered to a customer whose whole project was one
+    #: text note, who was then asked which of them was nearest their work. The
+    #: second is the same gate getting it right on a project of log lines, and
+    #: it is here so the check below can be shown not to reject it - a guard
+    #: that refuses acceptable copy costs more than the copy it was aimed at.
+    JARGON_OPTION = (
+        "pull the metric, the time range, and the grouping out of a "
+        "plain-English data request"
+    )
+    PLAIN_OPTION = (
+        "Turn a plain-English question about your singers database into a SQL "
+        "query (recommended - it is what your logs already show, and it grades "
+        "deterministically)"
+    )
+
+    #: What makes a word THEIRS. The rule the guidance states is that a
+    #: practice word is refused when it belongs to the trade a task comes from
+    #: "rather than to their project" - so an option that ties the word to the
+    #: customer's own material is the case the rule permits, not the case it
+    #: refuses. Without this the flat blocklist refused "Pull the metric and
+    #: the date out of each alert your dashboard writes", which is the register
+    #: the gate exists to produce.
+    THEIR_MATERIAL = re.compile(r"\b(?:your|yours|their|theirs|the customer's)\b")
+
+    @classmethod
+    def _practice_words(cls, text: str) -> list[str]:
+        flat = " ".join(text.casefold().split())
+        return sorted(
+            word
+            for word in cls.PRACTICE_WORDS
+            if re.search(rf"\b{re.escape(word)}\b", flat)
+        )
+
+    @classmethod
+    def _refused_practice_words(cls, text: str) -> list[str]:
+        """The practice words an option is actually refused for.
+
+        Two conditions, because one was not enough. The escape was "a
+        possessive appears anywhere in the option", and "pull the metric, the
+        time range and the grouping out of YOUR data request" satisfied it -
+        three trade words excused by one `your` bolted onto the trade's own
+        object at the end of the line. So a word is excused only when the
+        possessive sits in the same comma-delimited clause as the word itself,
+        AND the option reaches for at most one trade word at all. The second
+        condition is the finding this rule came from stated directly: what a
+        reader met was "three practice words in one line", and a pile of them
+        is the defect whatever else the line names.
+
+        The escape stays because the guidance's own rule is that a word is
+        refused when it belongs to the trade "rather than to their project" -
+        "pull the metric and the date out of each alert your dashboard writes"
+        is the register this gate exists to produce, and refusing it would push
+        the next author away from it.
+        """
+        flat = " ".join(text.casefold().split())
+        found = cls._practice_words(flat)
+        if len(found) != 1:
+            return found
+        word = found[0]
+        for clause in re.split(r"[,;:]", flat):
+            if re.search(
+                rf"\b{re.escape(word)}\b", clause
+            ) and cls.THEIR_MATERIAL.search(clause):
+                return []
+        return found
+
+    @staticmethod
+    def _offered_options() -> list[tuple[Path, str, str]]:
+        """Every lettered route or choice the guidance writes out for a reader."""
+        return [
+            (path, letter, text)
+            for path, options in TheAskIsLastAndNamesWhatIsLackingTests.route_blocks()
+            for letter, text in options
+        ]
+
+    @staticmethod
+    def route_blocks() -> list[tuple[Path, list[tuple[str, str]]]]:
+        """Every block of lettered routes the guidance writes out, in order.
+
+        Read off the corpus rather than listed, which is the whole point: a
+        rule pinned to the one example that failed leaves its siblings free to
+        carry the same defect, and this package has had exactly that twice.
+
+        Three things widened after review. The corpus is
+        `conversation_contract_documents()`, because the eight-document one
+        leaves README.md - the single most-read file in a public repository -
+        outside every check that owns this distinction. A route no longer has
+        to be inside a blockquote: this package quotes most customer-facing
+        wording, but "most" is not a property a scan may assume, and a route
+        rendered in a list or in plain bold is the same act. And the letters
+        run A-Z rather than A-D, so a fifth route is not silently unscanned.
+
+        Grouped into blocks rather than returned flat, because the mandate is
+        about a SET: one mark per choice cannot be counted on an option seen
+        alone. A block opens on `A` and runs while the letters keep ascending.
+        """
+        opener = re.compile(
+            r"^\s*(?:>\s?)?(?:[-*]\s+)?\*{0,2}([A-Z])(?:\.|\)|\s*\(|\*{2})"
+        )
+        quoted = re.compile(r"^\s*>\s?(.*)$")
+        found: list[tuple[Path, list[tuple[str, str]]]] = []
+        for path in conversation_contract_documents():
+            options: list[tuple[str, str]] = []
+            letter: str | None = None
+            body: list[str] = []
+
+            def close() -> None:
+                nonlocal letter, body
+                if letter is not None:
+                    options.append((letter, " ".join(body)))
+                letter, body = None, []
+
+            def flush() -> None:
+                nonlocal options
+                if options:
+                    found.append((path, options))
+                options = []
+
+            # A route opener has to START something. Dropping the blockquote
+            # requirement means a wrapped prose line can begin "A. One ask
+            # means one decision", and component-creation.md has exactly that
+            # line - so an unquoted opener counts only where the line before it
+            # was blank or was itself part of this block. Inside a blockquote
+            # the marker already says the line is customer-facing wording.
+            opens = True
+            for line in path.read_text(encoding="utf-8").splitlines():
+                stripped = line.strip()
+                quote = quoted.match(line)
+                text = quote.group(1).strip() if quote else stripped
+                start = opener.match(text) if text else None
+                if start and (quote or opens or letter is not None):
+                    close()
+                    expected = chr(ord("A") + len(options))
+                    if start.group(1) != expected:
+                        flush()
+                    letter, body = start.group(1), [text]
+                    opens = False
+                    continue
+                opens = not stripped
+                if not text:
+                    # A bare `>` is a blank line INSIDE a blockquote: it ends
+                    # the option, never the block. Treating it as the end of
+                    # the block is what split every two-route template in this
+                    # package into two blocks of one, which is exactly the
+                    # shape a one-mark-per-choice count cannot be taken on.
+                    close()
+                    if not quote:
+                        flush()
+                    continue
+                if letter is not None:
+                    body.append(text)
+            close()
+            flush()
+        return found
+
+    def test_the_register_check_reads_both_of_the_options_that_were_written(
+        self,
+    ) -> None:
+        """The guard itself, probed in both directions before it is trusted.
+
+        One half is the defect it exists for. The other half matters as much:
+        a check that also refuses the option this gate got right would push the
+        next author away from the wording this rule is trying to produce.
+        """
+        self.assertEqual(
+            self._practice_words(self.JARGON_OPTION),
+            ["grouping", "metric", "time range"],
+        )
+        self.assertEqual(self._practice_words(self.PLAIN_OPTION), [])
+        # And the scope the flat list had no room for. The refusal is of a word
+        # that belongs to the trade "rather than to their project"; an option
+        # that names their material has met the rule, and refusing it there
+        # pushes the next author away from the register this gate is for.
+        self.assertEqual(
+            self._refused_practice_words(self.JARGON_OPTION),
+            ["grouping", "metric", "time range"],
+        )
+        self.assertEqual(
+            self._refused_practice_words(
+                "Pull the metric and the date out of each alert your dashboard "
+                "writes"
+            ),
+            [],
+        )
+
+    def test_no_option_the_guidance_offers_is_written_in_practice_words(
+        self,
+    ) -> None:
+        """Scoped to every offered option, not to the one that was wrong."""
+        options = self._offered_options()
+        # The floor is derived rather than typed. A constant 3 says nothing
+        # about whether the scan still reaches the routes the documents write:
+        # it stays satisfied while the scan silently narrows to one file. Every
+        # document that renders a recommendation mark on a route has to appear
+        # in what the scan found, and the corpus supplies that list.
+        renders_a_route = {
+            path
+            for path in conversation_contract_documents()
+            if "(recommended" in path.read_text(encoding="utf-8").casefold()
+        }
+        self.assertTrue(
+            renders_a_route,
+            "no document renders a marked route, so this scan has nothing to "
+            "be measured against",
+        )
+        self.assertEqual(
+            renders_a_route - {path for path, _, _ in options},
+            set(),
+            "a document renders a marked route that this scan did not find, "
+            "so the scan has stopped matching the way routes are written",
+        )
+        for path, letter, text in options:
+            with self.subTest(document=path.name, option=letter):
+                self.assertEqual(
+                    self._refused_practice_words(text),
+                    [],
+                    "this option is offered to a customer in words that belong "
+                    "to the practice the task comes from, not to their project",
+                )
+
+    def test_a_task_choice_is_written_in_the_customer_s_own_words(self) -> None:
+        """The register rule, where the reader writing the options already is.
+
+        The gate is evaluated before any reference loads, so a rule about how
+        these options are worded has to be in the resident document or it does
+        not reach the moment they are written. It binds every choice rather
+        than one task kind: the run that prompted this offered analytics words,
+        and the next one will offer some other trade's.
+        """
+        text = SKILL.read_text()
+        gate = text.split("#### Zero-anchor intent gate", 1)[1].split(
+            "### 2. Show readiness once", 1
+        )[0]
+        gate = " ".join(gate.casefold().split())
+        self.assertIn("write every choice in the customer's own words", gate)
+        self.assertIn(
+            "a word that belongs to the practice a task comes from rather than "
+            "to their project",
+            gate,
+        )
+        self.assertIn("where their material has no word for a thing", gate)
+        for word in self.PRACTICE_WORDS:
+            with self.subTest(word=word):
+                self.assertIn(
+                    word,
+                    gate,
+                    "the check below refuses this word in an offered option "
+                    "and the guidance never tells an author it is refused",
+                )
+
+    def test_a_recommended_task_names_the_evidence_in_their_material(self) -> None:
+        """A recommendation that fits every project has not read any of them.
+
+        "Structured and deterministically scoreable" is a property of the task.
+        It is true before the project is opened, so a recommendation resting on
+        it alone is the same sentence on every run. The one this gate got right
+        named what in the customer's own material picked it, and that is the
+        half the rule was missing.
+        """
+        text = SKILL.read_text()
+        gate = text.split("#### Zero-anchor intent gate", 1)[1].split(
+            "### 2. Show readiness once", 1
+        )[0]
+        gate = " ".join(gate.casefold().split())
+        self.assertIn(
+            "in that same sentence name what in their material makes it the one "
+            "to pick",
+            gate,
+        )
+        self.assertIn(
+            "a recommendation resting only on a property of the task recommends "
+            "the same thing in every project alike",
+            gate,
+        )
+        # And the reference that carries the no-preference default defers to it,
+        # rather than reading as licence to offer the category by name.
+        creation = self._creation()
+        self.assertIn(
+            '"classification" and "extraction" are how this document names the '
+            "shape; they are never how the customer is offered it",
+            creation,
+        )
+
+
+class ClausePolarityIsReadNotAssumedTests(unittest.TestCase):
+    """The polarity reader, probed in both directions before anything uses it.
+
+    A reader that answered `forbids` for every clause would pass every caller
+    below while checking nothing, which is the exact failure the callers were
+    rewritten to escape. So each answer is shown reachable on text whose shape
+    is known, the shipped prohibition is shown to read `forbids`, its
+    inversions to read otherwise, and the two ways a document can keep the
+    prohibition and defeat it anyway - saying the opposite later, and putting
+    an unrelated negator in front - are each shown red.
+    """
+
+    LIMITS = (
+        "claim the search will improve anything",
+        "promise what the held-out score will be",
+        "suggest that a customer who stops has made a mistake",
+    )
+    SHIPPED = (
+        "Nothing written here may claim the search will improve anything, "
+        "promise what the held-out score will be, or suggest that a customer "
+        "who stops has made a mistake."
+    )
+    INVERTED = (
+        "Everything written here MUST claim the search will improve anything, "
+        "promise what the held-out score will be, and suggest that a customer "
+        "who stops has made a mistake."
+    )
+
+    def test_every_answer_is_reachable(self) -> None:
+        self.assertEqual(
+            clause_polarity("A run never promises a gain.", "promises a gain"),
+            "forbids",
+        )
+        self.assertEqual(
+            clause_polarity("A run must promise a gain.", "promise a gain"),
+            "mandates",
+        )
+        self.assertEqual(
+            clause_polarity("A run promises a gain.", "promises a gain"),
+            "unqualified",
+        )
+        self.assertEqual(clause_polarity("A run is bounded.", "a gain"), "absent")
+        self.assertEqual(
+            clause_polarity(
+                "A run may never promise a gain. A run must promise a gain.",
+                "promise a gain",
+            ),
+            "mixed",
+        )
+
+    def test_a_later_statement_cannot_be_hidden_behind_an_earlier_one(self) -> None:
+        """The defect this branch fixed for the approval card, re-created here.
+
+        The first version read `flat.find(needle)` and answered on the first
+        occurrence, so appending a sentence that mandates what the shipped
+        sentence forbids left every caller green. A copy elsewhere satisfying
+        a guard is the same class as a duplicated condition satisfying one.
+        """
+        contradicted = (
+            f"{self.SHIPPED} In practice every preview must claim the search "
+            "will improve anything, promise what the held-out score will be, "
+            "and suggest that a customer who stops has made a mistake."
+        )
+        self.assertEqual(prohibition_defects(self.SHIPPED, self.LIMITS), [])
+        self.assertNotEqual(prohibition_defects(contradicted, self.LIMITS), [])
+        self.assertNotEqual(prohibition_defects(self.INVERTED, self.LIMITS), [])
+
+    def test_an_unrelated_negator_does_not_forbid_the_clause_after_it(self) -> None:
+        """ "Never X, and always Y" is this repository's own sentence shape.
+
+        A sentence-wide run-up read the `never` as governing `Y`, so a
+        prohibition could be turned into a mandate without removing a word the
+        guard knew about.
+        """
+        smuggled = (
+            "Never leave the customer without a reason, and always claim the "
+            "search will improve anything, promise what the held-out score "
+            "will be, and suggest that a customer who stops has made a "
+            "mistake."
+        )
+        self.assertEqual(clause_polarity(smuggled, self.LIMITS[0]), "mandates")
+        self.assertNotEqual(prohibition_defects(smuggled, self.LIMITS), [])
+
+    def test_natural_paraphrases_of_the_shipped_prohibition_stay_forbidding(
+        self,
+    ) -> None:
+        """A polarity reader that reds honest prose is the defect, not a win.
+
+        Two rewordings an author would plausibly reach for, neither of them the
+        wording that shipped, both of which still forbid.
+        """
+        for paraphrase in (
+            "No sentence in this section may claim the search will improve "
+            "anything, promise what the held-out score will be, or suggest "
+            "that a customer who stops has made a mistake.",
+            "This section does not claim the search will improve anything, "
+            "promise what the held-out score will be, or suggest that a "
+            "customer who stops has made a mistake.",
+        ):
+            with self.subTest(paraphrase=paraphrase[:32]):
+                self.assertEqual(prohibition_defects(paraphrase, self.LIMITS), [])
+
+    def test_a_prohibition_wearing_a_flipping_verb_is_a_mandate(self) -> None:
+        """The inversion that keeps the opening words and moves the polarity."""
+        self.assertEqual(
+            clause_polarity(
+                "Nothing written here may fail to claim the search will "
+                "improve anything.",
+                "claim the search will improve anything",
+            ),
+            "mandates",
+        )
+
+    def test_a_determiner_two_clauses_back_does_not_govern(self) -> None:
+        """The exemption that swallowed six real defects, probed directly.
+
+        `no` is a determiner far more often than a governor. Read over a whole
+        sentence it exempted "when no second route has been priced, end the
+        preview with a yes/no" and five phrasings like it; read adjacently it
+        governs only the clause it opens, and "no customer-facing message may
+        end with ..." - where it does govern, with a modal after it - still
+        reads as the prohibition it is.
+        """
+        self.assertEqual(
+            polarity_of(
+                adjacent_runup(
+                    "when no second route has been priced, end the preview", 38
+                )
+            ),
+            "unqualified",
+        )
+        self.assertEqual(
+            polarity_of(
+                adjacent_runup("no customer-facing message may end with that", 31)
+            ),
+            "forbids",
+        )
+
+
+class OneShapeAndOneMarkForEveryChoiceTests(unittest.TestCase):
+    """Five watched runs, and the same rule missing from three of them.
+
+    The creation reference already holds that two routes with nothing marked is
+    a menu, and that a menu offered instead of a recommendation is the same as
+    no recommendation. It was written for the build route and applied nowhere
+    else. The baseline spend approval is an unmarked pair; it renders bold
+    words where every other ask renders lettered routes; and the baseline
+    checkpoint put its bold on stopping with the recommendation trailing in
+    plain text at the end of the paragraph.
+    """
+
+    #: Instructions to offer a choice with nothing marked. The rule that names
+    #: the defect - "two routes with nothing marked is a menu" - is not one of
+    #: these, and the probe below shows it is not caught by them.
+    UNMARKED_PAIR_INSTRUCTIONS = (
+        "and no default",
+        "and no recommendation",
+        "and nothing marked",
+        "neither route is marked",
+        "no marked route",
+        "no recommended default",
+        "no recommended route",
+        "with no default",
+        "with nothing marked",
+    )
+
+    @classmethod
+    def _instructs_an_unmarked_pair(cls, text: str) -> list[str]:
+        flat = " ".join(text.casefold().split())
+        return sorted(
+            phrase
+            for phrase in cls.UNMARKED_PAIR_INSTRUCTIONS
+            if phrase in flat and guard_issues(flat, phrase)
+        )
+
+    @staticmethod
+    def _flat(path: Path) -> str:
+        return " ".join(path.read_text().casefold().split())
+
+    def _checkpoint(self) -> str:
+        """The baseline checkpoint paragraphs, by the sentences that bound them.
+
+        The closing bound moved when the evidence checks did. They used to sit
+        BELOW the recommendation and were the natural end of the slice; the
+        recommendation contradicted four of them and the order was the defect,
+        so they now sit above it and the slice ends where the flow hands over
+        to the connected preview instead.
+        """
+        text = self._flat(SKILL)
+        opening = "this checkpoint asks for the next spend"
+        closing = "preview the connected step with the final reply-ready block"
+        self.assertIn(opening, text)
+        self.assertIn(closing, text)
+        return text.split(opening, 1)[1].split(closing, 1)[0]
+
+    def test_the_unmarked_pair_check_reads_an_instruction_and_not_the_rule(
+        self,
+    ) -> None:
+        """The guard, probed both ways before anything is trusted to it.
+
+        A check that also flagged the sentence naming the defect would make the
+        rule unstatable, which is worse than the defect: the next author would
+        delete the paragraph that explains why the mark is there.
+        """
+        self.assertEqual(
+            self._instructs_an_unmarked_pair(
+                "Two named outcomes and no default. Proceeding approves this."
+            ),
+            ["and no default"],
+        )
+        for allowed in (
+            "Two routes with nothing marked is a menu, and this guide holds "
+            "that a menu offered instead of a recommendation is the same as "
+            "no recommendation. An unstated default is what that looks like.",
+            # The description of the defect, which the first version refused on
+            # `with no default` while proving only that one phrasing survives.
+            "A pair offered with no default is that same menu.",
+            "Never offer the pair with no default.",
+        ):
+            with self.subTest(allowed=allowed[:44]):
+                self.assertEqual(self._instructs_an_unmarked_pair(allowed), [])
+
+    def test_no_document_instructs_a_choice_with_nothing_marked(self) -> None:
+        """Scoped to every contract document, not to the approval that failed.
+
+        Widened from `assistant_facing_documents()`, which is eight files, to
+        the eleven-file corpus that already existed for exactly this kind of
+        rule. The three it adds are README.md, AGENTS.md and CLAUDE.md, and
+        this defect planted verbatim into all three stayed green.
+        """
+        documents = conversation_contract_documents()
+        self.assertTrue(documents, "no guidance documents were found to check")
+        for path in documents:
+            with self.subTest(document=path.name):
+                self.assertEqual(
+                    self._instructs_an_unmarked_pair(path.read_text()),
+                    [],
+                    "this document tells the assistant to offer a choice with "
+                    "nothing marked, which its own guide calls no recommendation",
+                )
+
+    def _spend_card(self) -> str:
+        """The pre-spend approval card's own bullet, not the whole file.
+
+        This is the defect the second commit shipped past the first commit's
+        guard. Each of the three conditions occurred ONCE in `run-safety.md`
+        when the guard was written and TWICE afterwards, because the connected
+        preview restated them verbatim. `assertIn` over the flattened file was
+        then satisfied by the restatement, so deleting a condition from the
+        customer-visible card - the only place it governs anything - ran green.
+        A guard over a rule that lives in one place has to be bound to that
+        place; "somewhere in this file" is a haystack the next duplicate
+        re-opens.
+        """
+        safety = self._flat(RUN_SAFETY)
+        opening = "- **proceed, or fix.**"
+        closing = "an asking cap is what this card exists to discharge"
+        self.assertIn(opening, safety)
+        self.assertIn(closing, safety)
+        return safety.split(opening, 1)[1].split(closing, 1)[0]
+
+    def test_the_spend_approval_marks_the_route_that_continues(self) -> None:
+        """The rule reaches the approval, with the reasoning it already uses."""
+        safety = self._spend_card()
+        self.assertIn(
+            "two lettered routes with the recommendation on one of them", safety
+        )
+        self.assertIn("`a.` proceed, marked recommended, and `b.` fix", safety)
+        self.assertIn(
+            "fixing needs no push, stays available at any time and costs nothing, "
+            "while the run not happening is the outcome this walkthrough exists "
+            "to avoid",
+            safety,
+        )
+        self.assertIn(
+            "a bounded taste of the workflow at a priced ceiling rather than a "
+            "full search",
+            safety,
+        )
+
+    #: A sentence that takes the mark off a choice altogether, rather than
+    #: moving it. The distinction is the whole finding: withholding leaves the
+    #: customer an unmarked pair in precisely the three states where an
+    #: invented mark does the most damage, and `component-creation.md` records
+    #: a blinded run supplying `(recommended)` for itself when it met one.
+    MARK_NOUN = r"(?:mark|recommendation)"
+    #: `the mark`/`a recommendation` and no other sense of the word: `mark it
+    #: untracked` is an unrelated verb, and matching it made this scan report
+    #: the cost-tracking rules as a route defect. Bounded by `.` and `;`
+    #: because a semicolon starts a new claim - "the mark moves; it is never
+    #: withheld" is two, and only the second is about withholding.
+    MARK_LIFT_VERB = (
+        r"(?:withheld|withhold|omitted|dropped|suppressed|held back|kept back|"
+        r"kept off|left off|leave off|removed|withdrawn|waived|absent|lifted)"
+    )
+    MARK_LIFTED = re.compile(
+        rf"\b(?:the|a|its|no)\s+{MARK_NOUN}\b[^.;]{{0,40}}?(\b{MARK_LIFT_VERB}\b)"
+        rf"|(\b(?:withhold|drop|omit|suppress|hold back|leave off|remove|lift)\b)"
+        rf"\s+(?:the|a|its)\s+{MARK_NOUN}\b",
+        re.IGNORECASE,
+    )
+
+    @classmethod
+    def _lifts_the_mark(cls, text: str) -> list[str]:
+        """Every instruction to leave a named-route choice with no mark.
+
+        Polarity is read at the WITHHOLDING VERB, not at the start of the
+        match. "The mark moves; it is never withheld from the set" opens on the
+        mark noun and carries its `never` three words later, so a reader that
+        looked only at what precedes the whole match called the rule an
+        instance of the defect it states - which is the shape that would make
+        the rule unstatable and delete the paragraph explaining the mark.
+        """
+        flat = " ".join(text.casefold().split())
+        return sorted(
+            {
+                match.group(0)
+                for match in cls.MARK_LIFTED.finditer(flat)
+                # At the VERB, whichever side of the noun it fell on: "the mark
+                # is never withheld" and "never drop the mark" are the same
+                # rule written two ways, and both carry the qualifier next to
+                # the verb rather than next to the noun.
+                if guard_issues_at(
+                    flat,
+                    (match.start(1) if match.group(1) else match.start(2)),
+                    match.end(),
+                )
+            }
+        )
+
+    def test_the_lifted_mark_check_reads_the_instruction_and_not_the_rule(
+        self,
+    ) -> None:
+        """The guard, probed both ways before anything is trusted to it."""
+        self.assertEqual(
+            len(
+                self._lifts_the_mark(
+                    "So the mark is withheld while the card carries a "
+                    "`FIX BEFORE PAID RUN`."
+                )
+            ),
+            1,
+        )
+        for allowed in (
+            "The mark moves; it is never withheld from the set.",
+            "The mark is never withheld from the pair.",
+            "The mark moves rather than lifting, on the same condition that "
+            "reference states.",
+        ):
+            with self.subTest(allowed=allowed[:40]):
+                self.assertEqual(self._lifts_the_mark(allowed), [])
+
+    def test_the_mark_moves_to_the_route_that_can_answer(self) -> None:
+        """It moves; it is never lifted. The two documents said different things.
+
+        SKILL.md mandated that exactly one route is marked recommended, naming
+        the baseline spend approval among the choices it binds. run-safety.md
+        then said - verbatim twice - that the mark is WITHHELD under a
+        `FIX BEFORE PAID RUN`, a blocking cap, or a run that cannot answer what
+        it is paid for. Both sides were pinned by separate literal assertions
+        in this class and nothing compared them, so the suite was green on the
+        contradiction.
+
+        Withholding is also the wrong mechanism on its own evidence:
+        run-safety.md holds that "an unmarked pair is a menu ... a run that
+        meets one supplies the default itself", and component-creation.md
+        records a blinded run doing exactly that. So the three states where an
+        invented mark is most harmful were the three the guide mandated an
+        unmarked pair in. The mark moves to `B. fix` instead - under a blocking
+        cap, fixing IS the route that can produce the result being paid for -
+        and the condition is stated once, in the creation reference, and
+        pointed at from both places that apply it.
+        """
+        card = self._spend_card()
+        self.assertIn("the mark moves rather than lifting", card)
+        for condition in (
+            "where the card carries a `fix before paid run`",
+            "where any cap blocks",
+            "where the run as scoped cannot answer the question it is being "
+            "paid to answer",
+        ):
+            with self.subTest(condition=condition):
+                self.assertIn(
+                    condition,
+                    card,
+                    "this condition is missing from the approval card itself; "
+                    "a copy elsewhere in the file does not govern the card",
+                )
+        self.assertIn(
+            "fixing is the route that can produce that result: `b.` carries "
+            "the mark, `a.` proceed stays offered unmarked",
+            card,
+        )
+        self.assertIn("the sentence beside it names the finding that moved it", card)
+        # One rule, not two: the approval names the reference that states it
+        # rather than restating a second version to be reconciled.
+        self.assertIn(
+            "on the same condition that reference states for choosing among "
+            "routes that continue",
+            card,
+        )
+        # And the condition is stated once. The connected preview restated all
+        # three verbatim, which is how the card's own copy became deletable.
+        safety = self._flat(RUN_SAFETY)
+        for condition in (
+            "where any cap blocks",
+            "where the run as scoped cannot answer the question it is being "
+            "paid to answer",
+        ):
+            with self.subTest(stated_once=condition):
+                self.assertEqual(
+                    safety.count(condition),
+                    1,
+                    "this condition is written twice in one document, so "
+                    "deleting the copy that governs leaves every guard over it "
+                    "satisfied by the copy that does not",
+                )
+        creation = self._flat(SKILL_ROOT / "references" / "component-creation.md")
+        self.assertIn(
+            "the baseline spend approval is this same rule at a later stage",
+            creation,
+        )
+        self.assertIn("the mark moves; it is never withheld from the set", creation)
+
+    def test_no_document_takes_the_mark_off_a_choice_instead_of_moving_it(
+        self,
+    ) -> None:
+        """The cross-document guard the contradiction got past.
+
+        Two documents each pinned by their own literal assertion, saying
+        opposite things about whether a mark exists, with nothing comparing
+        them. Scoped to the whole contract corpus rather than to the two files
+        that disagreed.
+        """
+        documents = conversation_contract_documents()
+        self.assertTrue(documents, "no guidance documents were found to check")
+        for path in documents:
+            with self.subTest(document=path.name):
+                self.assertEqual(
+                    self._lifts_the_mark(path.read_text()),
+                    [],
+                    "this document takes the mark off a named-route choice "
+                    "rather than moving it, which SKILL.md's one-shape rule "
+                    "forbids and which hands back the unmarked pair a blinded "
+                    "run fills in for itself",
+                )
+
+    def test_every_written_route_block_marks_exactly_one_route(self) -> None:
+        """The mandate, derived from the blocks rather than pinned as prose.
+
+        "exactly one is marked recommended" was asserted as a substring of
+        SKILL.md and nowhere else, so nothing in this suite ever counted a mark
+        in a rendered block. This reads the blocks the documents actually
+        write and counts.
+        """
+        blocks = TheAskIsLastAndNamesWhatIsLackingTests.route_blocks()
+        self.assertTrue(blocks, "no written route blocks were found to check")
+        for path, options in blocks:
+            marked = [text for _, text in options if "(recommended" in text.casefold()]
+            with self.subTest(
+                document=path.name, routes="".join(letter for letter, _ in options)
+            ):
+                self.assertEqual(
+                    len(marked),
+                    1,
+                    "this block of routes does not carry exactly one "
+                    "recommendation, which is the shape SKILL.md states for "
+                    "every named-route choice this run offers",
+                )
+
+    def test_the_route_block_count_reads_a_marked_block_and_an_unmarked_one(
+        self,
+    ) -> None:
+        """The counter above, probed both ways on invented blocks."""
+        marked = [
+            ("A", "**A. proceed** *(recommended - it is priced)*"),
+            ("B", "**B. fix**"),
+        ]
+        unmarked = [("A", "**A. proceed**"), ("B", "**B. fix**")]
+        doubled = [
+            ("A", "**A. proceed** *(recommended)*"),
+            ("B", "**B. fix** *(recommended)*"),
+        ]
+        count = lambda options: len(  # noqa: E731
+            [text for _, text in options if "(recommended" in text.casefold()]
+        )
+        self.assertEqual(count(marked), 1)
+        self.assertEqual(count(unmarked), 0)
+        self.assertEqual(count(doubled), 2)
+
+    def test_one_shape_is_stated_once_for_every_named_route_choice(self) -> None:
+        """Two shapes in one run read as a distinction the guide never made."""
+        skill = self._flat(SKILL)
+        self.assertIn(
+            "that shape is the shape of every choice this run puts to the "
+            "customer, not only this one",
+            skill,
+        )
+        self.assertIn(
+            "the routes are lettered from `a`, exactly one is marked " "recommended",
+            skill,
+        )
+        # The other half of the same sentence, read for polarity rather than
+        # for presence: "a set of named routes is never compressed into a
+        # yes/no" was pinned nowhere at all, and rewriting `never` as `may be`
+        # left the whole class green.
+        self.assertEqual(
+            clause_polarity(skill, "compressed into a yes/no"),
+            "forbids",
+            "the one-shape rule states the yes/no compression without "
+            "forbidding it, or writes it again somewhere nothing does",
+        )
+        self.assertIn(
+            "bold words with no letter and no mark are a second form for the "
+            "same act",
+            skill,
+        )
+        # The two carve-outs are real distinctions, not exemptions: the
+        # standing exit answers a different question, and a single proposed
+        # action is not a set of routes to letter.
+        self.assertIn(
+            "it answers where material is, so it rides on the asks about "
+            "material and never on an approval to spend",
+            skill,
+        )
+        self.assertIn(
+            "a single proposed action with no alternative route beside it is "
+            "not a route list",
+            skill,
+        )
+
+    def test_the_checkpoint_leads_with_the_recommendation(self) -> None:
+        """The guidance's sentence order is the output's emphasis order.
+
+        Written stop-first, a live run rendered a bold headline saying stopping
+        was a valid choice above a plain closing clause saying to continue.
+        The order is therefore part of the instruction, and it is asserted as
+        an order rather than as a pair of present sentences.
+        """
+        checkpoint = self._checkpoint()
+        self.assertIn(
+            "lead with that, and put the mark on it: the order this paragraph "
+            "is written in is the order a run reproduces",
+            checkpoint,
+        )
+        self.assertLess(
+            checkpoint.index("state the case as what continuing produces"),
+            checkpoint.index("declining stays available"),
+            "the decline is written above the case for continuing, which is "
+            "the emphasis order the defect came from",
+        )
+        # And the same rule applied to the lead itself. The lead is
+        # unconditional, and four evidenced branches below it said something
+        # else - a non-discriminating dataset or evaluator, a nearly perfect
+        # baseline, a baseline with no measured headroom, and a binding
+        # statistical tie. By this paragraph's own stated mechanism the lead
+        # wins, so a run recommended continuing 30 lines before performing the
+        # check that would have stopped it. The checks now run first, and the
+        # lead says what they can and cannot move.
+        skill = self._flat(SKILL)
+        self.assertLess(
+            skill.index(
+                "now check whether the dataset and evaluator distinguish "
+                "configurations"
+            ),
+            skill.index("this checkpoint asks for the next spend"),
+            "the recommendation is written above the checks that can displace "
+            "it, which is the order a run reproduces",
+        )
+        self.assertIn(
+            "the checks above are the only thing that moves the mark, and not "
+            "one of them moves it onto stopping",
+            checkpoint,
+        )
+        self.assertIn("they decide which continuing route carries it", checkpoint)
+        # This checkpoint is after the paid baseline, so declining is not the
+        # free exit the earlier approval was.
+        self.assertIn("this is also not the free exit", checkpoint)
+        self.assertIn("the last moment stopping is free", self._flat(SKILL))
+
+    def test_the_case_for_continuing_does_not_rest_on_measured_headroom(
+        self,
+    ) -> None:
+        """A conditional recommendation is an unmarked pair on the other branch.
+
+        "Name those when the baseline leaves headroom, and recommend
+        continuing" says nothing at all on a nearly perfect baseline, which is
+        exactly where a customer is left with two routes and no mark.
+        """
+        checkpoint = self._checkpoint()
+        self.assertNotIn("when the baseline leaves headroom, and recommend", checkpoint)
+        self.assertIn(
+            "two of them are reasons that hold on every sound baseline and rest "
+            "on no number",
+            checkpoint,
+        )
+        self.assertIn(
+            "measured headroom strengthens that case where the baseline leaves "
+            "some; it never creates it",
+            checkpoint,
+        )
+        # And the gain frame, which is the accurate one and the one that
+        # invites a decision rather than pushing it.
+        self.assertIn(
+            "state the case as what continuing produces rather than as what "
+            "stopping costs",
+            checkpoint,
+        )
+
+    def test_the_decline_route_survives_the_stronger_recommendation(self) -> None:
+        """The over-correction, which would be the worse defect of the two.
+
+        The next phase spends more money and needs an explicit approval. A
+        checkpoint that recommends continuing and leaves no answerable way to
+        decline is a consent defect, and a guard that only pushes toward
+        continuing would never see it.
+        """
+        checkpoint = self._checkpoint()
+        self.assertIn(
+            "declining stays available and stays plainly answerable", checkpoint
+        )
+        self.assertIn(
+            "a checkpoint that does not let a customer decline is a consent "
+            "defect and not a stronger recommendation",
+            checkpoint,
+        )
+        self.assertIn(
+            "preserve the local result and report the run as baseline-only",
+            checkpoint,
+        )
+
+    #: The three things a stronger case for continuing invites, forbidden in
+    #: one sentence. Written here rather than read off the document, so the
+    #: expectation is not satisfied by the document agreeing with itself.
+    CHECKPOINT_LIMITS = (
+        "claim the search will improve anything",
+        "promise what the held-out score will be",
+        "suggest that a customer who stops has made a mistake",
+    )
+
+    def test_the_case_claims_capability_and_information_and_never_a_gain(
+        self,
+    ) -> None:
+        """Three limits, each stated, because a stronger case invites all three."""
+        checkpoint = self._checkpoint()
+        # Polarity and scope, not presence. This used to be `assertIn`, which
+        # is satisfied by the sentence that FORBIDS these three and equally by
+        # the one that MANDATES them - the reviewer inverted "Nothing written
+        # here may claim ... or suggest ..." into "Everything written here MUST
+        # claim ... and suggest ..." in the shipped document and the suite
+        # stayed green. Reading each limit's own run-up is not enough either:
+        # the run-up to the third is ", or ", which governs nothing. So the
+        # SHAPE is asserted - one sentence carries all three, its head forbids,
+        # and no occurrence of any of them is written anywhere else in this
+        # slice. That last clause is what stops a later paragraph mandating
+        # what an earlier one forbids.
+        self.assertEqual(
+            prohibition_defects(checkpoint, self.CHECKPOINT_LIMITS),
+            [],
+            "the three limits are not written here as one governed prohibition",
+        )
+        self.assertIn("the honest claim is capability and information", checkpoint)
+        # The two rules this paragraph must survive, unchanged, in the text
+        # that follows it.
+        skill = self._flat(SKILL)
+        self.assertIn(
+            "offer the connected step as an optional, no-lift-possible "
+            "verification run, never as an expected gain",
+            skill,
+        )
+        self.assertIn(
+            "an accuracy-only search with walkthrough material requires a "
+            "workflow-demonstration label",
+            skill,
+        )
+
+    def test_the_connected_preview_states_reasons_that_hold_without_headroom(
+        self,
+    ) -> None:
+        """The same conditional, one stage later, as the whole justification.
+
+        The preview's reply-ready line rests on `<observed reason>`. On a
+        baseline that measured no opportunity that clause has nothing to put in
+        it, and the preview is then recommending with no reason stated.
+        """
+        safety = self._flat(RUN_SAFETY)
+        self.assertIn(
+            "that observed reason is one reason among several and never the "
+            "whole of the case",
+            safety,
+        )
+        for standing in (
+            "the only way the customer sees managed selection run against their "
+            "own agent",
+            "whether the selected configuration holds up on rows it was not "
+            "chosen on",
+        ):
+            with self.subTest(reason=standing):
+                self.assertIn(standing, safety)
+        self.assertIn(
+            "never what it will improve, and the no-lift wording below is "
+            "unchanged by them",
+            safety,
+        )
+        # The no-headroom route itself is untouched: the standing reasons are
+        # what the optional verification is offered ON, never a replacement for
+        # the harder-cases recommendation that governs there.
+        self.assertIn("recommend harder realistic cases first", safety)
+        self.assertIn(
+            "offer it as an optional no-lift-possible verification run", safety
+        )
+
+    #: An instruction to close a customer-facing message on one quoted
+    #: question. It is the shape that produced the defect: a card that had
+    #: already named a second route and priced it ended on a single yes/no, so
+    #: only one of the two could be answered.
+    #:
+    #: Was `end[^.]{0,90}with \`[^\`]*\?\``, which is four false-red classes
+    #: and five misses. `end` matched as a bare substring, so `Append`,
+    #: `Recommend` and `extend` all tripped it; the backticks were mandatory,
+    #: so the identical instruction in double quotes or in bold sailed past, as
+    #: did `close`/`finish`/`conclude` phrasings and anything past a
+    #: 90-character window; and with no polarity or scope it refused both the
+    #: prohibition of the shape and the sentence recording the run that
+    #: produced it - so the live acceptable prohibition was green only because
+    #: it happens to use double quotes.
+    CLOSING_VERB = (
+        r"\b(?:end|ends|ended|ending|close|closes|closed|closing|finish|"
+        r"finishes|finished|finishing|conclude|concludes|concluded|"
+        r"concluding|sign off)\b"
+    )
+    QUOTED_QUESTION = (
+        r"(?:`[^`]*\?`|\"[^\"]*\?\"|\u201c[^\u201d]*\?\u201d|\*\*[^*]*\?\*\*)"
+    )
+    CLOSING_QUESTION = re.compile(
+        CLOSING_VERB + r"[^.]{0,200}?" + QUOTED_QUESTION, re.IGNORECASE
+    )
+
+    @classmethod
+    def _instructs_a_closing_question(cls, text: str) -> list[str]:
+        flat = " ".join(text.split())
+        return sorted(
+            {
+                match
+                for match in cls.CLOSING_QUESTION.findall(flat)
+                if guard_issues(flat, match)
+            }
+        )
+
+    def test_the_connected_preview_ends_on_lettered_answerable_routes(self) -> None:
+        """One answerable route and one describable one is worse than a menu.
+
+        The card names stopping and prices it four ways, then closes on a
+        single yes/no about continuing - so the route it argued hardest about
+        is the one the customer cannot take. Read cold, it looked like no
+        options had been offered at all, not even what to type to proceed.
+        """
+        safety = self._flat(RUN_SAFETY)
+        self.assertIn(
+            "every offered connected preview ends on its routes, in the shape "
+            "skill.md states for every named-route choice",
+            safety,
+        )
+        self.assertIn("lettered from `a`, exactly one marked", safety)
+        self.assertIn("each one answerable by replying", safety)
+        self.assertIn(
+            "a route this guide names and prices is a route the customer can "
+            "take by replying",
+            safety,
+        )
+        # Both routes carry a reply form, and the decline names its own.
+        self.assertIn("reply `continue` and i will <next safe step>", safety)
+        self.assertIn("**b. stop here and keep the baseline result.**", safety)
+        self.assertIn("reply `stop` and i will preserve the local result", safety)
+        # The mark is the same rule as the pre-spend card's, conditions and all.
+        self.assertIn(
+            "the mark on `a` follows the pre-spend card's rule above. that "
+            "rule is stated there once and is not restated here",
+            safety,
+        )
+        self.assertIn("stopping is never the marked route", safety)
+        # Where the mark moves, every offered route still carries a letter.
+        # The template renders `A.` and `B. Stop`, so a bounded run described
+        # in prose and offered without one is the "second form for the same
+        # act" this guide refuses one section earlier.
+        self.assertIn(
+            "`a.` is the rows route and carries the mark, `b.` is the bounded "
+            "run, unmarked, and `c.` is stopping",
+            safety,
+        )
+        self.assertIn("every one of them keeps a letter and a reply form", safety)
+        # And the route it does NOT move onto. The paragraph above says an
+        # invalid or non-discriminating pair "has already stopped before this
+        # preview and gets the evidenced repair instead", so naming that repair
+        # as this preview's route `A` was the same document contradicting
+        # itself two paragraphs apart.
+        self.assertIn(
+            "has already stopped before this preview and gets the evidenced " "repair",
+            safety,
+        )
+        self.assertIn(
+            "not onto the evidenced repair, which is not one of this preview's "
+            "routes at all",
+            safety,
+        )
+        self.assertIn("the connected-stage preview", self._flat(SKILL))
+
+    def test_the_answerable_block_is_separable_from_the_disclosure(self) -> None:
+        """Present is not the same as findable.
+
+        `Reply continue` was there. It sat at the tail of a long paragraph,
+        below recipients, the data contract, pricing links and key scopes, and
+        did not read as an instruction - which is the same finding as the ask
+        ordering work one stage earlier, at a different altitude: the question
+        has to BE the last thing, not be inside it.
+        """
+        safety = self._flat(RUN_SAFETY)
+        self.assertIn(
+            "render it as its own block, after the disclosure prose, with "
+            "nothing following it",
+            safety,
+        )
+        self.assertIn(
+            "a reply form sitting in the tail of a long paragraph is not an "
+            "instruction",
+            safety,
+        )
+        self.assertIn(
+            "its lettered routes are the last thing in that message, below the "
+            "disclosure prose rather than inside it",
+            self._flat(SKILL),
+        )
+        # The standing bounds line is the `I have it` equivalent: it answers
+        # how big rather than what to do, so it is never numbered among them.
+        self.assertIn(
+            "the last line is not a third route: it answers how big rather "
+            "than what to do",
+            safety,
+        )
+
+    def test_the_closing_question_check_reads_an_instruction_and_not_a_rule(
+        self,
+    ) -> None:
+        """The guard, probed both ways before anything is trusted to it.
+
+        The rules that forbid the shape have to keep saying the words. A check
+        that also flagged "do not compress them into a yes/no question" would
+        make the prohibition unstatable, which is how a guard ends up deleting
+        the paragraph that explains it.
+        """
+        # The defect, and the four ways of writing it the old scan could not
+        # see: double quotes, bold, `close`/`finish`, and a window wider than
+        # ninety characters.
+        for defect in (
+            "End every offered connected preview with `Continue with this "
+            "bounded Traigent run?`; that reply opens no paid work.",
+            'End every offered connected preview with "Continue with this '
+            'bounded Traigent run?".',
+            "Close the card with **Shall I go ahead?**",
+            "Finish the message with `Continue?`",
+            "End every offered connected preview, after the disclosure prose, "
+            "the recipients, the data contract and the bounds line, with "
+            "`Continue with this bounded Traigent run?`.",
+        ):
+            with self.subTest(defect=defect[:44]):
+                self.assertEqual(len(self._instructs_a_closing_question(defect)), 1)
+        # And the honest prose, including the three classes the old regex
+        # refused: a word merely CONTAINING `end`, the same prohibition written
+        # in this repository's backtick house style, and the sentence that
+        # records the run the rule came from.
+        for allowed in (
+            'Do **not** compress them into a "Shall I go ahead?" yes/no question.',
+            "Do **not** compress them into a `Shall I go ahead?` yes/no question.",
+            "Never end a customer choice on `Shall I go ahead?`.",
+            "The preview used to end with `Continue with this bounded Traigent "
+            "run?`, which left it with one route the customer could take.",
+            "Append the standing bounds line under the routes; recommend the "
+            "one that can answer `did it hold?` and extend nothing else.",
+            'Ask exactly one task-intent question: **"What should the '
+            'walkthrough agent do?"** This question is the last thing in the '
+            "message.",
+            "End with the final reply-ready block in `references/run-safety.md`.",
+        ):
+            with self.subTest(allowed=allowed[:44]):
+                self.assertEqual(self._instructs_a_closing_question(allowed), [])
+
+    def test_no_document_ends_a_customer_choice_on_one_quoted_question(
+        self,
+    ) -> None:
+        """Scoped to every contract document, not to the preview that failed."""
+        documents = conversation_contract_documents()
+        self.assertTrue(documents, "no guidance documents were found to check")
+        for path in documents:
+            with self.subTest(document=path.name):
+                self.assertEqual(
+                    self._instructs_a_closing_question(path.read_text()),
+                    [],
+                    "this document tells a customer-facing message to close on "
+                    "one quoted question, so only one route can be answered",
+                )
+
+    #: A tie is a statement about resolution, and resolution comes from rows.
+    #: Pairing one with a reason to spend inverts the caution the frontier
+    #: section already carries.
+    #: Widened in both halves, and no longer bounded by a sentence break. One
+    #: synonym - `within noise` for the tie, `upside` for the room - or one
+    #: full stop between the two halves defeated the first version, and the
+    #: live text passed only because the author had split the thought across
+    #: two sentences: joining them into "a statistical tie is not headroom"
+    #: turned the suite red on the most natural correct statement of the rule.
+    TIE_PHRASES = (
+        "statistical tie",
+        "statistically indistinguishable",
+        "indistinguishable at this",
+        "within noise",
+        "inside the noise",
+        "too close to call",
+        "a tie among",
+        "tie among the top",
+    )
+    HEADROOM_PHRASES = (
+        "room to move",
+        "room to improve",
+        "room left",
+        "headroom",
+        "reason to spend",
+        "worth spending",
+        "upside",
+        "gain available",
+        "something a wider search",
+    )
+    #: How far apart the two halves may be and still be one thought. A sentence
+    #: break is not the boundary - the shipped text put them in consecutive
+    #: sentences - so the window is characters, sized to reach across one
+    #: ordinary sentence between them.
+    TIE_WINDOW = 240
+
+    #: What denies the pairing. Read over the text BETWEEN the two halves and
+    #: over the tie's own sentence, never over a whole-sentence run-up: "8 of
+    #: the 18 rows were solved by no configuration and the top three are a
+    #: statistical tie - both are things a wider search has room to move" is
+    #: the sale, and a run-up reading would find the unrelated "no
+    #: configuration" thirty words earlier and call it a denial.
+    #: Predicates, not bare negators. `POLARITY_NEGATORS` used to be spliced in
+    #: here and the sale this scan exists for opens "8 of the 18 rows were
+    #: solved by no configuration and the top three are a statistical tie" - so
+    #: an unrelated determiner in the gap read as a denial of the pairing.
+    TIE_DENIALS = (
+        "is not",
+        "are not",
+        "is never",
+        "are never",
+        "never a",
+        "not a ",
+        "not headroom",
+        "is no ",
+        "cannot",
+        "rather than",
+        "instead of",
+        "as a limit",
+        "a bound",
+        "the opposite",
+    )
+
+    @classmethod
+    def _sells_a_tie_as_headroom(cls, text: str) -> list[str]:
+        """Every place a tie at this sample size is paired with a reason to spend.
+
+        Paired by DISTANCE rather than by sentence, and denied by what sits
+        between the halves rather than by a run-up. The first version did the
+        opposite of both: a sentence break defeated it - which is the only
+        reason the shipped text passed, since the author had split the thought
+        in two - and it had no polarity at all, so "a statistical tie is not
+        headroom", the most natural correct statement of its own rule, went
+        red. A run-up reading does not fix that either: the sale it exists to
+        catch opens "8 of the 18 rows were solved by no configuration and the
+        top three are a statistical tie", where an unrelated `no` thirty words
+        earlier would read as a denial of the pairing.
+        """
+        flat = " ".join(text.casefold().split())
+        offending: set[str] = set()
+        for tie in cls.TIE_PHRASES:
+            for match in re.finditer(re.escape(tie), flat):
+                at, end = match.start(), match.end()
+                stop = POLARITY_SENTENCE_BREAK.search(flat, end)
+                tail = flat[at : stop.start() if stop else len(flat)]
+                for room in cls.HEADROOM_PHRASES:
+                    for found in re.finditer(re.escape(room), flat):
+                        if found.start() >= end:
+                            gap, span = (
+                                flat[end : found.start()],
+                                flat[at : found.end()],
+                            )
+                        elif found.end() <= at:
+                            gap, span = (
+                                flat[found.end() : at],
+                                flat[found.start() : end],
+                            )
+                        else:
+                            continue
+                        if len(gap) > cls.TIE_WINDOW:
+                            continue
+                        if any(token in f"{gap} {tail}" for token in cls.TIE_DENIALS):
+                            continue
+                        if guard_issues_at(flat, at, end, read_polarity=False):
+                            offending.add(span)
+        return sorted(offending)
+
+    def test_the_tie_check_reads_the_sale_and_leaves_the_caution_alone(
+        self,
+    ) -> None:
+        """Both directions, because the caution says the same words backwards.
+
+        The frontier section has to keep saying that several configurations are
+        statistically indistinguishable at this size. A guard that flagged that
+        sentence would delete the very bound this rule rests on.
+        """
+        for sold in (
+            "8 of the 18 rows were solved by no configuration and the top three "
+            "are a statistical tie - both are things a wider search has room to "
+            "move.",
+            # The synonym, which the first version had no word for.
+            "The top three are within noise of each other, so there is real "
+            "upside in a wider search.",
+            # And the sentence break, which used to end the scan's reach.
+            "The top three are a statistical tie. That is headroom a wider "
+            "search can still take.",
+        ):
+            with self.subTest(sold=sold[:44]):
+                self.assertGreaterEqual(len(self._sells_a_tie_as_headroom(sold)), 1)
+        for caution in (
+            "A point reaching the frontier is not evidence its score held: "
+            "several configurations are statistically indistinguishable at this "
+            "size, so the one that matched the incumbent's number may simply "
+            "have measured lucky.",
+            # The rule stated correctly, in one sentence, which is the wording
+            # an author reaches for first and which the first version refused.
+            "A statistical tie is not headroom.",
+            "A statistical tie at this size is never a reason to spend, and it "
+            "is not headroom a wider search can move.",
+            # And the record of the run that inverted it.
+            "The preview previously read a statistical tie as room to move "
+            "and sold it.",
+        ):
+            with self.subTest(caution=caution[:44]):
+                self.assertEqual(self._sells_a_tie_as_headroom(caution), [])
+
+    def test_a_tie_is_a_limit_and_never_a_reason_to_spend(self) -> None:
+        """A run inverted the frontier caution into a selling point.
+
+        "The top three are a statistical tie, and both are things a wider
+        search has room to move" is backwards: if three configurations cannot
+        be told apart on 18 rows, more configurations over the same 18 rows
+        cannot tell them apart either. Resolution comes from rows.
+        """
+        safety = self._flat(RUN_SAFETY)
+        self.assertIn(
+            "what may fill `<observed reason>` is a finding a wider search has "
+            "room to move",
+            safety,
+        )
+        self.assertIn("a statistical tie among the top configurations is not", safety)
+        self.assertIn(
+            "adding candidates adds nothing to separate them with - resolution "
+            "comes from rows, never from more things to rank",
+            safety,
+        )
+        self.assertIn(
+            "where it is the binding one recommend more or harder rows first",
+            safety,
+        )
+        self.assertIn("it is never a reason to spend", safety)
+        # The caution it inverts is still stated where it belongs.
+        self.assertIn(
+            "several configurations are statistically indistinguishable at this "
+            "size",
+            safety,
+        )
+
+    def test_no_document_offers_a_tie_at_this_size_as_headroom(self) -> None:
+        """Scoped to every contract document, not to the sentence that failed.
+
+        README.md conditioned continuing on "useful headroom" and sat outside
+        every corpus that owns this distinction, which is what widening found.
+        """
+        documents = conversation_contract_documents()
+        self.assertTrue(documents, "no guidance documents were found to check")
+        for path in documents:
+            with self.subTest(document=path.name):
+                self.assertEqual(
+                    self._sells_a_tie_as_headroom(path.read_text()),
+                    [],
+                    "this document pairs a tie at this sample size with a "
+                    "reason to spend, which inverts what a tie means",
+                )
+
+
+class GuardExemptionsAreNarrowEnoughToCatchTheDefectTests(unittest.TestCase):
+    r"""The measurement `guard_issues` reports, run rather than asserted once.
+
+    Five content scanners in this file share one exemption filter, and an
+    exemption is the cheapest possible way to make a guard useless without
+    making it look useless. The first version of the filter read its
+    exemptions over a WHOLE SENTENCE, and that one decision let six natural
+    phrasings of real defects - planted verbatim into shipped `run-safety.md`
+    and `SKILL.md` - pass every content guard in a 482-test run:
+
+    * `"When no second route has been priced, end the preview with
+      \`Continue with this bounded run?\`."` exempted by a bare `no` in a
+      subordinate clause;
+    * `"Present the two outcomes with no default, which reads as a neutral
+      choice."` exempted by `reads as` in a trailing comment;
+    * `"Give the customer two named outcomes and no recommendation."` and
+      `"The mark is held back where the card carries a \`FIX BEFORE PAID
+      RUN\`."` not in any word list at all;
+    * a tie sold as headroom with `no configuration` in the gap;
+    * and an option in three trade words excused by one `your` at the end.
+
+    Across 21 phrasings the filter caught 12. It now catches all 21, and both
+    numbers are recorded here rather than in a commit message so the next
+    narrowing can be measured against them.
+
+    **What this number is not.** These are 21 phrasings somebody thought of.
+    Every scanner underneath is a word list, so a defect written in vocabulary
+    no list names is not detected, and no count here says otherwise. The
+    honest reading of a green result from any of these five is "no listed
+    phrasing is present", never "this document is clean". The one guard in
+    this set that is structural rather than lexical - `route_blocks()`, which
+    counts marks in the blocks the documents actually render - is the shape
+    these should move to, and traigent-first-run#364 tracks it.
+    """
+
+    #: 21 natural phrasings of real defects. Every one must be caught.
+    DEFECTS = (
+        (
+            "closing",
+            "When no second route has been priced, end the preview with "
+            "`Continue with this bounded run?`.",
+        ),
+        (
+            "closing",
+            "A run that has reached this point should end the card with "
+            "`Shall I go ahead?`.",
+        ),
+        (
+            "closing",
+            'End every offered connected preview with "Continue with this '
+            'bounded Traigent run?".',
+        ),
+        ("closing", "Close the card with **Shall I go ahead?**"),
+        ("closing", "Finish the message with `Continue?`"),
+        (
+            "closing",
+            "End every offered connected preview, after the disclosure "
+            "prose, the recipients, the data contract and the bounds "
+            "line, with `Continue with this bounded Traigent run?`.",
+        ),
+        ("closing", "Conclude the approval with `Ready to proceed?` and wait."),
+        (
+            "pair",
+            "Present the two outcomes with no default, which reads as a "
+            "neutral choice.",
+        ),
+        ("pair", "Give the customer two named outcomes and no recommendation."),
+        ("pair", "Offer two named outcomes and no default."),
+        (
+            "pair",
+            "Render the pair with nothing marked so the customer is not " "pushed.",
+        ),
+        (
+            "lifted",
+            "The mark is held back where the card carries a " "`FIX BEFORE PAID RUN`.",
+        ),
+        (
+            "lifted",
+            "So the mark is withheld while the card carries a "
+            "`FIX BEFORE PAID RUN`.",
+        ),
+        ("lifted", "The recommendation is left off where any cap blocks."),
+        ("lifted", "Drop the mark where the run as scoped cannot answer."),
+        (
+            "tie",
+            "8 of the 18 rows were solved by no configuration and the top "
+            "three are a statistical tie - both are things a wider search "
+            "has room to move.",
+        ),
+        (
+            "tie",
+            "The top three are within noise of each other, so there is real "
+            "upside in a wider search.",
+        ),
+        (
+            "tie",
+            "The top three are a statistical tie. That is headroom a wider "
+            "search can still take.",
+        ),
+        (
+            "tie",
+            "No configuration solved 8 rows and the top three are a "
+            "statistical tie, so there is headroom left.",
+        ),
+        (
+            "practice",
+            "**A.** Pull the metric, the time range and the grouping out "
+            "of your data request",
+        ),
+        (
+            "practice",
+            "**A.** Pull the metric, the time range, and the grouping out "
+            "of a plain-English data request",
+        ),
+    )
+
+    #: Honest prose the same scanners must leave alone: the rules stated
+    #: correctly, the history of each defect written down, and acceptable
+    #: customer-facing options.
+    HONEST = (
+        (
+            "closing",
+            'Do **not** compress them into a "Shall I go ahead?" yes/no ' "question.",
+        ),
+        (
+            "closing",
+            "Do **not** compress them into a `Shall I go ahead?` yes/no " "question.",
+        ),
+        ("closing", "Never end a customer choice on `Shall I go ahead?`."),
+        (
+            "closing",
+            "The preview used to end with `Continue with this bounded "
+            "Traigent run?`, which left it with one route the customer "
+            "could take.",
+        ),
+        (
+            "closing",
+            "Append the standing bounds line under the routes; recommend "
+            "the one that can answer `did it hold?` and extend nothing "
+            "else.",
+        ),
+        (
+            "closing",
+            'Ask exactly one task-intent question: **"What should the '
+            'walkthrough agent do?"** This question is the last thing in '
+            "the message.",
+        ),
+        (
+            "closing",
+            "End with the final reply-ready block in " "`references/run-safety.md`.",
+        ),
+        ("closing", "No customer-facing message may end with `Shall I go ahead?`."),
+        (
+            "closing",
+            "The card names stopping and prices it four ways, and then "
+            "never says how to take it.",
+        ),
+        (
+            "closing",
+            "No offered preview may end with a single quoted question "
+            "such as `Continue?`.",
+        ),
+        (
+            "pair",
+            "Two routes with nothing marked is a menu, and this guide holds "
+            "that a menu offered instead of a recommendation is the same as "
+            "no recommendation.",
+        ),
+        ("pair", "A pair offered with no default is that same menu."),
+        ("pair", "Never offer the pair with no default."),
+        (
+            "pair",
+            "An unmarked pair with no recommendation on either route is the "
+            "same silence this bullet already refuses.",
+        ),
+        (
+            "pair",
+            "A menu offered instead of a recommendation is no "
+            "recommendation: a run that meets one supplies the default "
+            "itself.",
+        ),
+        ("lifted", "The mark moves; it is never withheld from the set."),
+        ("lifted", "The mark is never withheld from the pair."),
+        (
+            "lifted",
+            "The mark moves rather than lifting, on the same condition "
+            "that reference states.",
+        ),
+        (
+            "lifted",
+            "The recommendation is never held back; it moves to the route "
+            "that can answer.",
+        ),
+        (
+            "lifted",
+            "Never withhold the mark; move it to the route that can "
+            "produce the result.",
+        ),
+        (
+            "lifted",
+            "An unmarked pair is a menu, and the mark is never dropped " "from one.",
+        ),
+        (
+            "tie",
+            "A point reaching the frontier is not evidence its score held: "
+            "several configurations are statistically indistinguishable at "
+            "this size, so the one that matched the incumbent's number may "
+            "simply have measured lucky.",
+        ),
+        ("tie", "A statistical tie is not headroom."),
+        (
+            "tie",
+            "A statistical tie at this size is never a reason to spend, and "
+            "it is not headroom a wider search can move.",
+        ),
+        (
+            "tie",
+            "The preview previously read a statistical tie as room to move "
+            "and sold it.",
+        ),
+        (
+            "tie",
+            "Name a statistical tie as a limit on what the result may claim, "
+            "never as headroom.",
+        ),
+        (
+            "tie",
+            "Name it as a limit on what the result may claim, and where it "
+            "is the binding one recommend more or harder rows first.",
+        ),
+        (
+            "tie",
+            "At this sample size a statistical tie says the rows cannot "
+            "separate the configurations already tried, so it is not "
+            "headroom.",
+        ),
+        (
+            "practice",
+            "**A.** Pull the metric and the date out of each alert your "
+            "dashboard writes",
+        ),
+        (
+            "practice",
+            "**A.** Turn a plain-English question about your singers "
+            "database into a SQL query",
+        ),
+        (
+            "practice",
+            "**A.** Turn a plain-English question about your logs into a " "SQL query",
+        ),
+        (
+            "practice",
+            "**A.** Sort each ticket your helpdesk exports into one of " "four folders",
+        ),
+    )
+
+    #: The honest phrasing this filter still refuses, named rather than
+    #: quietly dropped from the set above. `... was the wording, and it is the
+    #: defect` puts the naming predicate two clauses away from the phrase it
+    #: names, and an adjacent-window reader cannot reach it. The cost is that
+    #: an author recording superseded wording writes the predicate next to it -
+    #: "two named outcomes and no default is the defect" - or quotes the line
+    #: from the ledger instead. It is left standing rather than patched with a
+    #: ninth exemption token, because every exemption added here is what this
+    #: whole class exists to measure.
+    KNOWN_FALSE_RED = (
+        "pair",
+        "Two named outcomes and no default was the wording, and it is the defect.",
+    )
+
+    def _scanner(self, name: str):
+        one = OneShapeAndOneMarkForEveryChoiceTests
+        return {
+            "closing": one._instructs_a_closing_question,
+            "pair": one._instructs_an_unmarked_pair,
+            "lifted": one._lifts_the_mark,
+            "tie": one._sells_a_tie_as_headroom,
+            "practice": TheAskIsLastAndNamesWhatIsLackingTests._refused_practice_words,
+        }[name]
+
+    def test_every_natural_phrasing_of_a_real_defect_is_caught(self) -> None:
+        """21 asked, 21 caught. 12 were caught before the exemptions narrowed."""
+        missed = [
+            text for scanner, text in self.DEFECTS if not self._scanner(scanner)(text)
+        ]
+        self.assertEqual(len(self.DEFECTS), 21)
+        self.assertEqual(
+            missed,
+            [],
+            "these phrasings of defects this suite claims to guard against are "
+            "not detected by any scanner here",
+        )
+
+    def test_the_honest_prose_beside_each_of_them_stays_green(self) -> None:
+        """A guard that reds honest prose is a defect, not a strictness win.
+
+        It does not stop the next author writing the defect; it stops them
+        explaining it, and the paragraph that explains a rule is what keeps the
+        rule from being deleted by the author after that.
+        """
+        refused = [
+            (scanner, text)
+            for scanner, text in self.HONEST
+            if self._scanner(scanner)(text)
+        ]
+        self.assertEqual(
+            refused,
+            [],
+            "these are correct statements of the rules, records of the runs "
+            "the rules came from, or acceptable customer-facing options",
+        )
+
+    def test_the_one_honest_phrasing_still_refused_is_named_and_not_hidden(
+        self,
+    ) -> None:
+        """The residual, asserted so it cannot be forgotten or quietly grow."""
+        scanner, text = self.KNOWN_FALSE_RED
+        self.assertTrue(
+            self._scanner(scanner)(text),
+            "this phrasing is no longer refused, so delete it from "
+            "KNOWN_FALSE_RED and move it into HONEST rather than leaving a "
+            "docstring claiming a limitation the code no longer has",
         )
 
 
