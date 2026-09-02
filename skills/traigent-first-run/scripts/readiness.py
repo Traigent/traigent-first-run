@@ -9234,7 +9234,14 @@ _BUILTIN_EXCEPTIONS = {
 
 
 def _module_bound_names(source: StaticSourceEvidence) -> frozenset[str]:
-    """Every name the selected agent's own file binds anywhere in it."""
+    """Every name the selected agent's own file binds anywhere in it.
+
+    `_named_exception` leans on this being the whole list, so it has to be one:
+    a parameter, an `except ... as`, or a `match` capture named for a builtin
+    exception shadows it exactly as an assignment does. Everything collected
+    here can only make a name unresolvable, which settles less and refuses
+    less, so a form listed in error is harmless and one omitted is not.
+    """
     cache = _source_analysis_cache(source)
     names = cache.get("module_bound_names")
     if names is None:
@@ -9250,6 +9257,14 @@ def _module_bound_names(source: StaticSourceEvidence) -> frozenset[str]:
                 node.ctx, (ast.Store, ast.Del)
             ):
                 bound.add(node.id)
+            elif isinstance(node, ast.arg):
+                bound.add(node.arg)
+            elif isinstance(
+                node, (ast.ExceptHandler, ast.MatchAs, ast.MatchStar)
+            ) and isinstance(node.name, str):
+                bound.add(node.name)
+            elif isinstance(node, ast.MatchMapping) and isinstance(node.rest, str):
+                bound.add(node.rest)
         names = cache["module_bound_names"] = frozenset(bound)
     return names
 
@@ -9317,13 +9332,17 @@ def _handler_captures(
     return None if unsettled else False
 
 
-def _raise_leaves(
-    node: ast.Raise,
+def _exception_leaves(
+    raised: str | None,
     protectors: tuple[tuple[ast.ExceptHandler, ...] | None, ...],
     source: StaticSourceEvidence,
 ) -> bool | None:
-    """Does this `raise` get past every `try` between it and the `while`?"""
-    raised = _raised_exception_name(node)
+    """Does an exception get past every `try` between it and the `while`?
+
+    Takes the class's identifier rather than the statement, because two
+    statements raise: `raise` names its class, and `assert` always raises
+    `AssertionError`.
+    """
     for protector in reversed(protectors):
         if protector is None:
             return None
@@ -9376,7 +9395,13 @@ def _statements_that_leave_the_while(
         elif isinstance(statement, ast.Return):
             yield True
         elif isinstance(statement, ast.Raise):
-            yield _raise_leaves(statement, protectors, source)
+            yield _exception_leaves(
+                _raised_exception_name(statement), protectors, source
+            )
+        elif isinstance(statement, ast.Assert):
+            # `assert q` is `if not q: raise AssertionError`, so it leaves on
+            # the same terms as any other raise - and is captured on them too.
+            yield _exception_leaves("AssertionError", protectors, source)
         if isinstance(statement, (ast.For, ast.AsyncFor, ast.While)):
             yield from _statements_that_leave_the_while(
                 statement.body, source, inner_loop=True, protectors=protectors
@@ -9459,18 +9484,27 @@ def derived_unbounded_while(source: StaticSourceEvidence) -> bool:
     agent that never ends while it printed a stop condition on the card.
 
     Read the capture, not the keyword, and a shape nobody has written down yet
-    is answered by the same sentence.
+    is answered by the same sentence. The keyword list is also complete rather
+    than merely current: `assert` is `raise AssertionError` written shorter and
+    goes through the same capture, and it is the last statement in the grammar
+    whose purpose can be to leave. A version that knew `raise` and not `assert`
+    gave the same exception opposite verdicts depending on how it was spelled,
+    which is the thesis of this docstring failing on its own second example.
 
-    UNSETTLED IS NOT REFUSED. Whether an `except` catches a particular `raise`
-    is a question about names: a bare `except:` takes anything, and a customer's
-    own class matched by identifier is settled too, but `except Timeout:`
-    against `raise Timeout()` from an import this walk does not follow is not.
-    Those come back as "cannot tell", which is credited as no exit and refuses
-    nothing - the asymmetry the whole check is built on. Getting that direction
-    right matters more than covering every shape, because the cost of the two
-    errors is not the same: a missed refutation leaves a claim unchecked, and a
-    false one tells an author who read their own agent correctly to write
-    something false about it.
+    UNSETTLED DOES NOT REFUSE, and that is all it does. Whether an `except`
+    catches a particular `raise` is a question about names: a bare `except:`
+    takes anything, and a customer's own class matched by identifier is settled
+    too, but `except Timeout:` against `raise Timeout()` from an import this
+    walk does not follow is not. Those come back as "cannot tell", and the
+    refutation below fires only when EVERY candidate is a proven capture, so a
+    "cannot tell" blocks it exactly as a proven exit does. There is no third
+    outcome to describe, because a check that only refutes has no crediting
+    path to reach: nothing here can raise a score, and the card's sentence is
+    the same either way. Getting that direction right matters more than
+    covering every shape, because the cost of the two errors is not the same:
+    a missed refutation leaves a claim unchecked, and a false one tells an
+    author who read their own agent correctly to write something false about
+    it.
 
     Two shapes it therefore does not reach, both recorded rather than fixed.
     `while not False:` is constant-true and is not refused, because the shared
@@ -12992,7 +13026,8 @@ def build_signal_from_entry(
                     f"{source.selected_callable.name} whose test cannot become "
                     "false and which has no way out of its body. A break "
                     "inside an inner loop ends that loop rather than this one, "
-                    "and a raise its own except catches never leaves either. "
+                    "and a raise or an assert its own except catches never "
+                    "leaves either. "
                     "The card would print 'a stop condition to point at' over "
                     "an agent with none - point at the stop condition, or "
                     "record bounded=False"

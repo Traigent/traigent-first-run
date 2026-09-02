@@ -404,9 +404,11 @@ sentence is the rule, rather than a list of keywords, and it is what tells you h
 will be read. A `break` is captured by any nearer loop: in `while True:` over `for c in q: break`
 the `break` ends the `for`, the `while` starts it again, and that agent never ends. A `raise` is
 captured by an enclosing `try` whose `except` handles it, so a loop whose only `raise` lands in its
-own handler is left exactly where it was. A `return` is captured only by a function definition, and
-this read never enters one. Where it cannot tell whether an exception escapes - a class it does not
-resolve, a handler written as an attribute - it refuses nothing.
+own handler is left exactly where it was. An `assert` is `raise AssertionError` written shorter and
+is read on exactly those terms, both when it leaves and when an `except AssertionError:` catches it.
+A `return` is captured only by a function definition, and this read never enters one. Where it
+cannot tell whether an exception escapes - a class it does not resolve, a handler written as an
+attribute - it refuses nothing.
 
 One shape is refused although the loop really does leave: a `while True:` whose only way out is
 `sys.exit()` or `os._exit()`. Seeing that means resolving a name to the function it calls, and

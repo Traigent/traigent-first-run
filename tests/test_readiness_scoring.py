@@ -14651,6 +14651,18 @@ class TheBuildHalfCitesTheAgentItReadTests(unittest.TestCase):
             "an-outer-try": "    while True:\n        try:\n            try:\n"
             "                raise ValueError('x')\n            except KeyError:\n"
             "                pass\n        except ValueError:\n            pass\n",
+            # `BaseException` is the one clause that settles a class this read
+            # cannot resolve, so it is the only arm reaching this shape: the
+            # subclass test cannot answer it, and the identifiers differ.
+            "an-unresolved-class-under-baseexception": "    while True:\n"
+            "        try:\n            raise Timeout('x')\n"
+            "        except BaseException:\n            pass\n",
+            # A nearer loop takes a `break` and takes nothing else. The `try`
+            # is still over this `raise` with a `for` in between, and the walk
+            # has to carry the handlers through it.
+            "a-raise-inside-an-inner-loop": "    while True:\n        try:\n"
+            "            for c in q:\n                raise ValueError('x')\n"
+            "        except ValueError:\n            pass\n",
         }.items():
             with self.subTest(shape=shape):
                 with self.assertRaises(MODULE.AgentDiscoveryInputError) as caught:
@@ -14675,6 +14687,74 @@ class TheBuildHalfCitesTheAgentItReadTests(unittest.TestCase):
                     {"control-flow": {"loop": True, "bounded": True}},
                 )
             self.assertIn("except catches", str(caught.exception))
+
+    def test_an_assert_leaves_on_the_same_terms_as_its_raise(self) -> None:
+        """The principle above, applied to the statement it did not name.
+
+        `assert q` is `if not q: raise AssertionError`, and a walk that knew
+        `raise` and not `assert` gave one exception opposite verdicts depending
+        on how an author had spelled it: `if q: raise AssertionError` was
+        accepted, `if q: assert q` was refused. The refusal then named two
+        causes, an inner loop and a catching `except`, and neither was theirs -
+        so it read as an accusation about code they had not written, in the
+        false-refusal direction this whole check treats as the expensive one.
+
+        This is a completion rather than another list entry. `assert` is the
+        last statement in the grammar whose purpose can be to leave, so adding
+        it closes the class instead of extending it, and it goes through the
+        same capture: an `except AssertionError:` over it keeps the loop where
+        it was, and a narrower clause does not.
+        """
+        for shape, body in {
+            "bare": "    while True:\n        assert q\n",
+            "inside-an-if": "    while True:\n        if q:\n            assert q\n",
+            "written-as-a-raise": "    while True:\n        if q:\n"
+            "            raise AssertionError\n",
+            "past-a-narrower-clause": "    while True:\n        try:\n"
+            "            assert q\n        except ValueError:\n            pass\n",
+        }.items():
+            with self.subTest(shape=shape, direction="leaves"):
+                facts = self._score_source(
+                    "MODEL = ['a']\ndef selected(q):\n" + body,
+                    {"control-flow": {"loop": True, "bounded": True}},
+                )
+                self.assertEqual(len(facts.build), len(MODULE.AGENT_BUILD_CHECKS))
+        with self.subTest(shape="caught-by-its-own-class", direction="captured"):
+            with self.assertRaises(MODULE.AgentDiscoveryInputError) as caught:
+                self._score_source(
+                    "MODEL = ['a']\ndef selected(q):\n    while True:\n"
+                    "        try:\n            assert q\n"
+                    "        except AssertionError:\n            pass\n",
+                    {"control-flow": {"loop": True, "bounded": True}},
+                )
+            self.assertIn("except catches", str(caught.exception))
+
+    def test_a_parameter_named_for_a_builtin_settles_nothing(self) -> None:
+        """`_named_exception` is only as safe as the list it consults.
+
+        It resolves a builtin exception unless the file binds that identifier,
+        and the binding walk read assignments, imports, defs and classes but
+        not a parameter, an `except ... as`, or a `match` capture. So a
+        function taking `Exception` as an argument had its own `except
+        Exception:` resolved against the real builtin, and a loop that leaves
+        was refused - a false red bought by an incomplete list, which is the
+        shape of defect this file exists to catch.
+        """
+        for shape, source in {
+            "a-parameter": "MODEL = ['a']\ndef selected(q, Exception=None):\n"
+            "    while True:\n        try:\n            raise ValueError('x')\n"
+            "        except Exception:\n            pass\n",
+            "an-except-alias": "MODEL = ['a']\ndef selected(q):\n"
+            "    try:\n        q = more(q)\n    except KeyError as Exception:\n"
+            "        pass\n    while True:\n        try:\n"
+            "            raise ValueError('x')\n        except Exception:\n"
+            "            pass\n",
+        }.items():
+            with self.subTest(shape=shape):
+                facts = self._score_source(
+                    source, {"control-flow": {"loop": True, "bounded": True}}
+                )
+                self.assertEqual(len(facts.build), len(MODULE.AGENT_BUILD_CHECKS))
 
     def test_an_exception_this_read_cannot_place_refuses_nothing(self) -> None:
         """The direction that decides which errors this check is allowed to make.

@@ -3,7 +3,7 @@
 follows: 0078
 follows-total-measured: 472_205
 total-ceiling: 473_800
-total-measured: 473_380
+total-measured: 473_539
 
 The bounded half of the control-flow read searched a loop's whole body for a
 break, a return or a raise and stopped at the first one it met. Depth was never
@@ -22,6 +22,14 @@ return, and this read never steps inside one. Whoever meets a shape none of the
 paragraphs mention can answer it from that sentence, which is the property an
 exemption list does not have and the reason the earlier wording produced this
 defect twice under two different keywords.
+
+One line of it goes to the statement the sentence caught that no report had.
+Review noticed that a bare assertion was still read as no way out while the same
+exception written the long way was read as one, so the same program earned
+opposite verdicts from its author's choice of spelling, and the refusal named
+two causes that were not the author's. An assertion is a raise with its class
+implied, it is the last statement in the grammar whose purpose can be to leave,
+and saying so closes the group rather than lengthening it.
 
 The paragraph also has to say what happens where the read cannot decide, because
 the direction of its errors is the whole contract. An except naming a class this
