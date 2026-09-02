@@ -2027,6 +2027,17 @@ class ReadinessScore:
     # working and keep saying the honest thing, which is that no read reached
     # them.
     agent_source_read: bool = False
+    # Whether any parameter was refused because this read could not follow its
+    # route to the call - carried for the CARD on the same terms as the field
+    # above, and weighting, capping and renormalizing nothing.
+    #
+    # It exists so the card can print an accepted route beside a refusal that
+    # could not follow one. Derived from `DiscoveredKnob.route_unverified`,
+    # which is set where the refusal is decided, rather than re-read at render
+    # time from the evidence prose: a renderer that matched sentences would be
+    # answering a semantic question from a surface signal, which is the class
+    # this package keeps filing against itself.
+    agent_route_unverified: bool = False
 
 
 @dataclass(frozen=True)
@@ -2283,6 +2294,16 @@ class DiscoveredKnob:
     # measured one-option agent.  Keep this structured: cap routing must never
     # infer a safety decision from a sentence written for the customer.
     unverified: bool = False
+    # Narrower than `unverified`, and separate for the reason that field is
+    # separate from the sentence beside it: `unverified` covers four states -
+    # no source root, no values and no range, a bound the source does not show,
+    # and a route this read could not follow - and only the last one is
+    # answered by showing an accepted route. A card that printed the worked
+    # example for all four would answer three questions nobody asked, and a
+    # renderer that told them apart by matching the prose would be the defect
+    # this module keeps filing: a semantic question decided from a surface
+    # signal.
+    route_unverified: bool = False
 
     @property
     def credited(self) -> bool:
@@ -6261,6 +6282,7 @@ def aggregate(
     *,
     repeated: RepeatedInputs | None = None,
     agent_source_read: bool = False,
+    agent_route_unverified: bool = False,
 ) -> ReadinessScore:
     # Every declared weight stays in the denominator, and #201 is the reason
     # that sentence is worth writing down rather than assuming.
@@ -6319,6 +6341,7 @@ def aggregate(
         gaps=collect_gaps(pillars, knobs, ordered_caps, overall),
         repeated_inputs=repeated,
         agent_source_read=agent_source_read,
+        agent_route_unverified=agent_route_unverified,
     )
 
 
@@ -6362,6 +6385,16 @@ def score_run(
             reference_free=scores_without_a_reference(evaluation_facts.method),
         ),
         agent_source_read=agent_facts.discovery_supplied,
+        # The same pair of conditions `score_agent_evidence` branches on to
+        # reach the discovery path at all. A config-space document wins
+        # outright there, so a route refusal recorded under one was never
+        # scored, and printing an accepted route beside it would answer a
+        # question this card did not ask.
+        agent_route_unverified=(
+            agent_facts.discovery_supplied
+            and not agent_facts.config_space_supplied
+            and any(knob.route_unverified for knob in agent_facts.discovered)
+        ),
     )
 
 
@@ -6948,6 +6981,12 @@ def render_card(
                 label = f"{palette.warn}WOULD LIMIT TO {cap.ceiling}{palette.reset}"
             lines.append(f"  {label} {cap.reason}")
         lines.append("")
+    if score.agent_route_unverified:
+        # BELOW the ceiling that reports the refusal, for the reason the block
+        # under it is below its own finding: what to write instead is only
+        # readable once the reader has read what was refused.
+        lines.extend(accepted_route_shape())
+        lines.append("")
     if score.repeated_inputs is not None:
         # BELOW the pillars and below the caps, and this position is the rule
         # rather than the layout that happened. A customer reads the result and
@@ -7185,6 +7224,40 @@ def render_markdown(score: ReadinessScore, timestamp: str | None = None) -> str:
     if limiting:
         lines.extend(["## What limits how high this can score", ""])
         lines.extend(cap_line(cap) for cap in limiting)
+        lines.append("")
+    if score.agent_route_unverified:
+        # In the durable report as well as on the card, and that is this
+        # module's own rule rather than a preference. A remedy printed in the
+        # terminal and missing from the report was already fixed once here for
+        # the cap remedies, on the argument that the report is the copy a
+        # reader keeps. This block is the same kind of content - what to write
+        # instead - so leaving it in the scrollback would re-open the seam that
+        # fix closed, one input over.
+        lines.extend(["## A settings route this read can follow", ""])
+        lines.extend(
+            [
+                "Printed because naming what failed does not say what would "
+                "pass. It is one accepted shape and not the only one, so read "
+                "it for its parts rather than for its names.",
+                "",
+                "```python",
+                *ACCEPTED_ROUTE_AGENT.splitlines(),
+                "```",
+                "",
+                'And the entry that cites it, inside the document\'s "knobs" map:',
+                "",
+                "```json",
+                *json.dumps(ACCEPTED_ROUTE_KNOB, indent=2).splitlines(),
+                "```",
+                "",
+                f"{len(ACCEPTED_ROUTE_PARTS)} parts make a route readable, "
+                "and this check wants them all:",
+                "",
+            ]
+        )
+        lines.extend(
+            f"{index}. {part}" for index, part in enumerate(ACCEPTED_ROUTE_PARTS, 1)
+        )
         lines.append("")
     if score.gaps:
         lines.extend(["## Ranked gaps", ""])
@@ -8804,6 +8877,39 @@ def _literal_scalar_options(node: ast.AST) -> tuple[Any, ...] | None:
     return None
 
 
+def _module_names_a_subscript_can_reach(source: StaticSourceEvidence) -> frozenset[str]:
+    """Module inventories an agent can actually index, as opposed to declare.
+
+    `_literal_scalar_options` reads a set literal, and it is right to: `if
+    model not in MODELS` is a real guard over a real inventory, and refusing
+    the set would refuse an option table that works. But `MODELS[choice]` over
+    a set raises `TypeError` before any request is made, so a SUBSCRIPT route
+    over one is a route that cannot run, and crediting it credits a search
+    dimension the agent would die on.
+
+    An ALLOWLIST, and the direction is the opposite of `_node_binds` for the
+    reason that function's docstring gives. This gates credit, where narrow
+    fails safe: a literal shape nobody has named here costs a false refusal.
+    `_node_binds` answers a refutation, where narrow fails unsafe, so it names
+    every kind and defaults to yes. The two are not inconsistent; they are the
+    same rule read from its two sides.
+
+    A spelling bound more than once qualifies only if EVERY binding of it can
+    be indexed, so a name that is a list on one line and a set on another is
+    not credited on the strength of the line that happens to be cited.
+    """
+    indexable: dict[str, bool] = {}
+    for node in source.tree.body:
+        if not isinstance(node, (ast.Assign, ast.AnnAssign)) or node.value is None:
+            continue
+        reachable = isinstance(
+            node.value, (ast.List, ast.Tuple, ast.Dict, ast.Constant)
+        )
+        for name in _assignment_names(node):
+            indexable[name] = indexable.get(name, True) and reachable
+    return frozenset(name for name, ok in indexable.items() if ok)
+
+
 def _literal_mapping_keys(node: ast.Dict) -> tuple[Any, ...] | None:
     """Return effective keys only when they select distinct literal values.
 
@@ -9152,8 +9258,14 @@ def _expression_varies_binding(
     name: str,
     dynamic_parameters: frozenset[str],
     source: StaticSourceEvidence,
+    *,
+    exact: bool = False,
 ) -> bool:
-    """A dynamic selection survives whole in one call argument."""
+    """A dynamic selection survives whole in one call argument.
+
+    `exact` asks the stricter question the alias arm needs: is this expression
+    the selection ITSELF, rather than a literal container built around it.
+    """
     for child in ast.walk(node):
         if not isinstance(child, ast.Subscript) or not _expression_uses_name(
             child.value, name
@@ -9163,13 +9275,482 @@ def _expression_varies_binding(
         # are fixed defaults dressed as a list of choices.  A bare identifier
         # is the narrow static proof that the selected callable receives a
         # choice from its caller without evaluating customer code.
+        if not (
+            isinstance(child.slice, ast.Name) and child.slice.id in dynamic_parameters
+        ):
+            continue
         if (
-            isinstance(child.slice, ast.Name)
-            and child.slice.id in dynamic_parameters
-            and _node_is_structurally_embedded(child, node, source)
+            child is node
+            if exact
+            else _node_is_structurally_embedded(child, node, source)
         ):
             return True
     return False
+
+
+# Every node kind that can bind a name in a callable's own scope, and the one
+# place this module decides that question. `ast.stmt` subclasses cover the
+# statements; the three extras are not statements and bind anyway - a handler's
+# `as` name, a `match` case's captures, and a walrus.
+#
+# Derived rather than restated by
+# `tests/test_readiness_scoring.py#TheBindingScanIsDerivedFromThePythonGrammarTests`,
+# which reads this module's source against `ast.stmt.__subclasses__()` so a
+# construct added to the language forces a decision here instead of being
+# silently credited.
+# Two statement kinds this module names but cannot assume exist. `TryStar` is
+# 3.11 and `TypeAlias` is 3.12, and `type model = int` really does bind a name -
+# so both are looked up rather than referenced, and an interpreter without them
+# simply has no such statement to meet.
+_TRY_STAR_NODES = tuple(
+    node for node in (getattr(ast, "TryStar", None),) if node is not None
+)
+_TYPE_ALIAS_NODES = tuple(
+    node for node in (getattr(ast, "TypeAlias", None),) if node is not None
+)
+
+_BINDING_CAPABLE_NODES = (ast.stmt, ast.ExceptHandler, ast.match_case, ast.NamedExpr)
+
+
+def _target_binds(name: str, targets: Iterable[ast.expr]) -> bool:
+    """Whether an assignment-style target list binds this exact spelling.
+
+    A `Subscript` or `Attribute` target writes THROUGH a name and does not
+    rebind it, so `TABLE[i] = x` is not a binding of `TABLE` - and the whole
+    access chain under it is skipped rather than walked, which an `ast.walk`
+    of the target does not do: the `TABLE` inside `TABLE[0]` is still an
+    `ast.Name` and read as a binding by anything that only skips the subscript
+    node itself.
+
+    Fail closed on the way out, for the reason `_node_binds` is: a target form
+    this does not read is treated as binding rather than as binding nothing.
+    """
+    pending = list(targets)
+    while pending:
+        node = pending.pop()
+        if isinstance(node, (ast.Subscript, ast.Attribute)):
+            continue
+        if isinstance(node, ast.Name):
+            if node.id == name:
+                return True
+            continue
+        if isinstance(node, (ast.Tuple, ast.List)):
+            pending.extend(node.elts)
+            continue
+        if isinstance(node, ast.Starred):
+            pending.append(node.value)
+            continue
+        return True
+    return False
+
+
+def _pattern_binds(name: str, pattern: ast.pattern) -> bool:
+    """Whether one `match` pattern captures this spelling, refusing the unknown.
+
+    `MatchAs` and `MatchStar` carry `name`; `MatchMapping` carries `rest`. The
+    final `return True` is the same fail-closed rule the statement dispatch
+    uses: `match` did not exist in 3.9, so a pattern kind this was not written
+    against must refuse rather than report "nothing bound here".
+    """
+    for node in ast.walk(pattern):
+        if isinstance(node, (ast.MatchAs, ast.MatchStar)):
+            if node.name == name:
+                return True
+        elif isinstance(node, ast.MatchMapping):
+            if node.rest == name:
+                return True
+        elif isinstance(
+            node,
+            (ast.MatchValue, ast.MatchSingleton, ast.MatchSequence, ast.MatchOr),
+        ):
+            continue
+        elif isinstance(node, ast.MatchClass):
+            if name in node.kwd_attrs:
+                # `case C(x=y)` binds `y`, which is a sub-pattern walked above;
+                # the attribute names themselves bind nothing. Kept explicit so
+                # the branch is a decision rather than a fall-through.
+                continue
+        elif not isinstance(node, ast.expr):
+            return True
+    return False
+
+
+def _node_binds(name: str, node: ast.AST) -> bool:
+    """Whether one node of a callable's own scope binds this spelling.
+
+    FAIL CLOSED, and that direction is the whole point of the function. The
+    caller asks "is this name written anywhere other than the one assignment I
+    read", which is a REFUTATION, and it uses the answer as a precondition for
+    CREDIT. `_agent_loops_forever` records what this module already learned
+    about that combination one check over: narrow scope is right for credit,
+    where it fails safe, and wrong for a refutation, where the same narrowness
+    fails unsafe and the wrong answer becomes the only accepted one.
+
+    The predecessor of this function counted `ast.Name` nodes in `Store`
+    context. Seven node kinds bind a name without producing one, and each read
+    as "no other write" while the value at the call had become something else:
+    `import x as model`, `from m import x as model`, `except E as model`, a
+    `match` capture, a `match` mapping rest, a nested `def model`, and a nested
+    `class model`. Measured against `symtable`, which reports the spelling
+    local and bound in every one of them. Source:
+    tests/test_readiness_scoring.py#ALocalBindingIsStillARouteToTheCallTests.
+
+    Adding those seven to a counter is what this does NOT do. `match` did not
+    exist in 3.9 and `type X = ...` did not exist in 3.11; a list is a list of
+    the constructs somebody had met. So every statement kind is named here and
+    anything unnamed binds. A construct added to the language costs a false
+    refusal until somebody names it, which is the direction that cannot
+    silently score a knob that never reaches the provider, and
+    `TheBindingScanIsDerivedFromThePythonGrammarTests` reads the set out of
+    `ast` so the decision cannot be skipped.
+    """
+    if isinstance(node, ast.NamedExpr):
+        return isinstance(node.target, ast.Name) and node.target.id == name
+    if isinstance(node, ast.ExceptHandler):
+        return node.name == name
+    if isinstance(node, ast.match_case):
+        return _pattern_binds(name, node.pattern)
+    if isinstance(node, ast.Assign):
+        return _target_binds(name, node.targets)
+    if isinstance(node, ast.AnnAssign):
+        # `model: str` on its own is not a binding. Inside a function body an
+        # annotation with no value is a no-op at runtime - it does not even
+        # reach `__annotations__` - so refusing it refused an author who wrote
+        # the type down on the line above, which is the false-refusal direction
+        # this pass exists to remove.
+        return node.value is not None and _target_binds(name, (node.target,))
+    if isinstance(node, ast.AugAssign):
+        return _target_binds(name, (node.target,))
+    if isinstance(node, ast.Delete):
+        # A delete is not a write, and it is disqualifying for the same reason
+        # a second write is: the name at the read is then not what the
+        # assignment put there, it is unbound.
+        return _target_binds(name, node.targets)
+    if isinstance(node, (ast.For, ast.AsyncFor)):
+        return _target_binds(name, (node.target,))
+    if isinstance(node, (ast.With, ast.AsyncWith)):
+        return any(
+            item.optional_vars is not None
+            and _target_binds(name, (item.optional_vars,))
+            for item in node.items
+        )
+    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        return node.name == name
+    if isinstance(node, (ast.Import, ast.ImportFrom)):
+        return any(_import_binding_name(node, alias) == name for alias in node.names)
+    if isinstance(node, (ast.Global, ast.Nonlocal)):
+        return name in node.names
+    if isinstance(node, _TYPE_ALIAS_NODES):
+        return isinstance(node.name, ast.Name) and node.name.id == name
+    if isinstance(
+        node,
+        (
+            ast.Expr,
+            ast.Pass,
+            ast.Break,
+            ast.Continue,
+            ast.Return,
+            ast.Raise,
+            ast.Assert,
+            ast.If,
+            ast.While,
+            ast.Match,
+            ast.Try,
+            *_TRY_STAR_NODES,
+        ),
+    ):
+        # These bind nothing themselves. What their bodies, handlers and cases
+        # bind is read from those nodes directly, because the walk this is
+        # called from yields every one of them.
+        return False
+    return True
+
+
+def _callable_binding_nodes(
+    name: str, callable_node: ast.FunctionDef | ast.AsyncFunctionDef
+) -> list[ast.AST]:
+    """Every node binding this spelling in the callable's own scope."""
+    return [
+        node
+        for node in _callable_body_nodes(callable_node)
+        if isinstance(node, _BINDING_CAPABLE_NODES) and _node_binds(name, node)
+    ]
+
+
+def _sole_binding_node(
+    name: str, callable_node: ast.FunctionDef | ast.AsyncFunctionDef
+) -> ast.AST | None:
+    """The single node binding this spelling in the callable's own scope."""
+    binders = _callable_binding_nodes(name, callable_node)
+    return binders[0] if len(binders) == 1 else None
+
+
+def _plain_assignment_of(name: str, node: ast.AST) -> ast.Assign | ast.AnnAssign | None:
+    """One assignment of one bare name, or nothing this read will follow."""
+    if not isinstance(node, (ast.Assign, ast.AnnAssign)) or node.value is None:
+        return None
+    targets = node.targets if isinstance(node, ast.Assign) else (node.target,)
+    if len(targets) != 1 or not isinstance(targets[0], ast.Name):
+        return None
+    return node if targets[0].id == name else None
+
+
+def _scope_header_nodes(scope: ast.AST) -> Iterator[ast.AST]:
+    """Every part of a definition that its ENCLOSING scope evaluates.
+
+    A `def`, `class` or `lambda` runs its own body in its own scope, and runs
+    everything else about itself in the scope it is written in: parameter
+    defaults, decorator expressions, class bases and keywords, annotations. A
+    walrus in any of those binds OUTSIDE the definition, so a scan that stops
+    at the definition node misses it - which is what
+    `_callable_body_nodes` does, correctly, for the question it answers.
+
+    Arrived at by SUBTRACTING the body rather than by naming the fields.
+    `decorator_list`, `args.defaults`, `args.kw_defaults`, `bases`, `keywords`
+    is the list somebody had met, and this module has already paid twice for
+    that shape of answer: the store counter that missed seven binding forms,
+    and the loop reader `_agent_loops_forever` was rewritten away from. What is
+    left after removing the body is whatever the grammar puts there, including
+    a field added after this was written.
+    """
+    body = getattr(scope, "body", [])
+    inner = {
+        id(node)
+        for statement in (body if isinstance(body, list) else [body])
+        for node in ast.walk(statement)
+    }
+    for node in ast.walk(scope):
+        if node is scope or id(node) in inner:
+            continue
+        yield node
+
+
+def _module_client_binding(
+    name: str, source: StaticSourceEvidence
+) -> ast.Assign | ast.AnnAssign | None:
+    """The module's sole binding of a spelling, when nothing can rebind it.
+
+    A provider client built once at import and reused is the ordinary way to
+    write an agent, and it was the shape the report that opened this work
+    describes. The receiver check read only writes INSIDE the selected
+    callable, so an agent with `client = OpenAI()` at module level had no
+    verified request at all: every setting it read from a config mapping was
+    refused, and moving that one line into the function credited them. That is
+    a rule about where the author put a line, the same defect the settings
+    route had, one input over.
+
+    Fail closed on the same primitive: any second binding of the spelling
+    anywhere in the module's own scope disqualifies it, decided by
+    `_node_binds` rather than by counting `ast.Name` stores, and a `global`
+    declaration for it anywhere in the file disqualifies it too, because a
+    function this read does not follow can then rebind it.
+    """
+    for node in ast.walk(source.tree):
+        if isinstance(node, ast.Global) and name in node.names:
+            return None
+    # `_callable_body_nodes` walks a node's OWN scope and does not descend into
+    # the functions and classes it defines, which is what "the module's own
+    # scope" means here: a `client = ...` inside some function binds that
+    # function's local, not this name.
+    #
+    # Its net stops AT a definition, though, and a definition evaluates part of
+    # itself in the scope it is written in. `def other(spare=(client := Fake()))`
+    # rebinds the module client before the selected callable ever runs, and so
+    # do a decorator expression, a class base, a class keyword, a lambda
+    # default and an annotation - six shapes measured credited before this,
+    # every one of them a verified external request over an object that is not
+    # the constructed client. `_scope_header_nodes` is the same scan over the
+    # part `_callable_body_nodes` does not reach.
+    #
+    # Deliberately not `_nested_scope_leaves_alone`, which answers the sibling
+    # question for a local alias. Its rule is "mentions the name and does not
+    # shadow it", and a module client is written to BE read by the functions
+    # below it: measured, that rule refuses the plain control agent and a
+    # read-only helper beside it, because reading the client is the whole point
+    # of binding one. The two scans want the same net and a different verdict.
+    scopes = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
+    own_scope = _callable_body_nodes(source.tree)
+    binders = [
+        node
+        for node in (
+            *own_scope,
+            *(
+                header
+                for scope in own_scope
+                if isinstance(scope, scopes)
+                for header in _scope_header_nodes(scope)
+            ),
+        )
+        if isinstance(node, _BINDING_CAPABLE_NODES) and _node_binds(name, node)
+    ]
+    if len(binders) != 1:
+        return None
+    binding = _plain_assignment_of(name, binders[0])
+    if (
+        binding is None
+        or source.parents.get(id(binding)) is not source.tree
+        or not _is_statically_reachable(binding, source)
+    ):
+        return None
+    return binding
+
+
+def _nested_scope_leaves_alone(name: str, scope: ast.AST) -> bool:
+    """Whether a nested definition cannot touch an enclosing local of this name.
+
+    Three answers, and only the middle one is new. A `nonlocal` declaration is
+    the language's one way for a nested scope to rebind an enclosing local, so
+    it always refuses, at any depth. A scope that binds the spelling itself -
+    `def describe(model): ...` - shadows it and cannot reach ours, so it is
+    left alone; refusing that shape refused an ordinary helper written beside
+    the call, one of six one-line additions to this module's own printed
+    example that the first revision of this pass turned down.
+
+    Anything else that MENTIONS the spelling refuses, even though a pure read
+    could not change the value. That is deliberate and it is the fail-closed
+    direction: a mechanism for reaching an enclosing local that this function
+    was not written against should cost a false refusal, not a credited knob.
+    """
+    for node in ast.walk(scope):
+        if isinstance(node, ast.Nonlocal) and name in node.names:
+            return False
+    if not _expression_uses_name(scope, name):
+        return True
+    arguments = getattr(scope, "args", None)
+    if arguments is not None and name in _callable_parameter_names(scope):
+        return True
+    body = getattr(scope, "body", [])
+    statements = body if isinstance(body, list) else [body]
+    return any(
+        isinstance(node, _BINDING_CAPABLE_NODES) and _node_binds(name, node)
+        for statement in statements
+        for node in ast.walk(statement)
+    )
+
+
+def _local_alias_initializer(
+    reference: ast.Name,
+    callable_node: ast.FunctionDef | ast.AsyncFunctionDef,
+    source: StaticSourceEvidence,
+) -> ast.expr | None:
+    """The one expression a plain local name still holds where it is read.
+
+    Measured before this existed, by construction rather than by reading the
+    code. Source:
+    tests/test_readiness_scoring.py#ALocalBindingIsStillARouteToTheCallTests,
+    which keeps the pair. Two agents differing by one line - the option table
+    written into the request call, and the same table bound to a local first -
+    scored 35 and 0 on the settings check. Every other line was identical, so
+    the refusal was about the local binding and nothing else, and a local
+    binding is how essentially every agent passes a setting to its provider. A
+    check that can only follow a value written literally inside the call's own
+    argument list refuses the ordinary shape and credits the rare one.
+
+    So this is a def-use pass, and a bounded one. It answers a question a
+    reader answers by looking: does this name still hold what that assignment
+    put in it? Everything it cannot establish is REFUSED rather than credited,
+    which is the only safe direction here - crediting an alias whose value this
+    read cannot pin would let a setting that never reaches the call score as
+    though it did, which is the same defect as the refusal it fixes, pointed
+    the other way.
+
+    Refused, each because the value at the read is then not the value the
+    assignment wrote, or is not decidable from syntax alone:
+
+    * a parameter, which holds whatever the caller passed;
+    * any second binding of the spelling in this callable's own scope, decided
+      by `_node_binds` and its fail-closed default rather than by counting one
+      node type - see that function for the seven constructs a count missed;
+    * a sole binding that is not one plain assignment of one bare name, so
+      tuple unpacking, `a = b = ...`, a loop target and a walrus are out;
+    * a binding nested in a branch, loop, or `try`, rather than a direct
+      statement of the callable's own body;
+    * a nested function, lambda, or class that reaches the spelling without
+      binding one of its own, per `_nested_scope_leaves_alone` - a nested
+      `def describe(model)` shadows it and is fine, a `nonlocal` is not;
+    * a read that does not follow the assignment in the file.
+
+    What is NOT refused is an ordinary read of the alias elsewhere - a guard
+    on it, a derived label, an f-string, handing it to a helper. An earlier
+    revision refused every attribute access on the name anywhere in the
+    callable, and that refused six one-line additions to this module's own
+    printed example, which re-opened the report this pass exists to answer one
+    shape over: copy the remedy, add a guard, get the same refusal. It is safe
+    to allow because of the invariant the two callers enforce - an alias is
+    credited only when its initializer is EXACTLY the selection, and both
+    `_literal_scalar_options` and `_literal_mapping_keys` refuse a table whose
+    entries are not `ast.Constant`. So the value is an immutable scalar
+    literal, and neither a method call nor an opaque call can change it. The
+    container case, `payload = [SELECTION, question]`, is where in-place
+    mutation is real, and it is refused by that same identity rule rather than
+    by a scan of every use.
+
+    One level, deliberately: `chosen = model` after `model = TABLE[...]` is a
+    second hop and earns nothing. A chain is where a bounded read stops being
+    bounded, and nothing in the shapes this exists to credit needs two.
+    """
+    name = reference.id
+    if not isinstance(reference.ctx, ast.Load):
+        return None
+    if name in _callable_parameter_names(callable_node):
+        return None
+    for node in _callable_body_nodes(callable_node):
+        if isinstance(
+            node,
+            (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda),
+        ) and not _nested_scope_leaves_alone(name, node):
+            return None
+    assignment = _sole_binding_node(name, callable_node)
+    if not isinstance(assignment, (ast.Assign, ast.AnnAssign)):
+        return None
+    if assignment.value is None:
+        return None
+    if source.parents.get(id(assignment)) is not callable_node:
+        return None
+    targets = (
+        assignment.targets
+        if isinstance(assignment, ast.Assign)
+        else (assignment.target,)
+    )
+    if not (
+        len(targets) == 1 and isinstance(targets[0], ast.Name) and targets[0].id == name
+    ):
+        return None
+    if not _is_statically_reachable(assignment, source):
+        return None
+    if reference.lineno <= (assignment.end_lineno or assignment.lineno):
+        return None
+    return assignment.value
+
+
+def _argument_alias_values(
+    expression: ast.expr,
+    callable_node: ast.FunctionDef | ast.AsyncFunctionDef,
+    source: StaticSourceEvidence,
+) -> tuple[ast.expr, ...]:
+    """What each local binding named whole by one call argument holds.
+
+    Only names the argument carries WHOLE are followed - `model=model` and
+    `messages=[model]` qualify, `model=model or "fast"` does not, because a
+    boolean operator can substitute a fixed value for the selected one and
+    this read cannot tell which side ran.
+
+    The callers then require the value returned here to BE the selection they
+    are matching, never merely to contain it. That identity is what makes the
+    alias provably an immutable scalar drawn from a checked table, which is
+    what `_local_alias_initializer` relies on to allow an ordinary read of the
+    name elsewhere in the callable.
+    """
+    values: list[ast.expr] = []
+    for child in ast.walk(expression):
+        if not (isinstance(child, ast.Name) and isinstance(child.ctx, ast.Load)):
+            continue
+        if not _node_is_structurally_embedded(child, expression, source):
+            continue
+        initializer = _local_alias_initializer(child, callable_node, source)
+        if initializer is not None:
+            values.append(initializer)
+    return tuple(values)
 
 
 def _selected_callable_nodes(source: StaticSourceEvidence) -> Iterator[ast.AST]:
@@ -9770,6 +10351,7 @@ def _binding_reaches_call_path(
                 call,
                 binding,
                 knob,
+                callable_node=callable_node,
                 dynamic_parameters=dynamic_parameters,
                 source=source,
             ):
@@ -9782,6 +10364,7 @@ def _call_uses_binding(
     binding: str,
     knob: str,
     *,
+    callable_node: ast.FunctionDef | ast.AsyncFunctionDef,
     dynamic_parameters: frozenset[str],
     source: StaticSourceEvidence,
 ) -> bool:
@@ -9789,18 +10372,36 @@ def _call_uses_binding(
         keyword.arg is None for keyword in call.keywords
     ):
         return False
+
+    def carries(expression: ast.expr) -> bool:
+        # The argument, or the one local binding it names. `model = MODELS[c]`
+        # followed by `model=model` is the same wiring as `model=MODELS[c]`
+        # written in the call, and refusing the first while crediting the
+        # second is a rule about where the author put a newline.
+        #
+        # `exact` on the alias arm, never on the argument. The argument may
+        # carry the selection inside a literal container, because the argument
+        # is consumed at the call and nothing can rewrite it in between. An
+        # alias may not: `payload = [MODELS[c], text]` is a mutable object that
+        # a later `payload.append(...)` changes, and it is that shape - not an
+        # ordinary read of a scalar - that this identity rule refuses.
+        if _expression_varies_binding(expression, binding, dynamic_parameters, source):
+            return True
+        return any(
+            _expression_varies_binding(
+                value, binding, dynamic_parameters, source, exact=True
+            )
+            for value in _argument_alias_values(expression, callable_node, source)
+        )
+
     for keyword in call.keywords:
-        if keyword.arg == knob and _expression_varies_binding(
-            keyword.value, binding, dynamic_parameters, source
-        ):
+        if keyword.arg == knob and carries(keyword.value):
             return True
     # A positional argument carries the value exactly as a keyword does. Only
     # same-file module definitions are resolved; imported signatures are unknown.
     parameters = _module_function_parameters(source, call.func)
     return parameters is not None and any(
-        index < len(parameters)
-        and parameters[index] == knob
-        and _expression_varies_binding(argument, binding, dynamic_parameters, source)
+        index < len(parameters) and parameters[index] == knob and carries(argument)
         for index, argument in enumerate(call.args)
     )
 
@@ -10462,27 +11063,37 @@ def _request_receiver_has_external_constructor(
     while isinstance(root, (ast.Attribute, ast.Subscript)):
         root = root.value
     if isinstance(root, ast.Name):
-        writes = [
-            node
-            for node in _callable_body_nodes(callable_node)
-            if isinstance(node, ast.Name)
-            and node.id == root.id
-            and isinstance(node.ctx, (ast.Store, ast.Del))
-            and _is_statically_reachable(node, source)
-        ]
-        if len(writes) != 1 or isinstance(writes[0].ctx, ast.Del):
+        # Two places a client may be built, and the same fail-closed question
+        # about rebinding asked of both. The predecessor of this counted
+        # `ast.Name` stores inside the callable, which is the counter
+        # `_node_binds` replaced: `import vendor as client` after
+        # `client = Vendor()` read as "one write" and credited a receiver that
+        # is a module by then.
+        binders = _callable_binding_nodes(root.id, callable_node)
+        if len(binders) > 1:
             return False
-        assignment = source.parents.get(id(writes[0]))
-        initializer = (
-            assignment.value
-            if isinstance(assignment, (ast.Assign, ast.AnnAssign))
-            else None
-        )
-        if not isinstance(initializer, ast.Call) or not _statement_precedes_reference(
-            assignment, root, callable_node, source
-        ):
+        if binders:
+            assignment = _plain_assignment_of(root.id, binders[0])
+            if assignment is None or not _is_statically_reachable(assignment, source):
+                return False
+            if not _statement_precedes_reference(
+                assignment, root, callable_node, source
+            ):
+                return False
+        elif root.id in _callable_parameter_names(callable_node):
+            # A client handed in is whatever the caller passed.
             return False
-        root = initializer
+        else:
+            assignment = _module_client_binding(root.id, source)
+            if assignment is None:
+                return False
+            # Built before the callable that uses it, which is what makes the
+            # ordering readable without following the import machinery.
+            if (assignment.end_lineno or assignment.lineno) >= callable_node.lineno:
+                return False
+        if not isinstance(assignment.value, ast.Call):
+            return False
+        root = assignment.value
     if not (
         isinstance(root, ast.Call)
         and _direct_external_constructor_import(root.func, callable_node, source)
@@ -11790,7 +12401,24 @@ def _selection_reaches_verified_request(
             expression = (
                 argument.value if isinstance(argument, ast.keyword) else argument
             )
-            if not _node_is_structurally_embedded(selection, expression, source):
+            # The argument, or the one local binding it names: an agent that
+            # writes `model = MODELS[cfg["model"]]` and then passes `model` has
+            # the same route as one that writes the selection into the call.
+            #
+            # The alias arm compares by IDENTITY where the argument arm allows
+            # container nesting, for the reason `_argument_alias_values` gives:
+            # an alias holding a container can be mutated after it is bound, an
+            # alias holding the selection itself is one of the table's
+            # immutable scalar literals and cannot be.
+            if not (
+                _node_is_structurally_embedded(selection, expression, source)
+                or any(
+                    value is selection
+                    for value in _argument_alias_values(
+                        expression, callable_node, source
+                    )
+                )
+            ):
                 continue
             if _request_call_consumes_argument(call, callable_node, source):
                 return True
@@ -12274,6 +12902,7 @@ def _request_builder_collections(knob: str, source: StaticSourceEvidence) -> lis
             and _is_statically_reachable(node, source)
             and isinstance(node.value, ast.Name)
             and node.value.id in declared
+            and node.value.id in _module_names_a_subscript_can_reach(source)
             and not _callable_binds(node.value.id, builder)
             and _selector_reads_knob(
                 node.slice, knob, holders, dynamic_parameters, node
@@ -12346,6 +12975,7 @@ def _module_collections_this_knob_selects(
             and _is_statically_reachable(node, source)
             and isinstance(node.value, ast.Name)
             and node.value.id in declared
+            and node.value.id in _module_names_a_subscript_can_reach(source)
             and not _callable_binds(node.value.id, callable_node)
             and _selector_reads_knob(
                 node.slice, knob, holders, dynamic_parameters, node
@@ -12399,6 +13029,11 @@ def _values_from_cited_binding(
     names = _assignment_names(node)
     found: list[Any] = []
     matching_names = [name for name in names if _name_matches_knob(name, knob)]
+    # Every route out of this branch is a subscript - `_expression_varies_binding`
+    # accepts nothing else - so an inventory that cannot be indexed has no route
+    # here whatever else is true of it.
+    reachable = _module_names_a_subscript_can_reach(source)
+    matching_names = [name for name in matching_names if name in reachable]
     if matching_names and _names_reach_call_path(
         matching_names, knob, binding_node=node, source=source
     ):
@@ -12634,6 +13269,7 @@ def discovered_knob_from_entry(
                 evidence,
                 uncredited_reason=reason,
                 unverified=True,
+                route_unverified=True,
             )
         distinct = len({repr(value) for value in values})
         if distinct < 2:
@@ -12710,6 +13346,13 @@ def discovered_knob_from_entry(
             + ", ".join(unevidenced)
             + " that the cited executable source does not show",
             unverified=True,
+            # Deliberately NOT `route_unverified`. This branch fires for a
+            # numeric range, and the accepted route this card prints is a list
+            # of named options. Setting it here would hand an author who
+            # mis-cited the line for a `temperature` range a worked example
+            # about model names, which answers a question they did not ask -
+            # the state that already made this field narrower than
+            # `unverified`, applied to the branch that would have broken it.
         )
     return DiscoveredKnob(name, "numeric", evidence, (low, high))
 
@@ -12859,6 +13502,125 @@ def agent_knobs_shape() -> str:
         "names - and the refusal names the one it wants:\n"
         f"{also_reads}"
     )
+
+
+# An agent whose settings route this read CAN follow, printed beside a refusal
+# that could not follow one.
+#
+# The sibling of `AGENT_KNOBS_EXAMPLE`, for the same measured reason and one
+# level further out. That constant exists because five successive attempts to
+# DESCRIBE the document contract were each wrong and each read correctly; this
+# one exists because a refusal that named only what failed sent five successive
+# rewrites of a working agent at four Python idioms that were never the cause.
+# The reader was told what this check could not verify and never what it can,
+# so the only way to find out was to guess, and every guess cost an edit to
+# code that already worked.
+#
+# A real file rather than a sketch, and checked against the real reader by
+# `tests/test_readiness_scoring.py`, because an example that this scorer would
+# itself refuse is worse than no example: it is the pattern this check exists
+# to refuse, handed to the reader as the thing to copy.
+#
+# It is ONE accepted shape, not the only one, and the printed text says so. A
+# card that implied otherwise would send an author to restructure an agent that
+# a different accepted route already covers, which is the harm this block is
+# here to stop rather than to repeat in a new spelling.
+ACCEPTED_ROUTE_AGENT = """from openai import OpenAI
+
+MODELS = ["gpt-4o-mini", "gpt-4o"]
+
+client = OpenAI()
+
+
+def answer(question, model_choice=0):
+    model = MODELS[model_choice]
+    reply = client.chat.completions.create(
+        model=model,
+        messages=[{"role": "user", "content": question}],
+    )
+    return reply.choices[0].message.content
+"""
+
+
+# The entry that cites the agent above, in the same document this scorer reads.
+# Both halves are printed, because either alone leaves the reader guessing at
+# the other: the code shows the route and the entry shows which line to cite
+# for it.
+ACCEPTED_ROUTE_KNOB: dict[str, Any] = {
+    "model": {
+        # True of the file above line by line, not merely in range of it. The
+        # sibling example shipped `source_lines: [5]` on four checks once and
+        # made a claim about a call that does not do what the claim said, in
+        # the block a reader is told to copy. So each number here is checked
+        # against that file by the suite rather than eyeballed.
+        "evidence": "agent.py:3 lists the alternatives, agent.py:9 selects "
+        "one, and agent.py:11 passes it to the request call.",
+        "source_lines": [3],
+        "values": ["gpt-4o-mini", "gpt-4o"],
+    }
+}
+
+
+# What the four printed parts are, in the order they appear in the file above.
+# Each one is a condition this reader actually applies, so the list can be
+# checked against the code rather than believed.
+ACCEPTED_ROUTE_PARTS: tuple[str, ...] = (
+    "the options are written out as literals in a module-level binding, and "
+    "'source_lines' cites that line",
+    "the selected callable chooses among them from something it is given: one "
+    "of its own parameters, as above, or a key it reads from a mapping passed "
+    "to it",
+    "that choice is what indexes the module binding",
+    "the selected value reaches an argument named for the setting, either "
+    "written into the call or through one plain local that nothing else "
+    "rewrites",
+    # The conditional part, named because it is the one an author cannot
+    # infer from the example: the example chooses by parameter, and that
+    # route reads any call. The mapping route needs the stronger proof, and
+    # the sentence says the client's position is not part of it - an earlier
+    # draft named neither, which read as "change your function signature" to
+    # an author whose only real gap was the kind of call.
+    "and where the choice is read from a mapping rather than taken as a "
+    "parameter, the call has to be a provider client's own request; that "
+    "client can be built at module level or inside the callable, either "
+    "reads",
+)
+
+ACCEPTED_ROUTE_LABEL = "ACCEPTED ROUTE"
+
+
+def accepted_route_shape() -> list[str]:
+    """The accepted worked example, as card lines.
+
+    Rendered from the constants above rather than restated, for the reason
+    `agent_knobs_shape` is: a skeleton that drifts from the checker teaches a
+    wrong shape with more authority than no skeleton at all.
+    """
+    entry = json.dumps(ACCEPTED_ROUTE_KNOB, indent=2)
+    lines = [
+        f"  {ACCEPTED_ROUTE_LABEL} One agent whose settings route this check "
+        "does follow, printed because",
+        "  naming what failed does not say what would pass. It is one accepted "
+        "shape and not the",
+        "  only one, so read it for its parts rather than for its names.",
+        "",
+    ]
+    lines.extend(
+        f"      {line}" if line else "" for line in ACCEPTED_ROUTE_AGENT.splitlines()
+    )
+    lines.append("")
+    lines.append('  and the entry that cites it, inside the document\'s "knobs" map:')
+    lines.append("")
+    lines.extend(f"      {line}" if line else "" for line in entry.splitlines())
+    lines.append("")
+    lines.append(
+        f"  {len(ACCEPTED_ROUTE_PARTS)} parts make a route readable, and this "
+        "check wants them all:"
+    )
+    lines.extend(
+        f"    {index}. {part}" for index, part in enumerate(ACCEPTED_ROUTE_PARTS, 1)
+    )
+    return lines
 
 
 # A prompt earns most of its check for existing and the rest for carrying
