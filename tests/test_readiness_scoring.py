@@ -4,6 +4,7 @@ import ast
 import contextlib
 import dataclasses
 import importlib.util
+import inspect
 import io
 import itertools
 import json
@@ -18101,7 +18102,16 @@ class AnUnfollowedRouteIsNotAnAbsentSettingTests(unittest.TestCase):
             "the accepted route this card prints",
             space.evidence,
         )
-        self.assertNotIn("is not the step here", space.evidence)
+        # NOT `assertNotIn("is not the step here", ...)`, which was here and
+        # could never red: that phrase is emitted nowhere in this repository,
+        # so it asserted only that a sentence nobody writes was not written.
+        # The live risk is the opposite one - that the ladder sentence gets
+        # suppressed again - and this is the assertion that catches it.
+        self.assertIn(
+            "1 more would reach the 4 this guide scores as room for two "
+            "settings to interact",
+            space.evidence,
+        )
 
     def test_an_unfollowed_route_still_earns_nothing(self) -> None:
         """The floor is the credit, and widening it is the unsafe direction.
@@ -18243,14 +18253,25 @@ class AnUnfollowedRouteIsNotAnAbsentSettingTests(unittest.TestCase):
         the class this repository keeps catching, and prose is where it hides,
         so the grid is asserted here rather than described anywhere.
 
-        The distinction that survives: the opening card passes no budget, so
-        the collapse costs nothing THERE and 35 points whenever the followed
-        count falls under the first rung. It costs 30 wherever the same space
-        meets the budget the guide's own producer always emits.
+        The correction then overshot in the other direction, which is the
+        mirrored defect: it said the collapse costs thirty points wherever the
+        space meets the budget the guide's producer emits. There is no such
+        place. A collapsed count exists only on the source-read branch, and
+        that branch passes a literal `None`; the budgeted call never reads
+        `facts.discovered`, so no budget a document declares can meet this
+        number. Forcing one leaves the score where it was. #406 is the standing
+        record of that branch being capped, and it is what makes the thirty
+        point rung unreachable from here.
+
+        So: the rung at `SEARCH_SPACE_FULL` is real and reachable with a
+        budget, the collapse never meets it, and what the collapse actually
+        costs on the opening card is 35 points whenever the followed count
+        falls under the FIRST rung, which is what this fixture does.
         """
-        # Both trial budgets in references/sdk-execution.md default to 12, and
-        # `search_space_points` records in its own docstring that the producer
-        # always emits one. The budget-present case is the normal one.
+        # `SEARCH_SPACE_FULL` is the second rung. Both trial budgets in
+        # references/sdk-execution.md happen to equal it, but that is not what
+        # makes the rung real, and it is not reachable from the branch this
+        # change touches - see the docstring above.
         emitted = 12
         self.assertEqual(MODULE.SEARCH_SPACE_INTERACTION, 4)
         self.assertEqual(MODULE.SEARCH_SPACE_FULL, emitted)
@@ -18261,11 +18282,14 @@ class AnUnfollowedRouteIsNotAnAbsentSettingTests(unittest.TestCase):
         # read as agreeing.
         self.assertEqual(MODULE.search_space_points(6, None), 70.0)
         self.assertEqual(MODULE.search_space_points(36, None), 70.0)
-        # The opening read never declares a budget, so this fixture's own cost
-        # is the first rung rather than the second.
+        # And the branch under change passes a literal None, so no declared
+        # budget can reach the second rung from here. Asserted rather than
+        # described, because describing it is how the claim went wrong twice.
         space = self._space(self._facts())
         self.assertEqual(space.value, 35.0)
         self.assertEqual(MODULE.search_space_points(36, None), 70.0)
+        source = inspect.getsource(MODULE.score_discovered_agent)
+        self.assertIn("search_space_points(configurations, None)", source)
 
     def test_one_option_never_widens_a_space_by_a_factor_of_one(self) -> None:
         """One option is not a choice on this branch either."""
@@ -18610,7 +18634,238 @@ def run(config, question):
                 },
             },
         )
+        # `tone` is NAMED, because the line it cites really does hold those
+        # literals and saying otherwise would be false about the file. What it
+        # does not get is a FACTOR: the count is what a document could inflate,
+        # so that half needs the binding to be named for the setting, and
+        # `SCHEMA_CONTEXTS` does not name `tone`.
         self.assertEqual(
-            [name for name, _count in MODULE.unfollowed_settings(facts)],
-            ["schema_context"],
+            dict(MODULE.unfollowed_settings(facts)),
+            {"schema_context": 2, "tone": 0},
         )
+        # This fixture credits nothing, so it exercises the all-refused
+        # sentence, where an uncounted setting must not be multiplied through.
+        # Letting a zero into that product printed "come to 0 configurations".
+        pillar, _caps, _rows = MODULE.score_agent(facts)
+        space = next(sub for sub in pillar.subscores if sub.name == "search-space")
+        self.assertNotIn("come to 0 configurations", space.evidence)
+        self.assertIn("their cited options come to 2 configurations", space.evidence)
+
+
+class TheNamedRequestArgumentRouteFollowsTheArgumentTests(unittest.TestCase):
+    """What the request RECEIVES, not what a parameter happens to be called.
+
+    The numeric route credits a setting whose value is what the request
+    argument of its own name receives. A first revision established that by
+    finding a parameter of the right name in whichever callable it was
+    scanning, and never looked at what the caller passed. Every shape below
+    puts a constant in the request while a helper's body still reads
+    `temperature=temperature`, and every one of them was credited, over a card
+    asserting that the setting's own value is what the request received.
+
+    The selected callable is the one exception and is different in kind: its
+    caller is the customer's harness, outside this file, and varying it is the
+    premise of the score.
+    """
+
+    HEAD = "from openai import OpenAI\n\nTEMPERATURES = (0.0, 0.7)\n\nclient = OpenAI()\n\n"
+    KNOB = {
+        "temperature": {
+            "low": 0.0,
+            "high": 0.7,
+            "source_lines": [3],
+            "evidence": "agent.py:3 spells both temperatures out.",
+        }
+    }
+
+    def _credited(self, body: str) -> bool:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "agent.py").write_text(self.HEAD + body)
+            facts = MODULE.agent_facts_from_discovery(
+                {"source": "agent.py", "knobs": self.KNOB},
+                source_root=root,
+                selected_agent=root / "agent.py",
+                selected_agent_callable="run",
+            )
+        return facts.discovered[0].credited
+
+    LITERAL_AT_THE_CALL_SITE = """
+def _send(temperature, question):
+    return client.chat.completions.create(
+        model="gpt-4o-mini", temperature=temperature,
+        messages=[{"role": "user", "content": question}])
+
+
+def run(config, question):
+    if config["temperature"] not in TEMPERATURES:
+        raise ValueError("bad temperature")
+    return _send(0.2, question)
+"""
+
+    DEFAULT_ONLY = """
+def _send(question, temperature=0.2):
+    return client.chat.completions.create(
+        model="gpt-4o-mini", temperature=temperature,
+        messages=[{"role": "user", "content": question}])
+
+
+def run(config, question):
+    if config["temperature"] not in TEMPERATURES:
+        raise ValueError("bad temperature")
+    return _send(question)
+"""
+
+    TELEMETRY_NAMES_IT = """
+def run(config, question):
+    client.log.record(temperature=config["temperature"])
+    return client.chat.completions.create(
+        model="gpt-4o-mini", temperature=0.2,
+        messages=[{"role": "user", "content": question}])
+"""
+
+    def test_a_constant_at_the_call_site_earns_nothing(self) -> None:
+        """The helper's body reads the parameter; the request received 0.2."""
+        self.assertFalse(self._credited(self.LITERAL_AT_THE_CALL_SITE))
+
+    def test_a_helper_parameter_that_only_takes_its_default_earns_nothing(
+        self,
+    ) -> None:
+        self.assertFalse(self._credited(self.DEFAULT_ONLY))
+
+    def test_a_call_on_the_client_that_is_not_the_request_earns_nothing(self) -> None:
+        """The receiver check resolves the chain root, so every method passes it.
+
+        `client.log.record(temperature=...)` satisfies the receiver and names
+        the setting, beside a request sending a constant. What separates them
+        is that the request's result is what the callable returns.
+        """
+        self.assertFalse(self._credited(self.TELEMETRY_NAMES_IT))
+
+    def test_the_shapes_that_really_do_reach_the_request_still_earn_it(self) -> None:
+        """The other direction, four ways, or the rule above is just a refusal."""
+        for name, body in (
+            (
+                "read straight into the request",
+                """
+def run(config, question):
+    return client.chat.completions.create(
+        model="gpt-4o-mini", temperature=config["temperature"],
+        messages=[{"role": "user", "content": question}])
+""",
+            ),
+            (
+                "the selected callable's own parameter",
+                """
+def run(question, temperature):
+    return client.chat.completions.create(
+        model="gpt-4o-mini", temperature=temperature,
+        messages=[{"role": "user", "content": question}])
+""",
+            ),
+            (
+                "a helper reading the forwarded mapping",
+                """
+def _send(config, question):
+    return client.chat.completions.create(
+        model="gpt-4o-mini", temperature=config["temperature"],
+        messages=[{"role": "user", "content": question}])
+
+
+def run(config, question):
+    return _send(config, question)
+""",
+            ),
+            (
+                "the result assigned, then returned",
+                """
+def run(config, question):
+    reply = client.chat.completions.create(
+        model="gpt-4o-mini", temperature=config["temperature"],
+        messages=[{"role": "user", "content": question}])
+    return reply.choices[0].message.content
+""",
+            ),
+        ):
+            with self.subTest(shape=name):
+                self.assertTrue(self._credited(body), name)
+
+
+class TheFloorSentenceDoesNotDependOnHowATableIsNamedTests(unittest.TestCase):
+    """Two byte-identical agents, one table renamed, and the fix reverting.
+
+    The ceiling is gated behind `_name_matches_knob`, which wants every token
+    of the setting's name. `STYLES` does not name `prompt_style`. When that was
+    also the gate on the SENTENCE, an agent whose tables are named for their
+    nouns had every refused setting drop out of the list, and the card fell
+    back to printing `your space has N distinct configurations` - the exact
+    sentence this change exists to remove, reached by a different route. Every
+    fixture in the change used a table named after its setting, which is why it
+    never showed.
+
+    Naming and counting are separate now. The name-match rule itself is #399.
+    """
+
+    AGENT = """from openai import OpenAI
+
+MODELS = {{"fast": "gpt-4o-mini", "balanced": "gpt-4o"}}
+{table} = {{"terse": "Be brief.", "warm": "Be friendly."}}
+
+client = OpenAI()
+
+
+def run(config, question):
+    reply = client.chat.completions.create(
+        model=MODELS[config["model"]],
+        messages=[{{"role": "user", "content": {table}[config["prompt_style"]] + question}}],
+    )
+    return reply.choices[0].message.content
+"""
+
+    def _evidence(self, table: str):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "agent.py").write_text(self.AGENT.format(table=table))
+            facts = MODULE.agent_facts_from_discovery(
+                {
+                    "source": "agent.py",
+                    "knobs": {
+                        "model": {
+                            "values": ["fast", "balanced"],
+                            "source_lines": [3],
+                            "evidence": "agent.py:3 lists the models.",
+                        },
+                        "prompt_style": {
+                            "values": ["terse", "warm"],
+                            "source_lines": [4],
+                            "evidence": "agent.py:4 lists the styles.",
+                        },
+                    },
+                },
+                source_root=root,
+                selected_agent=root / "agent.py",
+                selected_agent_callable="run",
+            )
+        pillar, _caps, _rows = MODULE.score_agent(facts)
+        space = next(sub for sub in pillar.subscores if sub.name == "search-space")
+        return space.evidence, facts
+
+    def test_the_floor_survives_a_table_named_for_its_noun(self) -> None:
+        for table in ("PROMPT_STYLES", "STYLES"):
+            with self.subTest(table=table):
+                evidence, _facts = self._evidence(table)
+                self.assertIn("this read followed 2 distinct configurations", evidence)
+                self.assertNotIn("your space has", evidence)
+                self.assertIn("could not follow prompt_style", evidence)
+
+    def test_only_the_number_depends_on_the_name(self) -> None:
+        """The half that SHOULD differ, so this is not just asserting sameness."""
+        matched, _ = self._evidence("PROMPT_STYLES")
+        self.assertIn("and 4 if they all do", matched)
+        self.assertNotIn("without a factor", matched)
+
+        unmatched, facts = self._evidence("STYLES")
+        self.assertNotIn("if they all do", unmatched)
+        self.assertIn("2 is a floor rather than the space", unmatched)
+        self.assertEqual(dict(MODULE.unfollowed_settings(facts)), {"prompt_style": 0})
+        self.assertFalse(MODULE._name_matches_knob("STYLES", "prompt_style"))

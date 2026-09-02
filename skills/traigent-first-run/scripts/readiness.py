@@ -2525,6 +2525,16 @@ class DiscoveredKnob:
     # mapping written to be indexed and for nothing else. The card says which
     # half was established rather than letting the credit imply both.
     bounds_from_document: bool = False
+    # Whether the cited source shows this setting's options at all. Separate
+    # from `unfollowed_options` because the two answer different questions and
+    # tying them together made the headline fix revert silently: the count
+    # needs a binding NAMED for the setting, and a table called `STYLES` does
+    # not name `prompt_style`, so an agent whose tables are all named that way
+    # had every refused setting drop out of the list - and the card fell back
+    # to printing the space as settled, which is the sentence this all exists
+    # to remove. What the source shows is the right question for the sentence
+    # and the wrong one for a number.
+    options_shown: bool = False
 
     @property
     def credited(self) -> bool:
@@ -5820,14 +5830,42 @@ def unfollowed_space_clause(
     is added - the probe first, because it is the one that always applies,
     where the accepted route can ask for an agent to be rewritten.
     """
-    ceiling = configurations * math.prod(count for _, count in unfollowed)
+    counted = [(name, count) for name, count in unfollowed if count > 1]
     named = ", ".join(name for name, _ in unfollowed)
-    return (
+    if not counted:
+        # Named without a number, which is the honest form when nothing here
+        # can be multiplied out. The floor sentence still has to say it is a
+        # floor: falling back to "your space has N" would be the refutation
+        # this whole clause exists to remove, arrived at by a different route.
+        return (
+            (
+                f"; it could not follow {named}, whose options the cited source "
+                f"does spell out, so {configurations} is a floor rather than the "
+                "space"
+            )
+            + search_space_shortfall(configurations, budget)
+            + _settling_clause()
+        )
+    ceiling = configurations * math.prod(count for _, count in counted)
+    clause = (
         f"; it could not follow {named}, whose options the cited source does "
         f"spell out, so the space is {configurations} only if none of those "
         f"vary and {ceiling} if they all do"
-        + search_space_shortfall(configurations, budget)
-        + "; those settings are already written down, so settling them is the "
+    )
+    if len(counted) < len(unfollowed):
+        uncounted = ", ".join(name for name, count in unfollowed if count <= 1)
+        clause += (
+            f"; {ceiling} counts only the ones whose options this read found "
+            f"under a binding named for them, so {uncounted} is named here "
+            "without a factor and the figure is a lower bound"
+        )
+    return clause + search_space_shortfall(configurations, budget) + _settling_clause()
+
+
+def _settling_clause() -> str:
+    """The option that needs no new setting, offered rather than asserted."""
+    return (
+        "; those settings are already written down, so settling them is the "
         "other way to that number and needs no new one - run the "
         "request-difference probe before any paid grid, or cite them on the "
         "accepted route this card prints"
@@ -6058,16 +6096,25 @@ def unfollowed_settings(facts: AgentFacts) -> tuple[tuple[str, int], ...]:
     probe can establish and this reader cannot; this is neither, and it is the
     one that used to be reported as the second by disappearing from the count.
 
-    A single option is dropped for the same reason it is dropped from a
-    credited knob - one option is not a choice - so this never widens a figure
-    by a factor of one, and it is read from `unfollowed_options` rather than
-    from a refusal sentence, because deciding a semantic question from a
-    surface signal is the defect class this module keeps filing against itself.
+    Every setting whose options the cited source shows is listed, and the count
+    beside each is what it may be MULTIPLIED by - zero where this read declined
+    to draw a number from it, because the binding holding the options is not
+    named for the setting. Naming and counting are separate on purpose: a
+    number a document could inflate needs the stricter test, and a sentence
+    saying "I could not follow this" needs only the weaker one. Gating both on
+    the strict test made the whole sentence vanish for an agent whose tables
+    are named for their nouns.
+
+    A single option is never counted, for the same reason it is dropped from a
+    credited knob - one option is not a choice - so this cannot widen a figure
+    by a factor of one. Both fields are structured, never re-read from a
+    refusal sentence, because deciding a semantic question from a surface
+    signal is the defect class this module keeps filing against itself.
     """
     return tuple(
         (knob.name, knob.unfollowed_options)
         for knob in facts.discovered
-        if knob.unfollowed_options > 1
+        if knob.options_shown
     )
 
 
@@ -6135,7 +6182,14 @@ def score_discovered_agent(
             # depend on whether one OTHER setting happened to be followed - a
             # customer whose four settings all sit outside these shapes is the
             # one who most needs to see that the read is the limit here.
-            unfollowed = unfollowed_settings(facts)
+            # Only the settings this read drew a number from, for the reason
+            # `unfollowed_space_clause` uses the same filter: the list now
+            # carries settings it can name but not count, and multiplying a
+            # zero through produced "their cited options come to 0
+            # configurations", which is not a sentence about anything.
+            unfollowed = [
+                (name, count) for name, count in unfollowed_settings(facts) if count > 1
+            ]
             if unfollowed:
                 ceiling = math.prod(count for _, count in unfollowed)
                 evidence += (
@@ -12876,6 +12930,7 @@ def _value_is_this_setting(
     knob: str,
     callable_node: ast.FunctionDef | ast.AsyncFunctionDef,
     dynamic_parameters: frozenset[str],
+    source: StaticSourceEvidence,
 ) -> bool:
     """Whether this expression is the setting itself and nothing else.
 
@@ -12902,6 +12957,17 @@ def _value_is_this_setting(
         isinstance(value, ast.Name)
         and isinstance(value.ctx, ast.Load)
         and value.id.casefold() == knob.casefold()
+        # The SELECTED callable only. A parameter of a helper says nothing
+        # about what the selected callable hands it: `_send(0.2, question)`
+        # into `def _send(temperature, ...)` puts a literal in the request
+        # while the helper's body still reads `temperature=temperature`. This
+        # check followed the name and never the argument, so it credited that
+        # agent and printed that the setting's own value is what the request
+        # received, over a request that received 0.2. The selected callable is
+        # different in kind: its caller is the customer's harness, outside this
+        # file and outside anything this read could inspect, and varying it is
+        # the whole premise of the score.
+        and callable_node is source.selected_callable
         and value.id in _callable_parameter_names(callable_node)
         and _callable_parameter_is_unshadowed(value.id, callable_node)
     ):
@@ -12946,13 +13012,23 @@ def _knob_reaches_its_named_request_argument(
                 and _request_receiver_has_external_constructor(
                     call.func.value, callable_node, source
                 )
+                # The receiver check resolves the chain ROOT, so every method
+                # on a provider client satisfies it - `client.log.record(...)`
+                # as readily as `client.chat.completions.create(...)`. What
+                # separates a request from a call that merely happens to sit on
+                # the same object is that the request's result is what the
+                # callable returns, which is the condition `_request_parameters`
+                # already applies for exactly this reason. Without it a
+                # telemetry line naming the setting credited a route while the
+                # real request beside it sent a constant.
+                and _request_result_return_nodes(call, callable_node, source)
             ):
                 continue
             for keyword in call.keywords:
                 if keyword.arg is None or keyword.arg.casefold() != knob.casefold():
                     continue
                 if _value_is_this_setting(
-                    keyword.value, knob, callable_node, dynamic_parameters
+                    keyword.value, knob, callable_node, dynamic_parameters, source
                 ):
                     return True
     return False
@@ -14122,7 +14198,8 @@ def discovered_knob_from_entry(
             # value. "Quote the options" was already being obeyed off the wrong
             # line, so naming the line is the only part that changes an outcome.
             confirmed_options = 0
-            if _cited_source_declares_values(values, checked_lines, source):
+            options_shown = _cited_source_declares_values(values, checked_lines, source)
+            if options_shown:
                 # The options are provably in the cited source and only the
                 # route is unfollowed, so how many there are is a fact this
                 # read established rather than one it is taking on trust.
@@ -14156,6 +14233,7 @@ def discovered_knob_from_entry(
                 unverified=True,
                 route_unverified=True,
                 unfollowed_options=confirmed_options,
+                options_shown=options_shown,
             )
         distinct = len({repr(value) for value in values})
         if distinct < 2:
@@ -14262,6 +14340,7 @@ def discovered_knob_from_entry(
                     )
                     else 0
                 ),
+                options_shown=True,
             )
         return DiscoveredKnob(
             name,
@@ -14492,8 +14571,18 @@ ACCEPTED_ROUTE_KNOB: dict[str, Any] = {
 
 
 # What the printed parts are, in the order they appear in the file above.
-# Each one is a condition this reader actually applies, so the list can be
-# checked against the code rather than believed.
+#
+# Each one names a condition this reader applies, and the honest scope of that
+# claim is narrower than an earlier wording here said. What IS mechanically
+# checked is that the worked agent and its entry are rendered from
+# `ACCEPTED_ROUTE_AGENT` and `ACCEPTED_ROUTE_KNOB` rather than restated, that
+# this tuple is non-empty, and that the card and the reference print exactly as
+# many conditions as it holds. The PROSE of each condition is not bound to the
+# predicate it describes; nothing here compares a sentence to an expression,
+# and claiming otherwise invited exactly the trust the sentence was warning
+# against. Keeping them true is a reviewer's job, and
+# `route_refusal_diagnosis` is where a drift shows up first, because it reports
+# these conditions by name.
 ACCEPTED_ROUTE_PARTS: tuple[str, ...] = (
     "the options are written out as literals in a module-level binding, and "
     "'source_lines' cites that line",

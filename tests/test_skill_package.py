@@ -29127,8 +29127,38 @@ class TheAcceptedRouteIsReadableBeforeItIsRefusedTests(unittest.TestCase):
     def _reference(self) -> str:
         return quoted_prose(self.REFERENCE)
 
+    def test_the_condition_list_is_not_empty_and_is_counted_the_same_everywhere(
+        self,
+    ) -> None:
+        """An emptied tuple ran zero assertions and reported OK.
+
+        Every other guard in this class iterates `ACCEPTED_ROUTE_PARTS`, so
+        emptying it satisfied all of them vacuously while the card printed
+        "0 parts make a route readable" and the reference printed no
+        conditions at all. The count is the one thing none of them checked.
+        """
+        parts = READINESS.ACCEPTED_ROUTE_PARTS
+        self.assertGreaterEqual(len(parts), 1)
+        card = "\n".join(READINESS.accepted_route_shape())
+        self.assertIn(f"{len(parts)} parts make a route readable", card)
+        for index in range(1, len(parts) + 1):
+            self.assertIn(f"    {index}. ", card)
+        self.assertNotIn(f"    {len(parts) + 1}. ", card)
+        # And the reference carries the same number, so the two renderings
+        # cannot drift apart in count while each stays self-consistent. Scoped
+        # to the block that lists them: the document holds other numbered
+        # lists, and a whole-file scan would be answering a different question.
+        body = self.REFERENCE.read_text()
+        block = body.split("**The route this reader follows", 1)[1].split(
+            "Three limits are worth knowing", 1
+        )[0]
+        for index in range(1, len(parts) + 1):
+            self.assertIn(f"\n{index}. ", block)
+        self.assertNotIn(f"\n{len(parts) + 1}. ", block)
+
     def test_the_reference_states_every_condition_the_checker_applies(self) -> None:
         reference = self._reference()
+        self.assertTrue(READINESS.ACCEPTED_ROUTE_PARTS)
         for part in READINESS.ACCEPTED_ROUTE_PARTS:
             self.assertIn(
                 " ".join(part.split()).casefold(),
