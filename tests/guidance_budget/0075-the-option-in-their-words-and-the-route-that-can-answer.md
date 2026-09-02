@@ -5,8 +5,8 @@ follows-resident-measured: 92_003
 follows-total-measured: 441_185
 resident-ceiling: 96_400
 resident-measured: 96_132
-total-ceiling: 453_000
-total-measured: 452_716
+total-ceiling: 453_300
+total-measured: 453_096
 
 Seven rules bought here, all of them found by watching somebody read what a
 run had already written, and five of them are one rule arriving in five places. The
@@ -49,8 +49,8 @@ live runs and rendered bold words where every other ask renders lettered routes.
 Both are fixed by pointing that reference's rule at it rather than by writing a
 second one: proceeding carries the mark, on the reasoning already stated one
 section over and stronger here because what is approved is deliberately small,
-and the mark is withheld under a blocking cap or where the run as scoped cannot
-answer what it is paid for. A single shape for named-route choices is stated
+and the mark moves to fixing under a blocking cap, or where the run as scoped
+cannot answer what it is paid for - the correction below states that. A single shape for named-route choices is stated
 once in the resident document, with the standing exit and a lone proposed action
 excluded by scope rather than by exemption.
 
@@ -81,8 +81,8 @@ next phase spends more and an approval nobody can decline is the worse defect,
 and three limits are written down so a stronger case cannot become a promise of
 improvement.
 
-Corrected after review, in the same entry rather than a new one, because these
-are the same bytes weighed again rather than a further raise.
+Corrected after review, twice, in the same entry rather than in new ones,
+because these are the same bytes weighed again rather than a further raise.
 
 The sentence "this checkpoint is a valid place to stop" was described above as
 reordered. It was deleted. 0069 had added four facts to it precisely because the
@@ -116,8 +116,8 @@ all three conditions verbatim, and that duplicate is what let a deletion from
 the card itself pass every guard over it.
 
 Size. Resident rises 4_129 on 0074, which is the largest resident raise in this
-ledger's history: 44 entries raise that ceiling and the next largest is 0020's
-3_209. 0073 argued a 901-byte raise and this is four and a half times it, so the
+ledger's history: 44 entries declare that ceiling and 41 raise it, and the next
+largest raise is 0020's 3_209. 0073 argued a 901-byte raise and this is four and a half times it, so the
 same argument is owed at four and a half times the strength. What earns it is
 that every byte fires before any reference loads. The intent gate's register
 rule is evaluated while the options are being written, and a rule reaching the
@@ -130,6 +130,19 @@ first draft: the worked failure behind the register rule, which is read once and
 belongs with the default that defers to it; the standing reasons for continuing,
 written out in full in both the flow and the reference and now written once in
 the reference; and a second full statement that a named route must be
-answerable, which the reference already carried. Total rises 932 over the same
-first draft and 11_531 over 0074, and it takes a ceiling of 453_000; most of
+answerable, which the reference already carried. Total rises 1_312 over the same
+first draft and 11_911 over 0074, and it takes a ceiling of 453_300; most of
 that movement is the transfer just described rather than new prose.
+
+Two more corrections, from the round that measured the guards instead of
+reading them. The connected preview named the evidenced repair as the route its
+mark moves onto, twelve lines under a paragraph saying a pair that fails the
+distinguishing check has already stopped before this preview and gets that
+repair instead - one document contradicting itself two paragraphs apart. The
+preview's moved-mark route is now more or harder rows, and the repair is named
+as what this card does not offer. In the same state the bounded run was
+described in prose and offered without a letter while the template rendered
+only two, which is the second form for the same act the resident rule refuses:
+all three routes are lettered and each keeps a reply form. That is what these
+last bytes buy, and it is the only part of this entry that adds customer-facing
+instruction rather than moving or deleting it.

@@ -704,17 +704,21 @@ that put one there was read as having offered no options at all - not even what 
 >
 > Or reply with a smaller trial cap or a lower ceiling and I will re-price this same step.
 
-Route `A` carries the reply-ready line `Recommended next: <action> — <measured reason>.`, which
+Route `A` carries the reply-ready line `Recommended next: <action> - <measured reason>.`, which
 stays a direct evidence-based statement rather than a question. The last line is not a third route:
 it answers how big rather than what to do, so it rides last and unnumbered exactly as `I have it`
-does on the asks about material, and nothing follows it. Replying to either route
+does on the asks about material, and nothing follows it. Replying to any of these routes
 opens no paid work without the explicit approval below. For controlled work, `continue` opens a
 preview; it approves nothing unless that preview disclosed recipients, effects, bounds, and cost.
 
 The mark on `A` follows the pre-spend card's rule above. That rule is stated there once and is not
-restated here: where it moves the mark, the route it moves onto - the evidenced repair, or more and
-harder rows before the search - is what `A` is, the bounded run is offered under it unmarked, and
-the sentence beside `A` names the finding that moved it. Stopping is never the marked route.
+restated here. Where it moves the mark here, it moves it onto more or harder rows before the search
+- not onto the evidenced repair, which is not one of this preview's routes at all: a dataset or
+evaluator that fails the distinguishing check stopped before this card, as the paragraph above says.
+So in that state `A.` is the rows route and carries the mark, `B.` is the bounded run, unmarked, and
+`C.` is stopping; every one of them keeps a letter and a reply form, because an offered route
+without a letter is the second form for the same act this guide already refuses. The sentence beside
+`A` names the finding that moved it. Stopping is never the marked route.
 
 Keep the default `$5.00` ceiling across both approvals. If a stage exceeds the remaining ceiling or
 is materially long, recommend a smaller slice or fewer trials; expand only if the user prefers.

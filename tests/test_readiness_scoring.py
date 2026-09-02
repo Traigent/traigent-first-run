@@ -8663,6 +8663,48 @@ class TheCardSpeaksTheUsersLanguageTests(unittest.TestCase):
             "checks were measured",
         )
 
+    def test_the_group_marker_is_the_worst_of_the_checks_it_covers(self) -> None:
+        """The invariant the code comments assert and nothing proved.
+
+        `min(subs, key=(measured, value))` is what puts the group's worst
+        marker on the shared finding, and the reason is stated twice in
+        `render_card`: a reader scanning the left edge must not be shown the
+        most forgiving marker of a set. Changing that `min` to `max` visibly
+        changes the customer's card - two group markers flip on the shipped
+        `--preflight -` output - and every test in this repository stayed
+        green, which is the "the comment is the only guard" class.
+
+        Derived from the pillar, and the fixture is built so the answer
+        differs: the group holds a `!!` and an `OK`, so a card taking the best
+        of the set prints `OK` where the worst is `!!`.
+        """
+        worst = MODULE.SubScore("foxtrot", 1.0, 40.0, True, "one reason for all")
+        best = MODULE.SubScore("golf", 40.0, 40.0, True, "one reason for all")
+        pillar = MODULE.Pillar(
+            name="dataset",
+            score=50,
+            confidence=1.0,
+            subscores=(best, worst),
+        )
+        self.assertNotEqual(
+            MODULE.marker(worst, False),
+            MODULE.marker(best, False),
+            "the fixture only says anything while the two markers differ",
+        )
+        card = self._rendered(pillar)
+        heading = next(
+            line
+            for line in card.splitlines()
+            if line.strip().endswith("one reason for all")
+        )
+        self.assertEqual(
+            heading.strip(),
+            f"{MODULE.marker(worst, False)} one reason for all",
+            "the shared finding carries a marker that is not the worst of the "
+            "checks listed under it, so a reader scanning the left edge is "
+            "shown the most forgiving one of the set",
+        )
+
     def test_checks_with_their_own_reasons_keep_their_own_rows(self) -> None:
         """The other direction, which a de-duplication pass gets wrong.
 
