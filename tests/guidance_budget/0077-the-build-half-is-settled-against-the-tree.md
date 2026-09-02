@@ -1,9 +1,9 @@
-# 0076 - the build half is settled against the tree
+# 0077 - the build half is settled against the tree
 
-follows: 0075
-follows-total-measured: 450_786
-total-ceiling: 454_400
-total-measured: 453_999
+follows: 0076
+follows-total-measured: 462_697
+total-ceiling: 467_600
+total-measured: 467_226
 
 A blinded fixture re-run spent these bytes before anyone wrote them down. Its
 dataset was rebuilt underneath it, so the recorded invariants no longer matched
@@ -24,12 +24,26 @@ settles what the source can settle and says plainly where nothing can.
 
 Two of the four checks can be contradicted by the tree the module already parses.
 A loop node in the selected callable refutes a claim that the agent takes one
-turn. A while whose own statements carry no break and no return refutes a claim
-that there is a stop condition to point at, which matters because that is the
-half of the answer pricing the risk. A declared tool absent from the whole file
-refutes itself. None of the three confirms anything, and the paragraph says so in
-those words, because a reader who takes silence for proof has been misled by the
-document rather than by the scorer.
+turn. A declared tool absent from the whole file refutes itself. And a loop whose
+test is a literal constant and whose body has no break, no return and no raise
+refutes a claim that there is a stop condition to point at, which matters because
+that is the half of the answer pricing the risk.
+
+That last rule cost a second correction, and the bytes explaining it are the
+reason this entry grew. A first version refused on the body alone, reasoning that
+a loop nobody breaks out of never stops. True premise, false conclusion: the
+usual way such a loop ends is its test becoming false, so it refused a counter
+winding down to zero and a flag set inside the body, printed a warning about
+unbounded cost over code that plainly finishes, and left its author no true
+document to write. The guidance now names the counter and the flag as bounds to
+record, and says which single shape is refused and why only that one can be.
+
+None of the three confirms anything, and both the paragraph and the rendered line
+say so, because a reader who takes silence for proof has been misled by the
+document rather than by the scorer. Neither read leaves the selected function's
+own body either, so an agent handing its loop to a helper clears both while never
+returning, and the line beside each answer now states how far the check reached
+rather than that a check happened.
 
 The direction is the expensive part to explain and the part that had to be
 written down. An equality between the declaration and the tree was implemented

@@ -393,11 +393,24 @@ spins, recurse, or hand the work to a comprehension, a generator, `map` or `iter
 an earlier version of this checker compared the two for equality and refused it, which left an agent
 that never ends with no true document to write.
 
-**`bounded` is read the same way.** A `while` in that body whose own statements carry neither
-`break` nor `return` cannot leave through either, so `"bounded": true` beside one is refused - the
-card would otherwise print "a stop condition to point at" over an agent with none. A `while` that
-does carry one is accepted, because whether it is reached is not a question this read can answer, and
-a `for` is never refused on this ground: it is bounded by its iterable.
+**`bounded` is read the same way, and refused only where the tree proves it.** Two conditions
+together: the loop test is a literal truthy constant - `while True:`, `while 1:` - **and** its own
+statements carry no `break`, no `return` and no `raise`. Such a loop cannot end by its condition and
+has no way out of its body, so `"bounded": true` beside one is refused; the card would otherwise
+print "a stop condition to point at" over an agent with none.
+
+Everything else is accepted, because the ordinary way a `while` ends is its condition becoming
+false. **A counter or a flag is a bound and you should record it as one**: `while n > 0` with `n`
+decrementing, and `while not done` with the flag set inside, are both `"bounded": true`, and neither
+is refused - this is the "loop with a bound can be recorded" case that the control-flow definition
+below already names. A `while True` that leaves by `break`, `return` or `raise` is accepted for the
+same reason, because whether that exit is reached is not a question this read can answer. A `for` is
+never refused on this ground at all: it is bounded by its iterable.
+
+An earlier version of this checker refused on the body alone, without the constant test. That is a
+true premise with a false conclusion - it refused the textbook counter loop, printed "one input can
+cost an unbounded number of calls" over code that plainly terminates, and left the author no true
+document to write.
 
 **`tools` is refuted, never confirmed.** A name in `declared` that appears nowhere in the selected
 agent's file - not as an identifier, an attribute, or a string - is not a tool that agent declares,
@@ -413,6 +426,11 @@ Write every answer to be true of the agent you selected. A carried-over document
 coordinates fall outside that source or when one of the two derivations contradicts it, and not
 otherwise - a read of another agent whose citations happen to land in range, on the two checks
 nothing can settle, will be reprinted on the customer's card as written.
+
+Neither derivation leaves the selected callable's own body, and passing one is not a finding that the
+answer is right. An agent whose loop is in a helper it calls passes both checks with `"loop": true,
+"bounded": true` and may still never return. The card says how far each check reached for exactly
+this reason; read the source, not the refusal.
 
 A parameter's `source_lines` are positive physical lines in relative `source`; that file must be
 `--selected-agent` below `--agent-source-root`. `--selected-agent-callable` names the selected

@@ -2323,10 +2323,28 @@ class BuildSignal:
     source_checked: bool = False
 
 
-# The build checks a source read can contradict. The other two are located
-# rather than settled: `--agent-knobs` records where their reader looked, and
-# nothing here decides whether they looked correctly.
-SOURCE_CHECKED_BUILD_CHECKS = frozenset({"control-flow", "tools"})
+# The build checks a source read can contradict, and EXACTLY how far each
+# check reached. The other two are located rather than settled:
+# `--agent-knobs` records where their reader looked, and nothing here decides
+# whether they looked correctly.
+#
+# The scope is in the sentence because a bare "checked for a contradiction and
+# none was found" reads as corroboration, and it is strongest precisely where
+# the derivation is blindest. Neither of these leaves the selected callable's
+# own body, so an agent that delegates its loop to a helper, recurses, or hands
+# the work to a comprehension passes both - and the customer-facing line has to
+# say that it passed a narrow read rather than that it was checked.
+SOURCE_CHECK_SCOPE = {
+    "control-flow": (
+        "no contradicting loop in the selected function's own body, which does "
+        "not establish that it ends"
+    ),
+    "tools": (
+        "every declared tool name appears in the selected file, which does not "
+        "establish that any of them is reachable"
+    ),
+}
+SOURCE_CHECKED_BUILD_CHECKS = frozenset(SOURCE_CHECK_SCOPE)
 
 
 # What the read of the agent's build is asked, and what each answer is worth.
@@ -8860,19 +8878,36 @@ def derived_unbounded_while(source: StaticSourceEvidence) -> bool:
     none. It is only reachable when `loop: true`, so making that answer usable
     again (see above) sends more traffic through it, not less.
 
-    Deliberately the cheapest sound refutation and nothing more: a `while`
-    whose own body carries neither `break` nor `return` cannot leave through
-    either, so `bounded: true` beside it is refused. `for` is excluded - it is
-    bounded by its iterable unless that iterable is infinite, which is not a
-    question this walk can answer - and a `while` that DOES carry a break or a
-    return is left alone, because reachability is not decidable here. One
-    direction again, for the same reason.
+    TWO conditions, and the first one is the whole correction. An earlier
+    revision refuted on the body alone - no `break`, no `return` - which is a
+    true premise supporting a false conclusion, because the ordinary way a
+    `while` ends is its condition becoming false. That refused `while n > 0`
+    with `n` decrementing, the textbook bounded loop, and `while not done` with
+    the flag set inside; it then accepted only a document calling them
+    unbounded, printed "one input can cost an unbounded number of calls" over a
+    loop that plainly terminates, and left `determined: false` as the escape -
+    disclaiming a determination the author really made. That is the same defect
+    the `loop` half above was just relieved of, one check over.
+
+    So the loop test must be a literal truthy constant. `while True:` and
+    `while 1:` cannot end by their condition, so an exit has to be in the body;
+    anything else - a comparison, a name, a call - may end by becoming false and
+    this walk cannot say whether it does.
+
+    And the exits include `raise`. A loop that leaves by raising has left.
+
+    `for` is never refuted here: it is bounded by its iterable unless that
+    iterable is infinite, which is not a question this walk can answer. One
+    direction again, and for the same reason as the loop half - what the tree
+    proves, and nothing inferred from what it does not show.
     """
     for node in _selected_callable_nodes(source):
         if not isinstance(node, ast.While):
             continue
+        if not (isinstance(node.test, ast.Constant) and bool(node.test.value)):
+            continue
         if not any(
-            isinstance(inner, (ast.Break, ast.Return))
+            isinstance(inner, (ast.Break, ast.Return, ast.Raise))
             for inner in _statements_outside_nested_scopes(node)
         ):
             return True
@@ -12363,11 +12398,12 @@ def build_signal_from_entry(
             if source is not None and derived_unbounded_while(source):
                 raise AgentDiscoveryInputError(
                     "build check 'control-flow' declares bounded=True, and "
-                    f"{source.display_path} has a while loop in "
-                    f"{source.selected_callable.name} whose body carries "
-                    "neither break nor return. The card would print 'a stop "
-                    "condition to point at' over an agent with none - point at "
-                    "the stop condition, or record bounded=False"
+                    f"{source.display_path} has a loop in "
+                    f"{source.selected_callable.name} whose test is a constant "
+                    "and which has no way out of its body - no break, no "
+                    "return, no raise. The card would print 'a stop condition "
+                    "to point at' over an agent with none - point at the stop "
+                    "condition, or record bounded=False"
                 )
             return BuildSignal(
                 check, weight, f"a loop, and a stop condition to point at ({evidence})"
@@ -12633,8 +12669,7 @@ def build_declarations_are_unmeasured(
                 evidence=(
                     "not independently verified; excluded from this score. "
                     + (
-                        "Assistant observation, and the source was checked for "
-                        "a contradiction and none was found: "
+                        f"Assistant observation ({SOURCE_CHECK_SCOPE[signal.name]}): "
                         if signal.source_checked
                         else "Assistant observation, which nothing here checks: "
                     )

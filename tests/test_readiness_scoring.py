@@ -14410,22 +14410,44 @@ class TheBuildHalfCitesTheAgentItReadTests(unittest.TestCase):
         path also carries MORE traffic now that `loop: true` is usable again,
         not less.
         """
-        with self.assertRaises(MODULE.AgentDiscoveryInputError) as caught:
-            self._score_source(
-                "MODEL = ['a']\ndef selected(q):\n    while True:\n        q = q + 'x'\n",
-                {"control-flow": {"loop": True, "bounded": True}},
-            )
-        self.assertIn("neither break nor return", str(caught.exception))
+        for shape, body in {
+            "while-True": "    while True:\n        q = q + 'x'\n",
+            "while-1": "    while 1:\n        q = q + 'x'\n",
+        }.items():
+            with self.subTest(shape=shape):
+                with self.assertRaises(MODULE.AgentDiscoveryInputError) as caught:
+                    self._score_source(
+                        "MODEL = ['a']\ndef selected(q):\n" + body,
+                        {"control-flow": {"loop": True, "bounded": True}},
+                    )
+                self.assertIn("no way out of its body", str(caught.exception))
 
-    def test_a_while_with_a_way_out_is_left_alone(self) -> None:
-        """The false-red direction for the bound, and the scope of the claim.
+    def test_a_loop_that_really_ends_is_not_called_unbounded(self) -> None:
+        """The false-red direction for the bound, written from the space of
+        bounded loops rather than from the reader's own exemption list.
 
-        A `while` carrying a break or a return is not refuted, because
-        reachability is not decidable here; a `for` is not refuted at all,
-        because it is bounded by its iterable. Without this the test above
-        would also pass against a reader that refused every bound.
+        The first version of this test listed the two shapes the code already
+        handled - `while True` with a break, and one with a return - plus a
+        `for`. It passed, and it was worthless: a fixture assembled out of the
+        exemptions the implementation happened to carry cannot find the ones it
+        does not. The loop half above got four realistic shapes; this got the
+        code's own answer key back.
+
+        What it missed is the ordinary way a `while` ends, which is its
+        condition becoming false. `while n > 0` with `n` decrementing is the
+        textbook bounded loop and was REFUSED; so was `while not done` with the
+        flag set inside, and so was a loop leaving by `raise`. The gate then
+        accepted only a document calling those unbounded, printing "one input
+        can cost an unbounded number of calls" over code that plainly
+        terminates - the same defect the loop half had been relieved of one
+        check earlier.
         """
         cases = {
+            "counter": "    n = 3\n    while n > 0:\n        n = n - 1\n    return q\n",
+            "flag": "    done = False\n    while not done:\n        done = True\n"
+            "    return q\n",
+            "call-condition": "    while more(q):\n        q = q + 'x'\n    return q\n",
+            "raise-exit": "    while True:\n        raise ValueError('x')\n",
             "while-return": "    while True:\n        return q\n",
             "while-break": "    while True:\n        break\n    return q\n",
             "for-loop": "    for i in range(3):\n        q = q + 'x'\n    return q\n",
@@ -14473,11 +14495,20 @@ class TheBuildHalfCitesTheAgentItReadTests(unittest.TestCase):
             for sub in pillar.subscores
         }
         with self.subTest(check="control-flow", kind="settled"):
-            self.assertIn("checked for a contradiction", rows["control-flow"])
+            # The SCOPE, not a bare "checked". A clause saying the source was
+            # checked and nothing was found reads as corroboration, and it is
+            # strongest exactly where the derivation is blindest: neither
+            # derivation leaves the callable's own body, so an agent that
+            # delegates its loop to a helper passes both and may never return.
+            self.assertIn(
+                "no contradicting loop in the selected function's own body",
+                rows["control-flow"],
+            )
+            self.assertIn("does not establish that it ends", rows["control-flow"])
         for check in ("prompt", "output-contract"):
             with self.subTest(check=check, kind="located"):
                 self.assertIn("nothing here checks", rows[check])
-                self.assertNotIn("checked for a contradiction", rows[check])
+                self.assertNotIn("does not establish", rows[check])
         # `tools` above answers "no tools", which is not applicable rather than
         # unverified, so it carries no observation to mark either way. The
         # applicable case is the one that has to say it.
@@ -14493,7 +14524,10 @@ class TheBuildHalfCitesTheAgentItReadTests(unittest.TestCase):
             for signal in MODULE.build_declarations_are_unmeasured(used.build)
         }
         with self.subTest(check="tools", kind="settled"):
-            self.assertIn("checked for a contradiction", marked["tools"])
+            self.assertIn("appears in the selected file", marked["tools"])
+            self.assertIn(
+                "does not establish that any of them is reachable", marked["tools"]
+            )
 
     def test_a_tool_the_source_never_mentions_is_refused(self) -> None:
         """The same move for `tools`, and only in the refuting direction.
