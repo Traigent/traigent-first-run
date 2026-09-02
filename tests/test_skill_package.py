@@ -76,6 +76,56 @@ def assistant_facing_documents() -> list[Path]:
     ]
 
 
+#: How much of a document a failed statement check may print.
+#:
+#: `assertIn(phrase, flattened_document)` renders the WHOLE haystack as its
+#: standard message. Measured on this tree: the connected-preview guard's
+#: haystack is `SKILL.md` flattened, 91_078 characters, so the actionable half
+#: of the failure - which phrase is missing - arrived buried in a document
+#: dump and the author had to search the failure for the answer.
+#: traigent-first-run#372.
+DOCUMENT_EXCERPT = 240
+
+
+def document_states(text: str, phrase: str) -> str | None:
+    """None when `text` states `phrase`, or a bounded diagnosis when it does not.
+
+    The diagnosis names the phrase, says how large the document searched was,
+    and shows where the document STOPS agreeing with it - the longest leading
+    run of the phrase the document does contain, with what follows that run in
+    the document beside what the phrase expected. A reworded sentence then
+    reads as a rewording rather than as an absence, which is the difference
+    between an author fixing it in one read and an author deleting the guard.
+
+    Bounded on purpose. A check that answers "not found" by printing the thing
+    it searched is answering with the question.
+    """
+    if phrase in text:
+        return None
+    low, high = 0, len(phrase)
+    while low < high:
+        middle = (low + high + 1) // 2
+        if phrase[:middle] in text:
+            low = middle
+        else:
+            high = middle - 1
+    shared = phrase[:low]
+    if not shared:
+        return (
+            f"the document does not state {phrase!r}, and shares no leading "
+            f"run with it at all, so this is an absence rather than a "
+            f"rewording ({len(text)} characters searched)"
+        )
+    at = text.index(shared)
+    found = text[at : at + min(len(phrase) + 40, DOCUMENT_EXCERPT)]
+    return (
+        f"the document does not state {phrase!r}. It agrees as far as "
+        f"{shared[-DOCUMENT_EXCERPT:]!r} and then says "
+        f"{found[len(shared) :]!r} where the phrase expects "
+        f"{phrase[low : low + 40]!r} ({len(text)} characters searched)"
+    )
+
+
 GUIDANCE_BUDGET_LEDGER = Path(__file__).resolve().parent / "guidance_budget"
 BUDGET_ENTRY_NAME = re.compile(r"^(\d{4})-[a-z0-9][a-z0-9-]*\.md$")
 BUDGET_FIGURE = re.compile(
@@ -27152,56 +27202,112 @@ class OneShapeAndOneMarkForEveryChoiceTests(unittest.TestCase):
         single yes/no about continuing - so the route it argued hardest about
         is the one the customer cannot take. Read cold, it looked like no
         options had been offered at all, not even what to type to proceed.
+
+        Read through `document_states` rather than `assertIn`, which is
+        traigent-first-run#372's third finding: `assertIn` against a flattened
+        guidance document renders the whole document as its failure message,
+        91_078 characters here, and buries the one fact the author needs. The
+        rule is general - every `assertIn` against a flattened document has it -
+        and this is the site the issue names.
         """
         safety = self._flat(RUN_SAFETY)
-        self.assertIn(
-            "every offered connected preview ends on its routes, in the shape "
-            "skill.md states for every named-route choice",
-            safety,
+        skill = self._flat(SKILL)
+        for text, phrase in (
+            (
+                safety,
+                "every offered connected preview ends on its routes, in the "
+                "shape skill.md states for every named-route choice",
+            ),
+            (safety, "lettered from `a`, exactly one marked"),
+            (safety, "each one answerable by replying"),
+            (
+                safety,
+                "a route this guide names and prices is a route the customer "
+                "can take by replying",
+            ),
+            # Both routes carry a reply form, and the decline names its own.
+            (safety, "reply `continue` and i will <next safe step>"),
+            (safety, "**b. stop here and keep the baseline result.**"),
+            (safety, "reply `stop` and i will preserve the local result"),
+            # The mark is the same rule as the pre-spend card's, conditions
+            # and all.
+            (
+                safety,
+                "the mark on `a` follows the pre-spend card's rule above. "
+                "that rule is stated there once and is not restated here",
+            ),
+            (safety, "stopping is never the marked route"),
+            # Where the mark moves, every offered route still carries a
+            # letter. The template renders `A.` and `B. Stop`, so a bounded
+            # run described in prose and offered without one is the "second
+            # form for the same act" this guide refuses one section earlier.
+            (
+                safety,
+                "`a.` is the rows route and carries the mark, `b.` is the "
+                "bounded run, unmarked, and `c.` is stopping",
+            ),
+            (safety, "every one of them keeps a letter and a reply form"),
+            # And the route it does NOT move onto. The paragraph above says an
+            # invalid or non-discriminating pair "has already stopped before
+            # this preview and gets the evidenced repair instead", so naming
+            # that repair as this preview's route `A` was the same document
+            # contradicting itself two paragraphs apart.
+            (
+                safety,
+                "has already stopped before this preview and gets the "
+                "evidenced repair",
+            ),
+            (
+                safety,
+                "not onto the evidenced repair, which is not one of this "
+                "preview's routes at all",
+            ),
+            (skill, "the connected-stage preview"),
+        ):
+            with self.subTest(phrase=phrase):
+                diagnosis = document_states(text, phrase)
+                self.assertIsNone(diagnosis, diagnosis)
+
+    def test_a_missing_statement_is_reported_without_printing_the_document(
+        self,
+    ) -> None:
+        """The diagnosis above, probed on a document whose size is the point.
+
+        traigent-first-run#372: the failure this replaces printed 91_078
+        characters as its standard message. So the probe asserts the size of
+        what a failure says, not only its wording - a bounded message that
+        grew back into a dump would otherwise pass this unchanged.
+
+        Driven by an invented document rather than by `RUN_SAFETY`, so the
+        fixture cannot be the same text the assertion reads.
+        """
+        document = "the preview ends on lettered routes. " + ("filler words. " * 8000)
+        self.assertGreater(len(document), 90_000)
+        self.assertIsNone(document_states(document, "ends on lettered routes"))
+        # A rewording: the document agrees up to the point it diverges, and the
+        # message says where, rather than saying the phrase is absent.
+        reworded = document_states(document, "ends on lettered and marked routes")
+        self.assertIsNotNone(reworded)
+        self.assertIn("ends on lettered ", reworded)
+        self.assertIn("and marked", reworded)
+        self.assertLess(
+            len(reworded),
+            2 * DOCUMENT_EXCERPT + 400,
+            "the diagnosis has grown back towards printing the document it "
+            "searched, which is the defect it exists to remove",
         )
-        self.assertIn("lettered from `a`, exactly one marked", safety)
-        self.assertIn("each one answerable by replying", safety)
-        self.assertIn(
-            "a route this guide names and prices is a route the customer can "
-            "take by replying",
-            safety,
+        self.assertLess(
+            len(reworded),
+            len(document) // 100,
+            "the diagnosis is not small against the document it searched, "
+            "which is the only property that made the old failure unreadable",
         )
-        # Both routes carry a reply form, and the decline names its own.
-        self.assertIn("reply `continue` and i will <next safe step>", safety)
-        self.assertIn("**b. stop here and keep the baseline result.**", safety)
-        self.assertIn("reply `stop` and i will preserve the local result", safety)
-        # The mark is the same rule as the pre-spend card's, conditions and all.
-        self.assertIn(
-            "the mark on `a` follows the pre-spend card's rule above. that "
-            "rule is stated there once and is not restated here",
-            safety,
-        )
-        self.assertIn("stopping is never the marked route", safety)
-        # Where the mark moves, every offered route still carries a letter.
-        # The template renders `A.` and `B. Stop`, so a bounded run described
-        # in prose and offered without one is the "second form for the same
-        # act" this guide refuses one section earlier.
-        self.assertIn(
-            "`a.` is the rows route and carries the mark, `b.` is the bounded "
-            "run, unmarked, and `c.` is stopping",
-            safety,
-        )
-        self.assertIn("every one of them keeps a letter and a reply form", safety)
-        # And the route it does NOT move onto. The paragraph above says an
-        # invalid or non-discriminating pair "has already stopped before this
-        # preview and gets the evidenced repair instead", so naming that repair
-        # as this preview's route `A` was the same document contradicting
-        # itself two paragraphs apart.
-        self.assertIn(
-            "has already stopped before this preview and gets the evidenced " "repair",
-            safety,
-        )
-        self.assertIn(
-            "not onto the evidenced repair, which is not one of this preview's "
-            "routes at all",
-            safety,
-        )
-        self.assertIn("the connected-stage preview", self._flat(SKILL))
+        # And a phrase sharing nothing is reported as an absence, which is a
+        # different thing for an author to be told.
+        absent = document_states(document, "zzz nothing here says this")
+        self.assertIsNotNone(absent)
+        self.assertIn("shares no leading run", absent)
+        self.assertLess(len(absent), DOCUMENT_EXCERPT + 400)
 
     def test_the_answerable_block_is_separable_from_the_disclosure(self) -> None:
         """Present is not the same as findable.
