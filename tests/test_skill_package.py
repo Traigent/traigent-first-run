@@ -443,8 +443,52 @@ def guidance_budget_defects(entries: list[SimpleNamespace]) -> list[str]:
                 and previous_ceiling is not None
                 and later.ceilings[which] < previous_ceiling
             ):
-                # A prune lowers both the ceiling and the measurement; that is a
-                # different decision and this check has nothing to say about it.
+                # A prune lowers both the ceiling and the measurement, and only
+                # one of those two halves was ever looked at. The ceiling
+                # falling is the author's CLAIM that a prune happened; the
+                # measurement falling is what a prune actually produces. This
+                # branch used to `continue` on the claim alone, which made "the
+                # ceiling went down" a surface signal standing in for "the
+                # package shrank" with the didn't-find-it side counting as a
+                # pass - so the renumber this rule was added for walked
+                # straight through it. Two branches both take the next number,
+                # the polite second author renumbers in place and re-points at
+                # the first, and keeps their own figures rather than measuring
+                # the merge; if the branch they were written on had a lower
+                # ceiling, the kept ceiling reads as a prune and a ceiling
+                # nobody chose to lower ships.
+                #
+                # What this cannot detect, because the rule is narrow: it
+                # compares two figures the author typed, not the package. A
+                # renumber whose kept figure happens to be BELOW its new
+                # predecessor's is the same arithmetic a real prune produces
+                # and is still believed - there is no signal in the file that
+                # tells those two apart, and the live ceiling check in
+                # `test_the_guidance_budget_is_not_silently_exceeded` with the
+                # newest-entry check is what weighs anything for real. It also
+                # says nothing about an entry that restates a ceiling
+                # unchanged, which never reaches this branch.
+                #
+                # And it refuses one thing that is not a renumber: tightening a
+                # ceiling toward a package that did not shrink. That is a third
+                # decision, it has never been made here - both lowering entries
+                # on record, 0046 and 0067, brought the measurement down with
+                # the ceiling - and it should arrive with a field of its own
+                # rather than on the signal a stale renumber already uses.
+                if measurement >= previous_measurement:
+                    monotone.append(
+                        f"{later.path.name} lowers the {which} ceiling from "
+                        f"{previous_ceiling} to {later.ceilings[which]} while "
+                        f"measuring {which} at {measurement}, at or above "
+                        f"{previous_entry.path.name}'s {previous_measurement} "
+                        "which it follows. A prune lowers the measurement as "
+                        "well as the ceiling, and this one lowers only the "
+                        "ceiling - which is what a renumber leaves when its "
+                        "figures were kept instead of taken again. Re-measure "
+                        "the merged package and state the figure it gives: a "
+                        "renumber is not a prune, and this ceiling is "
+                        "otherwise one nobody decided to lower."
+                    )
                 continue
             if measurement < previous_measurement:
                 monotone.append(
@@ -565,6 +609,165 @@ def guidance_budget_measured(document_bytes: dict[Path, int]) -> dict[str, int]:
         "total": sum(document_bytes.values()),
         "document": max(document_bytes.values()),
     }
+
+
+def _median(values: list[int]) -> int:
+    """The middle of `values`, and the lower middle of an even-length one."""
+    ordered = sorted(values)
+    middle = len(ordered) // 2
+    if len(ordered) % 2:
+        return ordered[middle]
+    return (ordered[middle - 1] + ordered[middle]) // 2
+
+
+def guidance_budget_raises(chain: list[SimpleNamespace]) -> dict[str, list[int]]:
+    """How many bytes each raise of each ceiling added, along the chain.
+
+    Ceiling movement rather than measured movement, because a raise is the
+    decision this ledger records and the measured figure is only what it was
+    weighed against. The choice is not load bearing: over the committed
+    ledger the median ceiling raise is 475 bytes for resident and 1_342 for
+    total, against median measured steps of 556 and 1_297.5 - close enough
+    that either population puts the line in the same place.
+
+    A ceiling that goes DOWN is not a raise and is not counted, so a prune
+    cannot pull the typical raise toward zero and quieten the note below.
+
+    A budget that has been declared and never raised maps to an empty list
+    rather than being absent from the result, so a caller can tell "this
+    ledger records no raise of it" apart from "there is no such budget".
+    """
+    raises: dict[str, list[int]] = {}
+    in_force: dict[str, int] = {}
+    for entry in chain:
+        for which, ceiling in sorted(entry.ceilings.items()):
+            raises.setdefault(which, [])
+            if which in in_force and ceiling > in_force[which]:
+                raises[which].append(ceiling - in_force[which])
+            in_force[which] = ceiling
+    return raises
+
+
+def guidance_budget_typical_raise(
+    raises: dict[str, list[int]],
+) -> dict[str, tuple[int, str]]:
+    """What an ordinary raise of each budget costs, and over what population.
+
+    Derived rather than picked, which is the point of putting it here: "the
+    remaining headroom is smaller than a typical raise" is computable from
+    the ledger's own record, and a round constant would be the one number in
+    this mechanism nobody measured, sitting beside a directory whose entries
+    are nothing but measurements.
+
+    The median rather than the mean, because the population is skewed by
+    design: the largest total raise on record is 41_741 bytes against a
+    median of 1_342, so a mean would set the line four figures above the
+    raise an ordinary branch makes and the note would fire on packages with
+    room to spare.
+
+    A budget with no raise of its own falls back to every raise the ledger
+    records - which is `document` today, declared once and not moved since.
+    That fallback is deliberate. Returning no threshold for it would make "no
+    history to compare with" arrive as "nothing to say", which is the same
+    didn't-find-it-so-pass shape these checks exist to refuse. The population
+    is returned beside the figure so the note can name it, because a
+    threshold whose population the reader cannot see is the round constant
+    this exists instead of.
+    """
+    pooled = [size for sizes in raises.values() for size in sizes]
+    typical: dict[str, tuple[int, str]] = {}
+    for which, sizes in sorted(raises.items()):
+        if sizes:
+            typical[which] = (
+                _median(sizes),
+                f"the {len(sizes)} {which} raises this ledger records",
+            )
+        elif pooled:
+            typical[which] = (
+                _median(pooled),
+                f"all {len(pooled)} raises this ledger records, because it "
+                f"records no {which} raise of its own",
+            )
+    return typical
+
+
+def guidance_budget_headroom_notes(
+    document_bytes: dict[Path, int],
+    ceilings: dict[str, int],
+    typical: dict[str, tuple[int, str]],
+) -> list[str]:
+    """One line per budget with less room left than a raise usually takes.
+
+    Every budget is a single `assertLess`, so a branch is green one byte under
+    and red one byte over and nothing between those two states says anything.
+    The first signal that a budget is nearly spent therefore arrives as a
+    failing build on somebody else's branch, carrying arithmetic that belongs
+    to two branches neither of which could see the other, and the branch that
+    goes red is rarely the branch that spent the bytes.
+
+    It is not a distant prospect. Measured on the tree this arrived in, all
+    three budgets are already inside one typical raise: 465 bytes of resident
+    headroom, 497 of total, and 57 on the largest single document.
+
+    This is a note and not an assertion: it reports a distance rather than a
+    rule anybody broke, and the three ceiling checks beside it are what refuse.
+    A budget that is over its ceiling gets a negative headroom here and a
+    failure from the check a moment later, which is the right way round.
+
+    Returned rather than printed, so the wording is exercised against an
+    invented package and an invented ledger instead of by waiting for the
+    real one to walk up to its wall.
+    """
+    measured = guidance_budget_measured(document_bytes)
+    largest = max(document_bytes, key=lambda path: document_bytes[path])
+    notes: list[str] = []
+    for which, ceiling in sorted(ceilings.items()):
+        headroom = ceiling - measured[which]
+        if which in typical:
+            size, population = typical[which]
+            if headroom >= size:
+                continue
+            against = (
+                f"less than the {size} bytes a raise of it usually takes, "
+                f"the median over {population}"
+            )
+        else:
+            # A ledger holding no raise at all cannot say what a typical one
+            # costs. Staying quiet here would make "no history" read as "no
+            # problem", so the note is unconditional instead and says why.
+            against = (
+                "and this ledger records no raise at all, so there is no "
+                "typical raise to measure that against"
+            )
+        # DOCUMENT is `max()` over the set rather than a named file, so the
+        # gap belongs to whichever document currently holds the maximum and
+        # not to the package. Naming it is what makes the number legible:
+        # 57 bytes reads as a wall the next paragraph anywhere hits, and it is
+        # nothing of the sort until an edit lands in this one file.
+        where = (
+            f"{largest.relative_to(ROOT)} at {measured[which]}"
+            if which == "document"
+            else str(measured[which])
+        )
+        qualifier = (
+            " That ceiling is the largest single document rather than a named "
+            "one, so this gap is that file's alone: every other document has "
+            "room to grow until it becomes the maximum without moving this "
+            "number."
+            if which == "document"
+            else ""
+        )
+        notes.append(
+            f"guidance budget: {which} has {headroom} bytes of headroom "
+            f"({where} against a {ceiling} ceiling), {against}. Prune, or "
+            "raise the ceiling deliberately with an entry in "
+            "tests/guidance_budget/ measured on the merged package: the "
+            "branch that goes over will not be the one that spent this, and "
+            f"it finds out from a red build.{qualifier} Nothing here fails - "
+            "this is the state between green and red that used to say "
+            "nothing at all."
+        )
+    return notes
 
 
 SKILL_PREFIX = "skills/traigent-first-run/"
@@ -22376,6 +22579,24 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
             "budgets is unenforced",
         )
 
+        # And every budget gets a headroom threshold off this ledger. The
+        # derivation falls back to the pooled population for a budget the
+        # ledger has never raised, so the only way a budget can arrive here
+        # without one is a ledger with no raise anywhere in it - which would
+        # leave the note below with nothing to say and no way to tell that
+        # apart from having nothing to report.
+        self.assertEqual(
+            sorted(
+                guidance_budget_typical_raise(
+                    guidance_budget_raises(guidance_budget_chain(entries))
+                )
+            ),
+            ["document", "resident", "total"],
+            "a declared budget has no derived headroom threshold, so the note "
+            "in the ceiling check is silent about it for want of a number "
+            "rather than for want of a problem",
+        )
+
     def test_the_guidance_budget_is_not_silently_exceeded(self) -> None:
         """Size is a contradiction surface, so it gets a number and a ceiling.
 
@@ -22414,6 +22635,36 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         measured = guidance_budget_measured(document_bytes)
         resident = measured["resident"]
         ceilings = guidance_budget_ceilings()
+
+        # Imported here rather than at the top of the file: this is the one
+        # place that warns, and the import block is a line every branch
+        # touching this file crosses - which is the conflict surface the whole
+        # per-raise ledger exists to avoid making bigger.
+        import warnings
+
+        # Emitted BEFORE the three assertions, so a budget that is nearly spent
+        # is still reported on a run that goes red for a different one.
+        #
+        # `warnings.warn` and not a print, and that is measured rather than
+        # assumed. Under pytest 8.4.2 with default options a passing test's
+        # stderr is captured and discarded, so a bare print says nothing at all
+        # to anyone running the suite that way, while a warning is listed in
+        # the run's warnings summary. `unittest`, which is what CI runs, shows
+        # either. The `catch_warnings` guard is what keeps the note from ever
+        # becoming a failure: under `-W error` an unguarded `warnings.warn`
+        # errors the test in BOTH runners, and a note about spare bytes must
+        # never be the thing that reds a branch.
+        for note in guidance_budget_headroom_notes(
+            document_bytes,
+            ceilings,
+            guidance_budget_typical_raise(
+                guidance_budget_raises(guidance_budget_chain())
+            ),
+        ):
+            with warnings.catch_warnings():
+                warnings.simplefilter("always")
+                warnings.warn(note)
+
         self.assertLess(
             resident,
             ceilings["resident"],
@@ -22444,19 +22695,30 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         # sums, so a reference that takes 38KB in one step reads as a small
         # fraction of TOTAL and barely moves RESIDENT - which is
         # exactly what 0052 did, and it was found by adding up ledger entries
-        # afterwards rather than by anything failing. This one names the file.
+        # afterwards rather than by anything failing. This one names the file,
+        # and says that it is naming one: the ceiling governs `max()` over the
+        # set rather than a document chosen by name, so the gap it reports
+        # belongs to whichever file currently holds the maximum. Read without
+        # that qualifier the number is a package-wide wall, and it is not one -
+        # today's runner-up is 30KB clear, so the gap is a red herring for
+        # every edit that does not land in the file named here, and it becomes
+        # the whole story for one that does with no state in between.
         largest = max(document_bytes, key=lambda path: document_bytes[path])
         self.assertLess(
             measured["document"],
             ceilings["document"],
             f"{largest.relative_to(ROOT)} is {measured['document']} bytes "
-            f"against a {ceilings['document']} per-document ceiling. This "
-            "budget is per file on purpose: the two sums above cannot tell one "
-            "document growing by a third from forty growing a little, and the "
-            "stage that loads this one now carries every byte of it at once. "
-            "Move detail to the reference that owns that stage, or raise the "
-            "ceiling deliberately with an entry in tests/guidance_budget/ "
-            "stating which document grew and what the growth buys.",
+            f"against a {ceilings['document']} per-document ceiling, and it is "
+            "the file this ceiling is currently measuring: the budget is "
+            "`max()` over the set rather than a named document, so this gap is "
+            "that file's and every other document has room until it becomes "
+            "the maximum. This budget is per file on purpose: the two sums "
+            "above cannot tell one document growing by a third from forty "
+            "growing a little, and the stage that loads this one now carries "
+            "every byte of it at once. Move detail to the reference that owns "
+            "that stage, or raise the ceiling deliberately with an entry in "
+            "tests/guidance_budget/ stating which document grew and what the "
+            "growth buys.",
         )
 
     def test_a_single_document_that_steps_is_visible_where_the_sums_are_not(
@@ -23327,6 +23589,257 @@ class GuidanceBudgetLedgerRulesTests(unittest.TestCase):
             }
         )
         self.assertEqual(guidance_budget_defects(entries), [])
+
+    def test_a_renumber_that_kept_its_figures_is_not_a_prune(self) -> None:
+        """A lowered ceiling used to be believed with nothing checking it.
+
+        The test above is the prune this mechanism has to keep allowing. This
+        is what the same branch let through while it read only the ceiling:
+        two branches both take the next number, the polite second author
+        renumbers in place and re-points at the first, and keeps their own two
+        figures instead of measuring the merge. Their branch had the lower
+        ceiling, so the kept ceiling reads as a deliberate prune, the
+        monotonicity rule is skipped whole, and 240_000 becomes 235_000 with
+        nobody having decided that.
+
+        Branch A raised with room here, and that is the point rather than a
+        convenience: 0002 measures 231_402 under a 240_000 ceiling, so branch
+        B's kept 234_112 is ABOVE its new predecessor's figure and the
+        monotonicity rule would have had nothing to say even if it had run.
+        Every check in the file passes and the ceiling still falls. Observed
+        on this exact ledger before the evidence check existed:
+        `guidance_budget_defects` returned `[]` and `guidance_budget_ceilings`
+        returned `{'resident': 61500, 'total': 235000}`.
+
+        The figures are literal on purpose. A fixture built from
+        `guidance_budget_ceilings()` would follow the committed ledger
+        wherever it goes and stop describing this scenario the first time
+        somebody raises a ceiling.
+        """
+        renumbered = self.ledger(
+            **{
+                "0001-inherited-ledger.md": self.root(),
+                # Branch A landed first, measured on the root, and raised with
+                # room to spare - which is ordinary and is what leaves branch
+                # B's figure above this one.
+                "0002-branch-a.md": self.entry(
+                    "0002 - branch A",
+                    follows=1,
+                    follows_measured={"total": 228_407},
+                    total_ceiling=240_000,
+                    total_measured=231_402,
+                ),
+                # Branch B wrote 235_000/234_112 against `follows: 0001`. On
+                # the merge it was renumbered and re-pointed at 0002, its
+                # predecessor binding was restated as instructed, and its own
+                # two figures were carried over untouched.
+                "0003-branch-b.md": self.entry(
+                    "0003 - branch B",
+                    follows=2,
+                    follows_measured={"total": 231_402},
+                    total_ceiling=235_000,
+                    total_measured=234_112,
+                ),
+            }
+        )
+        defects = guidance_budget_defects(renumbered)
+        # Exactly one, which is the claim: no other rule in this file was
+        # catching this ledger, so the refusal below is this check working
+        # rather than a fixture that is malformed in some second way.
+        self.assertEqual(len(defects), 1, defects)
+        self.assertDefect(
+            renumbered, "0003-branch-b.md lowers the total ceiling from 240000"
+        )
+        self.assertDefect(renumbered, "to 235000 while measuring total at 234112")
+        self.assertDefect(renumbered, "at or above 0002-branch-a.md's 231402")
+        self.assertDefect(renumbered, "a renumber is not a prune")
+        self.assertDefect(renumbered, "Re-measure the merged package")
+
+        # The control, and it is deliberately not the fixture above with one
+        # number changed: a different pair of entries, about a different
+        # change, doing the thing a prune actually does. The ceiling comes
+        # down AND the measurement lands below the predecessor's, which is
+        # what removing bytes produces, and the ledger takes it.
+        pruned = self.ledger(
+            **{
+                "0001-inherited-ledger.md": self.root(),
+                "0014-stage-detail-moved-out.md": self.entry(
+                    "0014 - stage detail moved to the reference that owns it",
+                    follows=1,
+                    follows_measured={"total": 228_407},
+                    total_ceiling=230_500,
+                    total_measured=229_800,
+                ),
+                "0015-the-duplicated-card-is-gone.md": self.entry(
+                    "0015 - the duplicated card is gone",
+                    follows=14,
+                    follows_measured={"total": 229_800},
+                    total_ceiling=230_000,
+                    total_measured=229_100,
+                ),
+            }
+        )
+        self.assertEqual(guidance_budget_defects(pruned), [])
+
+        # The boundary, which is `>=` and not `>`: a measurement that merely
+        # FAILED TO RISE is not a prune either. The lowered ceiling is 230_000
+        # and the restated figure 229_800, so the entry is under its own
+        # ceiling and reaches this rule rather than being refused on the way
+        # in for a breach.
+        unchanged = self.ledger(
+            **{
+                "0001-inherited-ledger.md": self.root(),
+                "0014-stage-detail-moved-out.md": self.entry(
+                    "0014 - stage detail moved to the reference that owns it",
+                    follows=1,
+                    follows_measured={"total": 228_407},
+                    total_ceiling=230_500,
+                    total_measured=229_800,
+                ),
+                "0015-the-duplicated-card-is-gone.md": self.entry(
+                    "0015 - the duplicated card is gone",
+                    follows=14,
+                    follows_measured={"total": 229_800},
+                    total_ceiling=230_000,
+                    total_measured=229_800,
+                ),
+            }
+        )
+        self.assertDefect(unchanged, "at or above 0014-stage-detail-moved-out.md's")
+
+    def test_the_headroom_threshold_is_derived_from_the_ledgers_own_raises(
+        self,
+    ) -> None:
+        """The note's line is computed from the record, not chosen.
+
+        Two halves. `guidance_budget_raises` reads what a raise has cost off
+        the chain, and a ceiling that goes DOWN is not one - otherwise a prune
+        would pull the typical raise toward zero and quieten the note it is
+        supposed to inform. `guidance_budget_typical_raise` turns those
+        populations into one figure per budget, and falls back to the pooled
+        population for a budget the ledger has never raised rather than
+        returning nothing for it.
+
+        The populations below are literal lists, not the committed ledger's,
+        so the medians asserted here are arithmetic a reader can check.
+        """
+        entries = self.ledger(
+            **{
+                "0001-inherited-ledger.md": self.root(),
+                "0002-branch-a.md": self.entry(
+                    "0002 - branch A",
+                    follows=1,
+                    follows_measured={"total": 228_407},
+                    total_ceiling=232_000,
+                    total_measured=231_402,
+                ),
+                # A prune, and so not a raise: 231_500 is lower than 232_000.
+                "0003-branch-b.md": self.entry(
+                    "0003 - branch B",
+                    follows=2,
+                    follows_measured={"total": 231_402},
+                    total_ceiling=231_500,
+                    total_measured=230_900,
+                ),
+            }
+        )
+        self.assertEqual(
+            guidance_budget_raises(guidance_budget_chain(entries)),
+            # 228_750 -> 232_000 is the only raise here, and resident is
+            # declared once and never moved, which is an empty population
+            # rather than an absent budget.
+            {"resident": [], "total": [3_250]},
+        )
+
+        typical = guidance_budget_typical_raise(
+            {"resident": [100, 200, 900], "total": [50, 60], "document": []}
+        )
+        self.assertEqual(typical["resident"][0], 200)
+        self.assertIn("the 3 resident raises", typical["resident"][1])
+        # Even-length, so the lower of the two middles.
+        self.assertEqual(typical["total"][0], 55)
+        # Pooled: 50, 60, 100, 200, 900.
+        self.assertEqual(typical["document"][0], 100)
+        self.assertIn("records no document raise of its own", typical["document"][1])
+
+        # And the one case that genuinely has nothing to derive from. It is
+        # reported as no threshold rather than as a large one, so the note can
+        # say so instead of going quiet.
+        self.assertEqual(guidance_budget_typical_raise({"document": []}), {})
+
+    def test_the_headroom_note_fires_before_the_ceiling_does(self) -> None:
+        """The state between green and red that nothing used to report.
+
+        Driven by an invented package and an invented set of raise sizes, in
+        both directions. Waiting for the real package to walk up to its own
+        wall would prove nothing today and would prove something different
+        every time somebody raises a ceiling.
+
+        The literal figures matter here: 300 and 50 bytes of headroom against
+        a 500-byte typical raise are the fixture, and 12_000 against the same
+        500 is the budget that has to stay silent in the same call. A note
+        that cannot stay silent carries no information when it speaks.
+        """
+        guide, skill = ROOT / "GUIDE.md", SKILL
+        reference = SKILL_ROOT / "references" / "sdk-execution.md"
+        package = {guide: 8_000, skill: 40_000, reference: 60_000}
+        # resident 48_000, total 108_000, document 60_000.
+        ceilings = {"resident": 48_300, "total": 120_000, "document": 60_050}
+        typical = {
+            "resident": (500, "the 9 resident raises this ledger records"),
+            "total": (500, "the 9 total raises this ledger records"),
+            "document": (
+                500,
+                "all 18 raises this ledger records, because it records no "
+                "document raise of its own",
+            ),
+        }
+
+        notes = guidance_budget_headroom_notes(package, ceilings, typical)
+        self.assertEqual(len(notes), 2, notes)
+        document_note, resident_note = notes
+        self.assertIn("document has 50 bytes of headroom", document_note)
+        self.assertIn(
+            "references/sdk-execution.md at 60000 against a 60050 ceiling",
+            document_note,
+        )
+        # The qualifier #390 asked to be recorded: the ceiling is a maximum
+        # over the set, so this gap is one file's rather than the package's.
+        self.assertIn(
+            "the largest single document rather than a named one", document_note
+        )
+        self.assertIn("resident has 300 bytes of headroom", resident_note)
+        self.assertIn("(48000 against a 48300 ceiling)", resident_note)
+        self.assertIn(
+            "less than the 500 bytes a raise of it usually takes", resident_note
+        )
+        # TOTAL has 12_000 bytes of room on the same measurement, and says
+        # nothing. This is the half that keeps the note worth reading.
+        self.assertEqual(
+            [note for note in notes if note.startswith("guidance budget: total")], []
+        )
+        # The resident note names no file, because RESIDENT is a sum and
+        # naming one document in it would be the wrong story.
+        self.assertNotIn("sdk-execution.md", resident_note)
+
+        # Ample room everywhere: nothing fires at all.
+        self.assertEqual(
+            guidance_budget_headroom_notes(
+                package,
+                {"resident": 60_000, "total": 200_000, "document": 90_000},
+                typical,
+            ),
+            [],
+        )
+
+        # A ledger with no raise anywhere in it cannot say what a typical one
+        # costs. Every budget is reported, saying exactly that - because "no
+        # history" reported as silence is indistinguishable from "no problem",
+        # which is the shape this whole mechanism exists to refuse.
+        for note in guidance_budget_headroom_notes(package, ceilings, {}):
+            with self.subTest(note=note[:60]):
+                self.assertIn("records no raise at all", note)
+        self.assertEqual(len(guidance_budget_headroom_notes(package, ceilings, {})), 3)
 
     def test_a_ceiling_needs_the_figure_it_was_measured_against(self) -> None:
         """A ceiling with no measurement leaves the next merge nothing to

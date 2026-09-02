@@ -49,6 +49,20 @@ Rules the suite enforces:
   under the ceiling it buys, and it may not fall below the last measurement of
   the same budget earlier in the chain unless the entry is lowering that
   ceiling too (a prune, which is a different decision).
+* **A prune has to show the shrink.** Lowering a ceiling used to be enough on
+  its own: the entry was read as a deliberate prune and the rule above was
+  skipped whole, with nothing checking that the package got smaller. An entry
+  that lowers a ceiling now has to state a `-measured:` figure BELOW its
+  predecessor's for the same budget, which is what removing bytes produces.
+  What that refuses is the renumber described below arriving with its figures
+  kept: if the entry it now follows raised the ceiling higher than yours, your
+  kept ceiling reads as a prune, and a ceiling nobody decided to lower governs
+  the merged package. What it still cannot see is a kept figure that happens to
+  land below the new predecessor's - that is the same arithmetic a real prune
+  leaves, and no field in the file tells them apart. It also refuses tightening
+  a ceiling toward a package that did not shrink; that is a third decision,
+  nobody has made it here, and it should arrive with a field of its own rather
+  than on the signal a stale renumber already uses.
 * **Each field is stated exactly once.** A second `total-ceiling:` line used to
   parse with the last one winning, so the number that governed was whichever
   came second in the file while the other sat above it looking like the
@@ -89,8 +103,38 @@ against the merge.
 What this does not do: it detects that two raises were measured on the same
 state, not that anybody's figure is right. Nothing re-measures the package for
 you. The monotonicity rule catches a re-point whose figure is below the one it
-now follows - the un-remeasured case - and nothing more. The ceiling check in
+now follows - the un-remeasured case - and the prune-evidence rule catches the
+other half of it, a re-point that keeps a LOWER CEILING than the entry it now
+follows without the smaller measurement a prune produces. Neither says anything
+about a figure that is merely wrong. The ceiling check in
 `tests/test_skill_package.py` is what measures the package for real.
+
+## The headroom note
+
+`test_the_guidance_budget_is_not_silently_exceeded` prints a warning, one line
+per budget, when the room left under a ceiling is smaller than a raise of that
+budget usually is. It never fails; the ceiling check beside it is what does.
+
+The threshold is read off this directory rather than chosen: the median of
+every raise of that ceiling the ledger records, and for a budget the ledger has
+never raised - `document`, declared once - the median of every raise it records
+at all, which the note says when it uses it. The median rather than the mean
+because the population is skewed by design; the largest total raise on record
+is 41_741 bytes against a median of 1_342.
+
+It exists because a budget is otherwise green one byte under and red one byte
+over, so the first word anyone gets that a ceiling is nearly spent is a failing
+build on somebody else's branch, carrying arithmetic that belongs to two
+branches neither of which could see the other. Measured when the note was
+added, on the tree it arrived in: 465 bytes of resident headroom, 497 of total,
+and 57 on the largest single document - all three already inside one typical
+raise, and nothing said so.
+
+For DOCUMENT the note names the file holding the maximum, because that ceiling
+is `max()` over the set rather than a named document. The gap it reports is
+that one file's: every other document has room to grow until it becomes the
+maximum, so a 57-byte reading is a wall for an edit to the named file and
+irrelevant to an edit anywhere else, with no state in between.
 
 ## Why one file per raise
 
