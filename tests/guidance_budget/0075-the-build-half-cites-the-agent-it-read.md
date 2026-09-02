@@ -3,7 +3,7 @@
 follows: 0074
 follows-total-measured: 441_185
 total-ceiling: 442_300
-total-measured: 441_923
+total-measured: 442_022
 
 A blinded fixture re-run spent these bytes before anyone wrote them down. Its
 dataset was rebuilt underneath it, so the recorded invariants no longer matched

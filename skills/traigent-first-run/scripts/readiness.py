@@ -8766,6 +8766,52 @@ def _selected_callable_nodes(source: StaticSourceEvidence) -> Iterator[ast.AST]:
         pending.extend(reversed(list(ast.iter_child_nodes(node))))
 
 
+def derived_control_flow_loop(source: StaticSourceEvidence) -> bool:
+    """Does the selected callable loop? Read out of the source, not asked.
+
+    The difference between this and a cited line number is the whole point.
+    `checked_source_lines` answers "is this integer in range and executable",
+    which is a surface property: it cannot tell a hand-verified citation from
+    an arbitrary in-range one, and both of its cannot-tell branches pass. So a
+    document carried over from another agent kept clearing it, and the card
+    printed "there is no loop" over a `while True:` while the guard said yes.
+
+    A negative build finding has no line that establishes it, so for a claim
+    like this one no coordinate can ever be more than where somebody says they
+    looked. This is the other move: settle the question from the tree the
+    module already parses, and refuse the declaration that contradicts it.
+
+    Scoped to `_selected_callable_nodes`, which is the same lexical body every
+    other static check here is scoped to - a loop inside a nested function is
+    that function's control flow, not the selected callable's.
+    """
+    return any(
+        isinstance(node, (ast.For, ast.AsyncFor, ast.While))
+        for node in _selected_callable_nodes(source)
+    )
+
+
+def derived_source_names(source: StaticSourceEvidence) -> frozenset[str]:
+    """Every identifier and string constant the selected agent's file carries.
+
+    Deliberately the whole module rather than the selected callable: a tool
+    name is ordinarily declared at module level and referenced inside the
+    callable, and this is used only to REFUTE - a name that appears nowhere in
+    the file cannot be a tool this agent declares. Nothing is credited from it.
+    """
+    names: set[str] = set()
+    for node in ast.walk(source.tree):
+        if isinstance(node, ast.Name):
+            names.add(node.id)
+        elif isinstance(node, ast.Attribute):
+            names.add(node.attr)
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            names.add(node.name)
+        elif isinstance(node, ast.Constant) and isinstance(node.value, str):
+            names.add(node.value)
+    return frozenset(names)
+
+
 def _lexical_owner(node: ast.AST, source: StaticSourceEvidence) -> ast.AST:
     """Return the module/function/class scope that owns ``node``."""
     child = node
@@ -11971,26 +12017,35 @@ AGENT_KNOBS_EXAMPLE: dict[str, Any] = {
     # `source_lines` is what a later score can check against the source it was
     # taken from, so a read carried over from another agent - or from this one
     # before it was edited - is refused instead of reprinted.
+    # Every answer here is TRUE of the five-line agent this example is checked
+    # against in `test_readiness_scoring.py`, not merely in range of it. An
+    # earlier revision put `source_lines: [5]` on all four checks and claimed
+    # `output-contract: present` about a call that returns the provider reply
+    # unread - in range, and wrong, in the document every refusal prints
+    # verbatim. A shipped example that is false about its own agent is worse
+    # than no example: it is the exact pattern this reader exists to refuse,
+    # handed to the reader as the thing to copy.
     "build": {
         "prompt": {
             "present": False,
-            "evidence": "agent.py:5 carries no prompt",
-            "source_lines": [5],
+            "evidence": "agent.py:4-5 no prompt reaches the call",
+            "source_lines": [4, 5],
         },
         "output-contract": {
-            "present": True,
-            "evidence": "agent.py:5 returns the provider reply unwrapped",
+            "present": False,
+            "evidence": "agent.py:5 returns the provider reply unread, so "
+            "nothing pins the answer's shape",
             "source_lines": [5],
         },
         "control-flow": {
             "loop": False,
-            "evidence": "agent.py:5 makes one straight-line return",
-            "source_lines": [5],
+            "evidence": "agent.py:4-5 is one straight-line return, no loop",
+            "source_lines": [4, 5],
         },
         "tools": {
             "used": False,
-            "evidence": "agent.py:5 declares and calls none",
-            "source_lines": [5],
+            "evidence": "agent.py:4-5 declares and reaches no tools",
+            "source_lines": [4, 5],
         },
     },
 }
@@ -12124,6 +12179,21 @@ def build_signal_from_entry(
                 f"build check {check!r} is undetermined and gives no reason; a "
                 "check that leaves the pillar has to say what stopped the read"
             )
+        # Refused rather than ignored. This arm used to accept `source_lines`
+        # of any shape at all - [99999], "not-a-list", [-5] - because it
+        # returns before the validation below, so the one place a reader could
+        # look to see whether their coordinate was checked silently said
+        # nothing. An undetermined check has no line to point at by
+        # construction, so a coordinate here is a contradiction on the face of
+        # the document, and saying so is cheaper than letting the author
+        # believe it was read.
+        if "source_lines" in spec:
+            raise AgentDiscoveryInputError(
+                f"build check {check!r} is undetermined and still cites "
+                "'source_lines'; a read that could not settle the question has "
+                "no line that establishes it. Drop the citation, or drop "
+                "'determined': false and answer the check"
+            )
         return BuildSignal(
             check,
             0.0,
@@ -12179,6 +12249,22 @@ def build_signal_from_entry(
             f"accept whatever comes back ({evidence})",
         )
     if check == "control-flow":
+        # The claim, checked against the tree - not the coordinate, checked
+        # against a line count. `derived_control_flow_loop` says why this is
+        # the move that closes the class rather than a stricter version of the
+        # one that did not.
+        if source is not None:
+            derived = derived_control_flow_loop(source)
+            if _build_flag(check, spec, "loop") != derived:
+                raise AgentDiscoveryInputError(
+                    f"build check 'control-flow' declares loop="
+                    f"{_build_flag(check, spec, 'loop')!r}, and "
+                    f"{source.display_path} reads loop={derived!r} in "
+                    f"{source.selected_callable.name}. A read of a different "
+                    "agent, or of this one before it was edited, is the "
+                    "ordinary way these disagree - re-read the selected source "
+                    "rather than adjusting the answer to fit"
+                )
         if not _build_flag(check, spec, "loop"):
             return BuildSignal(
                 check, weight, f"one call per input, so it ends ({evidence})"
@@ -12210,6 +12296,26 @@ def build_signal_from_entry(
             f"build check {check!r} says tools are used and names none; the "
             "check is whether each tool the agent declares can be reached"
         )
+    if source is not None:
+        # Refutation, never credit. A tool name that appears nowhere in the
+        # selected agent's file - not as an identifier, an attribute, or a
+        # string - is not a tool this agent declares, whatever the citation
+        # beside it resolves to. This is the `tools` half of the same move the
+        # control-flow branch makes: settle what the source can settle, rather
+        # than pricing a coordinate that cannot distinguish a real read from a
+        # borrowed one.
+        #
+        # It cannot go the other way. A name that IS present proves nothing -
+        # tools are ordinary calls and this module does not attempt a call
+        # graph - so a present name is left exactly as unverified as before.
+        absent = sorted(set(declared) - derived_source_names(source))
+        if absent:
+            raise AgentDiscoveryInputError(
+                f"build check {check!r} declares {', '.join(absent)}, which "
+                f"{source.display_path} does not mention anywhere. A read of "
+                "another agent is the ordinary way this happens - re-read the "
+                "selected source"
+            )
     unreachable = _build_names(check, spec, "unreachable")
     stray = sorted(set(unreachable) - set(declared))
     if stray:

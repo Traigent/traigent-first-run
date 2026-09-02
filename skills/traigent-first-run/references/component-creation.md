@@ -363,15 +363,15 @@ a document to be reused.
                    "source_lines": [6, 12],
                    "evidence": "The selected agent's style alternatives reach its local call path."}},
  "build": {
-   "prompt": {"present": true, "few_shot": 2, "source_lines": [4],
-              "evidence": "agent.py:4 SYSTEM carries two worked examples"},
-   "output-contract": {"present": true, "source_lines": [9],
-                       "evidence": "agent.py:9 json.loads(reply) parses it"},
-   "control-flow": {"loop": true, "bounded": true, "source_lines": [8],
-                    "evidence": "agent.py:8 for _ in range(MAX_STEPS)"},
-   "tools": {"used": true, "declared": ["search", "fetch"], "unreachable": [],
-             "source_lines": [6],
-             "evidence": "agent.py:6 TOOLS lists both; both resolve in this module"}}}
+   "prompt": {"present": true, "few_shot": 0, "source_lines": [6, 9],
+              "evidence": "agent.py:6 STYLES holds the instruction text and carries no worked examples; :9 passes one into the call"},
+   "output-contract": {"present": false, "source_lines": [9],
+                       "evidence": "agent.py:9 returns the provider reply unread, so nothing pins the answer's shape"},
+   "control-flow": {"loop": false, "bounded": true, "source_lines": [8, 9],
+                    "evidence": "agent.py:8-9 is one straight-line return with no loop"},
+   "tools": {"used": false, "declared": [], "unreachable": [],
+             "source_lines": [8, 9],
+             "evidence": "agent.py:8-9 declares and reaches no tools"}}}
 ```
 
 Each settled build check carries `source_lines` on the same terms, and for the same reason: the
