@@ -27,6 +27,11 @@ Load each reference when its stage begins:
    consistent across the run and depth is calibrated from evidence, never by asking the user
    how experienced they are.
 
+A stage carrying a **Read next.** dispatch has already chosen for that stage, and the dispatch
+governs: open its required section, plus any optional section whose stated condition holds, and
+leave the rest of that reference closed until a later dispatch asks for it. The list above is
+what a stage with no dispatch falls back to.
+
 Use [`scripts/preflight.py`](scripts/preflight.py) for the free static preflight. Use
 [`scripts/readiness.py`](scripts/readiness.py) as a mandatory gate, never only when it seems
 useful: score all three pillars at the start of every guided run before any Agent, Dataset, or
@@ -372,6 +377,11 @@ The opening score is not skippable, always reports all three pillars, and is the
 reports for the project. Show it before any Agent, Dataset, or Evaluation component is created or
 repaired; current-run validation evidence may be prepared first as the gate above requires.
 
+**Read next.** Required: [`references/component-creation.md` § Reading the agent for the opening score](references/component-creation.md#reading-the-agent-for-the-opening-score).
+If a component has to be classified `real`, `limited`, or `invalid`: [`references/component-creation.md` § Evidence and provenance](references/component-creation.md#evidence-and-provenance).
+If the first event is about to be appended to the run log: [`references/run-safety.md` § The run log](references/run-safety.md#the-run-log).
+If rows exist and the row review has to be written: [`references/evaluation-and-dataset.md` § The row-level sanity check](references/evaluation-and-dataset.md#the-row-level-sanity-check).
+
 Say that the scoring command reads the project and changes nothing of the customer's. Name the
 evidence the guided run wrote before it: its row review when rows exist, and both calibration
 artifacts when opening calibration ran. A claim of no writes is refuted by one `ls`.
@@ -528,6 +538,9 @@ so say before they answer that accepting lowers the ceiling.
 offer ends; the dataset reference owns the split behind the total, how the rows are drawn and the
 ceiling that follows.
 
+**Read next.** Required: [`references/component-creation.md` § The one ask, and the path that answers it](references/component-creation.md#the-one-ask-and-the-path-that-answers-it).
+If a dataset below this run's 28 puts a top-up on that same ask: [`references/evaluation-and-dataset.md` § Dataset construction](references/evaluation-and-dataset.md#dataset-construction).
+
 ### 3. Complete the system
 
 Follow the dependency matrix in `references/component-creation.md`:
@@ -540,6 +553,10 @@ Follow the dependency matrix in `references/component-creation.md`:
 - Design compatibility in both directions: dataset inputs fit the agent contract, and agent
   outputs are meaningfully scoreable by the evaluator. Treat this as a design check here; exact
   runtime binding is owned by the installed SDK and is verified in stage 5.
+
+**Read next.** Required: [`references/component-creation.md` § Dependency matrix](references/component-creation.md#dependency-matrix).
+If the matrix row directs creating an agent: [`references/component-creation.md` § Agent creation](references/component-creation.md#agent-creation).
+If the row directs building an evaluation method: [`references/evaluation-and-dataset.md` § Evaluation selection](references/evaluation-and-dataset.md#evaluation-selection).
 
 Create a minimal reversible integration under `traigent-runs/` or a thin wrapper around the
 existing function. Do not refactor production code just to demonstrate the workflow.
@@ -554,6 +571,13 @@ Immediately after completing the system, run every available bundled component c
 path needs only the Python standard library and local project files. Do this before creating an
 isolated environment, before installing dependencies, before creating `.env`, before asking for a
 provider key, and before any SDK-specific check.
+
+**Read next.** Required: [`references/evaluation-and-dataset.md` § Mandatory calibration](references/evaluation-and-dataset.md#mandatory-calibration).
+If the resolved evaluator call path executes or imports candidate output: [`references/run-safety.md` § Static and mock validation](references/run-safety.md#static-and-mock-validation).
+If calibration reaches its timeout: [`references/evaluation-and-dataset.md` § When calibration runs long](references/evaluation-and-dataset.md#when-calibration-runs-long).
+If a check reports that the dataset or evaluator cannot separate configurations: [`references/evaluation-and-dataset.md` § Quality diagnosis and repair choice](references/evaluation-and-dataset.md#quality-diagnosis-and-repair-choice).
+If the agent and the evaluator have to be validated against each other before optimization: [`references/component-creation.md` § Compatibility contract](references/component-creation.md#compatibility-contract).
+If a repair is to move a component from `limited` or `invalid` to `real`: [`references/component-creation.md` § Readiness transitions](references/component-creation.md#readiness-transitions).
 
 Follow this order:
 
@@ -785,6 +809,9 @@ Before baseline approval, explain only its provider recipients using `references
 the selected provider receives normal model-call content; OpenRouter and every allowed upstream
 inference provider/route may receive it. Connected synchronization waits until after the baseline checkpoint.
 
+**Read next.** Required: [`references/run-safety.md` § Environment and privacy](references/run-safety.md#environment-and-privacy).
+If a public signature or capability has to be confirmed on the installed SDK: [`references/sdk-execution.md` § Capability discovery](references/sdk-execution.md#capability-discovery).
+
 ### 6. Approve and run the baseline
 
 Scope the run before pricing it. When the dataset carries more than 100 usable rows, select the
@@ -803,6 +830,11 @@ Use the baseline checklist in `references/run-safety.md` for one concise baselin
 approval covering the live provider check, any pre-baseline LLM-judge calibration, and the
 preserved baseline or generated twelve-row sweep. Say only that a separately previewed managed run may
 follow; do not front-load its algorithm, search space, trial arithmetic, portal features, or insights.
+
+**Read next.** Required: [`references/run-safety.md` § Approval and budgets](references/run-safety.md#approval-and-budgets).
+If the dataset carries more than 100 usable rows: [`references/evaluation-and-dataset.md` § First-run subset for a large dataset](references/evaluation-and-dataset.md#first-run-subset-for-a-large-dataset).
+If runtime or a trial count has to be estimated: [`references/sdk-execution.md` § Automatic run bounds](references/sdk-execution.md#automatic-run-bounds).
+If this walkthrough supplies the baseline's models: [`references/sdk-execution.md` § Walkthrough model ladder](references/sdk-execution.md#walkthrough-model-ladder).
 
 When this run filled a gap for the walkthrough, or an active cap asks rather than blocks, that same
 approval also carries the pre-spend card in `references/run-safety.md`: what the gap was and how it
@@ -883,6 +915,10 @@ Traigent key in that process, preserving any existing key on disk, so it produce
 path from "nothing set up" to "a number I can see". Say plainly that this is a **local fixed
 grid**, not Traigent choosing which configurations to test. It is local, not free: provider calls
 spend from the same approved total.
+
+**Read next.** Required: [`references/sdk-execution.md` § Small baseline sweep](references/sdk-execution.md#small-baseline-sweep).
+If the run wrapper is being written now: [`references/sdk-execution.md` § Decorator contract](references/sdk-execution.md#decorator-contract).
+If the user's own baseline space is being preserved: [`references/run-safety.md` § Baseline and optimization](references/run-safety.md#baseline-and-optimization).
 
 Immediately after it returns, show a **Local baseline checkpoint** before any Traigent-key or
 account request:
@@ -997,6 +1033,8 @@ scores across both paid measurements - never on the held-out rows, which arbitra
 score only that one against the ten held-out rows;
 `references/evaluation-and-dataset.md` owns the rest.
 
+**Read next.** Required: [`references/evaluation-and-dataset.md` § Held-out set and claims](references/evaluation-and-dataset.md#held-out-set-and-claims).
+
 Do not run an offline baseline and then pay to repeat it merely to populate the portal. Do not ask
 the user to choose trial counts or knobs; select them from the inspected agent and include their
 calls in the connected-stage approval.
@@ -1012,6 +1050,10 @@ historical `wired` is never proof. Follow that reference's freeze/remove/persist
 Save
 `traigent-runs/config-space.json` only after this search returns nonzero trials, from the exact
 space it received, and use only that current-run document for the closing `--config-space` score.
+
+**Read next.** Required: [`references/sdk-execution.md` § Broader optimization](references/sdk-execution.md#broader-optimization).
+If the connected run's tracking path has not been proved: [`references/run-safety.md` § Connected-run readiness](references/run-safety.md#connected-run-readiness).
+If the local baseline is to appear in the portal: [`references/sdk-execution.md` § Carrying the local baseline into the portal](references/sdk-execution.md#carrying-the-local-baseline-into-the-portal).
 
 If provider, Traigent backend, or portal connectivity is unavailable, stop with the concrete
 failure and one recommended recovery. Never fall back automatically to mock or synthetic results,
@@ -1037,6 +1079,9 @@ best configuration and non-degenerate measures exist. Verify the held-out score 
 configuration this run recommends, chosen on the tuning scores, and that no other candidate was
 scored on those rows. Report truncation and persistence failures, require the portal
 probe to have stayed green, and verify each portal link before claiming visibility.
+
+**Read next.** Required: [`references/run-safety.md` § Post-run verification](references/run-safety.md#post-run-verification).
+If the search stopped, failed, or returned zero trials: [`references/run-safety.md` § Recovery](references/run-safety.md#recovery).
 
 Lead with a layered summary whose opening layers are enough for a quick read and whose details are
 auditable:
@@ -1125,6 +1170,9 @@ available. Surface deeper signals only when a verified run-scoped platform artif
 returned them. Never fill the DEEPER-INSIGHTS template from expectation, infer labels from a flat
 score, promise a numeric dataset-quality score, or imply the platform graded an unrun dataset;
 over substitutes, every insight describes only the walkthrough.
+
+**Read next.** Required: [`references/sdk-execution.md` § Result checks](references/sdk-execution.md#result-checks).
+If the installed result exposes a per-example audit or an insights helper: [`references/sdk-execution.md` § Reading the result for insight](references/sdk-execution.md#reading-the-result-for-insight).
 
 Close by saying what a further run would be worth. Name the gaps still open and what each is now
 costing; use the user's own measured evidence rather than encouragement. Say what this walkthrough
