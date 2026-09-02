@@ -3,10 +3,10 @@
 follows: 0074
 follows-resident-measured: 92_003
 follows-total-measured: 441_185
-resident-ceiling: 94_300
-resident-measured: 94_053
-total-ceiling: 449_100
-total-measured: 448_667
+resident-ceiling: 94_500
+resident-measured: 94_222
+total-ceiling: 451_200
+total-measured: 450_710
 
 Two paid walkthroughs bought nothing, and one blind spot paid for both. Every
 probe this package mandates is a string somebody typed. The four authored ones

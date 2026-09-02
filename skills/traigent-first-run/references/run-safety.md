@@ -308,9 +308,12 @@ fulfils it.
 
 Deterministic calibration is a separate execution gate and always requires a recorded `sufficient`
 evidence-backed semantic-coverage verdict. Before environment setup, run only a non-executing
-evaluator whose complete call path is local-only, side-effect-free, and standard-library-only. A
-non-executing evaluator that needs a declared local dependency waits until that dependency is
-installed. An execution evaluator has already ended this guide at the scope gate above. Run either
+evaluator whose complete call path is local-only, side-effect-free, and standard-library-only. The
+same three words bind anything else this stage imports, and a reply transform is the one other
+thing it does: reaching that function executes its module's top level, which for an agent file is
+commonly a provider client. A non-executing evaluator that needs a declared local dependency waits
+until that dependency is installed, and so does a transform whose module does - the flag waits with
+it rather than pulling an install into this stage. An execution evaluator has already ended this guide at the scope gate above. Run either
 before creating `.env` or requesting a provider key. A generic outside-review wait is not a gate;
 pause only when one unresolved product-grading ambiguity would materially change correctness or
 ranking. Do not execute an LLM judge or an uncertain or external evaluator without explicit approval

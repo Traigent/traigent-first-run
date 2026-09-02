@@ -8233,11 +8233,33 @@ class SkillPackageTests(unittest.TestCase):
             "one run-scoped value to both scripts, so a kind one accepts and "
             "the other refuses stops a stage that must not fail",
         )
-        # And the flag the guide mandates really is on both, so this compares
-        # two live vocabularies rather than one live and one dead constant.
+
+        # And both really wire the flag TO that constant, so this compares two
+        # live vocabularies rather than one live and one dead. A substring
+        # search for the flag name is satisfied by a comment mentioning it.
+        def task_kind_choices(script: Path) -> str | None:
+            for node in ast.walk(ast.parse(script.read_text())):
+                if not isinstance(node, ast.Call):
+                    continue
+                if not any(
+                    isinstance(argument, ast.Constant)
+                    and argument.value == "--task-kind"
+                    for argument in node.args
+                ):
+                    continue
+                for keyword in node.keywords:
+                    if keyword.arg == "choices" and isinstance(keyword.value, ast.Name):
+                        return keyword.value.id
+            return None
+
         for script in ("readiness.py", "calibrate_evaluator.py"):
             with self.subTest(script=script):
-                self.assertIn("--task-kind", (scripts / script).read_text())
+                self.assertEqual(
+                    task_kind_choices(scripts / script),
+                    "TASK_KINDS",
+                    "--task-kind must take its choices from the constant this "
+                    "test compares, or the comparison guards nothing",
+                )
 
     def test_evaluator_calibration_covers_multiple_cases(self) -> None:
         text = " ".join(
@@ -18727,6 +18749,14 @@ class TheApprovedTotalReachesTheCodeTests(unittest.TestCase):
                         # the child sleep and exit normally, measuring its
                         # inherited test environment rather than this ending.
                         "signal.signal(signal.SIGQUIT, signal.SIG_DFL)",
+                        # And SIGHUP, for the same reason and one the note
+                        # above never got applied to: `nohup` ignores it, so a
+                        # suite run under `nohup` - which is how a long run is
+                        # captured to a log - inherited SIG_IGN, the child slept
+                        # and exited cleanly, and this reported a failure that
+                        # was an artefact of how the suite was launched. A green
+                        # result that depends on the launcher is not a result.
+                        "signal.signal(signal.SIGHUP, signal.SIG_DFL)",
                         self.spend_report_program(
                             ceiling=5.00,
                             spent=2.00,

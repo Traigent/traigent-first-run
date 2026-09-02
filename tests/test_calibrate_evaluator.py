@@ -1661,9 +1661,10 @@ class TimeoutIsReportableTests(unittest.TestCase):
         """Pin the number to the work it must cover, not to itself.
 
         A flat budget passes every relative-shape assertion while failing the
-        one customer it was written for: a deterministic case can have ten
-        calls, including up to six supplemental probes, while a judge has four.
-        At a minute per call, two deterministic cases need up to 1200 seconds.
+        one customer it was written for: a deterministic case can have twelve
+        calls, including up to eight supplemental probes, while a judge has
+        four. At a minute per call, two deterministic cases need up to 1440
+        seconds.
         Reverting that derivation has to fail on meaning here, not on a file
         hash.
 
@@ -1794,6 +1795,15 @@ class TimeoutIsReportableTests(unittest.TestCase):
             # reader who is paying per probe.
             "a deterministic matrix needs at least two pairs",
             "the cap already binds at that minimum",
+            # Built from the constants like the five-pair rates below. These
+            # two were typed, so a probe moving the probe count left the words
+            # describing the previous one - the same defect the note below
+            # records for `75`, one sentence earlier in the same paragraph.
+            f"reserves for up to {probes_per_case['deterministic']} calls per pair",
+            f"maximum {probes_per_case['deterministic']} calls per pair",
+            f"finish all {probes_per_case['deterministic']} possible probes per pair",
+            f"is {ceiling // (2 * probes_per_case['deterministic'])} seconds "
+            "per possible call rather than the derived 75",
             # Built from the constants, not typed twice. A probe that moved
             # DETERMINISTIC_SECONDS_PER_PROBE to 60 survived the literal version
             # of this line: both counts above happened to stay put, and the only
@@ -3107,20 +3117,20 @@ class TheSeamBetweenTheProbesAndTheAgentTests(unittest.TestCase):
         spec.loader.exec_module(module)
         return module
 
-    def calibrate(self, directory, *extra, transform=None, scorer=None):
+    def calibrate(self, directory, *extra, transform=None, scorer=None, cases=None):
         """Run one calibration in `directory` and return (process, payload)."""
         root = Path(directory)
         scorer_path = root / "scorer.py"
         scorer_path.write_text(scorer or self.SCORER)
-        cases = root / "cases.json"
-        cases.write_text(json.dumps(self.CASES))
+        cases_path = root / "cases.json"
+        cases_path.write_text(json.dumps(cases or self.CASES))
         command = [
             sys.executable,
             str(SCRIPT),
             "--scorer",
             f"{scorer_path}:task_score",
             "--cases",
-            f"@{cases}",
+            f"@{cases_path}",
             "--allow-execution",
             "--timeout",
             "120",
@@ -3441,7 +3451,25 @@ class TheSeamBetweenTheProbesAndTheAgentTests(unittest.TestCase):
         verdict = module.seam_probe_outcome
         for reference, score, error, unavailable, expected in (
             (1.0, 0.0, None, None, "damaged"),
+            # The value that made this a REDESIGN. The truncation defect's
+            # damaged row scored 0.24 on a partial-credit grader, which is
+            # ABOVE the 0.2 bad-probe ceiling the first version keyed on - so
+            # the one defect this check exists for came back `preserved`. Every
+            # test in this class used a strict 1.0/0.0 scorer, which is why
+            # nothing here could see it: the whole 0.2-0.8 range was
+            # unreachable, and a branch no fixture enters is not covered.
+            (1.0, 0.24, None, None, "damaged"),
+            (1.0, 0.7999, None, None, "damaged"),
+            # And the other direction, which is why the line is the good
+            # minimum rather than "any drop": a graded scorer nudging a right
+            # answer from 1.00 to 0.80 still calls it right.
+            (1.0, 0.8, None, None, "preserved"),
+            (1.0, 0.9, None, None, "preserved"),
             (0.0, 0.0, None, None, "preserved"),
+            # A reference the authored phase did not call right cannot be
+            # damaged by delivery, wherever the delivered score lands.
+            (0.5, 0.0, None, None, "preserved"),
+            (0.79, 0.1, None, None, "preserved"),
             (1.0, 1.0, None, None, "preserved"),
             (1.0, None, "ValueError: x", None, "refused"),
             (1.0, None, None, {"reason": "timeout", "detail": "x"}, "unavailable"),
@@ -3457,6 +3485,272 @@ class TheSeamBetweenTheProbesAndTheAgentTests(unittest.TestCase):
                     ),
                     expected,
                 )
+
+    # A grader that awards partial credit, so a delivered answer can land in
+    # the middle of the range instead of only at 0.0 or 1.0. Jaccard over
+    # tokens: written out here rather than imported, and no assertion below
+    # reads a number out of it.
+    GRADED_SCORER = (
+        "def task_score(*, output, expected, input_data, metadata):\n"
+        "    del input_data, metadata\n"
+        "    got = set(' '.join(str(output).split()).casefold().rstrip('; ').split())\n"
+        "    want = set(' '.join(str(expected).split()).casefold().rstrip('; ').split())\n"
+        "    if not want or not got:\n"
+        "        return 0.0\n"
+        "    return round(len(got & want) / len(got | want), 4)\n"
+    )
+    GRADED_CASES = [
+        {
+            "name": "stadiums with no concert",
+            "score_mode": "graded",
+            "expected": (
+                "SELECT name FROM stadium WHERE stadium_id NOT IN "
+                "(SELECT stadium_id FROM concert)"
+            ),
+            "input_data": {"message": "Which stadiums have never held a concert?"},
+            "probes": {
+                "good": (
+                    "SELECT name FROM stadium WHERE stadium_id NOT IN "
+                    "(SELECT stadium_id FROM concert)"
+                ),
+                "equivalent_good": (
+                    "select name from stadium where stadium_id not in "
+                    "(select stadium_id from concert)"
+                ),
+                "partial": "SELECT name FROM stadium WHERE stadium_id NOT IN concert",
+                "bad": "DROP TABLE stadium",
+            },
+        },
+        {
+            "name": "every singer name",
+            "score_mode": "graded",
+            "expected": "SELECT name FROM singer",
+            "input_data": {"message": "List every singer name"},
+            "probes": {
+                "good": "SELECT name FROM singer",
+                "equivalent_good": "select name from singer",
+                "partial": "SELECT name FROM singer LIMIT 3",
+                "bad": "DROP TABLE singer",
+            },
+        },
+    ]
+    # Preserves an upper-cased reply and raises on a lower-cased one, so one
+    # probe refuses while its sibling is preserved.
+    REFUSES_LOWER_CASE = (
+        "def extract_sql(reply):\n"
+        "    if reply.count('```') >= 2:\n"
+        "        body = reply.split('```')[1]\n"
+        "        reply = body.split(chr(10), 1)[1] if chr(10) in body else body\n"
+        "    if 'SELECT' not in reply:\n"
+        "        raise ValueError('lower-case reply')\n"
+        "    return reply.strip()\n"
+    )
+
+    def test_a_partially_credited_fragment_is_still_damaged(self) -> None:
+        """P1-1, and the reason the suite could not have caught it.
+
+        The truncation defect delivered an unbalanced fragment that a
+        partial-credit grader scored 0.24. The first version of this check
+        classified on `score <= bad_maximum`, default 0.2, so 0.24 came back
+        `preserved` - the one defect the whole change was written for, reported
+        as fine. Every seam fixture in this class was `binary` with a strict
+        1.0/0.0 scorer, so the classifier's entire middle range was unreachable
+        and no assertion could have failed.
+
+        `bad_maximum` could not simply be raised: it is the ceiling the
+        AUTHORED matrix holds a bad probe under, so loosening it here loosens
+        the calibration gate there. The line is `good_minimum` on both sides.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            process, payload = self.calibrate(
+                directory,
+                "--task-kind",
+                "code-sql",
+                transform=self.TRUNCATING,
+                scorer=self.GRADED_SCORER,
+                cases=self.GRADED_CASES,
+            )
+        probe = self._seam(payload, "stadiums with no concert", "good")
+        self.assertEqual(probe["outcome"], "damaged", process.stderr)
+        self.assertEqual(probe["reference_score"], 1.0)
+        self.assertGreater(
+            probe["score"],
+            0.2,
+            "this fixture only proves anything while the delivered score is "
+            "above the bad-probe ceiling the first version keyed on",
+        )
+        self.assertLess(probe["score"], 0.8)
+        self.assertIn("seam_probe_advisory", payload)
+
+    def test_a_graded_step_that_keeps_the_answer_right_is_not_damaged(self) -> None:
+        """The other direction of P1-1: a drop is not damage, losing right is.
+
+        The same graded scorer and the same middle of the range - a sound
+        extraction delivers an answer this evaluator still calls right, and a
+        classifier keyed on "any drop from the reference" would red it.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            process, payload = self.calibrate(
+                directory,
+                "--task-kind",
+                "code-sql",
+                transform=self.SOUND,
+                scorer=self.GRADED_SCORER,
+                cases=self.GRADED_CASES,
+            )
+        self.assertNotIn("seam_probe_advisory", payload, process.stderr)
+        self.assertEqual(set(self._outcomes(payload).values()), {"preserved"})
+
+    def test_a_reply_transform_that_cannot_be_loaded_is_exit_two(self) -> None:
+        """P1-2: a typo'd flag disabled the whole check and said not to worry.
+
+        Five distinct mistakes all arrived as "every probe refused", which this
+        script then reported as `seam_probe_off_domain` - "not a fault, do not
+        carry it to the approval". The check this change adds was silently off
+        and the payload said so in the reassuring direction.
+        """
+        broken = {
+            "missing file": ("gone.py", None),
+            "renamed function": ("agent.py", self.SOUND),
+            "syntax error": ("agent.py", "def extract_sql(reply)\n    return reply\n"),
+            "uninstalled import": (
+                "agent.py",
+                "import totally_absent_package_xyz\n\n\n"
+                "def extract_sql(reply):\n    return reply\n",
+            ),
+            "two positional arguments": (
+                "agent.py",
+                "def extract_sql(reply, mode):\n    return reply\n",
+            ),
+        }
+        for name, (filename, source) in broken.items():
+            with self.subTest(mistake=name), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                scorer = root / "scorer.py"
+                scorer.write_text(self.SCORER)
+                cases = root / "cases.json"
+                cases.write_text(json.dumps(self.CASES))
+                agent = root / filename
+                if source is not None:
+                    agent.write_text(source)
+                function = (
+                    "no_such_function"
+                    if name == "renamed function"
+                    else ("extract_sql")
+                )
+                process = subprocess.run(
+                    [
+                        sys.executable,
+                        str(SCRIPT),
+                        "--scorer",
+                        f"{scorer}:task_score",
+                        "--cases",
+                        f"@{cases}",
+                        "--allow-execution",
+                        "--task-kind",
+                        "code-sql",
+                        "--timeout",
+                        "120",
+                        "--json",
+                        "--reply-transform",
+                        f"{agent}:{function}",
+                    ],
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertEqual(process.returncode, 2, process.stderr)
+                self.assertIn("could not be loaded", process.stderr)
+                self.assertIn("Fix the flag", process.stderr)
+                self.assertNotIn("off_domain", process.stdout)
+
+    def test_a_refusal_beside_a_preserved_probe_still_reports(self) -> None:
+        """P2-3: the advisory collected `damaged` and `refused`, and only
+        `damaged` was ever exercised end to end - so narrowing the pipeline to
+        `== "damaged"` left the suite green while the behaviour vanished.
+
+        This step handles the shape (it preserves the upper-cased answer) and
+        fails on the content of its sibling, which is exactly the case the
+        off-domain rule must NOT swallow.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            process, payload = self.calibrate(
+                directory, "--task-kind", "code-sql", transform=self.REFUSES_LOWER_CASE
+            )
+        self.assertEqual(
+            self._outcomes(payload),
+            {
+                ("stadiums with no concert", "good"): "preserved",
+                ("stadiums with no concert", "equivalent_good"): "refused",
+                ("every singer name", "good"): "preserved",
+                ("every singer name", "equivalent_good"): "refused",
+            },
+            process.stderr,
+        )
+        self.assertIn("seam_probe_advisory", payload)
+        self.assertNotIn("seam_probe_off_domain", payload)
+        self.assertIn("returned nothing", payload["seam_probe_advisory"])
+
+    def test_nothing_is_said_about_a_check_nobody_asked_for(self) -> None:
+        """P2-4: the arming condition had no test, so deleting it stayed green.
+
+        A calibration naming no reply step and no code task kind did not ask
+        for this check. Announcing its absence there would print a line nobody
+        can act on beside the ones they can, on every closed-label run.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            process, payload = self.calibrate(directory)
+        self.assertNotIn("seam_probe_skipped", payload, process.stderr)
+        self.assertNotIn("NOT RUN", process.stderr)
+        self.assertNotIn("seam_probe_advisory", payload)
+        # And the opposite arming, so the pair fails in both directions.
+        with tempfile.TemporaryDirectory() as directory:
+            process, payload = self.calibrate(directory, "--task-kind", "numeric")
+            self.assertNotIn("seam_probe_skipped", payload, process.stderr)
+        with tempfile.TemporaryDirectory() as directory:
+            process, payload = self.calibrate(directory, transform=self.SOUND)
+            self.assertIn("seam_probe_skipped", payload, process.stderr)
+
+    def test_the_payload_records_no_delivery_where_none_happened(self) -> None:
+        """P2-2: the stderr fix did not reach the JSON.
+
+        `delivered` echoed `sent` back byte-for-byte on every probe of a run
+        with no reply step, in the payload the guidance tells an assistant to
+        read both halves of and carry to a pre-spend approval.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            process, payload = self.calibrate(directory, "--task-kind", "code-sql")
+        for case in payload["cases"]:
+            for probe in case["seam_probes"]:
+                with self.subTest(case=case["name"], source=probe["source"]):
+                    self.assertIsNone(probe["delivered"], process.stderr)
+                    self.assertIsNotNone(probe["sent"])
+        # And it is present where a step really did run.
+        with tempfile.TemporaryDirectory() as directory:
+            _, delivered_payload = self.calibrate(
+                directory, "--task-kind", "code-sql", transform=self.TRUNCATING
+            )
+        self.assertIsNotNone(
+            self._seam(delivered_payload, "every singer name", "good")["delivered"]
+        )
+
+    def test_both_advisories_say_the_fenced_shape_was_constructed(self) -> None:
+        """P2-1: the fence is built by this check in BOTH branches.
+
+        `delivered = args.reply_transform is not None` says a transform was
+        configured. It does not say anything was observed, and the with-step
+        branch was written as though it did.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            _, with_step = self.calibrate(
+                directory, "--task-kind", "code-sql", transform=self.TRUNCATING
+            )
+        with tempfile.TemporaryDirectory() as directory:
+            _, without_step = self.calibrate(directory, "--task-kind", "code-sql")
+        self.assertIn("this check constructed", with_step["seam_probe_advisory"])
+        self.assertIn(
+            "not one observed from this route", with_step["seam_probe_advisory"]
+        )
+        self.assertIn("this check constructed", without_step["seam_probe_advisory"])
 
     def test_the_budget_reserves_for_every_seam_probe_it_can_place(self) -> None:
         """A wait quoted before the flags are chosen has to cover them all."""

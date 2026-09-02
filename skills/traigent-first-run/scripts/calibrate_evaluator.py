@@ -37,9 +37,10 @@ from typing import Any
 #
 # A flat number cannot do that, which is why it is gone. The work scales with
 # the case set: every case has four authored calls.  A deterministic run can add
-# up to six supplemental calls (five exception probes and, where meaningful, a
-# permutation probe).  A one-minute-per-call deterministic scorer therefore
-# needs up to 1200 seconds for two cases; a judge needs 480. The onboarding
+# up to eight supplemental calls (five exception probes, up to two seam probes,
+# and, where meaningful, a permutation probe).  A one-minute-per-call
+# deterministic scorer therefore needs up to 1440 seconds for two cases; a judge
+# needs 480. The onboarding
 # ceiling can cut that work, but below it the budget must scale with every call
 # it can make.
 #
@@ -464,7 +465,6 @@ TASK_KINDS = (
     "short-answer",
     "structured",
 )
-SEAM_OUTCOMES = ("preserved", "damaged", "refused", "unavailable")
 
 
 def seam_probes_are_off_domain(probes: list[dict[str, Any]]) -> bool:
@@ -504,7 +504,10 @@ def fenced_probe_output(good: Any, task_kind: str | None) -> str | None:
         return None
     if "```" in good or "~~~" in good:
         return None
-    return f"```{FENCED_PROBE_LANGUAGE[task_kind]}\n{good.strip()}\n```"
+    # The answer verbatim, never `.strip()`ed: for a whitespace-sensitive
+    # evaluator a trimmed probe differs from the authored one in two ways, and
+    # this check may only ever change the wrapper.
+    return f"```{FENCED_PROBE_LANGUAGE[task_kind]}\n{good}\n```"
 
 
 def seam_probe_outcome(
@@ -518,13 +521,26 @@ def seam_probe_outcome(
     """What one seam probe establishes, in one word.
 
     `damaged` is the only outcome that says anything, and it is deliberately
-    one-directional. It fires when the authored phase scored this same content
-    at or above the good minimum and the delivered form lands at or below the
-    bad maximum - an answer the evaluator calls right, arriving as one it calls
-    wrong. A transform that merely changes the string is not damage: trimming,
+    one-directional: the authored phase scored this same content at or above
+    the good minimum, and the delivered form no longer clears it. An answer the
+    evaluator calls right, arriving as one it does not.
+
+    The line is `good_minimum` on both sides, and getting that wrong cost this
+    check the very defect it was written for. It read `score <= bad_maximum`
+    first - and the truncation that prompted all of this delivered an
+    unbalanced fragment a partial-credit grader scored 0.24, which is above the
+    0.2 default, so the fragment came back `preserved`. `bad_maximum` could not
+    be raised to cover it either: its documented job is the ceiling the
+    AUTHORED matrix holds a bad probe under, and loosening that to tighten this
+    pulls the calibration gate the wrong way. `good_minimum` is the only
+    threshold that already means "this evaluator calls the answer right", which
+    is the whole claim being made.
+
+    A transform that merely changes the string is not damage: trimming,
     unquoting and case folding all change it and none of them changes the
     verdict, so a check on the STRING would fire on every well-behaved agent
-    there is.
+    there is. Nor is a graded scorer nudging 1.00 to 0.90 - that answer is
+    still one this evaluator accepts.
     """
     if unavailable is not None:
         return "unavailable"
@@ -533,7 +549,7 @@ def seam_probe_outcome(
     if (
         score is not None
         and reference_score >= thresholds["good_minimum"]
-        and score <= thresholds["bad_maximum"]
+        and score < thresholds["good_minimum"]
     ):
         return "damaged"
     return "preserved"
@@ -667,6 +683,17 @@ def run_worker() -> int:
                     }
                     case_results.append({"name": case["name"], "scores": scores})
                 response = {"cases": case_results}
+            elif operation == "load":
+                # Nothing is scored here. The scorer is already loaded above;
+                # this resolves the reply transform and checks it accepts the
+                # one positional argument its contract names, so a typo'd path,
+                # a renamed function, a syntax error, an uninstalled dependency
+                # and a two-argument signature all fail LOUDLY and once -
+                # instead of arriving later as N identical refusals that cannot
+                # be told from an agent whose contract excludes the shape.
+                transform = load_function(request["reply_transform"])
+                inspect.signature(transform).bind("probe")
+                response = {"loaded": True}
             elif operation == "supplemental":
                 case = request["case"]
                 probe = request["probe"]
@@ -821,16 +848,21 @@ def parse_args() -> argparse.Namespace:
         choices=TASK_KINDS,
         help=(
             "the run-scoped output kind, in readiness.py's vocabulary. On code "
-            "and code-sql it adds one seam probe carrying the case's own good "
-            "answer inside a markdown code fence - the shape a chat model "
-            "returns code in unless told otherwise. Pass it only where project "
-            "evidence grounds the kind"
+            "and code-sql it adds two seam probes per case, carrying that "
+            "case's own good and equivalent-good answers inside a markdown "
+            "code fence - the shape a chat model returns code in unless told "
+            "otherwise. It arms nothing on any other kind, so pass it only "
+            "where project evidence grounds one of those two"
         ),
     )
     parser.add_argument(
         "--allow-execution",
         action="store_true",
-        help="confirm that importing and executing the scorer is intended",
+        help=(
+            "confirm that importing and executing the scorer is intended - and "
+            "the module behind --reply-transform, whose top level runs on the "
+            "same import"
+        ),
     )
     parser.add_argument(
         "--paid-approved",
@@ -1287,7 +1319,8 @@ def run() -> int:
     args = parse_args()
     if not args.allow_execution:
         print(
-            "Refusing to import or execute the scorer without --allow-execution.",
+            "Refusing to import or execute the scorer, or the module behind "
+            "--reply-transform, without --allow-execution.",
             file=sys.stderr,
         )
         return 2
@@ -1302,6 +1335,7 @@ def run() -> int:
             file=sys.stderr,
         )
         return 2
+    absolute_transform = None
     if args.reply_transform is not None:
         transform_file, transform_separator, transform_name = (
             args.reply_transform.partition(":")
@@ -1309,6 +1343,7 @@ def run() -> int:
         if not transform_separator or not transform_name:
             print("--reply-transform must use FILE.py:FUNCTION.", file=sys.stderr)
             return 2
+        absolute_transform = f"{Path(transform_file).resolve()}:{transform_name}"
     if args.kind == "llm-judge" and not args.paid_approved:
         print(
             "LLM-judge calibration can make provider calls; obtain approval and pass --paid-approved.",
@@ -1359,6 +1394,45 @@ def run() -> int:
         allow_provider_access=args.kind == "llm-judge"
     )
     worker_cwd = Path(scorer_file).resolve().parent
+    if absolute_transform is not None:
+        # Before the budget opens, and in the same credential-stripped child
+        # every other piece of the customer's code runs in - never in this
+        # process. A reply transform that cannot be loaded is a broken flag, not
+        # a finding about an agent, and the old code could not say so: five
+        # distinct mistakes - a missing file, a renamed function, a syntax
+        # error, an uninstalled import, a two-argument signature - each arrived
+        # as "every probe refused", which this script then reported as the check
+        # being out of its domain. A typo silently disabled the whole check and
+        # told the reader not to worry about it.
+        loaded = subprocess.run(
+            [sys.executable, str(Path(__file__).resolve()), "--_worker"],
+            input=json.dumps(
+                {
+                    "operation": "load",
+                    "scorer": absolute_scorer,
+                    "reply_transform": absolute_transform,
+                    "import_root": str(args.import_root),
+                }
+            ),
+            text=True,
+            capture_output=True,
+            timeout=DETERMINISTIC_SECONDS_PER_PROBE,
+            env=worker_environment,
+            cwd=worker_cwd,
+        )
+        if loaded.returncode != 0:
+            print(
+                "--reply-transform could not be loaded, so no seam probe can "
+                "run and nothing about this agent's delivery has been "
+                "established. Fix the flag rather than reading this as a "
+                "finding:\n"
+                + (
+                    loaded.stderr.strip()
+                    or f"worker exited with status {loaded.returncode}"
+                ),
+                file=sys.stderr,
+            )
+            return 2
     # One deadline for the whole calibration, opened before the authored phase
     # and shared with the supplemental probes below, so `--timeout` is the
     # worst-case wall time rather than half of it. The supplemental phase used to
@@ -1488,6 +1562,25 @@ def run() -> int:
                     environment=worker_environment,
                     cwd=worker_cwd,
                 )
+            for kind in EXCEPTION_PROBE_KINDS:
+                attempt = run_supplemental_attempt(
+                    {
+                        **request_base,
+                        "probe": {"type": "exception", "kind": kind},
+                    },
+                    deadline=calibration_deadline,
+                    total_budget_seconds=args.timeout,
+                    environment=worker_environment,
+                    cwd=worker_cwd,
+                )
+                supplemental_results[index]["exception_probes"].append(
+                    {"kind": kind, **attempt}
+                )
+            # Last, deliberately. This family is the new arrival, and
+            # enqueuing it ahead of the exception probes would make an
+            # existing family starve first under budget pressure - a
+            # silent change to what an unrelated check reports, decided by
+            # an insertion point rather than by anyone.
             seam_inputs = [
                 (source, fenced_probe_output(case["probes"][source], args.task_kind))
                 for source in SEAM_TRANSFORMED_SOURCES
@@ -1502,12 +1595,7 @@ def run() -> int:
                         # rather than the parent: it is the customer's code, and
                         # it runs where every other piece of their code runs -
                         # in the credential-stripped worker, never here.
-                        "reply_transform": (
-                            None
-                            if args.reply_transform is None
-                            else f"{Path(args.reply_transform.partition(':')[0]).resolve()}"
-                            f":{args.reply_transform.partition(':')[2]}"
-                        ),
+                        "reply_transform": absolute_transform,
                         "probe": {"type": "seam", "output": sent},
                     },
                     deadline=calibration_deadline,
@@ -1517,20 +1605,6 @@ def run() -> int:
                 )
                 supplemental_results[index]["seam_probes"].append(
                     {"source": source, "sent": sent, **attempt}
-                )
-            for kind in EXCEPTION_PROBE_KINDS:
-                attempt = run_supplemental_attempt(
-                    {
-                        **request_base,
-                        "probe": {"type": "exception", "kind": kind},
-                    },
-                    deadline=calibration_deadline,
-                    total_budget_seconds=args.timeout,
-                    environment=worker_environment,
-                    cwd=worker_cwd,
-                )
-                supplemental_results[index]["exception_probes"].append(
-                    {"kind": kind, **attempt}
                 )
     if warning_timer is not None:
         warning_timer.cancel()
@@ -1588,7 +1662,15 @@ def run() -> int:
                     "source": probe["source"],
                     "sent": probe["sent"],
                     "as_written": configured_case["probes"][probe["source"]],
-                    "delivered": probe.get("delivered"),
+                    # Null where no reply step ran. It used to echo `sent`
+                    # back byte-for-byte, which is a delivery nothing performed
+                    # written into the payload the guidance tells an assistant
+                    # to read both halves of.
+                    "delivered": (
+                        probe.get("delivered")
+                        if args.reply_transform is not None
+                        else None
+                    ),
                     "score": probe["score"],
                     "error": probe["error"],
                     # The authored score for this same content. One wrapper is
@@ -1750,9 +1832,12 @@ def run() -> int:
                 + ". Each is an answer the authored probes already scored as "
                 "right, put through this run's own reply step in the shape a "
                 "chat model returns code - and coming out as one this evaluator "
-                "scores as wrong, or not coming out at all. That is a fact "
-                "about the two strings recorded beside it, not a verdict on any "
-                "model. It does not change calibration PASS. Show both strings "
+                "scores as wrong, or not coming out at all. The fenced shape is "
+                "one this check constructed, not one observed from this route: "
+                "what is established is how the step behaves on it, not that "
+                "the model sends it. That is a fact about the two strings "
+                "recorded beside it, not a verdict on any model. It does not "
+                "change calibration PASS. Show both strings "
                 "and settle it before the paid run: every trial passes through "
                 "this same step, and configurations that all score the damaged "
                 "form cannot be told apart."

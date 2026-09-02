@@ -284,7 +284,10 @@ not a failed evaluator; the `evaluator-unvalidated` ceiling limits the readiness
 the evaluation method is actually checked. When rows exist, do the row-level sanity check in
 `references/evaluation-and-dataset.md` here and pass it as `--row-review`: it is your own read, it
 spends nothing, and no generated row competes with it yet. Apply the run-scoped evaluator-method rule above to both
-scripts, and apply the run-scoped task-kind rule to readiness only, and the origin rule with it.
+scripts, and apply the run-scoped task-kind rule to readiness only here - narrower than its
+destination rule in `references/evaluation-and-dataset.md`, because this gate's calibration takes no
+seam flags and so establishes nothing about delivery for stage 4 to reuse - and the origin rule with
+it.
 **Opening dataset sequencing.** The opening preflight reads a discovered dataset with its default
 `input`/`output` fields, before any explicit field mapping; do not pass `--input-field` or
 `--expected-field` to that opening call. A request/response log or accepted trace is a **source**
@@ -561,18 +564,18 @@ Follow this order:
    Otherwise, run deterministic calibration only after a `sufficient`
    semantic-coverage verdict. Its path must be fully inspected, must not execute
    candidate-generated code or SQL, and must be local-only and
-   side-effect-free, and runs in the credential-stripped calibration subprocess. Where the agent has a
-   reply-to-answer step, pass it as `--reply-transform`, so the probes are scored as an answer
-   arrives rather than as it was typed. Pass `--task-kind` under the same rule that governs it
-   everywhere else - only where project evidence grounds a recognized kind - and omit it where the
-   agent's contract makes the model's reply something this check cannot build, such as a
-   structured-output agent parsing JSON; record that reason with the calibration artifacts.
-   `references/evaluation-and-dataset.md` owns the seam probes those flags add, the one shape they
-   send, and what each may claim. When the opening
+   side-effect-free, and runs in the credential-stripped calibration subprocess. Where the agent has
+   a reply-to-answer step, pass it as `--reply-transform` and pass `--task-kind` beside it under the
+   destination rule in `references/evaluation-and-dataset.md`, which owns both flags, the seam
+   probes they add, and what those may claim. The transform's whole module is imported to reach it,
+   so the inspection sentence above covers that module too: where it imports a dependency this
+   environment does not yet have, defer both flags with the calibration itself to step 5 rather than
+   installing anything here. When the opening
    gate already produced that fresh result, reuse it here unless the evaluator, cases, semantic
-   evidence, or execution path changed; do not execute the same calibration twice merely because
-   the flow reached this step. Run here anything the opening gate truthfully deferred and can now
-   establish.
+   evidence, execution path, or the flags above changed; a result produced without them establishes
+   nothing about delivery, so it is not the fresh result this step needs. Do not execute the same
+   calibration twice merely because the flow reached this step. Run here anything the opening gate
+   truthfully deferred and can now establish.
 5. Re-run `scripts/readiness.py` on the fresh preflight JSON plus any applicable calibration
    result. Omit every config-space file found before this run's enhanced search here just as at the
    opening gate. This score is required even when a low score or cap is expected. Record its gate
@@ -765,8 +768,9 @@ was filled, absolute paths to what was written, the easiest and hardest rows, wh
 method counts as correct, and one proceed-or-fix answer. It is content on the approval that already
 stops, never a second pause, and approving the spend is not approving the material. A standing
 `seam_probe_advisory` rides that same approval whether or not the card does: what the evaluator
-scored the answer as written and as delivered, and both strings. This is the last moment the
-delivery costs nothing to fix.
+scored the answer as the author wrote it and in the shape the probe sent, and every string the
+advisory recorded - which is one string, not two, where no reply step ran. This is the last moment
+the delivery costs nothing to fix.
 
 When the opening gate found Traigent already set up here, that approval carries it too, beside the
 figure: what was found, and that this run charges for its own baseline and search whether or not
@@ -874,17 +878,15 @@ possible; report any gain as cost and still flag weak evidence.
 
 Where that repair is one this run can make for nothing - a fault in code this run wrote, or one
 mended in a working copy that leaves their files untouched - the routes offered are ways to a sound
-measurement, and `references/component-creation.md` picks which of them carries the mark. This
-narrows that rule at one point and replaces none of it: a route whose own description carries the
-diagnosed fault into a later paid stage is not offered at all, marked or unmarked, because lettering
-it makes a known-bad outcome look considered. On this menu, and on no other, abandoning the run is
-not a co-equal letter beside the free repair: the customer paid for a measurement this run has just
-shown measured nothing, so keeping it is not keeping a result. That is a rule about the routes
-offered for this fault, in this moment. A later stage that letters and prices a stop of its own -
-the connected preview, where stopping keeps a baseline the run still stands behind - is untouched
-by it and keeps its own lettered route. Declining stays plainly answerable and is answered
-without reproach: preserve what was measured, report the run as baseline-only, and never suggest
-they were wrong to stop.
+measurement, and `references/component-creation.md` owns how they are worded and ordered. What
+follows governs which routes may be OFFERED here, and only here. A route whose own description
+carries the diagnosed fault into a later paid stage is not offered at all: lettering it makes a
+known-bad outcome look considered. Abandoning the run is not a co-equal letter beside the free
+repair either, because the customer paid for a measurement this run has just shown measured
+nothing, so keeping it is not keeping a result. Both sentences are bounded to this menu, for this
+fault, at this moment; no other stage's offer is changed by them. Declining stays plainly
+answerable and is answered without reproach: preserve what was measured, report the run as
+baseline-only, and never suggest they were wrong to stop.
 
 Preview the connected step with the final reply-ready line and approval rules in
 `references/run-safety.md`. Its explicit approval remains required before its key, probe, sync, or calls.
