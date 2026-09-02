@@ -6158,6 +6158,31 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
             evidence = "calibration reported a case this score could not read"
         elif facts.calibration_supplied:
             evidence = "calibration ran but reported no checks"
+        elif facts.calibration_scope_refused:
+            # The arm below says "no calibration result was PROVIDED", which is
+            # this module's own sentence for a run that was asked and did not
+            # answer - `SubScore.withheld` in prose. A run the evaluator-
+            # execution scope gate refused was never asked; it was forbidden,
+            # and printing the asked-and-refused sentence over it made the card
+            # charge that run with a silence it did not choose. It sat directly
+            # above the cap that says this check must not be run here, so the
+            # two lines of one card disagreed about what had happened.
+            #
+            # ONLY THE SENTENCE MOVES. `value`, `maximum`, `measured` and
+            # `withheld` are all identical to the arm below, so the pillar
+            # stays exactly where it was and the declaration still buys
+            # nothing - which is the rule this whole seam is held to, and the
+            # reason clearing `withheld` here was rejected: it would lift the
+            # pillar from 51 to about 97 on the strength of a flag nothing
+            # verifies, and make claiming a refusal cheaper than doing the
+            # work. What the run needs is not a higher number for the evidence
+            # it lacks; it is a way to get the evidence, and
+            # `calibrate_evaluator.py --contained` is that route.
+            evidence = (
+                "this run was never asked for a calibration - the evaluator-"
+                "execution scope gate refused it, and the weight stays because "
+                "the evidence is absent either way"
+            )
         else:
             evidence = "no calibration result was provided to this score"
         subs.append(
@@ -6177,7 +6202,12 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
                 # measurement the run had not reached yet. Neither line is
                 # allowed to be silent about which it is any more.
                 f"{evidence}; it costs points until a complete calibration is "
-                "measured",
+                "measured"
+                + (
+                    " - the contained calibration route is what measures one " "here"
+                    if facts.calibration_scope_refused
+                    else ""
+                ),
                 # The score describes the evidence connected to this run, not
                 # everything that may exist elsewhere. A complete calibration
                 # result earns these points; one that was not found or passed

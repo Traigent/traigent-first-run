@@ -297,12 +297,44 @@ flags do not make that execution safe.
 
 When the resolved evaluator call path is an executing one, preserve the project, run only
 read-only static inspection that does not import or execute it, record a `stopped` `containment`
-event, and end this guide before calibration, environment setup, credentials, provider calls, or
+event, and - unless the contained calibration route below can take it - end this guide before
+calibration, environment setup, credentials, provider calls, or
 paid work.
 The next step is a separate manual containment design and review outside this guide; it must decide
 the execution boundary, mounted inputs, credentials, network, limits, cleanup, and SQL data scope.
 Do not describe that manual work as available through this guide or imply that a local subprocess
 fulfils it.
+
+Two moments sit behind that stop and only one of them is about the model's output, so each is
+refused on its own reason rather than both on the stronger-sounding one. Calibration runs the four
+probes this guide's own matrix authors; there is no model-written statement at that step, and the
+question "why can I check a SQL scorer on five known pairs when I can check any other scorer that
+way?" has no good answer in terms of candidate output, because there is none. What calibration does
+do is import the scorer and let it open its engine against whatever database it is configured for,
+and that database is the project's. That is the reason calibration is refused outside the contained
+route: the target is unbounded, which is a containment question this guide declines to own rather
+than a claim about where the statements came from. A trial is the other moment - there the model
+writes the query and the scorer runs it - and nothing in this guide opens it, at any stage, under
+any flag.
+
+`scripts/calibrate_evaluator.py` reads the scorer's reachable project path before importing
+anything and refuses the ordinary route on two verdicts: a call that reaches a code or SQL engine,
+and a path the read could not follow to the end. Both refusals name their sites and exit 2, so this
+scope rule is enforced by the tool rather than carried by this sentence, and a scorer nobody can
+classify is refused rather than assumed clean. A parser gate is not a refusal: `compile` and
+`ast.parse` read a string, and reading is the first half of the comparison method
+`references/evaluation-and-dataset.md` selects for a code answer.
+
+`--contained` is the one bounded route the refusal offers, and it is narrow. It runs the same
+authored probes with the network closed at the socket layer, subprocesses refused, sqlite opened
+read-only under a step budget, and cpu and file writes bounded; the card records what the envelope
+actually enforced and what it does not bound, measured in the child rather than declared by the
+flag. Point it only at a disposable schema this run built or copied, never at a database the
+project depends on - the envelope makes a remote database unreachable and a local one unwritable,
+and neither of those is a reason to aim it at production data. It is refused beside `--kind
+llm-judge`, which needs the network the envelope closes. A contained calibration establishes the
+evaluator exactly as an ordinary one does and is what lifts `evaluator-calibration-refused`; where
+it cannot run, everything above stands and paid work still waits on the manual review.
 
 ### Deterministic calibration and mock plumbing
 
@@ -313,7 +345,7 @@ same three words bind anything else this stage imports, and a reply transform is
 thing it does: reaching that function executes its module's top level, which for an agent file is
 commonly a provider client. A non-executing evaluator that needs a declared local dependency waits
 until that dependency is installed, and so does a transform whose module does - the flag waits with
-it rather than pulling an install into this stage. An execution evaluator has already ended this guide at the scope gate above. Run either
+it rather than pulling an install into this stage. An execution evaluator has already ended this guide at the scope gate above, unless it was taken through the contained route named there. Run either
 before creating `.env` or requesting a provider key. A generic outside-review wait is not a gate;
 pause only when one unresolved product-grading ambiguity would materially change correctness or
 ranking. Do not execute an LLM judge or an uncertain or external evaluator without explicit approval

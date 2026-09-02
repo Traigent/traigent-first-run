@@ -7963,6 +7963,32 @@ class SkillPackageTests(unittest.TestCase):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, normalized)
         self.assertNotIn("static preflight identifies", normalized)
+        # The one exception the stop now names, and the reason it gives for
+        # itself. Both are pinned because the pair is the decision: a route
+        # without its bounds reads as a bypass, and bounds without a route
+        # leave the class of project this gate is about with nowhere to go.
+        for contained_phrase in (
+            "unless the contained calibration route below can take it",
+            "the network closed at the socket layer",
+            "sqlite opened read-only under a step budget",
+            "never at a database the project depends on",
+            "refused beside `--kind llm-judge`",
+            "a contained calibration establishes the evaluator",
+        ):
+            with self.subTest(contained_phrase=contained_phrase):
+                self.assertIn(contained_phrase, normalized)
+        # The refusal states the reason that is true of the step it refuses.
+        # Calibration runs authored probes, so blaming the model's output for
+        # the calibration stop was false of it.
+        for reason_phrase in (
+            "there is no model-written statement at that step",
+            "that database is the project's",
+            "the target is unbounded",
+            "a trial is the other moment",
+        ):
+            with self.subTest(reason_phrase=reason_phrase):
+                self.assertIn(reason_phrase, normalized)
+        self.assertIn("a parser gate is not a refusal", normalized)
 
         calibration = " ".join(
             text.split("### Deterministic calibration and mock plumbing", 1)[1]
@@ -20539,6 +20565,24 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
                 "code or sql | out of scope",
                 "| code | parser/compile gate plus unit or execution tests |",
                 "execution match (run the sql/code and compare results), unit tests,",
+            ),
+        ),
+        (
+            # The stop covered two moments and justified both with a reason
+            # that holds for only the second. Calibration runs the four probes
+            # this guide's own matrix authors, so no model-written statement
+            # runs there; a trial is where the model writes the query and the
+            # scorer runs it. Naming candidate output as the reason calibration
+            # is refused was false of calibration, and it was the sentence a
+            # customer had to accept to be told they could not check a SQL
+            # scorer on five known pairs. Settled: the reason at that step is
+            # the database the scorer opens.
+            "why calibrating an execution scorer is refused",
+            ("there is no model-written statement at that step",),
+            (
+                "because it executes candidate-generated sql",
+                "does not run candidate-generated code or sql outside containment",
+                "the probes are candidate-generated",
             ),
         ),
         (

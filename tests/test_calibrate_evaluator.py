@@ -6,6 +6,7 @@ import importlib.util
 import io
 import json
 import re
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -3974,6 +3975,699 @@ class TheSeamBetweenTheProbesAndTheAgentTests(unittest.TestCase):
             module.DETERMINISTIC_SUPPLEMENTAL_PROBES_PER_CASE,
             1 + module.SEAM_PROBES_PER_CASE + len(module.EXCEPTION_PROBE_KINDS),
         )
+
+
+class ExecutionScopeGateTests(unittest.TestCase):
+    """The scope gate, executed rather than described.
+
+    `SKILL.md` has always forbidden calibrating a scorer whose path executes
+    candidate code or SQL, and until this branch the only refusal in
+    `calibrate_evaluator.py` was `--allow-execution`, which acknowledges that
+    importing was intended and says nothing about what the scorer does next.
+    Measured on a 48-row query-log corpus with a result-set evaluator, obeying
+    the sentence scored 45 PARTIAL with the evaluation pillar at 51 and
+    ignoring it scored 89 with the pillar at 99 - a 44-point, band-changing
+    price on reading the rule.
+
+    Two things are proved here and they are different. The gate REFUSES, and
+    the thing it refuses has somewhere to go.
+    """
+
+    RUNNER_CASES = json.dumps(
+        [
+            {
+                "name": "one",
+                "score_mode": "binary",
+                "expected": "a",
+                "probes": {
+                    "good": "a",
+                    "equivalent_good": "a",
+                    "partial": "b",
+                    "bad": "c",
+                },
+            },
+            {
+                "name": "two",
+                "score_mode": "binary",
+                "expected": "x",
+                "probes": {
+                    "good": "x",
+                    "equivalent_good": "x",
+                    "partial": "y",
+                    "bad": "z",
+                },
+            },
+        ]
+    )
+
+    @staticmethod
+    def _module():
+        spec = importlib.util.spec_from_file_location("first_run_scope", SCRIPT)
+        module = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        sys.modules[spec.name] = module
+        spec.loader.exec_module(module)
+        return module
+
+    def calibrate(self, scorer: Path, name: str, *extra: str):
+        return subprocess.run(
+            [
+                sys.executable,
+                str(SCRIPT),
+                "--scorer",
+                f"{scorer}:{name}",
+                "--import-root",
+                str(scorer.parent),
+                "--cases",
+                self.RUNNER_CASES,
+                "--allow-execution",
+                "--json",
+                *extra,
+            ],
+            capture_output=True,
+            text=True,
+        )
+
+    def write(self, directory: str, name: str, source: str) -> Path:
+        path = Path(directory) / name
+        path.write_text(source)
+        return path
+
+    # -- the gate refuses -------------------------------------------------
+    def test_a_scorer_that_reaches_an_engine_is_refused_and_never_imported(
+        self,
+    ) -> None:
+        """The sites are named, and the read happens before the import.
+
+        The import is what the refusal has to precede: once the scorer's module
+        top level has run, the connection this gate is about may already be
+        open. The marker file is how that is checked rather than assumed - it
+        is written at import, so its absence is evidence the module never ran.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            marker = Path(directory) / "imported.marker"
+            scorer = self.write(
+                directory,
+                "engine_scorer.py",
+                "import pathlib\n"
+                "import sqlite3\n\n"
+                f"pathlib.Path({str(marker)!r}).write_text('ran')\n\n\n"
+                "def score_sql(*, output, expected, input_data, metadata):\n"
+                "    del input_data, metadata\n"
+                "    connection = sqlite3.connect(':memory:')\n"
+                "    try:\n"
+                "        rows = connection.execute(str(output)).fetchall()\n"
+                "    except Exception:\n"
+                "        return 0.0\n"
+                "    finally:\n"
+                "        connection.close()\n"
+                "    return float(bool(rows))\n",
+            )
+            process = self.calibrate(scorer, "score_sql")
+            self.assertEqual(process.returncode, 2, process.stdout)
+            self.assertFalse(
+                marker.exists(),
+                "the scorer's module top level ran, so the refusal came after "
+                "the import it exists to prevent",
+            )
+        self.assertIn("engine_scorer.py:", process.stderr)
+        self.assertIn("sqlite3", process.stderr)
+
+    def test_a_scorer_this_read_cannot_follow_is_refused_and_it_really_executes(
+        self,
+    ) -> None:
+        """The unknown case fails closed, on a scorer that names no engine.
+
+        This is the property the whole design turns on. The recurring defect in
+        this package is a check that settles a semantic question from a surface
+        signal and lets its did-not-find-it branch count as a pass. So the
+        scorer here mentions `sqlite3` exactly once, as a value in a dict, and
+        never calls anything the reader recognises: the opener comes out of a
+        subscript and the verb comes out of `getattr` on a built-up string.
+        The reader finds ZERO sinks.
+
+        It is refused anyway - and the first half of this test runs the scorer
+        to show the refusal was right, so the assertion is not merely that an
+        unclassifiable file is turned away but that this particular
+        unclassifiable file does exactly what the gate is for.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            scorer = self.write(
+                directory,
+                "dispatch_scorer.py",
+                "import sqlite3\n\n"
+                "OPENERS = {'main': sqlite3.connect}\n\n\n"
+                "def score_sql(*, output, expected, input_data, metadata):\n"
+                "    del input_data, metadata\n"
+                "    opener = OPENERS['main']\n"
+                "    connection = opener(':memory:')\n"
+                "    try:\n"
+                "        runner = getattr(connection, 'exe' + 'cute')\n"
+                "        try:\n"
+                "            produced = runner(str(output)).fetchall()\n"
+                "        except Exception:\n"
+                "            return 0.0\n"
+                "        reference = runner(str(expected)).fetchall()\n"
+                "    finally:\n"
+                "        connection.close()\n"
+                "    return float(produced == reference)\n",
+            )
+
+            # It executes what it is given. Established by running it, not by
+            # reading it - the point of the test is that reading it does not
+            # settle this.
+            sys.path.insert(0, directory)
+            try:
+                loader = importlib.util.spec_from_file_location("dispatch", scorer)
+                executing = importlib.util.module_from_spec(loader)
+                assert loader.loader is not None
+                loader.loader.exec_module(executing)
+                self.assertEqual(
+                    executing.score_sql(
+                        output="SELECT 1",
+                        expected="SELECT 1",
+                        input_data=None,
+                        metadata=None,
+                    ),
+                    1.0,
+                )
+                self.assertEqual(
+                    executing.score_sql(
+                        output="SELECT 2",
+                        expected="SELECT 1",
+                        input_data=None,
+                        metadata=None,
+                    ),
+                    0.0,
+                )
+            finally:
+                sys.path.remove(directory)
+
+            module = self._module()
+            scan = module.execution_scope_scan(scorer, "score_sql", Path(directory))
+            self.assertEqual(scan["verdict"], module.SCOPE_UNREADABLE)
+            self.assertEqual(
+                scan["sinks"],
+                [],
+                "the point of this fixture is that no sink is visible; if one "
+                "is, it is proving the wrong branch",
+            )
+            self.assertTrue(scan["unreadable"])
+
+            process = self.calibrate(scorer, "score_sql")
+        self.assertEqual(process.returncode, 2, process.stdout)
+        self.assertIn("could not follow its complete path", process.stderr)
+
+    def test_an_engine_one_attribute_away_is_still_found(self) -> None:
+        """The receiver is the hole this read had, and it was a real one.
+
+        A scorer that grades through a project helper object - `STORE.rows(sql)`
+        where `STORE = Warehouse()` - has no engine call the reader recognises
+        at the call site: the receiver is a module-level name and `rows` is not
+        one of the engine verbs. The first version of this read cleared it,
+        which is the exact defect shape this package keeps producing: could not
+        follow it, therefore found nothing, therefore fine. It now resolves the
+        construction to the class and reads the method.
+        """
+        module = self._module()
+        with tempfile.TemporaryDirectory() as directory:
+            scorer = self.write(
+                directory,
+                "via_helper.py",
+                "import sqlite3\n\n\n"
+                "class Warehouse:\n"
+                "    def __init__(self):\n"
+                "        self.path = ':memory:'\n\n"
+                "    def rows(self, statement):\n"
+                "        connection = sqlite3.connect(self.path)\n"
+                "        try:\n"
+                "            return connection.execute(statement).fetchall()\n"
+                "        finally:\n"
+                "            connection.close()\n\n\n"
+                "STORE = Warehouse()\n\n\n"
+                "def score_sql(*, output, expected, input_data, metadata):\n"
+                "    del input_data, metadata\n"
+                "    try:\n"
+                "        produced = STORE.rows(str(output))\n"
+                "    except Exception:\n"
+                "        return 0.0\n"
+                "    return float(produced == STORE.rows(str(expected)))\n",
+            )
+            scan = module.execution_scope_scan(scorer, "score_sql", Path(directory))
+            process = self.calibrate(scorer, "score_sql")
+        self.assertEqual(scan["verdict"], module.SCOPE_EXECUTES, scan)
+        self.assertEqual(process.returncode, 2, process.stdout)
+
+    def test_an_honest_helper_object_is_not_refused_for_having_one(self) -> None:
+        """The false-red side of the same rule.
+
+        Following a receiver is only safe if it stops where the project does. A
+        normaliser holding a compiled pattern - `self.spaces.sub(...)` - has
+        `self` at the root of its chain and `sub` on something else entirely,
+        and looking `sub` up on the enclosing class would refuse the most
+        ordinary scorer in the guide for lacking a method it never claimed.
+        """
+        module = self._module()
+        with tempfile.TemporaryDirectory() as directory:
+            scorer = self.write(
+                directory,
+                "normalising.py",
+                "import re\n"
+                "import unicodedata\n\n\n"
+                "class Normalizer:\n"
+                "    def __init__(self):\n"
+                "        self.spaces = re.compile(r'\\s+')\n\n"
+                "    def clean(self, value):\n"
+                "        folded = unicodedata.normalize('NFKC', str(value))\n"
+                "        return self.spaces.sub(' ', folded).strip().casefold()\n\n\n"
+                "NORMALIZER = Normalizer()\n\n\n"
+                "def score_text(*, output, expected, input_data, metadata):\n"
+                "    del input_data, metadata\n"
+                "    return float(\n"
+                "        NORMALIZER.clean(output) == NORMALIZER.clean(expected)\n"
+                "    )\n",
+            )
+            scan = module.execution_scope_scan(scorer, "score_text", Path(directory))
+            process = self.calibrate(scorer, "score_text")
+        self.assertEqual(scan["verdict"], module.SCOPE_CLEAR, scan)
+        self.assertEqual(process.returncode, 0, process.stderr)
+
+    def test_a_callable_that_is_not_a_top_level_function_is_refused(self) -> None:
+        """A body that was never opened is not a body that was cleared."""
+        with tempfile.TemporaryDirectory() as directory:
+            scorer = self.write(
+                directory,
+                "bound_scorer.py",
+                "import sqlite3\n\n\n"
+                "def _build():\n"
+                "    def inner(*, output, expected, input_data, metadata):\n"
+                "        del input_data, metadata\n"
+                "        connection = sqlite3.connect(':memory:')\n"
+                "        connection.close()\n"
+                "        return float(str(output) == str(expected))\n"
+                "    return inner\n\n\n"
+                "score = _build()\n",
+            )
+            module = self._module()
+            scan = module.execution_scope_scan(scorer, "score", Path(directory))
+            process = self.calibrate(scorer, "score")
+        self.assertNotEqual(scan["verdict"], module.SCOPE_CLEAR)
+        self.assertTrue(
+            any(
+                "not a function defined at the top level" in site["detail"]
+                for site in scan["unreadable"]
+            ),
+            scan["unreadable"],
+        )
+        self.assertEqual(process.returncode, 2, process.stdout)
+
+    # -- the gate clears what it should ------------------------------------
+    def test_a_parser_gate_is_not_an_engine(self) -> None:
+        """`compile` and `ast.parse` read a string; they do not run it.
+
+        Refusing them would refuse the in-scope route rather than the
+        out-of-scope one: `references/evaluation-and-dataset.md` selects a
+        parser gate followed by comparison over canonical form as the way to
+        grade a code answer. The verbs that run a code object are `eval` and
+        `exec`, and those are sinks.
+        """
+        module = self._module()
+        self.assertNotIn("compile", module.EXECUTION_SINK_BUILTINS)
+        self.assertIn("compile", module.SAFE_BUILTINS)
+        self.assertIn("eval", module.EXECUTION_SINK_BUILTINS)
+        self.assertIn("exec", module.EXECUTION_SINK_BUILTINS)
+        with tempfile.TemporaryDirectory() as directory:
+            scorer = self.write(
+                directory,
+                "parser_gate.py",
+                "import ast\n\n\n"
+                "def score_code(*, output, expected, input_data, metadata):\n"
+                "    del input_data, metadata\n"
+                "    try:\n"
+                "        produced = ast.dump(ast.parse(str(output)))\n"
+                "    except SyntaxError:\n"
+                "        return 0.0\n"
+                "    reference = ast.dump(ast.parse(str(expected)))\n"
+                "    return float(produced == reference)\n",
+            )
+            scan = module.execution_scope_scan(scorer, "score_code", Path(directory))
+        self.assertEqual(scan["verdict"], module.SCOPE_CLEAR)
+        self.assertEqual(scan["sinks"], [])
+        self.assertEqual(scan["unreadable"], [])
+
+    def test_the_committed_outcome_evaluators_still_clear_the_read(self) -> None:
+        """The corpus this repository ships must not be refused by its own gate."""
+        module = self._module()
+        outcomes = ROOT / "tests" / "behavioral" / "outcomes"
+        checked = 0
+        for evaluator in sorted(outcomes.glob("*/project/evaluator.py")):
+            with self.subTest(evaluator=evaluator.relative_to(ROOT)):
+                scan = module.execution_scope_scan(
+                    evaluator, "score_intent", evaluator.parent
+                )
+                self.assertEqual(scan["verdict"], module.SCOPE_CLEAR, scan)
+                checked += 1
+        self.assertTrue(checked, "no committed evaluator was checked")
+
+    # -- the refusal says something true -----------------------------------
+    def test_the_refusal_does_not_blame_output_the_model_never_wrote(self) -> None:
+        """Calibration runs authored probes, so the old reason was false of it.
+
+        The gate covered two moments under one sentence and justified both with
+        a reason that holds for only the second. At CALIBRATION the four probes
+        come from the matrix this guide has the assistant author, so no
+        model-written statement runs; what is unbounded is the database the
+        scorer opens. At a TRIAL the model writes the query and the scorer runs
+        it, and that stays closed. The refusal must name the first reason,
+        because that is the step it is refusing.
+        """
+        module = self._module()
+        message = module.scope_refusal_message(
+            {
+                "verdict": module.SCOPE_EXECUTES,
+                "sinks": [{"file": "s.py", "line": 1, "detail": "d"}],
+                "unreadable": [],
+            }
+        )
+        lowered = message.casefold()
+        self.assertIn("opens an engine", lowered)
+        self.assertIn("authored", lowered)
+        self.assertNotIn("candidate-generated", lowered)
+        self.assertIn(
+            "nothing the model wrote runs at this step",
+            " ".join(lowered.split()),
+        )
+        self.assertIn("trial", lowered)
+        self.assertIn("--contained", message)
+
+    # -- the envelope, and what it actually closes -------------------------
+    def test_the_envelope_closes_the_network(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            scorer = self.write(
+                directory,
+                "dialer.py",
+                "import socket\n"
+                "import sqlite3\n\n\n"
+                "def score_remote(*, output, expected, input_data, metadata):\n"
+                "    del input_data, metadata\n"
+                "    sqlite3.connect(':memory:').close()\n"
+                "    socket.create_connection(('127.0.0.1', 9), timeout=1).close()\n"
+                "    return float(str(output) == str(expected))\n",
+            )
+            process = self.calibrate(scorer, "score_remote", "--contained")
+        self.assertEqual(process.returncode, 1, process.stdout)
+        self.assertIn("ContainmentRefusal", process.stderr)
+        self.assertIn("closed the network", process.stderr)
+
+    def test_the_envelope_refuses_subprocesses(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            scorer = self.write(
+                directory,
+                "shellout.py",
+                "import subprocess\n\n\n"
+                "def score_shell(*, output, expected, input_data, metadata):\n"
+                "    del input_data, metadata\n"
+                "    subprocess.run(['/bin/true'], check=False)\n"
+                "    return float(str(output) == str(expected))\n",
+            )
+            refused = self.calibrate(scorer, "score_shell")
+            contained = self.calibrate(scorer, "score_shell", "--contained")
+        self.assertEqual(refused.returncode, 2, refused.stdout)
+        self.assertEqual(contained.returncode, 1, contained.stdout)
+        self.assertIn("refuses subprocesses", contained.stderr)
+
+    def test_the_envelope_opens_sqlite_read_only(self) -> None:
+        """The engine enforces it, not this tool: a write fails inside sqlite."""
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory) / "disposable.db"
+            connection = sqlite3.connect(database)
+            connection.execute("CREATE TABLE rows (id INTEGER)")
+            connection.execute("INSERT INTO rows VALUES (1)")
+            connection.commit()
+            connection.close()
+            scorer = self.write(
+                directory,
+                "writer.py",
+                "import sqlite3\n\n"
+                f"DB = {str(database)!r}\n\n\n"
+                "def score_write(*, output, expected, input_data, metadata):\n"
+                "    del input_data, metadata\n"
+                "    connection = sqlite3.connect(DB)\n"
+                "    try:\n"
+                "        connection.execute('DELETE FROM rows')\n"
+                "        connection.commit()\n"
+                "    finally:\n"
+                "        connection.close()\n"
+                "    return float(str(output) == str(expected))\n",
+            )
+            process = self.calibrate(scorer, "score_write", "--contained")
+            survivors = sqlite3.connect(database).execute("SELECT COUNT(*) FROM rows")
+            remaining = survivors.fetchone()[0]
+        self.assertEqual(process.returncode, 1, process.stdout)
+        self.assertIn("readonly database", process.stderr)
+        self.assertEqual(remaining, 1, "the envelope let the scorer delete a row")
+
+    def test_the_envelope_refuses_attaching_a_second_database(self) -> None:
+        """Read-only on the main database is not read-only on the process.
+
+        Opening the graded database `mode=ro` says nothing about a SECOND file
+        the scorer attaches, creates and writes freely. Measured rather than
+        reasoned about: the first version of this envelope let an attaching
+        scorer create and populate a side database and exit 0. sqlite's own
+        authorizer is the instrument, because it refuses inside the engine
+        rather than by pattern-matching the statement text.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            main = Path(directory) / "graded.db"
+            connection = sqlite3.connect(main)
+            connection.execute("CREATE TABLE rows (id INTEGER)")
+            connection.commit()
+            connection.close()
+            side = Path(directory) / "side.db"
+            scorer = self.write(
+                directory,
+                "attaching.py",
+                "import sqlite3\n\n"
+                f"MAIN = {str(main)!r}\n"
+                f"SIDE = {str(side)!r}\n\n\n"
+                "def score_attach(*, output, expected, input_data, metadata):\n"
+                "    del input_data, metadata\n"
+                "    connection = sqlite3.connect(MAIN)\n"
+                "    try:\n"
+                '        connection.execute("ATTACH DATABASE \'" + SIDE + "\' AS side")\n'
+                "        connection.execute('CREATE TABLE side.mark (id INTEGER)')\n"
+                "        connection.commit()\n"
+                "    finally:\n"
+                "        connection.close()\n"
+                "    return float(str(output) == str(expected))\n",
+            )
+            process = self.calibrate(scorer, "score_attach", "--contained")
+            self.assertEqual(process.returncode, 1, process.stdout)
+            self.assertIn("not authorized", process.stderr)
+            self.assertFalse(
+                side.exists(), "the scorer attached and created a second database"
+            )
+
+    def test_the_second_name_for_connect_is_closed_too(self) -> None:
+        """`sqlite3` re-exports from `sqlite3.dbapi2`, so one patch is not one door.
+
+        Also measured: before this, a scorer calling `sqlite3.dbapi2.connect`
+        deleted a row from the graded database and the run exited 0.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory) / "graded.db"
+            connection = sqlite3.connect(database)
+            connection.execute("CREATE TABLE rows (id INTEGER)")
+            connection.execute("INSERT INTO rows VALUES (1)")
+            connection.commit()
+            connection.close()
+            scorer = self.write(
+                directory,
+                "second_name.py",
+                "import sqlite3.dbapi2\n\n"
+                f"DB = {str(database)!r}\n\n\n"
+                "def score_dbapi(*, output, expected, input_data, metadata):\n"
+                "    del input_data, metadata\n"
+                "    connection = sqlite3.dbapi2.connect(DB)\n"
+                "    try:\n"
+                "        connection.execute('DELETE FROM rows')\n"
+                "        connection.commit()\n"
+                "    finally:\n"
+                "        connection.close()\n"
+                "    return float(str(output) == str(expected))\n",
+            )
+            process = self.calibrate(scorer, "score_dbapi", "--contained")
+            remaining = (
+                sqlite3.connect(database)
+                .execute("SELECT COUNT(*) FROM rows")
+                .fetchone()
+            )[0]
+            self.assertEqual(process.returncode, 1, process.stdout)
+            self.assertIn("readonly database", process.stderr)
+            self.assertEqual(remaining, 1)
+
+    def test_a_contained_run_reports_what_was_enforced_not_what_was_asked_for(
+        self,
+    ) -> None:
+        """The attestation comes back from the child that installed it.
+
+        This is what separates a contained calibration from a declaration. The
+        run does not get to say it was contained; the process that closed the
+        envelope says what closed, and the parent copies that onto the card. A
+        run without the flag carries no `containment` block at all rather than
+        an empty or false one.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            scorer = self.write(
+                directory,
+                "plain.py",
+                "def score(*, output, expected, input_data, metadata):\n"
+                "    del input_data, metadata\n"
+                "    return float(str(output) == str(expected))\n",
+            )
+            contained = self.calibrate(scorer, "score", "--contained")
+            ordinary = self.calibrate(scorer, "score")
+        self.assertEqual(contained.returncode, 0, contained.stderr)
+        self.assertEqual(ordinary.returncode, 0, ordinary.stderr)
+        card = json.loads(contained.stdout)
+        envelope = card["containment"]
+        self.assertEqual(envelope["mode"], "contained")
+        self.assertIn("closed", envelope["network"])
+        self.assertIn("refused", envelope["subprocess"])
+        self.assertIn("read-only", envelope["sqlite"])
+        self.assertIn("RLIMIT_CPU", envelope["resources"])
+        # Named because it is absent. An envelope that lists only what it
+        # closed reads as one that closed everything.
+        self.assertIn("address space", envelope["not_bounded"])
+        self.assertNotIn("containment", json.loads(ordinary.stdout))
+        self.assertEqual(card["passed"], json.loads(ordinary.stdout)["passed"])
+
+    def test_the_scan_is_on_the_card_whichever_route_was_taken(self) -> None:
+        """A clean read states its own bound, so the clearance can be weighed."""
+        with tempfile.TemporaryDirectory() as directory:
+            scorer = self.write(
+                directory,
+                "plain.py",
+                "def score(*, output, expected, input_data, metadata):\n"
+                "    del input_data, metadata\n"
+                "    return float(str(output) == str(expected))\n",
+            )
+            process = self.calibrate(scorer, "score")
+        card = json.loads(process.stdout)
+        self.assertEqual(card["execution_scope"]["verdict"], "no-execution-found")
+        self.assertIn("not_followed", card["execution_scope"])
+        self.assertIn("files_read", card["execution_scope"])
+
+    def test_the_envelope_and_a_judge_cannot_both_hold(self) -> None:
+        """A judge reaches its provider over the network the envelope closes."""
+        with tempfile.TemporaryDirectory() as directory:
+            scorer = self.write(
+                directory,
+                "plain.py",
+                "def score(*, output, expected, input_data, metadata):\n"
+                "    del input_data, metadata\n"
+                "    return float(str(output) == str(expected))\n",
+            )
+            process = self.calibrate(
+                scorer,
+                "score",
+                "--contained",
+                "--kind",
+                "llm-judge",
+                "--paid-approved",
+            )
+        self.assertEqual(process.returncode, 2, process.stdout)
+        self.assertIn("closes the network", process.stderr)
+
+    # -- the acknowledgement reaches the process that executes -------------
+    def test_the_worker_refuses_a_request_that_carries_no_acknowledgement(
+        self,
+    ) -> None:
+        """`--allow-execution` was enforced in the parent only.
+
+        `run()` dispatches on `--_worker` before `parse_args()`, so the child -
+        the only process that ever imports the scorer - never evaluated the
+        flag. The acknowledgement now travels in the request, and a request
+        without it is refused before anything is imported.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            marker = Path(directory) / "imported.marker"
+            scorer = self.write(
+                directory,
+                "marking.py",
+                "import pathlib\n\n"
+                f"pathlib.Path({str(marker)!r}).write_text('ran')\n\n\n"
+                "def score(*, output, expected, input_data, metadata):\n"
+                "    del input_data, metadata\n"
+                "    return 1.0\n",
+            )
+            request = {
+                "operation": "authored",
+                "scorer": f"{scorer}:score",
+                "import_root": directory,
+                "cases": [
+                    {
+                        "name": "one",
+                        "expected": "a",
+                        "probes": {
+                            "good": "a",
+                            "equivalent_good": "a",
+                            "partial": "b",
+                            "bad": "c",
+                        },
+                    }
+                ],
+            }
+            process = subprocess.run(
+                [sys.executable, str(SCRIPT), "--_worker"],
+                input=json.dumps(request),
+                capture_output=True,
+                text=True,
+            )
+            self.assertNotEqual(process.returncode, 0, process.stdout)
+            self.assertIn("--allow-execution", process.stderr)
+            self.assertFalse(
+                marker.exists(),
+                "the worker imported the scorer before checking whether it was "
+                "allowed to",
+            )
+            allowed = subprocess.run(
+                [sys.executable, str(SCRIPT), "--_worker"],
+                input=json.dumps({**request, "allow_execution": True}),
+                capture_output=True,
+                text=True,
+            )
+            # Inside the temporary directory, because the marker lives in it:
+            # asserting after the directory is removed asserts nothing.
+            self.assertEqual(allowed.returncode, 0, allowed.stderr)
+            self.assertTrue(marker.exists())
+
+    # -- the read's own shape ----------------------------------------------
+    def test_the_budget_overrun_is_unreadable_rather_than_clear(self) -> None:
+        """A bound whose exhaustion clears is the defect, not the bound."""
+        module = self._module()
+        reader = module.ExecutionScopeReader(Path("/nonexistent"), Path("/nonexistent"))
+        self.assertEqual(reader.verdict(), module.SCOPE_CLEAR)
+        reader.unreadable.append({"file": "x", "line": 1, "detail": "budget"})
+        self.assertEqual(reader.verdict(), module.SCOPE_UNREADABLE)
+        reader.sinks.append({"file": "x", "line": 1, "detail": "sink"})
+        self.assertEqual(reader.verdict(), module.SCOPE_EXECUTES)
+
+    def test_an_unparsable_project_module_ends_the_read(self) -> None:
+        """A file the read cannot open is not a file it cleared."""
+        module = self._module()
+        with tempfile.TemporaryDirectory() as directory:
+            self.write(directory, "broken.py", "def :\n")
+            scorer = self.write(
+                directory,
+                "importing.py",
+                "import broken\n\n\n"
+                "def score(*, output, expected, input_data, metadata):\n"
+                "    del input_data, metadata\n"
+                "    return broken.helper(output, expected)\n",
+            )
+            scan = module.execution_scope_scan(scorer, "score", Path(directory))
+        self.assertEqual(scan["verdict"], module.SCOPE_UNREADABLE)
 
 
 if __name__ == "__main__":

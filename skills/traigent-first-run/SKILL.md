@@ -306,7 +306,9 @@ the evaluation method is actually checked, and the card's recommended action nam
 calibration rather than reading `proceed`. Where the deferral is the evaluator-execution scope gate
 rather than a step this run could take, pass `--calibration-scope-refused` so the card asks for the
 containment review instead of for the calibration the gate forbids; it moves no number, because
-nothing here can check it. Apply the run-scoped evaluator-method rule above to both
+nothing here can check it. Before declaring it, try `calibrate_evaluator.py --contained`, which
+`references/run-safety.md` bounds: it is the one route that establishes such an evaluator here, and
+a contained result is passed as an ordinary `--calibration` instead. Apply the run-scoped evaluator-method rule above to both
 scripts, and apply the run-scoped task-kind rule to readiness only here - narrower than its
 destination rule in `references/evaluation-and-dataset.md`, because this gate's calibration takes no
 seam flags and so establishes nothing about delivery for stage 4 to reuse - and the origin rule with
@@ -615,7 +617,10 @@ Follow this order:
    omit it from both when no method exists). This heuristic check does not assert SDK compatibility.
 4. Before calibration, apply `references/run-safety.md`'s execution-evaluator scope gate. If the
    resolved evaluator call path identifies code/SQL execution, record the `containment` stop and
-   end this guide before calibration, environment setup, credentials, provider calls, or paid work.
+   end this guide before calibration, environment setup, credentials, provider calls, or paid work,
+   unless `--contained` can take it under the bounds that reference sets. What the stop is about at
+   this step is the database such a scorer opens, not the probes it runs, which are the ones your
+   matrix authored; the trial where the model writes the query stays closed either way.
    Otherwise, run deterministic calibration only after a `sufficient`
    semantic-coverage verdict. Its path must be fully inspected, must not execute
    candidate-generated code or SQL, and must be local-only and
