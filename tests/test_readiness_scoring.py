@@ -14732,11 +14732,13 @@ class TheBuildHalfCitesTheAgentItReadTests(unittest.TestCase):
             "while-2-gt-1": "    while 2 > 1:\n        q = q + 'x'\n",
         }.items():
             with self.subTest(shape=shape, direction="refuted"):
-                with self.assertRaises(MODULE.AgentDiscoveryInputError):
+                with self.assertRaises(MODULE.AgentDiscoveryInputError) as caught:
                     self._score_source(
                         "MODEL = ['a']\ndef selected(q):\n" + body,
                         {"control-flow": {"loop": True, "bounded": True}},
                     )
+                # On the bound, and not on a citation this fixture got wrong.
+                self.assertIn("no way out of its body", str(caught.exception))
         for shape, body in {
             "empty-string-test": "    while '':\n        q = q + 'x'\n    return q\n",
             "mixed-literal-types": "    while 1 < 'a':\n        q = q + 'x'\n"
@@ -14770,12 +14772,15 @@ class TheBuildHalfCitesTheAgentItReadTests(unittest.TestCase):
             )
             self.assertEqual(len(facts.build), len(MODULE.AGENT_BUILD_CHECKS))
         with self.subTest(residual="leaves-by-a-call"):
-            with self.assertRaises(MODULE.AgentDiscoveryInputError):
+            with self.assertRaises(MODULE.AgentDiscoveryInputError) as caught:
                 self._score_source(
                     "import sys\nMODEL = ['a']\ndef selected(q):\n"
                     "    while True:\n        sys.exit(0)\n",
                     {"control-flow": {"loop": True, "bounded": True}},
                 )
+            # The refusal has to be the bound, not a citation this fixture got
+            # wrong, or the residual it pins is not the one being recorded.
+            self.assertIn("no way out of its body", str(caught.exception))
         guidance = (
             ROOT
             / "skills"
