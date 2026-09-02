@@ -1,12 +1,12 @@
-# 0083 - two caps that had no branch
+# 0084 - two caps that had no branch
 
-follows: 0082
-follows-resident-measured: 99_652
-follows-total-measured: 475_250
-resident-ceiling: 100_250
-resident-measured: 100_001
-total-ceiling: 475_950
-total-measured: 475_733
+follows: 0083
+follows-resident-measured: 105_335
+follows-total-measured: 481_003
+resident-ceiling: 106_050
+resident-measured: 105_684
+total-ceiling: 481_950
+total-measured: 481_486
 
 The scorer gained two conditions, and each one had to gain a bullet, because an
 assistant meeting a condition id with nothing beside it has no next step to take
@@ -33,3 +33,10 @@ A handful of the bytes narrow an existing promise rather than adding one. The
 search-space ceiling stays advisory for a run that named the agent it could not
 open, and the sentence extending that reading to every evidence-free card
 stopped being true the moment absence became a condition of its own.
+
+Both figures above are the merge, not this branch alone. Measured against the
+entry it now follows, the two bullets and that narrowing take 349 of the 465
+bytes its resident raise had left and 483 of its 497, which would have left the
+next author fourteen bytes and no warning that they were the last ones. Neither
+branch could have arithmetic the other had not done yet, so the numbers are
+restated here against the tree that actually exists and the room is put back.
