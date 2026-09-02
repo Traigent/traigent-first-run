@@ -656,8 +656,12 @@ def bind_call(
 
 
 def run_worker() -> int:
+    # Named before the read, so the failure path can say which component failed
+    # even when the read itself is what failed.
+    operation = "authored"
     try:
         request = json.load(sys.stdin)
+        operation = request.get("operation", "authored")
         import_root = Path(request["import_root"])
         scorer_file = Path(request["scorer"].partition(":")[0]).resolve()
         import_paths = [str(import_root), str(scorer_file.parent)]
@@ -666,7 +670,6 @@ def run_worker() -> int:
         ]
         captured_stdout = io.StringIO()
         with contextlib.redirect_stdout(captured_stdout):
-            operation = request.get("operation", "authored")
             # Read the operation FIRST, and load the scorer only for the
             # operations that score something. `load` checks the reply
             # transform and grades nothing, so loading the scorer there made a
@@ -801,10 +804,15 @@ def run_worker() -> int:
         )
         return 0
     except Exception as error:
-        print(
-            f"Evaluator execution failed: {type(error).__name__}: {error}",
-            file=sys.stderr,
+        # `load` never loads the scorer, so nothing but the reply transform can
+        # fail there. Saying "evaluator" would name the one component this
+        # branch does not touch, under a headline about the other one.
+        failed = (
+            "Reply transform could not be loaded"
+            if operation == "load"
+            else "Evaluator execution failed"
         )
+        print(f"{failed}: {type(error).__name__}: {error}", file=sys.stderr)
         return 1
 
 
@@ -1324,7 +1332,18 @@ def run_seam_batch(
     probes = request["probes"]
 
     def all_unavailable(reason: str, detail: str) -> list[dict[str, Any]]:
-        return [unavailable_supplemental_attempt(reason, detail) for _ in probes]
+        # Every entry carries the same reason AND says why they are the same:
+        # this family shares one worker, so a reader told to inspect or re-run
+        # an unavailable probe can tell "each was tried and each failed" from
+        # "one worker carried all of them". The older families are attempted
+        # individually and their entries look identical without this clause.
+        together = (
+            f" All {len(probes)} seam probes share one worker and fell together; "
+            "none was attempted on its own."
+        )
+        return [
+            unavailable_supplemental_attempt(reason, detail + together) for _ in probes
+        ]
 
     remaining_seconds = deadline - time.monotonic()
     if remaining_seconds <= 0:

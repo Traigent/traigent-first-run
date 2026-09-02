@@ -3685,6 +3685,12 @@ class TheSeamBetweenTheProbesAndTheAgentTests(unittest.TestCase):
                 # by installing something to satisfy stage 4.
                 self.assertIn("is a wrong flag: fix it", process.stderr)
                 self.assertIn("defer both seam flags", process.stderr)
+                # And the component named under that headline is the one that
+                # failed. `load` never loads the scorer, so the worker's
+                # generic "Evaluator execution failed" prefix named the one
+                # component this branch does not touch.
+                self.assertIn("Reply transform could not be loaded", process.stderr)
+                self.assertNotIn("Evaluator execution failed", process.stderr)
 
     def test_a_broken_scorer_is_not_reported_as_a_broken_transform(self) -> None:
         """The load probe used to inherit a scorer load it never uses.
@@ -3757,6 +3763,77 @@ class TheSeamBetweenTheProbesAndTheAgentTests(unittest.TestCase):
             f"for {probes} probes",
         )
 
+    def test_a_batch_that_dies_attributes_nothing_to_any_probe(self) -> None:
+        """The cost of running the family in one child, made enforceable.
+
+        Batching buys two imports instead of 2N+1 and stops the seam family
+        starving the older ones. It costs granularity: a crash or a timeout
+        takes every seam probe with it, and the parent has no partial output to
+        attribute. That property lived only in a docstring, and a one-line
+        mutation - blame probe 0, fabricate `preserved` for the rest - left the
+        suite green while the tool reported a score for probes that never ran.
+        That is the class this whole change exists to stop, so it is pinned.
+
+        Two ways to die, both real: the worker leaves mid-batch, and the batch
+        outlives the budget. Neither may produce a score, an error, or a reason
+        that differs between probes.
+        """
+        leaves_mid_batch = (
+            "import os\n\n"
+            "_CALLS = []\n\n\n"
+            "def extract_sql(reply):\n"
+            "    _CALLS.append(reply)\n"
+            "    if len(_CALLS) > 1:\n"
+            "        os._exit(1)\n"
+            "    return reply\n"
+        )
+        outlives_the_budget = (
+            "import time\n\n\n"
+            "def extract_sql(reply):\n"
+            "    time.sleep(30)\n"
+            "    return reply\n"
+        )
+        for label, transform, extra in (
+            ("worker leaves mid-batch", leaves_mid_batch, ()),
+            ("batch outlives the budget", outlives_the_budget, ("--timeout", "12")),
+        ):
+            with self.subTest(ending=label), tempfile.TemporaryDirectory() as directory:
+                process, payload = self.calibrate(
+                    directory, "--task-kind", "code-sql", *extra, transform=transform
+                )
+                probes = [
+                    probe for case in payload["cases"] for probe in case["seam_probes"]
+                ]
+                self.assertEqual(len(probes), 4, process.stderr)
+                for probe in probes:
+                    with self.subTest(source=probe["source"]):
+                        self.assertEqual(
+                            probe["outcome"], "unavailable", process.stderr
+                        )
+                        self.assertIsNone(probe["score"])
+                        self.assertIsNone(probe["error"])
+                        self.assertFalse(probe["available"])
+                # One ending, one reason: a probe that was never attempted on
+                # its own must not be reported as if it had been.
+                self.assertEqual(
+                    len({probe["unavailable"]["reason"] for probe in probes}),
+                    1,
+                    process.stderr,
+                )
+                # And the detail says WHY they are identical, which is the half
+                # a reader told to re-run an unavailable probe actually needs.
+                for probe in probes:
+                    self.assertIn(
+                        "share one worker and fell together",
+                        probe["unavailable"]["detail"],
+                    )
+                self.assertNotIn("seam_probe_advisory", payload)
+                listed = {
+                    item["probe"]
+                    for item in payload.get("supplemental_probe_unavailable", [])
+                }
+                self.assertTrue({"seam:good", "seam:equivalent_good"} <= listed)
+
     def test_the_budget_covers_the_transform_import(self) -> None:
         """P2-B: `--timeout` is the worst-case wall time its help promises.
 
@@ -3784,13 +3861,16 @@ class TheSeamBetweenTheProbesAndTheAgentTests(unittest.TestCase):
                 transform=transform,
             )
             elapsed = time.monotonic() - started
-        # Generous headroom over the budget for process start-up on a loaded
-        # machine, and still far below the budget-plus-75 the old path spent:
-        # the assertion is that the import is INSIDE the budget, not a
-        # stopwatch on the runner.
+        # Five seconds of headroom for process start-up on a loaded machine,
+        # and no more. The bound used to be `budget + sleep_seconds` - 22s -
+        # which is where the pre-fix path already landed, so the assertion
+        # naming the property could not fire and only the exit code caught the
+        # regression. The measured separation is wide enough to bound tightly:
+        # fixed lands just over the budget, pre-fix took the budget plus a
+        # whole per-probe allowance on top.
         self.assertLess(
             elapsed,
-            budget + sleep_seconds,
+            budget + 5,
             f"a {sleep_seconds}s import under a {budget}s budget took "
             f"{elapsed:.2f}s, so it is still running outside the budget: "
             f"{process.stderr}",
