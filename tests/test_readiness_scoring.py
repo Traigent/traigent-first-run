@@ -18858,6 +18858,61 @@ def run(config, question):
                 self.assertNotIn("your space has", evidence)
                 self.assertIn("could not follow prompt_style", evidence)
 
+    def test_the_lower_bound_disclosure_is_pinned_in_every_direction(self) -> None:
+        """The clause that says the ceiling counted only some of them.
+
+        It was observable and unheld: deleting the whole
+        `if len(counted) < len(unfollowed):` block left this file at Ran 539 /
+        OK / exit 0, byte-identical to baseline, while the customer lost the
+        only sentence saying the figure beside those names is a floor. The
+        phrase appeared repo-wide exactly once, as an `assertNotIn`, so its
+        ABSENCE was pinned on the fixture where it must not appear and its
+        PRESENCE was pinned nowhere.
+
+        The gap was structural rather than an oversight in any one test: the
+        two source fixtures cover all-counted and none-counted, and the branch
+        only runs on a MIXED list. Driving `search_space_evidence` directly
+        reaches it without a fourth agent, and partitions the branch completely
+        - which is the point, because a pin on the middle case alone would
+        leave the two early exits free to drift onto it.
+        """
+        mixed = MODULE.search_space_evidence(
+            3, 3, 1, None, unfollowed=[("model", 4), ("prompt_style", 0)]
+        )
+        # 12, not 3: the ceiling multiplies the counted setting and no other.
+        self.assertIn(
+            "so the space is 3 only if none of those vary and 12 if they all do",
+            mixed,
+        )
+        self.assertIn(
+            "12 counts only the ones whose options this read found under a "
+            "binding named for them, so prompt_style is named here without a "
+            "factor and the figure is a lower bound",
+            mixed,
+        )
+        # Both settings are still NAMED, which is the half that must not depend
+        # on whether a factor could be drawn from either of them.
+        self.assertIn("it could not follow model, prompt_style", mixed)
+
+        # All counted: a ceiling that counts everything it names owes no
+        # disclosure, and printing one would be a false qualification.
+        every = MODULE.search_space_evidence(
+            3, 3, 1, None, unfollowed=[("model", 4), ("prompt_style", 2)]
+        )
+        self.assertIn("and 24 if they all do", every)
+        self.assertNotIn("without a factor", every)
+        self.assertNotIn("counts only the ones", every)
+
+        # None counted: the early return, where there is no ceiling to qualify
+        # and the floor has to be stated as a floor rather than as the space.
+        none = MODULE.search_space_evidence(
+            3, 3, 1, None, unfollowed=[("model", 0), ("prompt_style", 0)]
+        )
+        self.assertIn("so 3 is a floor rather than the space", none)
+        self.assertNotIn("if they all do", none)
+        self.assertNotIn("without a factor", none)
+        self.assertNotIn("your space has", none)
+
     def test_only_the_number_depends_on_the_name(self) -> None:
         """The half that SHOULD differ, so this is not just asserting sameness."""
         matched, _ = self._evidence("PROMPT_STYLES")
