@@ -699,6 +699,8 @@ paragraph below carries both halves:
 - `dataset-below-measurable-size` - more comparable examples is what lifts this; until then call
   rankings exploratory, not stable comparisons. The run is worth making, so where the card asks,
   carry the top-up on the one ask rather than sending anyone away for data.
+- `dataset-repeated-rows` - fewer questions than rows: bounded, not stopped. Take the card's two
+  routes on the one ask - carry on over the examples that differ, or have them replace the repeats.
 - `dataset-coarse-resolution` - more comparable examples is what lifts this too, and the same
   bounded offer carries it wherever the card asks; after paired outputs exist, report paired outcome counts and justified
   uncertainty, calling a small or flat difference directional or inconclusive.
@@ -726,9 +728,12 @@ close if it was not fixed. After any repair or substitute creation, re-run the a
 applicable calibration, and the score, then record that gate result without overwriting the opening
 one.
 
+`agent-absent` blocks where no document, read, or declared origin names an agent at all: connect the
+one they have, or create it.
 `agent-no-varying-knobs` blocks when a settings document or a statically checked source read finds
 no usable dimension. Mark one setting with a second value or expose a direct request parameter. It
-is advisory only with no evidence or source candidates whose references could not be verified.
+is advisory only for a declared agent with no evidence, or source candidates whose references could
+not be verified.
 Before either paid grid, the local request-difference proof—not the opening score—must establish
 every selected direct dimension. Report stops/zero trials when that proof cannot do so.
 

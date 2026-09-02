@@ -4122,5 +4122,170 @@ class TheDistinctCountAndTheCountItBoundsDescribeOneSetTests(unittest.TestCase):
         self.assertEqual(metrics["tuning_distinct_scoreable_rows"], 50)
 
 
+class ATruncatedListSaysThatItIsTruncatedTests(unittest.TestCase):
+    """#378: two lists stopped at ten entries and said nothing about it.
+
+    `dataset-ids` printed ten colliding ids and `dataset-duplicates` ten groups
+    of repeated rows, in both cases with no ellipsis and no total - so a file
+    with thirty findings and a file with ten printed lines a reader could not
+    tell apart. The missing-id sentence three lines above `dataset-ids` already
+    led with its count and closed with "(first 10 shown)", so the shape these
+    two now take is the file's own and not a new convention.
+
+    The count is asserted separately from the truncation marker, because they
+    fail differently: a list of exactly ten findings must print the count and
+    must NOT claim to be partial.
+    """
+
+    def setUp(self) -> None:
+        MODULE.RESULTS.clear()
+
+    def _details(self, repeats: int, *, share_ids: bool) -> dict[str, str]:
+        """One file with `repeats` repeated rows, ids colliding or not.
+
+        The repeats are copies of distinct rows, so the two checks see the same
+        number of findings and either list can be read against the other.
+        """
+        distinct = [
+            {
+                "id": f"row-{index:03d}",
+                "input": f"question {index} about the billing system and its rules",
+                "output": f"answer-{index % 4}",
+                "source": "production-log",
+            }
+            for index in range(40)
+        ]
+        copied = [dict(row) for row in distinct[:repeats]]
+        if not share_ids:
+            for offset, row in enumerate(copied, start=1):
+                row["id"] = f"row-{40 + offset:03d}"
+        with tempfile.TemporaryDirectory() as raw:
+            dataset = Path(raw) / "dataset.jsonl"
+            dataset.write_text(
+                "\n".join(json.dumps(row) for row in distinct + copied) + "\n"
+            )
+            MODULE.RESULTS.clear()
+            MODULE.check_dataset(dataset)
+        return {result.check: result.detail for result in MODULE.RESULTS}
+
+    def test_thirty_findings_say_thirty_and_say_the_list_is_partial(self) -> None:
+        details = self._details(30, share_ids=True)
+        self.assertTrue(details["dataset-ids"].startswith("30 duplicate ids:"))
+        self.assertIn("(first 10 shown)", details["dataset-ids"])
+        self.assertTrue(
+            details["dataset-duplicates"].startswith(
+                "30 exact/normalized duplicate inputs at rows"
+            )
+        )
+        self.assertIn("(first 10 shown)", details["dataset-duplicates"])
+        # The list itself is still bounded, which is what the marker is for.
+        self.assertEqual(details["dataset-ids"].count("row-"), 10)
+
+    def test_a_complete_list_carries_its_count_and_no_truncation_marker(
+        self,
+    ) -> None:
+        """The false-red direction, at exactly the boundary.
+
+        Ten findings fit, so claiming the list is partial would be the same
+        defect running the other way: a reader told to expect more than they can
+        see. The count still leads, because a reader must not have to add up a
+        bracketed list to learn how many there are.
+        """
+        details = self._details(10, share_ids=True)
+        self.assertTrue(details["dataset-ids"].startswith("10 duplicate ids:"))
+        self.assertNotIn("shown)", details["dataset-ids"])
+        self.assertTrue(
+            details["dataset-duplicates"].startswith(
+                "10 exact/normalized duplicate inputs at rows"
+            )
+        )
+        self.assertNotIn("shown)", details["dataset-duplicates"])
+
+    def test_the_repetition_list_does_not_depend_on_the_ids(self) -> None:
+        """The two checks answer two questions, and only one reads an id.
+
+        Renumbering the repeats clears `dataset-ids` and leaves
+        `dataset-duplicates` reporting exactly what it reported before. Without
+        this the count added above could be satisfied by a check that had
+        quietly started reading identities.
+        """
+        colliding = self._details(30, share_ids=True)
+        renumbered = self._details(30, share_ids=False)
+        self.assertEqual(
+            colliding["dataset-duplicates"], renumbered["dataset-duplicates"]
+        )
+        self.assertEqual(renumbered["dataset-ids"], "stable ids are unique")
+
+    def test_the_id_counts_travel_on_every_arm_of_the_check(self) -> None:
+        """A metric published only with bad news has a silence with two meanings.
+
+        The readiness cap builds its reason out of these counts, and it has to
+        be able to tell "preflight looked and found none" from "this payload
+        predates the count". Publishing them on the PASS arm as well is what
+        makes the absence of a key mean exactly one thing.
+        """
+        for repeats, share_ids, expected in (
+            (30, True, 30),
+            (30, False, 0),
+            (0, True, 0),
+        ):
+            with self.subTest(repeats=repeats, share_ids=share_ids):
+                self._details(repeats, share_ids=share_ids)
+                metrics = next(
+                    result.metrics
+                    for result in MODULE.RESULTS
+                    if result.check == "dataset-ids"
+                )
+                self.assertEqual(metrics["duplicate_ids"], expected)
+                self.assertEqual(metrics["rows_without_id"], 0)
+                self.assertEqual(metrics["generated_rows_without_id"], 0)
+
+    def test_a_generated_row_with_no_id_is_counted_apart_from_the_rest(
+        self,
+    ) -> None:
+        """The two ways this check FAILs, kept as two numbers.
+
+        A collected row missing an id WARNs and caps nothing; a generated one
+        FAILs. A reason built from the wider count would name rows the check did
+        not object to, so both counts are published and only the narrower one
+        describes the failure.
+        """
+        rows = [
+            {
+                "id": f"row-{index:03d}",
+                "input": f"question {index} about the billing system and its rules",
+                "output": f"answer-{index % 4}",
+                "source": "production-log",
+            }
+            for index in range(40)
+        ]
+        rows.append(
+            {
+                "input": "a question nobody gave an id",
+                "output": "answer-0",
+                "source": "production-log",
+            }
+        )
+        rows.append(
+            {
+                "input": "a written question nobody gave an id",
+                "output": "answer-1",
+                "source": "synthetic",
+            }
+        )
+        with tempfile.TemporaryDirectory() as raw:
+            dataset = Path(raw) / "dataset.jsonl"
+            dataset.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+            MODULE.RESULTS.clear()
+            MODULE.check_dataset(dataset)
+        result = next(
+            result for result in MODULE.RESULTS if result.check == "dataset-ids"
+        )
+        self.assertEqual(result.status, MODULE.FAIL)
+        self.assertEqual(result.metrics["rows_without_id"], 2)
+        self.assertEqual(result.metrics["generated_rows_without_id"], 1)
+        self.assertEqual(result.metrics["duplicate_ids"], 0)
+
+
 if __name__ == "__main__":
     unittest.main()

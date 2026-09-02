@@ -2210,7 +2210,17 @@ def stable_id_is_missing(value: Any) -> bool:
 def emit_dataset_id_findings(
     row_records: list[tuple[int, dict[str, Any]]],
 ) -> None:
-    """Validate IDs across every input-bearing row, including unlabelled rows."""
+    """Validate IDs across every input-bearing row, including unlabelled rows.
+
+    Two findings share this check name and this record's metrics travel with
+    both, because a reader downstream needs the ARITHMETIC and not the sentence.
+    `dataset-ids` FAILs for two unrelated reasons - ids that collide, and
+    generated rows carrying none - and a consumer reading only the status
+    learned that one of them happened without learning which. The readiness card
+    then printed the reason for a third thing entirely (malformed rows), because
+    a boolean is all it had. Both counts are published on every arm, PASS
+    included, so silence never has two meanings.
+    """
     missing_records: list[tuple[int, dict[str, Any]]] = []
     ids: list[str] = []
     for line_number, row in row_records:
@@ -2221,13 +2231,28 @@ def emit_dataset_id_findings(
             ids.append(
                 stable_json(value) if isinstance(value, (dict, list)) else str(value)
             )
+    id_counts = Counter(ids)
+    duplicate_ids = sorted(value for value, count in id_counts.items() if count > 1)
+    generated_missing = sum(
+        1
+        for _line_number, row in missing_records
+        if classify_provenance(row_provenance(row))[0] == PROVENANCE_SYNTHESISED
+    )
+    id_metrics = {
+        # Id VALUES used by more than one row, not the rows using them: the
+        # question a consumer asks is "how many identities collide", and the row
+        # count is recoverable from the file while this is not.
+        "duplicate_ids": len(duplicate_ids),
+        "rows_without_id": len(missing_records),
+        # Published BESIDE the count above and not instead of it, because they
+        # answer different questions and only this one decides the status: a
+        # collected row with no id is a WARN, and a generated one is the FAIL.
+        # A consumer building a reason for that FAIL needs the count that caused
+        # it, and the wider one would name rows the check did not object to.
+        "generated_rows_without_id": generated_missing,
+    }
     if missing_records:
         missing_lines = [line_number for line_number, _row in missing_records]
-        generated_missing = sum(
-            1
-            for _line_number, row in missing_records
-            if classify_provenance(row_provenance(row))[0] == PROVENANCE_SYNTHESISED
-        )
         shown_lines = missing_lines[:MAX_REPORTED_DATASET_IDS]
         location = (
             f"source line {shown_lines[0]}"
@@ -2255,17 +2280,28 @@ def emit_dataset_id_findings(
             f"{len(missing_lines)} {noun} at {location}{suffix} {verb} "
             "no stable id; add stable ids in a working copy before excluding rows "
             f"or selecting a bounded subset, then re-run validation{generated_detail}",
+            id_metrics,
         )
-    id_counts = Counter(ids)
-    duplicate_ids = sorted(value for value, count in id_counts.items() if count > 1)
     if duplicate_ids:
+        # The count leads and the truncation says so, exactly as the missing-id
+        # sentence above already does. This list stopped at ten with no ellipsis
+        # and no total, so a file with thirty collisions and a file with ten
+        # printed the same line and a reader had no way to tell the list was
+        # partial.
+        shown_ids = duplicate_ids[:MAX_REPORTED_DATASET_IDS]
+        id_suffix = (
+            ""
+            if len(duplicate_ids) <= len(shown_ids)
+            else f" (first {MAX_REPORTED_DATASET_IDS} shown)"
+        )
         emit(
             "dataset-ids",
             FAIL,
-            f"duplicate ids: {duplicate_ids[:MAX_REPORTED_DATASET_IDS]}",
+            f"{len(duplicate_ids)} duplicate ids: {shown_ids}{id_suffix}",
+            id_metrics,
         )
     elif not missing_records:
-        emit("dataset-ids", PASS, "stable ids are unique")
+        emit("dataset-ids", PASS, "stable ids are unique", id_metrics)
 
 
 def check_evaluator(path: Path) -> None:
@@ -2558,10 +2594,22 @@ def check_dataset(
         "scoreable_rows": len(rows),
     }
     if exact_duplicates:
+        # The count leads and the truncation says so, on the sibling sentence's
+        # own shape (`emit_dataset_id_findings`). Ten groups were printed with
+        # no ellipsis and no total, so thirty repeats and ten repeats produced
+        # the same line. `MAX_REPORTED_DATASET_IDS` rather than a second literal
+        # ten, because one number spelled twice is one number that can drift.
+        shown_duplicates = exact_duplicates[:MAX_REPORTED_DATASET_IDS]
+        duplicate_suffix = (
+            ""
+            if len(exact_duplicates) <= len(shown_duplicates)
+            else f" (first {MAX_REPORTED_DATASET_IDS} shown)"
+        )
         emit(
             "dataset-duplicates",
             FAIL if synthetic else WARN,
-            f"exact/normalized duplicate inputs at rows {exact_duplicates[:10]}",
+            f"{len(exact_duplicates)} exact/normalized duplicate inputs at rows "
+            f"{shown_duplicates}{duplicate_suffix}",
             duplicate_metrics,
         )
     else:

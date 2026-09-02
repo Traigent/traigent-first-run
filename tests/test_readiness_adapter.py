@@ -532,8 +532,13 @@ class ReadinessAdapterReplayTests(unittest.TestCase):
             )
             everything = directory / "everything.jsonl"
             everything.write_text("\n".join([broken] * 100) + "\n")
-            partial_score = _score(partial)
-            everything_score = _score(everything)
+            # Both runs name the agent, so the remedy this test reads is the
+            # DATASET's. An undeclared agent blocks at a lower ceiling and its
+            # own remedy would win `recommended_action` on both sides, which
+            # would hide the very discontinuity being asserted.
+            named_agent = ("--agent-origin", "brought")
+            partial_score = _score(partial, extra=named_agent)
+            everything_score = _score(everything, extra=named_agent)
 
         self.assertEqual(partial_score["recommended_action"], "repair-dataset")
         self.assertEqual(everything_score["recommended_action"], "read-dataset")
@@ -1657,7 +1662,12 @@ class ReadinessAdapterReplayTests(unittest.TestCase):
 
             # And it is disclosed, not punished: the card names the tokens, the
             # remedy is a relabel, and the second grade is printed.
-            payload = _score(dataset)
+            #
+            # The agent is named for the counterfactual's sake: the second grade
+            # is only printable while relabelling would MOVE the card, and an
+            # undeclared agent holds both readings at one ceiling, so the
+            # disclosure would correctly report nothing to show.
+            payload = _score(dataset, extra=("--agent-origin", "brought"))
             self.assertIn(
                 "dataset-undeclared-provenance",
                 [cap["condition"] for cap in payload["caps"]],
@@ -3336,7 +3346,16 @@ class TheFamilyPartitionedSplitReachesTheCardTests(unittest.TestCase):
             dataset = _write_jsonl(Path(raw), "dataset.jsonl", self._rows(partitioned))
             return _score(
                 dataset,
-                extra=("--evaluator-method", "normalized-exact"),
+                # The agent is declared so the card is about the SPLIT. Leaving
+                # it out would put a blocking absent-agent cap on both sides of
+                # the comparison, and this test's whole content is that the
+                # family-partitioned side stops nothing.
+                extra=(
+                    "--evaluator-method",
+                    "normalized-exact",
+                    "--agent-origin",
+                    "brought",
+                ),
                 preflight_extra=("--evaluator-method", "normalized-exact"),
             )
 
@@ -3434,9 +3453,18 @@ class TheDeclaredOriginTravelsFromArgvToTheCardTests(unittest.TestCase):
         return sorted(cap["condition"] for cap in score["caps"])
 
     def test_declaring_nothing_is_the_baseline_these_are_measured_against(self) -> None:
+        """The baseline, and since #375 the agent half of it is not free.
+
+        Declaring nothing about the agent is now a finding rather than a
+        neutral starting point: SKILL.md leaves the flag off only where no
+        agent exists, so the payload reads that silence the way it already
+        reads silence about the dataset and the evaluator. The two calls below
+        differ in the declaration alone, which is what makes the flag visible
+        here rather than assumed.
+        """
         self.assertEqual(
             self._conditions(),
-            ["agent-no-varying-knobs", "evaluator-unvalidated"],
+            ["agent-absent", "evaluator-unvalidated"],
         )
         self.assertEqual(
             self._conditions(
@@ -3450,7 +3478,9 @@ class TheDeclaredOriginTravelsFromArgvToTheCardTests(unittest.TestCase):
         self.assertEqual(
             self._conditions("--evaluator-origin", "generated"),
             [
-                "agent-no-varying-knobs",
+                # No `--agent-origin` in this call, so the agent half reports
+                # its own silence rather than an unestablished search space.
+                "agent-absent",
                 "evaluator-generated",
                 "evaluator-unvalidated",
             ],
@@ -4832,6 +4862,188 @@ class TheRoutesOfferedWhenRowsRepeatTests(unittest.TestCase):
         )
         # And the route that points at it is the one that is actually there.
         self.assertTrue(self._route_lines(card)[0].startswith("A."))
+
+
+class RepeatedRowsAreCappedOnTheirOwnAccountTests(unittest.TestCase):
+    """#378: the same rows were stopped or cleared by their ids.
+
+    Ninety rows, thirty of them exact repeats of another row. Preflight's only
+    dataset FAIL was `dataset-ids`, the repetition itself only WARNed, and
+    `dataset-shape` PASSed ninety valid rows - so the blocking readiness cap was
+    `dataset-integrity-fail`, printing "some rows could not be read as data -
+    malformed lines, or missing the input or expected-answer field" over a file
+    where nothing was malformed and no field was missing. The same card said
+    "90/90 rows carry an expected output" two lines above it.
+
+    Renumbering the thirty ids and changing nothing else cleared the file
+    completely. A duplicated export normally does renumber, so the commonest
+    shape of the defect was the one that walked through.
+
+    Driven end to end through both real scripts, because the finding is
+    assembled from a preflight metric this branch adds and a readiness reason
+    built out of it; hand-built facts on either side of that seam would test one
+    half against a fixture of its own.
+    """
+
+    CATEGORIES = ("billing", "cancellation", "technical-support", "account")
+
+    def _distinct(self) -> list[dict]:
+        return [
+            {
+                "id": f"support-{index:03d}",
+                "input": (
+                    f"Ticket {index}: the customer writes about "
+                    f"{self.CATEGORIES[index % len(self.CATEGORIES)]} "
+                    "and asks what to do next."
+                ),
+                "output": self.CATEGORIES[index % len(self.CATEGORIES)],
+                "source": "production-support-log",
+                "difficulty": ("easy", "medium", "hard")[index % 3],
+            }
+            for index in range(1, 61)
+        ]
+
+    def _scored(self, *, renumber: bool) -> dict:
+        """One file, thirty repeated rows, ids colliding or not.
+
+        The two files differ in the `id` field of thirty rows and in nothing
+        else. That is the whole experiment: the inputs, the answers, the
+        provenance and the difficulty tags are byte-identical, so any difference
+        in the payload is attributable to the ids alone.
+        """
+        distinct = self._distinct()
+        repeats = [dict(row) for row in distinct[:30]]
+        if renumber:
+            for offset, row in enumerate(repeats, start=1):
+                row["id"] = f"support-{60 + offset:03d}"
+        with tempfile.TemporaryDirectory() as raw:
+            dataset = _write_jsonl(Path(raw), "duplicated.jsonl", distinct + repeats)
+            return _score(
+                dataset,
+                # The agent and the evaluation method are declared so the card
+                # is about the DATASET. Their own absences cap lower and would
+                # decide `recommended_action` on both sides.
+                extra=(
+                    "--evaluator-method",
+                    "normalized-exact",
+                    "--agent-origin",
+                    "brought",
+                    "--evaluator-origin",
+                    "brought",
+                ),
+                preflight_extra=("--evaluator-method", "normalized-exact"),
+            )
+
+    def test_the_repetition_caps_whether_or_not_the_ids_collide(self) -> None:
+        """The load-bearing test from the report, in both directions.
+
+        The renumbered file is the one that used to be cleared, so it is the
+        one that has to carry the finding now. The colliding file keeps it too:
+        a cap that appeared only when the ids happened to agree would be the
+        same accident with a new name.
+        """
+        for renumber in (False, True):
+            with self.subTest(renumbered=renumber):
+                score = self._scored(renumber=renumber)
+                cap = _cap(score, "dataset-repeated-rows")
+                self.assertFalse(cap["blocks"])
+                self.assertTrue(cap["asks"])
+                self.assertEqual(cap["action_kind"], "review-repeats")
+                # The counts come out of the finding the card already prints,
+                # so the cap and the routes below it cannot quote two numbers.
+                self.assertEqual(
+                    score["repeated_inputs"],
+                    {"scoreable": 90, "distinct": 60, "side": "in your dataset"},
+                )
+                self.assertIn("30 of the 90 rows", cap["reason"])
+                self.assertIn("resolves 60 different examples", cap["reason"])
+
+    def test_the_renumbered_export_no_longer_walks_straight_through(self) -> None:
+        """What the customer sees change, on the file that used to pass.
+
+        Nothing about it blocks - the rows are real and a comparison over sixty
+        different questions is worth making - so the change is in what the
+        payload ASKS. `proceed` said there was nothing to answer while the card
+        printed two routes to answer it.
+        """
+        score = self._scored(renumber=True)
+        self.assertEqual(score["status"], "OK")
+        self.assertEqual(score["recommended_action"], "review-repeats")
+        self.assertNotIn(
+            "dataset-integrity-fail",
+            [cap["condition"] for cap in score["caps"]],
+            "renumbering the ids repaired nothing about the rows",
+        )
+
+    def test_the_integrity_reason_names_the_ids_and_not_malformed_rows(
+        self,
+    ) -> None:
+        """The customer-facing sentence that was false.
+
+        Both halves are asserted. The new sentence has to name the collision and
+        its count; the old one may not survive anywhere in it, because a reason
+        that still mentions malformed lines sends a reader looking for lines
+        that parse perfectly.
+        """
+        score = self._scored(renumber=False)
+        cap = _cap(score, "dataset-integrity-fail")
+        self.assertTrue(cap["blocks"])
+        self.assertIn("30 ids are used by more than one row", cap["reason"])
+        for absent in ("malformed", "missing the input", "could not be read as data"):
+            with self.subTest(phrase=absent):
+                self.assertNotIn(absent, cap["reason"])
+        # And the card is no longer contradicting itself two lines apart.
+        labels = _dataset_subscore(score, "labels")
+        self.assertIn("90/90", labels["evidence"])
+
+    def test_a_genuinely_malformed_row_still_reads_as_malformed(self) -> None:
+        """The honest direction, so the reason is not simply reworded.
+
+        A file with unreadable lines and unique ids must still be told that its
+        lines are unreadable. Without this the fix would be a rename that moved
+        the false sentence rather than removing it.
+        """
+        rows = self._distinct()
+        with tempfile.TemporaryDirectory() as raw:
+            dataset = Path(raw) / "broken.jsonl"
+            dataset.write_text(
+                "\n".join([json.dumps(row) for row in rows] + ["{not json at all"] * 10)
+                + "\n"
+            )
+            score = _score(
+                dataset,
+                extra=("--agent-origin", "brought"),
+            )
+        cap = _cap(score, "dataset-integrity-fail")
+        self.assertIn("could not be read as data", cap["reason"])
+        self.assertIn("malformed lines", cap["reason"])
+        self.assertNotIn("used by more than one row", cap["reason"])
+
+    def test_a_file_with_no_repeats_carries_no_repetition_cap(self) -> None:
+        """The false-red direction the cap would otherwise have.
+
+        Sixty different questions, no repeats, everything else identical to the
+        fixtures above. A cap that fires here would be reading something other
+        than repetition, and the finding it is built from would be absent too.
+        """
+        with tempfile.TemporaryDirectory() as raw:
+            dataset = _write_jsonl(Path(raw), "clean.jsonl", self._distinct())
+            score = _score(
+                dataset,
+                extra=(
+                    "--evaluator-method",
+                    "normalized-exact",
+                    "--agent-origin",
+                    "brought",
+                    "--evaluator-origin",
+                    "brought",
+                ),
+                preflight_extra=("--evaluator-method", "normalized-exact"),
+            )
+        self.assertIsNone(score["repeated_inputs"])
+        self.assertNotIn(
+            "dataset-repeated-rows", [cap["condition"] for cap in score["caps"]]
+        )
 
 
 if __name__ == "__main__":

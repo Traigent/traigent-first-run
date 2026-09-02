@@ -326,8 +326,10 @@ Readiness score (the card, the three pillars, bands, caps, blocked)
   evidence cannot support a trustworthy comparison. `agent-no-varying-knobs`
   holds the card at 45 when the paid space is not yet established. It blocks
   where a settings document or source read establishes no usable dimension. It
-  is advisory where source evidence could not be checked, or where neither
-  source nor a settings document reached the score. A verified source reading
+  is advisory where source evidence could not be checked, or where a named
+  agent's source and settings document both failed to reach the score.
+  `agent-absent` holds the card lower and stops the paid run where nothing
+  names an agent at all. A verified source reading
   can improve the opening card; the separate pre-approval request-difference
   proof decides whether any paid grid may proceed.
   Bands: Not ready (0-29), Partial (30-54), Workable (55-74), Strong (75-89),
