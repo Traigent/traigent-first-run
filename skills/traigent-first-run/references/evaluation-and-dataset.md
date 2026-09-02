@@ -948,7 +948,9 @@ Six rules make the subset honest:
    one here, because this count cuts a **paid** draw and a wrong cut deletes a test case the
    customer wrote. This walkthrough's own worked task is text to SQL, where the characters it
    discards are the discriminating ones. `dataset-first-run-rows` reports the count this rule uses
-   in `first_run_distinct_rows`, beside the population it counted in `first_run_distinct_scope`.
+   in `first_run_distinct_rows`, beside the population it counted in `first_run_distinct_scope`,
+   and states the cap as both numbers: `first_run_questions`, and the rows they bring as
+   `first_run_rows_fewest` to `first_run_rows_most`.
 
    Distinct **across the whole draw**, not within one band: a row already drawn under one band buys
    nothing when another band offers the same input again. Work the bands in turn, take up to four

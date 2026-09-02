@@ -5,8 +5,8 @@ follows-resident-measured: 98_427
 follows-total-measured: 467_226
 resident-ceiling: 98_750
 resident-measured: 98_509
-total-ceiling: 472_350
-total-measured: 472_017
+total-ceiling: 472_500
+total-measured: 472_159
 
 Five rules governed the bounded subset and none of them said the drawn rows
 have to be different. On a file holding three hundred rows that resolve to six
@@ -43,6 +43,15 @@ never touches; a count over every row on a side answers about rows carrying no
 answer, which no comparison reaches. Both were live here, one on each axis, and
 both proposed eighteen where twelve was the truth. So the helper returns the
 scope beside the number and the finding prints it.
+
+The cap is stated in both currencies, because the last spelling of it mixed
+them. Eighteen is a row budget, the count it is compared against is questions,
+and one `min()` over the two went out under a row label: a split of four
+hundred rows asking two hundred questions was offered "eighteen usable rows"
+for a draw that brings thirty-six, so twelve trials priced two hundred and
+sixteen calls and bought four hundred and thirty-two. The finding now says the
+questions and the rows they bring, and the rule tells an assistant to say both
+wherever a run is priced.
 
 The resident line moves because stage 6 named eighteen and priced "that
 subset", which read as one number only while the two were always equal. It now
