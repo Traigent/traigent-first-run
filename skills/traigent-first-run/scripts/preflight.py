@@ -2583,6 +2583,49 @@ def _comparison_operand(
     return None
 
 
+def _single_scorer(tree: ast.Module) -> ast.AST | None:
+    """The one callable in this file that takes both answers, or nothing.
+
+    Two callables taking both answers means a helper a proof would have to
+    follow, and none means no scorer this walk recognises. Either way the file
+    is not established, which is why both proofs below start here.
+    """
+    scorers = [
+        node
+        for node in ast.walk(tree)
+        if set(_SCORER_ANSWER_PARAMETERS) <= _callable_parameter_names(node)
+    ]
+    return scorers[0] if len(scorers) == 1 else None
+
+
+def _is_leading_docstring(index: int, statement: ast.stmt) -> bool:
+    """Whether this statement is the scorer's own docstring."""
+    return (
+        index == 0
+        and isinstance(statement, ast.Expr)
+        and isinstance(statement.value, ast.Constant)
+        and isinstance(statement.value.value, str)
+    )
+
+
+def _deletes_nothing_the_proof_reads(
+    statement: ast.Delete, protected: set[str]
+) -> bool:
+    """Whether this `del` is the guide's opening idiom and nothing more.
+
+    `del input_data, metadata` opens every adapter in this guide and unbinds
+    two names no proof here reads, so skipping it costs nothing. A `del` of an
+    answer, of an alias a proof is carrying, or of anything that is not a bare
+    name is a different statement: skipping that one would leave the walk
+    reasoning about a name the scorer has taken away, which is the one thing a
+    proof of a whole comparison may not do.
+    """
+    unbound = {
+        target.id for target in statement.targets if isinstance(target, ast.Name)
+    }
+    return len(unbound) == len(statement.targets) and not unbound & protected
+
+
 def derived_comparison_shape(
     tree: ast.Module,
 ) -> tuple[str, frozenset[str], int] | None:
@@ -2594,26 +2637,15 @@ def derived_comparison_shape(
     not established to be a whole-value comparison at all, which settles
     nothing and refuses nothing.
     """
-    scorers = [
-        node
-        for node in ast.walk(tree)
-        if set(_SCORER_ANSWER_PARAMETERS) <= _callable_parameter_names(node)
-    ]
-    if len(scorers) != 1:
-        # Two callables taking both answers means a helper this walk would
-        # have to follow, and none means no scorer it recognises. Either way
-        # the file is not established.
+    scorer = _single_scorer(tree)
+    if scorer is None or not isinstance(
+        scorer, (ast.FunctionDef, ast.AsyncFunctionDef)
+    ):
         return None
-    scorer = scorers[0]
     aliases: dict[str, tuple[str, frozenset[str]]] = {}
     returns: list[ast.Return] = []
     for index, statement in enumerate(scorer.body):
-        if (
-            index == 0
-            and isinstance(statement, ast.Expr)
-            and isinstance(statement.value, ast.Constant)
-            and isinstance(statement.value.value, str)
-        ):
+        if _is_leading_docstring(index, statement):
             continue
         if isinstance(statement, ast.Delete):
             # `del input_data, metadata` is the idiom every adapter in this
@@ -2624,13 +2656,8 @@ def derived_comparison_shape(
             # stops the proof. Skipping that one too would leave the walk
             # reasoning about a name the scorer has unbound, which is the one
             # thing a proof of a whole comparison may not do.
-            unbound = {
-                target.id
-                for target in statement.targets
-                if isinstance(target, ast.Name)
-            }
-            if len(unbound) != len(statement.targets) or unbound & (
-                set(_SCORER_ANSWER_PARAMETERS) | set(aliases)
+            if not _deletes_nothing_the_proof_reads(
+                statement, set(_SCORER_ANSWER_PARAMETERS) | set(aliases)
             ):
                 return None
             continue
@@ -2685,6 +2712,212 @@ def comparison_witness(transforms: frozenset[str], line: int) -> str:
         applied = ", ".join(sorted(transforms))
         return f"{applied} applied before the comparison (line {line})"
     return f"the answers are compared as written (line {line})"
+
+
+# The structural SQL comparison a file provably delegates to, for the one task
+# kind every whole-value comparison is the wrong ruler for.
+#
+# #414: `code-sql` fitted exactly two methods. One is `execution`, which
+# `references/run-safety.md` refuses to ship, select or validate a sandbox for
+# and ends this guide on. The other is `composite` at half reproducibility.
+# Every deterministic method excluded `code-sql`, and correctly - two
+# different-looking queries can mean the same thing, so text equality scores a
+# right answer zero. What was missing is the comparison the standard SQL
+# benchmarks call exact set match: parse both queries, compare clause
+# components, execute nothing and open nothing.
+#
+# Adding the method is the easy half. The hard half is that "this evaluator
+# compares SQL structure" is NOT a property an AST can settle about arbitrary
+# Python, and deciding it from a surface signal - a name that reads like a
+# parser, an import that reads like a grammar - is the recurring defect in
+# this package, whose didn't-find-it branch counts as a pass. A general
+# classifier would answer "cannot tell" for nearly every real file, which is
+# the argument `derived_comparison_shape` already makes against classifying
+# the other eleven methods.
+#
+# So this proves DELEGATION to a comparator whose behaviour is known, and it
+# has two halves, both required:
+#
+# 1. The scorer's one return hands both answers, once each and in order, to a
+#    name this file imported from `sql_structure` at module level. Same walk
+#    and same discipline as the whole-value proof above: one scorer, one
+#    return, and a refusal the moment the body does anything else.
+# 2. The `sql_structure.py` beside the evaluator is the module this guide
+#    ships, compared as a parsed tree so a copy may be reformatted or
+#    re-commented and may not be made to do something else.
+#
+# Half 1 alone is a name anyone can type over a text comparator, which is #380
+# one indirection out. Half 2 alone proves only that a file was copied. A file
+# failing either is not established - and, as everywhere else here, not
+# established refutes nothing: it scores exactly as it did before this
+# existed, unless the declaration itself was a claim about this comparison,
+# which readiness decides and this walk does not.
+_STRUCTURAL_SQL_MODULE = "sql_structure"
+_STRUCTURAL_SQL_COMPARISON = "structural_match"
+STRUCTURAL_SQL_SHAPE = "sql-structure"
+# The shipped module, resolved from this script rather than from the caller's
+# working directory: what is being established is sameness with the copy in
+# THIS package, and a path the caller controls could not establish that.
+STRUCTURAL_SQL_ASSET = (
+    Path(__file__).resolve().parent.parent / "assets" / f"{_STRUCTURAL_SQL_MODULE}.py"
+)
+
+
+def _binds_bundled_comparator(tree: ast.Module) -> str | None:
+    """How this file binds the bundled comparator, or nothing.
+
+    Two spellings, because both are what an author writes and neither is
+    harder to prove than the other. `"name"` is `from sql_structure import
+    structural_match`, where the call is a bare name; `"module"` is `import
+    sql_structure`, where the call goes through the attribute. The reference
+    shows the first, and refusing the second would have cost an honest
+    evaluator its credit for a choice the guidance never asked about - the
+    quiet half of a check, since nobody reports a refusal they cannot see.
+
+    Both are absolute, module level and unaliased. A relative import names the
+    customer's own package rather than the copied module; an alias binds a name
+    the return would not show; an import inside a function is a binding this
+    walk did not follow to the return. Each of those is a file this walk has
+    not established, not a file it has caught.
+    """
+    for node in tree.body:
+        if isinstance(node, ast.ImportFrom):
+            if node.module != _STRUCTURAL_SQL_MODULE or node.level != 0:
+                continue
+            for alias in node.names:
+                if alias.name == _STRUCTURAL_SQL_COMPARISON and alias.asname is None:
+                    return "name"
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name == _STRUCTURAL_SQL_MODULE and alias.asname is None:
+                    return "module"
+    return None
+
+
+def _calls_bundled_comparator(node: ast.expr, binding: str) -> bool:
+    """Whether this expression is the comparator, reached the way it was bound.
+
+    Deliberately paired with the binding rather than accepting either shape
+    under either import. `structural_match(...)` under a plain `import
+    sql_structure` is an unbound name, and `sql_structure.structural_match(...)`
+    under a `from` import reads an attribute off something this file never
+    imported - both are files that would not run, and neither is established.
+    """
+    if binding == "name":
+        return isinstance(node, ast.Name) and node.id == _STRUCTURAL_SQL_COMPARISON
+    return (
+        isinstance(node, ast.Attribute)
+        and node.attr == _STRUCTURAL_SQL_COMPARISON
+        and isinstance(node.value, ast.Name)
+        and node.value.id == _STRUCTURAL_SQL_MODULE
+    )
+
+
+def _structural_delegation_line(scorer: ast.AST, binding: str) -> int | None:
+    """The line on which this scorer hands both answers to the comparator.
+
+    Deliberately stricter than the whole-value walk: no assignments at all.
+    There is nothing for a structural scorer to prepare - the comparator owns
+    the fence stripping, the comment stripping and the canonicalisation - so a
+    statement that prepares a value is a file doing something this walk has
+    not read, and it stops the proof.
+    """
+    if not isinstance(scorer, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        return None
+    returns: list[ast.Return] = []
+    for index, statement in enumerate(scorer.body):
+        if _is_leading_docstring(index, statement):
+            continue
+        if isinstance(statement, ast.Delete):
+            if not _deletes_nothing_the_proof_reads(
+                statement, set(_SCORER_ANSWER_PARAMETERS)
+            ):
+                return None
+            continue
+        if isinstance(statement, ast.Return):
+            returns.append(statement)
+            continue
+        return None
+    if len(returns) != 1 or returns[0].value is None:
+        return None
+    value = returns[0].value
+    if (
+        isinstance(value, ast.Call)
+        and isinstance(value.func, ast.Name)
+        and value.func.id in _TRUTH_WRAPPERS
+        and len(value.args) == 1
+        and not value.keywords
+    ):
+        value = value.args[0]
+    if (
+        not isinstance(value, ast.Call)
+        or not _calls_bundled_comparator(value.func, binding)
+        or value.keywords
+        or len(value.args) != 2
+    ):
+        return None
+    handed = [
+        argument.id if isinstance(argument, ast.Name) else None
+        for argument in value.args
+    ]
+    # Both answers, once each, and in the comparator's own parameter order.
+    # `structural_match(expected, output)` would score the same today and is
+    # still refused: the proof is that this file calls a known comparator the
+    # way it is documented, and a call this walk has to reason about is not
+    # that.
+    if handed != list(_SCORER_ANSWER_PARAMETERS):
+        return None
+    return value.lineno
+
+
+def _tree_of(path: Path) -> str | None:
+    """This file's parsed tree as a comparable string, or None if unreadable.
+
+    Every refusal `ast.parse` can make is one answer here, and it is None.
+    Comparing trees rather than bytes is the deliberate part: a copy may carry
+    different comments, formatting or line endings and still be this module,
+    and may not carry a different statement and still be it.
+    """
+    try:
+        return ast.dump(ast.parse(path.read_text()))
+    except (
+        OSError,
+        UnicodeDecodeError,
+        SyntaxError,
+        ValueError,
+        MemoryError,
+        RecursionError,
+    ):
+        return None
+
+
+def bundled_comparator_is_beside(evaluator: Path) -> bool:
+    """Whether the module beside this evaluator is the one this guide ships."""
+    shipped = _tree_of(STRUCTURAL_SQL_ASSET)
+    if shipped is None:
+        return False
+    local = _tree_of(evaluator.parent / f"{_STRUCTURAL_SQL_MODULE}.py")
+    return local is not None and local == shipped
+
+
+def derived_structural_sql_shape(tree: ast.Module, evaluator: Path) -> int | None:
+    """The line proving this file delegates its comparison, or nothing."""
+    scorer = _single_scorer(tree)
+    binding = _binds_bundled_comparator(tree)
+    if scorer is None or binding is None:
+        return None
+    line = _structural_delegation_line(scorer, binding)
+    if line is None or not bundled_comparator_is_beside(evaluator):
+        return None
+    return line
+
+
+def structural_comparison_witness(line: int) -> str:
+    """What was read, in terms the reader can check against their own files."""
+    return (
+        "both answers are handed to the bundled structural SQL comparator, and "
+        f"the copy beside this evaluator is unchanged (line {line})"
+    )
 
 
 def check_evaluator(path: Path) -> None:
@@ -2768,6 +3001,16 @@ def check_evaluator(path: Path) -> None:
         shape, transforms, line = comparison
         derived["comparison_shape"] = shape
         derived["comparison_witness"] = comparison_witness(transforms, line)
+    else:
+        # Only where the whole-value proof declined, and the two cannot both
+        # settle: a call to the bundled comparator is a helper call, which
+        # stops that walk at its first operand. Written as an `else` anyway,
+        # so that a later change to either proof cannot quietly produce a file
+        # reported as two shapes at once.
+        structural = derived_structural_sql_shape(tree, path)
+        if structural is not None:
+            derived["comparison_shape"] = STRUCTURAL_SQL_SHAPE
+            derived["comparison_witness"] = structural_comparison_witness(structural)
     if witnesses:
         emit(
             "evaluator-shape",

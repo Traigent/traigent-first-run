@@ -17515,11 +17515,23 @@ class TaskFitIsEarnedFromTheEvaluatorFileTests(unittest.TestCase):
 
         A run that never handed an evaluator to preflight has established
         nothing about it, and this check refutes only from proof. So every
-        method that is not a claim about running the answer keeps exactly what
-        it had, in both of the states that establish nothing.
+        method that is not a claim about the file keeps exactly what it had,
+        in both of the states that establish nothing.
+
+        Two families of method are a claim about the file and are excluded
+        here, each with its own test that they withhold: the one that says the
+        evaluator runs the answer, and the one that says it compares two
+        queries as parsed structures. Excluding them without asserting the
+        exclusion would let this test pass over a method that quietly stopped
+        being either, so the count below is checked against the tables.
         """
+        excused = 0
         for method, profile in sorted(MODULE.METHOD_PROFILES.items()):
-            if MODULE.METHOD_EXECUTES_CANDIDATE[method] is True:
+            if (
+                MODULE.METHOD_EXECUTES_CANDIDATE[method] is True
+                or method in MODULE.METHOD_REQUIRES_PROVEN_COMPARISON
+            ):
+                excused += 1
                 continue
             for kind in profile["fits"]:
                 for extra in ({}, {"executes_candidate": False}):
@@ -17529,6 +17541,17 @@ class TaskFitIsEarnedFromTheEvaluatorFileTests(unittest.TestCase):
                         self.assertEqual(
                             subscore.evidence, f"{method} suits {kind} output"
                         )
+        self.assertEqual(
+            excused,
+            len(
+                {
+                    method
+                    for method, claims in MODULE.METHOD_EXECUTES_CANDIDATE.items()
+                    if claims is True
+                }
+                | MODULE.METHOD_REQUIRES_PROVEN_COMPARISON
+            ),
+        )
 
     def test_a_mismatched_method_keeps_the_sentence_about_the_mismatch(self) -> None:
         """The arm about the file does not talk over the arm about the output.
@@ -17821,14 +17844,99 @@ class TaskFitIsMeasuredOnThePairNotOnEitherFieldTests(unittest.TestCase):
         self.assertIn("exact check rather than normalized-exact", overstated.evidence)
 
     def test_a_file_the_walk_could_not_settle_refuses_nothing(self) -> None:
-        """The commonest answer, and the one that must cost nobody anything."""
+        """The commonest answer, and the one that must cost nobody anything.
+
+        True of every method whose declaration is a claim about the OUTPUT
+        kind, which is all of them but two. `execution` and the methods in
+        `METHOD_REQUIRES_PROVEN_COMPARISON` are claims about the FILE, and for
+        those an unsettled file is the answer "not established" rather than a
+        clean bill - asserted directly below rather than merely skipped.
+        """
         for method, profile in sorted(MODULE.METHOD_PROFILES.items()):
-            if MODULE.METHOD_EXECUTES_CANDIDATE[method] is True:
+            if (
+                MODULE.METHOD_EXECUTES_CANDIDATE[method] is True
+                or method in MODULE.METHOD_REQUIRES_PROVEN_COMPARISON
+            ):
                 continue
             for kind in profile["fits"]:
                 with self.subTest(method=method, kind=kind):
                     subscore = self.fit(method, kind, shape=None)
                     self.assertEqual(subscore.value, MODULE.TASK_FIT_WEIGHT)
+
+    def test_a_method_that_claims_a_comparison_earns_nothing_from_an_unread_file(
+        self,
+    ) -> None:
+        """#414. The unknown case has to fail closed, and this is where.
+
+        The twelve older methods say what output kind they suit, so a file
+        nobody could classify refutes none of them. A method whose whole
+        content is a claim about the comparison the file performs is the other
+        case: "the walk could not account for this file" and "this file does
+        not do that" are the same answer to a customer, and crediting the
+        first would make the method the highest-paying word a run could type
+        over any evaluator - which is the reading #380 was filed about, one
+        indirection further out.
+        """
+        for method in sorted(MODULE.METHOD_REQUIRES_PROVEN_COMPARISON):
+            supported = MODULE.METHOD_COMPARISON_SUPPORT[method]
+            self.assertTrue(supported, f"{method} supports no comparison at all")
+            for kind in MODULE.METHOD_PROFILES[method]["fits"]:
+                with self.subTest(method=method, kind=kind):
+                    unread = self.fit(method, kind, shape=None)
+                    self.assertEqual(unread.value, MODULE.TASK_FIT_UNFIT_CREDIT)
+                    self.assertIn("does not establish that it does", unread.evidence)
+                    for shape in sorted(supported):
+                        proven = self.fit(method, kind, shape=shape)
+                        self.assertEqual(proven.value, MODULE.TASK_FIT_WEIGHT)
+                        self.assertEqual(
+                            proven.evidence, f"{method} suits {kind} output"
+                        )
+
+    def test_a_text_comparator_wearing_a_structural_name_is_refused(self) -> None:
+        """The acceptance test for #414, at the scoring layer.
+
+        The method exists so a SQL project has an in-scope route to a real
+        evaluation pillar. It must not become a second way to be paid for a
+        declaration: a file proven to be a whole-value text comparison is
+        refused under it, with the sentence that names what the file does
+        first so the reader can check it against their own source.
+        """
+        for method in sorted(MODULE.METHOD_REQUIRES_PROVEN_COMPARISON):
+            for kind in MODULE.METHOD_PROFILES[method]["fits"]:
+                for shape in ("exact", "normalized-exact"):
+                    with self.subTest(method=method, kind=kind, shape=shape):
+                        subscore = self.fit(method, kind, shape=shape)
+                        self.assertEqual(subscore.value, MODULE.TASK_FIT_UNFIT_CREDIT)
+                        self.assertIn(
+                            f"{shape} check rather than {method}", subscore.evidence
+                        )
+                        self.assertIn(
+                            MODULE.COMPARISON_SHAPE_DESCRIPTIONS[shape],
+                            subscore.evidence,
+                        )
+
+    def test_every_provable_shape_says_what_the_file_does(self) -> None:
+        """A refusal opens by describing the customer's own file, so it must fit.
+
+        The sentence used to be one literal, true of the two whole-value
+        shapes. A third shape that is not a whole-value comparison would have
+        been announced as one, and a refusal whose first half misdescribes the
+        file is a refusal nobody can check.
+        """
+        self.assertEqual(
+            sorted(MODULE.COMPARISON_SHAPE_DESCRIPTIONS),
+            sorted(
+                {
+                    shape
+                    for shapes in MODULE.METHOD_COMPARISON_SUPPORT.values()
+                    for shape in shapes
+                }
+            ),
+        )
+        for shape, described in sorted(MODULE.COMPARISON_SHAPE_DESCRIPTIONS.items()):
+            with self.subTest(shape=shape):
+                self.assertTrue(described[:1].islower())
+                self.assertNotIn("-", described.replace("well-", ""))
 
     def test_every_profiled_method_records_which_comparisons_support_it(
         self,
@@ -17844,14 +17952,27 @@ class TaskFitIsMeasuredOnThePairNotOnEitherFieldTests(unittest.TestCase):
         )
         for method, shapes in sorted(MODULE.METHOD_COMPARISON_SUPPORT.items()):
             with self.subTest(method=method):
-                self.assertLessEqual(shapes, {"exact", "normalized-exact"})
+                self.assertLessEqual(
+                    shapes, {"exact", "normalized-exact", "sql-structure"}
+                )
         # The three methods a whole-value equality can be, and no others.
         supported = {
             method
             for method, shapes in MODULE.METHOD_COMPARISON_SUPPORT.items()
-            if shapes
+            if shapes & {"exact", "normalized-exact"}
         }
         self.assertEqual(supported, {"exact", "normalized-exact", "routing"})
+        # And the one a proven structural SQL comparison supports, which is
+        # deliberately not one of those three: a file that reads both answers
+        # as queries is not comparing them as whole values, so crediting
+        # `exact` or `routing` from it would be the same mistake read
+        # backwards.
+        structural = {
+            method
+            for method, shapes in MODULE.METHOD_COMPARISON_SUPPORT.items()
+            if "sql-structure" in shapes
+        }
+        self.assertEqual(structural, {"sql-structure"})
 
     def test_the_engine_finding_outranks_the_comparison_finding(self) -> None:
         """Both refuse; the one about running the answer is the one to print.

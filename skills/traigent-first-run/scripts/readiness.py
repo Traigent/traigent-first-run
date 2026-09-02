@@ -569,6 +569,30 @@ METHOD_PROFILES: dict[str, dict[str, Any]] = {
         "cost": 1.0,
         "fits": ("code-sql", "code"),
     },
+    # #414. `code-sql` fitted exactly two methods, and one of them is the one
+    # `references/run-safety.md` ends this guide on. Every deterministic
+    # method excluded it, correctly: two different-looking queries can mean
+    # the same thing, so text equality scores a right answer zero. What was
+    # missing is the comparison the standard SQL benchmarks call exact set
+    # match - parse both queries and compare clause components, executing
+    # nothing and opening nothing.
+    #
+    # 0.95 is a deliberate placement, not a rounding. This method is a better
+    # ruler than string equality and a weaker one than running the queries,
+    # because it can still score a semantically equivalent query written a
+    # different way as wrong, and `reproducibility` is the only dial in this
+    # table that can say so: `fits` is a membership test with two payouts and
+    # cannot express "fits, imperfectly". It sits above `execution` at 0.9,
+    # which is right - no database state enters and nothing varies between
+    # runs - and below the whole-value text methods at 1.0, which is also
+    # right, because their 1.0 is over the question they actually answer and
+    # this one is a proxy for a semantic question, bounded by how much of the
+    # dialect the comparator covers.
+    "sql-structure": {
+        "reproducibility": 0.95,
+        "cost": 1.0,
+        "fits": ("code-sql",),
+    },
     "routing": {
         "reproducibility": 1.0,
         "cost": 1.0,
@@ -703,6 +727,11 @@ METHOD_MISMATCH_REASONS: dict[str, str] = {
         "blends several checks into one number, so it is only as good for "
         "{kind} output as the checks inside it, which this score cannot see"
     ),
+    "sql-structure": (
+        "reads both answers as SQL queries and compares their clauses, so a "
+        "{kind} answer that is not a query parses as nothing and is scored as "
+        "wrong however right it is"
+    ),
 }
 DETERMINISTIC_METHODS = {
     "exact",
@@ -713,6 +742,7 @@ DETERMINISTIC_METHODS = {
     "execution",
     "routing",
     "fuzzy",
+    "sql-structure",
 }
 CALIBRATION_REQUIRED_CHECKS = frozenset({"good_passes", "bad_fails", "non_constant"})
 
@@ -760,6 +790,7 @@ METHOD_EXECUTES_CANDIDATE: dict[str, bool | None] = {
     "llm-judge-pairwise": False,
     "llm-judge-rubric": False,
     "composite": None,
+    "sql-structure": False,
 }
 
 # Which methods a PROVEN whole-value comparison supports.
@@ -805,7 +836,37 @@ METHOD_COMPARISON_SUPPORT: dict[str, frozenset[str]] = {
     "llm-judge-pairwise": frozenset(),
     "llm-judge-rubric": frozenset(),
     "composite": frozenset(),
+    # The one method whose supported shape is not a whole-value comparison.
+    # Read both ways: a file proven to compare two queries as parsed
+    # structures does not support `exact` or any other word above, and a file
+    # proven to be a text comparison does not support this one.
+    "sql-structure": frozenset({"sql-structure"}),
 }
+
+# The methods whose credit requires the file to have ESTABLISHED the
+# comparison, rather than merely not to have contradicted it.
+#
+# #414 adds a method whose whole content is a claim about what the evaluator
+# does - it compares two queries as parsed structures - and the table above,
+# read alone, would have credited that claim on the word. `METHOD_COMPARISON
+# _SUPPORT` refutes from proof: it fires only where a shape was settled, so a
+# file the walk could not account for refutes nothing and keeps full credit.
+# That asymmetry is right for the twelve methods it was written for, whose
+# claim is about the OUTPUT kind and not about the file. It is wrong for this
+# one, where "the walk could not account for the file" and "the file does not
+# do this" are the same answer to the customer, and the didn't-find-it branch
+# would be a pass - the defect class this package keeps catching.
+#
+# So this set names the methods that fail closed instead: an unestablished
+# file earns `TASK_FIT_UNFIT_CREDIT`, exactly as a text comparator wearing
+# this method's name does, and the card says which of the two the reader is
+# in. Nothing is invented in either direction - credit is withheld, never
+# taken below the floor a mismatched method already lands on.
+#
+# Deliberately a set and not a default over `METHOD_PROFILES`: adding a method
+# here changes what an existing honest project scores, so it is a decision per
+# method rather than a policy a new row inherits.
+METHOD_REQUIRES_PROVEN_COMPARISON: frozenset[str] = frozenset({"sql-structure"})
 
 
 def reported_bool(value: object) -> bool | None:
@@ -2056,6 +2117,23 @@ def task_fit_unproven_execution_evidence(method: str, read_the_file: bool) -> st
     )
 
 
+# What each provable shape says the file DOES, in the reader's terms.
+#
+# Split out when #414 added a third shape, because the one sentence that used
+# to be inlined below is true of the two whole-value shapes and false of the
+# new one: a structural SQL comparison does not compare the whole answer with
+# the expected answer, which is the entire reason it exists. A refusal whose
+# first half misdescribes the customer's own file is a refusal they cannot
+# check, and this package has an open pattern of exactly that.
+COMPARISON_SHAPE_DESCRIPTIONS: dict[str, str] = {
+    "exact": "compares the whole answer with the expected answer and nothing else",
+    "normalized-exact": (
+        "compares the whole answer with the expected answer and nothing else"
+    ),
+    "sql-structure": "reads both answers as SQL and compares them as parsed structures",
+}
+
+
 def task_fit_comparison_evidence(method: str, shape: str, witness: str | None) -> str:
     """The card's sentence for a declaration the file's own comparison refutes.
 
@@ -2066,10 +2144,41 @@ def task_fit_comparison_evidence(method: str, shape: str, witness: str | None) -
     is a claim they can stand over the file and confirm.
     """
     found = f": {witness}" if witness else ""
+    performs = COMPARISON_SHAPE_DESCRIPTIONS[shape]
     return (
-        f"the evaluator file compares the whole answer with the expected "
-        f"answer and nothing else{found}. That is a {shape} check rather "
+        f"the evaluator file {performs}{found}. That is a {shape} check rather "
         f"than {method}, so the fit claimed for {method} is not credited"
+    )
+
+
+def task_fit_unproven_comparison_evidence(
+    method: str, shape: str | None, witness: str | None
+) -> str:
+    """Why a method whose whole claim is about the file earns nothing yet.
+
+    The sibling of `task_fit_unproven_execution_evidence`, and it exists for
+    the same reason. `sql-structure` says the evaluator reads both answers as
+    SQL and compares them as parsed structures. That is a statement about the
+    file, so it is credited from the file, and the two ways it can fail read
+    differently to the customer and must be said differently:
+
+    * a comparison was proven and it is a different one - the file is a text
+      comparator wearing this name, and `task_fit_comparison_evidence` already
+      says exactly that, so it says it here too rather than a second sentence
+      about the same situation drifting away from the first;
+    * nothing was proven - the claim is unpaid rather than disproved, and the
+      line says which of the two states the reader is in and what would settle
+      it, because "not established" with no route out is a refusal a customer
+      can only shrug at.
+    """
+    if shape is not None:
+        return task_fit_comparison_evidence(method, shape, witness)
+    return (
+        f"{method} says the evaluator reads both answers as SQL and compares "
+        "them as parsed structures, and the evaluator file read for this score "
+        "does not establish that it does. This check is credited from what the "
+        "file does, so an unestablished comparison earns no credit; the route "
+        "in references/evaluation-and-dataset.md is the one this score can read"
     )
 
 
@@ -5427,6 +5536,30 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
             )
         elif (
             fits
+            and facts.method in METHOD_REQUIRES_PROVEN_COMPARISON
+            and facts.comparison_shape
+            not in METHOD_COMPARISON_SUPPORT.get(facts.method or "", frozenset())
+        ):
+            # Credit, withheld, and the arm that keeps #414 from being #380
+            # again. The three arms around it all key on the file having
+            # ESTABLISHED something, which is the only safe direction for a
+            # refutation. This one is a credit decision, so it fails the other
+            # way on purpose: a method whose entire claim is about the
+            # comparison the file performs earns nothing until that comparison
+            # is proven, and `comparison_shape is None` - the walk could not
+            # account for the file - lands here rather than falling through to
+            # full credit.
+            #
+            # Without it the new method would have been the highest-paying
+            # thing a `code-sql` run could type over any evaluator the walk
+            # does not settle, which is precisely the reading #380 was filed
+            # about, one indirection further out.
+            value = TASK_FIT_UNFIT_CREDIT
+            evidence = task_fit_unproven_comparison_evidence(
+                facts.method or "", facts.comparison_shape, facts.comparison_witness
+            )
+        elif (
+            fits
             and facts.comparison_shape is not None
             and facts.comparison_shape
             not in METHOD_COMPARISON_SUPPORT.get(facts.method or "", frozenset())
@@ -7646,10 +7779,10 @@ def evaluator_execution_from_preflight(
 def evaluator_comparison_from_preflight(
     records: Sequence[dict[str, Any]],
 ) -> tuple[str | None, str | None]:
-    """Read the whole-value comparison preflight proved, if it proved one.
+    """Read the comparison preflight proved, if it proved one.
 
     Returns `(shape, witness)`. The shape is `None` unless the field carries
-    one of the two names this scorer can act on, which is the fail-closed
+    one of the three names this scorer can act on, which is the fail-closed
     reading in both directions at once: a payload that predates the field, a
     file the walk could not account for, and a value nobody can read all land
     on "nothing established", and nothing established refutes nothing.
@@ -7663,7 +7796,7 @@ def evaluator_comparison_from_preflight(
     if not shape:
         return None, None
     reported = shape.get("comparison_shape")
-    if reported not in ("exact", "normalized-exact"):
+    if reported not in ("exact", "normalized-exact", "sql-structure"):
         return None, None
     witness = shape.get("comparison_witness")
     if not isinstance(witness, str) or not witness.strip():
