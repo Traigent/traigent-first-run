@@ -8,7 +8,9 @@ Use this reference whenever creating or validating a dataset or evaluation metho
 2. Mandatory calibration
 3. Quality diagnosis and repair choice
 4. Dataset construction
-5. Held-out set and claims
+5. When calibration runs long
+6. First-run subset for a large dataset
+7. Held-out set and claims
 
 ## Evaluation selection
 

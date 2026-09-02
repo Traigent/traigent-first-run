@@ -27,6 +27,11 @@ Load each reference when its stage begins:
    consistent across the run and depth is calibrated from evidence, never by asking the user
    how experienced they are.
 
+A stage carrying a **Read next.** dispatch has already chosen for that stage, and the dispatch
+governs: open its required section, plus any optional section whose stated condition holds, and
+leave the rest of that reference closed until a later dispatch asks for it. The list above is
+what a stage with no dispatch falls back to.
+
 Use [`scripts/preflight.py`](scripts/preflight.py) for the free static preflight. Use
 [`scripts/readiness.py`](scripts/readiness.py) as a mandatory gate, never only when it seems
 useful: score all three pillars at the start of every guided run before any Agent, Dataset, or
@@ -373,7 +378,9 @@ reports for the project. Show it before any Agent, Dataset, or Evaluation compon
 repaired; current-run validation evidence may be prepared first as the gate above requires.
 
 **Read next.** Required: [`references/component-creation.md` § Reading the agent for the opening score](references/component-creation.md#reading-the-agent-for-the-opening-score).
-If a component is present but returns a constant, echo, fixture, or placeholder: [`references/component-creation.md` § Evidence and provenance](references/component-creation.md#evidence-and-provenance).
+If a component has to be classified `real`, `limited`, or `invalid`: [`references/component-creation.md` § Evidence and provenance](references/component-creation.md#evidence-and-provenance).
+If the first event is about to be appended to the run log: [`references/run-safety.md` § The run log](references/run-safety.md#the-run-log).
+If rows exist and the row review has to be written: [`references/evaluation-and-dataset.md` § The row-level sanity check](references/evaluation-and-dataset.md#the-row-level-sanity-check).
 
 Say that the scoring command reads the project and changes nothing of the customer's. Name the
 evidence the guided run wrote before it: its row review when rows exist, and both calibration
@@ -548,7 +555,7 @@ Follow the dependency matrix in `references/component-creation.md`:
   runtime binding is owned by the installed SDK and is verified in stage 5.
 
 **Read next.** Required: [`references/component-creation.md` § Dependency matrix](references/component-creation.md#dependency-matrix).
-If the row directs building an agent: [`references/component-creation.md` § Agent creation](references/component-creation.md#agent-creation).
+If the matrix row directs creating an agent: [`references/component-creation.md` § Agent creation](references/component-creation.md#agent-creation).
 If the row directs building an evaluation method: [`references/evaluation-and-dataset.md` § Evaluation selection](references/evaluation-and-dataset.md#evaluation-selection).
 
 Create a minimal reversible integration under `traigent-runs/` or a thin wrapper around the
@@ -569,7 +576,7 @@ provider key, and before any SDK-specific check.
 If the resolved evaluator call path executes or imports candidate output: [`references/run-safety.md` § Static and mock validation](references/run-safety.md#static-and-mock-validation).
 If calibration reaches its timeout: [`references/evaluation-and-dataset.md` § When calibration runs long](references/evaluation-and-dataset.md#when-calibration-runs-long).
 If a check reports that the dataset or evaluator cannot separate configurations: [`references/evaluation-and-dataset.md` § Quality diagnosis and repair choice](references/evaluation-and-dataset.md#quality-diagnosis-and-repair-choice).
-If the evaluation method has to be shown to grade the selected agent: [`references/component-creation.md` § Compatibility contract](references/component-creation.md#compatibility-contract).
+If the agent and the evaluator have to be validated against each other before optimization: [`references/component-creation.md` § Compatibility contract](references/component-creation.md#compatibility-contract).
 If a repair is to move a component from `limited` or `invalid` to `real`: [`references/component-creation.md` § Readiness transitions](references/component-creation.md#readiness-transitions).
 
 Follow this order:
@@ -1021,6 +1028,8 @@ scores across both paid measurements - never on the held-out rows, which arbitra
 score only that one against the ten held-out rows;
 `references/evaluation-and-dataset.md` owns the rest.
 
+**Read next.** Required: [`references/evaluation-and-dataset.md` § Held-out set and claims](references/evaluation-and-dataset.md#held-out-set-and-claims).
+
 Do not run an offline baseline and then pay to repeat it merely to populate the portal. Do not ask
 the user to choose trial counts or knobs; select them from the inspected agent and include their
 calls in the connected-stage approval.
@@ -1067,10 +1076,7 @@ scored on those rows. Report truncation and persistence failures, require the po
 probe to have stayed green, and verify each portal link before claiming visibility.
 
 **Read next.** Required: [`references/run-safety.md` § Post-run verification](references/run-safety.md#post-run-verification).
-If the accuracy-cost frontier is to be read from finished trials: [`references/sdk-execution.md` § Result checks](references/sdk-execution.md#result-checks).
-If a per-example audit or optimization-insights read is available: [`references/sdk-execution.md` § Reading the result for insight](references/sdk-execution.md#reading-the-result-for-insight).
 If the search stopped, failed, or returned zero trials: [`references/run-safety.md` § Recovery](references/run-safety.md#recovery).
-If the held-out rows are to be scored and reported: [`references/evaluation-and-dataset.md` § Held-out set and claims](references/evaluation-and-dataset.md#held-out-set-and-claims).
 
 Lead with a layered summary whose opening layers are enough for a quick read and whose details are
 auditable:
@@ -1159,6 +1165,9 @@ available. Surface deeper signals only when a verified run-scoped platform artif
 returned them. Never fill the DEEPER-INSIGHTS template from expectation, infer labels from a flat
 score, promise a numeric dataset-quality score, or imply the platform graded an unrun dataset;
 over substitutes, every insight describes only the walkthrough.
+
+**Read next.** Required: [`references/sdk-execution.md` § Result checks](references/sdk-execution.md#result-checks).
+If the installed result exposes a per-example audit or an insights helper: [`references/sdk-execution.md` § Reading the result for insight](references/sdk-execution.md#reading-the-result-for-insight).
 
 Close by saying what a further run would be worth. Name the gaps still open and what each is now
 costing; use the user's own measured evidence rather than encouragement. Say what this walkthrough

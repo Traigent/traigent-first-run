@@ -28326,7 +28326,14 @@ def dispatch_targets(text: str) -> list[SimpleNamespace]:
 def unresolved_anchors(
     documents: dict[str, str], references: dict[str, str]
 ) -> list[str]:
-    """Anchored targets that name no heading in the file they point at."""
+    """Anchored targets that name no heading in the file they point at.
+
+    `documents` is every tracked text file, not the reading list. A broken
+    anchor in `README.md` is a broken anchor a customer follows, and the
+    first version of this swept `assistant_facing_documents()` only, which
+    made the docstring's "anywhere in the package" a claim the code did not
+    keep.
+    """
     anchors = {name: heading_anchors(body) for name, body in references.items()}
     unresolved: list[str] = []
     for name, body in documents.items():
@@ -28391,6 +28398,119 @@ def unreachable_sections(
             if (name, slug) not in pointed:
                 unreachable.append(f"{name} § {title}")
     return unreachable
+
+
+#: Function words, so the overlap below is measured on the words that carry
+#: the condition. Generic English rather than anything about this package: a
+#: domain list here would be the word list this whole guard exists to avoid.
+CONDITION_FUNCTION_WORDS = frozenset("""
+    about after also this that they them then than there these those with
+    from into over under been being have have has had does done will would
+    should could must been each every some more most much many when where
+    which while whose what whom your yours their theirs before during until
+    still just only same other another such because since through against
+    between both else were was are is be by to of in on at it its as an a
+    and or not no if for the a run runs ran make makes made take takes
+    """.split())
+
+
+def ungrounded_conditions(text: str, references: dict[str, str]) -> list[str]:
+    """Optional conditions whose words are absent from the section they select.
+
+    A condition is the only thing standing between an optional pointer and a
+    pointer nobody has to justify, and `If the moon is waxing:` was green
+    before this existed. Grounding is measured against the destination's own
+    body: at least two content words of the condition have to appear in the
+    section it sends the run to, so a condition invented to license a pointer
+    fails while one written from the section it selects does not.
+
+    What this is NOT. It reads vocabulary, so it proves the condition is
+    about its destination and nothing else. It cannot tell whether a run can
+    actually DETERMINE the condition at that point, and it cannot tell a
+    narrow branch from one that is always true. Both of those are read by a
+    person. What it removes is the free lunch: a condition now has to be
+    written from the section it opens.
+    """
+    bodies = {
+        name: {
+            slug: section_body(body, line)
+            for slug, (line, _, _) in heading_anchors(body).items()
+        }
+        for name, body in references.items()
+    }
+    ungrounded: list[str] = []
+    for block in dispatch_blocks(text):
+        for offset, line in enumerate(block.lines):
+            if offset == 0:
+                continue
+            pointers = dispatch_pointers(line)
+            if not pointers:
+                continue
+            pointer = pointers[0]
+            condition = line[len("If ") :].split(": [", 1)[0].casefold()
+            words = {
+                word
+                for word in re.findall(r"[a-z]+", condition)
+                if len(word) > 3 and word not in CONDITION_FUNCTION_WORDS
+            }
+            target = posixpath.basename(pointer.target_path)
+            section = bodies.get(target, {}).get(pointer.slug, "").casefold()
+            grounded = {word for word in words if word in section}
+            if len(grounded) < 2:
+                ungrounded.append(
+                    f"line {block.line + offset}: {condition[:48]!r} shares "
+                    f"{len(grounded)} content words with {target} § "
+                    f"{pointer.title}"
+                )
+    return ungrounded
+
+
+def section_body(text: str, line: int) -> str:
+    """The text under the heading on `line`, down to the next heading of its level."""
+    lines = text.splitlines()
+    headings = markdown_headings(text)
+    level = next(level for number, level, _ in headings if number == line)
+    end = len(lines)
+    for number, later, _ in headings:
+        if number > line and later <= level:
+            end = number - 1
+            break
+    return "\n".join(lines[line:end])
+
+
+def unlisted_sections(text: str) -> list[str]:
+    """Sections the file's own index does not name.
+
+    The index is the one detector that survives a split whose new heading is
+    given a plausible-looking pointer: a section can be pointed at from
+    SKILL.md and still be missing from the list its own reference opens with,
+    and a reader who lands in the file and reads the index would never learn
+    it exists. It fails closed - a file with no index has every section
+    unlisted - which is why the two files that carry one are named below
+    rather than discovered.
+    """
+    indexes = index_section_titles(text)
+    if not indexes:
+        return []
+    listed = set()
+    for title in indexes:
+        line = next(
+            number for number, _, name in markdown_headings(text) if name == title
+        )
+        listed |= {
+            match.group(1)
+            for match in (
+                re.match(r"^\d+\.\s+(.*)$", raw.strip())
+                for raw in section_body(text, line).splitlines()
+                if raw.strip()
+            )
+            if match
+        }
+    return [
+        title
+        for _, level, title in markdown_headings(text)
+        if level == 2 and title not in indexes and title not in listed
+    ]
 
 
 def floating_dispatches(text: str) -> list[int]:
@@ -28472,9 +28592,15 @@ class ReferenceSectionsAreSignpostedTests(unittest.TestCase):
     it was on.
 
     Measured on trunk at `6d7c8d5`: 62 mentions of `references/*.md` in
-    SKILL.md, none carrying an anchor, no anchor anywhere in the package, and
-    32 of the 38 second-level reference sections never named in SKILL.md at
-    all - all ten of `sdk-execution.md`'s among them.
+    SKILL.md, none carrying an anchor, and no anchor anywhere in the package.
+    Two counts of the same gap, because they differ and both are true. By
+    literal text, 32 of the 38 second-level reference sections are never
+    named in SKILL.md at all - every one of `sdk-execution.md`'s ten among
+    them. Counted at a POINTER to its own file, which is the thing a run can
+    follow, only 3 of the 38 are named: `Ambiguity`, `Recovery` and
+    `Baseline and optimization` are the words falling out of "no ambiguity
+    remains", "one recommended recovery" and the index's own sentence, in
+    prose that sends nobody anywhere. The guard below counts the second way.
 
     So the resident file dispatches and the references teach. Each decision
     point carries one required pointer and, where a real branch exists, an
@@ -28495,33 +28621,129 @@ class ReferenceSectionsAreSignpostedTests(unittest.TestCase):
             path.name if path != SKILL else "SKILL.md": path.read_text(encoding="utf-8")
             for path in assistant_facing_documents()
         }
+        # Anchors are swept over everything git tracks, because a customer
+        # can follow one out of README.md as easily as out of SKILL.md.
+        cls.tracked = tracked_text_files()
 
     def test_every_anchor_in_the_package_resolves(self) -> None:
-        self.assertEqual(unresolved_anchors(self.documents, self.references), [])
+        self.assertEqual(unresolved_anchors(self.tracked, self.references), [])
 
     def test_every_pointer_shows_the_heading_it_resolves_to(self) -> None:
         self.assertEqual(unnamed_pointer_titles(self.documents, self.references), [])
 
     def test_every_dispatch_keeps_the_one_shape(self) -> None:
-        self.assertEqual(dispatch_defects(self.skill), [])
-
-    def test_the_marker_is_used_at_dispatches_and_nowhere_else(self) -> None:
         for name, body in self.documents.items():
+            self.assertEqual(dispatch_defects(body), [], name)
+
+    def test_only_the_resident_file_dispatches(self) -> None:
+        """ "The resident file dispatches and the references teach" as a check.
+
+        It was prose, and a well-formed dispatch inside a reference passed
+        every other check here. A reference that routes is a second flow: the
+        run would be taking direction from a document it was sent to by the
+        first one, and which of the two governs is exactly the question this
+        change exists to answer once.
+        """
+        dispatching = sorted(
+            name for name, body in self.documents.items() if dispatch_blocks(body)
+        )
+        self.assertEqual(dispatching, ["SKILL.md"])
+
+    def test_every_optional_condition_is_written_from_its_section(self) -> None:
+        self.assertEqual(ungrounded_conditions(self.skill, self.references), [])
+
+    def test_each_reference_index_lists_every_section_in_its_file(self) -> None:
+        """The detector that survives a split with a plausible pointer.
+
+        `sdk-execution.md` is excused, and the reason is arithmetic rather
+        than judgement: its own index is missing two sections, the fix is
+        about 80 bytes, and that file measures 128,943 against a 129,000
+        document ceiling. Completing it needs a ceiling raise, which is a
+        separate decision from this one and is filed as such.
+        """
+        self.assertEqual(
+            {
+                name: unlisted_sections(body)
+                for name, body in self.references.items()
+                if unlisted_sections(body)
+            },
+            {
+                "sdk-execution.md": [
+                    "Reading the result for insight",
+                    "Carrying the local baseline into the portal",
+                ]
+            },
+        )
+
+    def test_every_marker_is_a_dispatch_or_the_line_that_defines_one(
+        self,
+    ) -> None:
+        """A stray marker is a dispatch the parser cannot see.
+
+        The guidance index names the token when it says a dispatch narrows
+        what its stage opens, so one occurrence is prose. It is allowed by
+        POSITION rather than by wording: a definition comes before the thing
+        it defines, so any occurrence that is not a dispatch has to sit above
+        the first one. An indented dispatch, or half of one left in the
+        middle of the file, is below a dispatch and reds.
+        """
+        for name, body in self.documents.items():
+            blocks = dispatch_blocks(body)
+            lines = body.splitlines()
+            first = blocks[0].line if blocks else len(lines) + 1
+            for number, line in enumerate(lines, 1):
+                if DISPATCH_MARKER not in line or line.startswith(DISPATCH_MARKER):
+                    continue
+                self.assertLess(
+                    number,
+                    first,
+                    f"{name}:{number} carries the dispatch marker but is not a "
+                    "dispatch, and sits below one",
+                )
             self.assertEqual(
-                body.count(DISPATCH_MARKER),
-                len(dispatch_blocks(body)),
-                f"{name} uses the dispatch marker somewhere that is not a dispatch",
+                sum(1 for line in lines if line.startswith(DISPATCH_MARKER)),
+                len(blocks),
+                f"{name} has a dispatch line the block parser did not collect",
             )
 
-    def test_each_section_has_exactly_one_home(self) -> None:
-        seen: dict[tuple[str, str], int] = {}
-        repeated = []
-        for pointer in dispatch_targets(self.skill):
-            key = (posixpath.basename(pointer.target_path), pointer.slug)
-            if key in seen:
-                repeated.append(f"{key[0]} § {pointer.title} at {pointer.line}")
-            seen[key] = pointer.line
-        self.assertEqual(repeated, [])
+    def test_no_dispatch_points_at_a_section_twice(self) -> None:
+        """One home per DISPATCH, which is not the same as one per section.
+
+        The first version of this was one home per section anywhere in the
+        file, reasoned from `CLAUDE.md`'s one-decision-one-home rule. That
+        rule is about MANDATES: two statements of one rule can disagree with
+        each other, which is why it exists. Two pointers to one section
+        cannot disagree, and the stricter reading guaranteed a defect class -
+        a section genuinely needed at two decision points would be reachable
+        from at most one of them, forever. The run log is exactly that: its
+        event shape is needed when the record is created and again when a
+        search fails, and under the old rule the second step could have it or
+        the first could, never both.
+        """
+        for block in dispatch_blocks(self.skill):
+            keys = [
+                (posixpath.basename(pointer.target_path), pointer.slug)
+                for line in block.lines
+                for pointer in dispatch_pointers(line)
+            ]
+            self.assertEqual(
+                len(keys), len(set(keys)), f"line {block.line} repeats a pointer"
+            )
+
+    def test_a_section_is_required_reading_at_one_step(self) -> None:
+        """What survives of the one-home rule, and the part that was real.
+
+        Two steps may both point into a section. Only one may claim it as the
+        thing that must be read, because "required" is a claim about which
+        step owns the destination, and two owners is the ambiguity the
+        original rule was reaching for.
+        """
+        required = [
+            (posixpath.basename(pointer.target_path), pointer.slug)
+            for block in dispatch_blocks(self.skill)
+            for pointer in dispatch_pointers(block.lines[0])
+        ]
+        self.assertEqual(sorted(required), sorted(set(required)))
 
     def test_every_stage_of_the_guided_flow_carries_a_dispatch(self) -> None:
         """A stage added next month reds until it says where to read.
@@ -28550,20 +28772,40 @@ class ReferenceSectionsAreSignpostedTests(unittest.TestCase):
         """The exact gap the thin baseline came through.
 
         On trunk the paragraph prescribing the local fixed grid named no
-        reference at all, and the nearest mention of `sdk-execution.md` was 24
-        lines above it naming no section.
-        """
-        block = dispatch_directly_below(self.skill, "Run its explicit fixed grid")
-        self.assertIsNotNone(
-            block, "the dispatch no longer sits under the paragraph it answers"
-        )
-        self.assertIn("Small baseline sweep", block.lines[0])
-        self.assertIn(
-            "references/sdk-execution.md#small-baseline-sweep", block.lines[0]
-        )
+        reference at all, and the nearest mention of `sdk-execution.md` was
+        24 lines above it naming no section.
 
-    def test_no_dispatch_floats_under_a_bare_heading(self) -> None:
-        self.assertEqual(floating_dispatches(self.skill), [])
+        The dispatch is found by its own target rather than by quoting the
+        paragraph, and the paragraph is then read back off it. An earlier
+        version located the paragraph by the sentence
+        `"Run its explicit fixed grid"`, which reds on a legitimate reword
+        and says the dispatch moved. Quoting prose is how these pins rot, and
+        the one word asserted below is the guide's own name for the thing.
+        """
+        block = next(
+            (
+                block
+                for block in dispatch_blocks(self.skill)
+                if "#small-baseline-sweep" in block.lines[0]
+            ),
+            None,
+        )
+        self.assertIsNotNone(block, "nothing points at the sweep the baseline runs")
+        self.assertIn("Small baseline sweep", block.lines[0])
+        self.assertNotIn(block.line, floating_dispatches(self.skill))
+        lines = self.skill.splitlines()
+        end = block.line - 3
+        start = end
+        while start > 0 and lines[start - 1].strip():
+            start -= 1
+        above = " ".join(lines[start : end + 1]).casefold()
+        self.assertIn(
+            "grid",
+            above,
+            "the pointer to the sweep sits under a paragraph that is not the "
+            "one prescribing the grid; either the dispatch moved or that "
+            "paragraph was rewritten out from under it",
+        )
 
     def test_every_reference_section_is_entered_or_excused(self) -> None:
         self.assertEqual(
@@ -28603,12 +28845,18 @@ class SignpostGuardsRedForTheDefectAndNotForTheProseTests(unittest.TestCase):
         "## First thing\n\nBody.\n\n## Second thing\n\nBody.\n"
     )
 
+    #: Assembled rather than written out, so this file never CONTAINS a
+    #: bundled path carrying a fragment. It is swept by the resolution check like
+    #: every other tracked file, and a probe's deliberately broken anchor
+    #: sitting in the corpus would red the package it is probing.
+    REF = "references/glossary.md"
+
     HONEST = (
         "### 1. Do the thing\n\nProse.\n\n"
-        "**Read next.** Required: [`references/glossary.md` § First thing]"
-        "(references/glossary.md#first-thing).\n"
-        "If the second case applies: [`references/glossary.md` § Second thing]"
-        "(references/glossary.md#second-thing).\n"
+        f"**Read next.** Required: [`{REF}` § First thing]"
+        f"({REF}#first-thing).\n"
+        f"If the second case applies: [`{REF}` § Second thing]"
+        f"({REF}#second-thing).\n"
     )
 
     def package(self, skill: str, reference: str | None = None) -> tuple[dict, dict]:
@@ -28621,7 +28869,7 @@ class SignpostGuardsRedForTheDefectAndNotForTheProseTests(unittest.TestCase):
         )
         self.assertEqual(
             unresolved_anchors(documents, references),
-            ["SKILL.md: references/glossary.md#frist-thing resolves to no heading"],
+            [f"SKILL.md: {self.REF}#frist-thing resolves to no heading"],
         )
 
     def test_a_renamed_section_reds_its_anchor(self) -> None:
@@ -28722,6 +28970,86 @@ class SignpostGuardsRedForTheDefectAndNotForTheProseTests(unittest.TestCase):
         dispatch = DISPATCH_MARKER + self.HONEST.split(DISPATCH_MARKER, 1)[1]
         self.assertEqual(floating_dispatches(self.HONEST), [])
         self.assertEqual(floating_dispatches("### 1. Do the thing\n\n" + dispatch), [3])
+
+    #: A reference whose second section actually discusses the second case,
+    #: so the two probes below differ in the CONDITION and in nothing else.
+    GROUNDED_REFERENCE = (
+        "# Ref\n\n## Contents\n\n1. First thing\n2. Second thing\n\n"
+        "## First thing\n\nBody.\n\n## Second thing\n\n"
+        "The second case is settled from the preflight report.\n"
+    )
+
+    def test_a_condition_invented_to_license_a_pointer_reds(self) -> None:
+        """The evasion the optional half was open to.
+
+        An exception costs a count edit and a reason somebody reads. A
+        condition cost nothing at all, so the cheap way past reachability was
+        to invent one, and `If the moon is waxing:` was green.
+        """
+        honest = self.HONEST.replace(
+            "If the second case applies",
+            "If the preflight report settles the second case",
+        )
+        bogus = self.HONEST.replace(
+            "If the second case applies", "If the moon is waxing"
+        )
+        references = {"glossary.md": self.GROUNDED_REFERENCE}
+        self.assertEqual(ungrounded_conditions(honest, references), [])
+        self.assertEqual(len(ungrounded_conditions(bogus, references)), 1)
+
+    def test_a_reworded_but_grounded_condition_stays_green(self) -> None:
+        references = {"glossary.md": self.GROUNDED_REFERENCE}
+        for wording in (
+            "If the preflight report settles the second case",
+            "If a preflight report is present and settles the second case",
+        ):
+            self.assertEqual(
+                ungrounded_conditions(
+                    self.HONEST.replace("If the second case applies", wording),
+                    references,
+                ),
+                [],
+                wording,
+            )
+
+    def test_a_dispatch_inside_a_reference_is_found(self) -> None:
+        """ "The resident file dispatches" has to be a check, not a sentence."""
+        dispatch = DISPATCH_MARKER + self.HONEST.split(DISPATCH_MARKER, 1)[1]
+        routed = self.REFERENCE + "\nSome depth.\n\n" + dispatch
+        self.assertEqual(dispatch_blocks(self.REFERENCE), [])
+        self.assertEqual(len(dispatch_blocks(routed)), 1)
+
+    def test_an_index_that_does_not_list_a_section_reds(self) -> None:
+        added = self.REFERENCE + "\n## Third thing\n\nBody.\n"
+        self.assertEqual(unlisted_sections(self.REFERENCE), [])
+        self.assertEqual(unlisted_sections(added), ["Third thing"])
+
+    def test_a_fold_moves_content_and_neither_pointer_guard_sees_it(self) -> None:
+        """The blind spot, pinned instead of described.
+
+        A split that gives the moved content its own heading is caught by
+        reachability. A FOLD is not: the sentence moves into a section that
+        already exists, so no heading appears, no anchor moves, and both
+        halves stay green while the content a pointer promised is somewhere
+        else. It was written in a docstring and nothing held the record to
+        the code, so a later change could have closed or widened it silently.
+
+        The index check is what narrows this: a fold that later grows its own
+        heading is unlisted the moment it does.
+        """
+        folded = self.REFERENCE.replace(
+            "## First thing\n\nBody.\n\n## Second thing\n\nBody.\n",
+            "## First thing\n\n## Second thing\n\nBody. Body.\n",
+        )
+        self.assertNotEqual(folded, self.REFERENCE)
+        before = self.package(self.HONEST)
+        after = self.package(self.HONEST, folded)
+        self.assertEqual(
+            set(heading_anchors(self.REFERENCE)), set(heading_anchors(folded))
+        )
+        self.assertEqual(unresolved_anchors(*before), unresolved_anchors(*after))
+        self.assertEqual(unreachable_sections(*before), unreachable_sections(*after))
+        self.assertEqual(unreachable_sections(*after), [])
 
     def test_a_python_comment_is_not_a_heading(self) -> None:
         """The reason `markdown_headings` tracks fences at all."""
