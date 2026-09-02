@@ -1,12 +1,12 @@
-# 0075 - the option in their words, and the route that can answer
+# 0076 - the option in their words, and the route that can answer
 
-follows: 0074
-follows-resident-measured: 92_003
-follows-total-measured: 441_185
-resident-ceiling: 96_400
-resident-measured: 96_132
-total-ceiling: 453_300
-total-measured: 453_096
+follows: 0075
+follows-resident-measured: 94_298
+follows-total-measured: 450_786
+resident-ceiling: 98_700
+resident-measured: 98_427
+total-ceiling: 463_000
+total-measured: 462_697
 
 Seven rules bought here, all of them found by watching somebody read what a
 run had already written, and five of them are one rule arriving in five places. The
@@ -115,8 +115,8 @@ condition is written once and pointed at twice - the connected preview restated
 all three conditions verbatim, and that duplicate is what let a deletion from
 the card itself pass every guard over it.
 
-Size. Resident rises 4_129 on 0074, which is the largest resident raise in this
-ledger's history: 44 entries declare that ceiling and 41 raise it, and the next
+Size. Resident rises 4_129 on 0075, which is the largest resident raise in this
+ledger's history: 45 entries declare that ceiling and 42 raise it, and the next
 largest raise is 0020's 3_209. 0073 argued a 901-byte raise and this is four and a half times it, so the
 same argument is owed at four and a half times the strength. What earns it is
 that every byte fires before any reference loads. The intent gate's register
@@ -131,8 +131,20 @@ belongs with the default that defers to it; the standing reasons for continuing,
 written out in full in both the flow and the reference and now written once in
 the reference; and a second full statement that a named route must be
 answerable, which the reference already carried. Total rises 1_312 over the same
-first draft and 11_911 over 0074, and it takes a ceiling of 453_300; most of
+first draft and 11_911 over 0075, and it takes a ceiling of 463_000; most of
 that movement is the transfer just described rather than new prose.
+
+Both figures are measured on the merge with 0075, not carried across it. 0075
+landed while this entry was in review and moved five of the eight documents
+these sums are taken over, so a figure taken before it describes a package that
+no longer exists - which is the defect this ledger's predecessor binding is for.
+The deltas this entry is answerable for are unchanged by that merge, because the
+two changes are disjoint: 4_129 resident and 11_911 total, the same numbers
+measured on the earlier base. The one place the two touch is the baseline
+checkpoint, where 0075 added a paragraph bounding which routes a free repair may
+offer and this entry reordered the paragraphs around it; the merge keeps 0075's
+paragraph next to the check that names the repair it is about, and this entry's
+four paragraphs below it.
 
 Two more corrections, from the round that measured the guards instead of
 reading them. The connected preview named the evidenced repair as the route its

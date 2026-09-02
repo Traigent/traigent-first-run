@@ -842,11 +842,19 @@ def guard_issues(text: str, match: str) -> bool:
     unseen ones. Every scanner it filters is a word list underneath, so a
     defect written in vocabulary no list names is not detected. Treat a green
     result as "no listed phrasing of this defect is present", never as "this
-    document does not contain this defect". The structural counterpart in this
-    file - `route_blocks()`, which counts marks in the blocks the documents
-    actually render - is the shape these should move to, and
-    traigent-first-run#364 tracks that redesign together with the two blind
-    spots `route_blocks()` itself still has.
+    document does not contain this defect".
+
+    The other side of that measurement, stated here too because a one-sided
+    disclosure is its own kind of dishonesty: 32 of 33 honest paraphrases stay
+    green, and the one still refused is named as `KNOWN_FALSE_RED` in that same
+    class rather than dropped from the set. This filter can still red correct
+    prose, and where it does, the fix is to say so there and not to add a token
+    here.
+
+    The structural counterpart in this file - `route_blocks()`, which counts
+    marks in the blocks the documents actually render - is the shape these
+    should move to, and traigent-first-run#364 tracks that redesign together
+    with the two blind spots `route_blocks()` itself still has.
     """
     flat = " ".join(text.casefold().split())
     needle = " ".join(match.casefold().split())
