@@ -363,14 +363,74 @@ a document to be reused.
                    "source_lines": [6, 12],
                    "evidence": "The selected agent's style alternatives reach its local call path."}},
  "build": {
-   "prompt": {"present": true, "few_shot": 2,
-              "evidence": "agent.py:5-19 SYSTEM carries two worked examples"},
-   "output-contract": {"present": true, "evidence": "agent.py:24 json.loads(reply) parses it"},
-   "control-flow": {"loop": true, "bounded": true,
-                    "evidence": "agent.py:31 for _ in range(MAX_STEPS)"},
-   "tools": {"used": true, "declared": ["search", "fetch"], "unreachable": [],
-             "evidence": "agent.py:12 TOOLS lists both; both resolve in this module"}}}
+   "prompt": {"present": true, "few_shot": 0, "source_lines": [6, 9],
+              "evidence": "agent.py:6 STYLES holds the instruction text and carries no worked examples; :9 passes one into the call"},
+   "output-contract": {"present": false, "source_lines": [9],
+                       "evidence": "agent.py:9 returns the provider reply unread, so nothing pins the answer's shape"},
+   "control-flow": {"loop": false, "bounded": true, "source_lines": [8, 9],
+                    "evidence": "agent.py:8-9 is one straight-line return with no loop"},
+   "tools": {"used": false, "declared": [], "unreachable": [],
+             "source_lines": [8, 9],
+             "evidence": "agent.py:8-9 declares and reaches no tools"}}}
 ```
+
+Each settled build check carries `source_lines` on the same terms as a parameter, and a check
+answered `"determined": false` carries none - a read that could not settle the question has no line
+to point at, so a coordinate beside one is refused rather than ignored. The list records where the
+read looked. On its own it establishes nothing about what the read found: a line number is in range
+or it is not, which cannot tell a citation somebody verified from one they picked.
+
+So two of the four checks are settled against the source, and two are only located. The difference
+is on the card, in the sentence beside each check, because it is the difference between "a check ran
+and found no contradiction" and "nothing here looked at this".
+
+**`control-flow` is read from the source, in one direction.** A `for`, `async for` or `while` in the
+selected callable's own body proves it loops, so `"loop": false` beside one is refused. The absence
+of those proves nothing, and `"loop"` is not a question about node types - it is whether the agent
+ends, and on what. An agent that never ends need hold no loop of its own: it can call a helper that
+spins, recurse, or hand the work to a comprehension, a generator, `map` or `itertools`. Record
+`"loop": true` for any of those. It is accepted without a matching node, and it is the honest answer;
+an earlier version of this checker compared the two for equality and refused it, which left an agent
+that never ends with no true document to write.
+
+**`bounded` is read the same way, and refused only where the tree proves it.** Two conditions
+together: the loop test is a literal truthy constant - `while True:`, `while 1:` - **and** its own
+statements carry no `break`, no `return` and no `raise`. Such a loop cannot end by its condition and
+has no way out of its body, so `"bounded": true` beside one is refused; the card would otherwise
+print "a stop condition to point at" over an agent with none.
+
+Everything else is accepted, because the ordinary way a `while` ends is its condition becoming
+false. **A counter or a flag is a bound and you should record it as one**: `while n > 0` with `n`
+decrementing, and `while not done` with the flag set inside, are both `"bounded": true`, and neither
+is refused - this is the "loop with a bound can be recorded" case that the control-flow definition
+below already names. A `while True` that leaves by `break`, `return` or `raise` is accepted for the
+same reason, because whether that exit is reached is not a question this read can answer. A `for` is
+never refused on this ground at all: it is bounded by its iterable.
+
+An earlier version of this checker refused on the body alone, without the constant test. That is a
+true premise with a false conclusion - it refused the textbook counter loop, printed "one input can
+cost an unbounded number of calls" over code that plainly terminates, and left the author no true
+document to write.
+
+**`tools` is refuted, never confirmed.** A name in `declared` that appears nowhere in the selected
+agent's file - not as an identifier, an attribute, or a string - is not a tool that agent declares,
+and is refused. A name that is present establishes nothing: tools are ordinary calls and nothing here
+follows a call graph.
+
+**`prompt` and `output-contract` are located only.** Nothing statically decides whether a prompt
+carries worked examples, or whether anything pins the shape of an answer. Their `source_lines` say
+where you looked and their `evidence` says what you saw; neither is checked, and the card says so
+rather than letting the four checks read as equally verified.
+
+Write every answer to be true of the agent you selected. A carried-over document is caught when its
+coordinates fall outside that source or when one of the two derivations contradicts it, and not
+otherwise - a read of another agent whose citations happen to land in range, on the two checks
+nothing can settle, will be reprinted on the customer's card as written.
+
+Neither derivation leaves the selected callable's own body, and passing one is not a finding that the
+answer is right. An agent whose loop is in a helper it calls passes both checks with `"loop": true,
+"bounded": true` and may still never return. The card says how far each check reached for exactly
+this reason; read the source, not the refusal.
 
 A parameter's `source_lines` are positive physical lines in relative `source`; that file must be
 `--selected-agent` below `--agent-source-root`. `--selected-agent-callable` names the selected

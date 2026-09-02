@@ -1863,23 +1863,48 @@ def run_safe_opening_calibration_once(
                         "evidence": "agent.py:6 declares both formats; run selects one",
                     },
                 },
+                # Each settled check cites the executable line it was read
+                # from, on the same terms the knobs above already use. The
+                # citations are true of SAFE_OPENING_AGENT rather than merely in
+                # range: 4 and 6 declare the prompt and output texts, 19 and 21
+                # are where each reaches the request, 10 is the selected callable
+                # and 17 the single return that ends it. The tools check no
+                # longer cites :1 - that is the module docstring, which the
+                # scorer does not count as executable, so the old "agent.py:1-23"
+                # pointed its one negative claim at a line that cannot carry it.
                 "build": {
                     "prompt": {
                         "present": True,
                         "few_shot": 0,
-                        "evidence": "agent.py:19 assembles a prompt",
+                        "source_lines": [4, 19],
+                        "evidence": (
+                            "agent.py:4 declares the prompt text and carries no "
+                            "worked examples; :19 puts it in the request"
+                        ),
                     },
                     "output-contract": {
                         "present": True,
-                        "evidence": "agent.py:21 fixes the output instruction",
+                        "source_lines": [6, 21],
+                        "evidence": (
+                            "agent.py:6 declares the output instructions; :21 "
+                            "fixes one into the request"
+                        ),
                     },
                     "control-flow": {
                         "loop": False,
-                        "evidence": "agent.py:10-23 is straight-line and bounded",
+                        "source_lines": [10, 17],
+                        "evidence": (
+                            "agent.py:10-23 is straight-line and bounded; :17 "
+                            "returns once and there is no loop"
+                        ),
                     },
                     "tools": {
                         "used": False,
-                        "evidence": "agent.py:1-23 declares and calls no tools",
+                        "source_lines": [10, 17],
+                        "evidence": (
+                            "agent.py:10-23 declares and calls no tools; :17 "
+                            "builds a plain dict"
+                        ),
                     },
                 },
             },
