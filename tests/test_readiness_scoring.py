@@ -10020,21 +10020,25 @@ class TheSourceTrioIsOptionalButWholeTests(unittest.TestCase):
                             "prompt": {
                                 "present": True,
                                 "few_shot": 2,
+                                "source_lines": [1],
                                 "evidence": "agent.py:1 SYSTEM carries two examples",
                             },
                             "output-contract": {
                                 "present": True,
+                                "source_lines": [3],
                                 "evidence": "agent.py:3 json.loads(reply) parses it",
                             },
                             "control-flow": {
                                 "loop": False,
                                 "bounded": True,
+                                "source_lines": [2],
                                 "evidence": "agent.py:2 one call, no loop",
                             },
                             "tools": {
                                 "used": False,
                                 "declared": [],
                                 "unreachable": [],
+                                "source_lines": [2],
                                 "evidence": "agent.py:2 no tool is reached",
                             },
                         },
@@ -10834,7 +10838,65 @@ def _read(build=None, knobs=None):
                     f"    return provider({', '.join(call_arguments)})",
                 ]
             )
+        # Make the synthetic source TRUE of whatever the build document says
+        # about it, rather than the other way round. `control-flow.loop` and
+        # `tools.declared` are now settled from the tree, so a fixture that
+        # answers "this agent loops" against a straight-line source is refused
+        # - correctly, and that refusal is the guard working. These fixtures
+        # are about what one ANSWER does to the PILLAR, so the source is what
+        # bends: it grows a real loop when a fixture says there is one, and
+        # declares the tool names a fixture names.
+        #
+        # The loop goes before the return rather than around it, and the tool
+        # declaration after the whole module, because both positions were
+        # measured rather than assumed: a loop wrapping the return costs the
+        # knob its call-path credit (pillar 27 -> 0, `agent-no-varying-knobs`),
+        # a loop before the return costs nothing, and a trailing module
+        # constant costs nothing. The unchanged expectations across this file
+        # are the standing check on that.
+        build_document = document.get("build") or {}
+
+        def _answers(check: str, field: str) -> bool:
+            spec = build_document.get(check)
+            return (
+                isinstance(spec, dict)
+                and spec.get("determined") is not False
+                and spec.get(field) is True
+            )
+
+        tool_names: list[str] = []
+        tools_spec = build_document.get("tools")
+        if _answers("tools", "used") and isinstance(tools_spec, dict):
+            for field in ("declared", "unreachable"):
+                value = tools_spec.get(field)
+                if isinstance(value, list):
+                    tool_names.extend(name for name in value if isinstance(name, str))
+        if tool_names:
+            # APPENDED, never inserted. Every knob's `source_lines` was
+            # computed from this list's length as it was built above, so a line
+            # added ahead of them silently re-points all of them - which is
+            # exactly what it did: the whole file lost knob credit and
+            # `agent-no-varying-knobs` fired across nine fixtures that had
+            # nothing to do with tools.
+            lines.append(f"TOOLS = {sorted(set(tool_names))!r}")
+        if _answers("control-flow", "loop") and call_arguments:
+            body = lines.index("def selected(choice):") + 1
+            lines.insert(body, "    for _ in range(3):")
+            lines.insert(body + 1, "        pass")
+
         (root / "agent.py").write_text("\n".join(lines) + "\n")
+        # Point every settled build check at a line this synthetic source
+        # really has, the same way the knob evidence above is re-pointed. The
+        # coordinate is the reader's own contract and is exercised per check by
+        # `TheBuildHalfCitesTheAgentItRead` below.
+        for spec in (document.get("build") or {}).values():
+            if (
+                isinstance(spec, dict)
+                and spec.get("determined") is not False
+                and "source_lines" not in spec
+                and lines
+            ):
+                spec["source_lines"] = [len(lines)]
         return MODULE.agent_facts_from_discovery(
             document,
             source_root=root,
@@ -14130,6 +14192,511 @@ class AFoundAgentDoesNotLookLikeAMissingOneTests(unittest.TestCase):
         )
         self.assertIn("A read of the agent's source reached this score.", read)
         self.assertIn("No read of the agent's source reached this score", missing)
+
+
+class TheBuildHalfCitesTheAgentItReadTests(unittest.TestCase):
+    """A build read is a claim about the customer's code, and nothing checked it.
+
+    The knobs half refuses a document whose `source_lines` fall outside the
+    selected agent. The build half carried no coordinate at all - `evidence` is
+    prose and `checked_source_lines` explains why it stays unparsed - so a read
+    taken from one agent was scored verbatim against another.
+
+    A blinded fixture re-run is where this showed: the run retired its record,
+    restarted at stage 1 for a new opening score, and carried the previous
+    run's `agent-knobs.json` forward byte for byte. Its knobs half would have
+    been refused. Its build half printed on the customer's card as an
+    "Assistant observation" - "there is no loop", citing lines 932-936 of a
+    file with 22 lines in it, over an agent whose body is `while True:`.
+    """
+
+    AGENT = (
+        "MODELS = ['fast', 'slow']\n"
+        "def selected(choice):\n"
+        "    while True:\n"
+        "        return provider(model=MODELS[choice])\n"
+    )
+    # The read a previous run left behind: the shape trunk accepts, describing
+    # an agent that is not this one.
+    CARRIED_OVER = {
+        "prompt": {
+            "present": True,
+            "few_shot": 0,
+            "evidence": "other_agent.py:357-388 build_prompt assembles the instruction",
+        },
+        "output-contract": {
+            "present": True,
+            "evidence": "other_agent.py:390-410 extract_query returns the query text",
+        },
+        "control-flow": {
+            "loop": False,
+            "bounded": True,
+            "evidence": "other_agent.py:932-936 one call and returns; there is no loop",
+        },
+        "tools": {
+            "used": False,
+            "declared": [],
+            "unreachable": [],
+            "evidence": "other_agent.py:932-936 declares and reaches no tools",
+        },
+    }
+
+    @contextlib.contextmanager
+    def _root(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "agent.py").write_text(self.AGENT)
+            yield root
+
+    def _read(self, build, *, checked=True):
+        document = {
+            "source": "agent.py",
+            "knobs": {
+                "model": {
+                    "values": ["fast", "slow"],
+                    "source_lines": [1],
+                    "evidence": "MODELS reaches the selected call path.",
+                }
+            },
+            "build": build,
+        }
+        if not checked:
+            return MODULE.agent_facts_from_discovery(document)
+        with self._root() as root:
+            return MODULE.agent_facts_from_discovery(
+                document,
+                source_root=root,
+                selected_agent=root / "agent.py",
+                selected_agent_callable="selected",
+            )
+
+    def _carried_over(self, **overrides):
+        document = json.loads(json.dumps(self.CARRIED_OVER))
+        for check, extra in overrides.items():
+            document[check].update(extra)
+        return document
+
+    def test_a_build_read_with_no_coordinate_is_refused(self) -> None:
+        """The regression itself: this document scored clean, and should not.
+
+        Nothing in it is malformed by the old contract - it is the exact shape
+        the guide's own example printed - and every sentence in it is about a
+        different program.
+        """
+        with self.assertRaises(MODULE.AgentDiscoveryInputError) as caught:
+            self._read(self._carried_over())
+        self.assertIn("source_lines", str(caught.exception))
+
+    def test_a_build_read_citing_a_line_the_agent_lacks_is_refused(self) -> None:
+        """The carried-over document, once it has to name a coordinate."""
+        with self.assertRaises(MODULE.AgentDiscoveryInputError) as caught:
+            self._read(
+                self._carried_over(
+                    **{
+                        check: {"source_lines": [932]}
+                        for check in MODULE.BUILD_CHECK_ANSWER
+                    }
+                )
+            )
+        message = str(caught.exception)
+        self.assertIn("outside the selected agent source", message)
+        self.assertIn("build check", message)
+
+    def test_an_honest_read_of_this_agent_is_scored(self) -> None:
+        """The false-red direction: an honest read of THIS agent still passes.
+
+        Without this the tests above would also pass against a reader that
+        refused every build half, which measures nothing.
+
+        `control-flow` answers `loop: True` here, because this agent's body IS
+        a `while True:`. That is the difference the derivation makes and the
+        reason this fixture had to change: under the old coordinate-only guard
+        the carried-over `loop: False` passed with any in-range integer.
+        """
+        facts = self._read(
+            self._carried_over(
+                **{check: {"source_lines": [4]} for check in MODULE.BUILD_CHECK_ANSWER}
+                | {"control-flow": {"source_lines": [4], "loop": True, "bounded": True}}
+            )
+        )
+        self.assertEqual(
+            {signal.name for signal in facts.build},
+            {name for name, _weight in MODULE.AGENT_BUILD_CHECKS},
+        )
+
+    def _undetermined(self, **extra):
+        """All four checks answered `determined: false`, plus whatever `extra`
+        puts on each. Built as one dict rather than merged with `|`: the first
+        version of this test carried a twelve-line left operand that the merge
+        replaced wholesale, so the fields it was written to exercise never
+        reached the reader and `any("source_lines" in v)` was False. A test
+        named for a branch it cannot enter is the hole it was meant to guard.
+        """
+        return {
+            check: {
+                "determined": False,
+                "reason": "the prompt is fetched at runtime",
+                "evidence": "agent.py:2",
+                **extra,
+            }
+            for check in MODULE.BUILD_CHECK_ANSWER
+        }
+
+    def test_a_check_the_read_could_not_settle_needs_no_coordinate(self) -> None:
+        """`determined: false` has no line to point at, and demanding one would
+        price the honest answer above the confident one."""
+        document = self._undetermined()
+        self.assertFalse(any("source_lines" in spec for spec in document.values()))
+        facts = self._read(document)
+        self.assertTrue(all(not signal.measured for signal in facts.build))
+
+    def test_an_undetermined_check_may_not_smuggle_a_coordinate(self) -> None:
+        """The silence this arm used to keep.
+
+        It returns before the validation below it, so every one of these
+        exited 0 with the coordinate unread - which tells an author their
+        citation was checked when nothing looked at it.
+        """
+        for lines in ([99999], "not-a-list", [-5], [1]):
+            with self.subTest(source_lines=lines):
+                with self.assertRaises(MODULE.AgentDiscoveryInputError) as caught:
+                    self._read(self._undetermined(source_lines=lines))
+                self.assertIn("no line that establishes it", str(caught.exception))
+
+    def test_every_check_is_guarded_and_not_only_the_first(self) -> None:
+        """Deleting the guard from three of four checks kept the suite green.
+
+        Measured, on the first version of this branch: narrowing the coordinate
+        requirement to `check == "prompt"` left `Ran 1396 tests` with only the
+        two pre-existing failures - including `control-flow`, the check the
+        incident was actually about. Two causes, both fixed: the shared fixture
+        helper auto-injected a coordinate into every pre-existing document so
+        none of them entered the branch, and this class only ever raised on
+        `prompt` because it is first in `AGENT_BUILD_CHECKS`.
+
+        So the assertion is per check, one subTest each, and it names the check
+        in the message - a guard that fires once for the alphabetically first
+        answer is not a guard on the other three.
+        """
+        for check in MODULE.BUILD_CHECK_ANSWER:
+            with self.subTest(check=check):
+                document = self._carried_over(
+                    **{
+                        other: {"source_lines": [4]}
+                        for other in MODULE.BUILD_CHECK_ANSWER
+                        if other != check
+                    }
+                    | {"control-flow": {"source_lines": [4], "loop": True}}
+                )
+                if check == "control-flow":
+                    document[check] = {
+                        "loop": True,
+                        "bounded": True,
+                        "evidence": "carried over",
+                    }
+                else:
+                    document[check].pop("source_lines", None)
+                with self.assertRaises(MODULE.AgentDiscoveryInputError) as caught:
+                    self._read(document)
+                self.assertIn(check, str(caught.exception))
+
+    def test_a_declared_loop_that_the_source_contradicts_is_refused(self) -> None:
+        """The P1: the claim is checked, not the coordinate.
+
+        This is the incident reduced to one assertion. The carried-over
+        document says "there is no loop" about an agent whose body is a
+        `while True:`, and every coordinate in it resolves cleanly against that
+        agent. A guard that prices citations passes it. A guard that reads the
+        tree cannot.
+        """
+        with self.assertRaises(MODULE.AgentDiscoveryInputError) as caught:
+            self._read(
+                self._carried_over(
+                    **{
+                        check: {"source_lines": [4]}
+                        for check in MODULE.BUILD_CHECK_ANSWER
+                    }
+                )
+            )
+        message = str(caught.exception)
+        self.assertIn("declares loop=False", message)
+        self.assertIn("loops in", message)
+
+    # A loop the selected callable does not lexically hold, in the four shapes
+    # a real agent uses. Each is an agent that may never end and whose author
+    # is RIGHT to record `loop: true`.
+    LOOP_OUT_OF_SCOPE = {
+        "helper": "MODEL = ['a']\ndef selected(q):\n    return spin(q)\n"
+        "def spin(q):\n    while True:\n        q = q + 'x'\n",
+        "recursion": "MODEL = ['a']\ndef selected(q):\n    return selected(q)\n",
+        "comprehension": "MODEL = ['a']\ndef selected(q):\n    return [x for x in q]\n",
+        "map": "MODEL = ['a']\ndef selected(q):\n    return list(map(str, q))\n",
+    }
+
+    def _score_source(self, source: str, build: dict):
+        document = {
+            "source": "agent.py",
+            "knobs": {
+                "model": {
+                    "values": ["a"],
+                    "source_lines": [1],
+                    "evidence": "MODEL reaches the call.",
+                }
+            },
+            "build": {
+                check: {
+                    "evidence": "read",
+                    "source_lines": [1],
+                    **build.get(check, {}),
+                }
+                for check in MODULE.BUILD_CHECK_ANSWER
+            },
+        }
+        document["build"]["prompt"].setdefault("present", False)
+        document["build"]["output-contract"].setdefault("present", False)
+        document["build"]["tools"].setdefault("used", False)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "agent.py").write_text(source)
+            return MODULE.agent_facts_from_discovery(
+                document,
+                source_root=root,
+                selected_agent=root / "agent.py",
+                selected_agent_callable="selected",
+            )
+
+    def test_a_loop_the_tree_cannot_see_may_still_be_declared(self) -> None:
+        """The regression an equality comparison introduced, in four shapes.
+
+        The guide defines this check semantically - whether the agent ENDS and
+        on what - and a callable ends without ever holding a loop node of its
+        own. Comparing the declaration with `!=` against a syntactic read
+        therefore REFUSED the honest answer for a helper that spins, for
+        recursion, for a comprehension and for `map`, telling an author who had
+        correctly read the `while True:` in their own helper that they had read
+        the wrong agent.
+
+        That left exactly two accepted documents for an agent that never ends:
+        `loop: false`, which is false, and `determined: false`, which disclaims
+        a determination the author really made. On trunk the true answer was
+        accepted and merely unverified, so the equality traded
+        unverified-but-true for mandatory-and-false.
+        """
+        for shape, source in self.LOOP_OUT_OF_SCOPE.items():
+            with self.subTest(shape=shape):
+                facts = self._score_source(
+                    source, {"control-flow": {"loop": True, "bounded": False}}
+                )
+                self.assertEqual(len(facts.build), len(MODULE.AGENT_BUILD_CHECKS))
+
+    def test_an_unbounded_while_may_not_be_called_bounded(self) -> None:
+        """`bounded` prices the risk, and it was taken on trust.
+
+        The card turns it into "a loop, and a stop condition to point at", so a
+        document could assert a stop condition over an agent with none. This
+        path also carries MORE traffic now that `loop: true` is usable again,
+        not less.
+        """
+        for shape, body in {
+            "while-True": "    while True:\n        q = q + 'x'\n",
+            "while-1": "    while 1:\n        q = q + 'x'\n",
+        }.items():
+            with self.subTest(shape=shape):
+                with self.assertRaises(MODULE.AgentDiscoveryInputError) as caught:
+                    self._score_source(
+                        "MODEL = ['a']\ndef selected(q):\n" + body,
+                        {"control-flow": {"loop": True, "bounded": True}},
+                    )
+                self.assertIn("no way out of its body", str(caught.exception))
+
+    def test_a_loop_that_really_ends_is_not_called_unbounded(self) -> None:
+        """The false-red direction for the bound, written from the space of
+        bounded loops rather than from the reader's own exemption list.
+
+        The first version of this test listed the two shapes the code already
+        handled - `while True` with a break, and one with a return - plus a
+        `for`. It passed, and it was worthless: a fixture assembled out of the
+        exemptions the implementation happened to carry cannot find the ones it
+        does not. The loop half above got four realistic shapes; this got the
+        code's own answer key back.
+
+        What it missed is the ordinary way a `while` ends, which is its
+        condition becoming false. `while n > 0` with `n` decrementing is the
+        textbook bounded loop and was REFUSED; so was `while not done` with the
+        flag set inside, and so was a loop leaving by `raise`. The gate then
+        accepted only a document calling those unbounded, printing "one input
+        can cost an unbounded number of calls" over code that plainly
+        terminates - the same defect the loop half had been relieved of one
+        check earlier.
+        """
+        cases = {
+            "counter": "    n = 3\n    while n > 0:\n        n = n - 1\n    return q\n",
+            "flag": "    done = False\n    while not done:\n        done = True\n"
+            "    return q\n",
+            "call-condition": "    while more(q):\n        q = q + 'x'\n    return q\n",
+            "raise-exit": "    while True:\n        raise ValueError('x')\n",
+            "while-return": "    while True:\n        return q\n",
+            "while-break": "    while True:\n        break\n    return q\n",
+            "for-loop": "    for i in range(3):\n        q = q + 'x'\n    return q\n",
+        }
+        for shape, body in cases.items():
+            with self.subTest(shape=shape):
+                facts = self._score_source(
+                    "MODEL = ['a']\ndef selected(q):\n" + body,
+                    {"control-flow": {"loop": True, "bounded": True}},
+                )
+                self.assertEqual(len(facts.build), len(MODULE.AGENT_BUILD_CHECKS))
+
+    def test_the_card_says_which_checks_the_source_could_contradict(self) -> None:
+        """Settled and located must not read alike on the customer's card.
+
+        All four build checks are reported as not independently verified, which
+        is true of every one of them and hides the difference a reader most
+        needs: for `control-flow` and `tools` a check ran against the source and
+        found no contradiction; for `prompt` and `output-contract` nothing looked
+        at all, because nothing statically decides whether a prompt carries
+        worked examples or whether an answer's shape is pinned down.
+
+        Without this the derivation's value is invisible downstream and the next
+        reader meets the confusion the originating report opened on. Asserted on
+        the rendered card rather than on a field, because the card is where a
+        customer meets it.
+        """
+        facts = self._score_source(
+            "MODEL = ['a']\ndef selected(q):\n    return q\n",
+            {"control-flow": {"loop": False, "bounded": True}},
+        )
+        # Wrapped the way the command wraps it, so this asserts on what a
+        # customer is shown rather than on an intermediate the CLI never
+        # renders.
+        score = MODULE.score_run(
+            MODULE.DatasetFacts(),
+            MODULE.EvaluationFacts(),
+            replace(facts, build=MODULE.build_declarations_are_unmeasured(facts.build)),
+            dict(MODULE.DEFAULT_WEIGHTS),
+        )
+        rows = {
+            sub.name: sub.evidence
+            for pillar in score.pillars
+            if pillar.name == "agent"
+            for sub in pillar.subscores
+        }
+        with self.subTest(check="control-flow", kind="settled"):
+            # The SCOPE, not a bare "checked". A clause saying the source was
+            # checked and nothing was found reads as corroboration, and it is
+            # strongest exactly where the derivation is blindest: neither
+            # derivation leaves the callable's own body, so an agent that
+            # delegates its loop to a helper passes both and may never return.
+            self.assertIn(
+                "no contradicting loop in the selected function's own body",
+                rows["control-flow"],
+            )
+            self.assertIn("does not establish that it ends", rows["control-flow"])
+        for check in ("prompt", "output-contract"):
+            with self.subTest(check=check, kind="located"):
+                self.assertIn("nothing here checks", rows[check])
+                self.assertNotIn("does not establish", rows[check])
+        # `tools` above answers "no tools", which is not applicable rather than
+        # unverified, so it carries no observation to mark either way. The
+        # applicable case is the one that has to say it.
+        used = self._score_source(
+            "MODEL = ['a']\nTOOLS = ['search']\ndef selected(q):\n    return q\n",
+            {
+                "control-flow": {"loop": False, "bounded": True},
+                "tools": {"used": True, "declared": ["search"], "unreachable": []},
+            },
+        )
+        marked = {
+            signal.name: signal.evidence
+            for signal in MODULE.build_declarations_are_unmeasured(used.build)
+        }
+        with self.subTest(check="tools", kind="settled"):
+            self.assertIn("appears in the selected file", marked["tools"])
+            self.assertIn(
+                "does not establish that any of them is reachable", marked["tools"]
+            )
+
+    def test_a_tool_the_source_never_mentions_is_refused(self) -> None:
+        """The same move for `tools`, and only in the refuting direction.
+
+        A name absent from the whole file cannot be a tool this agent declares.
+        A name that is present proves nothing - tools are ordinary calls and
+        this module attempts no call graph - so the present case stays exactly
+        as unverified as it was, which the second half asserts.
+        """
+        borrowed = self._carried_over(
+            **{check: {"source_lines": [4]} for check in MODULE.BUILD_CHECK_ANSWER}
+            | {"control-flow": {"source_lines": [4], "loop": True}}
+        )
+        borrowed["tools"] = {
+            "used": True,
+            "declared": ["search", "fetch"],
+            "unreachable": [],
+            "evidence": "another agent's tools",
+            "source_lines": [4],
+        }
+        with self.assertRaises(MODULE.AgentDiscoveryInputError) as caught:
+            self._read(borrowed)
+        self.assertIn("does not mention anywhere", str(caught.exception))
+        self.assertIn("fetch, search", str(caught.exception))
+
+    def test_the_shipped_examples_are_true_of_their_own_agent(self) -> None:
+        """The refusal prints a document verbatim, so it teaches whatever it says.
+
+        A previous revision shipped four citations that were in range and false
+        about the only source they are ever checked against - `prompt` claiming
+        worked examples over a `MODELS = [...]` line, `control-flow` claiming a
+        `for` loop over a `def`. The guard was blind to all of it, which is the
+        finding this branch exists for, reproduced in its own example.
+
+        `control-flow` is the half that can be settled, so it is settled here
+        rather than eyeballed.
+        """
+        source = (
+            "\n\nMODELS = ['fast', 'slow']\n"
+            "def call(choice):\n    return provider(model=MODELS[choice])\n"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "agent.py").write_text(source)
+            evidence = MODULE.static_source_evidence(
+                "agent.py", root, root / "agent.py", "call"
+            )
+            self.assertEqual(
+                MODULE.AGENT_KNOBS_EXAMPLE["build"]["control-flow"]["loop"],
+                MODULE.derived_control_flow_loop(evidence),
+            )
+            # And it parses against that agent, rather than merely reading well.
+            MODULE.agent_facts_from_discovery(
+                json.loads(json.dumps(MODULE.AGENT_KNOBS_EXAMPLE)),
+                source_root=root,
+                selected_agent=root / "agent.py",
+                selected_agent_callable="call",
+            )
+
+    def test_the_guide_example_is_true_of_the_agent_it_documents(self) -> None:
+        """The same, for the copy a customer actually reads."""
+        documented = _documented_agent_read()
+        with _documented_agent_source_root() as root:
+            evidence = MODULE.static_source_evidence(
+                "agent.py", root, root / "agent.py", "call"
+            )
+            self.assertEqual(
+                documented["build"]["control-flow"]["loop"],
+                MODULE.derived_control_flow_loop(evidence),
+            )
+
+    def test_the_advisory_route_still_reads_a_build_half(self) -> None:
+        """A non-Python or unselected agent has no source to check against.
+
+        That route is an honest unknown, not a refusal: rejecting it would
+        confuse unsupported inspection with a malformed document.
+        """
+        facts = self._read(self._carried_over(), checked=False)
+        self.assertEqual(
+            {signal.name for signal in facts.build},
+            {name for name, _weight in MODULE.AGENT_BUILD_CHECKS},
+        )
 
 
 class WhoWroteItBoundsWhatItMayClaimTests(unittest.TestCase):
