@@ -10141,8 +10141,10 @@ class SkillPackageTests(unittest.TestCase):
         never sees that script, so no import and no runtime comparison exists
         and the comparison has to be made here. Coverage as well as names: the
         same drift had left two routes the gate can report as available with no
-        mapping in the wrapper at all, which is the identical stop reached
-        through a different sentence.
+        mapping in the wrapper at all. That used to be the identical stop
+        reached through a different sentence; since the wrapper stopped
+        refusing an unmapped literal it is worse than a stop, because the gate
+        reports a route as available and the run then never checks it.
         """
         gate = {
             label.split()[0].casefold(): set(names)
@@ -10219,6 +10221,12 @@ class SkillPackageTests(unittest.TestCase):
                     "ROUTE_ALIASES": aliases,
                     "SELECTED_CURRENT_PROVIDER": route,
                     "SELECTED_CURRENT_MODEL": f"{route}/some-model",
+                    # Swallowed rather than left to the builtin: the unmapped
+                    # route below now prints its advisory, and a suite that
+                    # reports a paragraph after `OK` trains its readers to
+                    # scroll past output. What the advisory says is asserted
+                    # in the test named after it, not here.
+                    "print": lambda *_: None,
                 },
             )
 
@@ -10252,8 +10260,173 @@ class SkillPackageTests(unittest.TestCase):
                 # names - not refused for being a spelling nothing recognises.
                 for name in published[route]:
                     self.assertIn(name, str(refused.exception))
-        with self.assertRaises(RuntimeError):
-            check_with("a-route-nobody-mapped", {"OPENAI_API_KEY": "x"})()
+        # A literal the table does not carry is no longer a refusal. What it is
+        # instead is pinned in
+        # `test_an_unrecognised_literal_withholds_the_check_instead_of_refusing`;
+        # all this line holds is that reaching it does not stop the run.
+        check_with("a-route-nobody-mapped", {"OPENAI_API_KEY": "x"})()
+
+    def test_an_unrecognised_literal_withholds_the_check_instead_of_refusing(
+        self,
+    ) -> None:
+        """Both directions of the gate, on literals measured out of the client.
+
+        The defect this pins was a refusal keyed to a lookup miss: the wrapper
+        answered "no credential mapping is declared" to a customer whose
+        `ANTHROPIC_API_KEY` was correct, and answered it without ever reading
+        the variable - the raise stood in front of the branch that reads it.
+        "I do not know this spelling" and "you have no credential" are
+        different facts, and only the second is a reason to stop in front of a
+        paid call.
+
+        The two literals below are not drawn from the table this test checks,
+        which is the point: a fixture built out of `PROVIDER_KEY_NAMES` could
+        only ever confirm that the table agrees with itself. They are what the
+        installed client was measured resolving to.
+
+        `anthropic_text` is what `anthropic/claude-2` and
+        `anthropic/claude-instant-1` dispatch to, through a hardcoded
+        `model == "claude-2" or model == "claude-instant-1"` in the client -
+        so neither slug appears in `models_by_provider["anthropic"]`, and the
+        sweep in `litellm_dispatch_literals` structurally cannot emit it.
+        `litellm_proxy` is what every route dispatches to when
+        `USE_LITELLM_PROXY` is set; that one is not keyed on the model at all,
+        so it reaches all eight routes rather than two retired models. The
+        second is why this is not a two-model curiosity: the table is already
+        incomplete in a way that can meet any customer.
+
+        The other direction is held in the same test on purpose. A fix that
+        opened the gate for everything would be worse than the defect, so a
+        route the table DOES carry, with nothing set and with a placeholder
+        set, still refuses and still names the variables that would have
+        satisfied it.
+        """
+        published = guide_constant(SDK_EXECUTION, "PROVIDER_KEY_NAMES")
+        aliases = guide_constant(SDK_EXECUTION, "ROUTE_ALIASES")
+
+        def run_guard(route: str, model: str, environment: dict[str, str]):
+            said: list[str] = []
+            guide_function(
+                SDK_EXECUTION,
+                "require_current_route_credential",
+                {
+                    "os": SimpleNamespace(environ=environment),
+                    "PROVIDER_KEY_NAMES": published,
+                    "ROUTE_ALIASES": aliases,
+                    "SELECTED_CURRENT_PROVIDER": route,
+                    "SELECTED_CURRENT_MODEL": model,
+                    # Resolved from this namespace before builtins, so the
+                    # advisory is captured as the value it is rather than
+                    # scraped back off the process's stdout.
+                    "print": lambda *said_now: said.append(" ".join(said_now)),
+                },
+            )()
+            return "\n".join(said)
+
+        unrecognised = (
+            ("anthropic_text", "anthropic/claude-2", "ANTHROPIC_API_KEY"),
+            ("anthropic_text", "anthropic/claude-instant-1", "ANTHROPIC_API_KEY"),
+            ("litellm_proxy", "openai/gpt-4o", "OPENAI_API_KEY"),
+        )
+        for literal, model, held in unrecognised:
+            with self.subTest(literal=literal, model=model):
+                # The working key that used to be refused. No exception is the
+                # assertion; `run_guard` raising would fail the test here.
+                said = run_guard(literal, model, {held: "a-working-key"})
+                self.assertIn(literal, said)
+                self.assertIn(model, said)
+                # It says what it could not do, not what the customer failed
+                # to do. The old sentence is named so it cannot come back
+                # under a branch that only looks like it proceeds.
+                self.assertNotIn("No first-run credential mapping", said)
+                self.assertNotIn("is not set", said)
+                self.assertIn("is not reporting one missing", said)
+                self.assertIn("gap in the guide rather than in your setup", said)
+                self.assertIn("first call", said)
+                # Held with nothing in the environment too: with no variable
+                # names on file there is nothing to conclude from an empty one,
+                # and concluding anyway is the defect in the other direction.
+                self.assertEqual(said, run_guard(literal, model, {}))
+
+        # A route it can check, with no credential, is still refused - by the
+        # branch that reads the environment, naming what would have satisfied
+        # it. `ANTHROPIC_API_KEY` is written out rather than read from the
+        # table for the same reason the literals above are.
+        for environment in ({}, {"ANTHROPIC_API_KEY": "# paste your key here"}):
+            with self.subTest(environment=sorted(environment)):
+                with self.assertRaises(RuntimeError) as refused:
+                    run_guard(
+                        "anthropic", "anthropic/claude-3-5-sonnet-20241022", environment
+                    )
+                self.assertIn("ANTHROPIC_API_KEY", str(refused.exception))
+
+        # `bedrock` is declared with no names on purpose. That is a different
+        # state from undeclared - it has been decided - so it passes in
+        # silence. Without this, the two collapse into one: the advisory is
+        # TRUE of bedrock, which reads as no names on file, so truth alone
+        # would not have kept the decided case out of the undecided branch.
+        self.assertEqual(run_guard("bedrock", "bedrock/anthropic.claude-v2", {}), "")
+
+        # The whole sentence, once, rather than a list of phrases it contains.
+        # A message whose job is to be true cannot be held by the presence of
+        # the right clauses: an advisory carrying every phrase asserted above
+        # and one added false claim about the reader's key satisfies all of
+        # them, and so does one whose route list has stopped tracking the
+        # table and hardcodes a stale answer. Both are caught here and nowhere
+        # else. The route names are written out for the same reason the
+        # literals above are: read from `PROVIDER_KEY_NAMES`, this could only
+        # confirm the table agrees with itself, and `bedrock` - declared,
+        # unchecked - is the one that must not appear.
+        self.assertEqual(
+            run_guard(
+                "anthropic_text", "anthropic/claude-2", {"ANTHROPIC_API_KEY": "k"}
+            ),
+            "Unverified route: this guide holds no credential variable names "
+            "for the provider route 'anthropic_text', so this check has read "
+            "nothing about the credential for 'anthropic/claude-2' and is not "
+            "reporting one missing. The route is left to fail, if it fails, "
+            "on its own first call, where an absent or rejected key arrives "
+            "as an authentication failure. The spellings this check knows are "
+            "anthropic, cohere, cohere_chat, gemini, huggingface, mistral, "
+            "openai, openrouter; this one is not among them, which is a gap "
+            "in the guide rather than in your setup, and worth reporting as "
+            "one.",
+        )
+
+        # `cohere_chat` is checked, through the route it aliases, so the
+        # sentence has to say so. Listing only `PROVIDER_KEY_NAMES` made it
+        # under-inclusive in exactly the way naming `bedrock` made it
+        # over-inclusive, and only one of those two was noticed first.
+        alias_named = run_guard("nobody-maps-this", "x/y", {})
+        self.assertIn("cohere_chat", alias_named)
+
+        # Whitespace must not reach the unverified branch. While an unknown
+        # spelling raised, `"openai "` was refused for the wrong reason and
+        # the run still stopped; now it would take the advisory and skip a
+        # check the table can actually make, so the strip has to happen before
+        # the lookup. The published assignment is executed rather than read,
+        # because what matters is the value it produces.
+        literal_assignment = next(
+            node
+            for node in ast.parse(
+                python_block_containing(SDK_EXECUTION, "SELECTED_CURRENT_PROVIDER = ")
+            ).body
+            if isinstance(node, ast.Assign)
+            and any(
+                isinstance(target, ast.Name)
+                and target.id == "SELECTED_CURRENT_PROVIDER"
+                for target in node.targets
+            )
+        )
+        for raw in (" openai", "openai ", "OpenAI\n", "\tOPENAI "):
+            with self.subTest(raw=raw):
+                namespace = {
+                    "os": SimpleNamespace(
+                        environ={"TRAIGENT_FIRST_RUN_CURRENT_PROVIDER": raw}
+                    )
+                }
+                exec(ast.unparse(literal_assignment), namespace)  # noqa: S102
+                self.assertEqual(namespace["SELECTED_CURRENT_PROVIDER"], "openai")
 
     def test_both_inventories_accept_every_name_litellm_will(self) -> None:
         """The comparison the other two structurally cannot make.
@@ -10434,9 +10607,15 @@ class SkillPackageTests(unittest.TestCase):
     ) -> None:
         """Which spelling goes into the environment variable, asked of the client.
 
-        `TRAIGENT_FIRST_RUN_CURRENT_PROVIDER` is read once, casefolded, and
-        looked up, and a value that is not a key raises before anything is
-        spent. No document says which values are keys, so the value comes from
+        `TRAIGENT_FIRST_RUN_CURRENT_PROVIDER` is read once, stripped,
+        casefolded, and looked up. A value that is not a key no longer raises;
+        it takes the unverified path, which means the run reaches its first
+        paid call with this credential unchecked rather than refused. That
+        makes the question below sharper, not weaker: an inventory that misses
+        a literal now buys silence instead of a stop, and a missing check is
+        harder to notice than a refusal.
+
+        No document says which values are keys, so the value comes from
         wherever the route was read: the model string, or the client's own
         `custom_llm_provider`. Both say the same word, and for one route that
         word was not the key - so the assistant that derived it correctly was
@@ -10495,10 +10674,10 @@ class SkillPackageTests(unittest.TestCase):
                     f"the client dispatches a {route} model on a literal the "
                     "wrapper does not accept, so a route derived from the "
                     "model string or from `custom_llm_provider` - the two "
-                    "places a route can be read - is refused as unmapped "
-                    "before the first paid call, by a customer holding a key "
-                    "that works. Accept it as an alias of the route it shares "
-                    "its credentials with.",
+                    "places a route can be read - reaches the first paid call "
+                    "with no credential check at all, by a customer whose key "
+                    "this inventory could have confirmed. Accept it as an "
+                    "alias of the route it shares its credentials with.",
                 )
         for alias, route in aliases.items():
             with self.subTest(alias=alias):
@@ -10515,7 +10694,8 @@ class SkillPackageTests(unittest.TestCase):
                     published,
                     f"{alias!r} is accepted as another spelling of {route!r}, "
                     "which the wrapper maps no credential names to, so the "
-                    "route it resolves to is refused as unmapped anyway.",
+                    "alias resolves to a route that checks nothing and buys "
+                    "the run no credential check at all.",
                 )
                 self.assertEqual(
                     names_read(alias),
@@ -28671,13 +28851,23 @@ class ReferenceSectionsAreSignpostedTests(unittest.TestCase):
     def test_each_reference_index_lists_every_section_in_its_file(self) -> None:
         """The detector that survives a split with a plausible pointer.
 
-        `sdk-execution.md` is excused, and the reason is arithmetic rather
-        than judgement: its own index is missing two sections, the fix is 81
-        bytes, and that file measures 128,943 against a 129,000 document
-        ceiling. Completing it needs a ceiling raise, which is a separate
-        decision from this one, filed as issue #381. The two names are the
-        expected value rather than a skip, so adding either one to the index
-        reds here until #381 also removes this entry.
+        There is no exemption now, and the empty expectation is the point:
+        every indexed reference lists every section it contains.
+
+        `sdk-execution.md` used to be excused, and the excuse was arithmetic
+        rather than judgement. Its index was missing `Reading the result for
+        insight` and `Carrying the local baseline into the portal`, the fix
+        was 81 bytes, and the file measured 128,943 against a 129,000
+        document ceiling - so completing the index needed a ceiling raise,
+        which was a separate decision and was filed as issue #381. Ledger 0084
+        raised that ceiling for the credential-guard change and left room, so
+        the 81 bytes were spent and the two names went in. What that exemption
+        cost while it stood is worth recording: a reader who landed in this
+        file and read its index never learned those two sections existed.
+
+        The expectation is a mapping rather than a skip so that a NEW gap
+        fails here loudly, naming the file and the sections, instead of being
+        absorbed into a standing allowance.
         """
         self.assertEqual(
             {
@@ -28685,12 +28875,7 @@ class ReferenceSectionsAreSignpostedTests(unittest.TestCase):
                 for name in INDEXED_REFERENCES
                 if unlisted_sections(self.references[name])
             },
-            {
-                "sdk-execution.md": [
-                    "Reading the result for insight",
-                    "Carrying the local baseline into the portal",
-                ]
-            },
+            {},
         )
 
     def test_every_reference_that_owes_an_index_has_one(self) -> None:
