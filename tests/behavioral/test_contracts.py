@@ -967,19 +967,43 @@ class ACleanOutcomeFixtureIsMadeOfDifferentQuestionsTests(unittest.TestCase):
                 )
 
     def test_the_guard_sees_the_shape_it_was_written_for(self) -> None:
-        """The probe, so a rule that stopped detecting anything fails here.
+        """Both directions, and the accepted false positive named rather than
+        implied.
 
-        Both directions on hand-built rows rather than on the committed files:
-        a numbered repeat collides, and two genuinely different questions that
-        happen to carry numbers do not.
+        POSITIVE: two rows differing only in a case number collide, which is
+        the shape this repository shipped and the reason the rule exists.
+
+        NEGATIVE: two rows differing in a WORD do not collide, even when both
+        carry the same numbers. That is the direction a rule keyed on digits
+        could plausibly get wrong, and it is the one that would false-red a
+        real fixture.
+
+        AND THE COST, pinned rather than described: two questions that differ
+        only in a quantity DO collide. That is a false positive, it is accepted
+        because this rule is applied to committed fixtures and never to a
+        customer's data, and pinning it here is what stops the limitation from
+        being restated in a docstring while nothing checks it is still the
+        limitation. If this assertion ever has to be deleted, the rule has
+        become safe for a wider use and that is a decision, not a cleanup.
         """
         repeat_a = {"id": "a", "input": "[case 001] Where is my invoice?"}
         repeat_b = {"id": "b", "input": "[case 025] Where is my invoice?"}
         self.assertEqual(self._without_digits(repeat_a), self._without_digits(repeat_b))
-        different_a = {"id": "a", "input": "Refund order 7781 please"}
-        different_b = {"id": "b", "input": "Cancel order 7781 please"}
+
+        different_a = {"id": "a", "input": "Refund order 7781 placed on 3 May"}
+        different_b = {"id": "b", "input": "Cancel order 7781 placed on 3 May"}
         self.assertNotEqual(
             self._without_digits(different_a), self._without_digits(different_b)
+        )
+
+        quantities_a = {"id": "a", "input": "What is 2 plus 2?"}
+        quantities_b = {"id": "b", "input": "What is 37 plus 45?"}
+        self.assertEqual(
+            self._without_digits(quantities_a),
+            self._without_digits(quantities_b),
+            "this rule no longer collides two questions that differ only in a "
+            "quantity. That is the false positive it was accepted with, so "
+            "either the rule changed or its documented cost has.",
         )
 
 

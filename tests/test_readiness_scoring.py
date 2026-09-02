@@ -677,13 +677,13 @@ class DatasetScoringTests(unittest.TestCase):
         self.assertEqual(full.value, 20.0)
 
         for check in MODULE.DIVERSITY_CHECKS:
-            for name in check.certifiers:
+            for certifier in check.certifiers:
                 for not_run in ("SKIP", None):
-                    with self.subTest(check=name, status=not_run):
-                        sub = self._diversity(**{**clean, name: not_run})
+                    with self.subTest(check=certifier.fact, status=not_run):
+                        sub = self._diversity(**{**clean, certifier.fact: not_run})
                         self.assertFalse(
                             sub.measured,
-                            f"{name}={not_run!r} still reads as a "
+                            f"{certifier.fact}={not_run!r} still reads as a "
                             f"measured, clean result: {sub.evidence}",
                         )
                         # The check's OWN clean sentence, read off the shipped
@@ -693,7 +693,14 @@ class DatasetScoringTests(unittest.TestCase):
                         # this question may not read as answered, and the words
                         # it would be answered in are whatever ship today.
                         self.assertNotIn(check.clean_label, sub.evidence)
-                        self.assertIn(check.looking_for_label, sub.evidence)
+                        # And the card names THIS scan, not the whole question.
+                        # A question with two certifiers has two ways of being
+                        # unanswered, and reporting the other one as unrun is a
+                        # false statement about what was covered.
+                        self.assertIn(certifier.looking_for, sub.evidence)
+                        for other in check.certifiers:
+                            if other.fact != certifier.fact:
+                                self.assertNotIn(other.looking_for, sub.evidence)
 
     def test_one_duplicated_row_is_one_deduction_not_two(self) -> None:
         """The exact and near checks describe one defect, so they cost once.
@@ -778,7 +785,10 @@ class DatasetScoringTests(unittest.TestCase):
         repetition = next(
             check
             for check in MODULE.DIVERSITY_CHECKS
-            if "near_duplicate_status" in check.certifiers
+            if any(
+                certifier.fact == "near_duplicate_status"
+                for certifier in check.certifiers
+            )
         )
         for label in (
             repetition.clean_label,
@@ -806,16 +816,18 @@ class DatasetScoringTests(unittest.TestCase):
         for check in MODULE.DIVERSITY_CHECKS:
             with self.subTest(check=check.clean_label):
                 self.assertTrue(check.certifiers)
-                for name in (*check.certifiers, *check.detectors):
+                names = [certifier.fact for certifier in check.certifiers]
+                for name in (*names, *check.detectors):
                     self.assertIn(name, fields)
+                self.assertEqual(len(names), len(set(names)))
 
     def test_no_exact_duplicates_cannot_clear_the_similarity_question(self) -> None:
-        """A detector may raise a finding; only the certifier may clear one.
+        """A detector may raise a finding; clearing takes every certifier.
 
         "No byte-identical rows" is not "no rows 90% alike", so an exact PASS
         beside an unfinished near scan leaves the question unasked - which is
-        the same rule the class above pins, applied to the check that was
-        demoted rather than deleted.
+        the same rule the class above pins, applied to the scan that answers
+        the narrower half of the question. Its mirror is the test below.
         """
         sub = self._diversity(
             duplicate_status="PASS",

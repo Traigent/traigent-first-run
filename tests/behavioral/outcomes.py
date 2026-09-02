@@ -56,7 +56,7 @@ RECORDED_FIELDS = ("band", "status", "recommended_action", "overall")
 # `recommended_action` reads, so a cap that silently changes kind is a change to
 # what the run does, not only to what it scores.
 RECORDED_CAP_FIELDS = ("condition", "ceiling", "blocks", "asks")
-EXPECTED_FIELDS = frozenset((*RECORDED_FIELDS, "caps"))
+EXPECTED_FIELDS = frozenset((*RECORDED_FIELDS, "caps", "asks_about_repeats"))
 
 REQUIRED_CASE_KEYS = {"id", "state", "why", "expected"}
 # Every state the score's own output selection can be in. `recommended_action`
@@ -106,6 +106,13 @@ def load_case(case_dir: Path) -> dict[str, Any]:
 def recorded_outcome(score: dict[str, Any]) -> dict[str, Any]:
     """The part of a readiness score these cases are a statement about."""
     outcome = {field: score[field] for field in RECORDED_FIELDS}
+    # Whether the run put a question to the customer about repeated rows, as a
+    # boolean rather than the counts behind it. A case declares what the run
+    # DOES, and the counts move with any change to the fixture's size while the
+    # question either arrives or does not. Without it, a regression that began
+    # asking about repeats on the clean fixtures would leave every declared
+    # field untouched and no case would fail.
+    outcome["asks_about_repeats"] = score.get("repeated_inputs") is not None
     outcome["caps"] = [
         {field: cap[field] for field in RECORDED_CAP_FIELDS} for cap in score["caps"]
     ]

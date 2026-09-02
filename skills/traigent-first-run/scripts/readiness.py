@@ -808,6 +808,10 @@ class SubScore:
 # Emitting it is what makes that copy deletable instead of a second source of
 # truth.
 PROCEED = "proceed"
+# The one remedy this run can carry out itself, named because two places now
+# branch on it: the table below routes two size caps to it, and the repeated-row
+# routes offer to write replacements only while it is the live recommendation.
+ADD_EXAMPLES = "add-examples"
 ACTION_FOR_CONDITION: dict[str, str] = {
     "dataset-absent": "get-data",
     # A file was named and no row in it matched the shape preflight read it
@@ -843,8 +847,8 @@ ACTION_FOR_CONDITION: dict[str, str] = {
     # material the project already has. `add-examples` is that instruction, and
     # it never blocks, because every dataset that reaches it is one a real
     # comparison can be made on.
-    "dataset-below-measurable-size": "add-examples",
-    "dataset-coarse-resolution": "add-examples",
+    "dataset-below-measurable-size": ADD_EXAMPLES,
+    "dataset-coarse-resolution": ADD_EXAMPLES,
     "dataset-no-expected-outputs": "label-data",
     "dataset-integrity-fail": "repair-dataset",
     "dataset-tune-holdout-overlap": "resplit-dataset",
@@ -2901,7 +2905,7 @@ def repeated_inputs(
         else:
             scoreable = min(facts.tuning_rows, labelled)
         distinct = tuning_distinct_for(facts, reference_free=reference_free)
-        side = "to tune on"
+        side = "on the tuning side"
     else:
         scoreable = facts.rows if reference_free else min(facts.rows, labelled)
         distinct = facts.distinct_rows
@@ -3976,6 +3980,20 @@ NEAR_DUPLICATE_PERCENT = 70
 
 
 @dataclass(frozen=True)
+class Certifier:
+    """One preflight record that must run clean before a question is clean.
+
+    It carries its own `looking_for` because the card names the checks that did
+    NOT run, and a question with two certifiers has two different ways of being
+    unanswered. Naming the whole question in either case reported a scan that
+    had just finished as one nobody performed.
+    """
+
+    fact: str
+    looking_for: str
+
+
+@dataclass(frozen=True)
 class DiversityCheck:
     """One question the diversity sub-score asks, and what answering it costs.
 
@@ -4017,18 +4035,28 @@ class DiversityCheck:
     """
 
     detectors: tuple[str, ...]
-    certifiers: tuple[str, ...]
+    certifiers: tuple[Certifier, ...]
     # Two labels, because the same question needs a different noun in the two
     # sentences: what it FOUND ("one expected output dominates") is not what it
     # was LOOKING FOR ("whether one expected output dominates"), and reusing the
     # first in the unchecked line reads as a finding the check never made.
     found_label: str
-    looking_for_label: str
     # What it says when it ran and found nothing. A third label rather than a
     # negation of the first, because "no rows at least 90% similar to another
     # row" is not English a first-time reader gets on one pass.
     clean_label: str
     points: float
+
+    @property
+    def looking_for_label(self) -> str:
+        """The whole question, in the words its certifiers ask it in.
+
+        Derived and not stored. It was a third literal beside the certifier
+        list and the clean sentence, and it went stale the moment a second
+        certifier was added: the card named one scan while two had to answer.
+        """
+        return ", and ".join(certifier.looking_for for certifier in self.certifiers)
+
     # Whether this question has a subject at all when the evaluator needs no
     # reference answer. A question with no subject is not an unrun check.
     needs_expected_outputs: bool = False
@@ -4064,12 +4092,17 @@ class DiversityCheck:
 DIVERSITY_CHECKS: tuple[DiversityCheck, ...] = (
     DiversityCheck(
         detectors=("near_duplicate_status", "duplicate_status"),
-        certifiers=("near_duplicate_status", "duplicate_status"),
-        found_label=(f"rows at least {NEAR_DUPLICATE_PERCENT}% similar to another row"),
-        looking_for_label=(
-            f"whether rows repeat each other at {NEAR_DUPLICATE_PERCENT}% "
-            "similarity or more"
+        certifiers=(
+            Certifier(
+                "near_duplicate_status",
+                f"whether rows repeat each other at {NEAR_DUPLICATE_PERCENT}% "
+                "similarity or more",
+            ),
+            Certifier(
+                "duplicate_status", "whether any row repeats another row's input"
+            ),
         ),
+        found_label=(f"rows at least {NEAR_DUPLICATE_PERCENT}% similar to another row"),
         # WHAT THE TWO SCANS ESTABLISHED, and not one word past it.
         #
         # This line used to read "no repeated questions at 70% similarity or
@@ -4094,9 +4127,12 @@ DIVERSITY_CHECKS: tuple[DiversityCheck, ...] = (
     ),
     DiversityCheck(
         detectors=("answer_dominance_status",),
-        certifiers=("answer_dominance_status",),
+        certifiers=(
+            Certifier(
+                "answer_dominance_status", "whether one expected output dominates"
+            ),
+        ),
         found_label="one expected output dominates",
-        looking_for_label="whether one expected output dominates",
         # Not "no single answer used by most rows" any more. Since #216 the
         # question is dominance against CHANCE, not a share of the rows, so a
         # four-way set can be flagged at exactly half the rows and a ten-way one
@@ -4141,12 +4177,14 @@ def diversity_subscore(
     that way: near-duplicates above 500 rows, and answer dominance under a
     reference-free evaluator (traigent-first-run#151).
 
-    A question is answered by its `certifier` and only by it. Its other
-    detectors can raise a finding but cannot pronounce it clean, which is what
-    lets the exact-duplicate check keep earning its place after the
-    near-duplicate check took over the scoring: on a dataset where the near
-    scan ran out of budget, an exact duplicate is still a found problem, while
-    an exact PASS leaves the near-similarity question genuinely unasked.
+    A question is answered by ALL of its `certifiers` and by nothing else. A
+    detector can raise a finding without being able to pronounce anything clean,
+    and since #356 neither repetition scan may pronounce alone either: the
+    similarity scan is measured wrong in both directions, and the exact scan
+    answers a narrower question than the one being asked. So on a dataset where
+    the near scan ran out of budget an exact duplicate is still a found problem,
+    while an exact PASS leaves the similarity question genuinely unasked - and
+    the reverse now holds too.
 
     So there are three outcomes, not two:
 
@@ -4184,11 +4222,21 @@ def diversity_subscore(
             earned -= check.points
             problems.append(check.found_label)
         elif all(
-            getattr(facts, name) in MEASURED_STATUSES for name in check.certifiers
+            getattr(facts, certifier.fact) in MEASURED_STATUSES
+            for certifier in check.certifiers
         ):
             continue
         else:
-            unchecked.append(check.looking_for_label)
+            # ONLY the scans that did not run. Naming the whole question listed
+            # a check that had just finished cleanly among the ones nobody
+            # performed, which is a false statement about coverage in the
+            # direction that under-reports it - reachable on exactly the older
+            # payloads `tuning_distinct_for` exists to tolerate.
+            unchecked.extend(
+                certifier.looking_for
+                for certifier in check.certifiers
+                if getattr(facts, certifier.fact) not in MEASURED_STATUSES
+            )
 
     not_checked = f"not checked: {', '.join(unchecked)}"
     if len(unchecked) == len(applicable):
@@ -6201,7 +6249,10 @@ def score_run(
         [*dataset_caps, *evaluation_caps, *agent_caps],
         knobs,
         weights,
-        repeated_inputs(
+        # By keyword, deliberately. A sibling branch adds a keyword-only marker
+        # to this call's signature at the same position, and a positional
+        # argument resolved against it raises rather than mis-binding.
+        repeated=repeated_inputs(
             dataset_facts,
             reference_free=scores_without_a_reference(evaluation_facts.method),
         ),
@@ -6468,27 +6519,37 @@ REPEATED_ROWS_LABEL = "REPEATED ROWS"
 RECOMMENDED_MARK = "(recommended"
 
 
-def repeated_input_routes(finding: RepeatedInputs) -> list[str]:
+def repeated_input_routes(finding: RepeatedInputs, *, offers_top_up: bool) -> list[str]:
     """What a customer may do about repeated rows, as routes they can reply to.
 
-    THE FIRST ROUTE IS A CONTINUE, and that is the whole shape of this block
-    rather than a preference between three equals. Nothing here stops a run: the
-    recommended answer writes the missing comparisons and carries on, the second
-    carries on with fewer, and the third is the customer's own edit. A finding
-    that ends in a stop would be this guide telling somebody mid-run to go away
-    and come back, which is the one thing it may not do.
+    WRITING ROWS IS NOT THIS BLOCK'S TO OFFER, and that is the correction this
+    function exists in its current shape to make. An earlier version offered
+    "write N replacement examples" on its own authority, next to a card that had
+    just said this run may write generated examples up to a bounded total - so a
+    24-row file with 6 repeats was offered 30 rows against a 28-row stop, and a
+    50-row file, where `top_up_offer` returns nothing and the size caps set
+    `asks=False` precisely because the run may NOT offer generation, was offered
+    twenty rows anyway. `Cap.asks` says why that is not a small error: an offer
+    with nobody asked is a substitution made on the customer's behalf.
 
-    THE REPLACEMENTS GO INTO THIS RUN'S OWN COPY. The customer's file is
-    material this run reads; it is not a file this run edits. So the recommended
-    route says where the rows are written, in the same breath as offering them,
-    and the closing line says the same thing again as a property of the run
-    rather than as a property of this offer.
+    So the first route is the bounded top-up this card already carries, and it
+    appears only while that offer is live. `offers_top_up` is
+    `recommended_action == ADD_EXAMPLES`, which is true exactly when a size cap
+    is ASKING and nothing blocks ahead of it - the same three conditions the
+    offer itself is built on, read off the one field that already combines them.
+    It names no number of its own and cannot exceed the total, because it is not
+    a second offer; it is this finding pointing at the one already made, so the
+    customer answers once.
 
-    Three routes and one mark, lettered from A. The rule is not local to this
-    block - every named choice this run puts to a customer is lettered and
-    carries exactly one recommendation - and the reason it is repeated in code
-    here is that a route list assembled at runtime cannot be checked by reading
-    a document.
+    THE MARK NEVER CONTRADICTS `recommended_action`. Route A carries it while
+    the top-up is what the payload recommends; otherwise route A is not printed
+    at all and the mark moves to continuing on the examples that differ. Both
+    marked routes are continues, which is the rule this block may not break -
+    nothing here tells somebody mid-run to stop.
+
+    Lettered from A in the order printed, so the letters stay contiguous when
+    the first route is absent, and exactly one route is marked by construction
+    rather than by inspection.
 
     IT SAYS NOTHING ABOUT HOW MANY ROWS THE PAID RUN WILL SCORE. That number is
     the bounded draw's, it is decided at the spend approval, and a second
@@ -6496,21 +6557,55 @@ def repeated_input_routes(finding: RepeatedInputs) -> list[str]:
     one. What this block quotes is a resolution: how many different questions
     the compared rows ask.
     """
-    return [
-        f"  {REPEATED_ROWS_LABEL} {finding.repeats} of {finding.scoreable} rows "
-        f"{finding.side} repeat an input already counted, so {finding.distinct} "
-        "different examples are what this comparison can resolve.",
-        f"  A. Write {finding.repeats} replacement examples into this run's own "
-        "copy of your dataset, in the shape your rows already use.  "
-        f"{RECOMMENDED_MARK}: it keeps this run moving and adds comparisons "
-        "your file does not hold yet)",
-        f"  B. Continue on the {finding.distinct} examples that differ, and "
-        "read the result as the smaller comparison it is.",
-        "  C. Replace the repeats in your own file, then say so and this run "
-        "reads it again.",
-        "  Your file is read and never written to, and rows this run writes are "
-        "scored as the generated rows they are.",
+    routes: list[tuple[str, bool]] = []
+    if offers_top_up:
+        routes.append(
+            (
+                "Answer the bounded top-up above with yes, and this run writes "
+                "the replacements into its own copy of your dataset, inside the "
+                "total it just named.",
+                True,
+            )
+        )
+    routes.append(
+        (
+            f"Continue on the {finding.distinct} examples that differ, and read "
+            "the result as the smaller comparison it is.",
+            not offers_top_up,
+        )
+    )
+    routes.append(
+        (
+            "Replace the repeats in your own file, then say so and this run "
+            "reads it again.",
+            False,
+        )
+    )
+    lines = [
+        f"  {REPEATED_ROWS_LABEL} {finding.repeats} of the {finding.scoreable} "
+        f"rows this run can score {finding.side} repeat an input already "
+        f"counted, so {finding.distinct} different examples are what this "
+        "comparison can resolve."
     ]
+    for index, (text, recommended) in enumerate(routes):
+        letter = chr(ord("A") + index)
+        mark = (
+            f"  {RECOMMENDED_MARK}: it keeps this run moving and buys "
+            "comparisons your file does not hold yet)"
+            if recommended
+            else ""
+        )
+        lines.append(f"  {letter}. {text}{mark}")
+    closing = "  Your file is read and never written to"
+    if offers_top_up:
+        # Only where rows might actually be written. On the other arm this run
+        # is writing nothing, and a sentence about how written rows are scored
+        # would describe an event that cannot happen.
+        closing += (
+            ", and rows this run writes are scored as the generated rows they are"
+        )
+    lines.append(f"{closing}.")
+    return lines
 
 
 def render_card(
@@ -6649,7 +6744,12 @@ def render_card(
         # evidence asks them to answer before they have read it. Nothing
         # summarising it goes higher up the card either, which is why this block
         # is not also a cap - a cap line prints in the section above.
-        lines.extend(repeated_input_routes(score.repeated_inputs))
+        lines.extend(
+            repeated_input_routes(
+                score.repeated_inputs,
+                offers_top_up=score.recommended_action == ADD_EXAMPLES,
+            )
+        )
         lines.append("")
     if score.provenance_assumption is not None:
         # On the card, not only in the durable report or a reference. This is
