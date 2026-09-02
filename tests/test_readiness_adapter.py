@@ -318,6 +318,18 @@ class ReadinessAdapterReplayTests(unittest.TestCase):
         self.assertEqual(invalid.returncode, 2)
         self.assertIn("invalid choice: 'sql'", invalid.stderr)
 
+        # `composite` rather than `execution`, and the swap is the finding of
+        # traigent-first-run#380 rather than a convenience. What this call has
+        # to show is that `code` reaches the score and is spent on the
+        # task-fit line, so the method beside it has to be one that can still
+        # earn the credit from a declaration. `execution` no longer can: it
+        # claims the evaluator runs the answer, and that claim is now credited
+        # from the file rather than from the word, so its evidence names the
+        # unestablished route and never mentions the task kind - which would
+        # leave this assertion unable to see the kind it exists to check.
+        # `composite` is also what references/evaluation-and-dataset.md
+        # selects for code and SQL output, so the pair here is the one the
+        # guidance would produce.
         accepted = subprocess.run(
             [
                 sys.executable,
@@ -325,7 +337,7 @@ class ReadinessAdapterReplayTests(unittest.TestCase):
                 "--preflight",
                 "-",
                 "--evaluator-method",
-                "execution",
+                "composite",
                 "--task-kind",
                 "code",
                 "--json",
@@ -345,7 +357,7 @@ class ReadinessAdapterReplayTests(unittest.TestCase):
             if subscore["name"] == "task-fit"
         )
         self.assertEqual(task_fit["value"], 25.0)
-        self.assertEqual(task_fit["evidence"], "execution suits code output")
+        self.assertEqual(task_fit["evidence"], "composite suits code output")
 
     def _healthy_context(
         self, directory: Path, method: str = "exact"
@@ -4836,3 +4848,252 @@ class TheRoutesOfferedWhenRowsRepeatTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# The evaluator the corpus already ships, and the two shapes #380 is about.
+# Read off disk rather than restated, so this replay is scoring the same file
+# the behavioural scenarios do.
+CORPUS_COMPARATOR = (
+    ROOT
+    / "tests"
+    / "behavioral"
+    / "outcomes"
+    / "clean-proceed"
+    / "project"
+    / "evaluator.py"
+)
+RUNS_CANDIDATE_SQL = '''"""Run the candidate query and compare the rows it returns."""
+
+import sqlite3
+
+
+def score_sql(*, output, expected, input_data, metadata):
+    del metadata
+    connection = sqlite3.connect(input_data["database"])
+    produced = connection.execute(output).fetchall()
+    wanted = connection.execute(expected).fetchall()
+    connection.close()
+    return float(produced == wanted)
+'''
+
+
+def _task_fit(score: dict) -> dict:
+    evaluation = next(
+        pillar for pillar in score["pillars"] if pillar["name"] == "evaluation"
+    )
+    return next(
+        subscore
+        for subscore in evaluation["subscores"]
+        if subscore["name"] == "task-fit"
+    )
+
+
+class TaskFitReplayFollowsTheFileNotTheDeclarationTests(unittest.TestCase):
+    """traigent-first-run#380, through the real two-script pipeline.
+
+    The unit tests hand `score_evaluation` a fact set. These run the actual
+    `preflight.py --evaluator ... --json | readiness.py --preflight -` the
+    guide tells a customer to run, so the metric preflight writes and the
+    field readiness reads are pinned to each other rather than to a shared
+    assumption.
+    """
+
+    def score(self, source: str | None, method: str, kind: str) -> dict:
+        extra = ("--evaluator-method", method, "--task-kind", kind)
+        if source is None:
+            return _score_evaluator(None, extra)
+        with tempfile.TemporaryDirectory() as directory:
+            evaluator = Path(directory) / "evaluator.py"
+            evaluator.write_text(source)
+            return _score_evaluator(evaluator, extra)
+
+    def test_the_reported_reading_is_reproduced_and_then_closed(self) -> None:
+        """`execution` used to be worth 17 more than a comparison on one file.
+
+        The file is a pure text comparator, so nothing in it runs the answer,
+        and both declarations describe the same file. They now land on the
+        same credit, and the reason names the file rather than the word.
+        """
+        comparator = CORPUS_COMPARATOR.read_text()
+        execution = _task_fit(self.score(comparator, "execution", "code-sql"))
+        comparison = _task_fit(self.score(comparator, "normalized-exact", "code-sql"))
+        self.assertEqual(execution["value"], comparison["value"])
+        self.assertEqual(execution["value"], MODULE.TASK_FIT_UNFIT_CREDIT)
+        self.assertIn("shows no call that would", execution["evidence"])
+
+    def test_the_route_the_guidance_selects_out_earns_the_one_it_forbids(
+        self,
+    ) -> None:
+        """Measured on the evaluator that route would actually be written as.
+
+        references/evaluation-and-dataset.md selects a composite for code and
+        SQL output: a parser gate, then comparison over canonical form. This
+        is that file, and the walk settles nothing about it - a helper call is
+        not a whole-value equality and `re` is not an engine - so the honest
+        declaration keeps every point while `execution` over the same file is
+        refused. The forbidden route now earns less than the permitted one on
+        the task the issue was reported against.
+        """
+        canonical_sql = (
+            '"""Compare SQL over a canonical form: fence, case, spacing."""\n\n'
+            "import re\n\n"
+            'FENCE = re.compile(r"^```(?:sql)?\\s*|\\s*```$", re.MULTILINE)\n'
+            'SPACING = re.compile(r"\\s+")\n\n\n'
+            "def canonical(text):\n"
+            '    stripped = FENCE.sub("", str(text)).strip().rstrip(";")\n'
+            '    return SPACING.sub(" ", stripped).casefold()\n\n\n'
+            "def score(*, output, expected, input_data, metadata):\n"
+            "    del input_data, metadata\n"
+            "    return float(canonical(output) == canonical(expected))\n"
+        )
+        selected = _task_fit(self.score(canonical_sql, "composite", "code-sql"))
+        forbidden = _task_fit(self.score(canonical_sql, "execution", "code-sql"))
+        self.assertEqual(selected["value"], MODULE.TASK_FIT_WEIGHT)
+        self.assertEqual(forbidden["value"], MODULE.TASK_FIT_UNFIT_CREDIT)
+        self.assertLess(forbidden["value"], selected["value"])
+
+    def test_a_scorer_that_runs_the_query_is_refused_end_to_end(self) -> None:
+        """preflight finds the construct, readiness spends the finding."""
+        score = self.score(RUNS_CANDIDATE_SQL, "execution", "code-sql")
+        subscore = _task_fit(score)
+        self.assertEqual(subscore["value"], MODULE.TASK_FIT_UNFIT_CREDIT)
+        self.assertIn("sqlite3", subscore["evidence"])
+        self.assertIn("runs the answer, as execution declares", subscore["evidence"])
+
+    def test_the_same_file_refutes_a_comparison_declared_over_it(self) -> None:
+        """A word cannot make a database into a string comparison."""
+        subscore = _task_fit(
+            self.score(RUNS_CANDIDATE_SQL, "normalized-exact", "closed-label")
+        )
+        self.assertEqual(subscore["value"], MODULE.TASK_FIT_UNFIT_CREDIT)
+        self.assertIn("describes a comparison", subscore["evidence"])
+
+    def test_the_corpus_comparator_keeps_every_point_it_had(self) -> None:
+        """The `0 credited -> refused` direction, on the file the corpus ships.
+
+        This is the one that would be expensive to get wrong: the evaluator
+        five behavioural scenarios grade with must score exactly as it did,
+        under the method those scenarios declare for it.
+        """
+        subscore = _task_fit(
+            self.score(
+                CORPUS_COMPARATOR.read_text(), "normalized-exact", "closed-label"
+            )
+        )
+        self.assertEqual(subscore["value"], MODULE.TASK_FIT_WEIGHT)
+        self.assertEqual(
+            subscore["evidence"], "normalized-exact suits closed-label output"
+        )
+        self.assertTrue(subscore["measured"])
+
+    def test_a_run_that_never_read_an_evaluator_loses_nothing_it_had(self) -> None:
+        """No file, no refutation. The check refutes only from proof."""
+        subscore = _task_fit(self.score(None, "normalized-exact", "closed-label"))
+        self.assertEqual(subscore["value"], MODULE.TASK_FIT_WEIGHT)
+        self.assertEqual(
+            subscore["evidence"], "normalized-exact suits closed-label output"
+        )
+
+    def test_preflight_warns_on_the_route_and_names_the_line(self) -> None:
+        """The finding is visible in preflight's own output, not only in a score."""
+        with tempfile.TemporaryDirectory() as directory:
+            evaluator = Path(directory) / "evaluator.py"
+            evaluator.write_text(RUNS_CANDIDATE_SQL)
+            records = _preflight_evaluator_records(evaluator)
+        shape = next(r for r in records if r["check"] == "evaluator-shape")
+        self.assertEqual(shape["status"], "WARN")
+        self.assertTrue(shape["metrics"]["executes"])
+        self.assertIn(
+            "imports sqlite3 (line 3)", shape["metrics"]["execution_witnesses"]
+        )
+
+
+class TheFourCombinationsAreScoredOnTheFileTests(unittest.TestCase):
+    """traigent-first-run#380, the matched pair, through the real two scripts.
+
+    Not a fact set: these run the same `preflight.py --evaluator ... --json |
+    readiness.py --preflight -` a customer runs, over the comparator the
+    corpus ships, so the four combinations are measured rather than reasoned
+    about.
+    """
+
+    def fit(self, method: str, kind: str) -> dict:
+        with tempfile.TemporaryDirectory() as directory:
+            evaluator = Path(directory) / "evaluator.py"
+            evaluator.write_text(CORPUS_COMPARATOR.read_text())
+            score = _score_evaluator(
+                evaluator, ("--evaluator-method", method, "--task-kind", kind)
+            )
+        return _task_fit(score)
+
+    def test_no_pair_of_declarations_out_earns_what_the_file_supports(self) -> None:
+        """One file. Every declared pair lands where the file puts it.
+
+        The four reported combinations, the two other routes to the same band
+        that a per-method refusal would have left open, and the two pairs the
+        file honestly supports. The last two are the ones that must not move.
+        """
+        refused = (
+            ("exact", "code-sql"),
+            ("normalized-exact", "structured"),
+            ("normalized-exact", "code-sql"),
+            ("exact", "structured"),
+            ("set-f1", "structured"),
+            ("schema", "structured"),
+            ("composite", "code-sql"),
+            ("execution", "code-sql"),
+        )
+        for method, kind in refused:
+            with self.subTest(method=method, kind=kind, expect="refused"):
+                self.assertEqual(
+                    self.fit(method, kind)["value"], MODULE.TASK_FIT_UNFIT_CREDIT
+                )
+        for method, kind in (
+            ("normalized-exact", "closed-label"),
+            ("routing", "routing"),
+        ):
+            with self.subTest(method=method, kind=kind, expect="credited"):
+                subscore = self.fit(method, kind)
+                self.assertEqual(subscore["value"], MODULE.TASK_FIT_WEIGHT)
+                self.assertEqual(subscore["evidence"], f"{method} suits {kind} output")
+
+    def test_the_pair_that_used_to_reach_the_top_says_what_the_file_is(self) -> None:
+        """And says it with a line the reader can open the file to."""
+        evidence = self.fit("exact", "structured")["evidence"]
+        self.assertIn("normalized-exact check rather than exact", evidence)
+        self.assertIn("casefold, strip applied before the comparison", evidence)
+        self.assertIn("line 6", evidence)
+
+    def test_preflight_publishes_the_comparison_it_proved(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            evaluator = Path(directory) / "evaluator.py"
+            evaluator.write_text(CORPUS_COMPARATOR.read_text())
+            records = _preflight_evaluator_records(evaluator)
+        shape = next(r for r in records if r["check"] == "evaluator-shape")
+        self.assertEqual(shape["status"], "PASS")
+        self.assertEqual(shape["metrics"]["comparison_shape"], "normalized-exact")
+
+    def test_an_evaluator_the_walk_cannot_settle_scores_as_it_always_did(self) -> None:
+        """The false-refusal direction, end to end.
+
+        A graded similarity is an honest evaluator and is not a whole-value
+        equality, so nothing about it is established and nothing is refused.
+        """
+        source = (
+            '"""Score by how alike two strings look."""\n\n'
+            "import difflib\n\n\n"
+            "def score(*, output, expected, input_data, metadata):\n"
+            "    del input_data, metadata\n"
+            "    return difflib.SequenceMatcher(None, str(output), str(expected)).ratio()\n"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            evaluator = Path(directory) / "evaluator.py"
+            evaluator.write_text(source)
+            records = _preflight_evaluator_records(evaluator)
+            score = _score_evaluator(
+                evaluator,
+                ("--evaluator-method", "fuzzy", "--task-kind", "short-answer"),
+            )
+        shape = next(r for r in records if r["check"] == "evaluator-shape")
+        self.assertNotIn("comparison_shape", shape["metrics"])
+        self.assertEqual(_task_fit(score)["value"], MODULE.TASK_FIT_WEIGHT)
