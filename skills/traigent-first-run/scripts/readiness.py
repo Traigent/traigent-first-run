@@ -2004,6 +2004,28 @@ class ReadinessScore:
     # ordinary case. Additive on the same terms as the field above, and its
     # presence is the finding - see `RepeatedInputs`.
     repeated_inputs: RepeatedInputs | None = None
+    # Whether a read of the agent's source reached this score at all - carried
+    # for the CARD, not for the arithmetic. Nothing here weights, caps or
+    # renormalizes anything.
+    #
+    # The agent pillar scores 0/100 with an empty bar in two states a customer
+    # experiences very differently: no agent was found, and an agent was found
+    # and read and the one measured check on it failed. The card rendered them
+    # identically - same bar, same number, same overall - and the owner of a
+    # project that HAD an agent read the card and asked whether it had been
+    # picked up. It had; three source lines were cited two rows below.
+    #
+    # Derived from `AgentFacts.discovery_supplied`, which is the same fact
+    # `score_agent` already branches on, rather than re-read at render time
+    # from the evidence prose. A renderer that decided "was an agent found" by
+    # matching sentences would be the exact defect this package keeps filing:
+    # a semantic question answered from a surface signal.
+    #
+    # Additive and defaulted for the reason above it: a consumer gains a key it
+    # can ignore, and the 50-odd callers that build a score without facts keep
+    # working and keep saying the honest thing, which is that no read reached
+    # them.
+    agent_source_read: bool = False
 
 
 @dataclass(frozen=True)
@@ -6157,7 +6179,9 @@ def aggregate(
     caps: Sequence[Cap],
     knobs: Sequence[KnobScore],
     weights: dict[str, float],
+    *,
     repeated: RepeatedInputs | None = None,
+    agent_source_read: bool = False,
 ) -> ReadinessScore:
     # Every declared weight stays in the denominator, and #201 is the reason
     # that sentence is worth writing down rather than assuming.
@@ -6215,6 +6239,7 @@ def aggregate(
         knobs=tuple(sorted(knobs, key=lambda knob: knob.name)),
         gaps=collect_gaps(pillars, knobs, ordered_caps, overall),
         repeated_inputs=repeated,
+        agent_source_read=agent_source_read,
     )
 
 
@@ -6249,13 +6274,15 @@ def score_run(
         [*dataset_caps, *evaluation_caps, *agent_caps],
         knobs,
         weights,
-        # By keyword, deliberately. A sibling branch adds a keyword-only marker
-        # to this call's signature at the same position, and a positional
-        # argument resolved against it raises rather than mis-binding.
+        # By keyword, both of them. This call gained a keyword-only marker and
+        # a second optional argument in the same window; a positional argument
+        # resolved against that marker raises rather than mis-binding, which is
+        # why neither of these is passed by position.
         repeated=repeated_inputs(
             dataset_facts,
             reference_free=scores_without_a_reference(evaluation_facts.method),
         ),
+        agent_source_read=agent_facts.discovery_supplied,
     )
 
 
@@ -6652,6 +6679,38 @@ def render_card(
         # `combine` already renormalizes over the applicable ones; this is the
         # same set, said out loud.
         applicable_checks = [sub for sub in pillar.subscores if sub.applicable]
+        # Collected, then printed as one parenthesis. Two adjacent groups -
+        # "(agent read)  (1 of 4 checks measured)" - read as two separate
+        # remarks about the pillar when they are one description of it.
+        suffix_parts: list[str] = []
+        if pillar.name == "agent":
+            # The state the bar cannot show. A found-and-read agent whose one
+            # measured check failed renders exactly like a project with no
+            # agent at all: `AGENT -------- 0/100`, and the same overall
+            # number, because the ceiling that binds is the same one. A repo
+            # owner read that card on a project whose agent HAD been built and
+            # asked whether it had been picked up - the citations were two rows
+            # below, and the headline had already answered "no".
+            #
+            # Unconditional, unlike the count below. Gating it on unmeasured
+            # checks would drop it exactly where every agent check was measured,
+            # which is the card where a reader is most entitled to know the
+            # source was read.
+            #
+            # Scoring is untouched. This adds no check, moves no weight and
+            # lifts no ceiling - the pillar keeps the value and the cap it had,
+            # and the reason it is 0 is still on its own rows.
+            # "agent source read", not "agent read". A customer who supplied
+            # `--config-space` and no `--agent-knobs` has an agent and no read
+            # of it, and "no agent read" is exactly the absence/unread
+            # ambiguity this line exists to remove - one word short of
+            # re-creating it. The durable report already says "a read of the
+            # agent's source", so the two now say the same thing.
+            suffix_parts.append(
+                "agent source read"
+                if score.agent_source_read
+                else "no agent source read"
+            )
         if any(not sub.measured for sub in applicable_checks):
             # A renormalized score over half the checks is not the same claim as
             # a full one, and "(partly checked)" proved too quiet to carry that
@@ -6660,9 +6719,12 @@ def render_card(
             # named instead, because "2 of 4 checks" is a fact the reader can
             # act on where an internal weight ratio is not.
             measured = sum(1 for sub in applicable_checks if sub.measured)
+            suffix_parts.append(
+                f"{measured} of {len(applicable_checks)} checks measured"
+            )
+        if suffix_parts:
             headline_suffix += (
-                f"  {palette.dim}({measured} of {len(applicable_checks)} checks"
-                f" measured){palette.reset}"
+                f"  {palette.dim}({'; '.join(suffix_parts)}){palette.reset}"
             )
         lines.append(
             f"  {pillar.name.upper():<11} {colour}{bar(pillar.score, unicode_ok=unicode_ok)}"
@@ -6871,6 +6933,24 @@ def render_markdown(score: ReadinessScore, timestamp: str | None = None) -> str:
             # them". Not a row in the table above, for the reason the card
             # gives: a check that can never be measured would hold this
             # pillar's confidence under the band gate forever.
+            #
+            # The read state goes here for the same reason the card carries
+            # it: a 0/100 agent pillar describes two different projects, and
+            # the saved report is where a reader lands with no session left to
+            # ask. Above the not-covered note, because "was the agent read at
+            # all" is the prior question to "which of its questions this
+            # pillar does not answer".
+            lines.extend(
+                [
+                    "",
+                    (
+                        "_A read of the agent's source reached this score._"
+                        if score.agent_source_read
+                        else "_No read of the agent's source reached this "
+                        "score, so every check above rests on its absence._"
+                    ),
+                ]
+            )
             lines.extend(["", f"_{AGENT_NOT_COVERED}_"])
         lines.append("")
     if score.knobs:

@@ -8824,6 +8824,12 @@ class TheCardSpeaksTheUsersLanguageTests(unittest.TestCase):
             replace(plain, provenance_assumption=every_row_silent),
             replace(plain, band_limited_by_confidence=True),
             replace(plain, gaps=("a ranked gap",)),
+            # Both agent read states. `plain` is the unread one by default, so
+            # only its opposite has to be named here - and it has to be, or the
+            # sentence that says the source WAS read reaches customers with no
+            # state in this matrix rendering it, which is the gap this scan
+            # exists to close.
+            replace(plain, agent_source_read=True),
         ]
         return scores
 
@@ -13707,6 +13713,171 @@ class OneFactIsOneRemediationLineTests(unittest.TestCase):
         self.assertIn(MODULE.AGENT_NOT_COVERED, report)
         agent_block = report.split("## Agent", 1)[1].split("## ", 1)[0]
         self.assertIn("not covered by this pillar", agent_block)
+
+
+class AFoundAgentDoesNotLookLikeAMissingOneTests(unittest.TestCase):
+    """The agent pillar scores 0/100 in two states, and the card drew one picture.
+
+    "No agent was found" and "an agent was found, read, and the one measured
+    check on it failed" both render `AGENT -------- 0/100` under the same
+    binding ceiling, so the overall number does not move either. A repo owner
+    whose agent HAD been built read that card and asked whether it had been
+    picked up. It had - three source lines were cited two rows below, and the
+    headline had already answered "no".
+
+    The scoring rule is right and is untouched here: an unverified observation
+    is excluded rather than credited. What was wrong is that the card rendered
+    a state the run KNOWS it is in as the state it cannot be told apart from.
+    """
+
+    AGENT = "MODELS = ['fast', 'slow']\ndef selected(choice):\n    return provider(model=MODELS[choice])\n"
+
+    def _card(self, *, read: bool) -> str:
+        knobs = {
+            "model": {
+                "values": ["fast", "slow"],
+                "source_lines": [1],
+                "evidence": "MODELS reaches the selected call path.",
+            }
+        }
+        if not read:
+            facts = MODULE.AgentFacts()
+        else:
+            with tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                (root / "agent.py").write_text(self.AGENT)
+                facts = MODULE.agent_facts_from_discovery(
+                    {"source": "agent.py", "knobs": knobs},
+                    source_root=root,
+                    selected_agent=root / "agent.py",
+                    selected_agent_callable="selected",
+                )
+        score = MODULE.score_run(
+            MODULE.DatasetFacts(),
+            MODULE.EvaluationFacts(),
+            facts,
+            dict(MODULE.DEFAULT_WEIGHTS),
+        )
+        return MODULE.render_card(score, unicode_ok=False)
+
+    def test_the_two_states_do_not_render_the_same_headline(self) -> None:
+        """The regression itself, stated as the customer meets it."""
+        found = self._card(read=True)
+        missing = self._card(read=False)
+        found_line = next(
+            row for row in found.splitlines() if row.strip().startswith("AGENT")
+        )
+        missing_line = next(
+            row for row in missing.splitlines() if row.strip().startswith("AGENT")
+        )
+        self.assertNotEqual(found_line, missing_line)
+        self.assertIn("agent source read", found_line)
+        self.assertIn("no agent source read", missing_line)
+
+    def test_the_read_state_moves_no_number(self) -> None:
+        """The false-red direction, and the whole constraint on this change.
+
+        Same pillars, same caps, both read states: every number the customer
+        sees has to be identical, and the ONLY textual difference is the token
+        that says which state it is. If this goes red the card started paying
+        for a read, which is the one thing the scoring rule exists to refuse.
+        """
+        pillars = [
+            MODULE.Pillar(
+                "agent",
+                0,
+                0.5,
+                (MODULE.SubScore("search-space", 0.0, 100.0, True, "nothing varies"),),
+            )
+        ]
+        cards = {}
+        for read in (True, False):
+            score = MODULE.aggregate(
+                pillars, [], [], dict(MODULE.DEFAULT_WEIGHTS), agent_source_read=read
+            )
+            self.assertEqual(score.overall, 0)
+            self.assertEqual(score.pillars[0].score, 0)
+            cards[read] = MODULE.render_card(score, unicode_ok=False)
+        self.assertEqual(
+            cards[True].replace("(agent source read)", "<state>"),
+            cards[False].replace("(no agent source read)", "<state>"),
+        )
+
+    def test_the_read_state_survives_a_fully_measured_pillar(self) -> None:
+        """Not gated on the unmeasured count.
+
+        The count only prints when a check went unmeasured. Hanging the read
+        state off it would drop it exactly where every agent check WAS
+        measured - the card where a reader is most entitled to know the source
+        was read.
+        """
+        score = MODULE.aggregate(
+            [MODULE.Pillar("agent", 100, 1.0, ())],
+            [],
+            [],
+            dict(MODULE.DEFAULT_WEIGHTS),
+            agent_source_read=True,
+        )
+        line = next(
+            row
+            for row in MODULE.render_card(score, unicode_ok=False).splitlines()
+            if row.strip().startswith("AGENT")
+        )
+        self.assertIn("agent source read", line)
+        self.assertNotIn("checks measured", line)
+
+    def test_the_other_pillars_are_untouched(self) -> None:
+        """Dataset and evaluation keep the exact suffix they had.
+
+        README.md pins the evaluation pillar's `(n of m checks measured)`
+        string, so a stray change here is a documentation defect too.
+        """
+        card = self._card(read=True)
+        for name in ("DATASET", "EVALUATION"):
+            line = next(
+                row for row in card.splitlines() if row.strip().startswith(name)
+            )
+            self.assertNotIn("agent source read", line)
+
+    def test_the_durable_report_says_whether_the_agent_was_read(self) -> None:
+        """The report outlives the terminal, and is where a reader lands with
+        no session left to ask."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "agent.py").write_text(self.AGENT)
+            facts = MODULE.agent_facts_from_discovery(
+                {
+                    "source": "agent.py",
+                    "knobs": {
+                        "model": {
+                            "values": ["fast", "slow"],
+                            "source_lines": [1],
+                            "evidence": "MODELS reaches the selected call path.",
+                        }
+                    },
+                },
+                source_root=root,
+                selected_agent=root / "agent.py",
+                selected_agent_callable="selected",
+            )
+        read = MODULE.render_markdown(
+            MODULE.score_run(
+                MODULE.DatasetFacts(),
+                MODULE.EvaluationFacts(),
+                facts,
+                dict(MODULE.DEFAULT_WEIGHTS),
+            )
+        )
+        missing = MODULE.render_markdown(
+            MODULE.score_run(
+                MODULE.DatasetFacts(),
+                MODULE.EvaluationFacts(),
+                MODULE.AgentFacts(),
+                dict(MODULE.DEFAULT_WEIGHTS),
+            )
+        )
+        self.assertIn("A read of the agent's source reached this score.", read)
+        self.assertIn("No read of the agent's source reached this score", missing)
 
 
 class WhoWroteItBoundsWhatItMayClaimTests(unittest.TestCase):
