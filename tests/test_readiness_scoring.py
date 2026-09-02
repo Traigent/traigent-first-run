@@ -11004,7 +11004,13 @@ class StaticAgentSourceEvidenceTests(unittest.TestCase):
         extra_files: dict[str, str] | None = None,
         source_reference: str = "agent.py",
     ) -> bool:
-        compile(source, "agent.py", "exec")
+        # `dont_inherit`, because this call is only here to prove the fixture
+        # is a real file. Without it the fixture is compiled under THIS
+        # module's `from __future__ import annotations`, which stringifies
+        # annotations and rejects a walrus inside one - so a shape that is
+        # ordinary Python in a customer's file failed here for a reason that
+        # belongs to the test module rather than to the fixture.
+        compile(source, "agent.py", "exec", dont_inherit=True)
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "agent.py").write_text(source, encoding="utf-8")
@@ -13387,7 +13393,13 @@ class ALocalBindingIsStillARouteToTheCallTests(unittest.TestCase):
 
     def _credited(self, body: str) -> bool:
         source = self.HEADER + body
-        compile(source, "agent.py", "exec")
+        # `dont_inherit`, because this call is only here to prove the fixture
+        # is a real file. Without it the fixture is compiled under THIS
+        # module's `from __future__ import annotations`, which stringifies
+        # annotations and rejects a walrus inside one - so a shape that is
+        # ordinary Python in a customer's file failed here for a reason that
+        # belongs to the test module rather than to the fixture.
+        compile(source, "agent.py", "exec", dont_inherit=True)
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "agent.py").write_text(source, encoding="utf-8")
@@ -13815,6 +13827,142 @@ class ALocalBindingIsStillARouteToTheCallTests(unittest.TestCase):
                 )
 
 
+class ARouteThatCannotExecuteIsNotARouteTests(unittest.TestCase):
+    """A set literal is an inventory, and `MODELS[choice]` over one raises.
+
+    `_literal_scalar_options` reads a set, and should: `if model not in
+    MODELS` is a real guard over a real option table, and that agent runs. But
+    a subscript over a set raises `TypeError` before any request is made, so
+    crediting the subscript route over one credits a search dimension the
+    agent would die on the first trial of.
+
+    Both halves are asserted together because the obvious repair breaks the
+    second one. Removing `ast.Set` from the literal reader closes the two
+    subscript shapes and also refuses the guard shape, which is a credit this
+    scorer gives correctly today - measured, and the reason the fix is at the
+    route rather than at the reader.
+    """
+
+    def _credited(self, source: str, callable_name: str = "answer") -> bool:
+        compile(source, "agent.py", "exec", dont_inherit=True)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "agent.py").write_text(source, encoding="utf-8")
+            facts = MODULE.agent_facts_from_discovery(
+                {
+                    "source": "agent.py",
+                    "knobs": {
+                        "model": {
+                            "values": ["fast", "slow"],
+                            "source_lines": [1],
+                            "evidence": "the model table this agent reads",
+                        }
+                    },
+                },
+                source_root=root,
+                selected_agent=root / "agent.py",
+                selected_agent_callable=callable_name,
+            )
+        return facts.discovered[0].credited
+
+    def test_a_subscript_over_an_unindexable_inventory_earns_nothing(self) -> None:
+        refused = {
+            "a set indexed by a parameter": (
+                'MODELS = {"fast", "slow"}\n\n\ndef answer(question, model_choice=0):\n'
+                "    model = MODELS[model_choice]\n"
+                "    return provider(model=model, text=question)\n"
+            ),
+            "a set selected by a config read": (
+                'MODELS = {"fast", "slow"}\n\n\ndef answer(question, cfg):\n'
+                '    return MODELS[cfg["model"]]\n'
+            ),
+            "a name that is a set on one line and a list on a later one": (
+                'MODELS = {"fast", "slow"}\n'
+                'MODELS = ["fast", "slow"]\n\n\ndef answer(question, model_choice=0):\n'
+                "    model = MODELS[model_choice]\n"
+                "    return provider(model=model, text=question)\n"
+            ),
+            "a name that is a list on one line and a set on another": (
+                'MODELS = ["fast", "slow"]\n'
+                'MODELS = {"fast", "slow"}\n\n\ndef answer(question, model_choice=0):\n'
+                "    model = MODELS[model_choice]\n"
+                "    return provider(model=model, text=question)\n"
+            ),
+        }
+        for name, source in refused.items():
+            with self.subTest(shape=name):
+                self.assertFalse(self._credited(source))
+
+    def test_an_inventory_the_agent_can_reach_still_earns(self) -> None:
+        """Three controls, and the third is what the obvious repair loses."""
+        credited = {
+            "a list indexed by a parameter": (
+                'MODELS = ["fast", "slow"]\n\n\ndef answer(question, model_choice=0):\n'
+                "    model = MODELS[model_choice]\n"
+                "    return provider(model=model, text=question)\n"
+            ),
+            "a tuple indexed by a parameter": (
+                'MODELS = ("fast", "slow")\n\n\ndef answer(question, model_choice=0):\n'
+                "    model = MODELS[model_choice]\n"
+                "    return provider(model=model, text=question)\n"
+            ),
+            "a SET behind a membership guard, which executes": (
+                'MODELS = {"fast", "slow"}\n\n\ndef answer(question, cfg):\n'
+                '    model = cfg.get("model", "fast")\n'
+                "    if model not in MODELS:\n"
+                "        raise ValueError(model)\n"
+                "    return [model, question]\n"
+            ),
+        }
+        for name, source in credited.items():
+            with self.subTest(shape=name):
+                self.assertTrue(self._credited(source))
+
+    def test_the_two_directions_are_read_from_the_two_sides_of_one_rule(
+        self,
+    ) -> None:
+        """The allowlist here and the fail-closed default there are one rule.
+
+        This gates CREDIT, where a shape nobody named costs a false refusal.
+        `_node_binds` answers a refutation, where a shape nobody named costs a
+        credited knob with no route. Asserted together so a later reader does
+        not "make them consistent" by turning one of them around.
+        """
+        source = MODULE.static_source_evidence
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "agent.py").write_text(
+                'A = ["x"]\nB = ("x",)\nC = {"x": 1}\nD = "x"\n'
+                'E = {"x"}\nF = set()\nG = [n for n in (1,)]\n'
+                'H = {"x"}\nH = ["x"]\nI = ["x"]\nI = {"x"}\n'
+                "def answer(q):\n    return q\n",
+                encoding="utf-8",
+            )
+            evidence = source(
+                "agent.py",
+                source_root=root,
+                selected_agent=root / "agent.py",
+                selected_callable="answer",
+            )
+        reachable = MODULE._module_names_a_subscript_can_reach(evidence)
+        self.assertEqual(sorted(reachable), ["A", "B", "C", "D"])
+        for unreachable in ("E", "F", "G"):
+            with self.subTest(name=unreachable):
+                self.assertNotIn(unreachable, reachable)
+        # A name bound twice qualifies only if EVERY binding can be indexed,
+        # in either order. Asserted on the helper because a module that binds
+        # one spelling twice is refused further up by `_module_binding_is_current`
+        # before this map is consulted, so no agent can reach the fold - and a
+        # mutation that read only the last binding passed every behavioural
+        # case in this class. This module has now paid for that shape of gap
+        # three times; the arm gets asserted where it lives.
+        for bound_twice in ("H", "I"):
+            with self.subTest(bound_twice=bound_twice):
+                self.assertNotIn(bound_twice, reachable)
+        # And the sibling scan defaults the other way, on purpose.
+        self.assertTrue(MODULE._node_binds("anything", ast.AST()))
+
+
 class TheBindingScanIsDerivedFromThePythonGrammarTests(unittest.TestCase):
     """#348: the question "is this name written again" defaults to yes.
 
@@ -13947,7 +14095,13 @@ class AClientBuiltAtImportIsStillAClientTests(unittest.TestCase):
     )
 
     def _credited(self, source: str) -> bool:
-        compile(source, "agent.py", "exec")
+        # `dont_inherit`, because this call is only here to prove the fixture
+        # is a real file. Without it the fixture is compiled under THIS
+        # module's `from __future__ import annotations`, which stringifies
+        # annotations and rejects a walrus inside one - so a shape that is
+        # ordinary Python in a customer's file failed here for a reason that
+        # belongs to the test module rather than to the fixture.
+        compile(source, "agent.py", "exec", dont_inherit=True)
         line = next(
             index
             for index, text in enumerate(source.splitlines(), 1)
@@ -14082,6 +14236,104 @@ class AClientBuiltAtImportIsStillAClientTests(unittest.TestCase):
         "schema_context": {"values": ["none", "tables"], "source_lines": [5]},
         "temperature": {"low": 0.0, "high": 1.0, "source_lines": [6]},
     }
+
+    def test_a_definition_binds_in_the_scope_it_is_written_in(self) -> None:
+        """The half of a definition the enclosing scope evaluates.
+
+        A `def`, `class` or `lambda` runs its body in its own scope and runs
+        everything else about itself where it is written. A walrus in a
+        parameter default, a decorator expression, a class base, a class
+        keyword, a lambda default or an annotation therefore rebinds the
+        module client before the selected callable ever runs, and a scan that
+        stops at the definition node cannot see it. Six shapes, all measured
+        credited before this, every one of them a verified external request
+        over an object that is not the constructed client.
+
+        The three controls matter as much as the six. A module client exists
+        to be read by the functions under it, so reading it - from the
+        selected callable or from a helper beside it - must stay credited, and
+        a walrus in a nested definition's own BODY binds that function's local
+        and must stay credited too.
+        """
+        table = 'MODELS = {"fast": "gpt-4o-mini", "slow": "gpt-4o"}\n'
+        head = "from openai import OpenAI\nfrom vendor import Fake\n\n" + table
+        head += "\nclient = OpenAI()\n"
+        rebinding = {
+            "a parameter default": (
+                "\n\ndef other(spare=(client := Fake())):\n    return spare\n"
+            ),
+            "a decorator expression": (
+                "\n\n@register(client := Fake())\ndef other():\n    return 1\n"
+            ),
+            "a class base": ("\n\nclass Other(base(client := Fake())):\n    pass\n"),
+            "a class keyword": (
+                "\n\nclass Other(metaclass=(client := Fake())):\n    pass\n"
+            ),
+            "a lambda default": ("\n\npick = lambda spare=(client := Fake()): spare\n"),
+            "a return annotation": (
+                "\n\ndef other() -> (client := Fake()):\n    return 1\n"
+            ),
+        }
+        for name, extra in rebinding.items():
+            with self.subTest(rebinding_in=name):
+                self.assertFalse(self._credited(head + extra + self.BODY))
+        untouched = {
+            "nothing else in the file": "",
+            "a helper that only reads the client": (
+                "\n\ndef ping():\n    return client.models.list()\n"
+            ),
+            "a walrus in a nested definition's own body": (
+                "\n\ndef other():\n    if (client := Fake()):\n"
+                "        pass\n    return 1\n"
+            ),
+        }
+        for name, extra in untouched.items():
+            with self.subTest(untouched=name):
+                self.assertTrue(self._credited(head + extra + self.BODY))
+
+    def test_the_header_scan_subtracts_the_body_rather_than_naming_fields(
+        self,
+    ) -> None:
+        """Derived, so a field the grammar adds is covered the day it lands.
+
+        Asserted on the helper because the behavioural cases above can only
+        show the fields somebody thought of. What makes the fix a class fix is
+        that it is `everything except the body`, and that is what this reads:
+        the header of a definition carries every node of it that its own body
+        does not.
+        """
+        source = (
+            "@deco(a := 1)\n"
+            "def outer(x=(b := 2), *, y=(c := 3)) -> (d := 4):\n"
+            "    e = 5\n"
+            "    return e\n"
+        )
+        definition = ast.parse(source).body[0]
+        header = list(MODULE._scope_header_nodes(definition))
+        bound = {
+            node.target.id
+            for node in header
+            if isinstance(node, ast.NamedExpr) and isinstance(node.target, ast.Name)
+        }
+        self.assertEqual(bound, {"a", "b", "c", "d"})
+        # And nothing from the body leaks into the header.
+        self.assertNotIn(
+            "e",
+            {
+                node.id
+                for node in header
+                if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store)
+            },
+        )
+        # A lambda's body is an expression rather than a list, and is excluded
+        # on the same terms.
+        lambda_node = ast.parse("f = lambda p=(g := 1): (h := 2)").body[0].value
+        lambda_bound = {
+            node.target.id
+            for node in MODULE._scope_header_nodes(lambda_node)
+            if isinstance(node, ast.NamedExpr) and isinstance(node.target, ast.Name)
+        }
+        self.assertEqual(lambda_bound, {"g"})
 
     def test_the_agent_the_report_describes_is_read(self) -> None:
         """The whole point, as the reporter meets it.

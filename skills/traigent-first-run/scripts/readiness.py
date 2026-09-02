@@ -8877,6 +8877,39 @@ def _literal_scalar_options(node: ast.AST) -> tuple[Any, ...] | None:
     return None
 
 
+def _module_names_a_subscript_can_reach(source: StaticSourceEvidence) -> frozenset[str]:
+    """Module inventories an agent can actually index, as opposed to declare.
+
+    `_literal_scalar_options` reads a set literal, and it is right to: `if
+    model not in MODELS` is a real guard over a real inventory, and refusing
+    the set would refuse an option table that works. But `MODELS[choice]` over
+    a set raises `TypeError` before any request is made, so a SUBSCRIPT route
+    over one is a route that cannot run, and crediting it credits a search
+    dimension the agent would die on.
+
+    An ALLOWLIST, and the direction is the opposite of `_node_binds` for the
+    reason that function's docstring gives. This gates credit, where narrow
+    fails safe: a literal shape nobody has named here costs a false refusal.
+    `_node_binds` answers a refutation, where narrow fails unsafe, so it names
+    every kind and defaults to yes. The two are not inconsistent; they are the
+    same rule read from its two sides.
+
+    A spelling bound more than once qualifies only if EVERY binding of it can
+    be indexed, so a name that is a list on one line and a set on another is
+    not credited on the strength of the line that happens to be cited.
+    """
+    indexable: dict[str, bool] = {}
+    for node in source.tree.body:
+        if not isinstance(node, (ast.Assign, ast.AnnAssign)) or node.value is None:
+            continue
+        reachable = isinstance(
+            node.value, (ast.List, ast.Tuple, ast.Dict, ast.Constant)
+        )
+        for name in _assignment_names(node):
+            indexable[name] = indexable.get(name, True) and reachable
+    return frozenset(name for name, ok in indexable.items() if ok)
+
+
 def _literal_mapping_keys(node: ast.Dict) -> tuple[Any, ...] | None:
     """Return effective keys only when they select distinct literal values.
 
@@ -9462,6 +9495,36 @@ def _plain_assignment_of(name: str, node: ast.AST) -> ast.Assign | ast.AnnAssign
     return node if targets[0].id == name else None
 
 
+def _scope_header_nodes(scope: ast.AST) -> Iterator[ast.AST]:
+    """Every part of a definition that its ENCLOSING scope evaluates.
+
+    A `def`, `class` or `lambda` runs its own body in its own scope, and runs
+    everything else about itself in the scope it is written in: parameter
+    defaults, decorator expressions, class bases and keywords, annotations. A
+    walrus in any of those binds OUTSIDE the definition, so a scan that stops
+    at the definition node misses it - which is what
+    `_callable_body_nodes` does, correctly, for the question it answers.
+
+    Arrived at by SUBTRACTING the body rather than by naming the fields.
+    `decorator_list`, `args.defaults`, `args.kw_defaults`, `bases`, `keywords`
+    is the list somebody had met, and this module has already paid twice for
+    that shape of answer: the store counter that missed seven binding forms,
+    and the loop reader `_agent_loops_forever` was rewritten away from. What is
+    left after removing the body is whatever the grammar puts there, including
+    a field added after this was written.
+    """
+    body = getattr(scope, "body", [])
+    inner = {
+        id(node)
+        for statement in (body if isinstance(body, list) else [body])
+        for node in ast.walk(statement)
+    }
+    for node in ast.walk(scope):
+        if node is scope or id(node) in inner:
+            continue
+        yield node
+
+
 def _module_client_binding(
     name: str, source: StaticSourceEvidence
 ) -> ast.Assign | ast.AnnAssign | None:
@@ -9489,9 +9552,35 @@ def _module_client_binding(
     # the functions and classes it defines, which is what "the module's own
     # scope" means here: a `client = ...` inside some function binds that
     # function's local, not this name.
+    #
+    # Its net stops AT a definition, though, and a definition evaluates part of
+    # itself in the scope it is written in. `def other(spare=(client := Fake()))`
+    # rebinds the module client before the selected callable ever runs, and so
+    # do a decorator expression, a class base, a class keyword, a lambda
+    # default and an annotation - six shapes measured credited before this,
+    # every one of them a verified external request over an object that is not
+    # the constructed client. `_scope_header_nodes` is the same scan over the
+    # part `_callable_body_nodes` does not reach.
+    #
+    # Deliberately not `_nested_scope_leaves_alone`, which answers the sibling
+    # question for a local alias. Its rule is "mentions the name and does not
+    # shadow it", and a module client is written to BE read by the functions
+    # below it: measured, that rule refuses the plain control agent and a
+    # read-only helper beside it, because reading the client is the whole point
+    # of binding one. The two scans want the same net and a different verdict.
+    scopes = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
+    own_scope = _callable_body_nodes(source.tree)
     binders = [
         node
-        for node in _callable_body_nodes(source.tree)
+        for node in (
+            *own_scope,
+            *(
+                header
+                for scope in own_scope
+                if isinstance(scope, scopes)
+                for header in _scope_header_nodes(scope)
+            ),
+        )
         if isinstance(node, _BINDING_CAPABLE_NODES) and _node_binds(name, node)
     ]
     if len(binders) != 1:
@@ -12813,6 +12902,7 @@ def _request_builder_collections(knob: str, source: StaticSourceEvidence) -> lis
             and _is_statically_reachable(node, source)
             and isinstance(node.value, ast.Name)
             and node.value.id in declared
+            and node.value.id in _module_names_a_subscript_can_reach(source)
             and not _callable_binds(node.value.id, builder)
             and _selector_reads_knob(
                 node.slice, knob, holders, dynamic_parameters, node
@@ -12885,6 +12975,7 @@ def _module_collections_this_knob_selects(
             and _is_statically_reachable(node, source)
             and isinstance(node.value, ast.Name)
             and node.value.id in declared
+            and node.value.id in _module_names_a_subscript_can_reach(source)
             and not _callable_binds(node.value.id, callable_node)
             and _selector_reads_knob(
                 node.slice, knob, holders, dynamic_parameters, node
@@ -12938,6 +13029,11 @@ def _values_from_cited_binding(
     names = _assignment_names(node)
     found: list[Any] = []
     matching_names = [name for name in names if _name_matches_knob(name, knob)]
+    # Every route out of this branch is a subscript - `_expression_varies_binding`
+    # accepts nothing else - so an inventory that cannot be indexed has no route
+    # here whatever else is true of it.
+    reachable = _module_names_a_subscript_can_reach(source)
+    matching_names = [name for name in matching_names if name in reachable]
     if matching_names and _names_reach_call_path(
         matching_names, knob, binding_node=node, source=source
     ):
