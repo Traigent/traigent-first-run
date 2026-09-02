@@ -14500,6 +14500,15 @@ class TheBuildHalfCitesTheAgentItReadTests(unittest.TestCase):
         for shape, body in {
             "while-True": "    while True:\n        q = q + 'x'\n",
             "while-1": "    while 1:\n        q = q + 'x'\n",
+            "continue-only": "    while True:\n        continue\n",
+            # A `return` written where it cannot leave this loop. The first is
+            # in a scope the walk does not enter and belongs to that scope; the
+            # second is in an `else:` that runs only when the test goes false,
+            # which this test cannot do.
+            "return-in-a-nested-def": "    while True:\n        def later():\n"
+            "            return q\n",
+            "return-in-the-whiles-else": "    while True:\n        q = q + 'x'\n"
+            "    else:\n        return q\n",
         }.items():
             with self.subTest(shape=shape):
                 with self.assertRaises(MODULE.AgentDiscoveryInputError) as caught:
@@ -14538,6 +14547,39 @@ class TheBuildHalfCitesTheAgentItReadTests(unittest.TestCase):
             "while-return": "    while True:\n        return q\n",
             "while-break": "    while True:\n        break\n    return q\n",
             "for-loop": "    for i in range(3):\n        q = q + 'x'\n    return q\n",
+            # Where the exit is WRITTEN, which is the axis the capture rule
+            # walks. An `if`, a `with` and a `try:` body hold a `break` without
+            # taking it, and a `for ... else:` is not inside its own `for`, so
+            # the `break` there binds to the `while` around it.
+            "break-in-if": "    while True:\n        if q:\n            break\n"
+            "    return q\n",
+            "break-in-try": "    while True:\n        try:\n            break\n"
+            "        except ValueError:\n            pass\n    return q\n",
+            "break-in-with": "    while True:\n        with open(q) as fh:\n"
+            "            break\n    return q\n",
+            "break-in-for-else": "    while True:\n        for c in q:\n"
+            "            pass\n        else:\n            break\n    return q\n",
+            "break-after-inner-loop": "    while True:\n        for c in q:\n"
+            "            break\n        break\n    return q\n",
+            "return-in-for": "    while True:\n        for c in q:\n"
+            "            return q\n",
+            # A `raise` no `except` between it and the `while` takes. Either
+            # the handler is spent on a different class, or it is not over the
+            # `raise` at all - and only the `try:` body is ever under it, so
+            # each of these raises the very class the clause beside it names
+            # and still leaves.
+            "raise-past-a-narrow-except": "    while True:\n        try:\n"
+            "            raise KeyError('x')\n        except ValueError:\n"
+            "            pass\n",
+            "raise-in-a-handler-of-its-own-class": "    while True:\n        try:\n"
+            "            q = more(q)\n        except ValueError:\n"
+            "            raise ValueError('again')\n",
+            "raise-in-a-try-else": "    while True:\n        try:\n"
+            "            q = more(q)\n        except ValueError:\n            pass\n"
+            "        else:\n            raise ValueError('x')\n",
+            "raise-in-a-finally": "    while True:\n        try:\n"
+            "            q = more(q)\n        except ValueError:\n            pass\n"
+            "        finally:\n            raise ValueError('x')\n",
         }
         for shape, body in cases.items():
             with self.subTest(shape=shape):
@@ -14546,6 +14588,287 @@ class TheBuildHalfCitesTheAgentItReadTests(unittest.TestCase):
                     {"control-flow": {"loop": True, "bounded": True}},
                 )
                 self.assertEqual(len(facts.build), len(MODULE.AGENT_BUILD_CHECKS))
+
+    def test_an_inner_loops_break_is_not_the_whiles_way_out(self) -> None:
+        """A `break` belongs to the nearest loop around it, and this walk
+        credited it to the outermost one.
+
+        The whole body was searched for a `break`, a `return` or a `raise`, and
+        any one of them anywhere ended the search. So `while True:` over
+        `for c in q: break` read as a loop with a way out. It has none: the
+        `break` ends the `for`, the `while` starts the `for` again, and the
+        agent runs forever while the card prints "a stop condition to point at".
+
+        The correction is a principle rather than a longer list of statement
+        types: a statement leaves the `while` only if nothing between it and the
+        `while` captures it. For a `break` the captor is any nearer loop.
+        """
+        for shape, body in {
+            "inner-for": "    while True:\n        for c in q:\n            break\n",
+            "inner-while": "    while True:\n        while True:\n            break\n",
+            "inner-for-in-an-if": "    while True:\n        if q:\n"
+            "            for c in q:\n                break\n",
+        }.items():
+            with self.subTest(shape=shape):
+                with self.assertRaises(MODULE.AgentDiscoveryInputError) as caught:
+                    self._score_source(
+                        "MODEL = ['a']\ndef selected(q):\n" + body,
+                        {"control-flow": {"loop": True, "bounded": True}},
+                    )
+                message = str(caught.exception)
+                self.assertIn("no way out of its body", message)
+                self.assertIn("inner loop", message)
+
+    def test_a_raise_the_loops_own_except_catches_is_not_a_way_out(self) -> None:
+        """The same defect one level deeper, and it was not in the report.
+
+        `raise` was counted at any depth on the reasoning that a loop leaving by
+        raising has left. That holds only until something catches it. A `raise`
+        inside a `try` whose `except` handles it lands in the handler, the
+        handler falls through, and the `while` goes round again - so the shipped
+        walk accepted `bounded: true` for a loop with no exit at all, by exactly
+        the argument the `break` case had already been fixed for.
+
+        Written out as the capture rule, `break` and `raise` stop being two
+        special cases: for a `raise` the captor is an enclosing `try` whose
+        `except` handles it. Three ways an `except` settles that it does -
+        taking everything, naming the same identifier the `raise` names, and
+        naming a builtin class above the one raised - because a rule that only
+        knew bare `except:` would be an exemption list again.
+        """
+        for shape, body in {
+            "bare-except": "    while True:\n        try:\n"
+            "            raise StopIteration\n        except:\n            pass\n",
+            "same-identifier": "    while True:\n        try:\n"
+            "            raise StopIteration\n        except StopIteration:\n"
+            "            pass\n",
+            "a-class-above-it": "    while True:\n        try:\n"
+            "            raise ValueError('x')\n        except Exception:\n"
+            "            pass\n",
+            "one-of-a-tuple": "    while True:\n        try:\n"
+            "            raise ValueError('x')\n        except (KeyError, ValueError):\n"
+            "            pass\n",
+            "an-outer-try": "    while True:\n        try:\n            try:\n"
+            "                raise ValueError('x')\n            except KeyError:\n"
+            "                pass\n        except ValueError:\n            pass\n",
+            # `BaseException` is the one clause that settles a class this read
+            # cannot resolve, so it is the only arm reaching this shape: the
+            # subclass test cannot answer it, and the identifiers differ.
+            "an-unresolved-class-under-baseexception": "    while True:\n"
+            "        try:\n            raise Timeout('x')\n"
+            "        except BaseException:\n            pass\n",
+            # A nearer loop takes a `break` and takes nothing else. The `try`
+            # is still over this `raise` with a `for` in between, and the walk
+            # has to carry the handlers through it.
+            "a-raise-inside-an-inner-loop": "    while True:\n        try:\n"
+            "            for c in q:\n                raise ValueError('x')\n"
+            "        except ValueError:\n            pass\n",
+        }.items():
+            with self.subTest(shape=shape):
+                with self.assertRaises(MODULE.AgentDiscoveryInputError) as caught:
+                    self._score_source(
+                        "MODEL = ['a']\ndef selected(q):\n" + body,
+                        {"control-flow": {"loop": True, "bounded": True}},
+                    )
+                message = str(caught.exception)
+                self.assertIn("no way out of its body", message)
+                self.assertIn("except catches", message)
+        with self.subTest(shape="a-class-this-file-declares"):
+            # Nothing resolves `Stop`, and nothing needs to: one identifier
+            # written twice in one statement settles the relation on its own.
+            # Without that rule the commonest real shape - an agent's own
+            # sentinel exception, caught by name - would go unsettled.
+            with self.assertRaises(MODULE.AgentDiscoveryInputError) as caught:
+                self._score_source(
+                    "MODEL = ['a']\n\n\nclass Stop(Exception):\n    pass\n\n\n"
+                    "def selected(q):\n    while True:\n        try:\n"
+                    "            raise Stop()\n        except Stop:\n"
+                    "            pass\n",
+                    {"control-flow": {"loop": True, "bounded": True}},
+                )
+            self.assertIn("except catches", str(caught.exception))
+
+    def test_an_assert_leaves_on_the_same_terms_as_its_raise(self) -> None:
+        """The principle above, applied to the statement it did not name.
+
+        `assert q` is `if not q: raise AssertionError`, and a walk that knew
+        `raise` and not `assert` gave one exception opposite verdicts depending
+        on how an author had spelled it: `if q: raise AssertionError` was
+        accepted, `if q: assert q` was refused. The refusal then named two
+        causes, an inner loop and a catching `except`, and neither was theirs -
+        so it read as an accusation about code they had not written, in the
+        false-refusal direction this whole check treats as the expensive one.
+
+        This is a completion rather than another list entry. `assert` is the
+        last statement in the grammar whose purpose can be to leave, so adding
+        it closes the class instead of extending it, and it goes through the
+        same capture: an `except AssertionError:` over it keeps the loop where
+        it was, and a narrower clause does not.
+        """
+        for shape, body in {
+            "bare": "    while True:\n        assert q\n",
+            "inside-an-if": "    while True:\n        if q:\n            assert q\n",
+            "written-as-a-raise": "    while True:\n        if q:\n"
+            "            raise AssertionError\n",
+            "past-a-narrower-clause": "    while True:\n        try:\n"
+            "            assert q\n        except ValueError:\n            pass\n",
+        }.items():
+            with self.subTest(shape=shape, direction="leaves"):
+                facts = self._score_source(
+                    "MODEL = ['a']\ndef selected(q):\n" + body,
+                    {"control-flow": {"loop": True, "bounded": True}},
+                )
+                self.assertEqual(len(facts.build), len(MODULE.AGENT_BUILD_CHECKS))
+        with self.subTest(shape="caught-by-its-own-class", direction="captured"):
+            with self.assertRaises(MODULE.AgentDiscoveryInputError) as caught:
+                self._score_source(
+                    "MODEL = ['a']\ndef selected(q):\n    while True:\n"
+                    "        try:\n            assert q\n"
+                    "        except AssertionError:\n            pass\n",
+                    {"control-flow": {"loop": True, "bounded": True}},
+                )
+            self.assertIn("except catches", str(caught.exception))
+
+    def test_a_parameter_named_for_a_builtin_settles_nothing(self) -> None:
+        """`_named_exception` is only as safe as the list it consults.
+
+        It resolves a builtin exception unless the file binds that identifier,
+        and the binding walk read assignments, imports, defs and classes but
+        not a parameter, an `except ... as`, or a `match` capture. So a
+        function taking `Exception` as an argument had its own `except
+        Exception:` resolved against the real builtin, and a loop that leaves
+        was refused - a false red bought by an incomplete list, which is the
+        shape of defect this file exists to catch.
+        """
+        for shape, source in {
+            "a-parameter": "MODEL = ['a']\ndef selected(q, Exception=None):\n"
+            "    while True:\n        try:\n            raise ValueError('x')\n"
+            "        except Exception:\n            pass\n",
+            "an-except-alias": "MODEL = ['a']\ndef selected(q):\n"
+            "    try:\n        q = more(q)\n    except KeyError as Exception:\n"
+            "        pass\n    while True:\n        try:\n"
+            "            raise ValueError('x')\n        except Exception:\n"
+            "            pass\n",
+        }.items():
+            with self.subTest(shape=shape):
+                facts = self._score_source(
+                    source, {"control-flow": {"loop": True, "bounded": True}}
+                )
+                self.assertEqual(len(facts.build), len(MODULE.AGENT_BUILD_CHECKS))
+
+    def test_an_exception_this_read_cannot_place_refuses_nothing(self) -> None:
+        """The direction that decides which errors this check is allowed to make.
+
+        Whether an `except` catches a particular `raise` is a question about
+        names, and this module does not resolve a customer's. `except Timeout:`
+        over `raise Timeout()` from an import nothing follows, a handler written
+        as an attribute, a name the file rebinds, a `raise` with no class at
+        all: each one is "cannot tell", and cannot tell must accept.
+
+        The two errors do not cost the same. A missed refutation leaves one
+        unchecked claim on a card that already says the check does not establish
+        the agent ends. A false one tells an author who read their own agent
+        correctly that they read the wrong program, which is the incident this
+        whole check came out of.
+        """
+        for shape, body in {
+            "an-unresolved-class": "    while True:\n        try:\n"
+            "            raise Timeout('x')\n        except OtherError:\n"
+            "            pass\n",
+            "an-attribute-handler": "    while True:\n        try:\n"
+            "            raise ValueError('x')\n        except errors.Any:\n"
+            "            pass\n",
+            "a-rebound-builtin": "    ValueError = more\n    while True:\n"
+            "        try:\n            raise ValueError('x')\n"
+            "        except Exception:\n            pass\n",
+            "a-bare-reraise": "    while True:\n        try:\n"
+            "            q = more(q)\n        except ValueError:\n            pass\n"
+            "        raise\n",
+        }.items():
+            with self.subTest(shape=shape):
+                facts = self._score_source(
+                    "MODEL = ['a']\ndef selected(q):\n" + body,
+                    {"control-flow": {"loop": True, "bounded": True}},
+                )
+                self.assertEqual(len(facts.build), len(MODULE.AGENT_BUILD_CHECKS))
+
+    def test_the_constant_test_is_read_by_the_shared_literal_subset(self) -> None:
+        """One of the two recorded residuals closes here, and one does not.
+
+        The test used to have to be an `ast.Constant`, so `while 2 > 1:` walked
+        past a refutation the tree can settle perfectly well. `_literal_
+        condition_value` is the subset the reachability walk already uses for
+        the same judgement, it folds a literal comparison, and reusing it costs
+        one expression.
+
+        `while not False:` stays out. Folding a `not` means widening that shared
+        subset, which would also change which lines the reachability walk calls
+        dead - a refusing direction, in a different check, bought for a shape
+        nobody writes. Recorded rather than hidden, here and in the guidance.
+        """
+        for shape, body in {
+            "while-True": "    while True:\n        q = q + 'x'\n",
+            "while-1": "    while 1:\n        q = q + 'x'\n",
+            "while-2-gt-1": "    while 2 > 1:\n        q = q + 'x'\n",
+        }.items():
+            with self.subTest(shape=shape, direction="refuted"):
+                with self.assertRaises(MODULE.AgentDiscoveryInputError) as caught:
+                    self._score_source(
+                        "MODEL = ['a']\ndef selected(q):\n" + body,
+                        {"control-flow": {"loop": True, "bounded": True}},
+                    )
+                # On the bound, and not on a citation this fixture got wrong.
+                self.assertIn("no way out of its body", str(caught.exception))
+        for shape, body in {
+            "empty-string-test": "    while '':\n        q = q + 'x'\n    return q\n",
+            "mixed-literal-types": "    while 1 < 'a':\n        q = q + 'x'\n"
+            "    return q\n",
+        }.items():
+            with self.subTest(shape=shape, direction="accepted"):
+                facts = self._score_source(
+                    "MODEL = ['a']\ndef selected(q):\n" + body,
+                    {"control-flow": {"loop": True, "bounded": True}},
+                )
+                self.assertEqual(len(facts.build), len(MODULE.AGENT_BUILD_CHECKS))
+
+    def test_the_shapes_this_read_does_not_reach_are_recorded_not_hidden(self) -> None:
+        """Two limits pinned so that closing either is a deliberate act.
+
+        `while not False:` is constant-true and is not refused - a missed
+        refutation, in the safe direction. `while True:` leaving only by
+        `sys.exit()` is refused although it really does leave - a false red, and
+        the expensive direction. Seeing the second means resolving a name to the
+        function it calls, which nothing in this module does, so the guidance
+        names the shape where an author writes the answer instead.
+
+        If a later change closes either one, this test is where it says so, and
+        the paragraph in `references/component-creation.md` changes with it.
+        """
+        with self.subTest(residual="constant-true-but-not-folded"):
+            facts = self._score_source(
+                "MODEL = ['a']\ndef selected(q):\n"
+                "    while not False:\n        q = q + 'x'\n",
+                {"control-flow": {"loop": True, "bounded": True}},
+            )
+            self.assertEqual(len(facts.build), len(MODULE.AGENT_BUILD_CHECKS))
+        with self.subTest(residual="leaves-by-a-call"):
+            with self.assertRaises(MODULE.AgentDiscoveryInputError) as caught:
+                self._score_source(
+                    "import sys\nMODEL = ['a']\ndef selected(q):\n"
+                    "    while True:\n        sys.exit(0)\n",
+                    {"control-flow": {"loop": True, "bounded": True}},
+                )
+            # The refusal has to be the bound, not a citation this fixture got
+            # wrong, or the residual it pins is not the one being recorded.
+            self.assertIn("no way out of its body", str(caught.exception))
+        guidance = (
+            ROOT
+            / "skills"
+            / "traigent-first-run"
+            / "references"
+            / "component-creation.md"
+        ).read_text()
+        self.assertIn("sys.exit()", guidance)
 
     def test_the_card_says_which_checks_the_source_could_contradict(self) -> None:
         """Settled and located must not read alike on the customer's card.
