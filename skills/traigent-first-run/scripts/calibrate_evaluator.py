@@ -37,9 +37,10 @@ from typing import Any
 #
 # A flat number cannot do that, which is why it is gone. The work scales with
 # the case set: every case has four authored calls.  A deterministic run can add
-# up to six supplemental calls (five exception probes and, where meaningful, a
-# permutation probe).  A one-minute-per-call deterministic scorer therefore
-# needs up to 1200 seconds for two cases; a judge needs 480. The onboarding
+# up to eight supplemental calls (five exception probes, up to two seam probes,
+# and, where meaningful, a permutation probe).  A one-minute-per-call
+# deterministic scorer therefore needs up to 1440 seconds for two cases; a judge
+# needs 480. The onboarding
 # ceiling can cut that work, but below it the budget must scale with every call
 # it can make.
 #
@@ -48,11 +49,14 @@ from typing import Any
 # of landing exactly on it. 90 for a judge, which additionally pays network
 # latency and may be a reasoning model thinking for a minute or more per probe.
 # Four probes decide the calibration. Deterministic calibration then makes five
-# exception probes and, where the expected output admits a distinct ordering,
-# one permutation probe per case. They are advisory, but they are real scorer
-# calls and the default whole-calibration deadline reserves for the maximum.
+# exception probes, up to two seam probes, and, where the expected output
+# admits a distinct ordering, one permutation probe per case. They are
+# advisory, but they are real scorer calls and the default whole-calibration
+# deadline reserves for the maximum - the seam probes included, on every
+# deterministic case rather than only the ones whose flags arm them, because a
+# budget that changes with a flag cannot be quoted before the flag is chosen.
 PROBES_PER_CASE = 4
-DETERMINISTIC_SUPPLEMENTAL_PROBES_PER_CASE = 1 + 5
+DETERMINISTIC_SUPPLEMENTAL_PROBES_PER_CASE = 1 + 2 + 5
 DETERMINISTIC_SECONDS_PER_PROBE = 75
 LLM_JUDGE_SECONDS_PER_PROBE = 90
 # Fifteen minutes, and it is an owner decision rather than a derivation. This is
@@ -65,11 +69,11 @@ LLM_JUDGE_SECONDS_PER_PROBE = 90
 # person and not about the work.
 #
 # So it CLAMPS, on purpose, and the clamp is the part that must be disclosed
-# rather than hidden. A deterministic case reserves ten possible calls, so at
-# 75s each the ceiling already cuts the two-pair minimum (1500s derived); a
+# rather than hidden. A deterministic case reserves twelve possible calls, so at
+# 75s each the ceiling already cuts the two-pair minimum (1800s derived); a
 # judge at 90s stays whole through two pairs (720s) and is cut from three
 # (1080s). A cut case set gets less per probe than `--help` quotes - 45 seconds
-# per judge call at five pairs and 18 seconds per deterministic possible call -
+# per judge call at five pairs and 15 seconds per deterministic possible call -
 # so an evaluator that really does take about a minute per call cannot finish a
 # documented matrix inside this ceiling and will reach the timeout question.
 # `references/evaluation-and-dataset.md` states that consequence to the user
@@ -393,6 +397,164 @@ def permuted_answer(expected: Any) -> str | None:
     return None
 
 
+# The seam: what the evaluator is actually handed.
+#
+# Both probe sets above stop short of the same place. The authored four measure
+# the evaluator against strings their author wrote; the generated ones are built
+# from the expected answer, which the author also wrote. Neither has ever been
+# through the thing that stands between the model and the evaluator - the
+# agent's own reply-to-answer step. Two paid runs were lost in that gap:
+#
+# - An extraction step took the LAST `SELECT` in a reply, correct for a model
+#   that reasons before answering and wrong for every query containing a
+#   subquery, whose inner `SELECT` is always later in the string. A right answer
+#   arrived at the evaluator as an unbalanced fragment over the wrong table and
+#   was honestly scored 0.24. One damaged row in eighteen moved every
+#   configuration by about the width of the whole spread, so the ranking was
+#   wrong rather than merely low - and the probe set already CONTAINED a
+#   subquery. The shape was covered on one side of the wiring and not the other.
+# - A reply arrived inside a markdown code fence, which is what a chat model
+#   returns for code unless it is told otherwise and sometimes even when it is,
+#   and the comparison read the fence as part of the answer. Twelve
+#   configurations scored 0.000, which ranks nothing.
+#
+# So the probes that already exist are put through the step that already exists,
+# and the property is the one thing both failures broke: an answer this
+# evaluator calls right must not arrive as one it calls wrong. No new fixture,
+# no shape table, no provider call.
+# Both authored answers this evaluator already accepted, and both are sent in
+# the fenced shape rather than as written.
+#
+# Sending a bare answer was the defect in the first version of this check. A
+# reply-transform's documented domain is "the model's reply", and for a
+# fence-bound agent - one whose prompt says to answer with a ```sql block, a
+# common and correct design - a bare answer is a shape it never receives. Such
+# a step legitimately returns "" or raises on one, and this check reported that
+# as the agent damaging a right answer. It was asserting an assumption it had
+# never stated and could not support: that every reply-transform is total on
+# bare text.
+#
+# The fence is the one shape there IS evidence for on a code task, which is the
+# whole reason this finding exists. So it is the only shape sent, and no other
+# task kind runs a seam probe at all: where the guide has no evidenced reply
+# shape, it has nothing honest to hand a reply step.
+#
+# `equivalent_good` takes the second slot rather than a bare `good` taking it.
+# Surface variance is exactly what a text-processing step is sensitive to - an
+# extractor keyed on an upper-case keyword is correct on one authored answer and
+# destructive on the lower-case variant the same model emits, and only the pair
+# can see that.
+SEAM_TRANSFORMED_SOURCES = ("good", "equivalent_good")
+SEAM_PROBES_PER_CASE = len(SEAM_TRANSFORMED_SOURCES)
+# The one shape that is not a guess, and the two kinds where it is not one.
+# Armed by the run-scoped task kind readiness.py already takes, never by
+# inspecting the expected answer: "this looks like SQL" is the sort of
+# inference this package refuses elsewhere. Two kinds and no table of shapes -
+# nobody has asked what a routing answer looks like on the wire, and a table of
+# imagined shapes is the same defect as a table of imagined probes.
+FENCED_PROBE_TASK_KINDS = ("code", "code-sql")
+FENCED_PROBE_LANGUAGE = {"code-sql": "sql", "code": ""}
+TASK_KINDS = (
+    "closed-label",
+    "code",
+    "code-sql",
+    "extraction",
+    "free-text",
+    "numeric",
+    "routing",
+    "short-answer",
+    "structured",
+)
+
+
+def seam_probes_are_off_domain(probes: list[dict[str, Any]]) -> bool:
+    """True when every probe that ran was refused, which establishes nothing.
+
+    A refusal cannot tell "this agent's code is broken" from "this check handed
+    it a shape its own contract excludes", and reporting N refusals as N
+    findings picks the first reading with no evidence for it. A structured-
+    output step - `json.loads(reply)["sql"]` - raises on every fenced string
+    there is, correctly, because its model returns JSON; the customer would
+    have met that on the pre-spend approval as a defect to settle before
+    paying.
+
+    So all-refused is reported as this check being outside its domain rather
+    than as a fault. A refusal sitting among preserved probes stays a finding:
+    there the step demonstrably handles this shape and failed on this content.
+    """
+    ran = [probe for probe in probes if probe["outcome"] != "unavailable"]
+    return bool(ran) and all(probe["outcome"] == "refused" for probe in ran)
+
+
+def fenced_probe_output(good: Any, task_kind: str | None) -> str | None:
+    """The case's own good answer, in the shape a model would have sent it.
+
+    Generated rather than authored, which is what makes it evidence: the
+    content is an answer the authored phase has already scored, so a failure
+    here cannot be the answer being wrong. Only the wrapper changed.
+
+    `None` where there is nothing honest to build - a good probe that is not
+    text, or one already carrying a fence. Fencing a list is a shape no model
+    sends, and fencing something already fenced tests a string nothing will
+    produce.
+    """
+    if task_kind not in FENCED_PROBE_TASK_KINDS:
+        return None
+    if not isinstance(good, str) or not good.strip():
+        return None
+    if "```" in good or "~~~" in good:
+        return None
+    # The answer verbatim, never `.strip()`ed: for a whitespace-sensitive
+    # evaluator a trimmed probe differs from the authored one in two ways, and
+    # this check may only ever change the wrapper.
+    return f"```{FENCED_PROBE_LANGUAGE[task_kind]}\n{good}\n```"
+
+
+def seam_probe_outcome(
+    *,
+    reference_score: float,
+    score: float | None,
+    error: str | None,
+    unavailable: dict[str, Any] | None,
+    thresholds: dict[str, float],
+) -> str:
+    """What one seam probe establishes, in one word.
+
+    `damaged` is the only outcome that says anything, and it is deliberately
+    one-directional: the authored phase scored this same content at or above
+    the good minimum, and the delivered form no longer clears it. An answer the
+    evaluator calls right, arriving as one it does not.
+
+    The line is `good_minimum` on both sides, and getting that wrong cost this
+    check the very defect it was written for. It read `score <= bad_maximum`
+    first - and the truncation that prompted all of this delivered an
+    unbalanced fragment a partial-credit grader scored 0.24, which is above the
+    0.2 default, so the fragment came back `preserved`. `bad_maximum` could not
+    be raised to cover it either: its documented job is the ceiling the
+    AUTHORED matrix holds a bad probe under, and loosening that to tighten this
+    pulls the calibration gate the wrong way. `good_minimum` is the only
+    threshold that already means "this evaluator calls the answer right", which
+    is the whole claim being made.
+
+    A transform that merely changes the string is not damage: trimming,
+    unquoting and case folding all change it and none of them changes the
+    verdict, so a check on the STRING would fire on every well-behaved agent
+    there is. Nor is a graded scorer nudging 1.00 to 0.90 - that answer is
+    still one this evaluator accepts.
+    """
+    if unavailable is not None:
+        return "unavailable"
+    if error is not None:
+        return "refused"
+    if (
+        score is not None
+        and reference_score >= thresholds["good_minimum"]
+        and score < thresholds["good_minimum"]
+    ):
+        return "damaged"
+    return "preserved"
+
+
 def literal_or_file(value: str) -> Any:
     if value.startswith("@"):
         return json.loads(Path(value[1:]).read_text())
@@ -494,8 +656,12 @@ def bind_call(
 
 
 def run_worker() -> int:
+    # Named before the read, so the failure path can say which component failed
+    # even when the read itself is what failed.
+    operation = "authored"
     try:
         request = json.load(sys.stdin)
+        operation = request.get("operation", "authored")
         import_root = Path(request["import_root"])
         scorer_file = Path(request["scorer"].partition(":")[0]).resolve()
         import_paths = [str(import_root), str(scorer_file.parent)]
@@ -504,8 +670,14 @@ def run_worker() -> int:
         ]
         captured_stdout = io.StringIO()
         with contextlib.redirect_stdout(captured_stdout):
-            function = load_function(request["scorer"])
-            operation = request.get("operation", "authored")
+            # Read the operation FIRST, and load the scorer only for the
+            # operations that score something. `load` checks the reply
+            # transform and grades nothing, so loading the scorer there made a
+            # broken scorer surface as "--reply-transform could not be loaded",
+            # naming a correct flag and telling the assistant to fix it - while
+            # the scorer's own failure has an exit code and a message of its
+            # own that it must be allowed to reach.
+            function = None if operation == "load" else load_function(request["scorer"])
             if operation == "authored":
                 case_results = []
                 for case in request["cases"]:
@@ -521,6 +693,76 @@ def run_worker() -> int:
                     }
                     case_results.append({"name": case["name"], "scores": scores})
                 response = {"cases": case_results}
+            elif operation == "seam":
+                # Every seam probe for every case, in ONE child. The
+                # supplemental families above get a fresh interpreter each
+                # because they are adversarial - malformed output, raised
+                # exceptions, a probe object that refuses to be consumed - and
+                # process-local state from one must not reach the next. A seam
+                # probe is an ordinary string through ordinary code, and the
+                # authored phase, which decides PASS, already scores every case
+                # in one child for that reason.
+                #
+                # The cost of not doing this was measured rather than guessed:
+                # the customer's agent module was imported once per probe, and
+                # since the guidance this change adds says that module's top
+                # level "for an agent file is commonly a provider client", a
+                # client constructor ran on every one. Under a tight budget the
+                # permutation probe and all five exception probes of the second
+                # case came back `budget-exhausted` with the flag and did not
+                # without it - the starvation the queue reorder had just
+                # removed, coming back through the clock instead of the queue.
+                transform = (
+                    load_function(request["reply_transform"])
+                    if request.get("reply_transform")
+                    else None
+                )
+                seam_results = []
+                for probe in request["probes"]:
+                    output = probe["output"]
+                    delivered = None
+                    score = None
+                    error_text = None
+                    try:
+                        if transform is not None:
+                            # Inside this try with the scoring call, on purpose:
+                            # a transform that raises on a probe IS the finding.
+                            output = transform(output)
+                            delivered = (
+                                output if isinstance(output, str) else repr(output)
+                            )
+                        score = bind_call(
+                            function,
+                            output,
+                            probe["expected"],
+                            probe.get("input_data"),
+                            probe.get("metadata"),
+                        )
+                    except (KeyboardInterrupt, GeneratorExit):
+                        raise
+                    except BaseException as error:  # a refusal is the evidence
+                        error_text = probe_error_text(error)
+                    seam_results.append(
+                        {
+                            "case_index": probe["case_index"],
+                            "source": probe["source"],
+                            "score": score,
+                            "error": error_text,
+                            "delivered": delivered,
+                        }
+                    )
+                response = {"seam": seam_results}
+            elif operation == "load":
+                # Nothing is scored here. The scorer is already loaded above;
+                # this resolves the reply transform and checks it accepts the
+                # one positional argument its contract names, so a typo'd path,
+                # a renamed function, a syntax error, an uninstalled dependency
+                # and a two-argument signature all fail LOUDLY and once -
+                # instead of arriving later as N identical refusals that cannot
+                # be told from an agent whose contract excludes the shape.
+                transform = load_function(request["reply_transform"])
+                inspect.signature(transform).bind("probe")
+                response = {"loaded": True}
             elif operation == "supplemental":
                 case = request["case"]
                 probe = request["probe"]
@@ -562,10 +804,15 @@ def run_worker() -> int:
         )
         return 0
     except Exception as error:
-        print(
-            f"Evaluator execution failed: {type(error).__name__}: {error}",
-            file=sys.stderr,
+        # `load` never loads the scorer, so nothing but the reply transform can
+        # fail there. Saying "evaluator" would name the one component this
+        # branch does not touch, under a headline about the other one.
+        failed = (
+            "Reply transform could not be loaded"
+            if operation == "load"
+            else "Evaluator execution failed"
         )
+        print(f"{failed}: {type(error).__name__}: {error}", file=sys.stderr)
         return 1
 
 
@@ -645,9 +892,35 @@ def parse_args() -> argparse.Namespace:
         "--kind", choices=("deterministic", "llm-judge"), default="deterministic"
     )
     parser.add_argument(
+        "--reply-transform",
+        help=(
+            "FILE.py:FUNCTION taking one positional argument - the model's "
+            "reply - and returning what the evaluator is handed. The agent's "
+            "own extraction or clean-up step, so the authored probes can be "
+            "scored the way an answer actually arrives instead of the way it "
+            "was typed. Omit where the agent hands its reply over unchanged"
+        ),
+    )
+    parser.add_argument(
+        "--task-kind",
+        choices=TASK_KINDS,
+        help=(
+            "the run-scoped output kind, in readiness.py's vocabulary. On code "
+            "and code-sql it adds two seam probes per case, carrying that "
+            "case's own good and equivalent-good answers inside a markdown "
+            "code fence - the shape a chat model returns code in unless told "
+            "otherwise. It arms nothing on any other kind, so pass it only "
+            "where project evidence grounds one of those two"
+        ),
+    )
+    parser.add_argument(
         "--allow-execution",
         action="store_true",
-        help="confirm that importing and executing the scorer is intended",
+        help=(
+            "confirm that importing and executing the scorer is intended - and "
+            "the module behind --reply-transform, whose top level runs on the "
+            "same import"
+        ),
     )
     parser.add_argument(
         "--paid-approved",
@@ -1038,6 +1311,118 @@ def run_supplemental_attempt(
     return {"score": score, "error": error, "unavailable": None}
 
 
+def run_seam_batch(
+    request: dict[str, Any],
+    *,
+    deadline: float,
+    total_budget_seconds: int,
+    environment: dict[str, str],
+    cwd: Path,
+) -> list[dict[str, Any]]:
+    """Score the whole seam family in one worker, and report per probe.
+
+    One worker, so the customer's transform module is imported once for the
+    family instead of once per probe. The cost is granularity on failure: a
+    crash or a timeout takes every seam probe with it, and each is reported
+    unavailable for the same reason. That is the trade the authored phase
+    already makes for the four probes that decide PASS, and it is reported
+    honestly - the parent has no partial output to attribute, so it attributes
+    none.
+    """
+    probes = request["probes"]
+
+    def all_unavailable(reason: str, detail: str) -> list[dict[str, Any]]:
+        # Every entry carries the same reason AND says why they are the same:
+        # this family shares one worker, so a reader told to inspect or re-run
+        # an unavailable probe can tell "each was tried and each failed" from
+        # "one worker carried all of them". The older families are attempted
+        # individually and their entries look identical without this clause.
+        together = (
+            f" All {len(probes)} seam probes share one worker and fell together; "
+            "none was attempted on its own."
+        )
+        return [
+            unavailable_supplemental_attempt(reason, detail + together) for _ in probes
+        ]
+
+    remaining_seconds = deadline - time.monotonic()
+    if remaining_seconds <= 0:
+        return all_unavailable(
+            "budget-exhausted",
+            f"the calibration's single {total_budget_seconds}-second total budget "
+            "was spent before the seam probes could run",
+        )
+    try:
+        process = subprocess.run(
+            [sys.executable, str(Path(__file__).resolve()), "--_worker"],
+            input=json.dumps(request),
+            text=True,
+            capture_output=True,
+            timeout=remaining_seconds,
+            env=environment,
+            cwd=cwd,
+        )
+    except subprocess.TimeoutExpired:
+        return all_unavailable(
+            "timeout",
+            f"the seam worker exceeded the remaining {remaining_seconds:.3f} "
+            f"seconds of the calibration's {total_budget_seconds}-second total "
+            "budget",
+        )
+    except (OSError, subprocess.SubprocessError) as error:
+        return all_unavailable(
+            "worker-setup-failed",
+            f"the seam worker could not be started or observed: {error}",
+        )
+    if process.returncode != 0:
+        reason = "worker-signal" if process.returncode < 0 else "worker-failed"
+        return all_unavailable(
+            reason,
+            process.stderr.strip()
+            or f"the seam worker exited with status {process.returncode}",
+        )
+    try:
+        payload = json.loads(process.stdout)
+    except json.JSONDecodeError as error:
+        return all_unavailable(
+            "invalid-worker-output",
+            f"the seam worker returned invalid JSON: {error.msg}",
+        )
+    scored = payload.get("seam") if isinstance(payload, dict) else None
+    if not isinstance(scored, list) or len(scored) != len(probes):
+        return all_unavailable(
+            "invalid-worker-output",
+            "the seam worker did not return one result per probe",
+        )
+    attempts = []
+    for probe, result in zip(probes, scored, strict=True):
+        score = result.get("score")
+        error = result.get("error")
+        if (score is None) == (error is None) or (
+            error is not None and not isinstance(error, str)
+        ):
+            attempts.append(
+                unavailable_supplemental_attempt(
+                    "invalid-worker-output",
+                    f"the seam worker returned neither a score nor a propagated "
+                    f"error for {probe['source']!r}",
+                )
+            )
+            continue
+        attempts.append(
+            {
+                "score": score,
+                "error": error,
+                "unavailable": None,
+                # What the evaluator was actually handed, which is the half of
+                # the finding a reader cannot reconstruct. `None` where no
+                # transform ran, because nothing was handed anywhere.
+                "delivered": result.get("delivered"),
+            }
+        )
+    return attempts
+
+
 # The one place an unexpected failure is allowed to end.
 #
 # The three scripts in this bundle each own this boundary because each is a
@@ -1097,10 +1482,31 @@ def run() -> int:
     args = parse_args()
     if not args.allow_execution:
         print(
-            "Refusing to import or execute the scorer without --allow-execution.",
+            "Refusing to import or execute the scorer, or the module behind "
+            "--reply-transform, without --allow-execution.",
             file=sys.stderr,
         )
         return 2
+    if args.kind == "llm-judge" and (
+        args.reply_transform is not None or args.task_kind is not None
+    ):
+        print(
+            "--reply-transform and --task-kind arm seam probes, which are "
+            "scorer calls. Against an LLM judge those are provider calls "
+            "nobody approved, so this combination is refused rather than "
+            "silently ignored.",
+            file=sys.stderr,
+        )
+        return 2
+    absolute_transform = None
+    if args.reply_transform is not None:
+        transform_file, transform_separator, transform_name = (
+            args.reply_transform.partition(":")
+        )
+        if not transform_separator or not transform_name:
+            print("--reply-transform must use FILE.py:FUNCTION.", file=sys.stderr)
+            return 2
+        absolute_transform = f"{Path(transform_file).resolve()}:{transform_name}"
     if args.kind == "llm-judge" and not args.paid_approved:
         print(
             "LLM-judge calibration can make provider calls; obtain approval and pass --paid-approved.",
@@ -1151,21 +1557,93 @@ def run() -> int:
         allow_provider_access=args.kind == "llm-judge"
     )
     worker_cwd = Path(scorer_file).resolve().parent
-    # One deadline for the whole calibration, opened before the authored phase
-    # and shared with the supplemental probes below, so `--timeout` is the
-    # worst-case wall time rather than half of it. The supplemental phase used to
-    # open a second budget of the same size after the authored phase returned:
-    # "one timeout at five minutes" was two at ten, and `--help` disclosed that
-    # instead of fixing it. Advisory work still cannot consume the budget that
-    # decides calibration, because the authored phase runs first and takes what
-    # it needs; what changes is that it can no longer be handed a second one.
+    # One deadline for the whole calibration, opened before the FIRST child
+    # this run starts and shared by every one after it, so `--timeout` is the
+    # worst-case wall time its own help promises. The load probe below used to
+    # sit outside it with a per-probe allowance of its own, so a slow import was
+    # wall time nobody was quoted. Source, and the way to take the measurement
+    # again: tests/test_calibrate_evaluator.py, which sleeps inside a
+    # transform's module at import under a budget smaller than the sleep and
+    # asserts the run finishes inside it. The guide has the assistant quote this
+    # wait to the customer before the stage runs, so it is a number a person is
+    # given rather than an internal bound.
     calibration_deadline = time.monotonic() + args.timeout
-    # Armed over the whole calibration, both phases, because the wall clock the
-    # user was quoted covers both. The cancel after the last probe is cleanup
-    # and is honestly not what makes this safe - the daemon flag is, since every
-    # early return below leaves the timer pending and the interpreter must not
-    # wait on it.
+    # Armed over the whole calibration, every phase, because the wall clock the
+    # user was quoted covers all of them. The cancel after the last probe is
+    # cleanup and is honestly not what makes this safe - the daemon flag is,
+    # since every early return below leaves the timer pending and the
+    # interpreter must not wait on it.
     warning_timer = start_pre_cap_warning(args.timeout)
+    if absolute_transform is not None:
+        # Before the budget opens, and in the same credential-stripped child
+        # every other piece of the customer's code runs in - never in this
+        # process. A reply transform that cannot be loaded is a broken flag, not
+        # a finding about an agent, and the old code could not say so: five
+        # distinct mistakes - a missing file, a renamed function, a syntax
+        # error, an uninstalled import, a two-argument signature - each arrived
+        # as "every probe refused", which this script then reported as the check
+        # being out of its domain. A typo silently disabled the whole check and
+        # told the reader not to worry about it.
+        try:
+            loaded = subprocess.run(
+                [sys.executable, str(Path(__file__).resolve()), "--_worker"],
+                input=json.dumps(
+                    {
+                        "operation": "load",
+                        "scorer": absolute_scorer,
+                        "reply_transform": absolute_transform,
+                        "import_root": str(args.import_root),
+                    }
+                ),
+                text=True,
+                capture_output=True,
+                timeout=max(
+                    0.0,
+                    min(
+                        float(DETERMINISTIC_SECONDS_PER_PROBE),
+                        calibration_deadline - time.monotonic(),
+                    ),
+                ),
+                env=worker_environment,
+                cwd=worker_cwd,
+            )
+        except subprocess.TimeoutExpired:
+            if warning_timer is not None:
+                warning_timer.cancel()
+            print(
+                "--reply-transform could not be loaded inside this "
+                f"calibration's {args.timeout}-second budget: importing its "
+                "module did not finish. Nothing about this agent's delivery "
+                "has been established. Re-run with a larger --timeout if that "
+                "import is normally this slow.",
+                file=sys.stderr,
+            )
+            return 2
+        if loaded.returncode != 0:
+            if warning_timer is not None:
+                warning_timer.cancel()
+            print(
+                "--reply-transform could not be loaded, so no seam probe can "
+                "run and nothing about this agent's delivery has been "
+                "established. Two different things look like this, and the "
+                "error below says which. A path, a function name or a "
+                "signature that is wrong is a wrong flag: fix it. A module "
+                "this environment cannot import yet is not - SKILL stage 4 has "
+                "you defer both seam flags with the calibration to stage 5, "
+                "where the dependencies are installed, rather than installing "
+                "anything to satisfy this stage:\n"
+                + (
+                    loaded.stderr.strip()
+                    or f"worker exited with status {loaded.returncode}"
+                ),
+                file=sys.stderr,
+            )
+            return 2
+    # Advisory work still cannot consume the budget that decides calibration,
+    # because the authored phase runs first and takes what it needs; what the
+    # single deadline above removes is a second budget of the same size being
+    # handed out after it - "one timeout at five minutes" was two at ten, and
+    # `--help` disclosed that instead of fixing it.
     try:
         process = subprocess.run(
             [sys.executable, str(Path(__file__).resolve()), "--_worker"],
@@ -1248,8 +1726,13 @@ def run() -> int:
     # between them, so generated advisory work can neither consume the timeout
     # that decides calibration nor extend the wait the user was quoted.
     supplemental_results = [
-        {"permutation": None, "exception_probes": []} for _case in cases
+        {"permutation": None, "exception_probes": [], "seam_probes": []}
+        for _case in cases
     ]
+    # Built across every case and run as one batch after the loop, so the
+    # customer's transform module is imported once for the whole family rather
+    # than once per probe.
+    seam_queue: list[dict[str, Any]] = []
     if args.kind == "deterministic":
         for index, case in enumerate(cases):
             worker_case = {
@@ -1293,6 +1776,46 @@ def run() -> int:
                 supplemental_results[index]["exception_probes"].append(
                     {"kind": kind, **attempt}
                 )
+            # Last, deliberately. This family is the new arrival, and
+            # enqueuing it ahead of the exception probes would make an
+            # existing family starve first under budget pressure - a
+            # silent change to what an unrelated check reports, decided by
+            # an insertion point rather than by anyone.
+            for source in SEAM_TRANSFORMED_SOURCES:
+                sent = fenced_probe_output(case["probes"][source], args.task_kind)
+                if sent is not None:
+                    seam_queue.append(
+                        {
+                            "case_index": index,
+                            "source": source,
+                            "output": sent,
+                            "expected": worker_case["expected"],
+                            "input_data": worker_case["input_data"],
+                            "metadata": worker_case["metadata"],
+                        }
+                    )
+    if seam_queue:
+        seam_attempts = run_seam_batch(
+            {
+                "operation": "seam",
+                "scorer": absolute_scorer,
+                "import_root": str(args.import_root),
+                # The transform reaches the child through the request rather
+                # than the parent: it is the customer's code, and it runs where
+                # every other piece of their code runs - in the
+                # credential-stripped worker, never here.
+                "reply_transform": absolute_transform,
+                "probes": seam_queue,
+            },
+            deadline=calibration_deadline,
+            total_budget_seconds=args.timeout,
+            environment=worker_environment,
+            cwd=worker_cwd,
+        )
+        for probe, attempt in zip(seam_queue, seam_attempts, strict=True):
+            supplemental_results[probe["case_index"]]["seam_probes"].append(
+                {"source": probe["source"], "sent": probe["output"], **attempt}
+            )
     if warning_timer is not None:
         warning_timer.cancel()
 
@@ -1344,6 +1867,39 @@ def run() -> int:
                 ),
             }
         if args.kind == "deterministic":
+            result["seam_probes"] = [
+                {
+                    "source": probe["source"],
+                    "sent": probe["sent"],
+                    "as_written": configured_case["probes"][probe["source"]],
+                    # Null where no reply step ran. It used to echo `sent`
+                    # back byte-for-byte, which is a delivery nothing performed
+                    # written into the payload the guidance tells an assistant
+                    # to read both halves of.
+                    "delivered": (
+                        probe.get("delivered")
+                        if args.reply_transform is not None
+                        else None
+                    ),
+                    "score": probe["score"],
+                    "error": probe["error"],
+                    # The authored score for this same content. One wrapper is
+                    # the only difference, so a gap between the two is the
+                    # wrapper, or what the reply step did to it - never the
+                    # answer, which this evaluator has already accepted.
+                    "reference_score": case["scores"][probe["source"]],
+                    "outcome": seam_probe_outcome(
+                        reference_score=case["scores"][probe["source"]],
+                        score=probe["score"],
+                        error=probe["error"],
+                        unavailable=probe["unavailable"],
+                        thresholds=thresholds,
+                    ),
+                    "available": probe["unavailable"] is None,
+                    "unavailable": probe["unavailable"],
+                }
+                for probe in supplemental["seam_probes"]
+            ]
             result["exception_probes"] = [
                 exception_probe_result(
                     probe["kind"],
@@ -1387,6 +1943,8 @@ def run() -> int:
             result["permutation_probe"] = case_results[0]["permutation_probe"]
         if "exception_probes" in case_results[0]:
             result["exception_probes"] = case_results[0]["exception_probes"]
+        if "seam_probes" in case_results[0]:
+            result["seam_probes"] = case_results[0]["seam_probes"]
 
     # One list, both shapes, so neither can answer this differently.
     #
@@ -1410,6 +1968,109 @@ def run() -> int:
             "label/value binding is a wrong answer that scores full marks. "
             "Confirm which this task is before optimizing against it."
         )
+    all_seam_probes = [
+        probe for case in case_results for probe in case.get("seam_probes", [])
+    ]
+    delivered = args.reply_transform is not None
+    if (
+        args.kind == "deterministic"
+        and not all_seam_probes
+        # Only where a probe was EXPECTED. A calibration that named no reply
+        # step and no code task kind did not ask for this check, and announcing
+        # its absence on every closed-label run would be a line nobody can act
+        # on printed beside the ones they can. What must never be silent is the
+        # other case: flags that read as arming it while nothing runs.
+        and (
+            args.reply_transform is not None
+            or args.task_kind in FENCED_PROBE_TASK_KINDS
+        )
+    ):
+        # A check that quietly declines to run is the failure mode this whole
+        # change exists to remove, so it says so rather than leaving an absent
+        # key to be noticed. --task-kind is what arms it: without an evidenced
+        # reply shape there is nothing honest to hand a reply step.
+        result["seam_probe_skipped"] = (
+            "No seam probe ran"
+            + (
+                ", because --task-kind was not one this check has an evidenced "
+                "reply shape for (code, code-sql)"
+                if args.task_kind not in FENCED_PROBE_TASK_KINDS
+                else ", because no case had a good and equivalent-good probe "
+                "this check could put a fence around"
+            )
+            + ". Nothing was established about how an answer reaches this "
+            "evaluator; do not record this as a pass."
+        )
+        print(f"NOT RUN: {result['seam_probe_skipped']}", file=sys.stderr)
+    if seam_probes_are_off_domain(all_seam_probes):
+        # Not a finding, and deliberately not the advisory: nothing here
+        # separates a broken step from one whose contract excludes this shape.
+        result["seam_probe_off_domain"] = (
+            "Every seam probe was refused by this run's reply step, so this "
+            "check established nothing. A step that rejects every fenced string "
+            "is what a structured-output agent looks like - one whose model "
+            "returns JSON rather than a code block - and it is also what a "
+            "broken step looks like; this cannot tell them apart and does not "
+            "guess. Read it as a check that did not apply, not as a fault, and "
+            "do not carry it to the approval as one. Where the agent's contract "
+            "is not a code fence, omit --task-kind and record why."
+        )
+        print(f"OFF DOMAIN: {result['seam_probe_off_domain']}", file=sys.stderr)
+    damaged_seams = [
+        (case["name"], probe)
+        for case in case_results
+        for probe in case.get("seam_probes", [])
+        if probe["outcome"] in ("damaged", "refused")
+    ]
+    if damaged_seams and "seam_probe_off_domain" not in result:
+        listing = "; ".join(
+            f"{name} ({probe['source']}: "
+            + (
+                f"raised {probe['error']} and returned nothing"
+                if probe["outcome"] == "refused"
+                else f"{probe['reference_score']:.4f} as written, "
+                f"{probe['score']:.4f} " + ("as delivered" if delivered else "fenced")
+            )
+            + ")"
+            for name, probe in damaged_seams
+        )
+        if delivered:
+            result["seam_probe_advisory"] = (
+                "The answer this evaluator is handed is not the answer it was "
+                "calibrated on. In: "
+                + listing
+                + ". Each is an answer the authored probes already scored as "
+                "right, put through this run's own reply step in the shape a "
+                "chat model returns code - and coming out as one this evaluator "
+                "scores as wrong, or not coming out at all. The fenced shape is "
+                "one this check constructed, not one observed from this route: "
+                "what is established is how the step behaves on it, not that "
+                "the model sends it. That is a fact about the two strings "
+                "recorded beside it, not a verdict on any model. It does not "
+                "change calibration PASS. Show both strings "
+                "and settle it before the paid run: every trial passes through "
+                "this same step, and configurations that all score the damaged "
+                "form cannot be told apart."
+            )
+        else:
+            # No reply step exists in this run, so nothing was "delivered" and
+            # nothing "arrived". The fenced string is one this check BUILT, and
+            # saying otherwise would put two identical strings in front of a
+            # customer under a sentence claiming they differ.
+            result["seam_probe_advisory"] = (
+                "This evaluator scores an answer it has already accepted as "
+                "wrong when that answer carries a markdown code fence. In: "
+                + listing
+                + ". This run has no reply step between the model and the "
+                "evaluator, so the fenced string recorded beside each is one "
+                "this check constructed and not one anything produced: nothing "
+                "here establishes that the model sends a fence, only that this "
+                "pair could not read it if it did. A chat model usually does "
+                "fence code, and has been observed doing so against a prompt "
+                "forbidding it, which is why this is worth showing. It does not "
+                "change calibration PASS. Put both strings on the approval and "
+                "let the customer say which their agent returns."
+            )
     zero_exception_probes = [
         (
             case["name"],
@@ -1459,6 +2120,19 @@ def run() -> int:
             for probe in case.get("exception_probes", [])
             if probe["unavailable"] is not None
         )
+        # The family this list was extended for. It collected from two of three
+        # probe families, and a seam probe lost to the budget went unmentioned
+        # in the very payload whose purpose is that a finding reaches a person -
+        # which is the defect the comment below already records, one family on.
+        unavailable_supplemental_probes.extend(
+            {
+                "case": case["name"],
+                "probe": f"seam:{probe['source']}",
+                **probe["unavailable"],
+            }
+            for probe in case.get("seam_probes", [])
+            if probe["unavailable"] is not None
+        )
     if unavailable_supplemental_probes:
         result["supplemental_probe_unavailable"] = unavailable_supplemental_probes
         result["supplemental_probe_advisory"] = (
@@ -1472,6 +2146,39 @@ def run() -> int:
             "authored calibration PASS; inspect or rerun unavailable probes before "
             "relying on them."
         )
+    if "seam_probe_advisory" in result:
+        print(f"ADVISORY: {result['seam_probe_advisory']}", file=sys.stderr)
+        for name, probe in damaged_seams:
+            print(f"[{name}] {probe['source']}", file=sys.stderr)
+            if delivered:
+                print(f"  SENT     : {probe['sent']!r}", file=sys.stderr)
+                print(
+                    "  DELIVERED: "
+                    + (
+                        f"nothing - raised {probe['error']}"
+                        if probe["outcome"] == "refused"
+                        else repr(probe["delivered"])
+                    ),
+                    file=sys.stderr,
+                )
+            else:
+                # One string, because there is only one. The bare form is the
+                # authored probe, already listed by the authored phase.
+                print(
+                    f"  AS WRITTEN : {probe['as_written']!r}  "
+                    f"{probe['reference_score']:.4f}",
+                    file=sys.stderr,
+                )
+                print(
+                    f"  CONSTRUCTED: {probe['sent']!r}  "
+                    + (
+                        f"raised {probe['error']}"
+                        if probe["outcome"] == "refused"
+                        else f"{probe['score']:.4f}"
+                    )
+                    + "  (built by this check - not observed)",
+                    file=sys.stderr,
+                )
     if "supplemental_probe_advisory" in result:
         # The summary line goes to stderr in every mode, including --json. The
         # documented invocation redirects stdout into a results file, so an

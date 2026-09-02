@@ -29,7 +29,7 @@ lawfully never entered, keeping its `[ ]` checkbox. SKILL.md owns every stage's 
 
 - Dataset rows, split, difficulty/scenario coverage, corruption, duplicates, and ceiling risk:
 - Evaluator meaning of "correct":
-- Calibration cases and results artifacts:
+- Calibration cases and results artifacts, the reply-transform and task kind passed to them, and every seam probe reported damaged, refused, off-domain or not run, with the strings it recorded:
 - Semantic-coverage evidence, verdict (`sufficient`/`ambiguous`), and known gaps:
 - Quality advisory, user choice, and revalidation result if applicable:
 - Row ids repaired into the working copy, and row ids generated to fill a gap:
