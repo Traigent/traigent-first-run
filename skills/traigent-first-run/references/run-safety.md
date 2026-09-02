@@ -592,10 +592,28 @@ exist and points at a file that was never created.
   Where the cap's route owns no question of its own, this card is that one home and asks it here.
 - **Where we are.** `Stage 3/5 · Baseline`, so the choice arrives placed in the run rather than
   loose.
-- **Proceed, or fix.** Two named outcomes and no default. Proceeding approves this material as the
-  thing the run will be graded against; fixing returns to the repair route SKILL stage 4 owns and
-  re-runs its gate before anything is spent. Approving the spend is not approving the material, and
-  silence is neither.
+- **Proceed, or fix.** Two lettered routes with the recommendation on one of them, in the shape
+  SKILL.md states for every named-route choice this run offers: `A.` proceed, marked recommended,
+  and `B.` fix. Proceeding approves this material as the thing the run will be graded against;
+  fixing returns to the repair route SKILL stage 4 owns and re-runs its gate before anything is
+  spent. Approving the spend is not approving the material, and silence is neither.
+
+  The mark goes on proceeding for the reason `references/component-creation.md` gives for marking a
+  route that continues, and it holds harder here: fixing needs no push, stays available at any time
+  and costs nothing, while the run not happening is the outcome this walkthrough exists to avoid -
+  and what is approved here is deliberately small, a bounded taste of the workflow at a priced
+  ceiling rather than a full search. An unmarked pair is a menu, and a menu offered instead of a
+  recommendation is no recommendation: a run that meets one supplies the default itself.
+
+  The mark moves rather than lifting, on the same condition that reference states for choosing among
+  routes that continue - mark the route that can produce the result being paid for. So where the
+  card carries a `FIX BEFORE PAID RUN`, where any cap blocks, or where the run as scoped cannot
+  answer the question it is being paid to answer, fixing is the route that can produce that result:
+  `B.` carries the mark, `A.` proceed stays offered unmarked, and the sentence beside it names the
+  finding that moved it. The mark is never withheld from the pair. An unmarked pair with no
+  recommendation on either route is the same silence this bullet already refuses, and these three
+  states are where it costs most - a run that meets one supplies the default itself, and it has no
+  reason to supply the right one.
 
 An asking cap is what this card exists to discharge, and discharging it means the customer meets its
 remedy at the moment they are asked to pay - not that its question is put here a second time.
@@ -640,17 +658,67 @@ combination count> configurations`, or the executed count alone when that total 
 
 Do not manufacture urgency. If baseline and evaluator show a measured quality, cost, or latency
 opportunity, say `Recommended next: continue with Traigent optimization because <observed reason>.`
+That observed reason is one reason among several and never the whole of the case, and a preview
+resting on it alone has nothing left to say on a baseline that measured none. Two reasons hold on
+every sound baseline and neither is a number: continuing is the only way the customer sees managed
+selection run against their own agent, which a local fixed grid by definition does not show, and
+the held-out check reports whether the selected configuration holds up on rows it was not chosen
+on - a finding about their own dataset that no other part of this run produces. Name those where no
+measured opportunity exists, so the preview still carries a stated reason instead of an unmarked
+pair. Neither may be written as an expected gain: they are what the run shows and what it tells
+them, never what it will improve, and the no-lift wording below is unchanged by them.
+
+What may fill `<observed reason>` is a finding a wider search has room to move. Rows that no
+configuration solved is one, because more configurations is the thing that could solve them. A
+statistical tie among the top configurations is not, and the frontier section below already says
+why in the opposite direction: it names one as a bound on what this run may claim. A run read that
+bound as an opportunity and sold it. At this sample size a tie says the rows cannot separate the
+configurations already tried, and adding candidates adds nothing to separate them with - resolution
+comes from rows, never from more things to rank. Name it as a limit on what the result may claim,
+and where it is the binding one recommend more or harder rows first. It is never a reason to spend.
 When the dataset and evaluator are sound but the baseline showed no measured quality or cost headroom,
 recommend harder realistic cases first. If the customer explicitly wants a verified portal/enhanced
 comparison anyway, offer it as an optional no-lift-possible verification run: say that it is not expected
 to find a gain and that declining leaves the honest baseline-only result intact. An invalid or
 non-discriminating dataset/evaluator has already stopped before this preview and gets the evidenced repair
-instead. End every offered connected preview with `Continue with this bounded Traigent run?`; that reply
-opens no paid work without the explicit approval below, and never promise improvement.
+instead. Never promise improvement.
 
-Final reply-ready line: `Recommended next: <action> — <measured reason>. Reply "continue" and I
-will <next safe step>.` For controlled work, `continue` opens a preview; it approves nothing unless
-that preview disclosed recipients, effects, bounds, and cost.
+Every offered connected preview ends on its routes, in the shape SKILL.md states for every
+named-route choice: lettered from `A`, exactly one marked, and each one answerable by replying.
+This preview used to close on a single yes/no question about continuing, which left it with one
+route the customer could take and one they could only read about - the card names stopping and
+prices it four ways, and then never says how to take it. That is worse than the unmarked pair the
+pre-spend card had, where both answers were at least available. A route this guide names and prices
+is a route the customer can take by replying.
+
+Final reply-ready block. Render it as its own block, after the disclosure prose, with nothing
+following it: a reply form sitting in the tail of a long paragraph is not an instruction, and a run
+that put one there was read as having offered no options at all - not even what to type to proceed.
+
+> **A. <action>** *(recommended - <measured reason>)*
+> Reply `continue` and I will <next safe step>.
+>
+> **B. Stop here and keep the baseline result.**
+> Reply `stop` and I will preserve the local result and report the run as baseline-only rather than
+> as a completed Traigent optimization.
+>
+> Or reply with a smaller trial cap or a lower ceiling and I will re-price this same step.
+
+Route `A` carries the reply-ready line `Recommended next: <action> - <measured reason>.`, which
+stays a direct evidence-based statement rather than a question. The last line is not a third route:
+it answers how big rather than what to do, so it rides last and unnumbered exactly as `I have it`
+does on the asks about material, and nothing follows it. Replying to any of these routes
+opens no paid work without the explicit approval below. For controlled work, `continue` opens a
+preview; it approves nothing unless that preview disclosed recipients, effects, bounds, and cost.
+
+The mark on `A` follows the pre-spend card's rule above. That rule is stated there once and is not
+restated here. Where it moves the mark here, it moves it onto more or harder rows before the search
+- not onto the evidenced repair, which is not one of this preview's routes at all: a dataset or
+evaluator that fails the distinguishing check stopped before this card, as the paragraph above says.
+So in that state `A.` is the rows route and carries the mark, `B.` is the bounded run, unmarked, and
+`C.` is stopping; every one of them keeps a letter and a reply form, because an offered route
+without a letter is the second form for the same act this guide already refuses. The sentence beside
+`A` names the finding that moved it. Stopping is never the marked route.
 
 Keep the default `$5.00` ceiling across both approvals. If a stage exceeds the remaining ceiling or
 is materially long, recommend a smaller slice or fewer trials; expand only if the user prefers.
