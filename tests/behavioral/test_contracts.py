@@ -875,5 +875,113 @@ class SlowEvaluatorEndToEndTests(unittest.TestCase):
         self.assertFalse(payload.get("timed_out", False))
 
 
+class ACleanOutcomeFixtureIsMadeOfDifferentQuestionsTests(unittest.TestCase):
+    """The committed outcome datasets, held to the run they are supposed to be.
+
+    These files ARE this repository's definition of what its card should say, so
+    a defect in one of them is asserted as correct behaviour by everything that
+    reads it. Two of them shipped 48 rows over 24 questions, `support-025` to
+    `support-048` repeating `support-001` to `support-024` word for word apart
+    from a `[case NNN]` number, with every one of the twelve held-out questions
+    also in the tuning split. Both scans passed, so the card certified a clean
+    run and the outcome test recorded that as right.
+
+    NUMBERS ARE NOT WORDS, and that is the whole rule below. Two rows that read
+    identically once their digits are removed are one question asked twice with
+    a counter changed: no configuration can answer them differently, so they buy
+    a provider call each and separate nothing. It is a rule a fixture can be
+    held to exactly, and it is deliberately not proposed as a check on customer
+    data - a dataset of genuinely different quantities would false-red on it,
+    which costs nothing here and would cost a customer their score.
+    """
+
+    OUTCOMES = Path(__file__).parent / "outcomes"
+    TUNE_NAMES = frozenset({"tune", "tuning", "train", "search"})
+
+    @classmethod
+    def _datasets(cls):
+        for case_dir in sorted(
+            path for path in cls.OUTCOMES.iterdir() if path.is_dir()
+        ):
+            dataset = case_dir / "project" / "evaluation-dataset.jsonl"
+            if not dataset.exists():
+                continue
+            rows = [
+                json.loads(line)
+                for line in dataset.read_text().splitlines()
+                if line.strip()
+            ]
+            yield case_dir.name, rows
+
+    @staticmethod
+    def _without_digits(row: dict) -> str:
+        text = " ".join(str(row.get("input", "")).casefold().split())
+        return "".join(character for character in text if not character.isdigit())
+
+    def test_no_committed_fixture_asks_one_question_under_two_numbers(self) -> None:
+        for name, rows in self._datasets():
+            with self.subTest(case=name):
+                seen: dict[str, str] = {}
+                collisions = []
+                for row in rows:
+                    key = self._without_digits(row)
+                    if key in seen:
+                        collisions.append((seen[key], row.get("id"), row.get("input")))
+                    seen[key] = row.get("id", "?")
+                self.assertEqual(
+                    collisions,
+                    [],
+                    "these rows differ only in a number, so they are one "
+                    "question written twice and the card will count them as "
+                    "two comparisons",
+                )
+
+    def test_no_held_out_question_is_also_a_tuning_question(self) -> None:
+        """A held-out row the search has already seen answers nothing.
+
+        The split check compares inputs exactly, so a held-out row carrying its
+        own case number reads as disjoint from the tuning row it copies, and the
+        card reports a clean split over a set with no unseen question in it.
+        """
+        for name, rows in self._datasets():
+            splits = {str(row.get("split", "")).casefold() for row in rows}
+            if not splits & self.TUNE_NAMES or splits <= self.TUNE_NAMES:
+                continue
+            with self.subTest(case=name):
+                tuning = {
+                    self._without_digits(row)
+                    for row in rows
+                    if str(row.get("split", "")).casefold() in self.TUNE_NAMES
+                }
+                held = {
+                    self._without_digits(row)
+                    for row in rows
+                    if str(row.get("split", "")).casefold() not in self.TUNE_NAMES
+                }
+                self.assertEqual(
+                    sorted(tuning & held),
+                    [],
+                    "the held-out split asks questions the tuning split "
+                    "already asked, so the held-out score measures recall of "
+                    "rows the search was tuned on",
+                )
+
+    def test_the_guard_sees_the_shape_it_was_written_for(self) -> None:
+        """The probe, so a rule that stopped detecting anything fails here.
+
+        Both directions on hand-built rows rather than on the committed files:
+        a numbered repeat collides, and two genuinely different questions that
+        happen to carry numbers do not.
+        """
+        repeat_a = {"id": "a", "input": "[case 001] Where is my invoice?"}
+        repeat_b = {"id": "b", "input": "[case 025] Where is my invoice?"}
+        self.assertEqual(self._without_digits(repeat_a), self._without_digits(repeat_b))
+        different_a = {"id": "a", "input": "Refund order 7781 please"}
+        different_b = {"id": "b", "input": "Cancel order 7781 please"}
+        self.assertNotEqual(
+            self._without_digits(different_a), self._without_digits(different_b)
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -10192,7 +10192,7 @@ class SkillPackageTests(unittest.TestCase):
         near_duplicates = next(
             check
             for check in READINESS.DIVERSITY_CHECKS
-            if check.certifier == "near_duplicate_status"
+            if "near_duplicate_status" in check.certifiers
         )
         for label in (
             near_duplicates.found_label,

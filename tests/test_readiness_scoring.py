@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 import contextlib
+import dataclasses
 import importlib.util
 import io
 import itertools
@@ -676,16 +677,23 @@ class DatasetScoringTests(unittest.TestCase):
         self.assertEqual(full.value, 20.0)
 
         for check in MODULE.DIVERSITY_CHECKS:
-            for not_run in ("SKIP", None):
-                with self.subTest(check=check.certifier, status=not_run):
-                    sub = self._diversity(**{**clean, check.certifier: not_run})
-                    self.assertFalse(
-                        sub.measured,
-                        f"{check.certifier}={not_run!r} still reads as a "
-                        f"measured, clean result: {sub.evidence}",
-                    )
-                    self.assertNotIn("no repeated questions", sub.evidence)
-                    self.assertIn(check.looking_for_label, sub.evidence)
+            for name in check.certifiers:
+                for not_run in ("SKIP", None):
+                    with self.subTest(check=name, status=not_run):
+                        sub = self._diversity(**{**clean, name: not_run})
+                        self.assertFalse(
+                            sub.measured,
+                            f"{name}={not_run!r} still reads as a "
+                            f"measured, clean result: {sub.evidence}",
+                        )
+                        # The check's OWN clean sentence, read off the shipped
+                        # table rather than quoted here. A literal would keep
+                        # passing after the sentence was reworded, which is how
+                        # a prohibition turns into decoration: the rule is that
+                        # this question may not read as answered, and the words
+                        # it would be answered in are whatever ship today.
+                        self.assertNotIn(check.clean_label, sub.evidence)
+                        self.assertIn(check.looking_for_label, sub.evidence)
 
     def test_one_duplicated_row_is_one_deduction_not_two(self) -> None:
         """The exact and near checks describe one defect, so they cost once.
@@ -733,6 +741,73 @@ class DatasetScoringTests(unittest.TestCase):
         )
         self.assertTrue(found.measured, found.evidence)
         self.assertEqual(found.value, 13.0, found.evidence)
+
+    def test_no_similarity_finding_cannot_clear_the_repetition_question(
+        self,
+    ) -> None:
+        """The direction #356's review added, and the reason the pair is one.
+
+        A bounded similarity join that reached the end of the file and found
+        nothing has established one thing: no pair crossed its line. It has not
+        established that no row repeats another, and this repository has
+        measured the gap between those two statements - it is the width of its
+        own clean fixture, where twelve rows re-ask twelve questions and the
+        join passes. So an unfinished exact scan beside a clean near scan leaves
+        the question open, exactly as the reverse arrangement already did.
+        """
+        sub = self._diversity(
+            duplicate_status="SKIP",
+            near_duplicate_status="PASS",
+            answer_dominance_status="PASS",
+        )
+        self.assertFalse(sub.measured, sub.evidence)
+
+    def test_the_clean_line_claims_a_scan_and_never_a_judgement(self) -> None:
+        """A repetition check may not report on what rows MEAN.
+
+        What ran is one exact comparison of inputs and one count of shared word
+        runs. Whether two rows ask the same question is a judgement neither of
+        them makes, so the sentence printed when they find nothing may not be
+        phrased as one - and "no repeated questions" is the phrasing this card
+        shipped while a file of repeated questions passed both scans.
+
+        Asserted as a property of the word rather than as a forbidden sentence:
+        any rewording that goes back to claiming about questions fails, and any
+        rewording that keeps describing the scans passes.
+        """
+        repetition = next(
+            check
+            for check in MODULE.DIVERSITY_CHECKS
+            if "near_duplicate_status" in check.certifiers
+        )
+        for label in (
+            repetition.clean_label,
+            repetition.found_label,
+            repetition.looking_for_label,
+        ):
+            with self.subTest(label=label):
+                self.assertNotIn("question", label.casefold())
+        # And the sentence that survives has to name what BOTH scans looked at,
+        # or it is one scan's answer standing in for two.
+        self.assertIn("input", repetition.clean_label)
+        self.assertIn(f"{MODULE.NEAR_DUPLICATE_PERCENT}%", repetition.clean_label)
+
+    def test_every_certifier_named_is_a_fact_this_scorer_actually_reads(
+        self,
+    ) -> None:
+        """A misspelt certifier would clear every question silently.
+
+        `getattr` on a name no `DatasetFacts` field carries raises, and a name
+        that exists but is never populated is worse: it reads as `None`, which
+        is not in `MEASURED_STATUSES`, so the question would go permanently
+        unmeasured instead. Both are caught by asking the dataclass.
+        """
+        fields = {field.name for field in dataclasses.fields(MODULE.DatasetFacts)}
+        for check in MODULE.DIVERSITY_CHECKS:
+            with self.subTest(check=check.clean_label):
+                self.assertTrue(check.certifiers)
+                for name in (*check.certifiers, *check.detectors):
+                    self.assertIn(name, fields)
 
     def test_no_exact_duplicates_cannot_clear_the_similarity_question(self) -> None:
         """A detector may raise a finding; only the certifier may clear one.
