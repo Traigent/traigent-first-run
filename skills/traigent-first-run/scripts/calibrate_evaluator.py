@@ -666,8 +666,15 @@ def run_worker() -> int:
         ]
         captured_stdout = io.StringIO()
         with contextlib.redirect_stdout(captured_stdout):
-            function = load_function(request["scorer"])
             operation = request.get("operation", "authored")
+            # Read the operation FIRST, and load the scorer only for the
+            # operations that score something. `load` checks the reply
+            # transform and grades nothing, so loading the scorer there made a
+            # broken scorer surface as "--reply-transform could not be loaded",
+            # naming a correct flag and telling the assistant to fix it - while
+            # the scorer's own failure has an exit code and a message of its
+            # own that it must be allowed to reach.
+            function = None if operation == "load" else load_function(request["scorer"])
             if operation == "authored":
                 case_results = []
                 for case in request["cases"]:
@@ -683,6 +690,65 @@ def run_worker() -> int:
                     }
                     case_results.append({"name": case["name"], "scores": scores})
                 response = {"cases": case_results}
+            elif operation == "seam":
+                # Every seam probe for every case, in ONE child. The
+                # supplemental families above get a fresh interpreter each
+                # because they are adversarial - malformed output, raised
+                # exceptions, a probe object that refuses to be consumed - and
+                # process-local state from one must not reach the next. A seam
+                # probe is an ordinary string through ordinary code, and the
+                # authored phase, which decides PASS, already scores every case
+                # in one child for that reason.
+                #
+                # The cost of not doing this was measured rather than guessed:
+                # the customer's agent module was imported once per probe, and
+                # since the guidance this change adds says that module's top
+                # level "for an agent file is commonly a provider client", a
+                # client constructor ran on every one. Under a tight budget the
+                # permutation probe and all five exception probes of the second
+                # case came back `budget-exhausted` with the flag and did not
+                # without it - the starvation the queue reorder had just
+                # removed, coming back through the clock instead of the queue.
+                transform = (
+                    load_function(request["reply_transform"])
+                    if request.get("reply_transform")
+                    else None
+                )
+                seam_results = []
+                for probe in request["probes"]:
+                    output = probe["output"]
+                    delivered = None
+                    score = None
+                    error_text = None
+                    try:
+                        if transform is not None:
+                            # Inside this try with the scoring call, on purpose:
+                            # a transform that raises on a probe IS the finding.
+                            output = transform(output)
+                            delivered = (
+                                output if isinstance(output, str) else repr(output)
+                            )
+                        score = bind_call(
+                            function,
+                            output,
+                            probe["expected"],
+                            probe.get("input_data"),
+                            probe.get("metadata"),
+                        )
+                    except (KeyboardInterrupt, GeneratorExit):
+                        raise
+                    except BaseException as error:  # a refusal is the evidence
+                        error_text = probe_error_text(error)
+                    seam_results.append(
+                        {
+                            "case_index": probe["case_index"],
+                            "source": probe["source"],
+                            "score": score,
+                            "error": error_text,
+                            "delivered": delivered,
+                        }
+                    )
+                response = {"seam": seam_results}
             elif operation == "load":
                 # Nothing is scored here. The scorer is already loaded above;
                 # this resolves the reply transform and checks it accepts the
@@ -697,13 +763,10 @@ def run_worker() -> int:
             elif operation == "supplemental":
                 case = request["case"]
                 probe = request["probe"]
-                delivered = None
                 if probe["type"] == "permutation":
                     output = probe["output"]
                 elif probe["type"] == "exception":
                     output = exception_probe_output(probe["kind"])
-                elif probe["type"] == "seam":
-                    output = probe["output"]
                 else:
                     raise ValueError(
                         f"unknown supplemental probe type: {probe['type']}"
@@ -711,15 +774,6 @@ def run_worker() -> int:
                 score = None
                 error_text = None
                 try:
-                    transform = request.get("reply_transform")
-                    if probe["type"] == "seam" and transform is not None:
-                        # Inside this try with the scoring call, on purpose: a
-                        # transform that raises on a probe IS the finding, and
-                        # letting it escape would report the run's own agent
-                        # code as an unavailable probe rather than a refusal.
-                        output = load_function(transform)(output)
-                    if probe["type"] == "seam":
-                        delivered = output if isinstance(output, str) else repr(output)
                     score = bind_call(
                         function,
                         output,
@@ -734,11 +788,7 @@ def run_worker() -> int:
                     raise
                 except BaseException as error:  # SystemExit is probe evidence
                     error_text = probe_error_text(error)
-                response = {
-                    "score": score,
-                    "error": error_text,
-                    "delivered": delivered,
-                }
+                response = {"score": score, "error": error_text}
             else:
                 raise ValueError(f"unknown worker operation: {operation}")
         print(
@@ -1250,14 +1300,108 @@ def run_supplemental_attempt(
             "invalid-worker-output",
             "supplemental worker error was not text",
         )
-    return {
-        "score": score,
-        "error": error,
-        "unavailable": None,
-        # Only a seam probe sets it: what the evaluator was actually handed,
-        # which is the half of the finding a reader cannot reconstruct.
-        "delivered": payload.get("delivered"),
-    }
+    return {"score": score, "error": error, "unavailable": None}
+
+
+def run_seam_batch(
+    request: dict[str, Any],
+    *,
+    deadline: float,
+    total_budget_seconds: int,
+    environment: dict[str, str],
+    cwd: Path,
+) -> list[dict[str, Any]]:
+    """Score the whole seam family in one worker, and report per probe.
+
+    One worker, so the customer's transform module is imported once for the
+    family instead of once per probe. The cost is granularity on failure: a
+    crash or a timeout takes every seam probe with it, and each is reported
+    unavailable for the same reason. That is the trade the authored phase
+    already makes for the four probes that decide PASS, and it is reported
+    honestly - the parent has no partial output to attribute, so it attributes
+    none.
+    """
+    probes = request["probes"]
+
+    def all_unavailable(reason: str, detail: str) -> list[dict[str, Any]]:
+        return [unavailable_supplemental_attempt(reason, detail) for _ in probes]
+
+    remaining_seconds = deadline - time.monotonic()
+    if remaining_seconds <= 0:
+        return all_unavailable(
+            "budget-exhausted",
+            f"the calibration's single {total_budget_seconds}-second total budget "
+            "was spent before the seam probes could run",
+        )
+    try:
+        process = subprocess.run(
+            [sys.executable, str(Path(__file__).resolve()), "--_worker"],
+            input=json.dumps(request),
+            text=True,
+            capture_output=True,
+            timeout=remaining_seconds,
+            env=environment,
+            cwd=cwd,
+        )
+    except subprocess.TimeoutExpired:
+        return all_unavailable(
+            "timeout",
+            f"the seam worker exceeded the remaining {remaining_seconds:.3f} "
+            f"seconds of the calibration's {total_budget_seconds}-second total "
+            "budget",
+        )
+    except (OSError, subprocess.SubprocessError) as error:
+        return all_unavailable(
+            "worker-setup-failed",
+            f"the seam worker could not be started or observed: {error}",
+        )
+    if process.returncode != 0:
+        reason = "worker-signal" if process.returncode < 0 else "worker-failed"
+        return all_unavailable(
+            reason,
+            process.stderr.strip()
+            or f"the seam worker exited with status {process.returncode}",
+        )
+    try:
+        payload = json.loads(process.stdout)
+    except json.JSONDecodeError as error:
+        return all_unavailable(
+            "invalid-worker-output",
+            f"the seam worker returned invalid JSON: {error.msg}",
+        )
+    scored = payload.get("seam") if isinstance(payload, dict) else None
+    if not isinstance(scored, list) or len(scored) != len(probes):
+        return all_unavailable(
+            "invalid-worker-output",
+            "the seam worker did not return one result per probe",
+        )
+    attempts = []
+    for probe, result in zip(probes, scored, strict=True):
+        score = result.get("score")
+        error = result.get("error")
+        if (score is None) == (error is None) or (
+            error is not None and not isinstance(error, str)
+        ):
+            attempts.append(
+                unavailable_supplemental_attempt(
+                    "invalid-worker-output",
+                    f"the seam worker returned neither a score nor a propagated "
+                    f"error for {probe['source']!r}",
+                )
+            )
+            continue
+        attempts.append(
+            {
+                "score": score,
+                "error": error,
+                "unavailable": None,
+                # What the evaluator was actually handed, which is the half of
+                # the finding a reader cannot reconstruct. `None` where no
+                # transform ran, because nothing was handed anywhere.
+                "delivered": result.get("delivered"),
+            }
+        )
+    return attempts
 
 
 # The one place an unexpected failure is allowed to end.
@@ -1394,6 +1538,23 @@ def run() -> int:
         allow_provider_access=args.kind == "llm-judge"
     )
     worker_cwd = Path(scorer_file).resolve().parent
+    # One deadline for the whole calibration, opened before the FIRST child
+    # this run starts and shared by every one after it, so `--timeout` is the
+    # worst-case wall time its own help promises. The load probe below used to
+    # sit outside it with a per-probe allowance of its own, so a slow import was
+    # wall time nobody was quoted. Source, and the way to take the measurement
+    # again: tests/test_calibrate_evaluator.py, which sleeps inside a
+    # transform's module at import under a budget smaller than the sleep and
+    # asserts the run finishes inside it. The guide has the assistant quote this
+    # wait to the customer before the stage runs, so it is a number a person is
+    # given rather than an internal bound.
+    calibration_deadline = time.monotonic() + args.timeout
+    # Armed over the whole calibration, every phase, because the wall clock the
+    # user was quoted covers all of them. The cancel after the last probe is
+    # cleanup and is honestly not what makes this safe - the daemon flag is,
+    # since every early return below leaves the timer pending and the
+    # interpreter must not wait on it.
+    warning_timer = start_pre_cap_warning(args.timeout)
     if absolute_transform is not None:
         # Before the budget opens, and in the same credential-stripped child
         # every other piece of the customer's code runs in - never in this
@@ -1404,28 +1565,54 @@ def run() -> int:
         # as "every probe refused", which this script then reported as the check
         # being out of its domain. A typo silently disabled the whole check and
         # told the reader not to worry about it.
-        loaded = subprocess.run(
-            [sys.executable, str(Path(__file__).resolve()), "--_worker"],
-            input=json.dumps(
-                {
-                    "operation": "load",
-                    "scorer": absolute_scorer,
-                    "reply_transform": absolute_transform,
-                    "import_root": str(args.import_root),
-                }
-            ),
-            text=True,
-            capture_output=True,
-            timeout=DETERMINISTIC_SECONDS_PER_PROBE,
-            env=worker_environment,
-            cwd=worker_cwd,
-        )
+        try:
+            loaded = subprocess.run(
+                [sys.executable, str(Path(__file__).resolve()), "--_worker"],
+                input=json.dumps(
+                    {
+                        "operation": "load",
+                        "scorer": absolute_scorer,
+                        "reply_transform": absolute_transform,
+                        "import_root": str(args.import_root),
+                    }
+                ),
+                text=True,
+                capture_output=True,
+                timeout=max(
+                    0.0,
+                    min(
+                        float(DETERMINISTIC_SECONDS_PER_PROBE),
+                        calibration_deadline - time.monotonic(),
+                    ),
+                ),
+                env=worker_environment,
+                cwd=worker_cwd,
+            )
+        except subprocess.TimeoutExpired:
+            if warning_timer is not None:
+                warning_timer.cancel()
+            print(
+                "--reply-transform could not be loaded inside this "
+                f"calibration's {args.timeout}-second budget: importing its "
+                "module did not finish. Nothing about this agent's delivery "
+                "has been established. Re-run with a larger --timeout if that "
+                "import is normally this slow.",
+                file=sys.stderr,
+            )
+            return 2
         if loaded.returncode != 0:
+            if warning_timer is not None:
+                warning_timer.cancel()
             print(
                 "--reply-transform could not be loaded, so no seam probe can "
                 "run and nothing about this agent's delivery has been "
-                "established. Fix the flag rather than reading this as a "
-                "finding:\n"
+                "established. Two different things look like this, and the "
+                "error below says which. A path, a function name or a "
+                "signature that is wrong is a wrong flag: fix it. A module "
+                "this environment cannot import yet is not - SKILL stage 4 has "
+                "you defer both seam flags with the calibration to stage 5, "
+                "where the dependencies are installed, rather than installing "
+                "anything to satisfy this stage:\n"
                 + (
                     loaded.stderr.strip()
                     or f"worker exited with status {loaded.returncode}"
@@ -1433,21 +1620,11 @@ def run() -> int:
                 file=sys.stderr,
             )
             return 2
-    # One deadline for the whole calibration, opened before the authored phase
-    # and shared with the supplemental probes below, so `--timeout` is the
-    # worst-case wall time rather than half of it. The supplemental phase used to
-    # open a second budget of the same size after the authored phase returned:
-    # "one timeout at five minutes" was two at ten, and `--help` disclosed that
-    # instead of fixing it. Advisory work still cannot consume the budget that
-    # decides calibration, because the authored phase runs first and takes what
-    # it needs; what changes is that it can no longer be handed a second one.
-    calibration_deadline = time.monotonic() + args.timeout
-    # Armed over the whole calibration, both phases, because the wall clock the
-    # user was quoted covers both. The cancel after the last probe is cleanup
-    # and is honestly not what makes this safe - the daemon flag is, since every
-    # early return below leaves the timer pending and the interpreter must not
-    # wait on it.
-    warning_timer = start_pre_cap_warning(args.timeout)
+    # Advisory work still cannot consume the budget that decides calibration,
+    # because the authored phase runs first and takes what it needs; what the
+    # single deadline above removes is a second budget of the same size being
+    # handed out after it - "one timeout at five minutes" was two at ten, and
+    # `--help` disclosed that instead of fixing it.
     try:
         process = subprocess.run(
             [sys.executable, str(Path(__file__).resolve()), "--_worker"],
@@ -1533,6 +1710,10 @@ def run() -> int:
         {"permutation": None, "exception_probes": [], "seam_probes": []}
         for _case in cases
     ]
+    # Built across every case and run as one batch after the loop, so the
+    # customer's transform module is imported once for the whole family rather
+    # than once per probe.
+    seam_queue: list[dict[str, Any]] = []
     if args.kind == "deterministic":
         for index, case in enumerate(cases):
             worker_case = {
@@ -1581,31 +1762,41 @@ def run() -> int:
             # existing family starve first under budget pressure - a
             # silent change to what an unrelated check reports, decided by
             # an insertion point rather than by anyone.
-            seam_inputs = [
-                (source, fenced_probe_output(case["probes"][source], args.task_kind))
-                for source in SEAM_TRANSFORMED_SOURCES
-            ]
-            for source, sent in [
-                (name, value) for name, value in seam_inputs if value is not None
-            ]:
-                attempt = run_supplemental_attempt(
-                    {
-                        **request_base,
-                        # The transform reaches the child through the request
-                        # rather than the parent: it is the customer's code, and
-                        # it runs where every other piece of their code runs -
-                        # in the credential-stripped worker, never here.
-                        "reply_transform": absolute_transform,
-                        "probe": {"type": "seam", "output": sent},
-                    },
-                    deadline=calibration_deadline,
-                    total_budget_seconds=args.timeout,
-                    environment=worker_environment,
-                    cwd=worker_cwd,
-                )
-                supplemental_results[index]["seam_probes"].append(
-                    {"source": source, "sent": sent, **attempt}
-                )
+            for source in SEAM_TRANSFORMED_SOURCES:
+                sent = fenced_probe_output(case["probes"][source], args.task_kind)
+                if sent is not None:
+                    seam_queue.append(
+                        {
+                            "case_index": index,
+                            "source": source,
+                            "output": sent,
+                            "expected": worker_case["expected"],
+                            "input_data": worker_case["input_data"],
+                            "metadata": worker_case["metadata"],
+                        }
+                    )
+    if seam_queue:
+        seam_attempts = run_seam_batch(
+            {
+                "operation": "seam",
+                "scorer": absolute_scorer,
+                "import_root": str(args.import_root),
+                # The transform reaches the child through the request rather
+                # than the parent: it is the customer's code, and it runs where
+                # every other piece of their code runs - in the
+                # credential-stripped worker, never here.
+                "reply_transform": absolute_transform,
+                "probes": seam_queue,
+            },
+            deadline=calibration_deadline,
+            total_budget_seconds=args.timeout,
+            environment=worker_environment,
+            cwd=worker_cwd,
+        )
+        for probe, attempt in zip(seam_queue, seam_attempts, strict=True):
+            supplemental_results[probe["case_index"]]["seam_probes"].append(
+                {"source": probe["source"], "sent": probe["output"], **attempt}
+            )
     if warning_timer is not None:
         warning_timer.cancel()
 

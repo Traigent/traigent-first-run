@@ -566,8 +566,9 @@ Follow this order:
    candidate-generated code or SQL, and must be local-only and
    side-effect-free, and runs in the credential-stripped calibration subprocess. Where the agent has
    a reply-to-answer step, pass it as `--reply-transform` and pass `--task-kind` beside it under the
-   destination rule in `references/evaluation-and-dataset.md`, which owns both flags, the seam
-   probes they add, and what those may claim. The transform's whole module is imported to reach it,
+   destination rule in `references/evaluation-and-dataset.md`. When each flag is passed is decided
+   here; that reference owns the destination rule, the seam probes the flags add, and what those
+   probes may claim. The transform's whole module is imported to reach it,
    so the inspection sentence above covers that module too: where it imports a dependency this
    environment does not yet have, defer both flags with the calibration itself to step 5 rather than
    installing anything here. When the opening

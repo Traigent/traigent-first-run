@@ -1759,15 +1759,31 @@ class TimeoutIsReportableTests(unittest.TestCase):
         self.assertEqual(ceiling, 900)
         # The arithmetic behind the sentence, so a constant can never move and
         # leave the words describing the previous number.
+        # `default=0` rather than a bare `max`, because the bare form raised
+        # `ValueError: max() iterable argument is empty` when a probe count
+        # moved - a drifted constant reported as an interpreter error, with
+        # nothing naming the count that drifted. Zero is not a reachable case
+        # count, so the assertion below still fails; it now fails saying what.
         last_whole = {
             kind: max(
-                count
-                for count in range(1, 100)
-                if count * probes_per_case[kind] * seconds <= ceiling
+                (
+                    count
+                    for count in range(1, 100)
+                    if count * probes_per_case[kind] * seconds <= ceiling
+                ),
+                default=0,
             )
             for kind, seconds in per_probe.items()
         }
-        self.assertEqual(last_whole, {"deterministic": 1, "llm-judge": 2})
+        self.assertEqual(
+            last_whole,
+            {"deterministic": 1, "llm-judge": 2},
+            "the last case count that fits the ceiling whole has moved, so a "
+            f"probe count changed: {probes_per_case} per case at "
+            f"{per_probe} seconds each against a {ceiling}-second ceiling. A "
+            "zero here means not even one case fits, and the sentence this "
+            "test pins describes a derivation that can no longer apply",
+        )
         five_pair_rate = {
             kind: ceiling / (5 * probes_per_case[kind]) for kind in self.KINDS
         }
@@ -3660,8 +3676,127 @@ class TheSeamBetweenTheProbesAndTheAgentTests(unittest.TestCase):
                 )
                 self.assertEqual(process.returncode, 2, process.stderr)
                 self.assertIn("could not be loaded", process.stderr)
-                self.assertIn("Fix the flag", process.stderr)
                 self.assertNotIn("off_domain", process.stdout)
+                # Both readings, because the tool is what a non-conforming run
+                # reads and the two remedies are opposite: a wrong path or
+                # signature is a wrong flag, and a module this environment
+                # cannot import yet is the environment not being ready - which
+                # the guidance answers by deferring both flags to stage 5, not
+                # by installing something to satisfy stage 4.
+                self.assertIn("is a wrong flag: fix it", process.stderr)
+                self.assertIn("defer both seam flags", process.stderr)
+
+    def test_a_broken_scorer_is_not_reported_as_a_broken_transform(self) -> None:
+        """The load probe used to inherit a scorer load it never uses.
+
+        `run_worker` resolved the scorer before dispatching on the operation,
+        so a scorer that could not be imported surfaced through the `load`
+        branch as "--reply-transform could not be loaded" - naming a correct
+        flag, telling the assistant to fix it, and turning the scorer's own
+        exit 1 into an exit 2. The scorer's failure has its own code and its
+        own message and has to reach both.
+        """
+        broken_scorer = (
+            "import no_such_scorer_dependency\n\n\n"
+            "def task_score(*, output, expected, input_data, metadata):\n"
+            "    return 1.0\n"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            without, _ = self.calibrate(
+                directory, "--task-kind", "code-sql", scorer=broken_scorer
+            )
+        with tempfile.TemporaryDirectory() as directory:
+            with_flag, _ = self.calibrate(
+                directory,
+                "--task-kind",
+                "code-sql",
+                transform=self.SOUND,
+                scorer=broken_scorer,
+            )
+        self.assertEqual(without.returncode, 1, without.stderr)
+        self.assertEqual(
+            with_flag.returncode,
+            1,
+            "a correct --reply-transform must not change how a broken scorer "
+            f"is reported: {with_flag.stderr}",
+        )
+        self.assertIn("no_such_scorer_dependency", with_flag.stderr)
+        self.assertNotIn("--reply-transform could not be loaded", with_flag.stderr)
+
+    def test_the_transform_module_is_imported_once_for_the_whole_family(
+        self,
+    ) -> None:
+        """P2-C: it was imported once per probe, plus once for the load probe.
+
+        The guidance this change adds says that module's top level "for an
+        agent file is commonly a provider client", so a client constructor ran
+        on every seam probe. Two imports now - one to validate the flag, one
+        for the batched family - and the count no longer grows with the case
+        set, which is the property that matters.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            witness = root / "imports.log"
+            transform = (
+                "from pathlib import Path\n\n"
+                f"Path({str(witness)!r}).open('a').write('import\\n')\n\n\n"
+                "def extract_sql(reply):\n"
+                "    return reply\n"
+            )
+            process, payload = self.calibrate(
+                directory, "--task-kind", "code-sql", transform=transform
+            )
+            imports = witness.read_text().count("import")
+        probes = sum(len(case["seam_probes"]) for case in payload["cases"])
+        self.assertEqual(probes, 4, process.stderr)
+        self.assertEqual(
+            imports,
+            2,
+            "the customer's agent module should be imported once to validate "
+            f"the flag and once for the batched family, not {imports} times "
+            f"for {probes} probes",
+        )
+
+    def test_the_budget_covers_the_transform_import(self) -> None:
+        """P2-B: `--timeout` is the worst-case wall time its help promises.
+
+        The load probe used to run before the deadline opened, with a
+        75-second allowance of its own, so a slow import was time the customer
+        waited and was never quoted. The guide has the assistant quote this
+        wait before the stage runs.
+        """
+        sleep_seconds = 12
+        budget = 10
+        with tempfile.TemporaryDirectory() as directory:
+            transform = (
+                "import time\n\n"
+                f"time.sleep({sleep_seconds})\n\n\n"
+                "def extract_sql(reply):\n"
+                "    return reply\n"
+            )
+            started = time.monotonic()
+            process, _ = self.calibrate(
+                directory,
+                "--task-kind",
+                "code-sql",
+                "--timeout",
+                str(budget),
+                transform=transform,
+            )
+            elapsed = time.monotonic() - started
+        # Generous headroom over the budget for process start-up on a loaded
+        # machine, and still far below the budget-plus-75 the old path spent:
+        # the assertion is that the import is INSIDE the budget, not a
+        # stopwatch on the runner.
+        self.assertLess(
+            elapsed,
+            budget + sleep_seconds,
+            f"a {sleep_seconds}s import under a {budget}s budget took "
+            f"{elapsed:.2f}s, so it is still running outside the budget: "
+            f"{process.stderr}",
+        )
+        self.assertEqual(process.returncode, 2, process.stderr)
+        self.assertIn("could not be loaded inside this", process.stderr)
 
     def test_a_refusal_beside_a_preserved_probe_still_reports(self) -> None:
         """P2-3: the advisory collected `damaged` and `refused`, and only
