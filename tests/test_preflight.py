@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import contextlib
 import importlib.util
 import io
@@ -4122,5 +4123,706 @@ class TheDistinctCountAndTheCountItBoundsDescribeOneSetTests(unittest.TestCase):
         self.assertEqual(metrics["tuning_distinct_scoreable_rows"], 50)
 
 
+# Evaluators a customer would plausibly hand this guide, written before the
+# walk they are pointed at and NOT from the constructs it happens to name.
+# Three of them are here specifically because an implementation could pass the
+# obvious cases and still fail them: SQL_CANONICAL_COMPARISON uses `compile`,
+# PARSER_GATE_COMPARISON imports a SQL library that parses without connecting,
+# and HANDED_IN_CURSOR reaches a database without importing one at all.
+CASEFOLD_COMPARISON = '''"""Compare a label after case and spacing are normalised."""
+
+
+def score(*, output, expected, input_data, metadata):
+    del input_data, metadata
+    return float(str(output).strip().casefold() == str(expected).strip().casefold())
+'''
+SQL_CANONICAL_COMPARISON = '''"""Compare SQL over a canonical form: fence, case, spacing, semicolon."""
+
+import re
+
+FENCE = re.compile(r"^```(?:sql)?\\s*|\\s*```$", re.MULTILINE)
+SPACING = re.compile(r"\\s+")
+
+
+def canonical(text):
+    stripped = FENCE.sub("", str(text)).strip().rstrip(";")
+    return SPACING.sub(" ", stripped).casefold()
+
+
+def score(*, output, expected, input_data, metadata):
+    del input_data, metadata
+    return float(canonical(output) == canonical(expected))
+'''
+PARSER_GATE_COMPARISON = '''"""Parse both queries and compare the parsed forms. Nothing connects."""
+
+import sqlparse
+
+
+def score(*, output, expected, input_data, metadata):
+    del input_data, metadata
+    produced = sqlparse.format(str(output), keyword_case="lower", strip_comments=True)
+    wanted = sqlparse.format(str(expected), keyword_case="lower", strip_comments=True)
+    return float(produced.strip() == wanted.strip())
+'''
+FUZZY_RATIO_COMPARISON = '''"""Score by how alike two strings look."""
+
+import difflib
+
+
+def score(*, output, expected, input_data, metadata):
+    del input_data, metadata
+    return difflib.SequenceMatcher(None, str(output), str(expected)).ratio()
+'''
+SCHEMA_FIELD_COMPARISON = '''"""Parse JSON and compare the fields that matter."""
+
+import json
+
+
+def score(*, output, expected, input_data, metadata):
+    del input_data, metadata
+    try:
+        produced = json.loads(output)
+    except json.JSONDecodeError:
+        return 0.0
+    wanted = json.loads(expected)
+    return float(all(produced.get(key) == value for key, value in wanted.items()))
+'''
+SET_F1_COMPARISON = '''"""Order-insensitive overlap between two collections."""
+
+
+def score(*, output, expected, input_data, metadata):
+    del input_data, metadata
+    produced = set(str(output).split(","))
+    wanted = set(str(expected).split(","))
+    if not produced or not wanted:
+        return 0.0
+    shared = len(produced & wanted)
+    return 2 * shared / (len(produced) + len(wanted))
+'''
+NUMERIC_TOLERANCE_COMPARISON = '''"""Read both answers as numbers, within a tolerance."""
+
+import ast
+import math
+
+
+def score(*, output, expected, input_data, metadata):
+    del input_data, metadata
+    produced = ast.literal_eval(str(output).strip())
+    wanted = ast.literal_eval(str(expected).strip())
+    return float(math.isclose(produced, wanted, rel_tol=0.01))
+'''
+REFERENCE_TABLE_COMPARISON = '''"""Read a reference table off disk, then compare."""
+
+import json
+from pathlib import Path
+
+ALIASES = json.loads(Path(__file__).with_name("aliases.json").read_text())
+
+
+def score(*, output, expected, input_data, metadata):
+    del input_data, metadata
+    produced = ALIASES.get(str(output).strip(), str(output).strip())
+    return float(produced == str(expected).strip())
+'''
+LLM_JUDGE_SCORER = '''"""Ask a model to grade the answer against a rubric."""
+
+import litellm
+
+RUBRIC = "Score 1 when the answer states the same fact, else 0."
+
+
+def score(*, output, expected, input_data, metadata):
+    del metadata
+    reply = litellm.completion(
+        model="gpt-4o-mini",
+        messages=[{"role": "user", "content": f"{RUBRIC}\\n{input_data}\\n{output}"}],
+    )
+    return float(reply["choices"][0]["message"]["content"].strip() == "1")
+'''
+DYNAMIC_IMPORT_OF_A_HELPER = '''"""Load the project's own comparison helper by name."""
+
+import importlib
+
+
+def score(*, output, expected, input_data, metadata):
+    del input_data, metadata
+    helper = importlib.import_module("project.compare")
+    return float(helper.same(str(output), str(expected)))
+'''
+CALLABLE_OBJECT_COMPARISON = '''"""A callable object rather than a function."""
+
+import unicodedata
+
+
+class Scorer:
+    def __init__(self, fold=True):
+        self.fold = fold
+
+    def __call__(self, *, output, expected, input_data, metadata):
+        del input_data, metadata
+        left = unicodedata.normalize("NFKC", str(output)).strip()
+        right = unicodedata.normalize("NFKC", str(expected)).strip()
+        return float(left.casefold() == right.casefold() if self.fold else left == right)
+
+
+score = Scorer()
+'''
+MATCH_DISPATCH_COMPARISON = '''"""Routes on the declared metadata kind."""
+
+
+def score(*, output, expected, input_data, metadata):
+    del input_data
+    match (metadata or {}).get("kind"):
+        case "numeric":
+            return float(abs(float(output) - float(expected)) < 0.01)
+        case "set":
+            return float(set(str(output).split()) == set(str(expected).split()))
+        case _:
+            return float(str(output).strip() == str(expected).strip())
+'''
+NON_EXECUTING_EVALUATORS = {
+    "callable object": CALLABLE_OBJECT_COMPARISON,
+    "match statement dispatch": MATCH_DISPATCH_COMPARISON,
+    "casefold comparison": CASEFOLD_COMPARISON,
+    "canonical SQL comparison": SQL_CANONICAL_COMPARISON,
+    "parser gate then comparison": PARSER_GATE_COMPARISON,
+    "fuzzy ratio": FUZZY_RATIO_COMPARISON,
+    "schema field comparison": SCHEMA_FIELD_COMPARISON,
+    "set overlap": SET_F1_COMPARISON,
+    "numeric tolerance": NUMERIC_TOLERANCE_COMPARISON,
+    "reference table lookup": REFERENCE_TABLE_COMPARISON,
+    "llm judge": LLM_JUDGE_SCORER,
+    "dynamic import of a helper": DYNAMIC_IMPORT_OF_A_HELPER,
+}
+
+SQLITE_ROUNDTRIP = '''"""Run both queries against a fixture database and compare rows."""
+
+import sqlite3
+
+
+def score(*, output, expected, input_data, metadata):
+    del metadata
+    connection = sqlite3.connect(input_data["database"])
+    produced = connection.execute(output).fetchall()
+    wanted = connection.execute(expected).fetchall()
+    connection.close()
+    return float(produced == wanted)
+'''
+DUCKDB_ROUNDTRIP = '''"""Same idea, on a different engine."""
+
+import duckdb
+
+
+def score(*, output, expected, input_data, metadata):
+    del metadata
+    connection = duckdb.connect(input_data["database"])
+    return float(connection.execute(output).fetchall() == connection.execute(expected).fetchall())
+'''
+HANDED_IN_CURSOR = '''"""The connection arrives in input_data. Nothing here imports a driver."""
+
+
+def score(*, output, expected, input_data, metadata):
+    del metadata
+    cursor = input_data["cursor"]
+    cursor.execute(output)
+    produced = cursor.fetchall()
+    cursor.execute(expected)
+    return float(produced == cursor.fetchall())
+'''
+SHELLS_OUT_TO_PSQL = '''"""Hand the query to the command line client."""
+
+import subprocess
+
+
+def score(*, output, expected, input_data, metadata):
+    del metadata
+    produced = subprocess.run(
+        ["psql", input_data["dsn"], "-c", output], capture_output=True, text=True
+    )
+    return float(produced.stdout.strip() == str(expected).strip())
+'''
+SHELLS_OUT_THROUGH_OS = '''"""The same idea through the older interface."""
+
+import os
+
+
+def score(*, output, expected, input_data, metadata):
+    del metadata
+    handle = os.popen(f"sqlite3 {input_data['database']} \\"{output}\\"")
+    return float(handle.read().strip() == str(expected).strip())
+'''
+EXECUTES_CANDIDATE_CODE = '''"""Run the candidate as Python and read a name back out."""
+
+
+def score(*, output, expected, input_data, metadata):
+    del input_data, metadata
+    namespace = {}
+    exec(output, {"__builtins__": {}}, namespace)
+    return float(namespace.get("answer") == expected)
+'''
+EVALUATES_CANDIDATE_EXPRESSION = '''"""Treat the candidate as an expression."""
+
+
+def score(*, output, expected, input_data, metadata):
+    del input_data, metadata
+    return float(eval(output) == eval(expected))
+'''
+FROM_IMPORT_OF_A_RUNNER = '''"""Imported by name rather than as a module."""
+
+from subprocess import run
+
+
+def score(*, output, expected, input_data, metadata):
+    del metadata
+    finished = run(["duckdb", input_data["database"], "-c", output], capture_output=True)
+    return float(finished.stdout.decode().strip() == str(expected).strip())
+'''
+POSTGRES_DRIVER = '''"""A driver import, with the cursor built inside a helper."""
+
+import psycopg2
+
+
+def connect(dsn):
+    return psycopg2.connect(dsn)
+
+
+def score(*, output, expected, input_data, metadata):
+    del metadata
+    with connect(input_data["dsn"]) as connection:
+        cursor = connection.cursor()
+        cursor.execute(output)
+        return float(cursor.fetchall() == expected)
+'''
+RUNS_A_CANDIDATE_FILE = '''"""Write the candidate out and run the file."""
+
+import runpy
+from pathlib import Path
+
+
+def score(*, output, expected, input_data, metadata):
+    del metadata
+    path = Path(input_data["scratch"]) / "candidate.py"
+    path.write_text(output)
+    namespace = runpy.run_path(str(path))
+    return float(namespace.get("answer") == expected)
+'''
+EXECUTING_EVALUATORS = {
+    "sqlite roundtrip": SQLITE_ROUNDTRIP,
+    "duckdb roundtrip": DUCKDB_ROUNDTRIP,
+    "handed-in cursor": HANDED_IN_CURSOR,
+    "shells out to psql": SHELLS_OUT_TO_PSQL,
+    "shells out through os": SHELLS_OUT_THROUGH_OS,
+    "executes candidate code": EXECUTES_CANDIDATE_CODE,
+    "evaluates candidate expression": EVALUATES_CANDIDATE_EXPRESSION,
+    "from-import of a runner": FROM_IMPORT_OF_A_RUNNER,
+    "postgres driver": POSTGRES_DRIVER,
+    "runs a candidate file": RUNS_A_CANDIDATE_FILE,
+}
+
+
+class TheEvaluatorCallPathIsReadOutOfItsOwnTreeTests(unittest.TestCase):
+    """traigent-first-run#380.
+
+    `check_evaluator` used to be an `ast.parse` and a verdict about syntax, so
+    a pure text comparator and a scorer that runs candidate SQL emitted
+    byte-identical metrics. `run-safety.md` ends this guide on the second, and
+    the readiness score paid 17 more points for declaring it, on a file nobody
+    had read.
+
+    The probe files above were written from the space of evaluators a customer
+    would hand over, not from the constructs the walk names, which is why
+    three of them are shapes a narrower implementation passes and then fails:
+    a canonical-form comparison that calls `compile`, a parser library that
+    reads SQL without connecting to anything, and a cursor that arrives in
+    `input_data` so no driver is ever imported.
+    """
+
+    def witnesses(self, source: str) -> tuple[str, ...]:
+        return MODULE.candidate_execution_witnesses(ast.parse(source))
+
+    def test_an_honest_comparison_evaluator_leaves_no_witness(self) -> None:
+        """Ten shapes that grade without running anything, all clean.
+
+        This is the false-refusal direction, and it is the expensive one: a
+        walk that flagged any of these would take 17 points off a customer who
+        did exactly what the guide asked for.
+        """
+        for name, source in NON_EXECUTING_EVALUATORS.items():
+            with self.subTest(evaluator=name):
+                self.assertEqual(self.witnesses(source), ())
+
+    def test_every_route_to_an_engine_leaves_a_witness(self) -> None:
+        """Ten shapes that reach an engine or a process, all found."""
+        for name, source in EXECUTING_EVALUATORS.items():
+            with self.subTest(evaluator=name):
+                found = self.witnesses(source)
+                self.assertTrue(found, f"{name} left no witness")
+
+    def test_a_connection_handed_in_is_found_with_no_import_to_read(self) -> None:
+        """The case a module list alone cannot see.
+
+        `HANDED_IN_CURSOR` imports nothing at all - the cursor arrives in
+        `input_data`, which is how an evaluator written against a project's own
+        fixtures usually gets one. The DB-API call names are what catch it, and
+        this asserts the import half did no work here.
+        """
+        tree = ast.parse(HANDED_IN_CURSOR)
+        imports = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, (ast.Import, ast.ImportFrom))
+        ]
+        self.assertEqual(imports, [])
+        self.assertEqual(
+            self.witnesses(HANDED_IN_CURSOR),
+            ("calls .execute() (line 7)", "calls .execute() (line 9)"),
+        )
+
+    def test_the_dbapi_call_names_come_from_the_standard_library(self) -> None:
+        """Derived, not remembered.
+
+        The engine surface is read off `sqlite3.Connection`, the DB-API 2.0
+        implementation this interpreter ships, so a name the specification
+        carries cannot be missing from the table because nobody had met it.
+        """
+        import sqlite3
+
+        dbapi_names = {
+            name
+            for name in dir(sqlite3.Connection)
+            if name.startswith("execute") and not name.startswith("_")
+        }
+        self.assertTrue(dbapi_names)
+        self.assertLessEqual(dbapi_names, MODULE._ENGINE_CALL_NAMES)
+
+    def test_an_engine_named_in_the_symbol_rather_than_the_module_is_found(
+        self,
+    ) -> None:
+        """The spelling the cloud drivers document for themselves.
+
+        `from google.cloud import bigquery` and `from mysql import connector`
+        put the engine's name in the imported symbol, and a table asked only
+        about the module half answers "no" to both. A relative import of the
+        same word is a name in the customer's own package and must stay clean.
+        """
+        self.assertEqual(
+            self.witnesses("from google.cloud import bigquery\n"),
+            ("imports google.cloud.bigquery (line 1)",),
+        )
+        self.assertEqual(
+            self.witnesses("from mysql import connector\n"),
+            ("imports mysql.connector (line 1)",),
+        )
+        self.assertEqual(
+            self.witnesses("from snowflake import connector\n"),
+            ("imports snowflake.connector (line 1)",),
+        )
+        self.assertEqual(self.witnesses("from . import duckdb\n"), ())
+        self.assertEqual(self.witnesses("from .helpers import subprocess\n"), ())
+
+    def test_the_process_family_is_matched_and_ordinary_os_members_are_not(
+        self,
+    ) -> None:
+        """Both directions over `os`, from a list written out of its docs.
+
+        Written out rather than filtered by the predicate under test, because
+        a fixture derived from its own assertion proves nothing. The second
+        half is the one that keeps the prefix rule honest: `exec` and `spawn`
+        are short, and a rule that matched more of `os` than this would start
+        refusing evaluators that merely read a file.
+        """
+        documented = (
+            "execl execle execlp execlpe execv execve execvp execvpe "
+            "spawnl spawnle spawnlp spawnlpe spawnv spawnve spawnvp spawnvpe "
+            "posix_spawn posix_spawnp system popen startfile fork forkpty"
+        ).split()
+        present = [name for name in documented if hasattr(os, name)]
+        self.assertGreater(len(present), 10)
+        for name in present:
+            with self.subTest(member=name):
+                self.assertTrue(MODULE._is_process_attribute(name))
+        ordinary = (
+            "path environ getcwd listdir sep remove stat walk open close "
+            "read write rename makedirs urandom cpu_count getenv"
+        ).split()
+        for name in ordinary:
+            with self.subTest(member=name):
+                self.assertTrue(hasattr(os, name))
+                self.assertFalse(MODULE._is_process_attribute(name))
+
+    def test_building_a_code_object_is_not_running_one(self) -> None:
+        """`compile`, `literal_eval` and `import_module` are deliberately out.
+
+        Each was left out for its own reason and each would have cost a real
+        evaluator its credit: `re.compile` is how the canonical-form
+        comparison this guide asks for is written, `ast.literal_eval` reads a
+        number without running anything, and loading a module by name is how
+        ordinary Python reaches a dependency.
+        """
+        self.assertNotIn("compile", MODULE._EXECUTION_BUILTIN_CALLS)
+        self.assertEqual(self.witnesses("import re\nP = re.compile('a')\n"), ())
+        self.assertEqual(
+            self.witnesses("from re import compile\nP = compile('a')\n"), ()
+        )
+        self.assertEqual(self.witnesses("import ast\nV = ast.literal_eval('1')\n"), ())
+        self.assertEqual(self.witnesses(DYNAMIC_IMPORT_OF_A_HELPER), ())
+
+    def test_a_witness_names_the_construct_and_the_line_it_sits_on(self) -> None:
+        """A refusal a customer cannot check is one they cannot disagree with."""
+        self.assertEqual(
+            self.witnesses(SQLITE_ROUNDTRIP),
+            (
+                "imports sqlite3 (line 3)",
+                "calls .execute() (line 9)",
+                "calls .execute() (line 10)",
+            ),
+        )
+        self.assertEqual(
+            self.witnesses(EXECUTES_CANDIDATE_CODE), ("calls exec() (line 7)",)
+        )
+        # `import os` is not a witness and must not become one. Every second
+        # Python file imports it, and an evaluator that reads a path out of it
+        # has started no process. What is reported is the call.
+        self.assertEqual(
+            self.witnesses(SHELLS_OUT_THROUGH_OS), ("calls os.popen() (line 8)",)
+        )
+        self.assertEqual(self.witnesses("import os\nD = os.environ['HOME']\n"), ())
+
+    def test_an_engine_route_warns_and_says_so_in_the_metrics(self) -> None:
+        MODULE.RESULTS.clear()
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "evaluator.py"
+            path.write_text(SQLITE_ROUNDTRIP)
+            MODULE.check_evaluator(path)
+        result = next(r for r in MODULE.RESULTS if r.check == "evaluator-shape")
+        self.assertEqual(result.status, MODULE.WARN)
+        self.assertTrue(result.metrics["exists"])
+        self.assertTrue(result.metrics["parses"])
+        self.assertTrue(result.metrics["executes"])
+        self.assertIn("imports sqlite3 (line 3)", result.metrics["execution_witnesses"])
+        self.assertIn("sqlite3", result.detail)
+
+    def test_a_comparison_evaluator_reports_a_walk_that_found_nothing(self) -> None:
+        """`executes: false` is a walk that ran, not a check that was skipped.
+
+        The distinction is the whole reason the field is emitted on a passing
+        check at all: readiness has to tell "read, and nothing found" apart
+        from "no file was read", and it can only do that if the clean case
+        says something.
+        """
+        MODULE.RESULTS.clear()
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "evaluator.py"
+            path.write_text(SQL_CANONICAL_COMPARISON)
+            MODULE.check_evaluator(path)
+        result = next(r for r in MODULE.RESULTS if r.check == "evaluator-shape")
+        self.assertEqual(result.status, MODULE.PASS)
+        self.assertIs(result.metrics["executes"], False)
+        self.assertNotIn("execution_witnesses", result.metrics)
+
+    def test_a_file_that_does_not_parse_reports_no_execution_verdict(self) -> None:
+        """No tree, no walk, and no field claiming one ran."""
+        MODULE.RESULTS.clear()
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "evaluator.py"
+            path.write_text("def score(output, expected:\n    return 1.0\n")
+            MODULE.check_evaluator(path)
+        result = next(r for r in MODULE.RESULTS if r.check == "evaluator-shape")
+        self.assertEqual(result.status, MODULE.FAIL)
+        self.assertNotIn("executes", result.metrics)
+
+    def test_the_walk_reads_the_tree_and_opens_nothing_else(self) -> None:
+        """Still inside the static gate.
+
+        The walk is handed a tree `ast.parse` already built, so the guarantee
+        `check_evaluator` has always made - no import, no call, no module top
+        level - is not weakened by asking it a second question. Asserted by
+        walking an evaluator whose import would fail loudly if anything
+        resolved it.
+        """
+        source = "import definitely_not_installed_" + "engine\n"
+        self.assertEqual(self.witnesses(source), ())
+        self.assertEqual(
+            self.witnesses("import duckdb\n"), ("imports duckdb (line 1)",)
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
+
+
+# Whole-value comparisons, in the spellings evaluators are actually written
+# in. `ALIASED_NORMALISED` and `REVERSED_OPERANDS` are here because they are
+# the same comparison rearranged, and a walk that only understood the corpus's
+# one-line form would answer "not established" to both and quietly hand back
+# the credit it was meant to withhold.
+BARE_EQUALITY = '''"""Character for character, and nothing else."""
+
+
+def score(*, output, expected, input_data, metadata):
+    del input_data, metadata
+    return float(output == expected)
+'''
+STRINGIFIED_EQUALITY = '''"""The same, with both sides read as text first."""
+
+
+def score(*, output, expected, input_data, metadata):
+    del input_data, metadata
+    return str(output) == str(expected)
+'''
+ALIASED_NORMALISED = '''"""Both sides prepared on their own line, then compared."""
+
+
+def score(*, output, expected, input_data, metadata):
+    del input_data, metadata
+    produced = str(output).strip().casefold()
+    wanted = str(expected).strip().casefold()
+    return float(produced == wanted)
+'''
+REVERSED_OPERANDS = '''"""Expected on the left, and only one side folded."""
+
+
+def score(*, output, expected, input_data, metadata):
+    del input_data, metadata
+    return float(str(expected).strip() == str(output))
+'''
+COMPARES_ONE_ANSWER_TWICE = '''"""Compares the answer with itself. Not a comparison against the expectation."""
+
+
+def score(*, output, expected, input_data, metadata):
+    del input_data, metadata, expected
+    return float(output.strip() == output.casefold())
+'''
+TWO_ANSWER_TAKING_CALLABLES = '''"""A helper takes both answers too, so the scorer is ambiguous."""
+
+
+def same(output, expected):
+    return str(output).strip() == str(expected).strip()
+
+
+def score(*, output, expected, input_data, metadata):
+    del input_data, metadata
+    return float(same(output, expected))
+'''
+
+
+class TheComparisonTheFilePerformsIsProvedOrLeftUnsettledTests(unittest.TestCase):
+    """traigent-first-run#380, the half a single-field check cannot reach.
+
+    It is the matched pair that pays: over one unchanged text comparator,
+    `exact` + `code-sql`, `normalized-exact` + `structured` and
+    `normalized-exact` + `code-sql` all read the same, and `exact` +
+    `structured` read the top band with no caps. So the top band is reached by
+    mis-declaring both fields consistently, and checking either field alone
+    sees nothing wrong.
+
+    What this walk establishes is what the comparison IS, so every declaration
+    can be measured against one fact. It proves or it declines: the `None`
+    answer is the common one and refutes nothing.
+    """
+
+    def shape(self, source: str):
+        return MODULE.derived_comparison_shape(ast.parse(source))
+
+    def test_a_comparison_with_no_transform_reads_as_exact(self) -> None:
+        for name, source in (
+            ("bare equality", BARE_EQUALITY),
+            ("stringified equality", STRINGIFIED_EQUALITY),
+        ):
+            with self.subTest(evaluator=name):
+                shape, transforms, _line = self.shape(source)
+                self.assertEqual(shape, "exact")
+                self.assertEqual(transforms, frozenset())
+
+    def test_a_transform_on_either_side_reads_as_normalized(self) -> None:
+        """Either side, because normalising one is still normalising."""
+        shape, transforms, line = self.shape(CASEFOLD_COMPARISON)
+        self.assertEqual(shape, "normalized-exact")
+        self.assertEqual(transforms, frozenset({"strip", "casefold"}))
+        self.assertEqual(line, 6)
+        aliased, aliased_transforms, _line = self.shape(ALIASED_NORMALISED)
+        self.assertEqual(aliased, "normalized-exact")
+        self.assertEqual(aliased_transforms, frozenset({"strip", "casefold"}))
+        reversed_shape, reversed_transforms, _line = self.shape(REVERSED_OPERANDS)
+        self.assertEqual(reversed_shape, "normalized-exact")
+        self.assertEqual(reversed_transforms, frozenset({"strip"}))
+
+    def test_every_other_honest_evaluator_is_left_unsettled(self) -> None:
+        """The `None` branch, over the same real shapes the other walk uses.
+
+        This is the direction that decides whether the check is safe to ship.
+        Each of these grades honestly and none of them is a whole-value
+        equality, so each must come back unestablished and keep every point it
+        had. A walk that guessed at any of them would be refusing a customer
+        on a shape it had not read.
+        """
+        settled = {"casefold comparison"}
+        for name, source in NON_EXECUTING_EVALUATORS.items():
+            if name in settled:
+                continue
+            with self.subTest(evaluator=name):
+                self.assertIsNone(self.shape(source))
+
+    def test_a_shape_the_walk_cannot_account_for_is_not_guessed_at(self) -> None:
+        """Four refusals, each for its own reason.
+
+        A comparison against something other than the expected answer, a
+        second callable taking both answers, an operator that is not equality,
+        and a branch. Each would have to be followed to be judged, and none of
+        them is.
+        """
+        self.assertIsNone(self.shape(COMPARES_ONE_ANSWER_TWICE))
+        self.assertIsNone(self.shape(TWO_ANSWER_TAKING_CALLABLES))
+        self.assertIsNone(
+            self.shape(
+                "def score(*, output, expected, input_data, metadata):\n"
+                "    return float(output != expected)\n"
+            )
+        )
+        self.assertIsNone(
+            self.shape(
+                "def score(*, output, expected, input_data, metadata):\n"
+                "    if not output:\n"
+                "        return 0.0\n"
+                "    return float(output == expected)\n"
+            )
+        )
+
+    def test_a_numeric_reading_is_not_reported_as_a_text_comparison(self) -> None:
+        """`float()` around an answer reinterprets it and stops the proof.
+
+        `str()` is the one neutral wrapper, because it changes nothing a
+        string comparison would see. Reading an answer as a number is a
+        different check, and this walk declines it rather than filing it under
+        one of the two names it knows.
+        """
+        self.assertIsNone(
+            self.shape(
+                "def score(*, output, expected, input_data, metadata):\n"
+                "    return float(float(output) == float(expected))\n"
+            )
+        )
+
+    def test_the_proof_reaches_the_metrics_with_a_line_to_check_it_on(self) -> None:
+        MODULE.RESULTS.clear()
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "evaluator.py"
+            path.write_text(CASEFOLD_COMPARISON)
+            MODULE.check_evaluator(path)
+        result = next(r for r in MODULE.RESULTS if r.check == "evaluator-shape")
+        self.assertEqual(result.metrics["comparison_shape"], "normalized-exact")
+        self.assertEqual(
+            result.metrics["comparison_witness"],
+            "casefold, strip applied before the comparison (line 6)",
+        )
+
+    def test_an_unsettled_file_carries_no_comparison_field_at_all(self) -> None:
+        """Absent, not null. There is no value that honestly stands for it."""
+        MODULE.RESULTS.clear()
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "evaluator.py"
+            path.write_text(FUZZY_RATIO_COMPARISON)
+            MODULE.check_evaluator(path)
+        result = next(r for r in MODULE.RESULTS if r.check == "evaluator-shape")
+        self.assertNotIn("comparison_shape", result.metrics)
+        self.assertNotIn("comparison_witness", result.metrics)
