@@ -24842,6 +24842,15 @@ class TheBoundedDrawSpendsOnDifferentRowsTests(unittest.TestCase):
             ),
         ),
         (
+            "which rows the draw's size is read off",
+            ("among the rows this run can score",),
+            (
+                "at the tuning split's distinct-input count",
+                "`tuning_distinct_rows`",
+                "the tuning split's distinct inputs, whichever is smaller",
+            ),
+        ),
+        (
             "whether the rule reaches the held-out split",
             ("this rule does not reach it",),
             (

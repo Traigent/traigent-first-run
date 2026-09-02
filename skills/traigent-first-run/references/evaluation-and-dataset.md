@@ -852,15 +852,18 @@ Six rules make the subset honest:
    separate none of them - whatever expected answers they carry. The second is a provider call in
    every trial and no comparison at all. Distinctness here is therefore counted the one way
    preflight already counts it and the card already prints it: **different normalized inputs**,
-   reported as `tuning_distinct_rows` beside the tuning size. Do not re-key it on the expected
-   answer as well - a multi-reference split of 60 questions under two accepted golds is 60
-   different examples, not 120, and re-keying would say 120 while the card says 60.
+   reported beside the tuning size. Do not re-key it on the expected answer as well - a
+   multi-reference split of 60 questions under two accepted golds is 60 different examples, not
+   120, and re-keying would say 120 while the card says 60.
 
    Distinct **across the whole draw**, not within one band: a row already drawn under one band buys
    nothing when another band offers the same input again. Work the bands in turn, take up to four
    inputs each band has not already contributed, and stop at eighteen or at the tuning split's
-   distinct-input count, whichever is smaller. Price and report that number, because it is what the
-   run buys.
+   distinct inputs **among the rows this run can score**, whichever is smaller. Those are the
+   labelled tuning rows, or every present tuning row under a method that scores without a
+   reference. A count of the different inputs across all tuning rows is the larger of the two on a
+   part-annotated file, and sizing a paid draw from it buys back the repeats this rule removes.
+   Price and report the number actually drawn, because it is what the run buys.
 
    **When a band cannot reach four, the draw is short by that much, and the shortfall is not made up
    from the bands that can.** An extra `easy` input is not a `hard` one, so topping the count back

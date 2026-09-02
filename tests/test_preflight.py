@@ -3261,11 +3261,18 @@ class TheSubsetProposalCountsDifferentQuestionsTests(unittest.TestCase):
     """The number the bounded-draw rule names has to be the number preflight emits.
 
     `references/evaluation-and-dataset.md` rule 6 tells an assistant to draw
-    distinct inputs and to read their count off `tuning_distinct_rows`. That is
-    a guidance sentence pointing at a metric key, and the two can drift apart
-    silently: the sentence is prose and the key is emitted by this script. These
-    run the real check and assert the numbers the rule depends on, so a rename
-    or a re-keying here fails beside the document rather than a release later.
+    distinct inputs and to stop at the tuning split's distinct inputs among the
+    rows this run can score. That is a guidance sentence about a population, and
+    the population and the script can drift apart silently: the sentence is
+    prose and the counting is done here. These run the real check and assert the
+    numbers the rule depends on, so a re-keying here fails beside the document
+    rather than a release later.
+
+    The rule names a population rather than a metric key on purpose. A count of
+    the different inputs across ALL tuning rows is a true fact about the file
+    and is larger than the scoreable one wherever some tuning rows carry no
+    expected answer - and a paid draw sized from the larger number keeps exactly
+    the repeats this rule removes.
 
     The re-keying matters most and is the reason the rule says "inputs" twice.
     A multi-reference split - one question with two accepted golds - is two rows
@@ -3367,6 +3374,53 @@ class TheSubsetProposalCountsDifferentQuestionsTests(unittest.TestCase):
         self.assertEqual(finding.metrics["distinct_rows"], 400)
         self.assertEqual(finding.metrics["first_run_rows"], 18)
         self.assertNotIn("different inputs among them", finding.detail)
+
+    def test_the_proposal_counts_only_rows_this_run_can_score(self) -> None:
+        """The population, not just the counting. This is the #356 shape.
+
+        A file half collected and half annotated is the ordinary state of one
+        somebody is still working on. Its unlabelled rows cannot be scored, so
+        they are not rows a configuration can be told apart on and they are not
+        rows the bounded draw may be sized from - and they are exactly what
+        makes a distinct count over every present row larger than the one this
+        proposal is allowed to use.
+
+        The fixture is built from the shape and not from either count: 150
+        labelled rows written from a fixed number of questions, beside 150
+        unlabelled rows that repeat nothing. Counted over the rows that can be
+        scored, the proposal is the questions those rows ask; counted over every
+        present row it would be the 18-row default, because 150 unlabelled
+        inputs are more than enough to hide the repeats. Both numbers are
+        asserted, so the test fails if the bound is dropped as well as if it is
+        taken over the wrong rows.
+        """
+        questions = 12
+        rows = [
+            {
+                "id": f"labelled-{index}",
+                "input": f"question number {index % questions} about the filing",
+                "output": f"answer {index % questions}",
+            }
+            for index in range(150)
+        ]
+        rows += [
+            {"id": f"unlabelled-{index}", "input": f"draft question {index}"}
+            for index in range(150)
+        ]
+        finding = self.scan(rows)["dataset-first-run-rows"]
+        self.assertEqual(finding.metrics["usable_rows"], 150)
+        self.assertEqual(
+            finding.metrics["distinct_rows"],
+            questions,
+            "the distinct count reaches rows that carry no expected answer, so "
+            "it is not the population the draw can be sized from",
+        )
+        self.assertEqual(
+            finding.metrics["first_run_rows"],
+            questions,
+            "the proposal is above the questions this run can score, so it "
+            "prices calls no comparison can use",
+        )
 
     def test_the_bound_is_applied_and_not_merely_reported(self) -> None:
         """The helper itself, at the boundary the emit cannot reach.
