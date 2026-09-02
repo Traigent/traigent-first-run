@@ -4,12 +4,11 @@
 Every scorer must return a finite, normalized, higher-is-better score in ``[0,1]``.
 For deterministic calibration the child is credential-stripped, but process separation is not a
 sandbox. This first-run guide does not calibrate a scorer that executes candidate code or SQL
-through the ordinary path - not because the probes are the model's, they are authored here, but
-because calling such a scorer opens an engine against a database this step cannot bound.
-``--contained`` is the one bounded route that will, and ``references/run-safety.md`` states its
-limits beside the manual containment review it does not replace. The read below decides which of
-the two a scorer is eligible for, and refuses rather than guesses when it cannot follow the
-scorer's path.
+at all - not because the probes are the model's, they are authored here, but because calling such a
+scorer opens an engine against a database this step cannot bound. ``references/run-safety.md``
+routes that work to a separate containment review and records why no in-process route replaces it.
+The gate below asks ``preflight.py``'s one-directional walk of every file this run would import,
+including the module behind ``--reply-transform``, and refuses on a witness.
 """
 
 from __future__ import annotations
@@ -17,7 +16,6 @@ from __future__ import annotations
 import argparse
 import ast
 import asyncio
-import builtins
 import contextlib
 import importlib.util
 import inspect
@@ -31,7 +29,6 @@ import sys
 import threading
 import time
 import traceback
-import urllib.parse
 from pathlib import Path
 from typing import Any
 
@@ -572,1184 +569,155 @@ def literal_or_file(value: str) -> Any:
         return value
 
 
-# The execution-scope read, and exactly what it is allowed to conclude.
+# WHERE THE ENGINE QUESTION IS ANSWERED, and it is not answered here.
 #
-# The docstring at the top of this file has always said this guide does not
-# calibrate a scorer whose complete path executes candidate-generated code or
-# SQL. Until now that sentence was the whole of the rule: the only refusal in
-# the file was `--allow-execution`, which acknowledges that importing the
-# scorer is intended and says nothing whatever about what the scorer then does
-# with the probe it is handed. A rule nothing executes is advice, and on a
-# text-to-SQL project the card scored obedience well below the same run that
-# ignored the rule - a band lower, on evidence the obedient run was forbidden
-# to collect - so it was advice with a price on following it.
+# `preflight.py`'s `candidate_execution_witnesses` walks a parsed file for the
+# constructs that reach a code or SQL engine, and `evaluator-shape` reports what
+# it found. One decision, one home. This file asks that function and owns no
+# engine table of its own: a second table would drift from the first, and the
+# tool that refuses would end up disagreeing with the card that warns.
 #
-# TWO MOMENTS, TWO REASONS, and conflating them is what made the old sentence
-# false. Calibration runs the four probes this guide's own matrix authors, so
-# there is no model-written statement at this step at all; what it does do is
-# import the scorer and let it open its engine against whatever database it is
-# configured for, and that database is the project's. THAT is why calibration
-# is refused outside the envelope, and it is a containment question rather than
-# a claim about where the SQL came from. A TRIAL is the other moment - there the
-# model writes the query and the scorer runs it - and nothing here opens it.
-# Each refusal below states the reason that is true of the step it refuses.
+# WHAT THIS GATE CLAIMS, AND WHAT IT REFUSES TO CLAIM. That walk is
+# one-directional and says so in its own comment: a witness establishes that the
+# file reaches an engine, and finding none establishes nothing whatever. An
+# engine behind a helper module, a connection handed in through `input_data`, or
+# a name bound at runtime all escape it (traigent-first-run#416). So this gate
+# only ever REFUSES. It never clears: a run with no witness is a run this tool
+# had no grounds to stop, not a run it checked, and nothing here reports it as
+# an all-clear. The read of the complete call path that `SKILL.md` mandates is
+# still what covers the rest, and it is still a person's job.
 #
-# Deciding whether an arbitrary program submits its own input to an engine is
-# undecidable, so this read is deliberately asymmetric and each direction is
-# stated rather than implied:
+# That asymmetry is load-bearing, and it is what an earlier draft of this change
+# got wrong. It tried to close the gap with a second, deeper reader of its own
+# whose clearing branch was meant to fail closed. Adversarial review found seven
+# classes of scorer that really execute their input and cleared it anyway, three
+# of them recording nothing at all about what the read had skipped. A clearing
+# branch that is unsound is worse than the prose rule it replaces, because it
+# tells the reader it checked. So there is no clearing branch here to be wrong.
 #
-#   * SOUND WHERE IT REFUSES. A sink on the followed path is a real call into a
-#     real engine and the file, line and callee are printed, so a refusal can
-#     be checked against the source rather than taken on trust.
-#   * BOUNDED WHERE IT CLEARS. `no-execution-found` means "no sink on the path
-#     this read could follow", never "this scorer does not execute". The card
-#     records every module the read declined to open, so the size of the bound
-#     is visible to whoever reads the card.
-#   * FAILS CLOSED WHERE IT CANNOT READ. A call this reader cannot resolve to
-#     anything - a value fetched with `getattr`, a callable pulled out of a
-#     dict, a project module whose source will not parse - makes the verdict
-#     `unreadable`, and `unreadable` refuses exactly as `executes` does.
-#
-# That last one is the point of the whole design. The recurring defect in this
-# package is a check that answers a semantic question from a surface signal and
-# lets its "did not find it" branch count as a pass. Here the did-not-find-it
-# branch is a refusal, and `test_a_scorer_this_reader_cannot_follow_is_refused`
-# proves it by handing the reader a scorer whose sink is behind dynamic
-# dispatch, asserting the refusal, and then asserting that the same scorer
-# really does execute its input when it is run.
-#
-# Failing closed is only affordable because the refusal is not a terminus:
-# `--contained` runs the same probes on the same scorer inside the envelope
-# below and produces the same calibration evidence. A scorer this reader cannot
-# clear is routed, not stopped.
-SCOPE_CLEAR = "no-execution-found"
-SCOPE_EXECUTES = "executes"
-SCOPE_UNREADABLE = "unreadable"
-
-# Every call into one of these modules is treated as an execution sink. The
-# list is engines, not danger in general: each one takes a string and runs it,
-# which is the exact shape SKILL.md's rule is about. A module here is refused
-# on any call rather than on a named attribute, because the connect call and
-# the execute call belong to the same decision - a scorer that opens a database
-# to grade with is the class this gate exists for, wherever it puts the verb.
-EXECUTION_SINK_MODULES = frozenset(
-    {
-        "aiosqlite",
-        "asyncpg",
-        "clickhouse_connect",
-        "clickhouse_driver",
-        "commands",
-        "ctypes",
-        "cx_Oracle",
-        "databricks",
-        "dill",
-        "duckdb",
-        "importlib",
-        "marshal",
-        "multiprocessing",
-        "MySQLdb",
-        "mysql",
-        "oracledb",
-        "pickle",
-        "presto",
-        "psycopg",
-        "psycopg2",
-        "pty",
-        "pyhive",
-        "pymysql",
-        "pyodbc",
-        "runpy",
-        "snowflake",
-        "sqlalchemy",
-        "sqlite3",
-        "subprocess",
-        "trino",
-    }
-)
-
-# `os` is not an engine and most of it is path arithmetic, so it is named at
-# the attribute rather than at the module: these are the members that start a
-# process or replace this one.
-OS_EXECUTION_ATTRIBUTES = frozenset(
-    {
-        "execl",
-        "execle",
-        "execlp",
-        "execlpe",
-        "execv",
-        "execve",
-        "execvp",
-        "execvpe",
-        "fork",
-        "forkpty",
-        "popen",
-        "posix_spawn",
-        "posix_spawnp",
-        "spawnl",
-        "spawnle",
-        "spawnlp",
-        "spawnlpe",
-        "spawnv",
-        "spawnve",
-        "spawnvp",
-        "spawnvpe",
-        "startfile",
-        "system",
-    }
-)
-
-# Method names that hand their argument to an engine whatever the receiver is.
-# Matched on the name alone and deliberately: a cursor, a connection, a session
-# and an engine are four different objects with one verb between them, and no
-# static read of a project resolves which one a local variable holds. Over-
-# matching here costs a refusal that `--contained` answers; under-matching
-# costs the gate.
-EXECUTION_SINK_METHODS = frozenset(
-    {
-        "exec_driver_sql",
-        "execute",
-        "execute_batch",
-        "execute_values",
-        "executemany",
-        "executescript",
-        "read_sql",
-        "read_sql_query",
-        "read_sql_table",
-    }
-)
-
-# Builtins that run what they are given.
-#
-# `compile` and `ast.parse` are deliberately absent, and their absence is the
-# rule rather than an oversight: they PARSE, they do not run, and a parser gate
-# is the first half of the very method `references/evaluation-and-dataset.md`
-# recommends for a code answer. Refusing them would refuse the in-scope route.
-# `eval(compile(...))` and `exec(compile(...))` are still caught, at the verb
-# that actually runs the object.
-EXECUTION_SINK_BUILTINS = frozenset({"__import__", "eval", "exec", "execfile"})
-
-# Builtins whose result this reader cannot follow. They are not sinks - they
-# are the end of the read, which is what `unreadable` means.
-OPAQUE_BUILTINS = frozenset({"getattr", "globals", "locals", "vars"})
-
-# Builtins a scorer may call without ending the read. Everything outside this
-# set that is not resolved to a definition, an import or a sink is unreadable,
-# so the set is enumerated rather than guessed at from `builtins`: a name this
-# reader has not thought about must not clear by default.
-SAFE_BUILTINS = frozenset(
-    {
-        "abs",
-        "all",
-        "any",
-        "ascii",
-        "bin",
-        "bool",
-        "bytearray",
-        "bytes",
-        "callable",
-        "chr",
-        "classmethod",
-        # PARSES its argument and hands back a code object without running it,
-        # and a parser gate over the answer is the first half of the method
-        # this guide recommends for a code answer. The verbs that RUN a code
-        # object are `eval` and `exec`, and both are sinks above.
-        "compile",
-        "complex",
-        "delattr",
-        "dict",
-        "dir",
-        "divmod",
-        "enumerate",
-        "filter",
-        "float",
-        "format",
-        "frozenset",
-        "hash",
-        "hex",
-        "id",
-        "int",
-        "isinstance",
-        "issubclass",
-        "iter",
-        "len",
-        "list",
-        "map",
-        "max",
-        "hasattr",
-        "memoryview",
-        "min",
-        "next",
-        "object",
-        "oct",
-        "open",
-        "ord",
-        "pow",
-        "property",
-        "setattr",
-        "staticmethod",
-        "super",
-        "print",
-        "range",
-        "repr",
-        "reversed",
-        "round",
-        "set",
-        "slice",
-        "sorted",
-        "str",
-        "sum",
-        "tuple",
-        "type",
-        "zip",
-    }
-)
-
-# Exception constructors a scorer raises. Calling one is not a call this reader
-# needs to follow, and refusing them would end the read inside every `raise`.
-SAFE_EXCEPTION_SUFFIX = ("Error", "Exception", "Warning")
-
-# A read that has opened this many functions has stopped being a read of one
-# scorer. Exhausting it is `unreadable`, never a pass: a budget whose overrun
-# clears is the same defect as a not-found branch that clears.
-SCOPE_READ_BUDGET = 400
-
-# How many sites a refusal prints before it says how many more there are.
-MAX_REPORTED_SCOPE_SITES = 5
+# BOTH FILES THE CHILD IMPORTS ARE READ, and the second one is the reason this
+# gate is worth having. The scorer is the obvious file. The module behind
+# `--reply-transform` is imported and called in the same child on every probe,
+# and `--allow-execution`'s own help text has always said so - "and the module
+# behind --reply-transform, whose top level runs on the same import". It was
+# simply never looked at. A transform whose module opens a connection at import
+# is the same hazard as a scorer that does, reached one flag earlier.
 
 
-def is_safe_exception_name(name: str) -> bool:
-    """Whether calling this name raises rather than runs something.
+# How many witnesses a refusal prints before it says how many more there are.
+MAX_REPORTED_EXECUTION_WITNESSES = 5
 
-    The builtin half is exact - `KeyboardInterrupt` and `SystemExit` carry no
-    suffix, and a scorer that raises one is doing control flow. The suffix half
-    is the bound, and it is narrow on purpose: a name this read could not
-    resolve which is spelled like an exception is treated as one rather than
-    ending the read inside every `raise` a project writes.
+
+PREFLIGHT_MODULE_NAME = "traigent_first_run_preflight"
+
+
+def preflight_walk() -> Any:
+    """The one function that answers whether a file reaches an engine.
+
+    Loaded by path rather than by `import preflight`, because these scripts are
+    run directly and copied into a bundle rather than installed as a package, so
+    the sibling is not reliably importable by name. Registered in `sys.modules`
+    before it is executed: `preflight.py` builds dataclasses at its top level,
+    and `dataclasses` resolves a class's own module out of `sys.modules` while
+    doing it.
     """
-    builtin = getattr(builtins, name, None)
-    if isinstance(builtin, type) and issubclass(builtin, BaseException):
-        return True
-    return name[:1].isupper() and name.endswith(SAFE_EXCEPTION_SUFFIX)
+    existing = sys.modules.get(PREFLIGHT_MODULE_NAME)
+    if existing is not None:
+        return existing.candidate_execution_witnesses
+    path = Path(__file__).resolve().parent / "preflight.py"
+    spec = importlib.util.spec_from_file_location(PREFLIGHT_MODULE_NAME, path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot load {path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[PREFLIGHT_MODULE_NAME] = module
+    try:
+        spec.loader.exec_module(module)
+    except BaseException:
+        del sys.modules[PREFLIGHT_MODULE_NAME]
+        raise
+    return module.candidate_execution_witnesses
 
 
-class ModuleRead:
-    """One parsed project file, and the names its top level binds."""
+def execution_scope_scan(files: dict[str, Path]) -> dict[str, Any]:
+    """Ask preflight's walk of every file this run is about to import.
 
-    def __init__(self, path: Path, tree: ast.Module) -> None:
-        self.path = path
-        self.tree = tree
-        self.functions: dict[str, ast.AST] = {}
-        self.classes: dict[str, ast.ClassDef] = {}
-        # name -> dotted module it stands for, for `import x` / `import x as y`
-        self.module_aliases: dict[str, str] = {}
-        # name -> (dotted module, attribute) for `from m import n [as a]`
-        self.imported_names: dict[str, tuple[str, str]] = {}
-        self.star_imports: list[ast.ImportFrom] = []
-        self.bound_values: set[str] = set()
-        # name -> the module-level call that built it, so `STORE.rows(sql)` can
-        # be followed into the class `STORE` was constructed from. Without this
-        # the read cleared a scorer whose engine sat one attribute away: the
-        # receiver was unresolvable, the method name was not one of the engine
-        # verbs, and "could not follow it" quietly counted as "found nothing".
-        self.instance_sources: dict[str, ast.Call] = {}
-        self.top_level: list[ast.AST] = []
-        for statement in tree.body:
-            if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                self.functions[statement.name] = statement
-                continue
-            if isinstance(statement, ast.ClassDef):
-                self.classes[statement.name] = statement
-                continue
-            self.top_level.append(statement)
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Import):
-                for alias in node.names:
-                    self.module_aliases[alias.asname or alias.name.split(".")[0]] = (
-                        alias.name
-                    )
-            elif isinstance(node, ast.ImportFrom):
-                if any(alias.name == "*" for alias in node.names):
-                    self.star_imports.append(node)
-                    continue
-                module = "." * node.level + (node.module or "")
-                for alias in node.names:
-                    self.imported_names[alias.asname or alias.name] = (
-                        module,
-                        alias.name,
-                    )
-            elif isinstance(node, ast.Assign):
-                for target in node.targets:
-                    for name in ast.walk(target):
-                        if isinstance(name, ast.Name):
-                            self.bound_values.add(name.id)
-                if isinstance(node.value, ast.Call) and len(node.targets) == 1:
-                    target = node.targets[0]
-                    if isinstance(target, ast.Name):
-                        self.instance_sources[target.id] = node.value
-            elif isinstance(node, (ast.AnnAssign, ast.AugAssign)):
-                if isinstance(node.target, ast.Name):
-                    self.bound_values.add(node.target.id)
-
-
-def attribute_root(node: ast.Attribute) -> str | None:
-    """The leftmost `Name` of a dotted attribute chain, if it is one."""
-    current: ast.AST = node
-    while isinstance(current, ast.Attribute):
-        current = current.value
-    return current.id if isinstance(current, ast.Name) else None
-
-
-def local_bindings(node: ast.AST) -> tuple[dict[str, ast.AST], set[str]]:
-    """Names a function body binds: nested definitions, and everything else."""
-    definitions: dict[str, ast.AST] = {}
-    values: set[str] = set()
-    for child in ast.walk(node):
-        if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            definitions[child.name] = child
-        elif isinstance(child, ast.ClassDef):
-            values.add(child.name)
-        elif isinstance(child, ast.Assign):
-            for target in child.targets:
-                for name in ast.walk(target):
-                    if isinstance(name, ast.Name):
-                        values.add(name.id)
-        elif isinstance(child, (ast.AnnAssign, ast.AugAssign)):
-            if isinstance(child.target, ast.Name):
-                values.add(child.target.id)
-        elif isinstance(child, (ast.For, ast.AsyncFor, ast.comprehension)):
-            for name in ast.walk(child.target):
-                if isinstance(name, ast.Name):
-                    values.add(name.id)
-        elif isinstance(child, ast.arg):
-            values.add(child.arg)
-        elif isinstance(child, (ast.withitem,)):
-            if child.optional_vars is not None:
-                for name in ast.walk(child.optional_vars):
-                    if isinstance(name, ast.Name):
-                        values.add(name.id)
-    return definitions, values
-
-
-class ExecutionScopeReader:
-    """Read a scorer's reachable project path for calls into an engine."""
-
-    def __init__(self, import_root: Path, scorer_directory: Path) -> None:
-        # The two directories the child puts on `sys.path`, in the same order,
-        # so what this reader calls "the project" is exactly what the child
-        # will be able to import.
-        self.roots = [import_root.resolve(), scorer_directory.resolve()]
-        self.sinks: list[dict[str, Any]] = []
-        self.unreadable: list[dict[str, Any]] = []
-        self.not_followed: set[str] = set()
-        self.reads: dict[str, ModuleRead | None] = {}
-        self.visited: set[tuple[str, str]] = set()
-        self.opened = 0
-        # The class whose method is currently being read, so `self.helper()`
-        # resolves. `None` at module level and inside a plain function.
-        self.owner: tuple[ModuleRead, ast.ClassDef] | None = None
-
-    # -- recording ---------------------------------------------------------
-    def record_sink(self, path: Path, node: ast.AST, detail: str) -> None:
-        self.sinks.append(
-            {
-                "file": str(path),
-                "line": getattr(node, "lineno", 0),
-                "detail": detail,
-            }
-        )
-
-    def record_unreadable(self, path: Path, node: ast.AST, detail: str) -> None:
-        self.unreadable.append(
-            {
-                "file": str(path),
-                "line": getattr(node, "lineno", 0),
-                "detail": detail,
-            }
-        )
-
-    # -- resolution --------------------------------------------------------
-    def project_module_path(self, dotted: str, relative_to: Path) -> Path | None:
-        """Where a dotted module lives inside the project, or None."""
-        if not dotted:
-            return None
-        if dotted.startswith("."):
-            stripped = dotted.lstrip(".")
-            base = relative_to.parent
-            for _ in range(len(dotted) - len(stripped) - 1):
-                base = base.parent
-            candidates = [base]
-            parts = stripped.split(".") if stripped else []
-        else:
-            candidates = list(self.roots)
-            parts = dotted.split(".")
-        for base in candidates:
-            if not parts:
-                continue
-            module_file = base.joinpath(*parts).with_suffix(".py")
-            package_file = base.joinpath(*parts, "__init__.py")
-            for candidate in (module_file, package_file):
-                try:
-                    resolved = candidate.resolve()
-                except OSError:
-                    continue
-                if resolved.is_file():
-                    return resolved
-        return None
-
-    def resolve_class(
-        self, read: ModuleRead, call: ast.Call
-    ) -> "tuple[ModuleRead, ast.ClassDef] | None":
-        """The project class a module-level construction call names, if any.
-
-        Deliberately returns None for anything outside the project rather than
-        guessing. `WHITESPACE = re.compile(...)` is not a project object, and
-        treating every unresolvable construction as unreadable would refuse the
-        most ordinary scorer there is.
-        """
-        callee = call.func
-        if isinstance(callee, ast.Name):
-            name = callee.id
-            if name in read.classes:
-                return (read, read.classes[name])
-            if name in read.imported_names:
-                module, attribute = read.imported_names[name]
-                return self.class_in_project_module(read, module, attribute)
-            return None
-        if isinstance(callee, ast.Attribute):
-            root = attribute_root(callee)
-            if root is not None and root in read.module_aliases:
-                return self.class_in_project_module(
-                    read, read.module_aliases[root], callee.attr
-                )
-        return None
-
-    def class_in_project_module(
-        self, read: ModuleRead, dotted: str, name: str
-    ) -> "tuple[ModuleRead, ast.ClassDef] | None":
-        path = self.project_module_path(dotted, read.path)
-        if path is None:
-            return None
-        imported = self.read_module(path)
-        if imported is None or name not in imported.classes:
-            return None
-        return (imported, imported.classes[name])
-
-    def class_method(
-        self, read: ModuleRead, node: ast.ClassDef, name: str
-    ) -> ast.AST | None:
-        """A method of this class, following bases this read can resolve."""
-        for statement in node.body:
-            if (
-                isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef))
-                and statement.name == name
-            ):
-                return statement
-        for base in node.bases:
-            resolved: tuple[ModuleRead, ast.ClassDef] | None = None
-            if isinstance(base, ast.Name) and base.id in read.classes:
-                resolved = (read, read.classes[base.id])
-            elif isinstance(base, ast.Name) and base.id in read.imported_names:
-                module, attribute = read.imported_names[base.id]
-                resolved = self.class_in_project_module(read, module, attribute)
-            if resolved is None:
-                continue
-            base_read, base_class = resolved
-            if base_class is node:
-                continue
-            found = self.class_method(base_read, base_class, name)
-            if found is not None:
-                return found
-        return None
-
-    def read_module(self, path: Path) -> ModuleRead | None:
-        key = str(path)
-        if key in self.reads:
-            return self.reads[key]
+    A file that will not parse contributes no witnesses and is recorded as
+    unread rather than as clean. That distinction costs nothing here - the gate
+    has no clearing branch for it to weaken - and it keeps the card honest about
+    which files the walk actually ran on. Importing an unparsable file is about
+    to fail loudly on its own, one step later.
+    """
+    witnesses_of = preflight_walk()
+    witnesses: list[dict[str, str]] = []
+    unread: list[str] = []
+    for role, path in files.items():
         try:
-            source = path.read_text(encoding="utf-8")
-            tree = ast.parse(source, filename=key)
-        except (OSError, UnicodeDecodeError, SyntaxError, ValueError) as error:
-            self.reads[key] = None
-            self.unreadable.append(
-                {
-                    "file": key,
-                    "line": 0,
-                    "detail": (f"the source could not be read: {type(error).__name__}"),
-                }
-            )
-            return None
-        read = ModuleRead(path, tree)
-        self.reads[key] = read
-        for star in read.star_imports:
-            self.record_unreadable(
-                path,
-                star,
-                "`from ... import *` hides which names this file binds",
-            )
-        return read
-
-    # -- walking -----------------------------------------------------------
-    def walk_module_top_level(self, read: ModuleRead) -> None:
-        """A module's top level runs on import, so it is on the path too."""
-        key = (str(read.path), "<module>")
-        if key in self.visited:
-            return
-        self.visited.add(key)
-        for statement in read.top_level:
-            self.walk_body(read, statement, {}, set())
-        for dotted in list(read.module_aliases.values()) + [
-            module for module, _ in read.imported_names.values()
-        ]:
-            path = self.project_module_path(dotted, read.path)
-            if path is None:
-                continue
-            imported = self.read_module(path)
-            if imported is not None:
-                self.walk_module_top_level(imported)
-
-    def walk_function(
-        self,
-        read: ModuleRead,
-        node: ast.AST,
-        name: str,
-        owner: "tuple[ModuleRead, ast.ClassDef] | None" = None,
-    ) -> None:
-        key = (str(read.path), name)
-        if key in self.visited:
-            return
-        self.visited.add(key)
-        self.opened += 1
-        if self.opened > SCOPE_READ_BUDGET:
-            self.record_unreadable(
-                read.path,
-                node,
-                f"the read passed {SCOPE_READ_BUDGET} functions and stopped",
-            )
-            return
-        definitions, values = local_bindings(node)
-        previous_owner = self.owner
-        if owner is not None:
-            self.owner = owner
-        try:
-            self.walk_body(read, node, definitions, values)
-        finally:
-            self.owner = previous_owner
-
-    def walk_body(
-        self,
-        read: ModuleRead,
-        node: ast.AST,
-        definitions: dict[str, ast.AST],
-        values: set[str],
-    ) -> None:
-        for child in ast.walk(node):
-            if isinstance(child, ast.Call):
-                self.classify_call(read, child, definitions, values)
-
-    def classify_call(
-        self,
-        read: ModuleRead,
-        call: ast.Call,
-        definitions: dict[str, ast.AST],
-        values: set[str],
-    ) -> None:
-        callee = call.func
-        if isinstance(callee, ast.Name):
-            self.classify_name_call(read, call, callee, definitions, values)
-            return
-        if isinstance(callee, ast.Attribute):
-            self.classify_attribute_call(read, call, callee)
-            return
-        # A call of a call, of a subscript, of a lambda. There is no name to
-        # resolve, so the read ends here rather than passing.
-        self.record_unreadable(
-            read.path,
-            call,
-            f"a call through {type(callee).__name__} cannot be resolved to a "
-            "definition",
-        )
-
-    def classify_name_call(
-        self,
-        read: ModuleRead,
-        call: ast.Call,
-        callee: ast.Name,
-        definitions: dict[str, ast.AST],
-        values: set[str],
-    ) -> None:
-        name = callee.id
-        if name in EXECUTION_SINK_BUILTINS:
-            self.record_sink(read.path, call, f"{name}() runs what it is given")
-            return
-        if name in OPAQUE_BUILTINS:
-            self.record_unreadable(
-                read.path, call, f"{name}() returns something this read cannot follow"
-            )
-            return
-        if name in definitions:
-            self.walk_function(read, definitions[name], f"{name}#{callee.lineno}")
-            return
-        if name in read.functions:
-            self.walk_function(read, read.functions[name], name)
-            return
-        if name in read.classes:
-            initializer = next(
-                (
-                    statement
-                    for statement in read.classes[name].body
-                    if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef))
-                    and statement.name == "__init__"
-                ),
-                None,
-            )
-            if initializer is not None:
-                self.walk_function(read, initializer, f"{name}.__init__")
-            return
-        if name in read.imported_names:
-            module, attribute = read.imported_names[name]
-            self.follow_import(read, call, module, attribute)
-            return
-        if name in read.module_aliases:
-            self.classify_module_use(
-                read, call, read.module_aliases[name], name, follow=True
-            )
-            return
-        if name in SAFE_BUILTINS or is_safe_exception_name(name):
-            return
-        if name in values:
-            self.record_unreadable(
-                read.path,
-                call,
-                f"{name!r} is a value this read cannot resolve to a definition",
-            )
-            return
-        self.record_unreadable(
-            read.path, call, f"{name!r} is not bound by anything this read can see"
-        )
-
-    def classify_attribute_call(
-        self, read: ModuleRead, call: ast.Call, callee: ast.Attribute
-    ) -> None:
-        attribute = callee.attr
-        if attribute in EXECUTION_SINK_METHODS:
-            self.record_sink(
-                read.path,
-                call,
-                f".{attribute}() submits its argument to an engine",
-            )
-            return
-        root = attribute_root(callee)
-        if root is None:
-            # A method on an expression. The receiver is unknown and the name
-            # is not one of the engine verbs, so this is the bound rather than
-            # the end of the read - recorded, and stated on the card.
-            self.not_followed.add(f".{attribute}")
-            return
-        if root in read.module_aliases:
-            self.classify_module_use(
-                read, call, read.module_aliases[root], attribute, follow=True
-            )
-            return
-        if root in read.imported_names:
-            module, name = read.imported_names[root]
-            self.classify_module_use(read, call, module, f"{name}.{attribute}")
-            return
-        # Only a one-level receiver is resolved. `self.spaces.sub(...)` has
-        # `self` at the root of its chain but `sub` belongs to `self.spaces`,
-        # and looking `sub` up on the enclosing class would refuse an entirely
-        # ordinary scorer for not having a method it never claimed to have.
-        direct = isinstance(callee.value, ast.Name)
-        if root == "self" and direct:
-            if self.owner is None:
-                self.not_followed.add(f"self.{attribute}")
-                return
-            owner_read, owner_class = self.owner
-            method = self.class_method(owner_read, owner_class, attribute)
-            if method is None:
-                self.record_unreadable(
-                    read.path,
-                    call,
-                    f"self.{attribute}() is not a method of "
-                    f"{owner_class.name}, so this read cannot say what it calls",
-                )
-                return
-            self.walk_function(
-                owner_read,
-                method,
-                f"{owner_class.name}.{attribute}",
-                owner=(owner_read, owner_class),
-            )
-            return
-        if direct and root in read.instance_sources:
-            owner = self.resolve_class(read, read.instance_sources[root])
-            if owner is not None:
-                owner_read, owner_class = owner
-                method = self.class_method(owner_read, owner_class, attribute)
-                if method is None:
-                    self.record_unreadable(
-                        read.path,
-                        call,
-                        f"{root}.{attribute}() is not a method of "
-                        f"{owner_class.name}, which {root} was built from",
-                    )
-                    return
-                self.walk_function(
-                    owner_read,
-                    method,
-                    f"{owner_class.name}.{attribute}",
-                    owner=(owner_read, owner_class),
-                )
-                return
-        self.not_followed.add(f"{root}.{attribute}")
-
-    def classify_module_use(
-        self,
-        read: ModuleRead,
-        call: ast.Call,
-        dotted: str,
-        attribute: str,
-        *,
-        follow: bool = False,
-    ) -> None:
-        head = dotted.lstrip(".").split(".")[0]
-        if head in EXECUTION_SINK_MODULES:
-            self.record_sink(
-                read.path, call, f"{dotted}.{attribute}() calls into {head}"
-            )
-            return
-        if head == "os" and attribute.split(".")[-1] in OS_EXECUTION_ATTRIBUTES:
-            self.record_sink(read.path, call, f"os.{attribute}() starts a process")
-            return
-        path = self.project_module_path(dotted, read.path)
-        if path is None:
-            self.not_followed.add(dotted or "<relative>")
-            return
-        imported = self.read_module(path)
-        if imported is None:
-            return
-        self.walk_module_top_level(imported)
-        if not follow:
-            return
-        target = attribute.split(".")[0]
-        if target in imported.functions:
-            self.walk_function(imported, imported.functions[target], target)
-        elif target in imported.classes:
-            self.not_followed.add(f"{dotted}.{target}")
-
-    def follow_import(
-        self, read: ModuleRead, call: ast.Call, module: str, attribute: str
-    ) -> None:
-        self.classify_module_use(read, call, module, attribute, follow=True)
-
-    # -- verdict -----------------------------------------------------------
-    def verdict(self) -> str:
-        if self.sinks:
-            return SCOPE_EXECUTES
-        if self.unreadable:
-            return SCOPE_UNREADABLE
-        return SCOPE_CLEAR
-
-
-def execution_scope_scan(
-    scorer_file: Path, scorer_name: str, import_root: Path
-) -> dict[str, Any]:
-    """Read the scorer's reachable project path without importing anything."""
-    scorer_file = Path(scorer_file).resolve()
-    reader = ExecutionScopeReader(Path(import_root), scorer_file.parent)
-    read = reader.read_module(scorer_file)
-    if read is not None:
-        reader.walk_module_top_level(read)
-        if scorer_name in read.functions:
-            reader.walk_function(read, read.functions[scorer_name], scorer_name)
-        elif scorer_name in read.classes:
-            # `load_function` accepts any callable, and a class is one. Read the
-            # two members calling it would run.
-            owner = (read, read.classes[scorer_name])
-            for member in ("__init__", "__call__"):
-                method = reader.class_method(read, read.classes[scorer_name], member)
-                if method is not None:
-                    reader.walk_function(
-                        read, method, f"{scorer_name}.{member}", owner=owner
-                    )
-        else:
-            # The callable the run named is not a module-level definition in
-            # the file it named. Whatever it is - an attribute of an object, a
-            # name bound at import, a re-export - this read cannot open it, and
-            # not opening it is not a pass.
-            reader.unreadable.append(
-                {
-                    "file": str(scorer_file),
-                    "line": 0,
-                    "detail": (
-                        f"{scorer_name!r} is not a function defined at the top "
-                        "level of this file, so its body was never read"
-                    ),
-                }
-            )
+            source = Path(path).read_text(encoding="utf-8")
+            tree = ast.parse(source, filename=str(path))
+        except (
+            OSError,
+            UnicodeDecodeError,
+            SyntaxError,
+            ValueError,
+            MemoryError,
+            RecursionError,
+        ):
+            unread.append(role)
+            continue
+        for witness in witnesses_of(tree):
+            witnesses.append({"role": role, "file": str(path), "witness": witness})
     return {
-        "verdict": reader.verdict(),
-        "sinks": reader.sinks,
-        "unreadable": reader.unreadable,
-        "not_followed": sorted(reader.not_followed),
-        "functions_read": reader.opened,
-        "files_read": sorted(key for key, value in reader.reads.items() if value),
+        "walk": "preflight.candidate_execution_witnesses",
+        "files": {role: str(path) for role, path in files.items()},
+        "unread": unread,
+        "witnesses": witnesses,
+        # Said in the payload, not only in the prose, because a consumer that
+        # reads an empty `witnesses` list has to know what it is allowed to
+        # conclude from it, which is nothing.
+        "witnesses_are_one_directional": True,
     }
 
 
 def scope_refusal_message(scan: dict[str, Any]) -> str:
-    """What to print when the read will not clear the scorer for plain probes."""
-    if scan["verdict"] == SCOPE_EXECUTES:
-        head = (
-            "Refusing to calibrate this scorer here: calling it opens an engine "
-            "and runs statements against whatever that engine is pointed at. "
-            "The probes are this guide's own authored pairs, so nothing the "
-            "model wrote runs at this step - what is unbounded is the target, "
-            "and a first run does not grade against a database it cannot "
-            "bound."
-        )
-        sites = scan["sinks"]
-    else:
-        head = (
-            "Refusing to calibrate this scorer here: this read could not follow "
-            "its complete path to the end, so whether calling it reaches an "
-            "engine is unsettled - and an unread path is not a cleared one."
-        )
-        sites = scan["unreadable"]
-    lines = [head, ""]
-    for site in sites[:MAX_REPORTED_SCOPE_SITES]:
-        lines.append(f"  {site['file']}:{site['line']}: {site['detail']}")
-    remaining = len(sites) - MAX_REPORTED_SCOPE_SITES
+    """What to print when a file this run would import reaches an engine."""
+    roles = sorted({site["role"] for site in scan["witnesses"]})
+    subject = " and ".join(roles)
+    lines = [
+        f"Refusing to calibrate: the {subject} this run would import reaches a "
+        "code or SQL engine, and calling it runs statements against whatever "
+        "that engine is pointed at. The probes are this guide's own authored "
+        "pairs, so nothing the model wrote runs at this step - what is "
+        "unbounded is the target, and a first run does not grade against a "
+        "database it cannot bound.",
+        "",
+    ]
+    for site in scan["witnesses"][:MAX_REPORTED_EXECUTION_WITNESSES]:
+        lines.append(f"  {site['role']}: {site['file']}: {site['witness']}")
+    remaining = len(scan["witnesses"]) - MAX_REPORTED_EXECUTION_WITNESSES
     if remaining > 0:
         lines.append(f"  ... and {remaining} more")
     lines.extend(
         [
             "",
-            "Re-run with --contained to take the same authored probes through "
-            "the containment envelope, which bounds the target: the network "
-            "closed, subprocesses refused, sqlite opened read-only under a "
-            "step budget, and cpu and file writes held down - with the card "
-            "recording what was enforced. Point it at a disposable schema this "
-            "run built, never at a database the project depends on. Or declare "
-            "the refusal to readiness.py with --calibration-scope-refused and "
-            "settle it through the containment review in "
-            "references/run-safety.md.",
+            "There is no route here that makes running it safe. This guide "
+            "does not own an execution boundary, and an in-process one is not "
+            "a boundary at all: see the containment section of "
+            "references/run-safety.md, which now records why. Design "
+            "containment separately, and tell readiness.py what happened with "
+            "--calibration-scope-refused so the card asks for that review "
+            "instead of for this check.",
             "",
             "This refusal is about calibration only. A trial, where the model "
             "writes the query and this scorer runs it, is the other moment and "
-            "no route here opens it.",
+            "nothing here opens it.",
+            "",
+            "A run this check does not stop is one it had no grounds to stop. "
+            "The walk behind it establishes execution and never establishes "
+            "its absence, so it is not an all-clear and the call-path read "
+            "SKILL.md asks for still applies.",
         ]
     )
     return "\n".join(lines)
-
-
-# The containment envelope, and why a route had to exist before the gate could
-# be enforced.
-#
-# `SKILL.md` forbids running a scorer that executes candidate-generated code or
-# SQL, and `references/run-safety.md` used to end the guide there. That is the
-# right instinct about the danger - executing model-written SQL against a
-# customer's live database in their first ten minutes is genuinely dangerous -
-# and the wrong terminus, because the calibration sub-score and the probe
-# spread are the only checks in this package that separate a scorer which
-# grades from one which does not, and a text-to-SQL project could not reach
-# either of them, so a query-log project that obeyed the rule sat a band below
-# the identical project that ignored it, and the whole of the difference was
-# the one check the rule forbade. A safety rule that costs a band is a rule
-# with a price on obedience, and the only thing between a user and that band
-# was whether they read the sentence. The figures behind this are in the
-# pull request that added the route; they came from a project fixture rather
-# than from this tree, so they are not restated here as if they could be taken
-# again from it.
-#
-# So this is the same probes, on the same scorer, inside an envelope this file
-# builds and then ATTESTS. The attestation is the load-bearing part: it is
-# produced by the tool from what it actually installed, never declared by the
-# run, which is what makes a contained calibration evidence rather than a
-# claim. A declaration verified against nothing must not pay, and this one is
-# not a declaration.
-#
-# What the envelope closes, and what it does not:
-#
-#   * THE NETWORK, completely, at the socket layer. This is the half that
-#     matters most, and it is why containment is worth the code: a production
-#     database, a warehouse, an internal API and a metadata service are all
-#     unreachable BY CONSTRUCTION from inside the envelope, whatever the
-#     scorer's connection string says. The proxy environment variables the
-#     deterministic path already set are not this - a direct `socket.connect`
-#     walks straight past them.
-#   * SUBPROCESSES, so a scorer cannot step outside the envelope by starting a
-#     process that is not in it.
-#   * SQLITE, opened read-only and given a step budget, because sqlite is the
-#     engine a disposable schema is actually built in and it is the one whose
-#     read-only mode this can express. `mode=ro` is enforced by the engine, not
-#     by us: a candidate `DROP TABLE` fails inside sqlite.
-#   * CPU AND FILE WRITES, through the process limits the platform offers.
-#
-#   * NOT memory, and not the filesystem beyond a write size. `RLIMIT_AS`
-#     breaks ordinary scientific stacks at import, and this envelope has to be
-#     usable by the projects it is for. Said here rather than implied by
-#     silence, and said on the card too.
-#   * NOT a sandbox in the isolation sense. Process separation was never one -
-#     the module docstring has said so from the start - and adding four locks
-#     to it does not make it one. What it is, is a bounded envelope whose
-#     bounds are enumerated, enforced, and printed.
-class ContainmentRefusal(RuntimeError):
-    """Raised inside the envelope when the scorer reaches past its bounds."""
-
-
-# Ten million sqlite virtual-machine instructions. A grading query over a
-# disposable first-run schema is thousands; a cartesian product over the same
-# schema passes this in well under a second of CPU. It bounds the runaway
-# without bounding the work, which is the only thing a step budget can honestly
-# claim to do.
-SQLITE_STEP_BUDGET = 10_000_000
-# How often sqlite asks the handler, in virtual-machine instructions. Small
-# enough that a runaway is stopped promptly, large enough that the callback is
-# not the cost.
-SQLITE_PROGRESS_INTERVAL = 100_000
-# Sixty-four mebibytes of writes. A disposable schema and its journals fit; a
-# scorer filling the disk does not.
-CONTAINED_FILE_BYTES = 64 * 1024 * 1024
-
-
-def close_network(report: dict[str, Any]) -> None:
-    """Refuse every outbound connection, at the socket layer."""
-    import socket
-
-    def refuse(*_args: Any, **_kwargs: Any) -> Any:
-        raise ContainmentRefusal(
-            "the containment envelope closed the network; this scorer tried to "
-            "open a connection"
-        )
-
-    socket.socket.connect = refuse
-    socket.socket.connect_ex = refuse
-    socket.socket.sendto = refuse
-    socket.create_connection = refuse
-    socket.getaddrinfo = refuse
-    if hasattr(socket, "create_server"):
-        socket.create_server = refuse
-    report["network"] = "closed at the socket layer"
-
-
-def close_subprocesses(report: dict[str, Any]) -> None:
-    """Refuse every way of starting a process that is not inside the envelope."""
-
-    def refuse(*_args: Any, **_kwargs: Any) -> Any:
-        raise ContainmentRefusal(
-            "the containment envelope refuses subprocesses; this scorer tried "
-            "to start a process outside it"
-        )
-
-    subprocess.Popen = refuse
-    subprocess.run = refuse
-    subprocess.call = refuse
-    subprocess.check_call = refuse
-    subprocess.check_output = refuse
-    closed = []
-    for attribute in sorted(OS_EXECUTION_ATTRIBUTES):
-        if hasattr(os, attribute):
-            setattr(os, attribute, refuse)
-            closed.append(attribute)
-    report["subprocess"] = "refused (subprocess, os." + ", os.".join(closed) + ")"
-
-
-def contain_sqlite(report: dict[str, Any]) -> None:
-    """Open every sqlite database read-only, under a step budget."""
-    try:
-        import sqlite3
-    except ImportError:  # pragma: no cover - sqlite3 is in every CPython build
-        report["sqlite"] = "not available in this interpreter"
-        return
-
-    class ContainedCursor(sqlite3.Cursor):
-        def execute(self, *arguments: Any, **keywords: Any) -> Any:
-            self.connection.reset_step_budget()
-            return super().execute(*arguments, **keywords)
-
-        def executemany(self, *arguments: Any, **keywords: Any) -> Any:
-            self.connection.reset_step_budget()
-            return super().executemany(*arguments, **keywords)
-
-        def executescript(self, *arguments: Any, **keywords: Any) -> Any:
-            self.connection.reset_step_budget()
-            return super().executescript(*arguments, **keywords)
-
-    # ATTACH is the escape a read-only main database does not close: the
-    # connection is opened `mode=ro`, and the scorer attaches a second file it
-    # creates and writes freely. Measured, not assumed - an attaching scorer
-    # created and populated a side database from inside the first version of
-    # this envelope, and the run exited 0. sqlite's own authorizer is the right
-    # instrument, because it refuses inside the engine rather than by pattern-
-    # matching the statement.
-    attach_actions = tuple(
-        value
-        for value in (
-            getattr(sqlite3, "SQLITE_ATTACH", 24),
-            getattr(sqlite3, "SQLITE_DETACH", 25),
-        )
-    )
-
-    def refuse_attach(action: int, *_details: Any) -> int:
-        if action in attach_actions:
-            return sqlite3.SQLITE_DENY
-        return sqlite3.SQLITE_OK
-
-    class ContainedConnection(sqlite3.Connection):
-        def __init__(self, *arguments: Any, **keywords: Any) -> None:
-            super().__init__(*arguments, **keywords)
-            self._steps_left = SQLITE_STEP_BUDGET
-            sqlite3.Connection.set_progress_handler(
-                self, self._step, SQLITE_PROGRESS_INTERVAL
-            )
-            sqlite3.Connection.set_authorizer(self, refuse_attach)
-
-        # A bound the scorer can lift is not a bound. Both hooks are the
-        # envelope's, and the connection refuses to hand them back.
-        def set_authorizer(self, *_arguments: Any, **_keywords: Any) -> None:
-            raise ContainmentRefusal(
-                "the containment envelope owns this connection's authorizer; "
-                "this scorer tried to replace it"
-            )
-
-        def set_progress_handler(self, *_arguments: Any, **_keywords: Any) -> None:
-            raise ContainmentRefusal(
-                "the containment envelope owns this connection's step budget; "
-                "this scorer tried to replace it"
-            )
-
-        def _step(self) -> int:
-            self._steps_left -= SQLITE_PROGRESS_INTERVAL
-            # A non-zero return aborts the statement sqlite is running. The
-            # scorer sees an OperationalError, which is the same shape a
-            # malformed query already gives it.
-            return 1 if self._steps_left <= 0 else 0
-
-        def reset_step_budget(self) -> None:
-            self._steps_left = SQLITE_STEP_BUDGET
-
-        def cursor(self, factory: Any = None) -> Any:
-            return super().cursor(factory or ContainedCursor)
-
-        def execute(self, *arguments: Any, **keywords: Any) -> Any:
-            self.reset_step_budget()
-            return super().execute(*arguments, **keywords)
-
-        def executemany(self, *arguments: Any, **keywords: Any) -> Any:
-            self.reset_step_budget()
-            return super().executemany(*arguments, **keywords)
-
-        def executescript(self, *arguments: Any, **keywords: Any) -> Any:
-            self.reset_step_budget()
-            return super().executescript(*arguments, **keywords)
-
-    real_connect = sqlite3.connect
-    # `sqlite3/__init__.py` re-exports from `sqlite3.dbapi2`, so replacing one
-    # name leaves the other pointing at the unpatched function. Also measured:
-    # a scorer calling `sqlite3.dbapi2.connect` walked straight past the first
-    # version of this envelope.
-    dbapi = sys.modules.get("sqlite3.dbapi2")
-
-    def contained_connect(database: Any, *arguments: Any, **keywords: Any) -> Any:
-        keywords.setdefault("factory", ContainedConnection)
-        own_factory = keywords["factory"] is ContainedConnection
-        target = database
-        if isinstance(database, (str, os.PathLike)):
-            text = os.fspath(database)
-            if text == ":memory:" or text == "":
-                pass
-            elif text.startswith("file:"):
-                target = read_only_uri(text)
-                keywords["uri"] = True
-            else:
-                target = read_only_uri(
-                    "file:" + urllib.parse.quote(str(Path(text).resolve()))
-                )
-                keywords["uri"] = True
-        connection = real_connect(target, *arguments, **keywords)
-        if not own_factory and hasattr(connection, "set_progress_handler"):
-            # The caller brought its own connection class, so the per-statement
-            # reset above is not in play. The budget still bounds the
-            # connection, and the card says which of the two applied rather
-            # than reporting the stronger one.
-            budget = {"left": SQLITE_STEP_BUDGET}
-
-            def step() -> int:
-                budget["left"] -= SQLITE_PROGRESS_INTERVAL
-                return 1 if budget["left"] <= 0 else 0
-
-            connection.set_progress_handler(step, SQLITE_PROGRESS_INTERVAL)
-            connection.set_authorizer(refuse_attach)
-            report["sqlite"] = (
-                "read-only where the path is a file; attach refused; "
-                f"{SQLITE_STEP_BUDGET} step budget per connection "
-                "(the caller supplied its own connection factory, so the "
-                "budget is not reset per statement and the hooks are "
-                "replaceable)"
-            )
-        return connection
-
-    sqlite3.connect = contained_connect
-    if dbapi is not None:
-        dbapi.connect = contained_connect
-    report["sqlite"] = (
-        "read-only where the path is a file; attach refused; "
-        f"{SQLITE_STEP_BUDGET} step budget per statement"
-    )
-
-
-def read_only_uri(uri: str) -> str:
-    """Force `mode=ro` into a sqlite file URI, replacing any mode it carries."""
-    base, separator, query = uri.partition("?")
-    parameters = [
-        pair for pair in query.split("&") if pair and not pair.startswith("mode=")
-    ]
-    parameters.append("mode=ro")
-    del separator
-    return base + "?" + "&".join(parameters)
-
-
-def bound_resources(report: dict[str, Any], cpu_seconds: int) -> None:
-    """Apply the process limits this platform offers, and say which took."""
-    try:
-        import resource
-    except ImportError:  # pragma: no cover - Windows has no resource module
-        report["resources"] = "not available on this platform"
-        return
-    applied = []
-    for name, limit in (
-        ("RLIMIT_CPU", cpu_seconds),
-        ("RLIMIT_FSIZE", CONTAINED_FILE_BYTES),
-    ):
-        constant = getattr(resource, name, None)
-        if constant is None:
-            continue
-        try:
-            soft, hard = resource.getrlimit(constant)
-            ceiling = limit if hard in (resource.RLIM_INFINITY,) else min(limit, hard)
-            resource.setrlimit(constant, (ceiling, hard))
-        except (ValueError, OSError):
-            continue
-        applied.append(f"{name}={ceiling}")
-        del soft
-    report["resources"] = ", ".join(applied) if applied else "none could be applied"
-    # Named because it is absent, not because it is present. A memory ceiling
-    # breaks ordinary numeric stacks at import, and an envelope its own users
-    # cannot load is not containment.
-    report["not_bounded"] = (
-        "address space, the filesystem beyond write size, and native code "
-        "reached through ctypes"
-    )
-
-
-def apply_containment(cpu_seconds: int) -> dict[str, Any]:
-    """Close the envelope, and return exactly what closed."""
-    report: dict[str, Any] = {"mode": "contained"}
-    close_network(report)
-    close_subprocesses(report)
-    contain_sqlite(report)
-    bound_resources(report, cpu_seconds)
-    return report
 
 
 def subprocess_environment(allow_provider_access: bool) -> dict[str, str]:
@@ -1857,9 +825,8 @@ def run_worker() -> int:
         # `--allow-execution` at all. The parent checked it once and every
         # child was trusted because only this file spawns them, which makes the
         # enforcement surface narrower than the flag's own help implies. The
-        # request now carries the acknowledgement and the containment state,
-        # and a request that carries neither is refused before anything is
-        # imported. It does not make the child unforgeable by whoever writes
+        # request now carries the acknowledgement, and a request without it is
+        # refused before anything is imported. It does not make the child unforgeable by whoever writes
         # its stdin; what it does is stop the executing process from taking its
         # authorization on trust from its own command line.
         if not request.get("allow_execution"):
@@ -1867,12 +834,6 @@ def run_worker() -> int:
                 "this worker imports and executes the scorer, and the request "
                 "does not carry the --allow-execution acknowledgement"
             )
-        if request.get("contained"):
-            containment_report = apply_containment(
-                int(request.get("cpu_seconds", CALIBRATION_TIMEOUT_CEILING_SECONDS))
-            )
-        else:
-            containment_report = None
         import_root = Path(request["import_root"])
         scorer_file = Path(request["scorer"].partition(":")[0]).resolve()
         import_paths = [str(import_root), str(scorer_file.parent)]
@@ -2005,8 +966,6 @@ def run_worker() -> int:
                 response = {"score": score, "error": error_text}
             else:
                 raise ValueError(f"unknown worker operation: {operation}")
-        if containment_report is not None:
-            response = {**response, "containment": containment_report}
         print(
             json.dumps(
                 {
@@ -2133,20 +1092,6 @@ def parse_args() -> argparse.Namespace:
             "confirm that importing and executing the scorer is intended - and "
             "the module behind --reply-transform, whose top level runs on the "
             "same import"
-        ),
-    )
-    parser.add_argument(
-        "--contained",
-        action="store_true",
-        help=(
-            "run the probes inside the containment envelope: the network "
-            "closed at the socket layer, subprocesses refused, sqlite opened "
-            "read-only under a step budget, and cpu and file writes bounded. "
-            "This is the route for a scorer whose path reaches an engine, and "
-            "for one this tool's static read cannot follow - both are refused "
-            "without it. Aim it at a disposable schema this run built. The card records what the envelope "
-            "actually enforced, measured rather than declared. Refused beside "
-            "--kind llm-judge, which needs the network the envelope closes"
         ),
     )
     parser.add_argument(
@@ -2734,15 +1679,6 @@ def run() -> int:
             print("--reply-transform must use FILE.py:FUNCTION.", file=sys.stderr)
             return 2
         absolute_transform = f"{Path(transform_file).resolve()}:{transform_name}"
-    if args.contained and args.kind == "llm-judge":
-        print(
-            "--contained closes the network, and an LLM judge reaches its "
-            "provider over it, so the two cannot both hold. A judge whose "
-            "path also executes candidate code or SQL has no route here: that "
-            "is the manual containment review in references/run-safety.md.",
-            file=sys.stderr,
-        )
-        return 2
     if args.kind == "llm-judge" and not args.paid_approved:
         print(
             "LLM-judge calibration can make provider calls; obtain approval and pass --paid-approved.",
@@ -2775,8 +1711,17 @@ def run() -> int:
     # a scorer this read will not clear is never imported: the read itself
     # parses source and imports nothing, which is what lets it precede the
     # acknowledgement's consequences rather than follow them.
-    scope = execution_scope_scan(scorer_file, scorer_name, args.import_root)
-    if scope["verdict"] != SCOPE_CLEAR and not args.contained:
+    # Both files this run would import, read before either of them is. The
+    # transform is resolved from the raw argument rather than from
+    # `absolute_transform`, which is built further down: the point of the gate
+    # is to precede every import, including the one the load probe makes.
+    scanned = {"scorer": Path(scorer_file).resolve()}
+    if args.reply_transform:
+        scanned["reply transform"] = Path(
+            args.reply_transform.partition(":")[0]
+        ).resolve()
+    scope = execution_scope_scan(scanned)
+    if scope["witnesses"]:
         print(scope_refusal_message(scope), file=sys.stderr)
         return 2
     # Attached once, here, rather than inside each of the two case-building
@@ -2797,8 +1742,6 @@ def run() -> int:
         "cases": cases,
         "import_root": str(args.import_root),
         "allow_execution": True,
-        "contained": args.contained,
-        "cpu_seconds": args.timeout,
     }
     worker_environment = subprocess_environment(
         allow_provider_access=args.kind == "llm-judge"
@@ -2841,8 +1784,6 @@ def run() -> int:
                         "reply_transform": absolute_transform,
                         "import_root": str(args.import_root),
                         "allow_execution": True,
-                        "contained": args.contained,
-                        "cpu_seconds": args.timeout,
                     }
                 ),
                 text=True,
@@ -2967,7 +1908,6 @@ def run() -> int:
         return 1
 
     payload = json.loads(process.stdout)
-    containment_report = payload.get("containment") if args.contained else None
 
     # Every deterministic supplemental attempt gets a new interpreter. A
     # module reload in one interpreter does not isolate imported dependency
@@ -2998,8 +1938,6 @@ def run() -> int:
                 "case": worker_case,
                 "import_root": str(args.import_root),
                 "allow_execution": True,
-                "contained": args.contained,
-                "cpu_seconds": args.timeout,
             }
             permutation = case.get("permutation")
             if permutation is not None:
@@ -3061,8 +1999,6 @@ def run() -> int:
                 "reply_transform": absolute_transform,
                 "probes": seam_queue,
                 "allow_execution": True,
-                "contained": args.contained,
-                "cpu_seconds": args.timeout,
             },
             deadline=calibration_deadline,
             total_budget_seconds=args.timeout,
@@ -3203,18 +2139,12 @@ def run() -> int:
         if "seam_probes" in case_results[0]:
             result["seam_probes"] = case_results[0]["seam_probes"]
 
-    # What was read, and what was enforced - on both shapes, because a card
-    # that carries the calibration evidence has to carry the terms it was
-    # obtained under. `execution_scope` is always present: a run that cleared
-    # the read states the bound of that clearance, which is the list of modules
-    # the read did not open, and a contained run states the sinks it was
-    # contained BECAUSE of. `containment` appears only where the envelope
-    # actually closed, and its contents come back from the child that closed
-    # it rather than from the flag that asked for it - a declaration verified
-    # against nothing must not pay, and this one is not a declaration.
+    # Which files the engine walk ran on, on both card shapes. It carries no
+    # verdict, because the walk reaches one in a single direction: a card exists
+    # only where no witness was found, and no witness found is not a finding.
+    # What the key is for is the opposite of reassurance - it names the files
+    # that were read, so a reader can see which ones were not.
     result["execution_scope"] = scope
-    if containment_report is not None:
-        result["containment"] = containment_report
 
     # One list, both shapes, so neither can answer this differently.
     #

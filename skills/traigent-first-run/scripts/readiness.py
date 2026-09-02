@@ -6178,6 +6178,15 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
             # work. What the run needs is not a higher number for the evidence
             # it lacks; it is a way to get the evidence, and
             # `calibrate_evaluator.py --contained` is that route.
+            # The whole sentence is built in the one arm that owns this state,
+            # rather than as a tail appended after the chain. An earlier draft
+            # keyed that tail on `facts.calibration_scope_refused` outside the
+            # branch, so it also attached to the arms above and could print
+            # "calibration ran but reported no checks" and "was never asked" in
+            # one sentence. The CLI refuses that pair today, so it was latent
+            # rather than live - but the guard sits thousands of lines away in
+            # another function, and a sentence that stays true only because a
+            # distant refusal stays in place is one flag away from being wrong.
             evidence = (
                 "this run was never asked for a calibration - the evaluator-"
                 "execution scope gate refused it, and the weight stays because "
@@ -6202,12 +6211,7 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
                 # measurement the run had not reached yet. Neither line is
                 # allowed to be silent about which it is any more.
                 f"{evidence}; it costs points until a complete calibration is "
-                "measured"
-                + (
-                    " - the contained calibration route is what measures one " "here"
-                    if facts.calibration_scope_refused
-                    else ""
-                ),
+                "measured",
                 # The score describes the evidence connected to this run, not
                 # everything that may exist elsewhere. A complete calibration
                 # result earns these points; one that was not found or passed

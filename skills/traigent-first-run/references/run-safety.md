@@ -297,8 +297,7 @@ flags do not make that execution safe.
 
 When the resolved evaluator call path is an executing one, preserve the project, run only
 read-only static inspection that does not import or execute it, record a `stopped` `containment`
-event, and - unless the contained calibration route below can take it - end this guide before
-calibration, environment setup, credentials, provider calls, or
+event, and end this guide before calibration, environment setup, credentials, provider calls, or
 paid work.
 The next step is a separate manual containment design and review outside this guide; it must decide
 the execution boundary, mounted inputs, credentials, network, limits, cleanup, and SQL data scope.
@@ -317,24 +316,45 @@ than a claim about where the statements came from. A trial is the other moment -
 writes the query and the scorer runs it - and nothing in this guide opens it, at any stage, under
 any flag.
 
-`scripts/calibrate_evaluator.py` reads the scorer's reachable project path before importing
-anything and refuses the ordinary route on two verdicts: a call that reaches a code or SQL engine,
-and a path the read could not follow to the end. Both refusals name their sites and exit 2, so this
-scope rule is enforced by the tool rather than carried by this sentence, and a scorer nobody can
-classify is refused rather than assumed clean. A parser gate is not a refusal: `compile` and
-`ast.parse` read a string, and reading is the first half of the comparison method
-`references/evaluation-and-dataset.md` selects for a code answer.
+`scripts/calibrate_evaluator.py` now enforces this rule instead of relying on it being read. Before
+it imports anything, it asks the same walk `preflight.py` reports through `evaluator-shape` of every
+file the run would import - the scorer, and the module behind `--reply-transform`, which is loaded
+and called in the same child on every probe and had never been looked at. A witness names its file
+and line and exits 2.
 
-`--contained` is the one bounded route the refusal offers, and it is narrow. It runs the same
-authored probes with the network closed at the socket layer, subprocesses refused, sqlite opened
-read-only under a step budget, and cpu and file writes bounded; the card records what the envelope
-actually enforced and what it does not bound, measured in the child rather than declared by the
-flag. Point it only at a disposable schema this run built or copied, never at a database the
-project depends on - the envelope makes a remote database unreachable and a local one unwritable,
-and neither of those is a reason to aim it at production data. It is refused beside `--kind
-llm-judge`, which needs the network the envelope closes. A contained calibration establishes the
-evaluator exactly as an ordinary one does and is what lifts `evaluator-calibration-refused`; where
-it cannot run, everything above stands and paid work still waits on the manual review.
+Read the direction of that check carefully, because it only goes one way. A witness establishes
+that a file reaches an engine; finding none establishes nothing at all, since a walk of one file
+cannot see an engine behind a helper module, a connection handed in with the row, or a name bound
+while the process runs. A run this check does not stop is therefore a run it had no grounds to
+stop, never a run it cleared, and nothing in the output offers it as an all-clear. Reading the
+complete call path is still the instruction above, and it is still yours.
+
+An in-process envelope is not a route to that evidence, and this is now measured rather than
+assumed. One was built and attacked: the network closed at the socket layer, subprocesses refused,
+sqlite reopened read-only under a step budget with attach denied, and processor time and file
+growth bounded. A single adversarial pass escaped it seven times, in classes rather than in
+one-off tricks - a C extension module reached under the pure-Python one that was patched, a module
+reloaded to restore the original functions, a send path the patch set had not enumerated, a native
+call through a foreign-function handle, a public engine constructor that skips the wrapped opener
+entirely, and a soft resource limit raised straight back because the hard limit still permitted it.
+Each of those is a class with more members, and the eighth is a matter of who looks next: bounding
+Python from inside the same interpreter means bounding it against every extension module, every
+constructor and every native handle it can reach, and that surface has no edge.
+
+The worse half was not the escapes. The card kept reporting the bounds as enforced while the
+process had already stepped outside them, because the report was written beside the patches rather
+than measured after them - a claim verified against nothing, inside a safety statement. That is the
+one thing this package refuses everywhere else, so the envelope was not repaired and shipped; it
+was removed, and this paragraph is what it produced. The sentence at the top of this section - that
+a virtual environment, stripped credentials, an ordinary subprocess, a timeout or mock flags do not
+make that execution safe - now has evidence behind it, and it extends to anything else built the
+same way. A boundary the operating system enforces is a different proposition, and it is one this
+guide deliberately does not own.
+
+So the manual containment design and review above is still the whole of the route, and a project
+whose evaluator runs the candidate's answer stops here with its calibration evidence uncollected.
+That costs it real points on the readiness card, and the card now says why rather than asking it to
+run the check anyway.
 
 ### Deterministic calibration and mock plumbing
 
@@ -345,7 +365,7 @@ same three words bind anything else this stage imports, and a reply transform is
 thing it does: reaching that function executes its module's top level, which for an agent file is
 commonly a provider client. A non-executing evaluator that needs a declared local dependency waits
 until that dependency is installed, and so does a transform whose module does - the flag waits with
-it rather than pulling an install into this stage. An execution evaluator has already ended this guide at the scope gate above, unless it was taken through the contained route named there. Run either
+it rather than pulling an install into this stage. An execution evaluator has already ended this guide at the scope gate above. Run either
 before creating `.env` or requesting a provider key. A generic outside-review wait is not a gate;
 pause only when one unresolved product-grading ambiguity would materially change correctness or
 ranking. Do not execute an LLM judge or an uncertain or external evaluator without explicit approval

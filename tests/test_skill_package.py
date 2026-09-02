@@ -7963,20 +7963,36 @@ class SkillPackageTests(unittest.TestCase):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, normalized)
         self.assertNotIn("static preflight identifies", normalized)
-        # The one exception the stop now names, and the reason it gives for
-        # itself. Both are pinned because the pair is the decision: a route
-        # without its bounds reads as a bypass, and bounds without a route
-        # leave the class of project this gate is about with nowhere to go.
-        for contained_phrase in (
-            "unless the contained calibration route below can take it",
-            "the network closed at the socket layer",
-            "sqlite opened read-only under a step budget",
-            "never at a database the project depends on",
-            "refused beside `--kind llm-judge`",
-            "a contained calibration establishes the evaluator",
+        # What the section now records about an in-process envelope, and why.
+        # Pinned because it is a finding rather than a preference: one was
+        # built, escaped seven times in a single adversarial pass, and reported
+        # its bounds as enforced while the process was already outside them.
+        # The conclusion that survives is that this guide does not own an
+        # execution boundary, so the sentence at the top of the section has
+        # evidence behind it instead of only good instincts.
+        for envelope_phrase in (
+            "an in-process envelope is not a route to that evidence",
+            "escaped it seven times",
+            "that surface has no edge",
+            "a claim verified against nothing",
+            "was not repaired and shipped",
+            "a boundary the operating system enforces",
+            "the manual containment design and review above is still the whole "
+            "of the route",
         ):
-            with self.subTest(contained_phrase=contained_phrase):
-                self.assertIn(contained_phrase, normalized)
+            with self.subTest(envelope_phrase=envelope_phrase):
+                self.assertIn(envelope_phrase, normalized)
+        # And the gate itself: enforced, over both files, in one direction.
+        for gate_phrase in (
+            "now enforces this rule instead of relying on it being read",
+            "the module behind `--reply-transform`",
+            "it only goes one way",
+            "finding none establishes nothing at all",
+            "never a run it cleared",
+        ):
+            with self.subTest(gate_phrase=gate_phrase):
+                self.assertIn(gate_phrase, normalized)
+        self.assertNotIn("--contained", normalized)
         # The refusal states the reason that is true of the step it refuses.
         # Calibration runs authored probes, so blaming the model's output for
         # the calibration stop was false of it.
@@ -7988,7 +8004,6 @@ class SkillPackageTests(unittest.TestCase):
         ):
             with self.subTest(reason_phrase=reason_phrase):
                 self.assertIn(reason_phrase, normalized)
-        self.assertIn("a parser gate is not a refusal", normalized)
 
         calibration = " ".join(
             text.split("### Deterministic calibration and mock plumbing", 1)[1]

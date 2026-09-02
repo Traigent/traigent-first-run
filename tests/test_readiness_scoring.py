@@ -10597,11 +10597,20 @@ class ADeferredCalibrationSaysSoInTheFieldConsumersReadTests(unittest.TestCase):
         self.assertFalse(refused_calibration.measured)
         self.assertIn("never asked", refused_calibration.evidence)
         self.assertIn("scope gate refused it", refused_calibration.evidence)
-        self.assertIn("contained calibration route", refused_calibration.evidence)
+        # The whole sentence is built inside the arm that owns this state. An
+        # earlier draft appended its tail after the branch, keyed on the flag
+        # rather than on which arm fired, so it also attached to the
+        # "calibration ran but reported no checks" arms above and could print
+        # both halves in one sentence.
+        self.assertNotIn("never asked", self._calibration_subscore(plain).evidence)
         # The sentence for a run that simply postponed the step is untouched:
         # that run WAS asked, and the old words are true of it.
         self.assertIn("no calibration result was provided", plain_calibration.evidence)
-        self.assertNotIn("never asked", plain_calibration.evidence)
+        self.assertEqual(
+            plain_calibration.evidence,
+            "no calibration result was provided to this score; it costs points "
+            "until a complete calibration is measured",
+        )
 
     def test_only_the_sentence_moves_and_the_arithmetic_does_not(self) -> None:
         """The legibility fix must be provably free.
