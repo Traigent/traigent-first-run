@@ -5171,5 +5171,129 @@ class AFailingIdCheckAlwaysReachesItsCeilingTests(unittest.TestCase):
         )
 
 
+class TheRepeatedRowsTieDecidesWhichRouteIsOfferedTests(unittest.TestCase):
+    """The tie at 89 is not decoration: it chooses what the card offers.
+
+    `dataset-repeated-rows` and `dataset-coarse-resolution` share a ceiling and
+    both ask, so `CAP_RANK` decides which remedy `recommended_action` carries.
+    `repeated_input_routes` reads that field to decide whether the bounded
+    top-up appears as a route at all, so the declaration order picks between two
+    different cards for one project.
+
+    #384 ranked the repetition rung after resolution and argued the consequence
+    in a comment without ever building a project where the two meet. This is
+    that project. The dataset is the smallest one that raises both - twenty-four
+    scoreable rows asking twenty questions, which is under the thirty a stable
+    comparison wants and over the ten a wiring check needs - and the second test
+    reverses the declaration to show the card actually changes.
+
+    Scored in-process rather than through the CLI because the second half has to
+    reorder `CAP_RANK`, which a subprocess cannot be handed. The preflight half
+    is still the real script over a real file, so the counts both caps quote are
+    the ones preflight computed.
+    """
+
+    def _score(self) -> object:
+        rows = [
+            {
+                "id": f"row-{index:03d}",
+                "input": (
+                    f"Ticket {index}: the customer writes about "
+                    f"{('billing', 'cancellation', 'technical-support', 'account')[index % 4]} "
+                    "and asks what to do next."
+                ),
+                "output": ("billing", "cancellation", "technical-support", "account")[
+                    index % 4
+                ],
+                "source": "production-log",
+                "difficulty": ("easy", "medium", "hard")[index % 3],
+            }
+            for index in range(1, 21)
+        ]
+        rows += [
+            dict(row, id=f"row-{20 + offset:03d}")
+            for offset, row in enumerate(rows[:4], start=1)
+        ]
+        with tempfile.TemporaryDirectory() as raw:
+            records = _preflight_records(
+                _write_jsonl(Path(raw), "dataset.jsonl", rows),
+                "--evaluator-method",
+                "normalized-exact",
+            )
+        present, parses = MODULE.evaluator_shape_from_preflight(records)
+        return MODULE.score_run(
+            MODULE.dataset_facts_from_preflight(records),
+            MODULE.evaluation_facts_from_calibration(
+                None,
+                method="normalized-exact",
+                task_kind="closed-label",
+                evaluator_present=present,
+                evaluator_parses=parses,
+                origin=MODULE.BROUGHT,
+            ),
+            MODULE.AgentFacts(origin=MODULE.BROUGHT),
+            dict(MODULE.DEFAULT_WEIGHTS),
+        )
+
+    def test_both_conditions_ask_at_the_shared_ceiling(self) -> None:
+        """The tie has to exist before the order can decide anything.
+
+        Asserted separately from the routes below so a fixture that stopped
+        raising one of the two fails as "this project no longer makes the tie"
+        rather than as a route that moved.
+        """
+        score = self._score()
+        asking = {
+            cap.condition: cap.ceiling
+            for cap in score.caps
+            if cap.asks and cap.blocks is False
+        }
+        self.assertEqual(
+            asking,
+            {"dataset-coarse-resolution": 89, "dataset-repeated-rows": 89},
+            "the fixture no longer produces the tie this test is about",
+        )
+        self.assertFalse([cap for cap in score.caps if cap.blocks])
+
+    def test_the_declared_order_keeps_the_top_up_on_the_card(self) -> None:
+        """What ships: resolution wins the tie, so the offer is still routed."""
+        score = self._score()
+        self.assertEqual(score.recommended_action, MODULE.ADD_EXAMPLES)
+        card = MODULE.render_card(score, unicode_ok=False)
+        self.assertIn("Answer the bounded top-up above with yes", card)
+        self.assertIn(
+            MODULE.RECOMMENDED_MARK, card.split("A. ", 1)[1].split("\n", 1)[0]
+        )
+
+    def test_reversing_the_order_takes_the_offer_off_the_card(self) -> None:
+        """The half the comment asserted and nothing executed.
+
+        Rank the repetition rung first and `recommended_action` becomes its
+        remedy, `offers_top_up` goes false, and the customer is no longer
+        offered the top-up this card printed two lines above them. That is the
+        cost of the tie, and it is why the order is a decision rather than a
+        sequence somebody happened to type.
+        """
+        original = dict(MODULE.CAP_RANK)
+        swapped = dict(original)
+        swapped["dataset-coarse-resolution"], swapped["dataset-repeated-rows"] = (
+            original["dataset-repeated-rows"],
+            original["dataset-coarse-resolution"],
+        )
+        MODULE.CAP_RANK.clear()
+        MODULE.CAP_RANK.update(swapped)
+        try:
+            score = self._score()
+            card = MODULE.render_card(score, unicode_ok=False)
+        finally:
+            MODULE.CAP_RANK.clear()
+            MODULE.CAP_RANK.update(original)
+        self.assertEqual(score.recommended_action, "review-repeats")
+        self.assertNotIn("Answer the bounded top-up above with yes", card)
+        # And the repetition block is still printed - what moved is the offer
+        # inside it, not the finding.
+        self.assertIn(MODULE.REPEATED_ROWS_LABEL, card)
+
+
 if __name__ == "__main__":
     unittest.main()
