@@ -346,9 +346,9 @@ evidence without `values` or `low`/`high`; verify the real build path before add
 to the enhanced space. A stub whose comment lists the settings a real call *would* take is describing
 an agent that does not exist yet, and recording those names reports a search space this project does
 not have - the same false readiness a historical config-space file produces. Pass it as
-`scripts/readiness.py --agent-knobs`; SKILL.md stage 1 states where it is written. Each scoring gets
-its own directory there because a read is evidence about the source at the moment it was taken, never
-a document to be reused.
+`scripts/readiness.py --agent-knobs`; SKILL.md stage 1 states where it is written, how far one
+reading travels, and where it stops. Each scoring gets its own directory there because a read is
+evidence about the source at the moment it was taken.
 
 ```json
 {"source": "agent.py",
@@ -394,16 +394,33 @@ an earlier version of this checker compared the two for equality and refused it,
 that never ends with no true document to write.
 
 **`bounded` is read the same way, and refused only where the tree proves it.** Two conditions
-together: the loop test is a literal truthy constant - `while True:`, `while 1:` - **and** its own
-statements carry no `break`, no `return` and no `raise`. Such a loop cannot end by its condition and
-has no way out of its body, so `"bounded": true` beside one is refused; the card would otherwise
-print "a stop condition to point at" over an agent with none.
+together: the loop test is one the tree settles as true (`while True:`, `while 1:`, `while 2 > 1:`)
+**and** nothing in its body leaves it. Such a loop cannot end by its condition and has no way out,
+so `"bounded": true` beside one is refused; the card would otherwise print "a stop condition to
+point at" over an agent with none.
+
+**A statement leaves the `while` only if nothing between it and the `while` captures it.** That one
+sentence is the rule, rather than a list of keywords, and it is what tells you how an unusual shape
+will be read. A `break` is captured by any nearer loop: in `while True:` over `for c in q: break`
+the `break` ends the `for`, the `while` starts it again, and that agent never ends. A `raise` is
+captured by an enclosing `try` whose `except` handles it, so a loop whose only `raise` lands in its
+own handler is left exactly where it was. An `assert` is `raise AssertionError` written shorter and
+is read on exactly those terms, both when it leaves and when an `except AssertionError:` catches it.
+A `return` is captured only by a function definition, and this read never enters one. Where it
+cannot tell whether an exception escapes - a class it does not resolve, a handler written as an
+attribute - it refuses nothing.
+
+One shape is refused although the loop really does leave: a `while True:` whose only way out is
+`sys.exit()` or `os._exit()`. Seeing that means resolving a name to the function it calls, and
+nothing here does. The refusal is a limit of this read rather than a finding about your agent, so
+record that check `"determined": false` with a `reason` naming the call - a statement about what
+this read could settle, not about what your agent does.
 
 Everything else is accepted, because the ordinary way a `while` ends is its condition becoming
 false. **A counter or a flag is a bound and you should record it as one**: `while n > 0` with `n`
 decrementing, and `while not done` with the flag set inside, are both `"bounded": true`, and neither
 is refused - this is the "loop with a bound can be recorded" case that the control-flow definition
-below already names. A `while True` that leaves by `break`, `return` or `raise` is accepted for the
+below already names. A `while True` carrying an exit that the rule above counts is accepted for the
 same reason, because whether that exit is reached is not a question this read can answer. A `for` is
 never refused on this ground at all: it is bounded by its iterable.
 
@@ -419,13 +436,18 @@ follows a call graph.
 
 **`prompt` and `output-contract` are located only.** Nothing statically decides whether a prompt
 carries worked examples, or whether anything pins the shape of an answer. Their `source_lines` say
-where you looked and their `evidence` says what you saw; neither is checked, and the card says so
-rather than letting the four checks read as equally verified.
+where you looked and their `evidence` says what you saw; neither settles the finding, and the card
+says so rather than letting the four checks read as equally verified.
 
 Write every answer to be true of the agent you selected. A carried-over document is caught when its
-coordinates fall outside that source or when one of the two derivations contradicts it, and not
-otherwise - a read of another agent whose citations happen to land in range, on the two checks
-nothing can settle, will be reprinted on the customer's card as written.
+coordinates fall outside that source, or when a derivation contradicts it, and not otherwise. Your
+`evidence` is prose and nothing reads it: on any of the four checks a sentence describing another
+program is reprinted on the customer's card as written, because deciding whether a filename in a
+sentence is a misattribution or an ordinary reference to another module of the same project is not
+something a reader of prose can do - and refusing such a reference would refuse the truth about
+every agent whose prompt or tools live in a second file. What the card prints beside your sentence
+instead is the line your `source_lines` actually point at, quoted from the selected agent, so a
+reader can weigh the two against each other. Write the sentence so they agree.
 
 Neither derivation leaves the selected callable's own body, and passing one is not a finding that the
 answer is right. An agent whose loop is in a helper it calls passes both checks with `"loop": true,
@@ -449,7 +471,7 @@ alone authorizes a multi-configuration paid grid; the Enhanced config-space reco
 Run the read with all three bound inputs, for example:
 
 ```bash
-scripts/readiness.py --agent-knobs traigent-runs/readiness/<run>/agent-knobs.json \
+scripts/readiness.py --agent-knobs traigent-runs/readiness/<YYYYMMDDTHHMMSSZ>/agent-knobs.json \
   --agent-source-root "$PROJECT_ROOT" --selected-agent "$PROJECT_ROOT/agent.py" \
   --selected-agent-callable answer_question
 ```

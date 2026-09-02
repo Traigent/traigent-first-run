@@ -36,9 +36,11 @@ after the run, to measure the space it searched. Use
 [`scripts/calibrate_evaluator.py`](scripts/calibrate_evaluator.py) for the separate,
 explicit evaluator-execution gate. Supply lifecycle-permitted evidence from the current run;
 an absent or deferred input scores its pillar from absent evidence and is never a reason to skip
-the score. A config-space file found before this run's enhanced search is historical context, not
-current-run readiness evidence: no invocation in this run scores it, and no number derived from
-scoring one is reported. Only after task intent is anchored, copy
+the score. A readiness document this run did not itself produce is historical context, not
+current-run readiness evidence - a config-space file found before this run's enhanced search,
+whoever wrote it, and an agent reading left by an earlier or retired run alike: no invocation in
+this run scores one, and no number derived from scoring one is reported. Only after task intent is
+anchored, copy
 [`assets/run-plan.md`](assets/run-plan.md) into `traigent-runs/run-plan.md` and fill it from
 discovered evidence. Record the opening result there - overall score, band, and binding caps - and
 never overwrite the recorded opening score. Record each later run as that template's gate result.
@@ -72,7 +74,12 @@ exactly match the freshly rendered and approved enhanced card. If the invariants
 differ, do not resume this run: rename the old record to the next unused
 `traigent-runs/run-plan-historical-<YYYYMMDDTHHMMSSZ>.md` (never overwrite), keep its spend and results
 historical or baseline-only, copy a fresh template to canonical `traigent-runs/run-plan.md`, start
-at stage 1 with a new opening score, and never rerun paid work without newly scoped approval.
+at stage 1 with a new opening score, and never rerun paid work without newly scoped approval. That
+opening score re-reads the agent, because the old record's readiness directories are historical
+with it: an opening score over an old reading is not one. Every `<YYYYMMDDTHHMMSSZ>` this guide
+writes into a name - that rename, stage 1's readiness directory, the run log's `ts` - is UTC when
+that file or directory is written, never one id minted per run and reused; the run supplies it,
+because no bundled script reads a clock.
 Observe a live process, but never restart or expand it from the record alone. A record with every
 stage done or skipped is finished, not a resume point. The operating contract owns the mismatch
 rule.
@@ -307,10 +314,11 @@ On a zero-anchor run, keep the preflight JSON on stdout and feed it directly to
 anchors intent, do not use `--report`, write evidence under the project, or name a readiness
 directory.
 Explicitly omit every config-space file found before this run's enhanced search from scoring,
-including one left by an earlier guided run: it is historical context, not current-run readiness
-evidence. Record its provenance; a timestamp, hash, or non-empty `wired` list does not make it
-current. A customer-authored file may guide inspection, never score values or wiring. Every guided
-run does this, including a zero-anchor run.
+including one left by an earlier guided run, which the historical-document rule above already
+excludes. Record its provenance; a timestamp, hash, or non-empty `wired` list does not make it
+current, and the readiness directory holding a retired run's agent reading does not make that
+current either. A customer-authored file may guide inspection, never score values or wiring. Every
+guided run does this, including a zero-anchor run.
 
 After task intent is anchored, every file a
  scoring writes to reach it - that document, the preflight JSON, any note - goes in
@@ -356,7 +364,7 @@ Proceed with what can be varied if nothing comes back. Never ask
 for a config-space file here - the paragraph above omits
 every one of those found before this run's search, so it cannot answer this. The ceiling left
 standing is read by stage 4's cap routing below, which is unchanged. Pass this same reading to every
-later re-score in this run, re-reading the agent only where this run created or repaired it: a
+later re-score of this record, re-reading the agent only where this run created or repaired it: a
 re-score that quietly drops the flag reports the agent pillar falling from what the opening read
 established to nothing, and that fall reaches the customer as an honest change in their project.
 `references/component-creation.md` owns the shape.
@@ -775,9 +783,10 @@ inference provider/route may receive it. Connected synchronization waits until a
 ### 6. Approve and run the baseline
 
 Scope the run before pricing it. When the dataset carries more than 100 usable rows, select the
-bounded first-run subset described in `references/evaluation-and-dataset.md` - 18 rows by default, at
-least four from each difficulty band, drawn within each split rather than across it - and estimate
-runtime and spend from that subset, not from the full row count.
+bounded first-run subset described in `references/evaluation-and-dataset.md` - 18 questions by
+default, at least four from each difficulty band, drawn within each split rather than across it, and
+distinct by input across the whole draw - and estimate runtime and spend from the rows those
+questions bring, never from the full row count.
 
 Select only after scoring the full dataset and before pricing the run. Record the chosen row ids,
 report subset and full sizes, and state that the small first-run sample limits the claim.

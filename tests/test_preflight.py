@@ -683,6 +683,15 @@ class StaticPreflightTests(unittest.TestCase):
         )
 
     def test_paid_first_run_rows_are_reported_from_usable_rows(self) -> None:
+        """Reads the pair now, because one number under the other's name was the defect.
+
+        Same two fixtures and the same detail substrings as before; the metric
+        it asserts changed because `first_run_rows` conflated a question cap
+        with a row count. Both fixtures ask one question per row, so the cap
+        and the rows coincide here and the old expectation is asserted twice
+        over - once as questions, once as the rows they bring - rather than
+        weakened.
+        """
         for row_count, expected in ((40, 40), (101, 18)):
             with self.subTest(row_count=row_count):
                 MODULE.RESULTS.clear()
@@ -708,7 +717,9 @@ class StaticPreflightTests(unittest.TestCase):
                     if item.check == "dataset-first-run-rows"
                 )
                 self.assertEqual(finding.status, MODULE.PASS)
-                self.assertEqual(finding.metrics["first_run_rows"], expected)
+                self.assertEqual(finding.metrics["first_run_questions"], expected)
+                self.assertEqual(finding.metrics["first_run_rows_fewest"], expected)
+                self.assertEqual(finding.metrics["first_run_rows_most"], expected)
                 self.assertEqual(finding.metrics["usable_rows"], row_count)
                 self.assertIn("proposed first-run subset cap", finding.detail)
                 self.assertIn("actual row ids before baseline approval", finding.detail)
@@ -3259,6 +3270,713 @@ class EveryRowCountIsAccountedForTests(unittest.TestCase):
             MODULE.validate_row_count_bounds(blind)
         self.assertEqual(MODULE.row_counts({"bands": ["easy"], "rows": 3}), {"rows": 3})
         self.assertEqual(MODULE.row_counts(None), {})
+
+
+class TheSubsetProposalCountsDifferentQuestionsTests(unittest.TestCase):
+    """The number the bounded-draw rule names has to be the number preflight emits.
+
+    `references/evaluation-and-dataset.md` rule 6 tells an assistant to draw
+    different questions and to stop at the tuning split's different questions
+    among the rows this run can score. That is a guidance sentence about a
+    POPULATION and an IDENTITY, and the script can drift from either silently.
+
+    Both axes have already been wrong here, which is why the fixtures below
+    cross them rather than covering each alone. A review found the first
+    version's coverage arranged so that no case tested both at once: the one
+    fixture that declared a split never asserted the proposal, and the three
+    that asserted the proposal never declared a split - two halves covered and
+    the seam between them open, while the seam was where the defect was.
+
+    * POPULATION. `#356` was the labelled axis: a distinct count over every
+      tuning row bounding a comparison that only reaches the labelled ones.
+      The split axis is the same defect one over: the guide hands preflight the
+      combined file, so a count over every row answers about rows the draw
+      never touches. On a 400-row tuning split asking 12 questions beside a
+      held-out ten, that difference is six rows per configuration in every
+      trial.
+    * IDENTITY. `normalized_identity` keeps word characters and discards every
+      operator, so `is x > 5` and `is x < 5` reach it as one string. Bounding a
+      PAID draw with it deletes real test cases, and the walkthrough's own
+      worked task is text to SQL. The draw uses `exact_input_identity`, which
+      has no false positive.
+    """
+
+    def setUp(self) -> None:
+        MODULE.RESULTS.clear()
+
+    def scan(self, rows: list[dict], **kwargs: str) -> dict:
+        MODULE.RESULTS.clear()
+        with tempfile.TemporaryDirectory() as directory:
+            dataset = Path(directory) / "eval.jsonl"
+            dataset.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+            MODULE.check_dataset(dataset, **kwargs)
+        return {result.check: result for result in MODULE.RESULTS}
+
+    @staticmethod
+    def held_out(count: int = 10, questions: int | None = None) -> list[dict]:
+        """A held-out split that asks its own questions, which the draw may not count."""
+        span = count if questions is None else questions
+        return [
+            {
+                "id": f"hold-{index}",
+                "input": f"does exhibit {index % span} contradict the filing",
+                "output": "no",
+                "split": "holdout",
+            }
+            for index in range(count)
+        ]
+
+    def test_the_proposal_counts_the_tuning_split_and_not_the_file(self) -> None:
+        """The seam: a split IS declared and the proposal IS asserted.
+
+        The guide mandates the combined, split-labelled file as preflight's
+        input, so this is the ordinary path rather than a corner. The tuning
+        split asks twelve questions; the held-out ten ask ten more; the file
+        therefore holds twenty-two. Only one of those numbers may bound a draw
+        that never leaves the tuning split.
+
+        Both the count and the scope are asserted, because a count that is
+        right by accident and a count that says what it counted are different
+        guarantees, and only the second survives someone adding a third split.
+        """
+        rows = [
+            {
+                "id": f"tune-{index}",
+                "input": f"question number {index % 12} about the quarterly filing",
+                "output": f"answer {index % 12}",
+                "split": "tuning",
+            }
+            for index in range(400)
+        ]
+        rows += self.held_out()
+        finding = self.scan(rows)["dataset-first-run-rows"]
+        self.assertEqual(finding.metrics["usable_rows"], 410)
+        self.assertEqual(
+            finding.metrics["first_run_distinct_rows"],
+            12,
+            "the count reaches rows outside the tuning split, so it is not the "
+            "population the draw can be sized from",
+        )
+        self.assertEqual(
+            finding.metrics["first_run_distinct_scope"], "the tuning split"
+        )
+        self.assertEqual(
+            finding.metrics["first_run_questions"],
+            12,
+            "the proposal is above the questions the tuning split asks, so it "
+            "prices calls no comparison can use",
+        )
+        self.assertIn("12 different inputs in the tuning split", finding.detail)
+
+    def test_an_operator_is_not_a_repeat(self) -> None:
+        """The identity axis, on the shape this walkthrough actually teaches.
+
+        Forty questions differing only in their comparison operator are forty
+        questions. Under the looser identity they are twenty, and the twenty
+        dropped are test cases the customer wrote - a de-duplication that
+        removes questions, which rule 6 forbids in as many words. Asserted
+        against the SCRIPT's own two identities as well as against the count,
+        so the reason a re-key would be wrong is pinned beside the count it
+        would break.
+        """
+        self.assertEqual(
+            MODULE.normalized_identity("is x > 5"),
+            MODULE.normalized_identity("is x < 5"),
+            "the looser identity stopped collapsing operators, so this fixture "
+            "no longer distinguishes the two measures",
+        )
+        self.assertNotEqual(
+            MODULE.exact_input_identity("is x > 5"),
+            MODULE.exact_input_identity("is x < 5"),
+        )
+        rows = [
+            {
+                "id": f"op-{index}-{sign}",
+                "input": f"is column_{index} {sign} 5",
+                "output": "yes" if sign == ">" else "no",
+                "split": "tuning",
+            }
+            for index in range(20)
+            for sign in (">", "<")
+        ]
+        rows += [
+            {
+                "id": f"pad-{index}",
+                "input": f"how many rows joined table {index}",
+                "output": str(index),
+                "split": "tuning",
+            }
+            for index in range(120)
+        ]
+        rows += self.held_out()
+        finding = self.scan(rows)["dataset-first-run-rows"]
+        self.assertEqual(
+            finding.metrics["first_run_distinct_rows"],
+            160,
+            "the draw counted two operator questions as one, so it would cut "
+            "the budget on a guess the rule refuses",
+        )
+        self.assertEqual(finding.metrics["first_run_questions"], 18)
+
+    def test_a_multi_reference_split_counts_its_questions_not_its_rows(self) -> None:
+        """Sixty questions under two accepted golds are sixty questions.
+
+        The fixture is built from the shape rather than from any count this
+        script computes: 60 questions written out, each once per accepted gold.
+        The proposal is capped at eighteen QUESTIONS, and the rows those
+        questions bring are what the run pays for - which is rule 6's own
+        wording and the reason the cap is not a row count.
+        """
+        rows = []
+        for index in range(60):
+            for gold in ("yes", "affirmative"):
+                rows.append(
+                    {
+                        "id": f"q{index}-{gold}",
+                        "input": f"is claim number {index} supported by the passage",
+                        "output": gold,
+                        "split": "tuning",
+                    }
+                )
+        rows += self.held_out(12)
+        found = self.scan(rows)
+        tuning = found["dataset-tuning-size"]
+        self.assertEqual(tuning.metrics["tuning_rows"], 120)
+        self.assertEqual(
+            tuning.metrics["tuning_distinct_rows"],
+            60,
+            "the card would tell a reader 120 while the rule counts questions",
+        )
+        proposal = found["dataset-first-run-rows"]
+        self.assertEqual(proposal.metrics["first_run_distinct_rows"], 60)
+        self.assertEqual(
+            proposal.metrics["first_run_questions"],
+            18,
+            "the cap is in questions, and eighteen questions is what rule 6 caps",
+        )
+        self.assertEqual(
+            (
+                proposal.metrics["first_run_rows_fewest"],
+                proposal.metrics["first_run_rows_most"],
+            ),
+            (36, 36),
+            "eighteen questions under two accepted golds bring thirty-six rows, "
+            "and the run pays for the rows",
+        )
+
+    def test_the_subset_proposal_never_exceeds_the_questions_asked(self) -> None:
+        """A file of 400 rows asking 12 questions may not be proposed 18 rows.
+
+        Both numbers used to travel in one payload - `subset cap: 18` beside a
+        distinct count of 12 - with nothing saying which governed, while the
+        difference is six calls per configuration in every trial. No split is
+        declared here on purpose: the fallback population is the whole
+        scoreable set, because an undeclared split is a file the draw comes out
+        of entire.
+        """
+        rows = [
+            {
+                "id": f"row-{index}",
+                "input": f"question number {index % 12} about the quarterly filing",
+                "output": f"answer {index % 12}",
+            }
+            for index in range(400)
+        ]
+        finding = self.scan(rows)["dataset-first-run-rows"]
+        self.assertEqual(finding.metrics["usable_rows"], 400)
+        self.assertEqual(finding.metrics["first_run_distinct_rows"], 12)
+        self.assertEqual(finding.metrics["first_run_distinct_scope"], "this dataset")
+        self.assertEqual(
+            finding.metrics["first_run_questions"],
+            12,
+            "the proposal is above the questions this file asks, so it prices "
+            "calls no comparison can use",
+        )
+        self.assertIn("12 different inputs in this dataset", finding.detail)
+
+    def test_a_file_of_different_questions_keeps_the_full_proposal(self) -> None:
+        """The other direction: the bound may not shrink an honest dataset.
+
+        Pinned separately from the existing usable-rows test because that one
+        would pass unchanged if the new bound were wired to always clamp - its
+        fixture has no repeats to distinguish the two behaviours.
+        """
+        rows = [
+            {
+                "id": f"row-{index}",
+                "input": f"question number {index} about the quarterly filing",
+                "output": f"answer {index}",
+            }
+            for index in range(400)
+        ]
+        finding = self.scan(rows)["dataset-first-run-rows"]
+        self.assertEqual(finding.metrics["first_run_distinct_rows"], 400)
+        self.assertEqual(finding.metrics["first_run_questions"], 18)
+        self.assertEqual(finding.metrics["first_run_rows_most"], 18)
+        self.assertNotIn("different inputs in", finding.detail)
+
+    def test_the_proposal_counts_only_rows_this_run_can_score(self) -> None:
+        """The labelled axis, which is #356's own. Crossed with a declared split.
+
+        A file half collected and half annotated is the ordinary state of one
+        somebody is still working on. Its unlabelled rows cannot be scored, so
+        they are not rows a configuration can be told apart on and not rows the
+        draw may be sized from - and they are exactly what makes a count over
+        every present row larger than the one the proposal may use.
+        """
+        questions = 12
+        rows = [
+            {
+                "id": f"labelled-{index}",
+                "input": f"question number {index % questions} about the filing",
+                "output": f"answer {index % questions}",
+                "split": "tuning",
+            }
+            for index in range(150)
+        ]
+        rows += [
+            {
+                "id": f"unlabelled-{index}",
+                "input": f"draft question {index}",
+                "split": "tuning",
+            }
+            for index in range(150)
+        ]
+        rows += self.held_out()
+        finding = self.scan(rows)["dataset-first-run-rows"]
+        self.assertEqual(finding.metrics["usable_rows"], 160)
+        self.assertEqual(
+            finding.metrics["first_run_distinct_rows"],
+            questions,
+            "the count reaches rows that carry no expected answer, so it is "
+            "not the population the draw can be sized from",
+        )
+        self.assertEqual(
+            finding.metrics["first_run_questions"],
+            questions,
+            "the proposal is above the questions this run can score, so it "
+            "prices calls no comparison can use",
+        )
+
+    def test_a_blank_expected_answer_is_not_a_drawable_question(self) -> None:
+        """The third scoping axis, and the one `rows` alone gets wrong.
+
+        A row whose expected answer is present but blank survives
+        normalization - the field is there - and is not scoreable, which is the
+        one definition `dataset_row_is_labelled` exists to hold. Counting those
+        rows made the draw's count say 160 in the same payload where
+        `tuning_labelled_rows` said 120, which is the same two-populations
+        shape as the labelled and split axes above, on the axis that looks
+        already handled.
+
+        Both numbers are asserted so the fixture cannot pass by coincidence:
+        the card still reports what the split holds, and the draw reports only
+        what it can be scored on.
+        """
+        self.assertFalse(MODULE.dataset_row_is_labelled({"output": ""}))
+        rows = [
+            {
+                "id": f"answered-{index}",
+                "input": f"question {index} about the filing",
+                "output": "yes",
+                "split": "tuning",
+            }
+            for index in range(120)
+        ]
+        rows += [
+            {
+                "id": f"blank-{index}",
+                "input": f"question awaiting an answer {index}",
+                "output": "",
+                "split": "tuning",
+            }
+            for index in range(40)
+        ]
+        rows += self.held_out()
+        found = self.scan(rows)
+        self.assertEqual(found["dataset-tuning-size"].metrics["tuning_rows"], 160)
+        self.assertEqual(
+            found["dataset-tuning-size"].metrics["tuning_labelled_rows"], 120
+        )
+        self.assertEqual(
+            found["dataset-first-run-rows"].metrics["first_run_distinct_rows"],
+            120,
+            "the draw counted rows whose expected answer is blank, so it is "
+            "sized on questions no configuration can be scored on",
+        )
+
+    def test_the_card_prices_the_rows_the_capped_questions_bring(self) -> None:
+        """N2: the cap is in questions and the money is in rows. Say both.
+
+        The finding published one number, called it rows, and it was the
+        question cap. On a split of 400 rows asking 200 questions that card
+        read "18 usable rows" for a draw bringing 36, so the guide's twelve
+        trial default priced 216 provider calls against 432 bought. Three
+        vocabularies in one `min()`, which is the class this rule exists to
+        close, on a fourth axis.
+
+        What is asserted is what the numbers MEAN, not the sentence they sit
+        in. Every expected value below is computed from the fixture's own shape
+        - questions written out once per accepted answer - and never read off a
+        constant the script also reads, so a rename or a re-key fails here.
+        """
+        questions, golds = 200, ("yes", "affirmative")
+        rows = [
+            {
+                "id": f"q{index}-{gold}",
+                "input": f"question number {index}",
+                "output": gold,
+                "split": "tuning",
+            }
+            for index in range(questions)
+            for gold in golds
+        ]
+        finding = self.scan(rows)["dataset-first-run-rows"]
+        cap = finding.metrics["first_run_questions"]
+        fewest = finding.metrics["first_run_rows_fewest"]
+        most = finding.metrics["first_run_rows_most"]
+        self.assertEqual(finding.metrics["usable_rows"], questions * len(golds))
+        self.assertEqual(finding.metrics["first_run_distinct_rows"], questions)
+        self.assertEqual(
+            (fewest, most),
+            (cap * len(golds), cap * len(golds)),
+            "the rows the capped questions bring are not published, so a run "
+            f"priced from this card buys {len(golds)} times what it quotes",
+        )
+        self.assertIn(f"{cap} questions", finding.detail)
+        self.assertIn(f"{most} scoreable rows", finding.detail)
+
+    def test_an_uneven_file_is_priced_as_the_range_it_is(self) -> None:
+        """One row number would be an invention where questions differ in cost.
+
+        Which questions a draw takes is decided by the band floor and by the
+        author, not by this check, so where questions bring different numbers
+        of rows the honest answer is an interval. 150 questions of one row
+        beside 20 of two: eighteen questions bring 18 at the arithmetic
+        cheapest and 36 at the dearest.
+
+        Untagged on purpose, and named as such. With no difficulty tags there
+        is no band floor to forbid the cheapest questions, so both ends of the
+        interval are reachable HERE - which is a property of this fixture, not
+        of the method.
+        `test_the_range_is_an_outer_bound_not_a_reachable_floor` carries the
+        case where it is false, because a test that cannot break the claim it
+        is named for is not evidence for it.
+        """
+        rows = [
+            {
+                "id": f"single-{index}",
+                "input": f"single reference question {index}",
+                "output": "x",
+                "split": "tuning",
+            }
+            for index in range(150)
+        ]
+        rows += [
+            {
+                "id": f"double-{index}-{gold}",
+                "input": f"double reference question {index}",
+                "output": gold,
+                "split": "tuning",
+            }
+            for index in range(20)
+            for gold in ("p", "q")
+        ]
+        finding = self.scan(rows)["dataset-first-run-rows"]
+        self.assertEqual(finding.metrics["first_run_questions"], 18)
+        self.assertEqual(finding.metrics["first_run_rows_fewest"], 18)
+        self.assertEqual(finding.metrics["first_run_rows_most"], 36)
+        self.assertIn("between 18 and 36 scoreable rows", finding.detail)
+
+    def test_the_range_is_an_outer_bound_not_a_reachable_floor(self) -> None:
+        """N5: the band floor can forbid the cheapest questions, and this cannot see it.
+
+        `rows_for` takes the cheapest and dearest questions by cost alone.
+        Rule 6 also requires at least four questions from each of four
+        difficulty bands, and nothing in `DrawableInputs` reads a row's
+        difficulty, so where cost correlates with difficulty the arithmetic low
+        end is below anything a compliant draw can reach.
+
+        30 easy questions of one row beside 90 harder ones of three:
+
+            arithmetic low end   : 18 questions x 1 row              = 18
+            cheapest COMPLIANT   : 4 easy x 1 + 14 harder x 3        = 46
+            arithmetic high end  : 18 questions x 3 rows             = 54
+
+        The interval is honest and neither end is a quote. What is asserted is
+        exactly that: the compliant floor lies strictly inside the reported
+        interval, so the low end understates it. The 46 is computed here from
+        the fixture's own shape and the band floor rule 6 states, never from
+        anything the script returns, so a change that made `rows_for` band-aware
+        would fail this deliberately rather than pass by coincidence.
+        """
+        rows = [
+            {
+                "id": f"easy-{index}",
+                "input": f"cheap question {index}",
+                "output": "a",
+                "difficulty": "easy",
+                "split": "tuning",
+            }
+            for index in range(30)
+        ]
+        rows += [
+            {
+                "id": f"hard-{index}-{gold}",
+                "input": f"expensive question {index}",
+                "output": gold,
+                "difficulty": "hard",
+                "split": "tuning",
+            }
+            for index in range(90)
+            for gold in ("p", "q", "r")
+        ]
+        rows += self.held_out()
+        finding = self.scan(rows)["dataset-first-run-rows"]
+        cap = finding.metrics["first_run_questions"]
+        fewest = finding.metrics["first_run_rows_fewest"]
+        most = finding.metrics["first_run_rows_most"]
+        self.assertEqual((cap, fewest, most), (18, 18, 54))
+
+        band_floor = 4
+        compliant_floor = band_floor * 1 + (cap - band_floor) * 3
+        self.assertEqual(compliant_floor, 46)
+        self.assertLess(
+            fewest,
+            compliant_floor,
+            "the reported low end is at or above the cheapest compliant draw, "
+            "so it is being quoted as a floor rather than as a bound",
+        )
+        self.assertLessEqual(compliant_floor, most)
+
+    def test_a_reference_free_method_may_draw_an_unlabelled_row(self) -> None:
+        """N3: the other branch of the labelled filter, which nothing pinned.
+
+        `drawable_distinct_inputs` excludes rows carrying no expected answer,
+        because no comparison reaches them - unless the method scores WITHOUT a
+        reference, where every present row is scoreable and excluding them
+        under-counts a draw that could have used them. Applying the filter
+        unconditionally left the whole class green, so the correct branch was
+        correct by accident.
+
+        Both branches run over one fixture, and the assertion is the difference
+        between them rather than either number alone: 60 labelled questions
+        beside 60 unlabelled ones is 60 under a referenced method and 120 under
+        a reference-free one. A filter applied unconditionally ties them.
+        """
+        rows = [
+            {
+                "id": f"labelled-{index}",
+                "input": f"answered question {index}",
+                "output": "a",
+                "split": "tuning",
+            }
+            for index in range(60)
+        ]
+        rows += [
+            {
+                "id": f"unlabelled-{index}",
+                "input": f"question awaiting an answer {index}",
+                "split": "tuning",
+            }
+            for index in range(60)
+        ]
+        referenced = self.scan(rows)["dataset-first-run-rows"].metrics
+        method = sorted(MODULE.REFERENCE_FREE_METHODS)[0]
+        free = self.scan(rows, evaluator_method=method)[
+            "dataset-first-run-rows"
+        ].metrics
+        self.assertEqual(referenced["first_run_distinct_rows"], 60)
+        self.assertEqual(
+            free["first_run_distinct_rows"],
+            120,
+            "a reference-free draw was cut to the labelled rows, so it prices "
+            "half the questions it could have compared",
+        )
+        self.assertGreater(
+            free["first_run_distinct_rows"], referenced["first_run_distinct_rows"]
+        )
+
+    def test_the_bound_is_applied_only_where_the_subset_applies(self) -> None:
+        """The helper itself, at the two boundaries the emit cannot reach.
+
+        A caller with no question count gets the row-based answer rather than a
+        wrong one, and a caller with one is capped at eighteen only above
+        `BOUNDED_SUBSET_ABOVE_ROWS`, because below it the run scores the whole
+        dataset and there is no subset to cut.
+
+        Below the threshold the cap is the file's own question count, and that
+        is a correction rather than a relaxation: the previous spelling
+        returned the ROW count there and called it a cap, which is the same
+        two-vocabularies defect the emit above had. A 40-row file asking 7
+        questions has 7 questions and 40 rows, and both are now said.
+        """
+        # Above the threshold the eighteen governs, bounded by the questions.
+        self.assertEqual(MODULE.first_run_question_cap(400), 18)
+        self.assertEqual(MODULE.first_run_question_cap(400, 400), 18)
+        self.assertEqual(MODULE.first_run_question_cap(400, 12), 12)
+        self.assertEqual(MODULE.first_run_question_cap(101, 12), 12)
+        # At and below it there is no subset, so the cap is every question the
+        # file asks - not eighteen, and not the ROW count, which is what the
+        # previous spelling returned here and is a different quantity whenever
+        # a question carries more than one row.
+        self.assertEqual(MODULE.first_run_question_cap(100, 12), 12)
+        self.assertEqual(MODULE.first_run_question_cap(40, 40), 40)
+        self.assertEqual(MODULE.first_run_question_cap(40, 7), 7)
+        # And with nobody having counted, the row-based figure this check
+        # published before the count existed.
+        self.assertEqual(MODULE.first_run_question_cap(40), 40)
+
+    def test_an_unmeasured_count_is_not_a_count_of_zero(self) -> None:
+        """`None` means nobody counted. Reading it as 0 prices the run at nothing.
+
+        The two branches are pinned against each other rather than separately,
+        which is the only arrangement that fails on the collapse. `or 0` turns
+        the unmeasured case into the measured-nothing case, and a payload
+        written before this count existed then proposes a first run of zero
+        rows - the same shape as the defect this rule exists to fix, pointed
+        the other way: a number standing in for a measurement nobody took.
+
+        A genuine zero is left alone on purpose. It is unreachable through
+        `check_dataset`, which returns before this on an empty scoreable set,
+        so the assertion is on the helper's own contract and says what a future
+        caller may rely on.
+        """
+        unmeasured = MODULE.first_run_question_cap(400, None)
+        measured_nothing = MODULE.first_run_question_cap(400, 0)
+        self.assertEqual(
+            unmeasured,
+            18,
+            "an absent count bounded the proposal, so a payload that predates "
+            "the count prices a run it never measured",
+        )
+        self.assertEqual(measured_nothing, 0)
+        self.assertNotEqual(
+            unmeasured,
+            measured_nothing,
+            "None and 0 now give the same answer, so nothing distinguishes "
+            "'nobody counted' from 'there is nothing to draw'",
+        )
+
+    def test_the_draw_and_the_sibling_key_describe_one_population(self) -> None:
+        """The two counts differ by IDENTITY and must never differ by population.
+
+        `tuning_distinct_scoreable_rows` is the tuning-and-scoreable count a
+        comparison may be bounded by, and it is taken on `normalized_identity`.
+        The draw takes the same population on `exact_input_identity`, because
+        this one cuts a paid budget and that one does not. Keeping the identity
+        different is deliberate; keeping the population different is the defect
+        that has now appeared here on three axes, so it is pinned rather than
+        left to two walks agreeing by habit.
+
+        Two fixtures, because equality alone would also hold if both counts
+        were wrong the same way.
+
+        * Where no two questions collapse under the looser identity the two
+          numbers are EQUAL. The fixture carries a held-out split, unlabelled
+          tuning rows AND blank-answer tuning rows, so each of the three
+          populations this sentence names is one the fixture can actually catch
+          the draw reaching. An earlier version made that claim over rows that
+          were entirely labelled, where two thirds of it was untrue: dropping
+          the labelled filter left this test green and only the blank-answer
+          case held it. An overclaimed contract is a small lie a later reader
+          relies on, so the fixture was widened rather than the sentence
+          narrowed.
+        * Where exactly twenty pairs collapse, the difference is exactly twenty
+          and the draw's count is the larger. A draw that had quietly adopted
+          the looser identity would tie instead.
+        """
+        agreeing = [
+            {
+                "id": f"plain-{index}",
+                "input": f"how many rows joined table {index}",
+                "output": str(index),
+                "split": "tuning",
+            }
+            for index in range(60)
+        ]
+        agreeing += [
+            {
+                "id": f"unlabelled-{index}",
+                "input": f"question with no answer yet {index}",
+                "split": "tuning",
+            }
+            for index in range(15)
+        ]
+        agreeing += [
+            {
+                "id": f"blank-{index}",
+                "input": f"question with a blank answer {index}",
+                "output": "",
+                "split": "tuning",
+            }
+            for index in range(15)
+        ]
+        agreeing += self.held_out()
+        found = self.scan(agreeing)
+        self.assertEqual(
+            found["dataset-first-run-rows"].metrics["first_run_distinct_rows"],
+            found["dataset-tuning-size"].metrics["tuning_distinct_scoreable_rows"],
+            "the draw and the key it parallels no longer count the same rows",
+        )
+
+        collapsing = (
+            [row for row in agreeing if row["id"].startswith("plain-")]
+            + [
+                {
+                    "id": f"op-{index}-{sign}",
+                    "input": f"is column_{index} {sign} 5",
+                    "output": "yes" if sign == ">" else "no",
+                    "split": "tuning",
+                }
+                for index in range(20)
+                for sign in (">", "<")
+            ]
+            + self.held_out()
+        )
+        found = self.scan(collapsing)
+        draw = found["dataset-first-run-rows"].metrics["first_run_distinct_rows"]
+        key = found["dataset-tuning-size"].metrics["tuning_distinct_scoreable_rows"]
+        self.assertEqual(
+            draw - key,
+            20,
+            "the draw and the key differ by something other than the twenty "
+            "operator pairs, so one of them changed population",
+        )
+        self.assertGreater(draw, key)
+
+    def test_the_scope_travels_with_the_number(self) -> None:
+        """A count with no population is the shape both defects wore.
+
+        Every payload states which rows it counted, so a reader never has to
+        infer it from a second field, and a third split cannot silently change
+        what the number means.
+        """
+        for label, rows in (
+            (
+                "the tuning split",
+                [
+                    {
+                        "id": f"t{index}",
+                        "input": f"q{index}",
+                        "output": "a",
+                        "split": "train",
+                    }
+                    for index in range(30)
+                ]
+                + self.held_out(),
+            ),
+            (
+                "this dataset",
+                [
+                    {"id": f"n{index}", "input": f"q{index}", "output": "a"}
+                    for index in range(30)
+                ],
+            ),
+        ):
+            with self.subTest(scope=label):
+                finding = self.scan(rows)["dataset-first-run-rows"]
+                self.assertEqual(finding.metrics["first_run_distinct_scope"], label)
 
 
 class TheDistinctCountAndTheCountItBoundsDescribeOneSetTests(unittest.TestCase):

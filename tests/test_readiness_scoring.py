@@ -8,6 +8,7 @@ import io
 import itertools
 import json
 import re
+import symtable
 import sys
 import tempfile
 import typing
@@ -8916,6 +8917,11 @@ class TheCardSpeaksTheUsersLanguageTests(unittest.TestCase):
         "blocker_lines",
         "render_card",
         "render_markdown",
+        # Added with the block it renders. A renderer whose lines were left out
+        # of this tuple reaches customers with the rules below enforced on
+        # nothing, which is the gap this scan exists to close - so the block is
+        # named here in the same change that writes it, not in a later one.
+        "accepted_route_shape",
         "assumption_sentence",
         "task_fit_evidence",
         "readable_kinds",
@@ -9082,6 +9088,11 @@ class TheCardSpeaksTheUsersLanguageTests(unittest.TestCase):
             # state in this matrix rendering it, which is the gap this scan
             # exists to close.
             replace(plain, agent_source_read=True),
+            # And the state that draws the accepted route, on both surfaces.
+            # Same reason as the line above it: the block says what a customer
+            # should write instead, so it is exactly the text these rules are
+            # for, and a state nothing renders exempts it from all of them.
+            replace(plain, agent_route_unverified=True),
         ]
         return scores
 
@@ -10993,7 +11004,13 @@ class StaticAgentSourceEvidenceTests(unittest.TestCase):
         extra_files: dict[str, str] | None = None,
         source_reference: str = "agent.py",
     ) -> bool:
-        compile(source, "agent.py", "exec")
+        # `dont_inherit`, because this call is only here to prove the fixture
+        # is a real file. Without it the fixture is compiled under THIS
+        # module's `from __future__ import annotations`, which stringifies
+        # annotations and rejects a walrus inside one - so a shape that is
+        # ordinary Python in a customer's file failed here for a reason that
+        # belongs to the test module rather than to the fixture.
+        compile(source, "agent.py", "exec", dont_inherit=True)
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "agent.py").write_text(source, encoding="utf-8")
@@ -13351,6 +13368,1539 @@ class StaticAgentSourceEvidenceTests(unittest.TestCase):
                     )
 
 
+class ALocalBindingIsStillARouteToTheCallTests(unittest.TestCase):
+    """#348: an ordinary agent binds its setting to a local before the call.
+
+    Established by construction rather than by reading the checker, because
+    reading it is what produced the wrong answer five times. Two agents were
+    written that differ by exactly one line - the option table indexed inside
+    the request call, and the same selection bound to a local first - and
+    scored through the real reader. The direct one earned the settings check
+    and the local one scored zero, with every other byte identical. Four Python
+    idioms had been blamed before that pair was built (`or ""`, `float()`, an
+    f-string helper, and inlining the option literals) and none of them was the
+    cause; the newline was.
+
+    So the positive half of this class is that pair, asserted to agree, and the
+    negative half attacks the widening. A def-use pass that credited a binding
+    it could not actually verify would be the refusal's own defect pointed the
+    other way: a setting that never reaches the call, scored as though it did.
+    Every shape below where the value at the call is not the value the
+    assignment wrote has to stay refused.
+    """
+
+    HEADER = 'from openai import OpenAI\n\nMODELS = ["gpt-4o-mini", "gpt-4o"]\n\n'
+
+    def _credited(self, body: str) -> bool:
+        source = self.HEADER + body
+        # `dont_inherit`, because this call is only here to prove the fixture
+        # is a real file. Without it the fixture is compiled under THIS
+        # module's `from __future__ import annotations`, which stringifies
+        # annotations and rejects a walrus inside one - so a shape that is
+        # ordinary Python in a customer's file failed here for a reason that
+        # belongs to the test module rather than to the fixture.
+        compile(source, "agent.py", "exec", dont_inherit=True)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "agent.py").write_text(source, encoding="utf-8")
+            facts = MODULE.agent_facts_from_discovery(
+                {
+                    "source": "agent.py",
+                    "knobs": {
+                        "model": {
+                            "values": ["gpt-4o-mini", "gpt-4o"],
+                            "source_lines": [3],
+                            "evidence": "the module table reaches the selected call",
+                        }
+                    },
+                },
+                source_root=root,
+                selected_agent=root / "agent.py",
+                selected_agent_callable="answer",
+            )
+        return facts.discovered[0].credited
+
+    DIRECT_REQUEST = (
+        "def answer(question, cfg):\n"
+        "    client = OpenAI()\n"
+        "    reply = client.chat.completions.create(\n"
+        '        model=MODELS[cfg["model"]],\n'
+        '        messages=[{"role": "user", "content": question}],\n'
+        "    )\n"
+        "    return reply.choices[0].message.content\n"
+    )
+    LOCAL_REQUEST = (
+        "def answer(question, cfg):\n"
+        "    client = OpenAI()\n"
+        '    model = MODELS[cfg["model"]]\n'
+        "    reply = client.chat.completions.create(\n"
+        "        model=model,\n"
+        '        messages=[{"role": "user", "content": question}],\n'
+        "    )\n"
+        "    return reply.choices[0].message.content\n"
+    )
+
+    def test_the_one_line_pair_that_reproduced_the_report_now_agrees(self) -> None:
+        """The reproduction, kept as the thing it reproduced.
+
+        Both agents send the same two alternatives to the same request. The
+        only difference is whether the selection was bound to a name first,
+        which is a fact about where the author put a newline and not about
+        what the agent can vary.
+        """
+        self.assertTrue(self._credited(self.DIRECT_REQUEST))
+        self.assertTrue(self._credited(self.LOCAL_REQUEST))
+
+    def test_a_local_carries_a_module_table_into_an_ordinary_call(self) -> None:
+        """The same widening on the other route into a call.
+
+        The paraphrases are here rather than in their own test because they
+        are the same claim: the local's spelling, its annotation, and whether
+        the callee takes it by keyword or by position are all things this read
+        must not be sensitive to.
+        """
+        shapes = {
+            "written into the call": (
+                "def answer(question, model_choice=0):\n"
+                "    return provider(model=MODELS[model_choice], text=question)\n"
+            ),
+            "through one plain local": (
+                "def answer(question, model_choice=0):\n"
+                "    model = MODELS[model_choice]\n"
+                "    return provider(model=model, text=question)\n"
+            ),
+            "through an annotated local": (
+                "def answer(question, model_choice=0):\n"
+                "    model: str = MODELS[model_choice]\n"
+                "    return provider(model=model, text=question)\n"
+            ),
+            "through a differently named local": (
+                "def answer(question, model_choice=0):\n"
+                "    chosen = MODELS[model_choice]\n"
+                "    return provider(model=chosen, text=question)\n"
+            ),
+            "through a local passed by position": (
+                "def send(model, text):\n"
+                "    return provider(model=model, text=text)\n"
+                "def answer(question, model_choice=0):\n"
+                "    model = MODELS[model_choice]\n"
+                "    return send(model, question)\n"
+            ),
+        }
+        for name, body in shapes.items():
+            with self.subTest(shape=name):
+                self.assertTrue(self._credited(body))
+
+    def test_an_ordinary_read_of_the_selected_value_is_not_a_mutation(self) -> None:
+        """The false refusals the first revision of this pass shipped.
+
+        Each of these is the module's own printed example plus ONE ordinary
+        line, still satisfying every part that example prints. The first
+        revision refused all of them, because it turned down any attribute
+        access on the alias anywhere in the callable - so an author who copied
+        the printed remedy and added a guard met the same refusal with the same
+        sentence, which is the report this pass exists to answer, one shape
+        over.
+
+        They are safe to credit because of the invariant the two call sites
+        enforce and `test_the_credited_value_is_always_an_immutable_literal`
+        pins: a credited alias holds the selection ITSELF, and a checked table
+        may only hold `ast.Constant` entries. Neither a method call nor an
+        opaque helper can change an immutable scalar. The shape where in-place
+        mutation is real is a container, and that one is refused below.
+        """
+        shapes = {
+            "a guard on the selected value": (
+                '    if model.startswith("gpt-4"):\n        pass\n'
+            ),
+            "a derived label": "    label = model.upper()\n",
+            "an f-string built with a method": '    note = "{}".format(model)\n',
+            "a nested helper with a parameter of the same name": (
+                "    def describe(model):\n        return model\n"
+            ),
+            "a reject-unknown guard": (
+                "    if model not in MODELS:\n        raise ValueError(model)\n"
+            ),
+            "the value handed to an opaque helper": "    record(model)\n",
+            "the value compared against the table": "    seen = model in MODELS\n",
+            "the value sliced": "    prefix = model[:3]\n",
+        }
+        for name, extra in shapes.items():
+            with self.subTest(shape=name):
+                self.assertTrue(
+                    self._credited(
+                        "def answer(question, model_choice=0):\n"
+                        "    model = MODELS[model_choice]\n"
+                        f"{extra}"
+                        "    return provider(model=model, text=question)\n"
+                    )
+                )
+        # And the annotation written on the line above, which is not a binding
+        # at all inside a function body and was counted as one.
+        self.assertTrue(
+            self._credited(
+                "def answer(question, model_choice=0):\n"
+                "    model: str\n"
+                "    model = MODELS[model_choice]\n"
+                "    return provider(model=model, text=question)\n"
+            )
+        )
+
+    def test_the_credited_value_is_always_an_immutable_literal(self) -> None:
+        """The invariant the test above rests on, pinned where it is decided.
+
+        Read off the two readers that produce a credited option set rather
+        than asserted about them. If either ever accepted a non-constant
+        entry, an alias could hold a mutable object and an ordinary-looking
+        method call on it would become a real mutation.
+        """
+        self.assertIsNone(
+            MODULE._literal_scalar_options(ast.parse("[[1], [2]]", mode="eval").body)
+        )
+        self.assertIsNone(
+            MODULE._literal_scalar_options(ast.parse("[{'a': 1}]", mode="eval").body)
+        )
+        self.assertIsNone(
+            MODULE._literal_mapping_keys(
+                ast.parse("{'a': ['x'], 'b': ['y']}", mode="eval").body
+            )
+        )
+        self.assertEqual(
+            MODULE._literal_scalar_options(ast.parse('["a", "b"]', mode="eval").body),
+            ("a", "b"),
+        )
+
+    def test_a_binding_this_read_cannot_pin_earns_nothing(self) -> None:
+        """Every shape where the name at the call is not what the assignment wrote.
+
+        Each of these would be a knob credited without a route, which is the
+        refusal this class widens, inverted. They are listed one per shape
+        rather than folded together so a regression names the shape it broke.
+
+        The seven rebinding forms at the end are the ones a store COUNT could
+        not see, because none of them is an `ast.Name` in `Store` context. Each
+        was verified against `symtable`, which reports the spelling assigned
+        and local in every one of them.
+        """
+        shapes = {
+            "reassigned before the call": (
+                "def answer(question, model_choice=0):\n"
+                "    model = MODELS[model_choice]\n"
+                '    model = "gpt-4o-mini"\n'
+                "    return provider(model=model, text=question)\n"
+            ),
+            "augmented before the call": (
+                "def answer(question, model_choice=0):\n"
+                "    model = MODELS[model_choice]\n"
+                '    model += "-preview"\n'
+                "    return provider(model=model, text=question)\n"
+            ),
+            "unpacked from a tuple": (
+                "def answer(question, model_choice=0):\n"
+                "    model, text = MODELS[model_choice], question\n"
+                "    return provider(model=model, text=text)\n"
+            ),
+            "rebound in a branch": (
+                "def answer(question, model_choice=0):\n"
+                "    model = MODELS[model_choice]\n"
+                "    if question:\n"
+                '        model = "gpt-4o-mini"\n'
+                "    return provider(model=model, text=question)\n"
+            ),
+            "bound inside a branch": (
+                "def answer(question, model_choice=0):\n"
+                "    if question:\n"
+                "        model = MODELS[model_choice]\n"
+                "    return provider(model=model, text=question)\n"
+            ),
+            "bound by a walrus": (
+                "def answer(question, model_choice=0):\n"
+                "    if (model := MODELS[model_choice]):\n"
+                "        pass\n"
+                "    return provider(model=model, text=question)\n"
+            ),
+            "rebound by a walrus": (
+                "def answer(question, model_choice=0):\n"
+                "    model = MODELS[model_choice]\n"
+                "    if (model := 'gpt-4o-mini'):\n"
+                "        pass\n"
+                "    return provider(model=model, text=question)\n"
+            ),
+            "rebound by a comprehension walrus": (
+                "def answer(question, model_choice=0):\n"
+                "    model = MODELS[model_choice]\n"
+                "    seen = [(model := str(x)) for x in (1, 2)]\n"
+                "    return provider(model=model, text=question, seen=seen)\n"
+            ),
+            "bound in a loop": (
+                "def answer(question, model_choice=0):\n"
+                "    for _ in (0,):\n"
+                "        model = MODELS[model_choice]\n"
+                "    return provider(model=model, text=question)\n"
+            ),
+            "replaced by an alternative at the call": (
+                "def answer(question, model_choice=0):\n"
+                "    model = MODELS[model_choice]\n"
+                '    return provider(model=model or "gpt-4o-mini", text=question)\n'
+            ),
+            "read before it is bound": (
+                "def answer(question, model_choice=0):\n"
+                "    result = provider(model=model, text=question)\n"
+                "    model = MODELS[model_choice]\n"
+                "    return result\n"
+            ),
+            "read by a nested callable that does not bind it": (
+                "def answer(question, model_choice=0):\n"
+                "    model = MODELS[model_choice]\n"
+                "    later = lambda: model\n"
+                "    return provider(model=model, text=question, later=later)\n"
+            ),
+            "rebound through nonlocal": (
+                "def answer(question, model_choice=0):\n"
+                "    model = MODELS[model_choice]\n"
+                "    def later():\n"
+                "        nonlocal model\n"
+                "        model = 'gpt-4o-mini'\n"
+                "    later()\n"
+                "    return provider(model=model, text=question)\n"
+            ),
+            "deleted on one path": (
+                "def answer(question, model_choice=0):\n"
+                "    model = MODELS[model_choice]\n"
+                "    if question:\n"
+                "        del model\n"
+                "    return provider(model=model, text=question)\n"
+            ),
+            "two hops from the table": (
+                "def answer(question, model_choice=0):\n"
+                "    model = MODELS[model_choice]\n"
+                "    chosen = model\n"
+                "    return provider(model=chosen, text=question)\n"
+            ),
+            "carried to a different argument": (
+                "def answer(question, model_choice=0):\n"
+                "    model = MODELS[model_choice]\n"
+                "    return provider(text=model, model=question)\n"
+            ),
+            "held in a container that a later line can change": (
+                "def answer(question, model_choice=0):\n"
+                "    payload = [MODELS[model_choice], question]\n"
+                "    payload.append('gpt-4o-mini')\n"
+                "    return provider(model=payload, text=question)\n"
+            ),
+            "never reading the declared table": (
+                "def answer(question, cfg):\n"
+                "    client = OpenAI()\n"
+                '    model = cfg.get("model") or "gpt-4o-mini"\n'
+                "    reply = client.chat.completions.create(\n"
+                "        model=model,\n"
+                '        messages=[{"role": "user", "content": question}],\n'
+                "    )\n"
+                "    return reply.choices[0].message.content\n"
+            ),
+            # The seven a store count could not see.
+            "rebound by an import alias": (
+                "def answer(question, model_choice=0):\n"
+                "    model = MODELS[model_choice]\n"
+                "    import os as model\n"
+                "    return provider(model=model, text=question)\n"
+            ),
+            "rebound by a from-import alias": (
+                "def answer(question, model_choice=0):\n"
+                "    model = MODELS[model_choice]\n"
+                "    from os import sep as model\n"
+                "    return provider(model=model, text=question)\n"
+            ),
+            "rebound by an except handler": (
+                "def answer(question, model_choice=0):\n"
+                "    model = MODELS[model_choice]\n"
+                "    try:\n"
+                "        pass\n"
+                "    except Exception as model:\n"
+                "        pass\n"
+                "    return provider(model=model, text=question)\n"
+            ),
+            "rebound by a match capture": (
+                "def answer(question, model_choice=0):\n"
+                "    model = MODELS[model_choice]\n"
+                "    match question:\n"
+                "        case model:\n"
+                "            pass\n"
+                "    return provider(model=model, text=question)\n"
+            ),
+            "rebound by a match mapping rest": (
+                "def answer(question, model_choice=0):\n"
+                "    model = MODELS[model_choice]\n"
+                "    match question:\n"
+                "        case {'a': 1, **model}:\n"
+                "            pass\n"
+                "    return provider(model=model, text=question)\n"
+            ),
+            "rebound by a nested def of the same name": (
+                "def answer(question, model_choice=0):\n"
+                "    model = MODELS[model_choice]\n"
+                "    def model():\n"
+                "        return 1\n"
+                "    return provider(model=model, text=question)\n"
+            ),
+            "rebound by a decorated nested def of the same name": (
+                "def answer(question, model_choice=0):\n"
+                "    model = MODELS[model_choice]\n"
+                "    @staticmethod\n"
+                "    def model():\n"
+                "        return 1\n"
+                "    return provider(model=model, text=question)\n"
+            ),
+            "rebound by a nested class of the same name": (
+                "def answer(question, model_choice=0):\n"
+                "    model = MODELS[model_choice]\n"
+                "    class model:\n"
+                "        pass\n"
+                "    return provider(model=model, text=question)\n"
+            ),
+            "rebound by a with-target": (
+                "def answer(question, model_choice=0):\n"
+                "    model = MODELS[model_choice]\n"
+                "    with open('x') as model:\n"
+                "        pass\n"
+                "    return provider(model=model, text=question)\n"
+            ),
+            "rebound by a type alias": (
+                "def answer(question, model_choice=0):\n"
+                "    model = MODELS[model_choice]\n"
+                "    type model = int\n"
+                "    return provider(model=model, text=question)\n"
+            ),
+        }
+        for name, body in shapes.items():
+            with self.subTest(shape=name):
+                self.assertFalse(self._credited(body))
+
+    def test_every_refused_rebinding_really_binds_the_name(self) -> None:
+        """The fixtures above are checked against Python, not against belief.
+
+        A refusal test passes just as well when its fixture does not do what
+        its name says, and seven of those fixtures assert something about a
+        construct rather than about an assignment. `symtable` is the
+        interpreter's own answer to "is this spelling bound in this scope", so
+        it is what says the fixture is the shape the subtest claims.
+        """
+        rebinding = {
+            "import ... as": "    import os as model\n",
+            "from ... import ... as": "    from os import sep as model\n",
+            "except ... as": (
+                "    try:\n        pass\n    except Exception as model:\n        pass\n"
+            ),
+            "match capture": "    match question:\n        case model:\n            pass\n",
+            "match mapping rest": (
+                "    match question:\n        case {'a': 1, **model}:\n            pass\n"
+            ),
+            "nested def": "    def model():\n        return 1\n",
+            "nested class": "    class model:\n        pass\n",
+            "with target": "    with open('x') as model:\n        pass\n",
+            "type alias": "    type model = int\n",
+        }
+        for name, line in rebinding.items():
+            with self.subTest(construct=name):
+                source = f"def answer(question):\n{line}    return model\n"
+                table = symtable.symtable(source, "agent.py", "exec")
+                scope = table.get_children()[0]
+                symbol = scope.lookup("model")
+                # `is_local` is the property that matters and the one true of
+                # all nine: the spelling is bound in this scope. `is_assigned`
+                # is false for the two import forms, which bind through
+                # `is_imported` instead - reading only `is_assigned` would have
+                # let this fixture check silently exempt the two constructs it
+                # was written to catch first.
+                self.assertTrue(symbol.is_local(), name)
+                self.assertTrue(symbol.is_assigned() or symbol.is_imported(), name)
+                # And the module agrees, on the same source.
+                tree = ast.parse(source)
+                callable_node = tree.body[0]
+                self.assertTrue(
+                    any(
+                        isinstance(node, MODULE._BINDING_CAPABLE_NODES)
+                        and MODULE._node_binds("model", node)
+                        for node in MODULE._callable_body_nodes(callable_node)
+                    ),
+                    name,
+                )
+
+
+class AFixtureIsCompiledAsTheFileACustomerWritesTests(unittest.TestCase):
+    """Every `compile()` in this module validates a fixture, not this module.
+
+    This file opens with `from __future__ import annotations`, and `compile()`
+    inherits the calling frame's future statements unless told not to. So a
+    fixture checked here was being checked under stringified annotations,
+    which no customer file has unless they asked for them - and it really
+    changes the answer: a walrus in an annotation is ordinary Python and is a
+    `SyntaxError` under that future.
+
+    Four of the five calls were fixed when the difference was found and the
+    fifth was missed, at the site with the most riding on it: the one that
+    guarantees the printed example is a file a customer can use. So the rule
+    is read out of this module's own source rather than left to whoever adds
+    the sixth call.
+    """
+
+    #: The one call that compiles a fixture under this module's own future
+    #: statements ON PURPOSE, keyed by the test that owns it. A sanctioned
+    #: exit rather than a line number, on the same terms as `UNDERIVABLE` and
+    #: `UNREACHABLE_RENDERER_LINES` above: it says why, and the guard fails on
+    #: a stale entry too, so an exemption cannot outlive the call it excuses.
+    INHERITING_ON_PURPOSE = {
+        "test_the_difference_is_real_and_not_theoretical": (
+            "shows what inheriting costs, so it has to inherit; the assertion "
+            "beside it is that this call raises and the guarded one does not"
+        )
+    }
+
+    def _compile_calls(self) -> dict[str, list[ast.Call]]:
+        """Every `compile()` in this module, by the test function holding it."""
+        source = Path(__file__).read_text(encoding="utf-8")
+        found: dict[str, list[ast.Call]] = {}
+        for function in ast.walk(ast.parse(source)):
+            if not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            calls = [
+                node
+                for node in ast.walk(function)
+                if isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == "compile"
+            ]
+            if calls:
+                found[function.name] = calls
+        return found
+
+    def test_every_compile_here_refuses_this_modules_future_statements(self) -> None:
+        by_function = self._compile_calls()
+        self.assertTrue(by_function, "no compile call found; this guard reads nothing")
+        missing = sorted(
+            f"{name}:{call.lineno}"
+            for name, calls in by_function.items()
+            if name not in self.INHERITING_ON_PURPOSE
+            for call in calls
+            if not any(
+                keyword.arg == "dont_inherit"
+                and isinstance(keyword.value, ast.Constant)
+                and keyword.value.value is True
+                for keyword in call.keywords
+            )
+        )
+        self.assertEqual(
+            missing,
+            [],
+            "a fixture compiled under this module's `from __future__ import "
+            "annotations` is checked under semantics the customer's file does "
+            "not have; pass dont_inherit=True",
+        )
+
+    def test_no_exemption_outlives_the_call_it_excuses(self) -> None:
+        """A stale entry fails, so the exit cannot quietly widen."""
+        by_function = self._compile_calls()
+        for name, reason in self.INHERITING_ON_PURPOSE.items():
+            with self.subTest(exempt=name):
+                self.assertIn(name, by_function)
+                self.assertTrue(reason.strip())
+                self.assertTrue(
+                    any(
+                        not any(
+                            keyword.arg == "dont_inherit" for keyword in call.keywords
+                        )
+                        for call in by_function[name]
+                    ),
+                    "this exemption no longer excuses anything",
+                )
+
+    def test_the_difference_is_real_and_not_theoretical(self) -> None:
+        """The guard would be cargo without this, so the effect is exercised."""
+        annotated = "def answer() -> (client := 1):\n    return 1\n"
+        with self.assertRaises(SyntaxError):
+            compile(annotated, "agent.py", "exec")
+        compile(annotated, "agent.py", "exec", dont_inherit=True)
+
+
+class ARouteThatCannotExecuteIsNotARouteTests(unittest.TestCase):
+    """A set literal is an inventory, and `MODELS[choice]` over one raises.
+
+    `_literal_scalar_options` reads a set, and should: `if model not in
+    MODELS` is a real guard over a real option table, and that agent runs. But
+    a subscript over a set raises `TypeError` before any request is made, so
+    crediting the subscript route over one credits a search dimension the
+    agent would die on the first trial of.
+
+    Both halves are asserted together because the obvious repair breaks the
+    second one. Removing `ast.Set` from the literal reader closes the two
+    subscript shapes and also refuses the guard shape, which is a credit this
+    scorer gives correctly today - measured, and the reason the fix is at the
+    route rather than at the reader.
+    """
+
+    def _credited(self, source: str, callable_name: str = "answer") -> bool:
+        compile(source, "agent.py", "exec", dont_inherit=True)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "agent.py").write_text(source, encoding="utf-8")
+            facts = MODULE.agent_facts_from_discovery(
+                {
+                    "source": "agent.py",
+                    "knobs": {
+                        "model": {
+                            "values": ["fast", "slow"],
+                            "source_lines": [1],
+                            "evidence": "the model table this agent reads",
+                        }
+                    },
+                },
+                source_root=root,
+                selected_agent=root / "agent.py",
+                selected_agent_callable=callable_name,
+            )
+        return facts.discovered[0].credited
+
+    def test_a_subscript_over_an_unindexable_inventory_earns_nothing(self) -> None:
+        refused = {
+            "a set indexed by a parameter": (
+                'MODELS = {"fast", "slow"}\n\n\ndef answer(question, model_choice=0):\n'
+                "    model = MODELS[model_choice]\n"
+                "    return provider(model=model, text=question)\n"
+            ),
+            "a set selected by a config read": (
+                'MODELS = {"fast", "slow"}\n\n\ndef answer(question, cfg):\n'
+                '    return MODELS[cfg["model"]]\n'
+            ),
+            "a name that is a set on one line and a list on a later one": (
+                'MODELS = {"fast", "slow"}\n'
+                'MODELS = ["fast", "slow"]\n\n\ndef answer(question, model_choice=0):\n'
+                "    model = MODELS[model_choice]\n"
+                "    return provider(model=model, text=question)\n"
+            ),
+            "a name that is a list on one line and a set on another": (
+                'MODELS = ["fast", "slow"]\n'
+                'MODELS = {"fast", "slow"}\n\n\ndef answer(question, model_choice=0):\n'
+                "    model = MODELS[model_choice]\n"
+                "    return provider(model=model, text=question)\n"
+            ),
+        }
+        for name, source in refused.items():
+            with self.subTest(shape=name):
+                self.assertFalse(self._credited(source))
+
+    def test_an_inventory_the_agent_can_reach_still_earns(self) -> None:
+        """Three controls, and the third is what the obvious repair loses."""
+        credited = {
+            "a list indexed by a parameter": (
+                'MODELS = ["fast", "slow"]\n\n\ndef answer(question, model_choice=0):\n'
+                "    model = MODELS[model_choice]\n"
+                "    return provider(model=model, text=question)\n"
+            ),
+            "a tuple indexed by a parameter": (
+                'MODELS = ("fast", "slow")\n\n\ndef answer(question, model_choice=0):\n'
+                "    model = MODELS[model_choice]\n"
+                "    return provider(model=model, text=question)\n"
+            ),
+            "a SET behind a membership guard, which executes": (
+                'MODELS = {"fast", "slow"}\n\n\ndef answer(question, cfg):\n'
+                '    model = cfg.get("model", "fast")\n'
+                "    if model not in MODELS:\n"
+                "        raise ValueError(model)\n"
+                "    return [model, question]\n"
+            ),
+        }
+        for name, source in credited.items():
+            with self.subTest(shape=name):
+                self.assertTrue(self._credited(source))
+
+    def test_the_two_directions_are_read_from_the_two_sides_of_one_rule(
+        self,
+    ) -> None:
+        """The allowlist here and the fail-closed default there are one rule.
+
+        This gates CREDIT, where a shape nobody named costs a false refusal.
+        `_node_binds` answers a refutation, where a shape nobody named costs a
+        credited knob with no route. Asserted together so a later reader does
+        not "make them consistent" by turning one of them around.
+        """
+        source = MODULE.static_source_evidence
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "agent.py").write_text(
+                'A = ["x"]\nB = ("x",)\nC = {"x": 1}\nD = "x"\n'
+                'E = {"x"}\nF = set()\nG = [n for n in (1,)]\n'
+                'H = {"x"}\nH = ["x"]\nI = ["x"]\nI = {"x"}\n'
+                "def answer(q):\n    return q\n",
+                encoding="utf-8",
+            )
+            evidence = source(
+                "agent.py",
+                source_root=root,
+                selected_agent=root / "agent.py",
+                selected_callable="answer",
+            )
+        reachable = MODULE._module_names_a_subscript_can_reach(evidence)
+        self.assertEqual(sorted(reachable), ["A", "B", "C", "D"])
+        for unreachable in ("E", "F", "G"):
+            with self.subTest(name=unreachable):
+                self.assertNotIn(unreachable, reachable)
+        # A name bound twice qualifies only if EVERY binding can be indexed,
+        # in either order. Asserted on the helper because a module that binds
+        # one spelling twice is refused further up by `_module_binding_is_current`
+        # before this map is consulted, so no agent can reach the fold - and a
+        # mutation that read only the last binding passed every behavioural
+        # case in this class. This module has now paid for that shape of gap
+        # three times; the arm gets asserted where it lives.
+        for bound_twice in ("H", "I"):
+            with self.subTest(bound_twice=bound_twice):
+                self.assertNotIn(bound_twice, reachable)
+        # And the sibling scan defaults the other way, on purpose.
+        self.assertTrue(MODULE._node_binds("anything", ast.AST()))
+
+
+class TheBindingScanIsDerivedFromThePythonGrammarTests(unittest.TestCase):
+    """#348: the question "is this name written again" defaults to yes.
+
+    `_node_binds` answers a REFUTATION and its answer gates CREDIT, which is
+    the combination `_agent_loops_forever` in the same module already recorded
+    a lesson about: narrow scope fails safe for credit and unsafe for a
+    refutation, and there the wrong answer became the only accepted one.
+
+    Its predecessor counted `ast.Name` nodes in `Store` context and missed
+    seven constructs that bind without one. Enumerating those seven would have
+    left `type X = ...`, which 3.12 added. So the test that guards it does not
+    restate a list either: it reads the statement kinds out of `ast` and fails
+    when this module has not decided about one.
+    """
+
+    def _dispatched_names(self) -> set[str]:
+        source = Path(MODULE.__file__).read_text(encoding="utf-8")
+        function = next(
+            node
+            for node in ast.walk(ast.parse(source))
+            if isinstance(node, ast.FunctionDef) and node.name == "_node_binds"
+        )
+        return {
+            node.attr
+            for node in ast.walk(function)
+            if isinstance(node, ast.Attribute)
+            and isinstance(node.value, ast.Name)
+            and node.value.id == "ast"
+        } | {
+            name.removeprefix("_").removesuffix("_NODES").title().replace("_", "")
+            for name in ("_TRY_STAR_NODES", "_TYPE_ALIAS_NODES")
+        }
+
+    def test_every_statement_python_defines_is_decided_here(self) -> None:
+        """Derived from `ast`, so a new construct fails this rather than pass."""
+        dispatched = self._dispatched_names()
+        # The two version-guarded kinds are referenced through module-level
+        # tuples rather than by attribute, so they are named from those tuples.
+        for guarded in (MODULE._TRY_STAR_NODES, MODULE._TYPE_ALIAS_NODES):
+            dispatched.update(node.__name__ for node in guarded)
+        undecided = sorted(
+            cls.__name__
+            for cls in ast.stmt.__subclasses__()
+            if cls.__name__ not in dispatched
+        )
+        self.assertEqual(
+            undecided,
+            [],
+            "a statement kind this Python defines that `_node_binds` does not "
+            "name. Decide it there - a construct nobody has decided about must "
+            "reach the fail-closed default, and this test exists so that the "
+            "default is never reached silently",
+        )
+
+    def test_an_unrecognised_node_binds_by_default(self) -> None:
+        """The fail-closed default itself, exercised rather than assumed.
+
+        Without this the `return True` below the dispatch is a claim about the
+        code rather than a behaviour, and a refactor that turned it into
+        `return False` would pass every other test in this file.
+        """
+        self.assertTrue(MODULE._node_binds("model", ast.AST()))
+        # And a pattern kind the pattern reader does not name.
+        self.assertTrue(MODULE._pattern_binds("model", ast.AST()))
+
+    def test_a_target_writing_through_a_name_is_not_a_binding(self) -> None:
+        """`TABLE[i] = x` and `obj.attr = x` do not rebind `TABLE` or `obj`."""
+        module = ast.parse("TABLE[0] = 1\nobj.attr = 2\nTABLE, obj = 3, 4\n")
+        through_subscript, through_attribute, unpacked = module.body
+        self.assertFalse(MODULE._node_binds("TABLE", through_subscript))
+        self.assertFalse(MODULE._node_binds("obj", through_attribute))
+        self.assertTrue(MODULE._node_binds("TABLE", unpacked))
+        self.assertTrue(MODULE._node_binds("obj", unpacked))
+        # And the target reader's own fail-closed exit. No assignment Python
+        # can parse reaches it today, so no fixture can, which is exactly why
+        # it is asserted directly: a mutation that turned it into "binds
+        # nothing" survived every behavioural test in this file.
+        self.assertTrue(MODULE._target_binds("model", [ast.AST()]))
+
+    def test_more_than_one_binder_is_not_a_sole_binder(self) -> None:
+        """The "exactly one" requirement, asserted where order cannot hide it.
+
+        The refusal fixtures reach this through a walk whose order is an
+        implementation detail, and a mutation that took the FIRST binder
+        instead of requiring the only one passed all of them. So the count is
+        pinned on the helper, where two binders is two binders whichever the
+        walk yields first.
+        """
+        one = ast.parse("def answer(c):\n    model = TABLE[c]\n    return model\n")
+        two = ast.parse(
+            "def answer(c):\n    model = TABLE[c]\n"
+            "    import os as model\n    return model\n"
+        )
+        none = ast.parse("def answer(c):\n    return TABLE[c]\n")
+        self.assertIsInstance(
+            MODULE._sole_binding_node("model", one.body[0]), ast.Assign
+        )
+        self.assertIsNone(MODULE._sole_binding_node("model", two.body[0]))
+        self.assertIsNone(MODULE._sole_binding_node("model", none.body[0]))
+        self.assertEqual(len(MODULE._callable_binding_nodes("model", two.body[0])), 2)
+
+
+class AClientBuiltAtImportIsStillAClientTests(unittest.TestCase):
+    """#348's second half: the reporter's agent builds its client once.
+
+    The receiver check read only writes INSIDE the selected callable, so an
+    agent with `client = OpenAI()` at module level had no verified request at
+    all and every setting it read from a config mapping was refused. Measured:
+    the four-setting agent the report describes scored the agent pillar 0 with
+    `agent-no-varying-knobs`, and moving that one line into the function scored
+    it 54 with no cap. Source:
+    tests/test_readiness_scoring.py#AClientBuiltAtImportIsStillAClientTests,
+    which keeps both agents.
+
+    That is a rule about where the author put a line, which is the same defect
+    the settings route had one input over, so it is fixed the same way and
+    guarded the same way: any second binding of the client's spelling anywhere
+    in the module refuses, decided by `_node_binds` rather than by counting
+    stores, and a `global` for it anywhere in the file refuses too.
+    """
+
+    TABLE = 'MODELS = {"fast": "gpt-4o-mini", "slow": "gpt-4o"}\n'
+    BODY = (
+        "\n\ndef answer(question, cfg):\n"
+        '    model = MODELS[cfg["model"]]\n'
+        "    reply = client.chat.completions.create(\n"
+        '        model=model, messages=[{"role": "user", "content": question}]\n'
+        "    )\n"
+        "    return reply.choices[0].message.content\n"
+    )
+
+    def _credited(self, source: str) -> bool:
+        # `dont_inherit`, because this call is only here to prove the fixture
+        # is a real file. Without it the fixture is compiled under THIS
+        # module's `from __future__ import annotations`, which stringifies
+        # annotations and rejects a walrus inside one - so a shape that is
+        # ordinary Python in a customer's file failed here for a reason that
+        # belongs to the test module rather than to the fixture.
+        compile(source, "agent.py", "exec", dont_inherit=True)
+        line = next(
+            index
+            for index, text in enumerate(source.splitlines(), 1)
+            if text.startswith("MODELS = ")
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "agent.py").write_text(source, encoding="utf-8")
+            facts = MODULE.agent_facts_from_discovery(
+                {
+                    "source": "agent.py",
+                    "knobs": {
+                        "model": {
+                            "values": ["fast", "slow"],
+                            "source_lines": [line],
+                            "evidence": "the model table this agent selects from",
+                        }
+                    },
+                },
+                source_root=root,
+                selected_agent=root / "agent.py",
+                selected_agent_callable="answer",
+            )
+        return facts.discovered[0].credited
+
+    def test_a_client_built_once_at_module_level_is_a_verified_request(self) -> None:
+        self.assertTrue(
+            self._credited(
+                "from openai import OpenAI\n\n"
+                + self.TABLE
+                + "\nclient = OpenAI()\n"
+                + self.BODY
+            )
+        )
+
+    def test_a_client_this_read_cannot_pin_earns_nothing(self) -> None:
+        """Every way the spelling can stop meaning that constructor."""
+        shapes = {
+            "rebound by a second module assignment": (
+                "from openai import OpenAI\n\n"
+                + self.TABLE
+                + "\nclient = OpenAI()\nclient = OpenAI()\n"
+                + self.BODY
+            ),
+            "rebound by an import alias": (
+                "from openai import OpenAI\n\n"
+                + self.TABLE
+                + "\nclient = OpenAI()\nimport os as client\n"
+                + self.BODY
+            ),
+            "declared global somewhere in the file": (
+                "from openai import OpenAI\n\n"
+                + self.TABLE
+                + "\nclient = OpenAI()\n\n\ndef reset():\n"
+                "    global client\n    client = None\n" + self.BODY
+            ),
+            "rebound by a class of the same name": (
+                "from openai import OpenAI\n\n"
+                + self.TABLE
+                + "\nclient = OpenAI()\n\n\nclass client:\n    pass\n"
+                + self.BODY
+            ),
+            "built after the callable that uses it": (
+                "from openai import OpenAI\n\n"
+                + self.TABLE
+                + self.BODY
+                + "\n\nclient = OpenAI()\n"
+            ),
+            "built from a standard-library import": (
+                "from json import JSONDecoder\n\n"
+                + self.TABLE
+                + "\nclient = JSONDecoder()\n"
+                + self.BODY
+            ),
+            "not constructed at all": (
+                "from openai import OpenAI\n\n"
+                + self.TABLE
+                + "\nclient = OpenAI\n"
+                + self.BODY
+            ),
+            "bound by tuple unpacking": (
+                "from openai import OpenAI\n\n"
+                + self.TABLE
+                + "\nclient, spare = OpenAI(), None\n"
+                + self.BODY
+            ),
+            "handed to the callable as a parameter": (
+                "from openai import OpenAI\n\n"
+                + self.TABLE
+                + "\nclient = OpenAI()\n\n\ndef answer(question, cfg, client):\n"
+                '    model = MODELS[cfg["model"]]\n'
+                "    reply = client.chat.completions.create(\n"
+                '        model=model, messages=[{"role": "user", "content": question}]\n'
+                "    )\n"
+                "    return reply.choices[0].message.content\n"
+            ),
+        }
+        for name, source in shapes.items():
+            with self.subTest(shape=name):
+                self.assertFalse(self._credited(source))
+
+    AGENT = (
+        "from openai import OpenAI\n"
+        "\n"
+        'MODELS = {"fast": "gpt-4o-mini", "slow": "gpt-4o"}\n'
+        'PROMPT_STYLES = {"terse": "SQL only.", "explained": "SQL, then why."}\n'
+        'SCHEMA_CONTEXTS = {"none": "", "tables": "Tables: orders, customers."}\n'
+        "TEMPERATURE_BOUNDS = (0.0, 1.0)\n"
+        "\n"
+        "client = OpenAI()\n"
+        "\n"
+        "\n"
+        "def answer(question, cfg):\n"
+        '    model = MODELS[cfg["model"]]\n'
+        '    prompt_style = PROMPT_STYLES[cfg["prompt_style"]]\n'
+        '    schema_context = SCHEMA_CONTEXTS[cfg["schema_context"]]\n'
+        '    temperature = TEMPERATURE_BOUNDS[cfg["temperature"]]\n'
+        "    reply = client.chat.completions.create(\n"
+        "        model=model,\n"
+        "        temperature=temperature,\n"
+        "        messages=[\n"
+        '            {"role": "system", "content": prompt_style},\n'
+        '            {"role": "system", "content": schema_context},\n'
+        '            {"role": "user", "content": question},\n'
+        "        ],\n"
+        "    )\n"
+        "    return reply.choices[0].message.content\n"
+    )
+    KNOBS = {
+        "model": {"values": ["fast", "slow"], "source_lines": [3]},
+        "prompt_style": {"values": ["terse", "explained"], "source_lines": [4]},
+        "schema_context": {"values": ["none", "tables"], "source_lines": [5]},
+        "temperature": {"low": 0.0, "high": 1.0, "source_lines": [6]},
+    }
+
+    def test_a_definition_binds_in_the_scope_it_is_written_in(self) -> None:
+        """The half of a definition the enclosing scope evaluates.
+
+        A `def`, `class` or `lambda` runs its body in its own scope and runs
+        everything else about itself where it is written. A walrus in a
+        parameter default, a decorator expression, a class base, a class
+        keyword, a lambda default or an annotation therefore rebinds the
+        module client before the selected callable ever runs, and a scan that
+        stops at the definition node cannot see it. Six shapes, all measured
+        credited before this, every one of them a verified external request
+        over an object that is not the constructed client.
+
+        The three controls matter as much as the six. A module client exists
+        to be read by the functions under it, so reading it - from the
+        selected callable or from a helper beside it - must stay credited, and
+        a walrus in a nested definition's own BODY binds that function's local
+        and must stay credited too.
+        """
+        table = 'MODELS = {"fast": "gpt-4o-mini", "slow": "gpt-4o"}\n'
+        head = "from openai import OpenAI\nfrom vendor import Fake\n\n" + table
+        head += "\nclient = OpenAI()\n"
+        rebinding = {
+            "a parameter default": (
+                "\n\ndef other(spare=(client := Fake())):\n    return spare\n"
+            ),
+            "a decorator expression": (
+                "\n\n@register(client := Fake())\ndef other():\n    return 1\n"
+            ),
+            "a class base": ("\n\nclass Other(base(client := Fake())):\n    pass\n"),
+            "a class keyword": (
+                "\n\nclass Other(metaclass=(client := Fake())):\n    pass\n"
+            ),
+            "a lambda default": ("\n\npick = lambda spare=(client := Fake()): spare\n"),
+            "a return annotation": (
+                "\n\ndef other() -> (client := Fake()):\n    return 1\n"
+            ),
+        }
+        for name, extra in rebinding.items():
+            with self.subTest(rebinding_in=name):
+                self.assertFalse(self._credited(head + extra + self.BODY))
+        untouched = {
+            "nothing else in the file": "",
+            "a helper that only reads the client": (
+                "\n\ndef ping():\n    return client.models.list()\n"
+            ),
+            "a walrus in a nested definition's own body": (
+                "\n\ndef other():\n    if (client := Fake()):\n"
+                "        pass\n    return 1\n"
+            ),
+        }
+        for name, extra in untouched.items():
+            with self.subTest(untouched=name):
+                self.assertTrue(self._credited(head + extra + self.BODY))
+
+    def test_the_header_scan_subtracts_the_body_rather_than_naming_fields(
+        self,
+    ) -> None:
+        """Derived, so a field the grammar adds is covered the day it lands.
+
+        Asserted on the helper because the behavioural cases above can only
+        show the fields somebody thought of. What makes the fix a class fix is
+        that it is `everything except the body`, and that is what this reads:
+        the header of a definition carries every node of it that its own body
+        does not.
+        """
+        source = (
+            "@deco(a := 1)\n"
+            "def outer(x=(b := 2), *, y=(c := 3)) -> (d := 4):\n"
+            "    e = 5\n"
+            "    return e\n"
+        )
+        definition = ast.parse(source).body[0]
+        header = list(MODULE._scope_header_nodes(definition))
+        bound = {
+            node.target.id
+            for node in header
+            if isinstance(node, ast.NamedExpr) and isinstance(node.target, ast.Name)
+        }
+        self.assertEqual(bound, {"a", "b", "c", "d"})
+        # And nothing from the body leaks into the header.
+        self.assertNotIn(
+            "e",
+            {
+                node.id
+                for node in header
+                if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store)
+            },
+        )
+        # A lambda's body is an expression rather than a list, and is excluded
+        # on the same terms.
+        lambda_node = ast.parse("f = lambda p=(g := 1): (h := 2)").body[0].value
+        lambda_bound = {
+            node.target.id
+            for node in MODULE._scope_header_nodes(lambda_node)
+            if isinstance(node, ast.NamedExpr) and isinstance(node.target, ast.Name)
+        }
+        self.assertEqual(lambda_bound, {"g"})
+
+    def test_the_agent_the_report_describes_is_read(self) -> None:
+        """The whole point, as the reporter meets it.
+
+        Four settings read from a config mapping, a client built once at
+        import, every value passed through a plain local. This is the agent
+        #348 describes, and the assertion is the one the report makes: it
+        scores zero, and it should not.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "agent.py").write_text(self.AGENT, encoding="utf-8")
+            knobs = {
+                name: {**spec, "evidence": f"the {name} table this agent reads"}
+                for name, spec in json.loads(json.dumps(self.KNOBS)).items()
+            }
+            facts = MODULE.agent_facts_from_discovery(
+                {"source": "agent.py", "knobs": knobs},
+                source_root=root,
+                selected_agent=root / "agent.py",
+                selected_agent_callable="answer",
+            )
+        self.assertEqual(
+            sorted(knob.name for knob in facts.discovered if knob.credited),
+            ["model", "prompt_style", "schema_context", "temperature"],
+        )
+        pillar, caps, _ = MODULE.score_agent(facts)
+        self.assertGreater(pillar.score, 0)
+        self.assertEqual(
+            [
+                cap.condition
+                for cap in caps
+                if cap.condition == "agent-no-varying-knobs"
+            ],
+            [],
+        )
+
+
+class TheRefusedRouteIsShownAnAcceptedOneTests(unittest.TestCase):
+    """#348: the refusal named what failed and never what would pass.
+
+    Five rewrites of a working agent were aimed at idioms that were never the
+    cause, because the only thing the card said was that the route could not
+    be verified. The remedy is the one `agent_knobs_shape` already landed for
+    the document half: print a real, complete, accepted example rather than
+    describe one, and pin it against the reader so it cannot drift into an
+    example this scorer would itself refuse.
+    """
+
+    def _score_printed_agent(self, agent: str, entry: dict):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "agent.py").write_text(agent, encoding="utf-8")
+            return MODULE.agent_facts_from_discovery(
+                {"source": "agent.py", "knobs": entry},
+                source_root=root,
+                selected_agent=root / "agent.py",
+                selected_agent_callable="answer",
+            )
+
+    def test_the_printed_route_is_one_this_reader_actually_credits(self) -> None:
+        """The anti-drift property, checked through the real reader.
+
+        This is the whole reason the example is a constant and not prose. A
+        shipped example that scores zero is not a smaller version of the fix;
+        it is the defect the fix exists to remove, handed to the reader as the
+        thing to copy.
+        """
+        # `dont_inherit`, and this is the site with the most riding on it: the
+        # example a customer copies must be validated as the file THEY will
+        # write, not under this module's `from __future__ import annotations`.
+        # Inert for the example as shipped and wrong anyway - a guard that
+        # checks the artifact under semantics no customer file has is a guard
+        # checking a different thing, which is the defect this class exists to
+        # keep out of the printed block.
+        compile(MODULE.ACCEPTED_ROUTE_AGENT, "agent.py", "exec", dont_inherit=True)
+        facts = self._score_printed_agent(
+            MODULE.ACCEPTED_ROUTE_AGENT,
+            json.loads(json.dumps(MODULE.ACCEPTED_ROUTE_KNOB)),
+        )
+        self.assertTrue(facts.discovered[0].credited)
+        pillar, caps, _ = MODULE.score_agent(facts)
+        self.assertGreater(pillar.score, 0)
+        self.assertFalse(any(cap.condition == "agent-no-varying-knobs" for cap in caps))
+
+    def test_the_cited_lines_point_at_the_printed_agent(self) -> None:
+        """The entry beside the example describes THAT file, not a nearby one.
+
+        `source_lines` is the field the reader is being taught to fill in, so
+        a printed value that lands on a blank line teaches the wrong lesson
+        while still scoring, because the scorer reads the whole cited set.
+        """
+        lines = MODULE.ACCEPTED_ROUTE_AGENT.splitlines()
+        for number in MODULE.ACCEPTED_ROUTE_KNOB["model"]["source_lines"]:
+            with self.subTest(cited=number):
+                self.assertIn("MODELS", lines[number - 1])
+        for value in MODULE.ACCEPTED_ROUTE_KNOB["model"]["values"]:
+            with self.subTest(value=value):
+                self.assertIn(repr(value).strip("'"), MODULE.ACCEPTED_ROUTE_AGENT)
+        # And every line the prose points at, which `source_lines` does not
+        # cover and which the sibling example got wrong once: the numbers in
+        # the sentence have to name lines that do what the sentence says.
+        quoted = dict(
+            zip(
+                (
+                    int(number)
+                    for number in re.findall(
+                        r"agent\.py:(\d+)",
+                        MODULE.ACCEPTED_ROUTE_KNOB["model"]["evidence"],
+                    )
+                ),
+                ("MODELS = ", "model = MODELS[", "model=model"),
+            )
+        )
+        self.assertEqual(len(quoted), 3)
+        for number, fragment in quoted.items():
+            with self.subTest(quoted=number):
+                self.assertIn(fragment, lines[number - 1])
+
+    def _score(self, agent: str, knob: dict):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "agent.py").write_text(agent, encoding="utf-8")
+            facts = MODULE.agent_facts_from_discovery(
+                {"source": "agent.py", "knobs": {"model": knob}},
+                source_root=root,
+                selected_agent=root / "agent.py",
+                selected_agent_callable="answer",
+            )
+        return MODULE.score_run(
+            MODULE.DatasetFacts(),
+            MODULE.EvaluationFacts(),
+            facts,
+            dict(MODULE.DEFAULT_WEIGHTS),
+        )
+
+    def _card(self, agent: str, knob: dict) -> str:
+        return MODULE.render_card(self._score(agent, knob), unicode_ok=False)
+
+    def _report(self, agent: str, knob: dict) -> str:
+        return MODULE.render_markdown(self._score(agent, knob))
+
+    REFUSED_AGENT = (
+        "from openai import OpenAI\n"
+        "\n"
+        'MODELS = {"fast": "gpt-4o-mini", "slow": "gpt-4o"}\n'
+        "\n"
+        "client = OpenAI()\n"
+        "\n"
+        "\n"
+        "def answer(question, cfg):\n"
+        '    model = MODELS[cfg["model"]]\n'
+        "    return summarise(model)\n"
+    )
+    REFUSED_KNOB = {
+        "values": ["fast", "slow"],
+        "source_lines": [3],
+        "evidence": "the table this agent selects from",
+    }
+
+    @staticmethod
+    def _fenced(report: str, language: str) -> str:
+        return report.split(f"```{language}\n", 1)[1].split("```", 1)[0]
+
+    def test_the_block_a_reader_copies_is_one_this_reader_credits(self) -> None:
+        """Parsed out of the RENDERED block, not compared to the constants.
+
+        A pin that asserts the constants appear in the output cannot see a
+        renderer that drops a line, reflows the code, or indents it into
+        something that no longer parses. So this takes the two fenced blocks
+        back out of the durable report, parses them as the file and the
+        document they claim to be, and scores THAT through the real reader.
+        """
+        report = self._report(self.REFUSED_AGENT, self.REFUSED_KNOB)
+        agent = self._fenced(report, "python")
+        entry = json.loads(self._fenced(report, "json"))
+        ast.parse(agent)
+        facts = self._score_printed_agent(agent, entry)
+        self.assertTrue(facts.discovered[0].credited)
+        pillar, caps, _ = MODULE.score_agent(facts)
+        self.assertGreater(pillar.score, 0)
+        self.assertFalse(any(cap.condition == "agent-no-varying-knobs" for cap in caps))
+
+    def test_the_accepted_route_prints_beside_a_refused_route(self) -> None:
+        card = self._card(self.REFUSED_AGENT, self.REFUSED_KNOB)
+        self.assertIn(MODULE.ACCEPTED_ROUTE_LABEL, card)
+        # The card indents the block rather than fencing it, so it is read back
+        # by removing that indent and parsing what is left.
+        printed = "\n".join(
+            line[6:] if line.startswith("      ") else line
+            for line in card.splitlines()
+        )
+        ast.parse(self._fenced_from_card(printed))
+        for part in MODULE.ACCEPTED_ROUTE_PARTS:
+            with self.subTest(part=part):
+                self.assertIn(part, card)
+
+    @staticmethod
+    def _fenced_from_card(printed: str) -> str:
+        start = printed.index("from openai import OpenAI")
+        end = printed.index("and the entry that cites it")
+        return printed[start:end]
+
+    def test_the_durable_report_carries_it_too(self) -> None:
+        """The report is the copy a reader keeps, so the remedy is in it.
+
+        A remedy that prints in the terminal and is missing from the durable
+        artifact was already a defect in this module once, for the cap
+        remedies. This block is the same kind of content, so both surfaces
+        carry it and both are asserted, or the next reader fixes it twice.
+        """
+        report = self._report(self.REFUSED_AGENT, self.REFUSED_KNOB)
+        self.assertIn("## A settings route this read can follow", report)
+        for line in MODULE.ACCEPTED_ROUTE_AGENT.splitlines():
+            if line.strip():
+                with self.subTest(line=line):
+                    self.assertIn(line, report)
+        for part in MODULE.ACCEPTED_ROUTE_PARTS:
+            with self.subTest(part=part):
+                self.assertIn(part, report)
+        credited = self._report(
+            MODULE.ACCEPTED_ROUTE_AGENT,
+            json.loads(json.dumps(MODULE.ACCEPTED_ROUTE_KNOB))["model"],
+        )
+        self.assertNotIn("## A settings route this read can follow", credited)
+
+    def test_nothing_is_printed_where_no_route_was_refused(self) -> None:
+        """Two states that must not draw the block, for different reasons.
+
+        A credited read has no question to answer. A parameter refused for a
+        reason that is not about its route - here, no values and no range -
+        has a question this block does not answer, and printing it would hand
+        the reader a remedy for something else.
+        """
+        credited = self._card(
+            MODULE.ACCEPTED_ROUTE_AGENT,
+            json.loads(json.dumps(MODULE.ACCEPTED_ROUTE_KNOB))["model"],
+        )
+        self.assertNotIn(MODULE.ACCEPTED_ROUTE_LABEL, credited)
+        unsettled = self._card(
+            self.REFUSED_AGENT,
+            {
+                "source_lines": [3],
+                "evidence": "seen in the agent, never settled",
+            },
+        )
+        self.assertNotIn(MODULE.ACCEPTED_ROUTE_LABEL, unsettled)
+
+    def test_only_the_state_this_example_answers_sets_the_flag(self) -> None:
+        """Enumerated from the source, not from the two branches I had in mind.
+
+        `unverified` covers four states and only one of them is answered by
+        showing an accepted route. A reviewer found the flag set on a second
+        one - the numeric-bounds refusal - where the printed example is a list
+        of named options and answers nothing the author asked. So the guard
+        reads every `DiscoveredKnob(...)` this module builds with
+        `unverified=True` and requires each to have decided, rather than
+        checking the two the author remembered.
+        """
+        source = Path(MODULE.__file__).read_text(encoding="utf-8")
+        calls = [
+            node
+            for node in ast.walk(ast.parse(source))
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "DiscoveredKnob"
+        ]
+        unverified = [
+            call
+            for call in calls
+            if any(
+                keyword.arg == "unverified"
+                and isinstance(keyword.value, ast.Constant)
+                and keyword.value.value is True
+                for keyword in call.keywords
+            )
+        ]
+        self.assertGreaterEqual(len(unverified), 4)
+        routed = [
+            call
+            for call in unverified
+            if any(keyword.arg == "route_unverified" for keyword in call.keywords)
+        ]
+        self.assertEqual(
+            len(routed),
+            1,
+            "exactly one unverified state is answered by the printed route. "
+            "A new one has to decide, and the decision belongs beside the "
+            "branch rather than in this test",
+        )
+        # And the one that does is the categorical route refusal, identified by
+        # the value it reports rather than by its position in the file.
+        self.assertEqual(routed[0].args[1].value, "categorical")
+
+
+class TheSettingsRouteMovesTheCardTests(unittest.TestCase):
+    """#348: what following the local binding is worth, stated as a number.
+
+    The credit is not a rounding difference. Measured on 200 collected rows,
+    split 180/20, difficulty-tagged, against a brought deterministic evaluator
+    passing all seven calibration checks. Source:
+    tests/test_readiness_scoring.py#TheSettingsRouteMovesTheCardTests, which
+    builds the facts. A read that establishes nothing scores 45 PARTIAL under
+    `agent-no-varying-knobs`; the same run with one two-option setting credited
+    scores 72 WORKABLE with no cap, and the four-setting agent #348 describes
+    scores 79 STRONG with no cap. Two bands and 34 points.
+
+    That magnitude is the reason the pass refuses everything it cannot pin: a
+    knob that never reaches the provider would buy the same 34 points and the
+    same band. So the transition itself is pinned here - not the numbers, which
+    are weights, but the fact that crediting the route is what removes the
+    ceiling and the ask.
+    """
+
+    @staticmethod
+    def _strong_inputs():
+        """The dataset and evaluator the numbers above were taken on."""
+        check = {"good_passes": True, "bad_fails": True, "non_constant": True}
+        return (
+            MODULE.DatasetFacts(
+                exists=True,
+                dataset_supplied=True,
+                rows=200,
+                labelled_rows=200,
+                tuning_rows=180,
+                holdout_rows=20,
+                tuning_labelled_rows=180,
+                holdout_labelled_rows=20,
+                distinct_rows=200,
+                tuning_distinct_rows=180,
+                tuning_distinct_scoreable_rows=180,
+                difficulty_bands=("easy", "medium", "hard", "very-hard"),
+                difficulty_tagged_rows=200,
+                duplicate_status="PASS",
+                near_duplicate_status="PASS",
+                answer_dominance_status="PASS",
+                collected_rows=200,
+                answerable_rows=200,
+                sources=("production-support-desk",),
+            ),
+            MODULE.EvaluationFacts(
+                present=True,
+                method="exact",
+                calibration_present=True,
+                calibration_supplied=True,
+                calibration_complete=True,
+                calibration_passed=True,
+                checks=(check,) * 7,
+                probe_scores=((1.0, 0.0),),
+                parses=True,
+                origin="brought",
+            ),
+        )
+
+    HEADER = 'from openai import OpenAI\n\nMODELS = ["gpt-4o-mini", "gpt-4o"]\n\n'
+    DIRECT = (
+        "def answer(question, model_choice=0):\n"
+        "    return provider(model=MODELS[model_choice], text=question)\n"
+    )
+    THROUGH_A_LOCAL = (
+        "def answer(question, model_choice=0):\n"
+        "    model = MODELS[model_choice]\n"
+        "    return provider(model=model, text=question)\n"
+    )
+
+    def _score(self, body: str):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "agent.py").write_text(self.HEADER + body, encoding="utf-8")
+            facts = MODULE.agent_facts_from_discovery(
+                {
+                    "source": "agent.py",
+                    "knobs": {
+                        "model": {
+                            "values": ["gpt-4o-mini", "gpt-4o"],
+                            "source_lines": [3],
+                            "evidence": "the module table on the call path",
+                        }
+                    },
+                },
+                source_root=root,
+                selected_agent=root / "agent.py",
+                selected_agent_callable="answer",
+            )
+        pillar, caps, _ = MODULE.score_agent(facts)
+        return pillar, caps
+
+    def test_the_route_is_what_removes_the_ceiling_and_the_ask(self) -> None:
+        direct_pillar, direct_caps = self._score(self.DIRECT)
+        local_pillar, local_caps = self._score(self.THROUGH_A_LOCAL)
+        self.assertEqual(direct_pillar.score, local_pillar.score)
+        self.assertEqual(
+            [cap.condition for cap in direct_caps],
+            [cap.condition for cap in local_caps],
+        )
+        self.assertNotIn(
+            "agent-no-varying-knobs", [cap.condition for cap in local_caps]
+        )
+        self.assertGreater(local_pillar.score, 0)
+
+    def test_the_transition_is_a_ceiling_and_an_action_not_only_points(self) -> None:
+        """Both halves of what the customer sees change, so both are asserted.
+
+        A test on the pillar alone would pass while the card still printed a
+        ceiling and asked for a repair, which is the half a reader acts on.
+        """
+        refused = (
+            "def answer(question, cfg):\n"
+            '    model = cfg.get("model") or "gpt-4o-mini"\n'
+            "    return provider(model=model, text=question)\n"
+        )
+        _, refused_caps = self._score(refused)
+        _, credited_caps = self._score(self.THROUGH_A_LOCAL)
+        self.assertIn("agent-no-varying-knobs", [cap.condition for cap in refused_caps])
+        self.assertNotIn(
+            "agent-no-varying-knobs", [cap.condition for cap in credited_caps]
+        )
+        self.assertEqual(
+            MODULE.recommended_action(
+                tuple(sorted(credited_caps, key=MODULE.cap_order))
+            ),
+            MODULE.PROCEED,
+        )
+
+    def test_the_whole_card_moves_two_bands(self) -> None:
+        """The magnitude, on the card a customer reads rather than the pillar.
+
+        Stated because it is what makes the refusals above expensive: a knob
+        this pass credited without a route would buy the same two bands. The
+        numbers are weights and may move; what is asserted is the direction,
+        the ceiling, and that the band really changes.
+        """
+        dataset, evaluation = self._strong_inputs()
+
+        def card_for(body: str):
+            with tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                (root / "agent.py").write_text(self.HEADER + body, encoding="utf-8")
+                facts = MODULE.agent_facts_from_discovery(
+                    {
+                        "source": "agent.py",
+                        "knobs": {
+                            "model": {
+                                "values": ["gpt-4o-mini", "gpt-4o"],
+                                "source_lines": [3],
+                                "evidence": "the module table on the call path",
+                            }
+                        },
+                    },
+                    source_root=root,
+                    selected_agent=root / "agent.py",
+                    selected_agent_callable="answer",
+                )
+            return MODULE.score_run(
+                dataset, evaluation, facts, dict(MODULE.DEFAULT_WEIGHTS)
+            )
+
+        nothing_established = card_for(
+            "def answer(question, cfg):\n"
+            '    model = cfg.get("model") or "gpt-4o-mini"\n'
+            "    return provider(model=model, text=question)\n"
+        )
+        credited = card_for(self.THROUGH_A_LOCAL)
+        self.assertEqual(
+            [cap.condition for cap in nothing_established.caps],
+            ["agent-no-varying-knobs"],
+        )
+        self.assertEqual(list(credited.caps), [])
+        self.assertGreater(credited.overall, nothing_established.overall)
+        self.assertNotEqual(credited.band, nothing_established.band)
+
+
 class TheAgentPillarReadsTheAgentTests(unittest.TestCase):
     """#184: `AGENT` over one number that answered a question about our search.
 
@@ -14312,11 +15862,20 @@ class TheBuildHalfCitesTheAgentItReadTests(unittest.TestCase):
         a `while True:`. That is the difference the derivation makes and the
         reason this fixture had to change: under the old coordinate-only guard
         the carried-over `loop: False` passed with any in-range integer.
+
+        The prose still points at another agent's file, left alone on purpose.
+        This test is about the ANSWERS being true of this agent, which is what
+        `source_lines` and the two derivations decide. Whether the sentence
+        beside them describes this program is a question no refusal in this
+        module answers, and `test_the_card_shows_the_line_each_check_cited`
+        is where a reader is handed what they need to answer it themselves.
         """
         facts = self._read(
             self._carried_over(
                 **{check: {"source_lines": [4]} for check in MODULE.BUILD_CHECK_ANSWER}
-                | {"control-flow": {"source_lines": [4], "loop": True, "bounded": True}}
+                | {
+                    "control-flow": {"source_lines": [4], "loop": True, "bounded": True}
+                },
             )
         )
         self.assertEqual(
@@ -14346,9 +15905,17 @@ class TheBuildHalfCitesTheAgentItReadTests(unittest.TestCase):
         """`determined: false` has no line to point at, and demanding one would
         price the honest answer above the confident one."""
         document = self._undetermined()
-        self.assertFalse(any("source_lines" in spec for spec in document.values()))
+        self.assertEqual(
+            [check for check, spec in document.items() if "source_lines" in spec], []
+        )
         facts = self._read(document)
-        self.assertTrue(all(not signal.measured for signal in facts.build))
+        # By name rather than `assertTrue(all(...))`, which passes vacuously on
+        # an empty sequence and, when it does fail, names no check. The same
+        # argument is written out at length two tests below; it applies here.
+        self.assertEqual(
+            sorted(signal.name for signal in facts.build if not signal.measured),
+            sorted(name for name, _weight in MODULE.AGENT_BUILD_CHECKS),
+        )
 
     def test_an_undetermined_check_may_not_smuggle_a_coordinate(self) -> None:
         """The silence this arm used to keep.
@@ -14386,7 +15953,7 @@ class TheBuildHalfCitesTheAgentItReadTests(unittest.TestCase):
                         for other in MODULE.BUILD_CHECK_ANSWER
                         if other != check
                     }
-                    | {"control-flow": {"source_lines": [4], "loop": True}}
+                    | {"control-flow": {"source_lines": [4], "loop": True}},
                 )
                 if check == "control-flow":
                     document[check] = {
@@ -14415,7 +15982,7 @@ class TheBuildHalfCitesTheAgentItReadTests(unittest.TestCase):
                     **{
                         check: {"source_lines": [4]}
                         for check in MODULE.BUILD_CHECK_ANSWER
-                    }
+                    },
                 )
             )
         message = str(caught.exception)
@@ -14500,6 +16067,15 @@ class TheBuildHalfCitesTheAgentItReadTests(unittest.TestCase):
         for shape, body in {
             "while-True": "    while True:\n        q = q + 'x'\n",
             "while-1": "    while 1:\n        q = q + 'x'\n",
+            "continue-only": "    while True:\n        continue\n",
+            # A `return` written where it cannot leave this loop. The first is
+            # in a scope the walk does not enter and belongs to that scope; the
+            # second is in an `else:` that runs only when the test goes false,
+            # which this test cannot do.
+            "return-in-a-nested-def": "    while True:\n        def later():\n"
+            "            return q\n",
+            "return-in-the-whiles-else": "    while True:\n        q = q + 'x'\n"
+            "    else:\n        return q\n",
         }.items():
             with self.subTest(shape=shape):
                 with self.assertRaises(MODULE.AgentDiscoveryInputError) as caught:
@@ -14538,6 +16114,39 @@ class TheBuildHalfCitesTheAgentItReadTests(unittest.TestCase):
             "while-return": "    while True:\n        return q\n",
             "while-break": "    while True:\n        break\n    return q\n",
             "for-loop": "    for i in range(3):\n        q = q + 'x'\n    return q\n",
+            # Where the exit is WRITTEN, which is the axis the capture rule
+            # walks. An `if`, a `with` and a `try:` body hold a `break` without
+            # taking it, and a `for ... else:` is not inside its own `for`, so
+            # the `break` there binds to the `while` around it.
+            "break-in-if": "    while True:\n        if q:\n            break\n"
+            "    return q\n",
+            "break-in-try": "    while True:\n        try:\n            break\n"
+            "        except ValueError:\n            pass\n    return q\n",
+            "break-in-with": "    while True:\n        with open(q) as fh:\n"
+            "            break\n    return q\n",
+            "break-in-for-else": "    while True:\n        for c in q:\n"
+            "            pass\n        else:\n            break\n    return q\n",
+            "break-after-inner-loop": "    while True:\n        for c in q:\n"
+            "            break\n        break\n    return q\n",
+            "return-in-for": "    while True:\n        for c in q:\n"
+            "            return q\n",
+            # A `raise` no `except` between it and the `while` takes. Either
+            # the handler is spent on a different class, or it is not over the
+            # `raise` at all - and only the `try:` body is ever under it, so
+            # each of these raises the very class the clause beside it names
+            # and still leaves.
+            "raise-past-a-narrow-except": "    while True:\n        try:\n"
+            "            raise KeyError('x')\n        except ValueError:\n"
+            "            pass\n",
+            "raise-in-a-handler-of-its-own-class": "    while True:\n        try:\n"
+            "            q = more(q)\n        except ValueError:\n"
+            "            raise ValueError('again')\n",
+            "raise-in-a-try-else": "    while True:\n        try:\n"
+            "            q = more(q)\n        except ValueError:\n            pass\n"
+            "        else:\n            raise ValueError('x')\n",
+            "raise-in-a-finally": "    while True:\n        try:\n"
+            "            q = more(q)\n        except ValueError:\n            pass\n"
+            "        finally:\n            raise ValueError('x')\n",
         }
         for shape, body in cases.items():
             with self.subTest(shape=shape):
@@ -14546,6 +16155,287 @@ class TheBuildHalfCitesTheAgentItReadTests(unittest.TestCase):
                     {"control-flow": {"loop": True, "bounded": True}},
                 )
                 self.assertEqual(len(facts.build), len(MODULE.AGENT_BUILD_CHECKS))
+
+    def test_an_inner_loops_break_is_not_the_whiles_way_out(self) -> None:
+        """A `break` belongs to the nearest loop around it, and this walk
+        credited it to the outermost one.
+
+        The whole body was searched for a `break`, a `return` or a `raise`, and
+        any one of them anywhere ended the search. So `while True:` over
+        `for c in q: break` read as a loop with a way out. It has none: the
+        `break` ends the `for`, the `while` starts the `for` again, and the
+        agent runs forever while the card prints "a stop condition to point at".
+
+        The correction is a principle rather than a longer list of statement
+        types: a statement leaves the `while` only if nothing between it and the
+        `while` captures it. For a `break` the captor is any nearer loop.
+        """
+        for shape, body in {
+            "inner-for": "    while True:\n        for c in q:\n            break\n",
+            "inner-while": "    while True:\n        while True:\n            break\n",
+            "inner-for-in-an-if": "    while True:\n        if q:\n"
+            "            for c in q:\n                break\n",
+        }.items():
+            with self.subTest(shape=shape):
+                with self.assertRaises(MODULE.AgentDiscoveryInputError) as caught:
+                    self._score_source(
+                        "MODEL = ['a']\ndef selected(q):\n" + body,
+                        {"control-flow": {"loop": True, "bounded": True}},
+                    )
+                message = str(caught.exception)
+                self.assertIn("no way out of its body", message)
+                self.assertIn("inner loop", message)
+
+    def test_a_raise_the_loops_own_except_catches_is_not_a_way_out(self) -> None:
+        """The same defect one level deeper, and it was not in the report.
+
+        `raise` was counted at any depth on the reasoning that a loop leaving by
+        raising has left. That holds only until something catches it. A `raise`
+        inside a `try` whose `except` handles it lands in the handler, the
+        handler falls through, and the `while` goes round again - so the shipped
+        walk accepted `bounded: true` for a loop with no exit at all, by exactly
+        the argument the `break` case had already been fixed for.
+
+        Written out as the capture rule, `break` and `raise` stop being two
+        special cases: for a `raise` the captor is an enclosing `try` whose
+        `except` handles it. Three ways an `except` settles that it does -
+        taking everything, naming the same identifier the `raise` names, and
+        naming a builtin class above the one raised - because a rule that only
+        knew bare `except:` would be an exemption list again.
+        """
+        for shape, body in {
+            "bare-except": "    while True:\n        try:\n"
+            "            raise StopIteration\n        except:\n            pass\n",
+            "same-identifier": "    while True:\n        try:\n"
+            "            raise StopIteration\n        except StopIteration:\n"
+            "            pass\n",
+            "a-class-above-it": "    while True:\n        try:\n"
+            "            raise ValueError('x')\n        except Exception:\n"
+            "            pass\n",
+            "one-of-a-tuple": "    while True:\n        try:\n"
+            "            raise ValueError('x')\n        except (KeyError, ValueError):\n"
+            "            pass\n",
+            "an-outer-try": "    while True:\n        try:\n            try:\n"
+            "                raise ValueError('x')\n            except KeyError:\n"
+            "                pass\n        except ValueError:\n            pass\n",
+            # `BaseException` is the one clause that settles a class this read
+            # cannot resolve, so it is the only arm reaching this shape: the
+            # subclass test cannot answer it, and the identifiers differ.
+            "an-unresolved-class-under-baseexception": "    while True:\n"
+            "        try:\n            raise Timeout('x')\n"
+            "        except BaseException:\n            pass\n",
+            # A nearer loop takes a `break` and takes nothing else. The `try`
+            # is still over this `raise` with a `for` in between, and the walk
+            # has to carry the handlers through it.
+            "a-raise-inside-an-inner-loop": "    while True:\n        try:\n"
+            "            for c in q:\n                raise ValueError('x')\n"
+            "        except ValueError:\n            pass\n",
+        }.items():
+            with self.subTest(shape=shape):
+                with self.assertRaises(MODULE.AgentDiscoveryInputError) as caught:
+                    self._score_source(
+                        "MODEL = ['a']\ndef selected(q):\n" + body,
+                        {"control-flow": {"loop": True, "bounded": True}},
+                    )
+                message = str(caught.exception)
+                self.assertIn("no way out of its body", message)
+                self.assertIn("except catches", message)
+        with self.subTest(shape="a-class-this-file-declares"):
+            # Nothing resolves `Stop`, and nothing needs to: one identifier
+            # written twice in one statement settles the relation on its own.
+            # Without that rule the commonest real shape - an agent's own
+            # sentinel exception, caught by name - would go unsettled.
+            with self.assertRaises(MODULE.AgentDiscoveryInputError) as caught:
+                self._score_source(
+                    "MODEL = ['a']\n\n\nclass Stop(Exception):\n    pass\n\n\n"
+                    "def selected(q):\n    while True:\n        try:\n"
+                    "            raise Stop()\n        except Stop:\n"
+                    "            pass\n",
+                    {"control-flow": {"loop": True, "bounded": True}},
+                )
+            self.assertIn("except catches", str(caught.exception))
+
+    def test_an_assert_leaves_on_the_same_terms_as_its_raise(self) -> None:
+        """The principle above, applied to the statement it did not name.
+
+        `assert q` is `if not q: raise AssertionError`, and a walk that knew
+        `raise` and not `assert` gave one exception opposite verdicts depending
+        on how an author had spelled it: `if q: raise AssertionError` was
+        accepted, `if q: assert q` was refused. The refusal then named two
+        causes, an inner loop and a catching `except`, and neither was theirs -
+        so it read as an accusation about code they had not written, in the
+        false-refusal direction this whole check treats as the expensive one.
+
+        This is a completion rather than another list entry. `assert` is the
+        last statement in the grammar whose purpose can be to leave, so adding
+        it closes the class instead of extending it, and it goes through the
+        same capture: an `except AssertionError:` over it keeps the loop where
+        it was, and a narrower clause does not.
+        """
+        for shape, body in {
+            "bare": "    while True:\n        assert q\n",
+            "inside-an-if": "    while True:\n        if q:\n            assert q\n",
+            "written-as-a-raise": "    while True:\n        if q:\n"
+            "            raise AssertionError\n",
+            "past-a-narrower-clause": "    while True:\n        try:\n"
+            "            assert q\n        except ValueError:\n            pass\n",
+        }.items():
+            with self.subTest(shape=shape, direction="leaves"):
+                facts = self._score_source(
+                    "MODEL = ['a']\ndef selected(q):\n" + body,
+                    {"control-flow": {"loop": True, "bounded": True}},
+                )
+                self.assertEqual(len(facts.build), len(MODULE.AGENT_BUILD_CHECKS))
+        with self.subTest(shape="caught-by-its-own-class", direction="captured"):
+            with self.assertRaises(MODULE.AgentDiscoveryInputError) as caught:
+                self._score_source(
+                    "MODEL = ['a']\ndef selected(q):\n    while True:\n"
+                    "        try:\n            assert q\n"
+                    "        except AssertionError:\n            pass\n",
+                    {"control-flow": {"loop": True, "bounded": True}},
+                )
+            self.assertIn("except catches", str(caught.exception))
+
+    def test_a_parameter_named_for_a_builtin_settles_nothing(self) -> None:
+        """`_named_exception` is only as safe as the list it consults.
+
+        It resolves a builtin exception unless the file binds that identifier,
+        and the binding walk read assignments, imports, defs and classes but
+        not a parameter, an `except ... as`, or a `match` capture. So a
+        function taking `Exception` as an argument had its own `except
+        Exception:` resolved against the real builtin, and a loop that leaves
+        was refused - a false red bought by an incomplete list, which is the
+        shape of defect this file exists to catch.
+        """
+        for shape, source in {
+            "a-parameter": "MODEL = ['a']\ndef selected(q, Exception=None):\n"
+            "    while True:\n        try:\n            raise ValueError('x')\n"
+            "        except Exception:\n            pass\n",
+            "an-except-alias": "MODEL = ['a']\ndef selected(q):\n"
+            "    try:\n        q = more(q)\n    except KeyError as Exception:\n"
+            "        pass\n    while True:\n        try:\n"
+            "            raise ValueError('x')\n        except Exception:\n"
+            "            pass\n",
+        }.items():
+            with self.subTest(shape=shape):
+                facts = self._score_source(
+                    source, {"control-flow": {"loop": True, "bounded": True}}
+                )
+                self.assertEqual(len(facts.build), len(MODULE.AGENT_BUILD_CHECKS))
+
+    def test_an_exception_this_read_cannot_place_refuses_nothing(self) -> None:
+        """The direction that decides which errors this check is allowed to make.
+
+        Whether an `except` catches a particular `raise` is a question about
+        names, and this module does not resolve a customer's. `except Timeout:`
+        over `raise Timeout()` from an import nothing follows, a handler written
+        as an attribute, a name the file rebinds, a `raise` with no class at
+        all: each one is "cannot tell", and cannot tell must accept.
+
+        The two errors do not cost the same. A missed refutation leaves one
+        unchecked claim on a card that already says the check does not establish
+        the agent ends. A false one tells an author who read their own agent
+        correctly that they read the wrong program, which is the incident this
+        whole check came out of.
+        """
+        for shape, body in {
+            "an-unresolved-class": "    while True:\n        try:\n"
+            "            raise Timeout('x')\n        except OtherError:\n"
+            "            pass\n",
+            "an-attribute-handler": "    while True:\n        try:\n"
+            "            raise ValueError('x')\n        except errors.Any:\n"
+            "            pass\n",
+            "a-rebound-builtin": "    ValueError = more\n    while True:\n"
+            "        try:\n            raise ValueError('x')\n"
+            "        except Exception:\n            pass\n",
+            "a-bare-reraise": "    while True:\n        try:\n"
+            "            q = more(q)\n        except ValueError:\n            pass\n"
+            "        raise\n",
+        }.items():
+            with self.subTest(shape=shape):
+                facts = self._score_source(
+                    "MODEL = ['a']\ndef selected(q):\n" + body,
+                    {"control-flow": {"loop": True, "bounded": True}},
+                )
+                self.assertEqual(len(facts.build), len(MODULE.AGENT_BUILD_CHECKS))
+
+    def test_the_constant_test_is_read_by_the_shared_literal_subset(self) -> None:
+        """One of the two recorded residuals closes here, and one does not.
+
+        The test used to have to be an `ast.Constant`, so `while 2 > 1:` walked
+        past a refutation the tree can settle perfectly well. `_literal_
+        condition_value` is the subset the reachability walk already uses for
+        the same judgement, it folds a literal comparison, and reusing it costs
+        one expression.
+
+        `while not False:` stays out. Folding a `not` means widening that shared
+        subset, which would also change which lines the reachability walk calls
+        dead - a refusing direction, in a different check, bought for a shape
+        nobody writes. Recorded rather than hidden, here and in the guidance.
+        """
+        for shape, body in {
+            "while-True": "    while True:\n        q = q + 'x'\n",
+            "while-1": "    while 1:\n        q = q + 'x'\n",
+            "while-2-gt-1": "    while 2 > 1:\n        q = q + 'x'\n",
+        }.items():
+            with self.subTest(shape=shape, direction="refuted"):
+                with self.assertRaises(MODULE.AgentDiscoveryInputError) as caught:
+                    self._score_source(
+                        "MODEL = ['a']\ndef selected(q):\n" + body,
+                        {"control-flow": {"loop": True, "bounded": True}},
+                    )
+                # On the bound, and not on a citation this fixture got wrong.
+                self.assertIn("no way out of its body", str(caught.exception))
+        for shape, body in {
+            "empty-string-test": "    while '':\n        q = q + 'x'\n    return q\n",
+            "mixed-literal-types": "    while 1 < 'a':\n        q = q + 'x'\n"
+            "    return q\n",
+        }.items():
+            with self.subTest(shape=shape, direction="accepted"):
+                facts = self._score_source(
+                    "MODEL = ['a']\ndef selected(q):\n" + body,
+                    {"control-flow": {"loop": True, "bounded": True}},
+                )
+                self.assertEqual(len(facts.build), len(MODULE.AGENT_BUILD_CHECKS))
+
+    def test_the_shapes_this_read_does_not_reach_are_recorded_not_hidden(self) -> None:
+        """Two limits pinned so that closing either is a deliberate act.
+
+        `while not False:` is constant-true and is not refused - a missed
+        refutation, in the safe direction. `while True:` leaving only by
+        `sys.exit()` is refused although it really does leave - a false red, and
+        the expensive direction. Seeing the second means resolving a name to the
+        function it calls, which nothing in this module does, so the guidance
+        names the shape where an author writes the answer instead.
+
+        If a later change closes either one, this test is where it says so, and
+        the paragraph in `references/component-creation.md` changes with it.
+        """
+        with self.subTest(residual="constant-true-but-not-folded"):
+            facts = self._score_source(
+                "MODEL = ['a']\ndef selected(q):\n"
+                "    while not False:\n        q = q + 'x'\n",
+                {"control-flow": {"loop": True, "bounded": True}},
+            )
+            self.assertEqual(len(facts.build), len(MODULE.AGENT_BUILD_CHECKS))
+        with self.subTest(residual="leaves-by-a-call"):
+            with self.assertRaises(MODULE.AgentDiscoveryInputError) as caught:
+                self._score_source(
+                    "import sys\nMODEL = ['a']\ndef selected(q):\n"
+                    "    while True:\n        sys.exit(0)\n",
+                    {"control-flow": {"loop": True, "bounded": True}},
+                )
+            # The refusal has to be the bound, not a citation this fixture got
+            # wrong, or the residual it pins is not the one being recorded.
+            self.assertIn("no way out of its body", str(caught.exception))
+        guidance = (
+            ROOT
+            / "skills"
+            / "traigent-first-run"
+            / "references"
+            / "component-creation.md"
+        ).read_text()
+        self.assertIn("sys.exit()", guidance)
 
     def test_the_card_says_which_checks_the_source_could_contradict(self) -> None:
         """Settled and located must not read alike on the customer's card.
@@ -14626,7 +16516,7 @@ class TheBuildHalfCitesTheAgentItReadTests(unittest.TestCase):
         """
         borrowed = self._carried_over(
             **{check: {"source_lines": [4]} for check in MODULE.BUILD_CHECK_ANSWER}
-            | {"control-flow": {"source_lines": [4], "loop": True}}
+            | {"control-flow": {"source_lines": [4], "loop": True}},
         )
         borrowed["tools"] = {
             "used": True,
@@ -14639,6 +16529,335 @@ class TheBuildHalfCitesTheAgentItReadTests(unittest.TestCase):
             self._read(borrowed)
         self.assertIn("does not mention anywhere", str(caught.exception))
         self.assertIn("fetch, search", str(caught.exception))
+
+    # Prose an author has every reason to write about a real project, and the
+    # shape the refusal this branch replaced would have exited 2 on. Every one
+    # names another file of the customer's own tree, because every real project
+    # has more than one file: the prompt text in `prompts.py`, the tool table
+    # in `tools.py`, the schema in `settings.py`. None of them is a read of
+    # another agent, and no rule over filenames can tell them from one - the
+    # carried-over document's own `other_agent.py` is a sibling in the same
+    # tree and sits on the wrong side of every such rule.
+    HONEST_CROSS_MODULE_PROSE = (
+        "SYSTEM is defined at prompts.py:12 and passed in here at the call",
+        "the two tools are declared in tools.py:10 and bound to this callable",
+        "the schema is pinned in settings.py:4 and read by this function",
+        "the retry loop lives in runner.py:88, which this callable delegates to",
+    )
+
+    def _observed(self, source: str, build: dict, callable_name: str = "selected"):
+        """The build rows as a customer meets them, keyed by check name."""
+        facts = self._score_source(source, build)
+        return {
+            signal.name: signal.evidence
+            for signal in MODULE.build_declarations_are_unmeasured(facts.build)
+        }
+
+    def test_the_card_shows_the_line_each_check_cited(self) -> None:
+        """The residual, answered by deriving instead of by scanning.
+
+        `evidence` is prose the assistant authored and the card prints it
+        verbatim, so a sentence could name another program's file, cite lines
+        that file has and this one does not, and sit beside a `source_lines`
+        that resolves cleanly against the real agent. A reader met the sentence
+        with nothing to check it against.
+
+        Nothing is refused, because nothing can be: deciding whether a filename
+        is an attribution or an ordinary reference to another module of the
+        same project is a question about prose, and `HONEST_CROSS_MODULE_PROSE`
+        is the common case that any such rule refuses. So the check's own cited
+        line is printed beside the sentence instead, read out of the tree at a
+        coordinate already validated.
+
+        Asserted on the carried-over document, which is the point: the sentence
+        still says `other_agent.py:932-936`, and the clause beside it says what
+        this agent's line 4 actually is. The contradiction is now on the card
+        where a reader can see it, rather than absent from it.
+        """
+        rows = self._observed(
+            "MODEL = ['a']\ndef selected(q):\n    return spin(q)\n"
+            "def spin(q):\n    while True:\n        q = q + 'x'\n",
+            {
+                check: {"evidence": self.CARRIED_OVER[check]["evidence"]}
+                for check in MODULE.BUILD_CHECK_ANSWER
+            }
+            | {
+                "control-flow": {
+                    "loop": True,
+                    "bounded": False,
+                    "evidence": self.CARRIED_OVER["control-flow"]["evidence"],
+                }
+            },
+        )
+        for check in MODULE.BUILD_CHECK_ANSWER:
+            with self.subTest(check=check):
+                # The author's sentence, untouched. This branch deletes no
+                # explanation; the reason option one was set aside is that the
+                # sentence is the only thing saying WHAT was found.
+                self.assertIn("other_agent.py", rows[check])
+                # And beside it, the machine-derived half.
+                self.assertIn("Read from agent.py, 1: MODEL = ['a']", rows[check])
+
+    def test_the_quoted_line_is_read_from_the_tree_and_not_from_the_document(
+        self,
+    ) -> None:
+        """The property the whole change rests on, measured rather than argued.
+
+        Hold the document byte for byte and change only the customer's source.
+        A clause assembled from anything the assistant wrote would not move. A
+        clause read out of the tree moves with the file, which is what makes it
+        evidence a reader can weigh against the sentence.
+        """
+        document = {
+            check: {"evidence": "agent.py:1 the model table"}
+            for check in MODULE.BUILD_CHECK_ANSWER
+        } | {"control-flow": {"loop": False, "evidence": "agent.py:1 the model table"}}
+        first = self._observed(
+            "MODEL = ['a']\ndef selected(q):\n    return q\n", document
+        )
+        second = self._observed(
+            "MODEL = ['b', 'c']\ndef selected(q):\n    return q\n", document
+        )
+        self.assertIn("Read from agent.py, 1: MODEL = ['a']", first["prompt"])
+        self.assertIn("Read from agent.py, 1: MODEL = ['b', 'c']", second["prompt"])
+        # Same sentence in both, so the difference above is the source and
+        # nothing else.
+        self.assertIn("agent.py:1 the model table", first["prompt"])
+        self.assertIn("agent.py:1 the model table", second["prompt"])
+
+    def test_prose_naming_another_module_of_the_same_project_is_scored(self) -> None:
+        """The false-red direction, and the reason there is no guard here.
+
+        Each of these is a correct sentence about a real agent whose parts live
+        in more than one file, with correct `source_lines` throughout. A rule
+        refusing a filename that is not the selected agent's exits 2 on every
+        one of them, and tells an author who read the right source to re-read
+        it. The sentence reaches the card, and the cited line reaches the card
+        beside it.
+        """
+        for prose in self.HONEST_CROSS_MODULE_PROSE:
+            with self.subTest(prose=prose):
+                rows = self._observed(
+                    "MODEL = ['a']\ndef selected(q):\n    return q\n",
+                    {check: {"evidence": prose} for check in MODULE.BUILD_CHECK_ANSWER}
+                    | {"control-flow": {"loop": False, "evidence": prose}},
+                )
+                for check in MODULE.BUILD_CHECK_ANSWER:
+                    self.assertIn(prose, rows[check])
+                    self.assertIn("Read from agent.py, 1:", rows[check])
+
+    def test_a_check_that_settled_nothing_quotes_nothing(self) -> None:
+        """The absence is the signal, and it is not a gap.
+
+        `determined: false` carries no coordinate by construction - a read that
+        could not settle the question has no line establishing it - so there is
+        nothing to quote and nothing is invented. The card therefore shows the
+        difference between a check that pointed somewhere and one that could
+        not, without a second sentence claiming it.
+        """
+        facts = self._read(
+            self._undetermined(
+                evidence="the prompt is assembled in prompts.py:12, out of this read"
+            )
+        )
+        marked = MODULE.build_declarations_are_unmeasured(facts.build)
+        # Explicit, per check. `assertTrue(all(...))` passes vacuously on an
+        # empty sequence and says nothing about WHICH check failed.
+        self.assertEqual(
+            sorted(signal.name for signal in marked if not signal.cited_source),
+            sorted(name for name, _weight in MODULE.AGENT_BUILD_CHECKS),
+        )
+        self.assertEqual(
+            [signal.name for signal in marked if "Read from" in signal.evidence], []
+        )
+        self.assertEqual(
+            sorted(
+                signal.name for signal in marked if "prompts.py:12" in signal.evidence
+            ),
+            sorted(name for name, _weight in MODULE.AGENT_BUILD_CHECKS),
+        )
+
+    def test_a_quoted_line_cannot_rewrite_the_card_around_it(self) -> None:
+        """Customer source text crosses two renderers, so it is made safe first.
+
+        This is the one thing the change adds that was not already on the card:
+        bytes out of the customer's file, printed to a terminal and into a
+        Markdown table cell. Each case is a property of one of those surfaces
+        rather than a preference about how code should look.
+        """
+        escape = chr(27)
+        cases = {
+            "terminal escape": (
+                'MODEL = ["' + escape + '[2J" + "x"]\ndef selected(q):\n    return q\n',
+                lambda quoted: self.assertNotIn(escape, quoted),
+            ),
+            "markdown cell pipe": (
+                "MODEL: list | None = None\ndef selected(q):\n    return q\n",
+                # The delimiter property is asserted by
+                # `test_a_quoted_line_cannot_split_the_reports_table_row`,
+                # which renders the real table. Here only the escape reaches
+                # the card, which is the terminal's half.
+                lambda quoted: self.assertNotIn(" | ", quoted),
+            ),
+            "its own indentation": (
+                "MODEL = ['a']\ndef selected(q):\n\t\t  return    MODEL[0]\n",
+                lambda quoted: self.assertIn("3: return MODEL[0]", quoted),
+            ),
+        }
+        for label, (source, assertion) in cases.items():
+            with self.subTest(surface=label):
+                lines = [3] if label == "its own indentation" else [1]
+                rows = self._observed(
+                    source,
+                    {
+                        check: {"evidence": "read", "source_lines": lines}
+                        for check in MODULE.BUILD_CHECK_ANSWER
+                    }
+                    | {
+                        "control-flow": {
+                            "loop": False,
+                            "evidence": "read",
+                            "source_lines": lines,
+                        }
+                    },
+                )
+                quoted = rows["prompt"].split("Read from ")[1]
+                assertion(quoted)
+
+    @staticmethod
+    def _table_cells(row: str) -> int:
+        """Cells a table scanner sees in one rendered row.
+
+        A `|` delimits when it is not escaped, and a backslash escapes only
+        when it is not itself escaped, so what decides is the PARITY of the
+        backslash run immediately before the pipe. Counting that is the
+        property the escaping exists for.
+
+        Written this way because the earlier assertion was not. It checked
+        that the escape sequence `\\|` appeared in the output, which tests the
+        transformation the implementation happens to use rather than the
+        surface property it stands for - and the defect lived exactly in that
+        gap: a cited line already holding a backslash produced `\\\\|`, which
+        contains the sequence and still splits the row. This counter cannot
+        pass for that reason, and it survives a change of escaping strategy.
+        """
+        cells, backslashes = 1, 0
+        for character in row:
+            if character == "\\":
+                backslashes += 1
+                continue
+            if character == "|" and backslashes % 2 == 0:
+                cells += 1
+            backslashes = 0
+        return cells
+
+    def test_a_quoted_line_cannot_split_the_reports_table_row(self) -> None:
+        """The durable report puts this string in a table cell, so count cells.
+
+        `render_markdown` writes one row per check as
+        `| name | points | evidence |`, which an unsplit row renders as five
+        cells: the empty edges plus the three columns. A live delimiter inside
+        the quotation adds one, and the report silently gains a column.
+
+        The regex case is the one that shipped past the previous assertion,
+        and it is not far-fetched: `output-contract` asks whether anything
+        pins the shape of an answer, and a compiled pattern is the canonical
+        way to do that, so a line holding an escaped alternation is exactly
+        what an author cites for it.
+        """
+        cases = {
+            "bare pipe": "MODEL: list | None = None",
+            "escaped pipe in a regex": 'ANSWER = re.compile(r"^(yes\\|no)$")',
+            "trailing backslash": 'MODEL = "a\\\\"',
+            "doubled backslash then pipe": 'MODEL = "a\\\\" + "|b"',
+            "many pipes": 'MODEL = "a|b|c|d|e"',
+            # Long enough to be truncated, and carrying escapes at the cut, so
+            # the property is asserted on the truncated form too.
+            "pipes past the width bound": 'MODEL = "' + "x|y\\|z" * 40 + '"',
+        }
+        for label, first_line in cases.items():
+            with self.subTest(source=label):
+                facts = self._score_source(
+                    first_line + "\ndef selected(q):\n    return q\n",
+                    {
+                        check: {"evidence": "read", "source_lines": [1]}
+                        for check in MODULE.BUILD_CHECK_ANSWER
+                    }
+                    | {
+                        "control-flow": {
+                            "loop": False,
+                            "evidence": "read",
+                            "source_lines": [1],
+                        }
+                    },
+                )
+                report = MODULE.render_markdown(
+                    MODULE.score_run(
+                        MODULE.DatasetFacts(),
+                        MODULE.EvaluationFacts(),
+                        replace(
+                            facts,
+                            build=MODULE.build_declarations_are_unmeasured(facts.build),
+                        ),
+                        dict(MODULE.DEFAULT_WEIGHTS),
+                    )
+                )
+                rows = [
+                    line
+                    for line in report.splitlines()
+                    if line.startswith("| ")
+                    and "Read from" in line
+                    and " | unmeasured | " in line
+                ]
+                # The rows have to be found before they can be counted: a
+                # selector that matches nothing would make every assertion
+                # below vacuous.
+                self.assertEqual(len(rows), len(MODULE.AGENT_BUILD_CHECKS), report)
+                for row in rows:
+                    self.assertEqual(self._table_cells(row), 5, row)
+
+    def test_a_long_or_many_lined_citation_is_bounded(self) -> None:
+        """Neither renderer wraps, so an unbounded quotation is a broken card.
+
+        A generated module is one very long line, and a check may cite more
+        lines than a single row can hold. Both are truncated visibly - an
+        ellipsis, and a count of what was not shown - rather than silently
+        printing the first part as though it were the whole.
+        """
+        wide = "MODEL = [" + ", ".join(f"'m{i}'" for i in range(200)) + "]"
+        rows = self._observed(
+            wide + "\ndef selected(q):\n    q = q\n    return q\n",
+            {
+                check: {"evidence": "read", "source_lines": [1]}
+                for check in MODULE.BUILD_CHECK_ANSWER
+            }
+            | {
+                "control-flow": {"loop": False, "evidence": "read", "source_lines": [1]}
+            },
+        )
+        quoted = rows["prompt"].split("Read from ")[1]
+        self.assertLess(len(quoted), MODULE.CITED_SOURCE_WIDTH + 40, quoted)
+        self.assertTrue(quoted.endswith("..."), quoted)
+
+        rows = self._observed(
+            "MODEL = ['a']\ndef selected(q):\n    q = q\n    return q\n",
+            {
+                check: {"evidence": "read", "source_lines": [1, 2, 3, 4]}
+                for check in MODULE.BUILD_CHECK_ANSWER
+            }
+            | {
+                "control-flow": {
+                    "loop": False,
+                    "evidence": "read",
+                    "source_lines": [1, 2, 3, 4],
+                }
+            },
+        )
+        quoted = rows["prompt"].split("Read from ")[1]
+        self.assertIn("1: MODEL = ['a']", quoted)
+        self.assertIn("2: def selected(q):", quoted)
+        self.assertIn("(+2 more cited line(s))", quoted)
+        self.assertNotIn("return q", quoted)
 
     def test_the_shipped_examples_are_true_of_their_own_agent(self) -> None:
         """The refusal prints a document verbatim, so it teaches whatever it says.

@@ -959,13 +959,206 @@ def dataset_field_value(row: dict[str, Any], field_path: str) -> tuple[bool, Any
     return True, value
 
 
-def first_run_row_count(usable_rows: int) -> int:
-    """Return the rows each paid first-run configuration scores."""
-    return (
-        FIRST_RUN_TUNING_ROWS
-        if usable_rows > BOUNDED_SUBSET_ABOVE_ROWS
-        else usable_rows
-    )
+#: The split names whose rows a paid first run draws from. Read here rather
+#: than spelled twice: the bounded draw and the tuning-size finding below ask
+#: the same question of the same names, and two copies of this set are two
+#: answers waiting to disagree about what "the tuning split" means.
+TUNING_SPLIT_NAMES = frozenset({"tune", "tuning", "train", "search"})
+#: What `drawable_distinct_inputs` counted over, in the customer's terms.
+TUNING_SPLIT_SCOPE = "the tuning split"
+DATASET_SCOPE = "this dataset"
+
+
+def exact_input_identity(value: Any) -> str:
+    r"""Two inputs are one question only when they are equal. Nothing looser.
+
+    Deliberately NOT `normalized_identity`, and the difference decides money.
+    That function reduces an input to `re.findall(r"\w+", ...)`, which throws
+    away every operator and every mark: `is x > 5` and `is x < 5` reach it as
+    one string, and so do `2 + 2 = ?` and `2 - 2 = ?`. That is the right
+    trade where it is used - a leak between splits, or a duplicate WARN, wants
+    to see past punctuation and is only ever advisory - and it is the wrong
+    trade here, because this count SHRINKS a paid draw. Forty operator
+    questions would be drawn as twenty, and the twenty dropped are real test
+    cases the customer wrote. The walkthrough's own worked task is text to
+    SQL, where the discarded characters are the discriminating tokens.
+
+    So the identity that cuts a budget has no false positive by construction:
+    equal values are one question under every reading anybody could bring, and
+    unequal values are two. It over-counts a pair that differs only in
+    trailing space, which costs one provider call; the alternative costs a
+    question, and only one of those two errors can be found afterwards by
+    reading the run report.
+    """
+    return value if isinstance(value, str) else stable_json(value)
+
+
+@dataclass(frozen=True)
+class DrawableInputs:
+    """The different questions a bounded first run can draw, and what they cost.
+
+    Two numbers, because a draw is capped in QUESTIONS and paid for in ROWS,
+    and this file has already published one number under the other one's name.
+    `rows_per_question` carries the scoreable rows each question brings, so a
+    caller asking "what does a cap of eighteen buy" gets an answer taken over
+    this file rather than an assumption that every question brings one row.
+
+    A question can bring more than one row honestly: a multi-reference split
+    writes one question once per accepted answer, and rule 6 draws all of them
+    because dropping one narrows what counts as correct. So the row figure is a
+    RANGE. Which questions a compliant draw takes is decided by the band floor
+    and by the author, not here, and quoting a single row number would be
+    inventing that decision. The range collapses to one number whenever every
+    question brings the same number of rows, which is the ordinary file.
+    """
+
+    rows_per_question: tuple[int, ...]
+    scope: str
+
+    @property
+    def questions(self) -> int:
+        return len(self.rows_per_question)
+
+    @property
+    def rows(self) -> int:
+        return sum(self.rows_per_question)
+
+    def rows_for(self, questions: int) -> tuple[int, int]:
+        """An OUTER BOUND on the scoreable rows a draw of `questions` brings.
+
+        Not a reachable range, and the difference is stated because an earlier
+        version of this docstring claimed otherwise. Both ends are computed by
+        taking the cheapest and the dearest questions, and rule 6 also requires
+        at least four questions from each of four difficulty bands - a
+        constraint this object cannot see, because nothing here reads a row's
+        difficulty. Where cost correlates with difficulty the cheapest
+        questions sit in one band and no compliant draw can take them: on 30
+        easy questions of one row beside 90 harder ones of three, the arithmetic
+        low end is 18 while the cheapest COMPLIANT draw is four easy and
+        fourteen others, which is 46.
+
+        So the true figure is inside this interval and the interval is honest,
+        but neither end is a quote. What a run actually pays is the rows the
+        draw brings once it exists, which is what rule 6 tells an assistant to
+        report; this is the bound available before anybody has drawn.
+
+        A cap at or above the questions this file asks buys all of them, and
+        both ends meet on the whole set - which is exact, because there is
+        nothing left for a band floor to forbid.
+        """
+        ordered = sorted(self.rows_per_question)
+        taken = max(0, min(questions, len(ordered)))
+        return sum(ordered[:taken]), sum(ordered[len(ordered) - taken :])
+
+
+def drawable_distinct_inputs(
+    rows: list[dict[str, Any]], *, reference_free: bool = False
+) -> DrawableInputs:
+    """How many different questions a bounded first run can draw, and from where.
+
+    Three scopes, and this file has now had the same defect on all three: a
+    count and the number it bounds taken over populations that are not the
+    same rows.
+
+    SCOREABLE. A row carrying no expected answer is not a row any configuration
+    is compared on, so counting it inflates the bound past what the comparison
+    reaches. `rows` is only most of the way there - a row whose answer is
+    present but BLANK survives normalization and is not scoreable, and 40 of
+    them made this count say 160 in the same payload where
+    `tuning_labelled_rows` said 120. So the predicate is applied here rather
+    than assumed, and it is the same `dataset_row_is_labelled` the aggregate
+    and per-split counts use, under the same `reference_free` condition, so
+    the two can never disagree about one row.
+
+    TUNING-SCOPED, which is this function: the guide hands preflight the whole
+    file, tuning and held-out together, so a count over every row answers a
+    question about a population the draw never touches. On a 400-row file
+    whose tuning split asks twelve questions and whose held-out ten ask ten
+    more, counting the file returns twenty-two and the draw is proposed at
+    eighteen - six rows per configuration, in every trial, that no comparison
+    can use. Same defect, one axis over, which is why the population is named
+    and returned rather than left implicit in whichever local list was nearest.
+
+    Falls back to the whole scoreable set when no tuning split is declared,
+    because then there is no other population: an undeclared split is a file
+    the draw comes out of entire. The scope travels with the number so a card
+    never prints a count without saying what it counted.
+
+    Deliberately NOT the same number as `tuning_distinct_rows` beside it, and
+    the difference is the identity rather than the population: that key answers
+    how many questions a comparison count may be bounded by, where seeing past
+    punctuation is acceptable, and this one decides how many questions a
+    customer PAYS for, where it is not. Two numbers over one population, each
+    named for the question it answers, is the shape that survives; one number
+    read by two callers who need different identities is how a bound comes to
+    cut a budget on a guess.
+    """
+    by_split: dict[str, dict[str, int]] = {}
+    unsplit: dict[str, int] = {}
+    for row in rows:
+        if not reference_free and not dataset_row_is_labelled(row):
+            continue
+        identity = exact_input_identity(row["input"])
+        split = row_metadata_value(row, "split")
+        bucket = by_split.setdefault(str(split).casefold(), {}) if split else unsplit
+        bucket[identity] = bucket.get(identity, 0) + 1
+    tuning: dict[str, int] = {}
+    for name, values in by_split.items():
+        if name in TUNING_SPLIT_NAMES:
+            for identity, count in values.items():
+                tuning[identity] = tuning.get(identity, 0) + count
+    if tuning:
+        return DrawableInputs(tuple(sorted(tuning.values())), TUNING_SPLIT_SCOPE)
+    everything: dict[str, int] = dict(unsplit)
+    for values in by_split.values():
+        for identity, count in values.items():
+            everything[identity] = everything.get(identity, 0) + count
+    return DrawableInputs(tuple(sorted(everything.values())), DATASET_SCOPE)
+
+
+def first_run_question_cap(
+    usable_rows: int, distinct_questions: int | None = None
+) -> int:
+    """How many DIFFERENT questions a paid first-run draw may take.
+
+    QUESTIONS, and the name says so because the previous spelling did not.
+    `FIRST_RUN_TUNING_ROWS` is an eighteen-ROW budget, `distinct_questions` is a
+    QUESTION count, and one `min()` over the two was emitted under a row label:
+    on a split of 400 rows asking 200 questions the card proposed "18 usable
+    rows" for a draw that brings 36, so a twelve-trial run priced at 216 calls
+    and bought 432. Three vocabularies in one expression is the same defect
+    this rule exists to close, on a fourth axis after the file, split and
+    labelled ones. The cap is in questions; `DrawableInputs.rows_for` converts
+    it, and both numbers are published.
+
+    The eighteen applies only where the bounded subset does. Below
+    `BOUNDED_SUBSET_ABOVE_ROWS` the run scores the whole dataset, so the cap is
+    every question the file asks rather than a cut this guidance never extends
+    that far.
+
+    `distinct_questions` is optional so that a caller holding only a row count
+    still gets an answer rather than a wrong one. Absent, nobody counted the
+    questions, and the honest fallback is the row-based figure this check
+    published before the count existed.
+
+    NONE IS NOT ZERO, and the difference is a priced run against no run at all.
+    `None` means nobody measured; `0` means somebody measured and found nothing
+    to draw. A caller that collapses the two - `distinct_questions or 0` is the
+    one-character way to do it - prices a first run at zero on any payload
+    written before the count existed. That is this rule's own defect pointed the
+    other way: a number standing in for a measurement nobody took.
+    `test_an_unmeasured_count_is_not_a_count_of_zero` pins both branches
+    against each other so the collapse cannot land green.
+    """
+    if distinct_questions is None:
+        return (
+            FIRST_RUN_TUNING_ROWS
+            if usable_rows > BOUNDED_SUBSET_ABOVE_ROWS
+            else usable_rows
+        )
+    if usable_rows <= BOUNDED_SUBSET_ABOVE_ROWS:
+        return distinct_questions
+    return min(FIRST_RUN_TUNING_ROWS, distinct_questions)
 
 
 def normalize_dataset_row(
@@ -2273,14 +2466,46 @@ def check_dataset(
             WARN,
             f"{len(rows)} rows is a wiring check, not a credible score",
         )
-    first_run_rows = first_run_row_count(len(rows))
+    # The cap named the walkthrough's eighteen whatever the file held, so a
+    # dataset of 400 rows asking 12 questions was proposed an 18-row subset in
+    # the same JSON that reported twelve. The population is named by the helper
+    # rather than taken from whichever local list of rows was nearest, because
+    # getting it wrong is not one bug: it is one bug per scoping axis, and this
+    # file has had it on three of them.
+    #
+    # BOTH NUMBERS ARE PUBLISHED, because the cap is in questions and the money
+    # is in rows, and quoting either alone under the other's name is the fourth
+    # axis of the same mistake. A multi-reference split of 200 questions over
+    # 400 rows buys 36 rows for an eighteen-question cap; the card used to say
+    # "18 usable rows" and a twelve-trial run priced at 216 calls bought 432.
+    drawable = drawable_distinct_inputs(rows, reference_free=reference_free)
+    first_run_questions = first_run_question_cap(len(rows), drawable.questions)
+    fewest_rows, most_rows = drawable.rows_for(first_run_questions)
+    rows_clause = (
+        f"{fewest_rows} scoreable rows"
+        if fewest_rows == most_rows
+        else f"between {fewest_rows} and {most_rows} scoreable rows"
+    )
+    distinct_clause = (
+        ""
+        if drawable.questions >= len(rows)
+        else f" ({drawable.questions} different inputs in {drawable.scope})"
+    )
     emit(
         "dataset-first-run-rows",
         PASS,
-        f"proposed first-run subset cap: {first_run_rows} usable rows per "
-        f"configuration from {len(rows)} usable rows; select and record the "
-        "actual row ids before baseline approval",
-        {"first_run_rows": first_run_rows, "usable_rows": len(rows)},
+        f"proposed first-run subset cap: {first_run_questions} questions, "
+        f"which bring {rows_clause} per configuration, from {len(rows)} usable "
+        f"rows{distinct_clause}; select and record the actual row ids before "
+        "baseline approval",
+        {
+            "first_run_questions": first_run_questions,
+            "first_run_rows_fewest": fewest_rows,
+            "first_run_rows_most": most_rows,
+            "usable_rows": len(rows),
+            "first_run_distinct_rows": drawable.questions,
+            "first_run_distinct_scope": drawable.scope,
+        },
     )
 
     input_types = {type(row["input"]).__name__ for row in rows}
@@ -2637,7 +2862,7 @@ def check_dataset(
             # the number it will bound cannot disagree about the method.
             if reference_free or labelled_row:
                 scoreable_splits.setdefault(split_name, set()).add(identity)
-    tune_names = {"tune", "tuning", "train", "search"}
+    tune_names = TUNING_SPLIT_NAMES
     holdout_names = {"holdout", "test", "validation", "validate"}
     tune_inputs = set().union(
         *(values for name, values in splits.items() if name in tune_names)

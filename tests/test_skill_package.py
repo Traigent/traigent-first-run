@@ -2693,6 +2693,89 @@ def pairs_the_readiness_scores(sentence: str) -> bool:
     return False
 
 
+# A readiness document belongs to the run that took it. One reading is passed to
+# every later scoring OF THE SAME RECORD, and a restart retires the record - so
+# what this refuses is the sentence that lets a retired or earlier run's
+# reading, or the directory holding it, count as this run's evidence. A blinded
+# re-run did exactly that, byte for byte, while both documents that spoke to it
+# stayed green: one said to pass the reading on, the other said a read is never
+# reused, and the restart paragraph where they meet said nothing at all.
+#
+# Three slots in one clause rather than an ordered pattern. The first version
+# was ordered - a word for whose run it was, then the document, then the role -
+# and it caught its own six fixtures and one of fourteen phrasings written
+# without looking at it, because English puts those three in any order it likes.
+# Clause scope is what keeps that permissive shape honest: the hedge below is
+# read over the same clause, not over the sentence, so a `never` two clauses
+# away no longer excuses an instruction.
+_RETIRED_RUN = re.compile(
+    r"\b(?:retired|retirement|earlier|previous|prior|historical|pre-restart|old"
+    r"|restart|reset|replaced|replacement|superseded"
+    r"|(?:new|fresh|next|replacement)\s+(?:record|run|score|scoring|card))\b",
+    re.IGNORECASE,
+)
+# Deliberately not a bare `document` or `evidence`. Both were here, and both
+# matched `sdk-execution.md`'s account of the config-space file a failed search
+# leaves on disk - a different artifact under a different rule, described in
+# order to forbid it. This classifier is about the agent reading and the
+# directories that hold it.
+_READING_ARTIFACT = re.compile(
+    r"\b(?:readings?|reads?|agent-knobs|opening read"
+    r"|settings? (?:observation|read|document)"
+    r"|agent (?:document|evidence|reading|read)"
+    r"|readiness (?:director(?:y|ies)|folders?|evidence))\b",
+    re.IGNORECASE,
+)
+_STILL_CURRENT = re.compile(
+    r"\b(?:current|still (?:stands|counts|good|valid|applies|scores|serves)"
+    r"|stands for|stays? (?:valid|good|current)|survives?|outlives?"
+    r"|inherit(?:s|ed|ing)?|remains?|counts|scores|applies|source for"
+    r"|is a (?:fine|good|valid) source|hand(?:s|ed)?|feed(?:s|ing)?"
+    r"|pass(?:es|ed)?|re-?us(?:e|es|ed|ing)|carry|carries|carried|carrying"
+    r"|keep|keeps|kept|retained"
+    r"|(?:new|fresh|next|replacement)\s+(?:opening\s+)?"
+    r"(?:score|scoring|card|record|run))\b",
+    re.IGNORECASE,
+)
+
+
+def treats_a_retired_reading_as_current(sentence: str) -> bool:
+    """Does this sentence let a retired run's reading score the next one?
+
+    The guide really does pass one reading to every later scoring of one live
+    record, so the carry itself is not the defect - the boundary it crosses is.
+    A prohibition and a bounded permission both have to pass; only the clause
+    that puts a retired or earlier run's document into a current-run role fails.
+
+    **What this does not do.** Three word lists and a negation scan, so a
+    phrasing none of the three name is not detected. The measurement is in
+    `TheRetiredReadingClassifierIsMeasuredTests`: 9 of 14 phrasings written
+    without reference to the pattern, and 0 of 12 honest paraphrases wrongly
+    refused. Both numbers describe those 26 sentences and prove nothing about
+    unseen ones. Read a green result as "no listed phrasing of this is
+    present", never as "this document does not carry this defect".
+
+    Three of the five misses are one known collision and are recorded rather
+    than chased. `_PAIRED_READINESS_HEDGE` contains bare `no` and `nothing`,
+    so "there is no need to read the agent again" and "nothing about a restart
+    makes the previous reading stale" are excused - and the same two tokens are
+    what keep "nothing a retired run wrote counts as evidence for the run that
+    follows" green, which is correct prose this guide is entitled to contain.
+    A word list cannot separate those two, and widening it to catch the first
+    pair reds the third; the measurement above is what says so.
+    """
+    for clause in re.split(r"[.;:]", sentence):
+        if not clause.strip() or _PAIRED_READINESS_HEDGE.search(clause):
+            continue
+        if (
+            _RETIRED_RUN.search(clause)
+            and _READING_ARTIFACT.search(clause)
+            and _STILL_CURRENT.search(clause)
+        ):
+            return True
+    return False
+
+
 def sentences(text: str) -> list[str]:
     """Whitespace-normalised sentences, split on real sentence punctuation."""
     return [
@@ -5734,24 +5817,46 @@ class SkillPackageTests(unittest.TestCase):
             f"tuning plus {held_out} held-out, which is {expected + held_out}",
         )
 
+        # Whitespace-tolerant between words, because it was not and that hid a
+        # restatement: `SKILL.md` wraps its own statement across a line, so the
+        # pattern matched six of the seven that existed and the seventh was
+        # uncovered by nothing more than a line break. A sweep whose misses look
+        # exactly like absences is the shape this file keeps finding elsewhere.
+        #
+        # `tuning questions` and `questions by default` are here because the
+        # subset rules now cap the draw in QUESTIONS: eighteen questions bring
+        # more than eighteen rows on a file whose questions carry several
+        # accepted answers, so a template quoting rows understates the price on
+        # exactly the datasets that rule is for. The generated walkthrough keeps
+        # the row spelling and keeps it honestly - it creates one accepted
+        # answer per row, so its eighteen is both numbers at once.
         counted = re.compile(
-            r"(\d+)\s+(?:tuning rows|tuning examples|varied synthetic cases"
-            r"|rows by default)"
+            r"(\d+)\s+(?:tuning\s+rows|tuning\s+questions|tuning\s+examples"
+            r"|varied\s+synthetic\s+cases|rows\s+by\s+default"
+            r"|questions\s+by\s+default)"
         )
         statements: list[tuple[str, int]] = []
         for path in assistant_facing_documents():
             for match in counted.finditer(path.read_text()):
                 statements.append((path.name, int(match.group(1))))
-        # The rule plus its five restatements. Pinned so that DELETING a
+        # The rule plus its six restatements. Pinned so that DELETING a
         # restatement is a decision someone makes, not a way for this sweep to
         # quietly cover less than it did. Raised from four when the held-out
         # split arrived - the sampling rule that draws the tuning rows from the
         # tuning split states the count a fifth time - and from five when the
         # row-level sanity check arrived, whose section states how many rows it
         # reads. Each new statement is welded here rather than left uncovered.
+        #
+        # Six to seven is NOT a seventh statement arriving. It is the wrapped
+        # one in `SKILL.md` that the pattern above could not see until it was
+        # made whitespace-tolerant, counted now for the first time. Two
+        # statements also moved in the same change - the row review dropped its
+        # copy of the number entirely, and the line that names the bound to the
+        # user gained one - which is why the total holds while the membership
+        # does not.
         self.assertEqual(
             len(statements),
-            6,
+            7,
             f"the walkthrough row count is now stated {len(statements)} times "
             f"({statements}); one home is better, but a new one must be welded "
             "here and a removed one accounted for",
@@ -7484,7 +7589,7 @@ class SkillPackageTests(unittest.TestCase):
 
         self.assertIn("first-run subset for a large dataset", dataset_text)
         for phrase in (
-            "18 tuning rows by default",
+            "18 tuning questions by default",
             "at least four from each of the four difficulty bands",
             "score the dataset, not the subset",
             "report the run's sample-size limitation separately",
@@ -7509,8 +7614,16 @@ class SkillPackageTests(unittest.TestCase):
         # approve a run that never happens - and a number that large may simply
         # get a no.
         self.assertIn("scope the run before pricing it", skill_text)
+        # "that subset" until the draw became distinct-preferring, at which
+        # point the drawn count and the 18-row default stopped being the same
+        # number and a sentence naming neither could price either - and then
+        # "the rows actually drawn", until eighteen was redefined from rows to
+        # questions and the rows a question brings became the figure that is
+        # paid. Which of them the estimate is built from is
+        # `TheBoundedDrawSpendsOnDifferentRowsTests`; the ordering below is this
+        # test's, and it only needs a stable anchor in that sentence.
         self.assertIn(
-            "estimate runtime and spend from that subset, not from the full row count",
+            "estimate runtime and spend from the rows those questions bring",
             skill_text,
         )
         subset_at = skill_text.index("scope the run before pricing it")
@@ -7519,7 +7632,9 @@ class SkillPackageTests(unittest.TestCase):
         )
         self.assertLess(
             subset_at,
-            skill_text.index("estimate runtime and spend from that subset"),
+            skill_text.index(
+                "estimate runtime and spend from the rows those questions bring"
+            ),
         )
 
     def test_closing_motivation_is_grounded_in_the_opening_gaps(self) -> None:
@@ -20600,6 +20715,47 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
                 "re-run the opening gate on a matching resumed record",
             ),
         ),
+        (
+            # A readiness directory named `20260901T183000Z` held files written
+            # at 20:33Z. The run was correct and read as one that had scored a
+            # project two hours before its own work, which cost an
+            # investigation; for a customer reconciling a bill against these
+            # directories it is worse, because the name is the only record of
+            # when a scoring happened. The notation was used in three documents,
+            # spelled three ways, and defined for one field in one of them - so
+            # "one id minted per run" and "the write time" were both faithful
+            # readings of the same guidance. Settled at the write moment, in the
+            # resident document, because stage 1 names the directory to the user
+            # before any reference has loaded.
+            "what moment a `<YYYYMMDDTHHMMSSZ>` name records",
+            ("is utc when that file or directory is written",),
+            (
+                "traigent-runs/readiness/<run>/",
+                "one stamp for the whole run",
+                "the same stamp for every scoring",
+                "a run id rather than a time",
+                "mint one run id and reuse it",
+            ),
+        ),
+        (
+            # The same re-run, one mechanism over. It retired its record,
+            # restarted at stage 1, and carried the previous run's agent reading
+            # across the boundary with an unchanged sha256. SKILL.md said to
+            # pass the reading to every later re-score "in this run";
+            # component-creation.md said a read is "never a document to be
+            # reused"; and the restart paragraph, the one place both apply at
+            # once, said nothing. Settled: a reading travels between scorings of
+            # one live record and stops at a retirement. The banned phrase is
+            # the reference's own, because it is the half that has to go for the
+            # bounded permission to be the only rule.
+            "whether a reading survives the record it was taken for",
+            ("an opening score over an old reading is not one",),
+            (
+                "never a document to be reused",
+                "carry the opening reading across the restart",
+                "reuse the retired run's reading",
+            ),
+        ),
     )
 
     # Our own release history, in the words a customer reads. Every one of
@@ -23428,7 +23584,12 @@ class TheOmissionRuleBindsTheRunNotOneInvocationTests(unittest.TestCase):
         """SKILL.md states the run-wide rule too - the fifth call was made by a
         reader who never reached the reference."""
         skill = " ".join(SKILL.read_text().casefold().split())
-        self.assertIn("no invocation in this run scores it", skill)
+        # `one` rather than `it`: the fence generalised from the config-space
+        # file to the class it belongs to - a readiness document this run did
+        # not itself produce - and a pronoun cannot point at two artifacts. The
+        # rule the fifth call broke is unchanged and still binds every
+        # invocation.
+        self.assertIn("no invocation in this run scores one", skill)
         self.assertIn("no number derived from scoring one is reported", skill)
 
 
@@ -27043,6 +27204,928 @@ class TrackingRecoveryTests(unittest.TestCase):
         self.assertIn("rather than restarting the phase to recover the link", recovery)
         self.assertIn("re-deciding whether to continue", recovery)
         self.assertNotIn("report the degradation", readiness.casefold())
+
+
+class TheBoundedDrawSpendsOnDifferentRowsTests(unittest.TestCase):
+    """The subset rules said where rows come from, never that they differ.
+
+    Five rules governed the bounded first-run subset - which split, which band,
+    recorded how, named to the user - and a draw satisfying every one of them
+    could put the same input in the eighteen several times. The agent produces
+    one output per input, so those rows are asked the same question by every
+    configuration: the second is a provider call in every trial and no
+    comparison. Compliant behaviour on a 120-row split holding 12 distinct
+    inputs spans 0 to 168 wasted calls of 216; at 12 distinct inputs a draw of
+    eighteen forces at least six repeats by pigeonhole, whatever the picker
+    does.
+
+    These tests exist because two earlier versions of them were welds. The
+    first was presence-only, and appending "make the shortfall up from the
+    bands that can" and appending "draw the subset short by that shortfall" -
+    opposite instructions - both shipped green. The second added a banned-phrase
+    registry and a subject count, and a review then walked through both: a
+    BYTE-NEUTRAL inversion kept every required phrase and rewrote the clause
+    that carried the instruction, and a second contradicting sentence that
+    simply avoided the one counted word shipped green with the ledger
+    re-measured.
+
+    So the required half is no longer `assertIn`. Every clause below is read
+    through `clause_polarity` and `guard_issues`, the filters this file already
+    uses over prose whose job is to name what it forbids: a document that
+    FORBIDS a required clause, states it twice with different polarity, or
+    names it as a misreading rather than issuing it, is refused - and each
+    decision names the clause that carries its consequence as well as the
+    clause that labels it, so half a sentence cannot be inverted under a
+    surviving headline. The subject count is scoped to rule 6 and keyed on a
+    family of markers rather than one word, which is what the word-avoiding
+    construction got past.
+
+    The numbers the rule tells an assistant to use are asserted against what
+    preflight really emits, in `tests/test_preflight.py`, so the guidance
+    cannot name a count the card does not carry.
+    """
+
+    RULE_COUNTS = {"four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8}
+
+    # (what is decided, clauses that state it, phrases that contradict it)
+    #
+    # Two required clauses per decision wherever the decision has a consequence:
+    # the first names it, the second carries it. The byte-neutral inversion this
+    # class was rebuilt for kept a naming clause word for word and rewrote the
+    # consequence beneath it, so a decision pinned only by its headline is
+    # pinned by the half that is never the instruction.
+    #
+    # Every banned phrase is one that was constructed and shipped green against
+    # an earlier version of this class, or is the reading the rule was rewritten
+    # to close.
+    DECIDED = (
+        (
+            "which repeat a draw may drop",
+            (
+                "the second is a provider call in every trial and no comparison at all",
+                "and it is the one thing this draw may drop",
+            ),
+            (
+                "drop the row that repeats the input whatever answer it carries",
+                "distinct by input and answer",
+                "re-key it on the expected answer",
+            ),
+        ),
+        (
+            "what a question with more than one accepted answer costs",
+            (
+                "every one of its rows is drawn and paid for",
+                "a configuration that answered acceptably then scores exactly "
+                "like one that answered wrongly",
+            ),
+            (
+                "scored as a fixed pair by every configuration",
+                "separate none of them - whatever expected answers they carry",
+                "keep one row per input and drop the rest",
+            ),
+        ),
+        (
+            "which identity may cut a paid draw",
+            (
+                "two inputs are the same question only when they are **equal**",
+                "this rule is never applied to a looser measure",
+            ),
+            (
+                "different normalized inputs",
+                "counted the one way preflight already counts it",
+                "`normalized_identity` is the measure this rule uses",
+            ),
+        ),
+        (
+            "which rows the draw's size is read off",
+            (
+                "among the rows this run can score",
+                "sizing a paid draw from it buys back the repeats this rule removes",
+            ),
+            (
+                "at the tuning split's distinct-input count",
+                "`tuning_distinct_rows`",
+                "the tuning split's distinct inputs, whichever is smaller",
+            ),
+        ),
+        (
+            "whether distinctness is measured within a band or across the draw",
+            (
+                "distinct **across the whole draw**",
+                "buys nothing when another band offers the same input again",
+            ),
+            (
+                "distinct within each band",
+                "distinct within a band",
+                "is still worth taking when another band offers that input again",
+            ),
+        ),
+        (
+            "what happens when a band cannot reach four",
+            (
+                "the draw is short by that much",
+                "the shortfall is not made up from the bands that can",
+            ),
+            (
+                "make the shortfall up from the bands that can",
+                "so the draw is still eighteen",
+                "top the draw back up to eighteen",
+                "pad the remainder from the other bands",
+                "so the eighteen is reached",
+            ),
+        ),
+        (
+            "whether the rule reaches the held-out split",
+            (
+                "this rule sizes the tuning draw and nothing else",
+                "this rule does not reach it",
+            ),
+            (
+                "applies to both draws",
+                "the held-out split is drawn short",
+                "draw the held-out split short",
+            ),
+        ),
+        (
+            "whether de-duplication can cost a question",
+            (
+                "de-duplication removes no question",
+                "every distinct input a band holds stays eligible",
+            ),
+            (
+                "de-duplication may remove a question",
+                "a band's inputs need not stay eligible",
+                "drop any band whose rows are all copies",
+            ),
+        ),
+        (
+            "what exact matching cannot see",
+            (
+                "is fifty different questions to this rule",
+                "the run pays for every one of them",
+            ),
+            (
+                "rewording a row is caught here",
+                "this also catches reworded repeats",
+            ),
+        ),
+    )
+
+    # A directive that must be stated once. Stating it twice is how a document
+    # comes to hold two answers, and the second one is what a reader acts on.
+    STATED_ONCE = (
+        "the draw is short by that much",
+        "distinct **across the whole draw**",
+        "this rule does not reach it",
+        "two inputs are the same question only when they are **equal**",
+    )
+
+    #: Ways a sentence says a band could not fill its four.
+    SHORT_BAND = (
+        "shortfall",
+        "cannot reach four",
+        "comes up empty",
+        "band is short",
+        "short band",
+        "could not give",
+        "runs short",
+        "falls short",
+    )
+    #: Ways a sentence says how big the draw ends up.
+    DRAW_SIZE = (
+        "eighteen",
+        "the draw is short",
+        "the size",
+        "18 rows",
+    )
+
+    def dataset_document(self) -> str:
+        return (SKILL_ROOT / "references" / "evaluation-and-dataset.md").read_text()
+
+    def subset_section(self) -> str:
+        document = self.dataset_document()
+        opening = "## First-run subset for a large dataset"
+        self.assertIn(opening, document)
+        return document.split(opening, 1)[1].split("\n## ", 1)[0]
+
+    def rule_six(self) -> str:
+        """Rule 6 alone, which is the block whose subjects are counted."""
+        section = self.subset_section()
+        opening = "6. **Draw different questions"
+        self.assertIn(opening, section, "rule 6 lost its lead-in")
+        return section[section.index(opening) :].split("\n\nKeeping at least", 1)[0]
+
+    def holdout_section(self) -> str:
+        document = self.dataset_document()
+        opening = "## Held-out set and claims"
+        self.assertIn(opening, document)
+        return document.split(opening, 1)[1].split("\n## ", 1)[0]
+
+    def normalized(self, text: str) -> str:
+        return " ".join(text.casefold().split())
+
+    def test_each_decision_is_stated_and_its_contradictions_are_not(self) -> None:
+        """The settled answer, read for polarity, and the readings that slipped past.
+
+        `assertIn` was what the byte-neutral inversion beat: it fires when a
+        phrase is DELETED and says nothing about whether the document tells an
+        assistant to do it, forbids it, or calls it a misreading. Both filters
+        below are the ones this file already applies to prose that has to name
+        what it forbids, so a required clause is checked the same way a banned
+        one is rather than by a weaker rule of its own.
+        """
+        section = self.subset_section()
+        for decision, required, banned in self.DECIDED:
+            for clause in required:
+                with self.subTest(decision=decision, states=clause):
+                    polarity = clause_polarity(section, clause)
+                    self.assertIn(
+                        polarity,
+                        ("mandates", "unqualified"),
+                        f"the subset rules {polarity} {clause!r}, so they no "
+                        f"longer decide {decision} the way this pins it",
+                    )
+                    self.assertTrue(
+                        guard_issues(section, clause),
+                        f"{clause!r} is written but not issued - the sentence "
+                        f"around it names or recalls it - so {decision} is "
+                        "decided by whatever follows instead",
+                    )
+            for clause in banned:
+                with self.subTest(decision=decision, forbids=clause):
+                    self.assertIn(
+                        clause_polarity(section, clause),
+                        ("absent", "forbids"),
+                        f"the subset rules now answer {decision} two ways; the "
+                        "second answer is the one a reader acts on",
+                    )
+
+    def test_a_directive_that_governs_is_stated_exactly_once(self) -> None:
+        """Two statements of one rule are two rules, and one of them will drift.
+
+        This is the guard the presence welds did not have: appending an opposite
+        instruction leaves the original in place, so every assertion about the
+        original still passes. Counting sees it.
+        """
+        section = self.subset_section()
+        for clause in self.STATED_ONCE:
+            with self.subTest(directive=clause):
+                written = clause_occurrences(section, clause)
+                self.assertEqual(
+                    len(written),
+                    1,
+                    f"{clause!r} is stated {len(written)} times in the subset "
+                    "rules; a directive with two homes can be changed in one",
+                )
+
+    def test_the_short_band_question_is_answered_in_one_sentence(self) -> None:
+        """A second answer that avoids the counted word is still a second answer.
+
+        The previous version of this counted the word `shortfall` across the
+        whole subset section, and a review beat it from both sides at once.
+        False green: "Where a band comes up empty, take the rows it could not
+        give from the bands that still have inputs left, so the eighteen is
+        reached" contradicts the rule, introduces no banned word, and never
+        writes `shortfall`. False red: rule 2 may legitimately say the word
+        while talking about REPORTING rather than deciding.
+
+        So the count is scoped to rule 6, and it counts SENTENCES that answer
+        the question - one that says a band came up short and says what the
+        draw's size does about it - rather than occurrences of one noun. The
+        de-duplication sentence beside it mentions a band contributing nothing
+        and says nothing about the size, which is why it is not a second answer
+        and is not counted as one.
+        """
+        flat = self.normalized(self.rule_six())
+        sentences = [part for part in re.split(r"(?<=[.!?])\s", flat) if part.strip()]
+        answering = [
+            sentence
+            for sentence in sentences
+            if any(marker in sentence for marker in self.SHORT_BAND)
+            and any(marker in sentence for marker in self.DRAW_SIZE)
+        ]
+        self.assertEqual(
+            len(answering),
+            1,
+            "rule 6 answers the short-band question in "
+            f"{len(answering)} sentences: {answering}. It is settled in one "
+            "sentence or it is settled in none.",
+        )
+
+    def test_the_held_out_split_owns_its_own_distinctness_rule(self) -> None:
+        """Scoping a rule out of a split is only safe when something else has it.
+
+        The previous version asserted the held-out section never says
+        `distinct`, which decided a semantic question - has ownership been
+        muddled - from a surface signal whose not-found branch was the pass.
+        It also blocked the fix: ten held-out rows all asking one question were
+        fully compliant, under a guide whose held-out claim is about
+        generalisation, and adding the obvious rule went red.
+
+        Both halves are asserted instead. Rule 6 says it stops, the held-out
+        section says what happens there, and the held-out answer is written in
+        exactly one of the two places.
+        """
+        subset = self.subset_section()
+        holdout = self.holdout_section()
+        owned = "the ten are ten different questions"
+        self.assertIn(
+            clause_polarity(holdout, owned),
+            ("mandates", "unqualified"),
+            "the held-out section no longer states its own distinctness rule, "
+            "so a repeat among the ten is answered by nothing",
+        )
+        self.assertTrue(guard_issues(holdout, owned))
+        self.assertEqual(
+            clause_occurrences(subset, owned),
+            [],
+            "the held-out rule is now stated in the subset rules too; a rule "
+            "with two homes can be changed in one",
+        )
+        self.assertIn(
+            clause_polarity(subset, "this rule does not reach it"),
+            ("mandates", "unqualified"),
+        )
+        for mandate in (
+            "ten is therefore exact in both directions, never a floor to grow from",
+            "top each set up to its composition with generated rows rather than "
+            "dropping a band",
+        ):
+            with self.subTest(mandate=mandate[:40]):
+                self.assertIn(mandate, self.normalized(holdout))
+
+    def test_the_flow_prices_the_rows_actually_drawn(self) -> None:
+        """Stage 6 named a number that can now differ from what is bought.
+
+        "18 rows by default" and "that subset" were unambiguous only while the
+        two were always equal. The estimate has to name which of them it is
+        built from, and the eighteen has to say which currency it is in: on a
+        multi-reference file eighteen questions bring thirty-six rows, so the
+        flow that says "18 rows" understates the price of exactly the dataset
+        class this rule exists for.
+
+        Two clauses that used to follow are gone rather than corrected, for one
+        reason. The first named the population #356 proved wrong; the second
+        admitted only that the draw can come in BELOW eighteen, which is the
+        opposite of the multi-reference case. Both sat in the file that owns
+        pricing, quoting a reference decision they could get wrong, and a
+        conclusion that routes to a reference for its reason must not be able
+        to carry that reference's mistake. Every stale spelling is refused by
+        name here, because nothing else in this file reads SKILL.md for one.
+        """
+        skill = self.normalized(SKILL.read_text())
+        self.assertIn("distinct by input across the whole draw", skill)
+        self.assertIn("18 questions by default", skill)
+        self.assertIn(
+            "estimate runtime and spend from the rows those questions bring, "
+            "never from the full row count",
+            skill,
+        )
+        for stale in (
+            "estimate runtime and spend from that subset, not from the full row count",
+            "the tuning split's distinct inputs or a band's own rows run short",
+            "which can be below 18",
+            "18 rows by default",
+            "`tuning_distinct_rows`",
+        ):
+            with self.subTest(stale=stale):
+                self.assertNotIn(self.normalized(stale), skill)
+
+    def test_the_stated_rule_count_is_the_number_of_rules(self) -> None:
+        """A label that counts nothing goes stale the first time anyone adds a rule.
+
+        Derived from the list rather than compared against a constant: the
+        expectation is what the document's own numbered items add up to, so this
+        keeps holding for a seventh rule and fails on a sixth left labelled five.
+
+        The item pattern does not require a bold lead-in. Requiring one made a
+        rule written without it invisible to the count, which is the same
+        not-found-is-a-pass shape this file keeps finding elsewhere.
+        """
+        section = self.subset_section()
+        stated = re.search(r"^(\w+) rules make the subset honest:$", section, re.M)
+        self.assertIsNotNone(stated, "the subset rules lost their counted preamble")
+        items = re.findall(r"^(\d+)\. ", section, re.M)
+        self.assertEqual(
+            [str(number) for number in range(1, len(items) + 1)],
+            items,
+            "the subset rules are not numbered 1..n, so no count describes them",
+        )
+        self.assertEqual(
+            self.RULE_COUNTS.get(stated.group(1).casefold()),
+            len(items),
+            f"the section says {stated.group(1)!r} rules and lists {len(items)}",
+        )
+
+
+class TheNameStampNamesOneMomentTests(unittest.TestCase):
+    """`<YYYYMMDDTHHMMSSZ>` is a name the customer reads off their own disk.
+
+    A blinded run named a readiness directory `20260901T183000Z` and wrote its
+    files at 20:33Z. Nothing was stale and nothing was wrong with the score;
+    the name was, and the run that reported it looked like one that had scored
+    a project two hours before it did the work.
+
+    The scorer is not where this is fixed and must not move.
+    `test_module_never_reads_the_clock` walks its AST and refuses `import time`
+    and `import datetime`, because the offline harness runs every scenario
+    twice and compares - a clock read there breaks the container job by
+    construction. The stamp is the caller's to supply, so what was missing is
+    the sentence saying which moment the caller supplies.
+    """
+
+    STAMP = "yyyymmddthhmmssz"
+    # A definition names its subject and asserts a moment for it. The first
+    # version of this was five literals, three of which matched nothing at all
+    # - one of them was the run-safety wording this branch deletes, so it went
+    # dead in the same commit that added it - and the two that were live both
+    # matched the same sentence a sibling assertion already pins verbatim. Six
+    # natural second definitions were detected 0 times. These two patterns
+    # detect 4 of the same 6; the two they miss name neither the notation nor
+    # the stamp, calling it "the folder" and "the file name", and that limit is
+    # measured in `test_the_probe_detects_a_second_definition`.
+    DEFINITION_SUBJECT = re.compile(
+        r"(?:yyyymmddthhmmssz|\bname-?stamp\b|\bthe stamp\b"
+        r"|readiness director(?:y|ies) name)",
+        re.IGNORECASE,
+    )
+    DEFINITION_MOMENT = re.compile(
+        r"\b(?:utc|clock|moment|instant|timestamps?|time|when|created"
+        r"|written|writes|minted|stamped)\b",
+        re.IGNORECASE,
+    )
+
+    @classmethod
+    def defines_the_stamp(cls, clause: str) -> bool:
+        return bool(
+            cls.DEFINITION_SUBJECT.search(clause)
+            and cls.DEFINITION_MOMENT.search(clause)
+        )
+
+    def _definition_holders(self) -> dict[str, list[str]]:
+        found: dict[str, list[str]] = {}
+        for path in conversation_contract_documents():
+            for clause in re.split(r"[.;:|]", path.read_text()):
+                if self.defines_the_stamp(clause):
+                    found.setdefault(path.name, []).append(" ".join(clause.split()))
+        return found
+
+    def test_only_one_document_says_what_the_stamp_names(self) -> None:
+        """One notation, one definition, and the definition is resident.
+
+        The uses are resident: stage 1 names the readiness directory to the
+        user, and the resume paragraph renames the retired record. Both fire
+        before any reference has loaded, so a definition living in a reference
+        would arrive after the name it governs was already chosen. That is why
+        the run log's field row points here rather than the other way round.
+
+        Split on table cells as well as sentence punctuation, because the use
+        this is most likely to grow a second definition beside is a row in a
+        key table, and a table has no full stops in it.
+        """
+        holders = self._definition_holders()
+        self.assertEqual(
+            sorted(holders),
+            ["SKILL.md"],
+            "the moment a `<YYYYMMDDTHHMMSSZ>` name records is one decision. "
+            "SKILL.md states it because both of the guide's own uses are in "
+            "SKILL.md and both fire before a reference loads; every other use "
+            "spells the notation and points here. Found in: "
+            + ", ".join(sorted(holders)),
+        )
+
+    def test_the_probe_detects_a_second_definition(self) -> None:
+        """The other half: that the probe above can see one at all.
+
+        A uniqueness assertion over a probe that matches nothing is green
+        forever. Four of these six are detected; the two that are not name
+        neither the notation nor the stamp, and widening the subject to reach
+        them - "the folder", "the file name" - collides with the prose both
+        SKILL.md and README.md write about readiness directories, so the miss
+        is recorded rather than chased. As with every word list in this file, a
+        green uniqueness result means "no clause phrased like these is present
+        elsewhere", never "no second definition exists".
+        """
+        second_definitions = (
+            "The stamp is the UTC time the directory was created.",
+            "Name the folder with the clock reading at the moment you make it.",
+            "`<YYYYMMDDTHHMMSSZ>` records when the scoring ran.",
+            "Use the current UTC instant for the file name.",
+            "The readiness directory name carries the time this evidence was "
+            "written.",
+            "That name-stamp is minted once per run and reused for every " "scoring.",
+        )
+        detected = [
+            phrasing
+            for phrasing in second_definitions
+            if self.defines_the_stamp(phrasing)
+        ]
+        self.assertEqual(
+            len(detected),
+            4,
+            "the probe detects a different number of these six than recorded; "
+            "update the count and the docstring in the direction it moved",
+        )
+        self.assertEqual(
+            [
+                phrasing[:20]
+                for phrasing in second_definitions
+                if phrasing not in detected
+            ],
+            ["Name the folder with", "Use the current UTC "],
+            "the two it misses are named, so a widening that trades one miss "
+            "for another is visible",
+        )
+
+    def test_the_definition_says_the_moment_and_refuses_the_run_id(self) -> None:
+        skill = " ".join(SKILL.read_text().casefold().split())
+        self.assertIn("is utc when that file or directory is written", skill)
+        self.assertIn("never one id minted per run and reused", skill)
+        # The three uses it is written to cover, named so a reader of any one
+        # of them knows this sentence governs it.
+        self.assertIn(
+            "that rename, stage 1's readiness directory, the run log's `ts`", skill
+        )
+
+    def test_one_spelling_reaches_every_document_and_every_script(self) -> None:
+        """Three spellings for one notation was half of what made it ambiguous.
+
+        `<run>` was the worst: it says the path segment is a run id, which is
+        the reading that produced the two-hour gap, in the reference that owns
+        the argv an assistant copies. `<timestamp>` was the README's.
+
+        Read off the corpus rather than from a list of the three documents that
+        happened to be wrong. A hardcoded list backstops the two old spellings
+        - the registry refuses those corpus-wide anyway - and cannot see a
+        THIRD spelling, or the same placeholder inside a bundled script, which
+        is where the assistant reads its argv from.
+        """
+        paths = list(conversation_contract_documents()) + sorted(
+            (SKILL_ROOT / "scripts").glob("*.py")
+        )
+        spellings: dict[str, set[str]] = {}
+        for path in paths:
+            for match in re.finditer(
+                r"(?:readiness|run-plan-historical)[/-]<([^>]{1,40})>", path.read_text()
+            ):
+                spellings.setdefault(match.group(1), set()).add(path.name)
+        self.assertEqual(
+            sorted(spellings),
+            [self.STAMP.upper()],
+            "one notation, one spelling, wherever the path is written: "
+            + "; ".join(
+                f"<{name}> in {sorted(where)}"
+                for name, where in sorted(spellings.items())
+            ),
+        )
+        # And it does reach more than the document that defines it.
+        self.assertGreaterEqual(len(spellings[self.STAMP.upper()]), 3)
+
+    def test_the_report_flag_says_which_moment_the_caller_passes(self) -> None:
+        """ "Never read from the clock" says where it does not come from.
+
+        Read off the `add_argument` call rather than out of the file. Both
+        halves were asserted against all 639 KB of `readiness.py` first, and
+        the second half occurs twice - once in this flag's help and once in
+        `render_markdown`'s docstring - so the half this branch did not write
+        was held up by a sentence it had nothing to do with, and replacing the
+        flag's own copy left the suite green. A needle another line can satisfy
+        is not pinning the line it names.
+        """
+        tree = ast.parse((SKILL_ROOT / "scripts" / "readiness.py").read_text())
+        declarations = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "add_argument"
+            and node.args
+            and isinstance(node.args[0], ast.Constant)
+            and node.args[0].value == "--report-timestamp"
+        ]
+        self.assertEqual(len(declarations), 1, "one flag, one declaration")
+        help_text = "".join(
+            part.value
+            for keyword in declarations[0].keywords
+            if keyword.arg == "help"
+            for part in ast.walk(keyword.value)
+            if isinstance(part, ast.Constant) and isinstance(part.value, str)
+        )
+        self.assertIn("the moment the caller writes this report", help_text)
+        self.assertIn("never read from the clock", help_text)
+
+
+class AReadingBelongsToTheRecordItWasTakenForTests(unittest.TestCase):
+    """The restart is both "this run" and a new run, and nothing said which.
+
+    SKILL.md told the run to pass its agent reading to every later re-score in
+    this run. `component-creation.md` said a read is evidence about the source
+    at the moment it was taken, never a document to be reused. A restart inside
+    one session satisfies both descriptions, and the paragraph that retires the
+    record said nothing about either - so a blinded run carried the reading
+    across an invariant mismatch with an unchanged sha256, and the whole AGENT
+    pillar was identical on both sides of a boundary the run had drawn itself.
+
+    The fix is a bound rather than a fourth rule. The config-space artifact was
+    already fenced in the index, at the gate, and again at the wiring line; its
+    sibling was fenced nowhere, though `--agent-knobs` is what feeds the AGENT
+    pillar. So the index's fence now names the class both belong to, and the
+    gate states the config-space instance without restating the mandate.
+    """
+
+    def _skill(self) -> str:
+        return " ".join(SKILL.read_text().casefold().split())
+
+    def _creation(self) -> str:
+        return " ".join(
+            (SKILL_ROOT / "references" / "component-creation.md")
+            .read_text()
+            .casefold()
+            .split()
+        )
+
+    def test_the_restart_says_the_new_opening_score_re_reads_the_agent(self) -> None:
+        skill = self._skill()
+        self.assertIn("that opening score re-reads the agent", skill)
+        self.assertIn(
+            "the old record's readiness directories are historical with it", skill
+        )
+        self.assertIn("an opening score over an old reading is not one", skill)
+
+    def test_the_carry_forward_is_bounded_to_one_live_record(self) -> None:
+        """ "In this run" is what a session reads as covering its own restart."""
+        skill = self._skill()
+        self.assertIn(
+            "pass this same reading to every later re-score of this record", skill
+        )
+        self.assertNotIn(
+            "pass this same reading to every later re-score in this run", skill
+        )
+
+    def test_one_fence_covers_both_readiness_documents(self) -> None:
+        """Generalised, not repeated: the asymmetry was the finding.
+
+        A fourth restatement for the sibling would have been a fourth place for
+        one rule to be changed in, which is the defect class this repository
+        keeps meeting. The class the fence names is provenance - a document
+        this run did not itself produce - which is exactly the line the bounded
+        carry-forward above stays on the right side of.
+        """
+        skill = self._skill()
+        self.assertIn(
+            "a readiness document this run did not itself produce is historical "
+            "context, not current-run readiness evidence",
+            skill,
+        )
+        self.assertIn("an agent reading left by an earlier or retired run alike", skill)
+        # Stated once. The gate below keeps the config-space instruction and
+        # points at the rule rather than saying it again.
+        self.assertEqual(
+            skill.count("historical context, not current-run readiness evidence"), 1
+        )
+        self.assertIn(
+            "including one left by an earlier guided run, which the "
+            "historical-document rule above already excludes",
+            skill,
+        )
+
+    def test_the_reference_points_at_the_bound_instead_of_denying_it(self) -> None:
+        creation = self._creation()
+        self.assertNotIn("never a document to be reused", creation)
+        self.assertIn(
+            "skill.md stage 1 states where it is written, how far one reading "
+            "travels, and where it stops",
+            creation,
+        )
+
+    def test_no_document_treats_a_retired_reading_as_current(self) -> None:
+        offenders = [
+            f"{path.name}: {part}"
+            for path in conversation_contract_documents()
+            for part in sentences(path.read_text())
+            if treats_a_retired_reading_as_current(part)
+        ]
+        self.assertEqual(
+            offenders,
+            [],
+            "a reading is evidence about the source at the moment it was taken, "
+            "for the record it was taken under. A retirement ends that record, "
+            "so the reading it left is historical with it and the new opening "
+            "score reads the agent again.",
+        )
+
+    def test_the_classifier_can_tell_the_two_directions_apart(self) -> None:
+        """Invented sentences, both directions, as with the paired-score one.
+
+        Five of the six refusals below are reachable by no substring list this
+        commit ships, which is the failure mode this repeat of the pattern
+        exists to avoid: the wording that reopens a decision is never the
+        wording that was removed. The sixth used to be reachable, and that is
+        worth recording rather than hiding - it was written as the registry ban
+        `carry the opening reading across the restart` verbatim, so it probed
+        the registry and not this classifier. It is reworded here, and
+        `test_no_probe_here_is_already_banned_by_the_registry` keeps the two
+        guards from quietly testing each other.
+
+        The acceptances are paraphrases rather than shipped sentences. Three of
+        them were the shipped text, which cannot fail while the corpus check
+        above passes, so they measured nothing.
+        """
+        must_refuse = (
+            "Take the opening reading through the restart so the fresh score "
+            "stays comparable.",
+            "Reuse the retired run's agent-knobs document for the new opening "
+            "score.",
+            "The previous record's readiness directory is current-run evidence "
+            "for the score after it.",
+            "A pre-restart reading still scores the agent pillar.",
+            "Pass the retired run's reading to the new opening score.",
+            "Keep the earlier run's agent-knobs and hand it to the fresh run.",
+        )
+        for sentence in must_refuse:
+            with self.subTest(refuse=sentence):
+                self.assertTrue(
+                    treats_a_retired_reading_as_current(sentence),
+                    "this carries a retired run's reading into the run that "
+                    "replaced it and must be refused",
+                )
+
+        must_accept = (
+            "A reading stops at the record it was taken under, so a "
+            "replacement run takes its own.",
+            "Do not let a retired record's agent document reach the score that "
+            "replaces it.",
+            "The folders an abandoned record leaves are kept and never fed to "
+            "a later scoring.",
+            "One observation of the program serves every scoring of the record "
+            "it belongs to.",
+            "Because the old record is finished, its evidence is history "
+            "rather than input.",
+            "Nothing a retired run wrote counts as evidence for the run that "
+            "follows it.",
+        )
+        for sentence in must_accept:
+            with self.subTest(accept=sentence):
+                self.assertFalse(
+                    treats_a_retired_reading_as_current(sentence),
+                    "this forbids the carry, bounds it to one live record, or "
+                    "describes a read the run took itself, and must be allowed",
+                )
+
+    def test_no_probe_here_is_already_banned_by_the_registry(self) -> None:
+        """Two guards testing each other look like two guards and are one.
+
+        A refusal fixture written as a registry ban verbatim passes whether or
+        not the classifier works, because the ban would have caught the shipped
+        text first. This keeps the six probes independent of the five phrases
+        the registry entry for this decision refuses.
+        """
+        banned = next(
+            contradicting
+            for decision, _agreed, contradicting in (
+                GuidanceDoesNotContradictItselfTests.CONTRADICTIONS
+            )
+            if decision == "whether a reading survives the record it was taken for"
+        )
+        overlap = [
+            (probe, phrase)
+            for probe in self._refusal_probes()
+            for phrase in banned
+            if phrase in probe.casefold()
+        ]
+        self.assertEqual(
+            overlap,
+            [],
+            "a probe the registry already refuses measures the registry, not "
+            "this classifier",
+        )
+
+    def _refusal_probes(self) -> tuple[str, ...]:
+        source = inspect.getsource(
+            self.test_the_classifier_can_tell_the_two_directions_apart
+        )
+        body = source.split("must_refuse = (", 1)[1].split("\n        )", 1)[0]
+        return tuple(part for part in re.findall(r'"((?:[^"\\]|\\.)*)"', body))
+
+
+class TheRetiredReadingClassifierIsMeasuredTests(unittest.TestCase):
+    """What the classifier catches, run rather than claimed in a body of text.
+
+    The first version of `treats_a_retired_reading_as_current` was an ordered
+    pattern. It caught all six of its own fixtures and **one** of the fourteen
+    phrasings below, which were written without looking at it - so the six
+    fixtures were measuring the author's memory of the pattern, and a reviewer
+    applying seven natural inversions to the shipped tree got a green suite,
+    including one that reinstates the run-id reading the naming half of this
+    change exists to settle.
+
+    Both numbers live here, not in a commit message, so the next narrowing or
+    widening is measured against them rather than argued about.
+
+    **What these numbers are not.** Fourteen phrasings somebody thought of and
+    twelve paraphrases somebody thought of. The classifier is three word lists
+    under a negation scan, so a phrasing in vocabulary none of them names is
+    not detected, and no count here says otherwise.
+    """
+
+    # Written to describe the defect, not to match the pattern.
+    NATURAL_PHRASINGS = (
+        "The agent reading from before the restart still stands for the score "
+        "that follows.",
+        "A settings observation taken under the old record may be handed to "
+        "the new one.",
+        "When the record is retired, the readiness folders it leaves behind "
+        "remain this run's evidence.",
+        "The opening read survives a restart and does not have to be taken " "again.",
+        "Hand the earlier record's agent document to the scoring that opens "
+        "the replacement run.",
+        "After the invariants fail, keep the agent read you already have.",
+        "A retired run's readiness folder is a fine source for the next "
+        "opening card.",
+        "There is no need to look at the program again once the record has "
+        "been replaced.",
+        "The settings read outlives the record it was taken under.",
+        "Nothing about a restart makes the previous agent reading stale.",
+        "Feed the old directory's agent-knobs straight into the fresh score.",
+        "The reading taken before the reset is still good for the reset run.",
+        "Once taken, an agent read stays valid for the whole session including "
+        "any restart.",
+        "The replacement record inherits the retired one's agent evidence.",
+    )
+    CAUGHT = 9
+
+    # The other side of the measurement, because a one-sided disclosure is its
+    # own kind of dishonesty: correct prose about the same subject stays green.
+    HONEST_PARAPHRASES = (
+        "A reading stops at the record it was taken under, so a replacement "
+        "run takes its own.",
+        "Do not let a retired record's agent document reach the score that "
+        "replaces it.",
+        "The folders an abandoned record leaves are kept and never fed to a "
+        "later scoring.",
+        "One observation of the program serves every scoring of the record it "
+        "belongs to.",
+        "Because the old record is finished, its evidence is history rather "
+        "than input.",
+        "A fresh opening score reads the program again instead of inheriting "
+        "an older read.",
+        "Nothing a retired run wrote counts as evidence for the run that "
+        "follows it.",
+        "The carry is bounded: it ends when the record ends.",
+        "Each scoring writes its own folder, and no scoring opens another's.",
+        "A read describes its subject at one instant, for the record that "
+        "asked for it.",
+        "That opening score re-reads the agent, because the old record's "
+        "readiness directories are historical with it.",
+        "Pass this same reading to every later re-score of this record.",
+    )
+
+    def test_the_measured_catch_rate_is_what_this_file_says_it_is(self) -> None:
+        caught = [
+            phrasing
+            for phrasing in self.NATURAL_PHRASINGS
+            if treats_a_retired_reading_as_current(phrasing)
+        ]
+        self.assertEqual(
+            len(caught),
+            self.CAUGHT,
+            f"the classifier catches {len(caught)} of "
+            f"{len(self.NATURAL_PHRASINGS)} phrasings written without "
+            f"reference to it, against the {self.CAUGHT} recorded here. Update "
+            "the number and the docstring together, in the direction the "
+            "change actually moved it.",
+        )
+
+    def test_the_five_it_misses_are_the_five_recorded(self) -> None:
+        """Named, so a widening that trades one miss for another is visible."""
+        missed = [
+            phrasing
+            for phrasing in self.NATURAL_PHRASINGS
+            if not treats_a_retired_reading_as_current(phrasing)
+        ]
+        self.assertEqual(
+            [phrasing[:24] for phrasing in missed],
+            [
+                "The opening read survive",
+                "After the invariants fai",
+                "There is no need to look",
+                "The settings read outliv",
+                "Nothing about a restart ",
+            ],
+        )
+
+    def test_correct_prose_about_the_same_subject_stays_green(self) -> None:
+        refused = [
+            paraphrase
+            for paraphrase in self.HONEST_PARAPHRASES
+            if treats_a_retired_reading_as_current(paraphrase)
+        ]
+        self.assertEqual(
+            refused,
+            [],
+            "a classifier that reds the guide for stating its own rule is a "
+            "classifier nobody can keep",
+        )
 
 
 if __name__ == "__main__":
