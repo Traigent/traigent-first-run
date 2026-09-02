@@ -436,13 +436,18 @@ follows a call graph.
 
 **`prompt` and `output-contract` are located only.** Nothing statically decides whether a prompt
 carries worked examples, or whether anything pins the shape of an answer. Their `source_lines` say
-where you looked and their `evidence` says what you saw; neither is checked, and the card says so
-rather than letting the four checks read as equally verified.
+where you looked and their `evidence` says what you saw; neither settles the finding, and the card
+says so rather than letting the four checks read as equally verified.
 
 Write every answer to be true of the agent you selected. A carried-over document is caught when its
-coordinates fall outside that source or when one of the two derivations contradicts it, and not
-otherwise - a read of another agent whose citations happen to land in range, on the two checks
-nothing can settle, will be reprinted on the customer's card as written.
+coordinates fall outside that source, or when a derivation contradicts it, and not otherwise. Your
+`evidence` is prose and nothing reads it: on any of the four checks a sentence describing another
+program is reprinted on the customer's card as written, because deciding whether a filename in a
+sentence is a misattribution or an ordinary reference to another module of the same project is not
+something a reader of prose can do - and refusing such a reference would refuse the truth about
+every agent whose prompt or tools live in a second file. What the card prints beside your sentence
+instead is the line your `source_lines` actually point at, quoted from the selected agent, so a
+reader can weigh the two against each other. Write the sentence so they agree.
 
 Neither derivation leaves the selected callable's own body, and passing one is not a finding that the
 answer is right. An agent whose loop is in a helper it calls passes both checks with `"loop": true,

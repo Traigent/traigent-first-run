@@ -14312,11 +14312,20 @@ class TheBuildHalfCitesTheAgentItReadTests(unittest.TestCase):
         a `while True:`. That is the difference the derivation makes and the
         reason this fixture had to change: under the old coordinate-only guard
         the carried-over `loop: False` passed with any in-range integer.
+
+        The prose still points at another agent's file, left alone on purpose.
+        This test is about the ANSWERS being true of this agent, which is what
+        `source_lines` and the two derivations decide. Whether the sentence
+        beside them describes this program is a question no refusal in this
+        module answers, and `test_the_card_shows_the_line_each_check_cited`
+        is where a reader is handed what they need to answer it themselves.
         """
         facts = self._read(
             self._carried_over(
                 **{check: {"source_lines": [4]} for check in MODULE.BUILD_CHECK_ANSWER}
-                | {"control-flow": {"source_lines": [4], "loop": True, "bounded": True}}
+                | {
+                    "control-flow": {"source_lines": [4], "loop": True, "bounded": True}
+                },
             )
         )
         self.assertEqual(
@@ -14346,9 +14355,17 @@ class TheBuildHalfCitesTheAgentItReadTests(unittest.TestCase):
         """`determined: false` has no line to point at, and demanding one would
         price the honest answer above the confident one."""
         document = self._undetermined()
-        self.assertFalse(any("source_lines" in spec for spec in document.values()))
+        self.assertEqual(
+            [check for check, spec in document.items() if "source_lines" in spec], []
+        )
         facts = self._read(document)
-        self.assertTrue(all(not signal.measured for signal in facts.build))
+        # By name rather than `assertTrue(all(...))`, which passes vacuously on
+        # an empty sequence and, when it does fail, names no check. The same
+        # argument is written out at length two tests below; it applies here.
+        self.assertEqual(
+            sorted(signal.name for signal in facts.build if not signal.measured),
+            sorted(name for name, _weight in MODULE.AGENT_BUILD_CHECKS),
+        )
 
     def test_an_undetermined_check_may_not_smuggle_a_coordinate(self) -> None:
         """The silence this arm used to keep.
@@ -14386,7 +14403,7 @@ class TheBuildHalfCitesTheAgentItReadTests(unittest.TestCase):
                         for other in MODULE.BUILD_CHECK_ANSWER
                         if other != check
                     }
-                    | {"control-flow": {"source_lines": [4], "loop": True}}
+                    | {"control-flow": {"source_lines": [4], "loop": True}},
                 )
                 if check == "control-flow":
                     document[check] = {
@@ -14415,7 +14432,7 @@ class TheBuildHalfCitesTheAgentItReadTests(unittest.TestCase):
                     **{
                         check: {"source_lines": [4]}
                         for check in MODULE.BUILD_CHECK_ANSWER
-                    }
+                    },
                 )
             )
         message = str(caught.exception)
@@ -14949,7 +14966,7 @@ class TheBuildHalfCitesTheAgentItReadTests(unittest.TestCase):
         """
         borrowed = self._carried_over(
             **{check: {"source_lines": [4]} for check in MODULE.BUILD_CHECK_ANSWER}
-            | {"control-flow": {"source_lines": [4], "loop": True}}
+            | {"control-flow": {"source_lines": [4], "loop": True}},
         )
         borrowed["tools"] = {
             "used": True,
@@ -14962,6 +14979,335 @@ class TheBuildHalfCitesTheAgentItReadTests(unittest.TestCase):
             self._read(borrowed)
         self.assertIn("does not mention anywhere", str(caught.exception))
         self.assertIn("fetch, search", str(caught.exception))
+
+    # Prose an author has every reason to write about a real project, and the
+    # shape the refusal this branch replaced would have exited 2 on. Every one
+    # names another file of the customer's own tree, because every real project
+    # has more than one file: the prompt text in `prompts.py`, the tool table
+    # in `tools.py`, the schema in `settings.py`. None of them is a read of
+    # another agent, and no rule over filenames can tell them from one - the
+    # carried-over document's own `other_agent.py` is a sibling in the same
+    # tree and sits on the wrong side of every such rule.
+    HONEST_CROSS_MODULE_PROSE = (
+        "SYSTEM is defined at prompts.py:12 and passed in here at the call",
+        "the two tools are declared in tools.py:10 and bound to this callable",
+        "the schema is pinned in settings.py:4 and read by this function",
+        "the retry loop lives in runner.py:88, which this callable delegates to",
+    )
+
+    def _observed(self, source: str, build: dict, callable_name: str = "selected"):
+        """The build rows as a customer meets them, keyed by check name."""
+        facts = self._score_source(source, build)
+        return {
+            signal.name: signal.evidence
+            for signal in MODULE.build_declarations_are_unmeasured(facts.build)
+        }
+
+    def test_the_card_shows_the_line_each_check_cited(self) -> None:
+        """The residual, answered by deriving instead of by scanning.
+
+        `evidence` is prose the assistant authored and the card prints it
+        verbatim, so a sentence could name another program's file, cite lines
+        that file has and this one does not, and sit beside a `source_lines`
+        that resolves cleanly against the real agent. A reader met the sentence
+        with nothing to check it against.
+
+        Nothing is refused, because nothing can be: deciding whether a filename
+        is an attribution or an ordinary reference to another module of the
+        same project is a question about prose, and `HONEST_CROSS_MODULE_PROSE`
+        is the common case that any such rule refuses. So the check's own cited
+        line is printed beside the sentence instead, read out of the tree at a
+        coordinate already validated.
+
+        Asserted on the carried-over document, which is the point: the sentence
+        still says `other_agent.py:932-936`, and the clause beside it says what
+        this agent's line 4 actually is. The contradiction is now on the card
+        where a reader can see it, rather than absent from it.
+        """
+        rows = self._observed(
+            "MODEL = ['a']\ndef selected(q):\n    return spin(q)\n"
+            "def spin(q):\n    while True:\n        q = q + 'x'\n",
+            {
+                check: {"evidence": self.CARRIED_OVER[check]["evidence"]}
+                for check in MODULE.BUILD_CHECK_ANSWER
+            }
+            | {
+                "control-flow": {
+                    "loop": True,
+                    "bounded": False,
+                    "evidence": self.CARRIED_OVER["control-flow"]["evidence"],
+                }
+            },
+        )
+        for check in MODULE.BUILD_CHECK_ANSWER:
+            with self.subTest(check=check):
+                # The author's sentence, untouched. This branch deletes no
+                # explanation; the reason option one was set aside is that the
+                # sentence is the only thing saying WHAT was found.
+                self.assertIn("other_agent.py", rows[check])
+                # And beside it, the machine-derived half.
+                self.assertIn("Read from agent.py, 1: MODEL = ['a']", rows[check])
+
+    def test_the_quoted_line_is_read_from_the_tree_and_not_from_the_document(
+        self,
+    ) -> None:
+        """The property the whole change rests on, measured rather than argued.
+
+        Hold the document byte for byte and change only the customer's source.
+        A clause assembled from anything the assistant wrote would not move. A
+        clause read out of the tree moves with the file, which is what makes it
+        evidence a reader can weigh against the sentence.
+        """
+        document = {
+            check: {"evidence": "agent.py:1 the model table"}
+            for check in MODULE.BUILD_CHECK_ANSWER
+        } | {"control-flow": {"loop": False, "evidence": "agent.py:1 the model table"}}
+        first = self._observed(
+            "MODEL = ['a']\ndef selected(q):\n    return q\n", document
+        )
+        second = self._observed(
+            "MODEL = ['b', 'c']\ndef selected(q):\n    return q\n", document
+        )
+        self.assertIn("Read from agent.py, 1: MODEL = ['a']", first["prompt"])
+        self.assertIn("Read from agent.py, 1: MODEL = ['b', 'c']", second["prompt"])
+        # Same sentence in both, so the difference above is the source and
+        # nothing else.
+        self.assertIn("agent.py:1 the model table", first["prompt"])
+        self.assertIn("agent.py:1 the model table", second["prompt"])
+
+    def test_prose_naming_another_module_of_the_same_project_is_scored(self) -> None:
+        """The false-red direction, and the reason there is no guard here.
+
+        Each of these is a correct sentence about a real agent whose parts live
+        in more than one file, with correct `source_lines` throughout. A rule
+        refusing a filename that is not the selected agent's exits 2 on every
+        one of them, and tells an author who read the right source to re-read
+        it. The sentence reaches the card, and the cited line reaches the card
+        beside it.
+        """
+        for prose in self.HONEST_CROSS_MODULE_PROSE:
+            with self.subTest(prose=prose):
+                rows = self._observed(
+                    "MODEL = ['a']\ndef selected(q):\n    return q\n",
+                    {check: {"evidence": prose} for check in MODULE.BUILD_CHECK_ANSWER}
+                    | {"control-flow": {"loop": False, "evidence": prose}},
+                )
+                for check in MODULE.BUILD_CHECK_ANSWER:
+                    self.assertIn(prose, rows[check])
+                    self.assertIn("Read from agent.py, 1:", rows[check])
+
+    def test_a_check_that_settled_nothing_quotes_nothing(self) -> None:
+        """The absence is the signal, and it is not a gap.
+
+        `determined: false` carries no coordinate by construction - a read that
+        could not settle the question has no line establishing it - so there is
+        nothing to quote and nothing is invented. The card therefore shows the
+        difference between a check that pointed somewhere and one that could
+        not, without a second sentence claiming it.
+        """
+        facts = self._read(
+            self._undetermined(
+                evidence="the prompt is assembled in prompts.py:12, out of this read"
+            )
+        )
+        marked = MODULE.build_declarations_are_unmeasured(facts.build)
+        # Explicit, per check. `assertTrue(all(...))` passes vacuously on an
+        # empty sequence and says nothing about WHICH check failed.
+        self.assertEqual(
+            sorted(signal.name for signal in marked if not signal.cited_source),
+            sorted(name for name, _weight in MODULE.AGENT_BUILD_CHECKS),
+        )
+        self.assertEqual(
+            [signal.name for signal in marked if "Read from" in signal.evidence], []
+        )
+        self.assertEqual(
+            sorted(
+                signal.name for signal in marked if "prompts.py:12" in signal.evidence
+            ),
+            sorted(name for name, _weight in MODULE.AGENT_BUILD_CHECKS),
+        )
+
+    def test_a_quoted_line_cannot_rewrite_the_card_around_it(self) -> None:
+        """Customer source text crosses two renderers, so it is made safe first.
+
+        This is the one thing the change adds that was not already on the card:
+        bytes out of the customer's file, printed to a terminal and into a
+        Markdown table cell. Each case is a property of one of those surfaces
+        rather than a preference about how code should look.
+        """
+        escape = chr(27)
+        cases = {
+            "terminal escape": (
+                'MODEL = ["' + escape + '[2J" + "x"]\ndef selected(q):\n    return q\n',
+                lambda quoted: self.assertNotIn(escape, quoted),
+            ),
+            "markdown cell pipe": (
+                "MODEL: list | None = None\ndef selected(q):\n    return q\n",
+                # The delimiter property is asserted by
+                # `test_a_quoted_line_cannot_split_the_reports_table_row`,
+                # which renders the real table. Here only the escape reaches
+                # the card, which is the terminal's half.
+                lambda quoted: self.assertNotIn(" | ", quoted),
+            ),
+            "its own indentation": (
+                "MODEL = ['a']\ndef selected(q):\n\t\t  return    MODEL[0]\n",
+                lambda quoted: self.assertIn("3: return MODEL[0]", quoted),
+            ),
+        }
+        for label, (source, assertion) in cases.items():
+            with self.subTest(surface=label):
+                lines = [3] if label == "its own indentation" else [1]
+                rows = self._observed(
+                    source,
+                    {
+                        check: {"evidence": "read", "source_lines": lines}
+                        for check in MODULE.BUILD_CHECK_ANSWER
+                    }
+                    | {
+                        "control-flow": {
+                            "loop": False,
+                            "evidence": "read",
+                            "source_lines": lines,
+                        }
+                    },
+                )
+                quoted = rows["prompt"].split("Read from ")[1]
+                assertion(quoted)
+
+    @staticmethod
+    def _table_cells(row: str) -> int:
+        """Cells a table scanner sees in one rendered row.
+
+        A `|` delimits when it is not escaped, and a backslash escapes only
+        when it is not itself escaped, so what decides is the PARITY of the
+        backslash run immediately before the pipe. Counting that is the
+        property the escaping exists for.
+
+        Written this way because the earlier assertion was not. It checked
+        that the escape sequence `\\|` appeared in the output, which tests the
+        transformation the implementation happens to use rather than the
+        surface property it stands for - and the defect lived exactly in that
+        gap: a cited line already holding a backslash produced `\\\\|`, which
+        contains the sequence and still splits the row. This counter cannot
+        pass for that reason, and it survives a change of escaping strategy.
+        """
+        cells, backslashes = 1, 0
+        for character in row:
+            if character == "\\":
+                backslashes += 1
+                continue
+            if character == "|" and backslashes % 2 == 0:
+                cells += 1
+            backslashes = 0
+        return cells
+
+    def test_a_quoted_line_cannot_split_the_reports_table_row(self) -> None:
+        """The durable report puts this string in a table cell, so count cells.
+
+        `render_markdown` writes one row per check as
+        `| name | points | evidence |`, which an unsplit row renders as five
+        cells: the empty edges plus the three columns. A live delimiter inside
+        the quotation adds one, and the report silently gains a column.
+
+        The regex case is the one that shipped past the previous assertion,
+        and it is not far-fetched: `output-contract` asks whether anything
+        pins the shape of an answer, and a compiled pattern is the canonical
+        way to do that, so a line holding an escaped alternation is exactly
+        what an author cites for it.
+        """
+        cases = {
+            "bare pipe": "MODEL: list | None = None",
+            "escaped pipe in a regex": 'ANSWER = re.compile(r"^(yes\\|no)$")',
+            "trailing backslash": 'MODEL = "a\\\\"',
+            "doubled backslash then pipe": 'MODEL = "a\\\\" + "|b"',
+            "many pipes": 'MODEL = "a|b|c|d|e"',
+            # Long enough to be truncated, and carrying escapes at the cut, so
+            # the property is asserted on the truncated form too.
+            "pipes past the width bound": 'MODEL = "' + "x|y\\|z" * 40 + '"',
+        }
+        for label, first_line in cases.items():
+            with self.subTest(source=label):
+                facts = self._score_source(
+                    first_line + "\ndef selected(q):\n    return q\n",
+                    {
+                        check: {"evidence": "read", "source_lines": [1]}
+                        for check in MODULE.BUILD_CHECK_ANSWER
+                    }
+                    | {
+                        "control-flow": {
+                            "loop": False,
+                            "evidence": "read",
+                            "source_lines": [1],
+                        }
+                    },
+                )
+                report = MODULE.render_markdown(
+                    MODULE.score_run(
+                        MODULE.DatasetFacts(),
+                        MODULE.EvaluationFacts(),
+                        replace(
+                            facts,
+                            build=MODULE.build_declarations_are_unmeasured(facts.build),
+                        ),
+                        dict(MODULE.DEFAULT_WEIGHTS),
+                    )
+                )
+                rows = [
+                    line
+                    for line in report.splitlines()
+                    if line.startswith("| ")
+                    and "Read from" in line
+                    and " | unmeasured | " in line
+                ]
+                # The rows have to be found before they can be counted: a
+                # selector that matches nothing would make every assertion
+                # below vacuous.
+                self.assertEqual(len(rows), len(MODULE.AGENT_BUILD_CHECKS), report)
+                for row in rows:
+                    self.assertEqual(self._table_cells(row), 5, row)
+
+    def test_a_long_or_many_lined_citation_is_bounded(self) -> None:
+        """Neither renderer wraps, so an unbounded quotation is a broken card.
+
+        A generated module is one very long line, and a check may cite more
+        lines than a single row can hold. Both are truncated visibly - an
+        ellipsis, and a count of what was not shown - rather than silently
+        printing the first part as though it were the whole.
+        """
+        wide = "MODEL = [" + ", ".join(f"'m{i}'" for i in range(200)) + "]"
+        rows = self._observed(
+            wide + "\ndef selected(q):\n    q = q\n    return q\n",
+            {
+                check: {"evidence": "read", "source_lines": [1]}
+                for check in MODULE.BUILD_CHECK_ANSWER
+            }
+            | {
+                "control-flow": {"loop": False, "evidence": "read", "source_lines": [1]}
+            },
+        )
+        quoted = rows["prompt"].split("Read from ")[1]
+        self.assertLess(len(quoted), MODULE.CITED_SOURCE_WIDTH + 40, quoted)
+        self.assertTrue(quoted.endswith("..."), quoted)
+
+        rows = self._observed(
+            "MODEL = ['a']\ndef selected(q):\n    q = q\n    return q\n",
+            {
+                check: {"evidence": "read", "source_lines": [1, 2, 3, 4]}
+                for check in MODULE.BUILD_CHECK_ANSWER
+            }
+            | {
+                "control-flow": {
+                    "loop": False,
+                    "evidence": "read",
+                    "source_lines": [1, 2, 3, 4],
+                }
+            },
+        )
+        quoted = rows["prompt"].split("Read from ")[1]
+        self.assertIn("1: MODEL = ['a']", quoted)
+        self.assertIn("2: def selected(q):", quoted)
+        self.assertIn("(+2 more cited line(s))", quoted)
+        self.assertNotIn("return q", quoted)
 
     def test_the_shipped_examples_are_true_of_their_own_agent(self) -> None:
         """The refusal prints a document verbatim, so it teaches whatever it says.

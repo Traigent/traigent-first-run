@@ -2335,6 +2335,28 @@ class BuildSignal:
     # in one direction only, so passing means "not contradicted", never
     # "established".
     source_checked: bool = False
+    # The physical lines this check cited, and what the selected agent actually
+    # says on them. Read out of the parsed tree at the coordinates
+    # `checked_source_lines` already validated, so it is derived rather than
+    # declared: it cannot name a file that is not the selected agent, because
+    # nothing here reads a filename out of anything.
+    #
+    # It exists because `evidence` is prose the assistant authored and the card
+    # prints it verbatim. A sentence can cite another program's file, describe
+    # another program, and sit beside a coordinate that resolves cleanly against
+    # this one - and a reader had no way to tell. Printing the cited line beside
+    # the sentence lets them tell, without this module having to decide whether
+    # the sentence is true.
+    #
+    # NOT a check, and not credit. Quoting a line establishes nothing about
+    # whether the observation beside it is correct; it establishes only where
+    # the observation says it was taken from, in text nobody but the customer's
+    # own file could have produced.
+    cited_source: tuple[tuple[int, str], ...] = ()
+    # The selected agent's own relative path, kept beside the lines it
+    # indexes so the rendered clause cannot be assembled from anything
+    # else. Empty exactly when `cited_source` is.
+    cited_source_path: str = ""
 
 
 # The build checks a source read can contradict, and EXACTLY how far each
@@ -12870,6 +12892,38 @@ def _build_names(check: str, spec: dict[str, Any], field: str) -> list[str]:
     return [name.strip() for name in value]
 
 
+def cited_source_text(
+    spec: Any, source: StaticSourceEvidence | None
+) -> tuple[str, tuple[tuple[int, str], ...]]:
+    """What the selected agent says on the lines a settled check cited.
+
+    The coordinates are not re-decided here and the rules are not copied. This
+    ASKS `checked_source_lines`, which is the one authority on whether a
+    citation is in range and executable, and which `build_signal_from_entry`
+    has already run over this same spec - so the call cannot refuse anything
+    and exists to avoid the alternative, which was a second copy of its
+    predicates living here.
+
+    That copy was the shape this repository keeps finding and removing: a
+    filter whose every branch is unreachable given the contract around it. It
+    looked like protection, it could never run, and had the contract ever
+    weakened it would have silently dropped a coordinate rather than failing.
+    Asking the authority means there is one set of rules, and a weakened
+    contract raises here instead of quietly rendering less.
+
+    Empty for a check the read could not settle. That arm carries no
+    coordinate by construction - a read that could not settle the question has
+    no line establishing it - so there is nothing to quote and the card shows
+    the difference rather than stating it.
+    """
+    if source is None or spec.get("determined") is False:
+        return "", ()
+    cited = checked_source_lines(spec.get("source_lines"), source)
+    return source.display_path, tuple(
+        (number, source.text_by_line[number - 1]) for number in cited
+    )
+
+
 def build_signal_from_entry(
     check: str, spec: Any, source: StaticSourceEvidence | None = None
 ) -> BuildSignal:
@@ -13102,6 +13156,29 @@ def build_signal_from_entry(
     )
 
 
+def _read_build_check(
+    check: str, spec: Any, source: StaticSourceEvidence | None
+) -> BuildSignal:
+    """One check, read first and annotated with what it cited second.
+
+    The order is the whole reason this is a function rather than an expression
+    inside the comprehension below. `build_signal_from_entry` is where every
+    refusal lives, so it runs before anything is read out of the coordinates,
+    and `cited_source_text` therefore quotes lines the reader accepted rather
+    than lines it was handed. Written as a generator clause this inverted:
+    an iteration clause is evaluated before the element expression, so the
+    quotation would have been taken from a document no refusal had seen yet.
+    """
+    signal = build_signal_from_entry(check, spec, source)
+    path, cited = cited_source_text(spec, source)
+    return replace(
+        signal,
+        source_checked=(source is not None and check in SOURCE_CHECKED_BUILD_CHECKS),
+        cited_source_path=path,
+        cited_source=cited,
+    )
+
+
 def agent_build_from_document(
     build: Any, source: StaticSourceEvidence | None = None
 ) -> tuple[BuildSignal, ...]:
@@ -13132,12 +13209,7 @@ def agent_build_from_document(
             "different statements about the agent"
         )
     return tuple(
-        replace(
-            build_signal_from_entry(check, build[check], source),
-            source_checked=(
-                source is not None and check in SOURCE_CHECKED_BUILD_CHECKS
-            ),
-        )
+        _read_build_check(check, build[check], source)
         for check, _weight in AGENT_BUILD_CHECKS
     )
 
@@ -13264,6 +13336,91 @@ def agent_facts_from_discovery(
     )
 
 
+# How much cited source reaches the card, and how many lines of it do.
+#
+# Bounded because this is the customer's own source text on a line neither
+# renderer wraps: the card prints one line per check, and `render_markdown`
+# puts the same string in a table cell. A generated or minified module is one
+# very long line, and an unbounded quotation would push the observation beside
+# it off the readable surface entirely. Two lines because the cited coordinate
+# is ordinarily the statement and the call it feeds; a longer citation says so
+# rather than silently showing the first half.
+CITED_SOURCE_LINES_SHOWN = 2
+CITED_SOURCE_WIDTH = 72
+
+
+def readable_source_line(text: str) -> str:
+    """One physical source line, made safe for the two surfaces that print it.
+
+    Not a beautifier. Three transformations, one per surface this string
+    crosses, and each is a property rather than a preference:
+
+    * Characters that are not printable are dropped. The card is written to a
+      terminal and a source file may hold an escape sequence inside a string
+      literal, so a quotation that could move the cursor is a quotation that
+      could rewrite the card around itself.
+    * Runs of whitespace collapse to one space. A line arrives carrying its own
+      indentation, and the card has already placed it in a column.
+    * `\\` and then `|` are escaped, in that order, because `render_markdown`
+      puts this inside a table cell where an unescaped pipe ends the cell
+      early. Both, and the order, are the whole of the correctness here. A
+      table scanner decides whether a `|` delimits by the PARITY of the run of
+      backslashes before it, so escaping the pipe alone is not enough: a line
+      holding `r"^(yes\\|no)$"` - which is exactly the line an author cites for
+      `output-contract`, a regex being the canonical way to pin an answer's
+      shape - already carries a backslash, and emitting `\\\\|` reads as an
+      escaped backslash followed by a LIVE delimiter. The row splits and the
+      durable report gains a column. Doubling the backslashes first makes
+      every backslash run even before the pipe's own escape adds one.
+
+      Escaped rather than dropped so the terminal shows a visible escape
+      instead of a line quietly different from the file it was read from.
+    """
+    collapsed = " ".join(text.split())
+    printable = "".join(character for character in collapsed if character.isprintable())
+    return printable.replace("\\", "\\\\").replace("|", "\\|")
+
+
+def cited_source_summary(signal: BuildSignal) -> str:
+    """The machine-derived half of a check's line: where it was read, verbatim.
+
+    This is the part of the sentence no assistant wrote. The path comes from
+    the resolved, containment-checked selected agent and the numbers from the
+    validated citation, so this clause cannot name a file that is not the agent
+    being scored, whatever the prose beside it says. That is the whole of what
+    it establishes. It does NOT say the observation is right, and a reader who
+    takes a quoted line for a confirmed finding has been misled by the layout
+    rather than by the words - so the words say "reads", never "confirms".
+
+    Empty when the check cited nothing, which is exactly the checks that could
+    not be settled. The absence is the signal there.
+
+    TRUNCATION HAPPENS AFTER ESCAPING, and what that is safe against is worth
+    stating exactly rather than approximately. A cut CAN land inside an escape:
+    between a `\\` and the `|` it protects, or part-way through a doubled
+    backslash run, either of which leaves a trailing backslash before the
+    ellipsis. That is cosmetic, and it is bounded - `\\.` is an escaped period
+    to a table scanner, not a delimiter.
+
+    What a cut cannot do is produce a LIVE delimiter. Every `|` in the escaped
+    string is immediately preceded by an odd backslash run, so a cut either
+    keeps the pair whole or removes the pipe along with everything after it.
+    There is no cut position that leaves a bare pipe behind.
+    """
+    if not signal.cited_source:
+        return ""
+    shown = signal.cited_source[:CITED_SOURCE_LINES_SHOWN]
+    quoted = []
+    for number, text in shown:
+        readable = readable_source_line(text)
+        if len(readable) > CITED_SOURCE_WIDTH:
+            readable = readable[: CITED_SOURCE_WIDTH - 3] + "..."
+        quoted.append(f"{number}: {readable}")
+    remaining = len(signal.cited_source) - len(shown)
+    more = f" (+{remaining} more cited line(s))" if remaining else ""
+    return f" Read from {signal.cited_source_path}, {'; '.join(quoted)}{more}"
+
+
 def build_declarations_are_unmeasured(
     build: tuple[BuildSignal, ...] | None,
 ) -> tuple[BuildSignal, ...] | None:
@@ -13283,29 +13440,56 @@ def build_declarations_are_unmeasured(
     cited to a line of their own file, and a score of zero beneath them, and
     concludes the tool thinks their agent is bad. It does not. It thinks
     nothing about their agent here, because nothing at this gate verified it.
+
+    THE PROSE IS NOT SCANNED, and the citation below is why it does not have to
+    be. `evidence` could describe a different program - name another file, cite
+    lines that file has and this one does not - beside a `source_lines` that
+    resolves cleanly against the real agent, and a reader met the sentence with
+    nothing to check it against. The answer is not to read the sentence
+    harder. A guard over prose has to decide whether a filename is an
+    attribution or a comparison, and the honest cases are the common ones: an
+    agent whose prompt lives in `prompts.py` and whose tools live in
+    `tools.py` is an ordinary project, its author cites those files correctly,
+    and a reader that refuses them refuses the truth. So nothing is refused.
+    The line the check cited is printed beside the sentence, derived from the
+    tree at coordinates already validated, and the reader can see for
+    themselves whether the two agree.
+
+    Which is this module's own rule applied one surface further out: derive
+    from structure, do not scan prose.
     """
     if build is None:
         return None
-    return tuple(
-        (
-            signal
-            if not signal.measured
-            else replace(
-                signal,
-                points=0.0,
-                evidence=(
-                    "not independently verified; excluded from this score. "
-                    + (
-                        f"Assistant observation ({SOURCE_CHECK_SCOPE[signal.name]}): "
-                        if signal.source_checked
-                        else "Assistant observation, which nothing here checks: "
-                    )
-                    + signal.evidence
-                ),
-                measured=False,
+    return tuple(_observed_declaration(signal) for signal in build)
+
+
+def _observed_declaration(signal: BuildSignal) -> BuildSignal:
+    """One rendered build declaration: the framing, the prose, the citation.
+
+    The citation is appended to every signal that carries one, including the
+    ones that were already unmeasured - a check reporting that the agent
+    declares no tools is still a claim about a line of somebody's file. The
+    "not independently verified" framing is added only to the signals that
+    would otherwise have scored, because that sentence is about a measurement
+    being withheld and there is none to withhold on the others.
+    """
+    quoted = cited_source_summary(signal)
+    if not signal.measured:
+        return replace(signal, evidence=signal.evidence + quoted) if quoted else signal
+    return replace(
+        signal,
+        points=0.0,
+        evidence=(
+            "not independently verified; excluded from this score. "
+            + (
+                f"Assistant observation ({SOURCE_CHECK_SCOPE[signal.name]}): "
+                if signal.source_checked
+                else "Assistant observation, which nothing here checks: "
             )
-        )
-        for signal in build
+            + signal.evidence
+            + quoted
+        ),
+        measured=False,
     )
 
 
