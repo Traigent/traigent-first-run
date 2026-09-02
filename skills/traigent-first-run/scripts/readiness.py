@@ -7674,6 +7674,17 @@ def render_card(
         # has nothing to route, and the one sentence that says what would lift
         # this band has to say it here or nowhere.
         #
+        # The `proceed` clause is words on purpose, and the alternatives were
+        # weighed rather than skipped (traigent-first-run#396). A cap would
+        # route a remedy and reopen the argument recorded above
+        # `ANSWER_KEY_BAND_CEILING` about why no ceiling can express this hold;
+        # a payload field for asks that are not caps is a schema decision that
+        # belongs with the contract nothing documents yet
+        # (traigent-first-run#401). Neither is needed to stop the card reading
+        # as a contradiction: the band and the next step answer different
+        # questions, exactly as the band and the block already do, and saying
+        # so costs one sentence.
+        #
         # In words, and not by naming the flag that carries the read. No line
         # this card renders names an argument today - the only customer-facing
         # strings that do are `--help`, which is a different reader - and the
@@ -7683,9 +7694,12 @@ def render_card(
         lines.append(
             f"  {palette.dim}No read covering the expected answers this run is "
             f"graded against has reached this score, so the comparison is not "
-            f"graded above {score.band} whatever it scores. A row-by-row read "
-            f"of each input beside its expected answer, covering the rows the "
-            f"run is graded on, is what lifts it.{palette.reset}"
+            f"graded above {score.band} whatever it scores. Nothing here is "
+            f"capped and nothing needs repairing, so the run is not stopped "
+            f"and the step after this one still reads proceed: what is held is "
+            f"the verdict, not the work. A row-by-row read of each input "
+            f"beside its expected answer, covering the rows the run is graded "
+            f"on, is what lifts it.{palette.reset}"
         )
     lines.append(
         f"  {palette.dim}Local pre-run planning estimate, not a probability or "
@@ -7745,9 +7759,12 @@ def render_markdown(score: ReadinessScore, timestamp: str | None = None) -> str:
                     "**The band is held here.** No read covering the expected "
                     "answers this run is graded against has reached this "
                     "score, so no score carries this comparison above "
-                    f"{score.band}. A row-by-row read of each input beside its "
-                    "expected answer, covering the rows the run is graded on, "
-                    "is what lifts it.",
+                    f"{score.band}. Nothing is capped and nothing needs "
+                    "repairing, so the run is not stopped and the recommended "
+                    "action still reads `proceed`: what is held is the "
+                    "verdict, not the work. A row-by-row read of each input "
+                    "beside its expected answer, covering the rows the run is "
+                    "graded on, is what lifts it.",
                     "",
                 ]
                 if score.band_limited_by_unread_answers

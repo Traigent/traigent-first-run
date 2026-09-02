@@ -331,7 +331,16 @@ Readiness score (the card, the three pillars, bands, caps, blocked)
   can improve the opening card; the separate pre-approval request-difference
   proof decides whether any paid grid may proceed.
   Bands: Not ready (0-29), Partial (30-54), Workable (55-74), Strong (75-89),
-  Excellent (90-100).
+  Excellent (90-100). Those are the ranges a number falls in, and the band
+  shown can sit below the one its number names. The top two say the run stands
+  behind the comparison, so they are held at Workable while a piece of the
+  evidence is missing rather than merely low. Two things hold them: too little
+  of the score was measured at all, or nobody has read the expected answers the
+  run is graded against - which no count taken off your file can establish, and
+  only a row-by-row read of an input beside its answer can. Neither moves the
+  number, because every measurement behind it stands; what is held is the
+  verdict. Neither is a cap, so neither stops the run, and the card names which
+  one is in force and points at what would close it.
   Cap: a ceiling on the whole score, so a high average cannot hide one bad part.
   There are three kinds, and they differ in what they ask of you rather than in
   how much they lower the number. Some caps block, because something has to be
