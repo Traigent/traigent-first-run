@@ -374,13 +374,45 @@ a document to be reused.
              "evidence": "agent.py:8-9 declares and reaches no tools"}}}
 ```
 
-Each settled build check carries `source_lines` on the same terms, and for the same reason: the
-`evidence` beside it is prose and is never parsed for a coordinate, so without the structured list
-the build half is the one claim about the customer's code that nothing checks. A check answered
-`"determined": false` carries none - a read that could not settle the question has no line to point
-at. This is also what makes a carried-over document detectable: a read taken from another agent, or
-from this one before it was edited, cites lines the selected source does not have and is refused
-rather than reprinted on the card.
+Each settled build check carries `source_lines` on the same terms as a parameter, and a check
+answered `"determined": false` carries none - a read that could not settle the question has no line
+to point at, so a coordinate beside one is refused rather than ignored. The list records where the
+read looked. On its own it establishes nothing about what the read found: a line number is in range
+or it is not, which cannot tell a citation somebody verified from one they picked.
+
+So two of the four checks are settled against the source, and two are only located. The difference
+is on the card, in the sentence beside each check, because it is the difference between "a check ran
+and found no contradiction" and "nothing here looked at this".
+
+**`control-flow` is read from the source, in one direction.** A `for`, `async for` or `while` in the
+selected callable's own body proves it loops, so `"loop": false` beside one is refused. The absence
+of those proves nothing, and `"loop"` is not a question about node types - it is whether the agent
+ends, and on what. An agent that never ends need hold no loop of its own: it can call a helper that
+spins, recurse, or hand the work to a comprehension, a generator, `map` or `itertools`. Record
+`"loop": true` for any of those. It is accepted without a matching node, and it is the honest answer;
+an earlier version of this checker compared the two for equality and refused it, which left an agent
+that never ends with no true document to write.
+
+**`bounded` is read the same way.** A `while` in that body whose own statements carry neither
+`break` nor `return` cannot leave through either, so `"bounded": true` beside one is refused - the
+card would otherwise print "a stop condition to point at" over an agent with none. A `while` that
+does carry one is accepted, because whether it is reached is not a question this read can answer, and
+a `for` is never refused on this ground: it is bounded by its iterable.
+
+**`tools` is refuted, never confirmed.** A name in `declared` that appears nowhere in the selected
+agent's file - not as an identifier, an attribute, or a string - is not a tool that agent declares,
+and is refused. A name that is present establishes nothing: tools are ordinary calls and nothing here
+follows a call graph.
+
+**`prompt` and `output-contract` are located only.** Nothing statically decides whether a prompt
+carries worked examples, or whether anything pins the shape of an answer. Their `source_lines` say
+where you looked and their `evidence` says what you saw; neither is checked, and the card says so
+rather than letting the four checks read as equally verified.
+
+Write every answer to be true of the agent you selected. A carried-over document is caught when its
+coordinates fall outside that source or when one of the two derivations contradicts it, and not
+otherwise - a read of another agent whose citations happen to land in range, on the two checks
+nothing can settle, will be reprinted on the customer's card as written.
 
 A parameter's `source_lines` are positive physical lines in relative `source`; that file must be
 `--selected-agent` below `--agent-source-root`. `--selected-agent-callable` names the selected

@@ -14333,7 +14333,167 @@ class TheBuildHalfCitesTheAgentItReadTests(unittest.TestCase):
             )
         message = str(caught.exception)
         self.assertIn("declares loop=False", message)
-        self.assertIn("reads loop=True", message)
+        self.assertIn("loops in", message)
+
+    # A loop the selected callable does not lexically hold, in the four shapes
+    # a real agent uses. Each is an agent that may never end and whose author
+    # is RIGHT to record `loop: true`.
+    LOOP_OUT_OF_SCOPE = {
+        "helper": "MODEL = ['a']\ndef selected(q):\n    return spin(q)\n"
+        "def spin(q):\n    while True:\n        q = q + 'x'\n",
+        "recursion": "MODEL = ['a']\ndef selected(q):\n    return selected(q)\n",
+        "comprehension": "MODEL = ['a']\ndef selected(q):\n    return [x for x in q]\n",
+        "map": "MODEL = ['a']\ndef selected(q):\n    return list(map(str, q))\n",
+    }
+
+    def _score_source(self, source: str, build: dict):
+        document = {
+            "source": "agent.py",
+            "knobs": {
+                "model": {
+                    "values": ["a"],
+                    "source_lines": [1],
+                    "evidence": "MODEL reaches the call.",
+                }
+            },
+            "build": {
+                check: {
+                    "evidence": "read",
+                    "source_lines": [1],
+                    **build.get(check, {}),
+                }
+                for check in MODULE.BUILD_CHECK_ANSWER
+            },
+        }
+        document["build"]["prompt"].setdefault("present", False)
+        document["build"]["output-contract"].setdefault("present", False)
+        document["build"]["tools"].setdefault("used", False)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "agent.py").write_text(source)
+            return MODULE.agent_facts_from_discovery(
+                document,
+                source_root=root,
+                selected_agent=root / "agent.py",
+                selected_agent_callable="selected",
+            )
+
+    def test_a_loop_the_tree_cannot_see_may_still_be_declared(self) -> None:
+        """The regression an equality comparison introduced, in four shapes.
+
+        The guide defines this check semantically - whether the agent ENDS and
+        on what - and a callable ends without ever holding a loop node of its
+        own. Comparing the declaration with `!=` against a syntactic read
+        therefore REFUSED the honest answer for a helper that spins, for
+        recursion, for a comprehension and for `map`, telling an author who had
+        correctly read the `while True:` in their own helper that they had read
+        the wrong agent.
+
+        That left exactly two accepted documents for an agent that never ends:
+        `loop: false`, which is false, and `determined: false`, which disclaims
+        a determination the author really made. On trunk the true answer was
+        accepted and merely unverified, so the equality traded
+        unverified-but-true for mandatory-and-false.
+        """
+        for shape, source in self.LOOP_OUT_OF_SCOPE.items():
+            with self.subTest(shape=shape):
+                facts = self._score_source(
+                    source, {"control-flow": {"loop": True, "bounded": False}}
+                )
+                self.assertEqual(len(facts.build), len(MODULE.AGENT_BUILD_CHECKS))
+
+    def test_an_unbounded_while_may_not_be_called_bounded(self) -> None:
+        """`bounded` prices the risk, and it was taken on trust.
+
+        The card turns it into "a loop, and a stop condition to point at", so a
+        document could assert a stop condition over an agent with none. This
+        path also carries MORE traffic now that `loop: true` is usable again,
+        not less.
+        """
+        with self.assertRaises(MODULE.AgentDiscoveryInputError) as caught:
+            self._score_source(
+                "MODEL = ['a']\ndef selected(q):\n    while True:\n        q = q + 'x'\n",
+                {"control-flow": {"loop": True, "bounded": True}},
+            )
+        self.assertIn("neither break nor return", str(caught.exception))
+
+    def test_a_while_with_a_way_out_is_left_alone(self) -> None:
+        """The false-red direction for the bound, and the scope of the claim.
+
+        A `while` carrying a break or a return is not refuted, because
+        reachability is not decidable here; a `for` is not refuted at all,
+        because it is bounded by its iterable. Without this the test above
+        would also pass against a reader that refused every bound.
+        """
+        cases = {
+            "while-return": "    while True:\n        return q\n",
+            "while-break": "    while True:\n        break\n    return q\n",
+            "for-loop": "    for i in range(3):\n        q = q + 'x'\n    return q\n",
+        }
+        for shape, body in cases.items():
+            with self.subTest(shape=shape):
+                facts = self._score_source(
+                    "MODEL = ['a']\ndef selected(q):\n" + body,
+                    {"control-flow": {"loop": True, "bounded": True}},
+                )
+                self.assertEqual(len(facts.build), len(MODULE.AGENT_BUILD_CHECKS))
+
+    def test_the_card_says_which_checks_the_source_could_contradict(self) -> None:
+        """Settled and located must not read alike on the customer's card.
+
+        All four build checks are reported as not independently verified, which
+        is true of every one of them and hides the difference a reader most
+        needs: for `control-flow` and `tools` a check ran against the source and
+        found no contradiction; for `prompt` and `output-contract` nothing looked
+        at all, because nothing statically decides whether a prompt carries
+        worked examples or whether an answer's shape is pinned down.
+
+        Without this the derivation's value is invisible downstream and the next
+        reader meets the confusion the originating report opened on. Asserted on
+        the rendered card rather than on a field, because the card is where a
+        customer meets it.
+        """
+        facts = self._score_source(
+            "MODEL = ['a']\ndef selected(q):\n    return q\n",
+            {"control-flow": {"loop": False, "bounded": True}},
+        )
+        # Wrapped the way the command wraps it, so this asserts on what a
+        # customer is shown rather than on an intermediate the CLI never
+        # renders.
+        score = MODULE.score_run(
+            MODULE.DatasetFacts(),
+            MODULE.EvaluationFacts(),
+            replace(facts, build=MODULE.build_declarations_are_unmeasured(facts.build)),
+            dict(MODULE.DEFAULT_WEIGHTS),
+        )
+        rows = {
+            sub.name: sub.evidence
+            for pillar in score.pillars
+            if pillar.name == "agent"
+            for sub in pillar.subscores
+        }
+        with self.subTest(check="control-flow", kind="settled"):
+            self.assertIn("checked for a contradiction", rows["control-flow"])
+        for check in ("prompt", "output-contract"):
+            with self.subTest(check=check, kind="located"):
+                self.assertIn("nothing here checks", rows[check])
+                self.assertNotIn("checked for a contradiction", rows[check])
+        # `tools` above answers "no tools", which is not applicable rather than
+        # unverified, so it carries no observation to mark either way. The
+        # applicable case is the one that has to say it.
+        used = self._score_source(
+            "MODEL = ['a']\nTOOLS = ['search']\ndef selected(q):\n    return q\n",
+            {
+                "control-flow": {"loop": False, "bounded": True},
+                "tools": {"used": True, "declared": ["search"], "unreachable": []},
+            },
+        )
+        marked = {
+            signal.name: signal.evidence
+            for signal in MODULE.build_declarations_are_unmeasured(used.build)
+        }
+        with self.subTest(check="tools", kind="settled"):
+            self.assertIn("checked for a contradiction", marked["tools"])
 
     def test_a_tool_the_source_never_mentions_is_refused(self) -> None:
         """The same move for `tools`, and only in the refuting direction.

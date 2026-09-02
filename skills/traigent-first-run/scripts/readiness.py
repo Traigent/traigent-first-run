@@ -2304,6 +2304,29 @@ class BuildSignal:
     evidence: str
     measured: bool = True
     applicable: bool = True
+    # Whether ANY source check ran against this claim, as distinct from whether
+    # it passed. Two of the four checks can be refuted from the tree - a loop
+    # node refutes "it ends", a name absent from the file refutes a declared
+    # tool - and two cannot be touched at all: nothing statically decides
+    # whether a prompt carries worked examples or whether an answer's shape is
+    # pinned down.
+    #
+    # The card called all four "not independently verified", which is true of
+    # every one of them and hides the difference a reader most needs: for two,
+    # a check ran and found no contradiction; for two, no check exists. Without
+    # this the derivation is invisible downstream and the next reader meets the
+    # confusion #357 opened on.
+    #
+    # NOT a claim that a checked signal is confirmed. Both derivations refute
+    # in one direction only, so passing means "not contradicted", never
+    # "established".
+    source_checked: bool = False
+
+
+# The build checks a source read can contradict. The other two are located
+# rather than settled: `--agent-knobs` records where their reader looked, and
+# nothing here decides whether they looked correctly.
+SOURCE_CHECKED_BUILD_CHECKS = frozenset({"control-flow", "tools"})
 
 
 # What the read of the agent's build is asked, and what each answer is worth.
@@ -8778,17 +8801,82 @@ def derived_control_flow_loop(source: StaticSourceEvidence) -> bool:
 
     A negative build finding has no line that establishes it, so for a claim
     like this one no coordinate can ever be more than where somebody says they
-    looked. This is the other move: settle the question from the tree the
-    module already parses, and refuse the declaration that contradicts it.
+    looked. This is the other move: settle what the tree can settle.
 
-    Scoped to `_selected_callable_nodes`, which is the same lexical body every
-    other static check here is scoped to - a loop inside a nested function is
-    that function's control flow, not the selected callable's.
+    READ IN ONE DIRECTION ONLY, and that asymmetry is the whole contract. A
+    loop node here proves the callable loops, so `loop: false` beside one is
+    refused. Its absence proves nothing: the guide defines this check
+    semantically - whether the agent ENDS, and on what
+    (`references/component-creation.md`) - and a callable ends without ever
+    holding a loop node of its own. It can delegate to a helper that spins,
+    recurse, or hand the work to `map`, a comprehension, a generator or
+    `itertools`.
+
+    An earlier revision compared the two with `!=`. That made the honest answer
+    unreachable for every one of those shapes: an author who correctly read the
+    `while True:` in the helper their agent calls was told they had read the
+    wrong agent and instructed not to adjust the answer to fit. The gate then
+    accepted exactly two documents for an agent that never ends - `loop: false`,
+    which is false, or `determined: false`, which disclaims a determination the
+    author really made. Before that revision the true `loop: true` was accepted
+    and merely unverified, so equality traded unverified-but-true for
+    mandatory-and-false on the one pillar the incident was about.
+
+    Adding node types does not fix it. Recursion, helper delegation, `map` and
+    unbounded generators survive any list, and each addition widens the false
+    refusal for a different shape.
+
+    Scoped to `_selected_callable_nodes`, the same lexical body every other
+    static check here uses. That scope is right for CREDIT, where narrow fails
+    safe, and it is exactly why the comparison must not be an equality: for a
+    refutation the same narrowness fails unsafe, and the wrong answer becomes
+    the only accepted one.
     """
     return any(
         isinstance(node, (ast.For, ast.AsyncFor, ast.While))
         for node in _selected_callable_nodes(source)
     )
+
+
+def _statements_outside_nested_scopes(node: ast.AST) -> Iterator[ast.AST]:
+    """Walk one node's own body, not the bodies of functions it defines."""
+    pending = list(ast.iter_child_nodes(node))
+    while pending:
+        child = pending.pop()
+        yield child
+        if isinstance(
+            child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
+        ):
+            continue
+        pending.extend(ast.iter_child_nodes(child))
+
+
+def derived_unbounded_while(source: StaticSourceEvidence) -> bool:
+    """Is there a `while` in the selected callable with no way out of its body?
+
+    `bounded` is the half of this check that prices the risk - the card turns
+    it into "a loop, and a stop condition to point at" - and it was taken on
+    trust, so a document could assert a stop condition over an agent that has
+    none. It is only reachable when `loop: true`, so making that answer usable
+    again (see above) sends more traffic through it, not less.
+
+    Deliberately the cheapest sound refutation and nothing more: a `while`
+    whose own body carries neither `break` nor `return` cannot leave through
+    either, so `bounded: true` beside it is refused. `for` is excluded - it is
+    bounded by its iterable unless that iterable is infinite, which is not a
+    question this walk can answer - and a `while` that DOES carry a break or a
+    return is left alone, because reachability is not decidable here. One
+    direction again, for the same reason.
+    """
+    for node in _selected_callable_nodes(source):
+        if not isinstance(node, ast.While):
+            continue
+        if not any(
+            isinstance(inner, (ast.Break, ast.Return))
+            for inner in _statements_outside_nested_scopes(node)
+        ):
+            return True
+    return False
 
 
 def derived_source_names(source: StaticSourceEvidence) -> frozenset[str]:
@@ -12250,16 +12338,18 @@ def build_signal_from_entry(
         )
     if check == "control-flow":
         # The claim, checked against the tree - not the coordinate, checked
-        # against a line count. `derived_control_flow_loop` says why this is
-        # the move that closes the class rather than a stricter version of the
-        # one that did not.
+        # against a line count. One direction only: a loop node refutes
+        # `loop: false`, and its absence refutes nothing, because the guide
+        # defines this check as whether the agent ENDS and a callable can fail
+        # to end without holding a loop node of its own. `derived_control_flow
+        # _loop` carries the shapes that proves and what an equality cost.
         if source is not None:
-            derived = derived_control_flow_loop(source)
-            if _build_flag(check, spec, "loop") != derived:
+            if not _build_flag(check, spec, "loop") and derived_control_flow_loop(
+                source
+            ):
                 raise AgentDiscoveryInputError(
-                    f"build check 'control-flow' declares loop="
-                    f"{_build_flag(check, spec, 'loop')!r}, and "
-                    f"{source.display_path} reads loop={derived!r} in "
+                    "build check 'control-flow' declares loop=False, and "
+                    f"{source.display_path} loops in "
                     f"{source.selected_callable.name}. A read of a different "
                     "agent, or of this one before it was edited, is the "
                     "ordinary way these disagree - re-read the selected source "
@@ -12270,6 +12360,15 @@ def build_signal_from_entry(
                 check, weight, f"one call per input, so it ends ({evidence})"
             )
         if _build_flag(check, spec, "bounded"):
+            if source is not None and derived_unbounded_while(source):
+                raise AgentDiscoveryInputError(
+                    "build check 'control-flow' declares bounded=True, and "
+                    f"{source.display_path} has a while loop in "
+                    f"{source.selected_callable.name} whose body carries "
+                    "neither break nor return. The card would print 'a stop "
+                    "condition to point at' over an agent with none - point at "
+                    "the stop condition, or record bounded=False"
+                )
             return BuildSignal(
                 check, weight, f"a loop, and a stop condition to point at ({evidence})"
             )
@@ -12370,7 +12469,12 @@ def agent_build_from_document(
             "different statements about the agent"
         )
     return tuple(
-        build_signal_from_entry(check, build[check], source)
+        replace(
+            build_signal_from_entry(check, build[check], source),
+            source_checked=(
+                source is not None and check in SOURCE_CHECKED_BUILD_CHECKS
+            ),
+        )
         for check, _weight in AGENT_BUILD_CHECKS
     )
 
@@ -12526,8 +12630,16 @@ def build_declarations_are_unmeasured(
             else replace(
                 signal,
                 points=0.0,
-                evidence="not independently verified; excluded from this score. "
-                "Assistant observation: " + signal.evidence,
+                evidence=(
+                    "not independently verified; excluded from this score. "
+                    + (
+                        "Assistant observation, and the source was checked for "
+                        "a contradiction and none was found: "
+                        if signal.source_checked
+                        else "Assistant observation, which nothing here checks: "
+                    )
+                    + signal.evidence
+                ),
                 measured=False,
             )
         )
