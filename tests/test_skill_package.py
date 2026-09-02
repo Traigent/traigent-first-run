@@ -14454,6 +14454,503 @@ class SkillPackageTests(unittest.TestCase):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, f"{skill} {safety} {sdk}")
 
+    # ------------------------------------------------------------------
+    # Cap routing, read as a claim rather than as two substrings (#389)
+    # ------------------------------------------------------------------
+    #
+    # The three guards below used to assert that a condition id appeared
+    # somewhere after an anchor sentence and that some phrase appeared after
+    # it:
+    #
+    #     self.assertIn(condition, routing)
+    #     self.assertLess(routing.index(condition), routing.index(branch))
+    #
+    # That checks a condition is MENTIONED. It never checks what the mention
+    # says, and both directions were measured on this tree before the change.
+    #
+    # STUFFABLE. SKILL.md writes `evaluator-generated` and `agent-generated`
+    # into one sentence. Splitting it in two and replacing the agent half with
+    # "`agent-generated` needs no branch and stops nothing, so never carry the
+    # substitute's provenance into the words" left both guards green: the
+    # matched phrase `walkthrough labeling` was still present two hundred bytes
+    # later, inside the OTHER condition's sentence. The guidance told an
+    # assistant not to do the one thing the module's remedy asks, and nothing
+    # in 1,621 tests noticed.
+    #
+    # FALSE-RED. A correct rewrite that used different words failed as a bare
+    # `ValueError: substring not found` out of `routing.index`, naming neither
+    # the condition, nor the phrase, nor where it looked. So the guard rejected
+    # true guidance for its wording and accepted false guidance for its
+    # substrings, and its whole cost landed on the honest author.
+    #
+    # Three things changed, and each closes a different half of that:
+    #
+    #   1. The window is the condition's OWN passage, parsed out of what the
+    #      document renders, rather than everything after an anchor. A phrase
+    #      belonging to another route can no longer answer for this one, and
+    #      the test's own comment already recorded a phrase 1,600 bytes away
+    #      satisfying a pair.
+    #   2. The phrase has to be ISSUED there, read with `clause_polarity`. A
+    #      route written backwards - "needs no walkthrough labeling", "never
+    #      enter the creation dependency matrix" - is refused where the module
+    #      says that is the route the condition takes.
+    #   3. The expectation is keyed by the module's REMEDY rather than pasted
+    #      per condition. `ACTION_FOR_CONDITION` is where this package decides
+    #      which conditions share an instruction, so a new condition on an
+    #      existing remedy is covered with nothing written here and a new
+    #      remedy fails closed. Every condition added since these guards were
+    #      written arrived as a `(condition, phrase)` pair chosen to match text
+    #      its author had just written, which is how the table came to agree
+    #      with every author by construction.
+    #
+    # What this still does not do, said plainly because a one-sided disclosure
+    # is its own defect: it reads words, not meaning. A passage that keeps one
+    # of its remedy's phrasings un-negated and writes something false around it
+    # is not detected. A rewrite that drops every listed phrasing reds - but it
+    # reds with the condition, the remedy, the polarity read for each phrasing
+    # and the passage on the screen, so the author can act on it in one read
+    # and the fix is another phrasing beside the ones below, never a wider
+    # window.
+
+    #: The sentence SKILL.md opens its cap routing with. The region runs from
+    #: here to the next heading, so a guard over routes reads the routes.
+    CAP_ROUTING_OPENER = "Route every active dataset cap"
+
+    #: Every remedy the scorer can emit, and the phrasings SKILL.md may route
+    #: it with.
+    #:
+    #: A SET per remedy rather than one string per condition, because a route
+    #: can honestly be written more than one way and a guard that pins one
+    #: wording pushes the next author away from the rule instead of towards
+    #: it. Exactly one of them has to be ISSUED in the condition's own passage;
+    #: the rest may be absent, and one being absent is never a failure on its
+    #: own.
+    CAP_ROUTE_PHRASINGS: dict[str, tuple[str, ...]] = {
+        "get-data": ("enter the creation dependency matrix",),
+        "read-dataset": ("read and re-map it", "re-map it per the dataset reference"),
+        "label-data": ("repairing a labelled working copy",),
+        "repair-dataset": ("repair and revalidate a working copy",),
+        "resplit-dataset": ("repair a disjoint split", "repair the split"),
+        "review-split": ("ask before repairing", "redraw the split"),
+        "connect-real-data": (
+            "walkthrough labeling rules",
+            "apply those rules",
+            "name the split out loud",
+        ),
+        "declare-data-provenance": (
+            "say the assumption and both card scores",
+            "offer declaring the real source",
+        ),
+        "review-answer-key": (
+            "a person reviews a sample of the answers",
+            "the same review",
+            "put the flagged rows to the user",
+            "approval-gated question",
+        ),
+        "add-examples": (
+            "more comparable examples is what lifts this",
+            "carry the top-up on the one ask",
+        ),
+        "repair-evaluator": ("inspect, repair, or replace",),
+        "connect-evaluator": ("create or select",),
+        "connect-real-evaluator": ("walkthrough labeling",),
+        "connect-real-agent": ("walkthrough labeling",),
+        # `evaluator-unvalidated`'s remedy is the vocabulary's `proceed`, which
+        # names no work: what the route has to say is where the measurement
+        # happens instead, and that is the calibration gate.
+        "proceed": ("opening/stage-4 calibration gate",),
+        "bound-evaluator-cost": ("five-option question",),
+        "vary-knobs": (
+            "report stops/zero trials",
+            "mark one setting with a second value",
+        ),
+    }
+
+    #: What a route has to rule OUT, where saying only what to do is not enough.
+    #:
+    #: Per condition rather than per remedy, because it is a property of the
+    #: condition: three routes exist largely to stop an assistant taking the
+    #: branch a neighbouring condition takes, and a customer holding a
+    #: perfectly good file was sent into dataset creation exactly that way.
+    #:
+    #: Read for polarity rather than pinned as "do not ...", which is what the
+    #: old table did. "Never enter the creation dependency matrix" says the
+    #: same thing and used to red.
+    CAP_ROUTE_REFUSALS: dict[str, tuple[str, ...]] = {
+        "dataset-shape-unrecognised": ("enter the creation dependency matrix",),
+        "dataset-tuning-split-empty": (
+            "enter the creation dependency matrix",
+            "ask for more data",
+        ),
+        "dataset-split-by-task-family": (
+            "enter the creation dependency matrix",
+            "ask for more data",
+        ),
+    }
+
+    #: A route denied by a bare determiner rather than by a negator.
+    #:
+    #: `POLARITY_NEGATORS` deliberately does not carry a bare `no` in front of
+    #: a noun, and it should not: "no configuration is enough on its own" opens
+    #: honest sentences all over this package, and reading that as a
+    #: prohibition is the false red that list was narrowed to remove. In front
+    #: of a ROUTE the two words are a denial and nothing else - "needs no
+    #: walkthrough labeling" is the route written backwards - so they are read
+    #: here, where the clause is known to be a route, and not there, where it
+    #: is not.
+    ROUTE_DENIALS = re.compile(r"\b(?:no|without)\s*$")
+
+    @classmethod
+    def route_polarity(cls, passage: str, phrase: str) -> frozenset[str]:
+        """What every occurrence of `phrase` in `passage` does to it.
+
+        `clause_polarity` collapses disagreeing occurrences to `mixed`, which
+        is right for a prohibition and wrong for a route: a route may be stated
+        and then carry a caveat, and one caveat does not unwrite it. The set is
+        returned instead, so the caller decides and the message can say what
+        was read where.
+        """
+        flat = " ".join(passage.casefold().split())
+        needle = " ".join(phrase.casefold().split())
+        answers = set()
+        for at in clause_occurrences(flat, needle):
+            runup = adjacent_runup(flat, at)
+            answers.add(
+                "forbids" if cls.ROUTE_DENIALS.search(runup) else polarity_of(runup)
+            )
+        return frozenset(answers) or frozenset({"absent"})
+
+    @staticmethod
+    def constructed_cap_conditions() -> set[str]:
+        """Every condition this package's scorer constructs a `Cap` for.
+
+        Read off the module's source, as the three guards below already did
+        one prefix at a time. Read whole here because a passage boundary is a
+        mention of ANY condition: a scan that knew only the dataset ids would
+        read the evaluator paragraph as part of the last dataset route.
+        """
+        source = (SKILL_ROOT / "scripts" / "readiness.py").read_text()
+        return set(re.findall(r'Cap\(\s*"([a-z0-9-]+)"', source))
+
+    @classmethod
+    def cap_routing_region(cls) -> str:
+        """SKILL.md's cap routing, from the sentence that opens it to the next heading."""
+        text = SKILL.read_text()
+        opener = text.find(cls.CAP_ROUTING_OPENER)
+        if opener < 0:
+            raise AssertionError(
+                f"SKILL.md no longer opens its cap routing with "
+                f"{cls.CAP_ROUTING_OPENER!r}. The routing guards read the "
+                "region between that sentence and the next heading; move this "
+                "anchor with the prose rather than leaving them reading a "
+                "region that starts somewhere else"
+            )
+        end = text.find("\n### ", opener)
+        return text[opener : end if end >= 0 else len(text)]
+
+    @staticmethod
+    def cap_routing_passages(region: str, conditions: set[str]) -> dict[str, str]:
+        """The passage that routes each condition, one per condition.
+
+        Parsed out of what markdown renders rather than sliced at an offset. A
+        `- ` item is one unit whole, however many sentences it takes, because a
+        bullet is one route and splitting it would let its second half answer
+        for its first. Prose is split at `POLARITY_SENTENCE_BREAK`, which
+        breaks on `;` as well as on `.` - the evaluator paragraph separates
+        three routes with semicolons and nothing else.
+
+        A route runs from the unit that first names its condition through every
+        following unit that names none, so the paragraph explaining a route
+        belongs to it. A condition named again later is a cross-reference and
+        does not open a second passage: `dataset-tuning-split-empty`'s bullet
+        cites `dataset-tune-holdout-overlap`, and a citation is not a route.
+
+        What it does not model, measured rather than assumed. Two routes
+        written into one sentence share a passage, so a phrase belonging to one
+        of them can still answer for the other - three sentences in this
+        document rather than the whole region, which is why the refusals above
+        are per condition. And a fenced block inside the region would be read
+        as prose; there are none there today (0 fences in 6_993 bytes), so this
+        is a bound on the parse and not a live blind spot, and a fence arriving
+        would show up as a sentence claiming a route.
+        """
+        units: list[str] = []
+        prose: list[str] = []
+        item: list[str] = []
+
+        def close_prose() -> None:
+            if prose:
+                units.extend(POLARITY_SENTENCE_BREAK.split(" ".join(prose)))
+                prose.clear()
+
+        def close_item() -> None:
+            if item:
+                units.append(" ".join(item))
+                item.clear()
+
+        for line in region.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("- "):
+                close_prose()
+                close_item()
+                item.append(stripped)
+            elif item:
+                if stripped:
+                    item.append(stripped)
+                else:
+                    close_item()
+            elif stripped:
+                prose.append(stripped)
+            else:
+                close_prose()
+        close_item()
+        close_prose()
+
+        named = re.compile(r"`([a-z0-9][a-z0-9-]*)`")
+        passages: dict[str, str] = {}
+        current: list[str] = []
+        for unit in units:
+            opening = [
+                name
+                for name in dict.fromkeys(named.findall(unit))
+                if name in conditions and name not in passages
+            ]
+            if opening:
+                current = opening
+                for condition in opening:
+                    passages[condition] = unit
+            elif current:
+                for condition in current:
+                    passages[condition] = f"{passages[condition]} {unit}"
+        return passages
+
+    def assert_the_route_is_written_for(
+        self, condition: str, passages: dict[str, str]
+    ) -> None:
+        """`condition` has a passage of its own, and that passage issues its remedy."""
+        remedy = READINESS.ACTION_FOR_CONDITION.get(condition)
+        self.assertIsNotNone(
+            remedy,
+            f"`{condition}` is constructed as a cap and has no entry in "
+            "ACTION_FOR_CONDITION, so there is no remedy for a route to carry",
+        )
+        self.assertIn(
+            remedy,
+            self.CAP_ROUTE_PHRASINGS,
+            f"`{condition}` routes to the remedy {remedy!r} and nothing here "
+            "says how SKILL.md may write it. Add the phrasings that route it - "
+            "otherwise the next condition on this remedy ships with a guard "
+            "that cannot read its route",
+        )
+        passage = passages.get(condition)
+        self.assertIsNotNone(
+            passage,
+            f"SKILL.md's cap routing never names `{condition}`, so an "
+            "assistant meeting the one cap it fires on has no branch to take "
+            f"and no words to say. The scorer raises it and routes it to "
+            f"{remedy!r}; write that route in the reader's language, because "
+            "condition ids stay internal. Routes found here: "
+            f"{sorted(passages)}",
+        )
+        phrasings = self.CAP_ROUTE_PHRASINGS[remedy]
+        read = {
+            phrase: sorted(self.route_polarity(passage, phrase)) for phrase in phrasings
+        }
+        issued = [
+            phrase
+            for phrase, answers in read.items()
+            if {"mandates", "unqualified"}.intersection(answers)
+        ]
+        self.assertTrue(
+            issued,
+            f"`{condition}`'s own passage does not tell the assistant to do "
+            f"what the module's remedy {remedy!r} asks. Read there: {read}. "
+            "`forbids` is the route written backwards, which is the defect "
+            "this guard exists for; `absent` means the route is written in "
+            "words this guard does not know, and the fix for that is another "
+            "phrasing in CAP_ROUTE_PHRASINGS, never a wider window. The "
+            f"passage read: {passage!r}",
+        )
+        # Not wrapped in `subTest`: this helper is exercised by a probe below
+        # that asserts it RAISES, and a subTest records a failure instead of
+        # raising, so the probe would pass while proving nothing.
+        for phrase in self.CAP_ROUTE_REFUSALS.get(condition, ()):
+            self.assertEqual(
+                sorted(self.route_polarity(passage, phrase)),
+                ["forbids"],
+                f"`{condition}`'s route has to rule {phrase!r} out and not "
+                "merely omit it: an assistant reading only what to do takes "
+                "the neighbouring condition's branch, which is how a customer "
+                "holding a usable file was sent to create one. The passage "
+                f"read: {passage!r}",
+            )
+
+    def test_every_cap_remedy_the_scorer_emits_has_a_written_route(self) -> None:
+        """The phrasings table covers the module's remedies, and only those.
+
+        Both directions. A remedy with no phrasings is a condition nobody can
+        route, and it fails closed at the first guard that meets it. A phrasing
+        set for a remedy the module no longer emits is dead text that reads
+        like a control, which is the shape this repository has been bitten by
+        before, so it is named here rather than left to rot.
+        """
+        emitted = {
+            READINESS.ACTION_FOR_CONDITION[condition]
+            for condition in self.constructed_cap_conditions()
+        }
+        self.assertEqual(
+            emitted - set(self.CAP_ROUTE_PHRASINGS),
+            set(),
+            "the scorer emits a remedy that no route in CAP_ROUTE_PHRASINGS "
+            "knows how to read, so every condition on it is routed by a guard "
+            "that cannot tell a route from an absence",
+        )
+        self.assertEqual(
+            set(self.CAP_ROUTE_PHRASINGS) - emitted,
+            set(),
+            "CAP_ROUTE_PHRASINGS carries a remedy the scorer no longer emits; "
+            "delete it rather than leaving a control nothing exercises",
+        )
+
+    def test_the_cap_routing_guard_reads_what_the_route_says(self) -> None:
+        """The mechanism above, probed both ways on invented routing regions.
+
+        Invented rather than read off SKILL.md, and deliberately: a fixture
+        built from the document the assertion reads proves only that the two
+        agree, which is the circularity this guard was rebuilt to remove.
+        """
+        honest = (
+            "Route every active dataset cap to the branch this flow defines.\n"
+            "\n"
+            "- `dataset-absent` - enter the creation dependency matrix, and "
+            "put both ways out on the one ask.\n"
+            "\n"
+            "`evaluator-generated` and `agent-generated` route through the "
+            "walkthrough labeling rules and nothing else - carry the "
+            "substitute's provenance into the words. Neither is a repair.\n"
+        )
+        conditions = {"dataset-absent", "evaluator-generated", "agent-generated"}
+        passages = self.cap_routing_passages(honest, conditions)
+        self.assertEqual(set(passages), conditions)
+        for condition in sorted(conditions):
+            with self.subTest(honest=condition):
+                self.assert_the_route_is_written_for(condition, passages)
+        # The paragraph that explains a route belongs to it, so a guard reading
+        # the route can read the explanation too.
+        self.assertIn("neither is a repair", passages["agent-generated"].casefold())
+
+        # 1. The stuffing this guard was rebuilt for, measured on SKILL.md
+        # itself: the agent half split off and written backwards, with the
+        # matched phrase left standing in the sentence beside it.
+        stuffed = honest.replace(
+            "`evaluator-generated` and `agent-generated` route through the "
+            "walkthrough labeling rules and nothing else - carry the "
+            "substitute's provenance into the words.",
+            "`agent-generated` needs no branch and stops nothing, so never "
+            "carry the substitute's provenance into the words. "
+            "`evaluator-generated` routes through the walkthrough labeling "
+            "rules and nothing else.",
+        )
+        stuffed_passages = self.cap_routing_passages(stuffed, conditions)
+        with self.assertRaises(AssertionError) as refused:
+            self.assert_the_route_is_written_for("agent-generated", stuffed_passages)
+        self.assertIn("agent-generated", str(refused.exception))
+        self.assertIn("connect-real-agent", str(refused.exception))
+        # `evaluator-generated` keeps its route in the same document, so the
+        # refusal is of this route and not of the file.
+        self.assert_the_route_is_written_for("evaluator-generated", stuffed_passages)
+
+        # 2. The same phrase, kept inside the passage and negated there.
+        negated = honest.replace(
+            "route through the walkthrough labeling rules and nothing else",
+            "need no walkthrough labeling rules and bound nothing",
+        )
+        with self.assertRaises(AssertionError):
+            self.assert_the_route_is_written_for(
+                "agent-generated", self.cap_routing_passages(negated, conditions)
+            )
+
+        # 3. A route rewritten in the remedy's other words stays green, which
+        # is the half a false red is silent about: nobody reports one, and the
+        # next contributor deletes the guard instead.
+        reworded = honest.replace(
+            "- `dataset-absent` - enter the creation dependency matrix, and "
+            "put both ways out on the one ask.",
+            "- `dataset-absent` - stop the paid run wherever nothing names a "
+            "dataset: enter the creation dependency matrix, then point this "
+            "run at the rows they already hold or derive some from what the "
+            "project does have.",
+        )
+        self.assert_the_route_is_written_for(
+            "dataset-absent", self.cap_routing_passages(reworded, conditions)
+        )
+        # And a reflow of the same bullet, because a hard wrap is not an edit.
+        wrapped = honest.replace(
+            "- `dataset-absent` - enter the creation dependency matrix, and "
+            "put both ways out on the one ask.",
+            "- `dataset-absent` - enter the creation\n  dependency matrix, and "
+            "put both ways\n  out on the one ask.",
+        )
+        self.assert_the_route_is_written_for(
+            "dataset-absent", self.cap_routing_passages(wrapped, conditions)
+        )
+
+        # 4. A missing route reds by name rather than as `substring not found`.
+        deleted = honest.replace("`agent-generated` ", "")
+        with self.assertRaises(AssertionError) as missing:
+            self.assert_the_route_is_written_for(
+                "agent-generated", self.cap_routing_passages(deleted, conditions)
+            )
+        self.assertIn("never names `agent-generated`", str(missing.exception))
+        self.assertIn("condition ids stay internal", str(missing.exception))
+
+        # 5. A refusal is read for polarity, so the rule may be written in any
+        # of the words that forbid.
+        refusing = (
+            "Route every active dataset cap to the branch this flow defines.\n"
+            "\n"
+            "- `dataset-shape-unrecognised` - no row matched the shape: never "
+            "enter the creation dependency matrix. Read and re-map it per the "
+            "dataset reference, then re-score.\n"
+        )
+        self.assert_the_route_is_written_for(
+            "dataset-shape-unrecognised",
+            self.cap_routing_passages(refusing, {"dataset-shape-unrecognised"}),
+        )
+        with self.assertRaises(AssertionError) as unrefused:
+            self.assert_the_route_is_written_for(
+                "dataset-shape-unrecognised",
+                self.cap_routing_passages(
+                    refusing.replace("never enter", "enter"),
+                    {"dataset-shape-unrecognised"},
+                ),
+            )
+        self.assertIn("rule", str(unrefused.exception))
+
+    def test_a_route_cannot_be_answered_by_the_sentence_beside_it(self) -> None:
+        """The window is the route's own passage, not the rest of the file.
+
+        The old guards read everything after an anchor sentence, so a phrase
+        1,600 bytes away in another condition's bullet satisfied a pair. The
+        comment above the agent guard recorded that hazard and the guard kept
+        it, because bounding an `.index()` needs somewhere to bound it to.
+        """
+        region = (
+            "Route every active dataset cap to the branch this flow defines.\n"
+            "\n"
+            "- `dataset-integrity-fail` - treat it as invalid.\n"
+            "- `dataset-absent` - enter the creation dependency matrix.\n"
+        )
+        passages = self.cap_routing_passages(
+            region, {"dataset-absent", "dataset-integrity-fail"}
+        )
+        self.assertNotIn(
+            "creation dependency matrix", passages["dataset-integrity-fail"]
+        )
+        with self.assertRaises(AssertionError):
+            self.assert_the_route_is_written_for("dataset-integrity-fail", passages)
+        self.assert_the_route_is_written_for("dataset-absent", passages)
+
     def test_every_agent_cap_condition_has_a_documented_branch(self) -> None:
         """The sibling below covers the dataset caps; nothing covered the agent one.
 
@@ -14475,43 +14972,31 @@ class SkillPackageTests(unittest.TestCase):
 
         Enumerated from the module rather than listed here, for the same reason
         the dataset check pins its count: a second agent cap must be routed too.
+
+        Since #389 the pair table is gone. What each route has to SAY is read
+        off the module's remedy through `CAP_ROUTE_PHRASINGS`, inside the
+        condition's own passage, with the polarity read - see the comment above
+        `CAP_ROUTING_OPENER` for the two directions that were measured broken.
+        The anchor this used to split on is gone with it: the region now runs
+        from the routing opener to the next heading, so the hazard that comment
+        recorded - reading a phrase 1_600 bytes before the condition it is
+        supposed to be routing - is no longer reachable rather than avoided.
         """
-        source = (SKILL_ROOT / "scripts" / "readiness.py").read_text()
         conditions = {
             condition
-            for condition in re.findall(r'Cap\(\s*"([a-z0-9-]+)"', source)
+            for condition in self.constructed_cap_conditions()
             if condition.startswith("agent-")
         }
         # #238 adds the second: whose agent this is, which is a different
         # question from how much of it can vary, and needs a route of its own
         # for the same reason the first one did.
         self.assertEqual(conditions, {"agent-no-varying-knobs", "agent-generated"})
-        normalized = " ".join(SKILL.read_text().casefold().split())
-        # Split at the evaluator/agent sentence, not at the dataset one. This
-        # branch also teaches the dataset intro the blocks-vs-advisory rule in
-        # the same words ("an advisory ceiling, never a repair to route"), so a
-        # search from the dataset anchor finds that sentence first and the
-        # ordering assertion below reads a phrase 1_600 bytes before the
-        # condition it is supposed to be routing.
-        routing = normalized.split(
-            "evaluator and agent caps route through the rules that already own them", 1
-        )[1]
-        for condition, branch in (
-            ("agent-no-varying-knobs", "report stops/zero trials"),
-            # #238: routed to the walkthrough labeling rules, which is the one
-            # place this guide already decides what may be said about material
-            # it wrote itself.
-            ("agent-generated", "walkthrough labeling"),
-        ):
+        passages = self.cap_routing_passages(
+            self.cap_routing_region(), self.constructed_cap_conditions()
+        )
+        for condition in sorted(conditions):
             with self.subTest(condition=condition):
-                self.assertIn(
-                    condition,
-                    routing,
-                    f"{condition} can stop or bound a run and the guidance "
-                    "never names it, so the assistant has no branch to take "
-                    "and no words to say - condition ids stay internal",
-                )
-                self.assertLess(routing.index(condition), routing.index(branch))
+                self.assert_the_route_is_written_for(condition, passages)
 
     def test_the_advisory_claim_matches_which_branches_actually_block(
         self,
@@ -14576,9 +15061,12 @@ class SkillPackageTests(unittest.TestCase):
     def test_an_unrecognised_shape_is_read_before_it_is_called_broken(self) -> None:
         """The route has to say READ, not just "not creation".
 
-        Removing "do not enter the creation dependency matrix" is caught by the
-        branch table below. Replacing the rest of the sentence with the repair
-        instruction it used to carry is not: the branch still routes away from
+        Removing the refusal of the creation dependency matrix is caught by
+        `CAP_ROUTE_REFUSALS` above, which reads it for polarity rather than for
+        the literal "do not ..." this line used to name, so "never enter the
+        creation dependency matrix" says it too. Replacing the rest of the
+        sentence with the repair instruction it used to carry is not caught
+        there: the branch still routes away from
         creation, and the assistant is still told to fix a file nobody has
         opened. Both halves are the fix, so both are asserted.
 
@@ -14833,77 +15321,27 @@ class SkillPackageTests(unittest.TestCase):
         # the three that scopes the claim rather than stopping the run.
         self.assertEqual(len(conditions), 16)
         normalized = " ".join(SKILL.read_text().casefold().split())
-        routing = normalized.split("route every active dataset cap", 1)[1]
-        for condition, branch in (
-            ("dataset-absent", "creation dependency matrix"),
-            # An unrecognised shape routes to reading the file, and explicitly
-            # NOT to creation: the id it used to share sent a customer holding
-            # a perfectly good file into the dataset-creation branch. It does
-            # not route to repair either - most files that reach it are not
-            # broken, so the branch must not open by calling them invalid.
-            (
-                "dataset-shape-unrecognised",
-                "do not enter the creation dependency matrix",
-            ),
-            ("dataset-no-expected-outputs", "repairing a labelled working copy"),
-            ("dataset-integrity-fail", "repair and revalidate a working copy"),
-            ("dataset-tune-holdout-overlap", "repair a disjoint split"),
-            ("dataset-fully-synthetic", "walkthrough labeling rules"),
-            ("dataset-mostly-synthetic", "name the split out loud"),
-            (
-                "dataset-undeclared-provenance",
-                "say the assumption and both card scores",
-            ),
-            ("dataset-mostly-undeclared", "say the assumption and both card scores"),
-            (
-                "dataset-generated-answer-key",
-                "a person reviews a sample of the answers",
-            ),
-            # The rung between "none of it" and "all of it", which the ladder
-            # did not have: with one rung the cap turned on the last row.
-            (
-                "dataset-mostly-generated-answer-key",
-                "the same review, on the model-written answers only",
-            ),
-            # Both map to `get-data`, and neither bullet said anything about
-            # data: one said "call rankings exploratory" and the other said
-            # report paired uncertainty. Read together with the action they
-            # emit, the guidance told a customer to hedge the claim and never
-            # what would lift the ceiling. The branch has to do what the action
-            # name says, or the two halves route differently.
-            # Distinct phrases, because the two conditions kept separate
-            # bullets: #149 gave `below-measurable-size` a second, blocking
-            # half that a merged bullet cannot carry, so `.index()` on one
-            # shared phrase would find the earlier bullet for both.
-            # Its own bullet since #197, and it must say the two things the
-            # small-dataset bullet used to have to carry as a second half: the
-            # repair is the split, and nobody is sent for data.
-            (
-                "dataset-tuning-split-empty",
-                "the rows are fine and the split is not",
-            ),
-            (
-                "dataset-below-measurable-size",
-                "more comparable examples is what lifts this",
-            ),
-            (
-                "dataset-coarse-resolution",
-                "more comparable examples is what lifts this too",
-            ),
-            (
-                "dataset-unsound-expected-outputs",
-                "approval-gated question",
-            ),
-        ):
+        # The `(condition, phrase)` table that used to sit here is gone with
+        # #389. It carried one pasted pair per condition, each phrase chosen to
+        # match text its author had just written, and it read them across the
+        # whole rest of the file: the comment it carried recorded that
+        # `dataset-coarse-resolution` needed its own phrase spelled "...too"
+        # only because `.index()` on the shared one found the earlier bullet.
+        # Bounding a route to its own passage removes that reason, and keying
+        # the phrasings on `ACTION_FOR_CONDITION` removes the pasting - two
+        # conditions that share a remedy now share its phrasings, and that is
+        # derived rather than noticed.
+        #
+        # Every dataset condition the scorer can raise is routed, not only the
+        # ones a table spelled out. The count above pins how many exist; this
+        # pins that each one reaches a reader with a branch that says what the
+        # module's remedy asks.
+        passages = self.cap_routing_passages(
+            self.cap_routing_region(), self.constructed_cap_conditions()
+        )
+        for condition in sorted(conditions):
             with self.subTest(condition=condition):
-                self.assertIn(condition, conditions)
-                self.assertLess(routing.index(condition), routing.index(branch))
-        # Every dataset condition the scorer can raise is routed here, not just
-        # the ones this table spells out. The count above pins how many exist;
-        # this pins that none of them reaches a reader with no branch at all.
-        for condition in conditions:
-            with self.subTest(condition=condition):
-                self.assertIn(condition, routing)
+                self.assert_the_route_is_written_for(condition, passages)
         self.assertIn("present the reason rather than the condition id", normalized)
         # And the rule that decides which routes stop the run, checked against
         # the scorer rather than only quoted. Without it the routing list is
@@ -15084,7 +15522,12 @@ class SkillPackageTests(unittest.TestCase):
                     # prints for a 240-row dataset whose tuning side carries no
                     # labels - measured `FIX BEFORE PAID RUN no example can be
                     # scored`, status BLOCKED.
-                    bullet = routing.split(f"`{condition}`", 1)[1].split("- `", 1)[0]
+                    # The bullet, taken from the same parse the routes above
+                    # are read with rather than sliced out again here: two
+                    # readings of "where does this bullet end" are two chances
+                    # to disagree, and this one used to stop at the next `- `
+                    # while the routes stopped somewhere else.
+                    bullet = passages[condition].casefold()
                     self.assertIn("only where", bullet)
                     self.assertIn("the same condition blocks", bullet)
                     self.assertIn("fix before paid run", bullet)
@@ -15315,21 +15758,17 @@ class SkillPackageTests(unittest.TestCase):
             if condition.startswith("evaluator-")
         }
         self.assertEqual(len(conditions), 6)
-        normalized = " ".join(SKILL.read_text().casefold().split())
-        routing = normalized.split(
-            "evaluator and agent caps route through the rules that already own them", 1
-        )[1]
-        for condition, branch in (
-            ("evaluator-unresolved", "inspect, repair, or replace"),
-            ("evaluator-invalid", "inspect, repair, or replace"),
-            ("evaluator-unvalidated", "opening/stage-4 calibration gate"),
-            ("evaluator-timeout", "five-option question"),
-            ("evaluator-absent", "create or select"),
-            ("evaluator-generated", "walkthrough labeling"),
-        ):
+        # Read per route since #389, not across the rest of the file, and read
+        # for what the route SAYS rather than for a phrase that follows the id
+        # somewhere. `evaluator-unresolved` and `evaluator-invalid` share the
+        # `repair-evaluator` remedy and therefore share its phrasings, which is
+        # derived from the module rather than written twice here.
+        passages = self.cap_routing_passages(
+            self.cap_routing_region(), self.constructed_cap_conditions()
+        )
+        for condition in sorted(conditions):
             with self.subTest(condition=condition):
-                self.assertIn(condition, conditions)
-                self.assertLess(routing.index(condition), routing.index(branch))
+                self.assert_the_route_is_written_for(condition, passages)
 
     def test_the_timeout_route_has_exactly_one_home(self) -> None:
         """Three branches wrote three routes; only one of them may survive.
