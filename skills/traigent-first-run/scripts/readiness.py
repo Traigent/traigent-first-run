@@ -13447,7 +13447,10 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--report", help="write the markdown report to this path")
     parser.add_argument(
         "--report-timestamp",
-        help="timestamp for the report; never read from the clock",
+        help=(
+            "UTC YYYYMMDDTHHMMSSZ, the moment the caller writes this report; "
+            "never read from the clock"
+        ),
     )
     parser.add_argument("--color", choices=("auto", "always", "never"), default="auto")
     parser.add_argument("--ascii", action="store_true", help="force ASCII glyphs")

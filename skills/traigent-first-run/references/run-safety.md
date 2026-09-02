@@ -1196,7 +1196,7 @@ problem is stamped when it was first met.
 
 | Key | What it holds |
 |---|---|
-| `ts` | UTC `YYYYMMDDTHHMMSSZ`, when this line was written |
+| `ts` | `YYYYMMDDTHHMMSSZ` as SKILL.md defines it, on the write of this line |
 | `event` | `blocked`, `stopped`, or `warning` |
 | `stage` | the run record's stage, 1 to 8 - the internal numbering, not the `n/5` the user saw |
 | `class` | a string, one value from that event's own closed set below. Never authored prose - the same failure met twice has to land on the same class, and a sentence written twice will not |

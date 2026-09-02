@@ -346,9 +346,9 @@ evidence without `values` or `low`/`high`; verify the real build path before add
 to the enhanced space. A stub whose comment lists the settings a real call *would* take is describing
 an agent that does not exist yet, and recording those names reports a search space this project does
 not have - the same false readiness a historical config-space file produces. Pass it as
-`scripts/readiness.py --agent-knobs`; SKILL.md stage 1 states where it is written. Each scoring gets
-its own directory there because a read is evidence about the source at the moment it was taken, never
-a document to be reused.
+`scripts/readiness.py --agent-knobs`; SKILL.md stage 1 states where it is written, how far one
+reading travels, and where it stops. Each scoring gets its own directory there because a read is
+evidence about the source at the moment it was taken.
 
 ```json
 {"source": "agent.py",
@@ -466,7 +466,7 @@ alone authorizes a multi-configuration paid grid; the Enhanced config-space reco
 Run the read with all three bound inputs, for example:
 
 ```bash
-scripts/readiness.py --agent-knobs traigent-runs/readiness/<run>/agent-knobs.json \
+scripts/readiness.py --agent-knobs traigent-runs/readiness/<YYYYMMDDTHHMMSSZ>/agent-knobs.json \
   --agent-source-root "$PROJECT_ROOT" --selected-agent "$PROJECT_ROOT/agent.py" \
   --selected-agent-callable answer_question
 ```
