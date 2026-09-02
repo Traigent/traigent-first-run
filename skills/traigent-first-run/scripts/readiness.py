@@ -4225,6 +4225,20 @@ def diversity_subscore(
     """
     problems: list[str] = []
     unchecked: list[str] = []
+    # Counted in CHECKS, beside a list counted in scans, because the branch
+    # below compares one of these to the number of applicable checks and the
+    # two are not the same unit. `unchecked` gained its second unit when a
+    # question grew a second certifier: it lists the scans that did not run, so
+    # one unanswered question with two scans contributes two entries and
+    # `len(unchecked) == len(applicable)` stopped meaning "nothing was
+    # answered". It read as that on a payload where one question was answered
+    # cleanly and the other was not asked - the card deleted the clean answer -
+    # and it read as the opposite where NO scan ran under a reference-free
+    # judge, printing "the checks that did run found nothing" about a run in
+    # which none did. Two counts over two populations compared to each other is
+    # the same defect this module's comparison count was fixed for; this is the
+    # count in the unit the comparison needs.
+    unanswered = 0
     earned = 20.0
     # A check whose subject this run does not have is not part of the question.
     # It keeps its points - there is nothing here for it to find - and it is
@@ -4254,6 +4268,7 @@ def diversity_subscore(
             # performed, which is a false statement about coverage in the
             # direction that under-reports it - reachable on exactly the older
             # payloads `tuning_distinct_for` exists to tolerate.
+            unanswered += 1
             unchecked.extend(
                 certifier.looking_for
                 for certifier in check.certifiers
@@ -4261,7 +4276,7 @@ def diversity_subscore(
             )
 
     not_checked = f"not checked: {', '.join(unchecked)}"
-    if len(unchecked) == len(applicable):
+    if unanswered == len(applicable):
         return SubScore("diversity", 0.0, 20.0, False, "duplication was not checked")
     if problems:
         evidence = "; ".join(problems)
@@ -6561,9 +6576,23 @@ def repeated_input_routes(finding: RepeatedInputs, *, offers_top_up: bool) -> li
 
     So the first route is the bounded top-up this card already carries, and it
     appears only while that offer is live. `offers_top_up` is
-    `recommended_action == ADD_EXAMPLES`, which is true exactly when a size cap
-    is ASKING and nothing blocks ahead of it - the same three conditions the
-    offer itself is built on, read off the one field that already combines them.
+    `recommended_action == ADD_EXAMPLES`, which is STRICTER than "the offer has
+    room": that field returns the first BLOCKING cap's remedy, then the first
+    ASKING one in ceiling order, so a blocker or any lower-ceiling asking cap
+    displaces the size remedy and this route is dropped while the offer is still
+    live. The reachable case is a project whose answer key was generated: the
+    offer is live, `dataset-coarse-resolution` asks at
+    `COARSE_RESOLUTION_CEILING`, nothing blocks, and `review-answer-key` asks
+    at the lower `GENERATED_ANSWER_KEY_CEILING`, so it wins the ordering and
+    route A is not printed.
+
+    That is the safe direction, and it is why the stricter field is read rather
+    than the offer's own conditions. Dropping the route costs a customer a
+    shortcut to an offer still printed two lines above them; printing it while
+    the payload recommends something else would put this block's only mark
+    against the run's own answer about what to do first. The second is a
+    defect; the first is a smaller card.
+
     It names no number of its own and cannot exceed the total, because it is not
     a second offer; it is this finding pointing at the one already made, so the
     customer answers once.

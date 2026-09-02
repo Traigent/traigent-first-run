@@ -4740,13 +4740,23 @@ class TheRoutesOfferedWhenRowsRepeatTests(unittest.TestCase):
         self.assertTrue(self._route_lines(card))
 
     def test_the_question_sits_below_every_result_it_follows(self) -> None:
-        """Below the pillars AND below the ceilings, not merely below the top.
+        """Below the pillars AND below every ceiling, not merely below the top.
 
         A question printed before its own evidence asks a customer to answer
         before they have read anything. The ceilings are part of that evidence:
         a card that asks which examples to compare on above `FIX BEFORE PAID
         RUN` and three limits is asking them to choose while the reasons are
         still below the fold.
+
+        EACH CAP IS FOUND BY ITS REASON, not by a rendered marker. The first
+        version of this test looked for `LIMITED TO {ceiling}`, which the
+        renderer prints only on the binding branch - every other cap renders
+        `WOULD LIMIT TO n` or `FIX BEFORE PAID RUN`, and `LIMITED TO 89` is not
+        a substring of `WOULD LIMIT TO 89`. So the guarded assertion ran zero
+        times out of four while `assertTrue(score["caps"])` above it made the
+        test look guarded, and the position mutation still passed. The reason
+        is a field of the cap rather than a spelling of the card, so it is
+        present however the line is labelled.
         """
         rows = self._rows()
         with tempfile.TemporaryDirectory() as raw:
@@ -4758,20 +4768,70 @@ class TheRoutesOfferedWhenRowsRepeatTests(unittest.TestCase):
         for pillar in score["pillars"]:
             self.assertLess(card.index(pillar["name"].upper()), label_at)
         self.assertTrue(score["caps"], "this fixture is meant to carry ceilings")
+        checked = 0
         for cap in score["caps"]:
-            marker = f"LIMITED TO {cap['ceiling']}"
-            if marker in card:
-                self.assertLess(
-                    card.index(marker),
-                    label_at,
-                    f"the question is printed above the ceiling {cap['condition']!r}",
-                )
+            self.assertIn(
+                cap["reason"],
+                card,
+                f"the cap {cap['condition']!r} is not on the card at all, so "
+                "nothing here can say where the question sits relative to it",
+            )
+            self.assertLess(
+                card.index(cap["reason"]),
+                label_at,
+                f"the question is printed above the ceiling {cap['condition']!r}",
+            )
+            checked += 1
+        self.assertEqual(
+            checked,
+            len(score["caps"]),
+            "not every cap was positioned against the question",
+        )
         self.assertEqual(card.count(MODULE.REPEATED_ROWS_LABEL), 1)
         self.assertEqual(
             card.count(MODULE.RECOMMENDED_MARK),
             1,
             "the recommendation is marked more than once on one card",
         )
+
+    def test_the_offer_route_a_points_at_is_printed_above_it(self) -> None:
+        """Route A says "above", so the thing it names has to be above it.
+
+        This is the position rule with teeth on it. Route A is deictic: it does
+        not restate the bounded offer, it points at one, and a block rendered
+        higher up the card would leave that sentence pointing upward at an
+        offer printed below it. Nothing else in this suite ties the two
+        together, so moving the block satisfied every other assertion.
+
+        The cap is built by `power_ceiling`, the function that builds it in a
+        real run, so the sentence asserted here is the shipped remedy's own and
+        not one invented by this test. A hand-written reason could carry any
+        words at all and would prove nothing about what a customer reads.
+        """
+        finding = MODULE.RepeatedInputs(
+            scoreable=16, distinct=12, side="on the tuning side"
+        )
+        cap = MODULE.power_ceiling(12, 16, available_rows=16)
+        self.assertIsNotNone(cap)
+        self.assertTrue(cap.asks, "this fixture is meant to reach the asking arm")
+        action, card = self._card_for([cap], finding)
+        self.assertEqual(action, MODULE.ADD_EXAMPLES)
+        offer = MODULE.top_up_offer(12, 16).strip()
+        self.assertTrue(offer, "this fixture is meant to carry the bounded offer")
+        sentence = offer.split(".")[0]
+        self.assertIn(
+            sentence,
+            card,
+            "the bounded offer is not on this card, so this test is not "
+            "exercising the arm route A points at",
+        )
+        self.assertLess(
+            card.index(sentence),
+            card.index(MODULE.REPEATED_ROWS_LABEL),
+            "route A points upward at an offer printed below it",
+        )
+        # And the route that points at it is the one that is actually there.
+        self.assertTrue(self._route_lines(card)[0].startswith("A."))
 
 
 if __name__ == "__main__":
