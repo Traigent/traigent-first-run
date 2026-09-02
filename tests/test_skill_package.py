@@ -14658,7 +14658,15 @@ class SkillPackageTests(unittest.TestCase):
             "answers has entered",
             normalized,
         )
-        self.assertIn("A partial read releases nothing", normalized)
+        self.assertIn("A partial read names its count and releases nothing", normalized)
+        # And the two sentences beside it, which are what stop this rule
+        # contradicting "Say how much you read" below it: the opening pass
+        # above the subset size names a count and releases nothing by design
+        # rather than by failing, and the release is taken on the reviewer's
+        # word because readiness counts entries and never matches them to rows
+        # (traigent-first-run#391).
+        self.assertIn("The hold comes off at the stage-4 re-score", normalized)
+        self.assertIn("this release is taken on your word", normalized)
         # 4. A finding is a question, never an edit - and the question has a
         #    shape: every flagged row's id, its quoted content, the reason, and
         #    whether the run will actually read it. Then the user's answer
@@ -15337,7 +15345,7 @@ class SkillPackageTests(unittest.TestCase):
             ("evaluator-unvalidated", "opening/stage-4 calibration gate"),
             # The same evidence boundary reached by the scope gate, routed to
             # the containment review and never to running the check here.
-            ("evaluator-calibration-refused", "containment review"),
+            ("evaluator-calibration-refused", "manual-containment route"),
             ("evaluator-timeout", "five-option question"),
             ("evaluator-absent", "create or select"),
             ("evaluator-generated", "walkthrough labeling"),

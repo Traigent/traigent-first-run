@@ -633,7 +633,9 @@ Follow this order:
    calibration twice merely because the flow reached this step. Run here anything the opening gate
    truthfully deferred and can now establish.
 5. Re-run `scripts/readiness.py` on the fresh preflight JSON plus any applicable calibration
-   result. Omit every config-space file found before this run's enhanced search here just as at the
+   result and the row-level read of the drawn rows `references/evaluation-and-dataset.md` asks for
+   at this step; the hold that read releases applies to this card too, not only the opening one.
+   Omit every config-space file found before this run's enhanced search here just as at the
    opening gate. This score is required even when a low score or cap is expected. Record its gate
    result in `traigent-runs/run-plan.md`. If calibration was deferred for an installed local
    dependency, record the preflight-only result now and re-run the score immediately after that
@@ -745,9 +747,10 @@ component on purpose, the run continues, and what the ceiling refuses is the cla
 when that gate establishes eligibility, or keep the ceiling and name the concrete deferral. It is
 an evidence boundary, not a repair finding.
 `evaluator-calibration-refused` is that same evidence boundary reached by the scope gate rather than
-by a step nobody took, and it routes to the containment review in `references/run-safety.md`, never
-to running the check here. Say that the ceiling is about missing evidence and not a finding against
-their evaluator, and never present the unsafe route as the way to lift it.
+by a step nobody took, and it routes to the manual-containment route in
+`references/run-safety.md`, never to running the check here. Say that the ceiling is about missing
+evidence and not a finding against their evaluator, and never present the unsafe route as the way
+to lift it.
 `evaluator-timeout` is neither a repair to route nor the invalid-evaluator
 paragraph: calibration ran and did not finish, which establishes nothing about this evaluator and
 does not make it invalid - slow and broken look identical from here. Settle it while gaps are still
@@ -1154,7 +1157,8 @@ interpreted.
 Do not close on a second number. Re-run `scripts/readiness.py` on the post-run evidence for the one
 reading nothing earlier could take - the agent pillar, scored from the space the enhanced search
 actually received - passing the current run's `--config-space traigent-runs/config-space.json` only
-when that search emitted it; otherwise score the agent from absent evidence. The opening and stage-4
+when that search emitted it, and the same row-level read, so this score is not held for a gap an
+earlier card already closed; otherwise score the agent from absent evidence. The opening and stage-4
 scores withhold every config-space document by construction, so this is the run's only measurement
 of the space the customer paid to search. Its dataset and evaluation caps rank nothing and settle
 nothing about what is still open: a gap this run filled with a substitute reads exactly like one the

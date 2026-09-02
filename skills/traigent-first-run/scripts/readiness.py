@@ -276,11 +276,16 @@ MIN_CONFIDENCE_FOR_TOP_BANDS = 0.75
 # `tests/behavioral/outcomes.py`, which declares the card that fixture produces:
 # a flat ceiling moves it from 81 to 74 and gives it a cap it does not deserve -
 # 48 collected rows, a brought evaluator that calibrates, and a band already
-# held at WORKABLE for thin evidence. Nothing about that run overclaims, and a
-# flat ceiling cannot tell it apart from the rotated-answer corpus, because the
-# two differ in nothing this scorer can read except the verdict each was about
-# to reach. A gate on the band reads exactly that; a ceiling on the score
-# cannot.
+# held at WORKABLE for thin evidence. Nothing about that run overclaims.
+#
+# And no ceiling can do both jobs, which is arithmetic rather than judgement.
+# STRONG begins at 75. Keeping the rotated corpus, which scores 83, out of it
+# needs a ceiling at or below 74; leaving the committed case, which scores 81,
+# where it is needs one at or above 81. No single number satisfies both, so a
+# flat ceiling either misses the corpus this was filed about or moves an
+# honest case - whatever else the two payloads differ in, and they differ in
+# plenty. A gate on the band is not a number on that scale at all: it reads
+# the verdict each run was about to reach, which is the thing being refused.
 ANSWER_KEY_BAND_CEILING = "WORKABLE"
 
 # Vendored from the installed SDK's canonical presets
@@ -1406,7 +1411,7 @@ CALIBRATION_REFUSED_CEILING = 45
 # to break the rule - and a route is a change to `calibrate_evaluator.py`, not
 # a number here. Raising this ceiling to close the gap would buy the incentive
 # back by having the card claim what no probe established, which is the defect
-# this whole branch exists to remove.
+# this whole branch exists to remove. Filed as traigent-first-run#392.
 AGENT_NO_VARYING_KNOBS_CEILING = 45
 # Equal to the timeout for the same reason: nothing is broken, and the run
 # compares nothing. An optimization with one configuration is a single
@@ -2634,6 +2639,14 @@ class EvaluationFacts:
     #
     # So it changes the condition, the sentence and the remedy, and leaves the
     # ceiling, the sub-scores and the pillar exactly where they were.
+    #
+    # Two things this does not reach, both filed rather than guessed at. A run
+    # that takes the forbidden path and declares nothing is indistinguishable
+    # from a compliant one, and whether this state should stop the run at all
+    # is a question `references/run-safety.md` answers differently from the cap
+    # it raises: traigent-first-run#393. And the `calibration` sub-score is
+    # still marked withheld for a run that was refused rather than asked:
+    # traigent-first-run#394.
     calibration_scope_refused: bool = False
 
 
@@ -4314,8 +4327,23 @@ def answer_key_read(facts: DatasetFacts, review: RowReview) -> bool:
     answers answer their own questions. On the rotated corpus calibration passes
     honestly, `evaluator-unvalidated` lifts on that honest pass, and the card
     then issues its strongest verdict over material where every configuration
-    scores near zero. A lift earned by evidence about a different question is
-    the failure this predicate exists to refuse.
+    scores near zero. A release bought by evidence about a different question
+    is the failure this predicate exists to refuse.
+
+    DECLARED, and not earned, which is the honest word for what this returns.
+    Entries are counted and never matched against rows: `preflight.py` emits no
+    row ids for them to be matched to, so a review of the right size whose ids
+    name nothing in the dataset releases the hold exactly as a real read does.
+    What is checked is everything counts can carry - `row_review_from_document`
+    refuses a repeated id, an origin the review may not claim, more collected
+    or undeclared rows than preflight counted, and more `in_run` rows than the
+    declared split holds - and identity is not among them.
+
+    So this is a bounded improvement on no gate at all, not a proof that anyone
+    read anything, and the guidance and the flag's own help say so in those
+    words. Closing it needs preflight to publish the ids it already reads,
+    which is a decision about writing customer row ids into a payload rather
+    than a small change: traigent-first-run#391.
 
     True in the three states where there is no such question to ask, and each
     is a real state rather than a convenience:
@@ -4365,6 +4393,18 @@ def row_review_evidence(review: RowReview, facts: DatasetFacts) -> str:
         return ""
     provided = provided_rows(facts)
     line = f"the coding assistant read {review.reviewed} of {provided} provided rows"
+    # And what those rows COVER, where the review said which rows the run
+    # reads. Without this clause the card printed "read 60 of 4812 provided
+    # rows" beside a top band, because the sentence counts the file and the
+    # floor counts the rows the comparison is graded on - two denominators for
+    # one read, which is the class `provided_rows` was extracted to close and
+    # this is the same class in the other direction.
+    graded = graded_rows(facts)
+    if review.reviewed_in_run is not None and graded is not None:
+        line += (
+            f", covering {review.reviewed_in_run} of the {graded} rows this "
+            "run is graded on"
+        )
     if review.unsound == 1:
         line += "; 1 expected answer contradicts its input"
     elif review.unsound:
@@ -7641,11 +7681,11 @@ def render_card(
         # the read and the evaluation reference owns its shape; what belongs
         # here is what is missing and what would supply it.
         lines.append(
-            f"  {palette.dim}Nobody has read the expected answers this run is "
-            f"graded against, so the comparison is not graded above "
-            f"{score.band} whatever it scores. A row-by-row read of each "
-            f"input beside its expected answer, supplied to this score, is "
-            f"what lifts it.{palette.reset}"
+            f"  {palette.dim}No read covering the expected answers this run is "
+            f"graded against has reached this score, so the comparison is not "
+            f"graded above {score.band} whatever it scores. A row-by-row read "
+            f"of each input beside its expected answer, covering the rows the "
+            f"run is graded on, is what lifts it.{palette.reset}"
         )
     lines.append(
         f"  {palette.dim}Local pre-run planning estimate, not a probability or "
@@ -7702,11 +7742,12 @@ def render_markdown(score: ReadinessScore, timestamp: str | None = None) -> str:
             # one hold that no cap row below explains.
             *(
                 [
-                    "**The band is held here.** Nobody has read the expected "
-                    "answers this run is graded against, so no score carries "
-                    "this comparison above "
+                    "**The band is held here.** No read covering the expected "
+                    "answers this run is graded against has reached this "
+                    "score, so no score carries this comparison above "
                     f"{score.band}. A row-by-row read of each input beside its "
-                    "expected answer, supplied to this score, is what lifts it.",
+                    "expected answer, covering the rows the run is graded on, "
+                    "is what lifts it.",
                     "",
                 ]
                 if score.band_limited_by_unread_answers
@@ -15086,7 +15127,13 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help=(
             "the coding assistant's own read of each provided row (path or -): "
             "does this expected output answer this input? Lowers the ceiling "
-            "when a material share do not, and never raises the score"
+            "when a material share do not, and adds no points. It is not "
+            "scoreless, and this sentence used to say so: a read covering the "
+            "rows the run is graded on releases the hold that keeps an "
+            "unreviewed answer key out of the top two bands. Entries are "
+            "counted, never matched against the dataset - preflight emits no "
+            "row ids to match them to - so the release is on this document's "
+            "word"
         ),
     )
     parser.add_argument(
@@ -15237,6 +15284,22 @@ def run(argv: Sequence[str] | None = None) -> int:
             "cannot read scoring input: --calibration-scope-refused says this "
             "run was not permitted to execute the evaluator, and --calibration "
             "is the result of executing it. Pass one.",
+            file=sys.stderr,
+        )
+        return 2
+
+    # Refused rather than ignored, for the reason `--row-review` is refused
+    # below: `scoring_requested` does not count this flag, so a run passing it
+    # with no evidence took the planner branch and the declaration vanished -
+    # accepted at the boundary, honoured nowhere. An option that means one
+    # thing in one mode and nothing in another is a defect in any case, and a
+    # safety declaration is the worst one to lose quietly.
+    if args.calibration_scope_refused and not scoring_requested(args):
+        print(
+            "cannot read scoring input: --calibration-scope-refused describes "
+            "a scoring call. The planner half takes no evidence, so there is "
+            "no calibration for it to describe and nothing would record it. "
+            "Pass it beside --preflight.",
             file=sys.stderr,
         )
         return 2

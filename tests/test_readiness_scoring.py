@@ -10501,22 +10501,49 @@ class ADeferredCalibrationSaysSoInTheFieldConsumersReadTests(unittest.TestCase):
             with self.subTest(table=table):
                 self.assertEqual(getattr(unasked, table), getattr(MODULE, table))
 
+        # THROUGH `score_evaluation`, which is the line the mutation edits.
+        # An earlier revision of this test hand-built the cap and passed no
+        # `asks`, so the flag took its `False` default on both modules and the
+        # two assertions below held identically on the UNMUTATED scorer - a
+        # probe that could not fail for the reason it names. The cap now comes
+        # from the constructor the mutation rewrites, and the same call is made
+        # against this module so the pair is a comparison rather than a claim.
+        outstanding = dict(
+            present=True,
+            method="normalized-exact",
+            parses=True,
+        )
+        reverted_caps = unasked.score_evaluation(
+            unasked.EvaluationFacts(**outstanding)
+        )[1]
+        kept_caps = MODULE.score_evaluation(MODULE.EvaluationFacts(**outstanding))[1]
+        self.assertEqual(
+            [cap.condition for cap in reverted_caps], ["evaluator-unvalidated"]
+        )
+        self.assertEqual(
+            [cap.condition for cap in kept_caps], ["evaluator-unvalidated"]
+        )
+        self.assertFalse(reverted_caps[0].asks)
+        self.assertTrue(kept_caps[0].asks)
+
         pillars = [
             unasked.Pillar(name=name, score=60, confidence=1.0, subscores=())
             for name in ("dataset", "evaluation", "agent")
         ]
-        cap = unasked.Cap(
-            "evaluator-unvalidated",
-            unasked.EVALUATOR_UNVALIDATED_CEILING,
-            "no complete current-run calibration",
-            blocks=False,
+        reverted = unasked.aggregate(
+            pillars, list(reverted_caps), [], dict(unasked.DEFAULT_WEIGHTS)
         )
-        reverted = unasked.aggregate(pillars, [cap], [], dict(unasked.DEFAULT_WEIGHTS))
-        self.assertFalse(cap.asks)
+        kept = MODULE.aggregate(
+            [
+                MODULE.Pillar(name=name, score=60, confidence=1.0, subscores=())
+                for name in ("dataset", "evaluation", "agent")
+            ],
+            list(kept_caps),
+            [],
+            dict(MODULE.DEFAULT_WEIGHTS),
+        )
         self.assertEqual(reverted.recommended_action, unasked.PROCEED)
-        self.assertEqual(
-            self._deferred().recommended_action, MODULE.COMPLETE_CALIBRATION
-        )
+        self.assertEqual(kept.recommended_action, MODULE.COMPLETE_CALIBRATION)
 
 
 class MeasuredOpeningInvocationTests(unittest.TestCase):

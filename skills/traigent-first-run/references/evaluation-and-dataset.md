@@ -801,7 +801,14 @@ checking, and release one hold: the top two bands are held at `WORKABLE` however
 until some read of the answers has entered, because a run that never looked is not a run that
 looked and found nothing. Covering the rows the run reads is what releases that hold: every entry
 marked `in_run` where the split is drawn, or every provided row where it is not. A partial read
-releases nothing and says so.
+names its count and releases nothing, and on a corpus above the first-run subset size that is the
+ordinary state of the opening pass rather than a failure of it: nothing has been drawn yet, so no
+read can cover the rows the comparison will run on. The hold comes off at the stage-4 re-score of
+the drawn rows, which "Say how much you read" below already asks for. Readiness counts your entries
+and never matches them to rows - preflight publishes no ids for it to match against - so this
+release is taken on your word, and a review naming rows you did not read is a false statement to the
+customer rather than a shortcut. Say that the band is held and
+where it lifts, rather than letting the opening card read as though the pass went wrong.
 An `unsure` is reported there too and never scored, because uncertainty is not a finding.
 
 Three things put the ceiling there rather than a stop. The run only ever reads the tuning rows plus
