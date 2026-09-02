@@ -97,9 +97,11 @@ nothing. The provider-paid local fixed baseline result appears before any Traige
 request. Only then does the guide explain and separately approve the managed optimization and
 verify portal tracking with a zero-LLM probe before its paid calls.
 
-At boundaries, the assistant shows `Stage n/5` and measured numbers. After baseline: continue with
-Traigent when the measured results show useful headroom, or address the strongest observed
-limitation first. It gives reason and scope—never a generic menu or guaranteed gain.
+At boundaries, the assistant shows `Stage n/5` and measured numbers. After baseline it recommends
+continuing, and names which continuing route: the managed search, or addressing the strongest
+observed limitation first where the measured results show no useful headroom. Stopping stays
+available and answerable either way. It gives reason and scope—never a generic menu or guaranteed
+gain.
 
 The default generated comparison has two planned measurements: all twelve configurations of a local
 fixed grid first, followed by a connected managed search over a materially broader space with added

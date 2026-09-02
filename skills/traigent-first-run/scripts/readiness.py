@@ -6764,7 +6764,42 @@ def render_card(
         # document produced three rows all saying "no knobs declared" - one
         # fact, three chances for a reader to think two of them are something
         # else they must also fix.
-        distinct = {sub.evidence for sub in pillar.subscores}
+        #
+        # The repeat is a property of a GROUP of checks, not of the pillar, and
+        # gating on the whole pillar being identical is what let the defect back
+        # in. A project with no agent to read scores five agent checks: four say
+        # the agent was never read and the fifth says no settings document
+        # arrived. Not one pillar-wide fact, so every row printed its own
+        # evidence and the same sentence appeared four times over. The customer
+        # reads it four times and learns it once - which is the same defect the
+        # all-identical case was fixed for, one degree short of the condition
+        # that fixed it.
+        #
+        # So the grouping is by the sentence: checks that share a reason are
+        # rendered together under it, and a check with a reason of its own keeps
+        # its own row. Mixed pillars are the ordinary case, and this is what the
+        # card does with them - it does not pick one reason for the pillar and
+        # drop the others.
+        #
+        # The check names stay, and that is a change to the all-identical case
+        # too. The earlier fix dropped them, on the argument that joining three
+        # labels into a sentence reads worse than the finding alone. That
+        # argument is about a SENTENCE; the names are listed here, one per line,
+        # under the finding they share. Which questions were asked is
+        # information the reader still needs - a bare "no dataset provided to
+        # this score" never said that five different things went unanswered
+        # because of it.
+        #
+        # Each listed name carries its OWN marker, and that is not decoration.
+        # A group is not always uniform: `dataset` on an empty score shares one
+        # sentence across five checks of which three ARE measured, and printing
+        # the group's worst marker over a bare list said all five went
+        # unmeasured while the headline beside it said "3 of 5 checks measured".
+        # Naming the checks turned an ambiguity into a specific false statement
+        # and erased the distinction `SubScore.measured` exists to carry. The
+        # group marker stays the worst of the set - a reader scanning the left
+        # edge must not be shown the most forgiving one - and each name says
+        # for itself which side of that it fell on.
         if not pillar.subscores:
             # A pillar can carry no checks at all - `aggregate` accepts one and
             # several callers build them. The old loop was a no-op there; the
@@ -6772,22 +6807,43 @@ def render_card(
             # raises. Rendering a card must not be able to fail on a shape the
             # scorer itself produces.
             pass
-        elif len(pillar.subscores) > 1 and len(distinct) == 1:
-            # One fact, so one line. Naming the checks here would join three
-            # labels into a sentence longer than the finding, which is how the
-            # first attempt at this made an unreadable pillar out of a readable
-            # one - the evidence IS the finding when nothing distinguishes them.
-            worst = min(pillar.subscores, key=lambda sub: (sub.measured, sub.value))
-            lines.append(f"    {marker(worst, unicode_ok)} {distinct.pop()}")
         else:
+            shared: dict[str, list[SubScore]] = {}
+            for sub in pillar.subscores:
+                shared.setdefault(sub.evidence, []).append(sub)
             # Width from the labels actually present, not a constant: these are
             # phrases now, and a fixed column either wraps the long ones or
             # pads every short one to the width of the longest name in the file.
-            width = max(len(display_name(sub.name)) for sub in pillar.subscores)
-            for sub in pillar.subscores:
-                label = display_name(sub.name)
-                lines.append(
-                    f"    {marker(sub, unicode_ok)} {label:<{width}}  {sub.evidence}"
+            #
+            # Over the rows that USE the column only. A grouped block prints its
+            # labels in a list of their own, so padding the table to the longest
+            # of those pushes the one remaining evidence sentence a column and a
+            # half to the right for nothing.
+            width = max(
+                (
+                    len(display_name(subs[0].name))
+                    for subs in shared.values()
+                    if len(subs) == 1
+                ),
+                default=0,
+            )
+            for evidence, subs in shared.items():
+                if len(subs) == 1:
+                    sub = subs[0]
+                    label = display_name(sub.name)
+                    lines.append(
+                        f"    {marker(sub, unicode_ok)} {label:<{width}}  {sub.evidence}"
+                    )
+                    continue
+                # The finding first, then the questions it answered for. The
+                # marker is the worst of the group, for the reason the pillar
+                # headline takes the worst: a reader scanning markers must not
+                # be shown the most forgiving one of a set.
+                worst = min(subs, key=lambda sub: (sub.measured, sub.value))
+                lines.append(f"    {marker(worst, unicode_ok)} {evidence}")
+                lines.extend(
+                    f"        {marker(sub, unicode_ok)} {display_name(sub.name)}"
+                    for sub in subs
                 )
         if pillar.name == "agent":
             # The half of #184's answer that is not a number. The pillar widened
