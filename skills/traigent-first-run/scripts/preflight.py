@@ -2673,16 +2673,30 @@ def check_dataset(
             # and only the second count can say which one this is.
             "tuning_distinct_rows": len(tune_inputs),
             # The same question asked of the rows that can be scored, and the
-            # one a comparison count may be bounded by (#356). It is published
-            # BESIDE the count above rather than replacing it: the first is a
-            # true fact about the file and is what the bounded first-run draw
-            # reads, and narrowing that key in place would silently change a
-            # different number in a different check.
+            # one any count describing what the comparison resolves may be
+            # bounded by (#356). It is published BESIDE the count above rather
+            # than replacing it, because narrowing that key in place would
+            # silently change a number other checks already read.
             #
-            # Equal to it under a reference-free method, where every present
-            # row is scoreable, and that equality is the point rather than a
-            # redundancy: a reader must not have to know the evaluator method
-            # to know which of the two describes the rows being compared.
+            # THIS IS THE KEY FOR SIZING WHAT A RUN BUYS, and the distinction is
+            # not academic. The count above is scoped to the tuning side and to
+            # nothing else; this one is scoped to the tuning side AND to the
+            # rows a score can actually be computed on. Anything pricing a draw
+            # wants the second, because a row nobody labelled is a row every
+            # configuration pays a provider for and none of them is scored on.
+            # A count taken over the whole file is wrong in a further way again:
+            # it spans the held-out split, which the search never draws from.
+            #
+            # Equal to the count above under a reference-free method, where
+            # every present row is scoreable, and that equality is the point
+            # rather than a redundancy: a reader must not have to know the
+            # evaluator method to know which of the two describes the rows
+            # being compared.
+            #
+            # ABSENT, never zero, on a payload written before it existed. A
+            # consumer must treat a missing key as "not measured" and leave its
+            # own number untouched, the way `resolved_by_distinct` does. Reading
+            # absence as zero would price a run at nothing.
             "tuning_distinct_scoreable_rows": len(tune_scoreable_inputs),
         }
         if tuning_scoreable < WIRING_CHECK_EXAMPLES:
