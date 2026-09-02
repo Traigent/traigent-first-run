@@ -17654,3 +17654,600 @@ def _row_review_refusal(
     except TypeError:
         raise
     return ""
+
+
+class TaskFitIsEarnedFromTheEvaluatorFileTests(unittest.TestCase):
+    """traigent-first-run#380.
+
+    Task fit was a lookup of a declared word in a table, so any declared word
+    earned its row's credit. On a `code-sql` task that made `execution` - the
+    one route `references/run-safety.md` ends this guide on - the single
+    highest-paying thing a run could type, 17 points above a comparison, on a
+    file nobody had read.
+
+    What the file does is now read by preflight and carried here as three
+    states, and the difference between the last two is the contract:
+    `True` a construct was found, `False` a walk ran and found none, `None`
+    no file was read. Only `True` refutes anything.
+    """
+
+    ENGINE_WITNESS = "imports sqlite3 (line 3)"
+
+    def fit(self, method, kind, **extra):
+        facts = MODULE.EvaluationFacts(
+            present=True, method=method, task_kind=kind, **extra
+        )
+        pillar, _caps = MODULE.score_evaluation(facts)
+        return next(sub for sub in pillar.subscores if sub.name == "task-fit")
+
+    def test_the_route_run_safety_forbids_stops_out_earning_the_permitted_one(
+        self,
+    ) -> None:
+        """The issue's own reading, on the file it was reported against.
+
+        A pure comparison file, a `code-sql` task, and the three declarations
+        a run could make about it. `execution` used to be worth 25 and
+        `normalized-exact` 8, so the guide's own scope stop was the most
+        profitable thing to type. `composite` is what
+        references/evaluation-and-dataset.md selects for code and SQL output,
+        and it is the one that should be paying most here.
+        """
+        walked = {"executes_candidate": False}
+        execution = self.fit("execution", "code-sql", **walked)
+        comparison = self.fit("normalized-exact", "code-sql", **walked)
+        selected = self.fit("composite", "code-sql", **walked)
+        self.assertEqual(execution.value, MODULE.TASK_FIT_UNFIT_CREDIT)
+        self.assertEqual(comparison.value, MODULE.TASK_FIT_UNFIT_CREDIT)
+        self.assertEqual(selected.value, MODULE.TASK_FIT_WEIGHT)
+        self.assertLess(execution.value, selected.value)
+        self.assertEqual(execution.value, comparison.value)
+        # Still measured, and still spending its weight. Withholding here
+        # would renormalise the check away and hand back most of what the
+        # refusal just took.
+        self.assertTrue(execution.measured)
+        self.assertFalse(execution.withheld)
+        self.assertEqual(execution.maximum, MODULE.TASK_FIT_WEIGHT)
+
+    def test_a_declared_execution_the_file_has_not_shown_is_not_credited(self) -> None:
+        """Two unestablished states, two sentences, neither claiming absence.
+
+        A walk that found nothing has not proved the evaluator does not run
+        the answer - a helper module or a connection handed in through
+        `input_data` both escape it. What it has established is that the
+        credit was not earned, and the two lines say which of the two states
+        the reader is in so they know whether to point preflight at the file
+        or to read the call path themselves.
+        """
+        walked = self.fit("execution", "code", executes_candidate=False)
+        unread = self.fit("execution", "code", executes_candidate=None)
+        self.assertEqual(walked.value, MODULE.TASK_FIT_UNFIT_CREDIT)
+        self.assertEqual(unread.value, MODULE.TASK_FIT_UNFIT_CREDIT)
+        self.assertNotEqual(walked.evidence, unread.evidence)
+        self.assertIn("shows no call that would", walked.evidence)
+        self.assertIn("no evaluator file was read", unread.evidence)
+        for line in (walked.evidence, unread.evidence):
+            self.assertIn("execution says the evaluator runs the answer", line)
+            # Never "this evaluator does not run the answer". The walk cannot
+            # establish that and the card must not say it.
+            self.assertNotIn("does not run", line)
+
+    def test_a_file_that_reaches_an_engine_refutes_a_comparison_declaration(
+        self,
+    ) -> None:
+        """The other half of #380: the score followed the string, not the file.
+
+        `normalized-exact` on `closed-label` is a fit and earns full credit.
+        The same declaration over a file whose own tree reaches a database is
+        contradicted by the file, and the file is the thing that will run.
+        """
+        honest = self.fit("normalized-exact", "closed-label", executes_candidate=False)
+        contradicted = self.fit(
+            "normalized-exact",
+            "closed-label",
+            executes_candidate=True,
+            execution_witness=self.ENGINE_WITNESS,
+        )
+        self.assertEqual(honest.value, MODULE.TASK_FIT_WEIGHT)
+        self.assertEqual(contradicted.value, MODULE.TASK_FIT_UNFIT_CREDIT)
+        self.assertIn("describes a comparison", contradicted.evidence)
+        self.assertIn(self.ENGINE_WITNESS, contradicted.evidence)
+
+    def test_the_declaration_chooses_the_sentence_and_never_the_verdict(self) -> None:
+        """One file, three declarations, three readings and one number.
+
+        `composite` claimed nothing about running the answer, so it is told
+        what was found rather than what it got wrong; `execution` claimed it
+        and is told the claim held; a comparison is told it was contradicted.
+        The credit is the same in all three because the file is the same.
+        """
+        found = {
+            "executes_candidate": True,
+            "execution_witness": self.ENGINE_WITNESS,
+        }
+        declared_execution = self.fit("execution", "code-sql", **found)
+        declared_composite = self.fit("composite", "code-sql", **found)
+        declared_comparison = self.fit("exact", "structured", **found)
+        lines = {
+            declared_execution.evidence,
+            declared_composite.evidence,
+            declared_comparison.evidence,
+        }
+        self.assertEqual(len(lines), 3)
+        for subscore in (
+            declared_execution,
+            declared_composite,
+            declared_comparison,
+        ):
+            self.assertEqual(subscore.value, MODULE.TASK_FIT_UNFIT_CREDIT)
+            self.assertIn(self.ENGINE_WITNESS, subscore.evidence)
+            self.assertIn("runs the answer", subscore.evidence)
+        self.assertIn("as execution declares", declared_execution.evidence)
+        self.assertNotIn("declares", declared_composite.evidence)
+
+    def test_a_witness_refuses_credit_under_every_declared_method(self) -> None:
+        """No word gets a file that runs the answer past this check."""
+        for method, profile in sorted(MODULE.METHOD_PROFILES.items()):
+            for kind in profile["fits"]:
+                with self.subTest(method=method, kind=kind):
+                    subscore = self.fit(
+                        method,
+                        kind,
+                        executes_candidate=True,
+                        execution_witness=self.ENGINE_WITNESS,
+                    )
+                    self.assertEqual(subscore.value, MODULE.TASK_FIT_UNFIT_CREDIT)
+
+    def test_nothing_this_read_can_do_raises_the_credit(self) -> None:
+        """The whole matrix, against the rule that stood before the file was read.
+
+        The old rule is written out here rather than imported, because the
+        point is to hold the new arms against what the table alone said: every
+        cell must land on that value or below it. A check derived from a
+        partial read of a file is allowed to withhold and is never allowed to
+        invent, and this is the assertion that says so over all of it.
+        """
+        states = (
+            {},
+            {"executes_candidate": False},
+            {"executes_candidate": True, "execution_witness": self.ENGINE_WITNESS},
+        )
+        cells = 0
+        for method, profile in sorted(MODULE.METHOD_PROFILES.items()):
+            for kind in MODULE.TASK_KINDS:
+                before = (
+                    MODULE.TASK_FIT_WEIGHT
+                    if kind in profile["fits"]
+                    else MODULE.TASK_FIT_UNFIT_CREDIT
+                )
+                for extra in states:
+                    with self.subTest(method=method, kind=kind, state=sorted(extra)):
+                        self.assertLessEqual(
+                            self.fit(method, kind, **extra).value, before
+                        )
+                        cells += 1
+        self.assertEqual(
+            cells, len(MODULE.METHOD_PROFILES) * len(MODULE.TASK_KINDS) * len(states)
+        )
+
+    def test_an_unread_file_refuses_nothing_a_comparison_earned(self) -> None:
+        """The `0 credited -> refused` direction, stated as a property.
+
+        A run that never handed an evaluator to preflight has established
+        nothing about it, and this check refutes only from proof. So every
+        method that is not a claim about running the answer keeps exactly what
+        it had, in both of the states that establish nothing.
+        """
+        for method, profile in sorted(MODULE.METHOD_PROFILES.items()):
+            if MODULE.METHOD_EXECUTES_CANDIDATE[method] is True:
+                continue
+            for kind in profile["fits"]:
+                for extra in ({}, {"executes_candidate": False}):
+                    with self.subTest(method=method, kind=kind, state=sorted(extra)):
+                        subscore = self.fit(method, kind, **extra)
+                        self.assertEqual(subscore.value, MODULE.TASK_FIT_WEIGHT)
+                        self.assertEqual(
+                            subscore.evidence, f"{method} suits {kind} output"
+                        )
+
+    def test_a_mismatched_method_keeps_the_sentence_about_the_mismatch(self) -> None:
+        """The arm about the file does not talk over the arm about the output.
+
+        `execution` on `free-text` is worth 8 either way, and the reader is
+        better served by the line that says what `execution` compares and why
+        free text cannot be scored by it than by a second line about a route
+        that was never going to fit anyway.
+        """
+        subscore = self.fit("execution", "free-text", executes_candidate=False)
+        self.assertEqual(subscore.value, MODULE.TASK_FIT_UNFIT_CREDIT)
+        self.assertEqual(
+            subscore.evidence,
+            MODULE.task_fit_evidence(
+                "execution", "free-text", MODULE.METHOD_PROFILES["execution"]["fits"]
+            ),
+        )
+        # A witness still outranks it: a file that runs the answer ends this
+        # guide whatever output kind it was pointed at.
+        found = self.fit(
+            "execution",
+            "free-text",
+            executes_candidate=True,
+            execution_witness=self.ENGINE_WITNESS,
+        )
+        self.assertIn(self.ENGINE_WITNESS, found.evidence)
+
+    def test_an_undeclared_method_or_kind_is_untouched_by_the_file_read(self) -> None:
+        """The unverified arm still names the missing input and stays withheld.
+
+        Fit is a property of the pair, and reading the evaluator supplies
+        neither half of it. A file that reaches an engine must not turn "no
+        task kind was declared" into a verdict about the method.
+        """
+        for extra in (
+            {},
+            {"executes_candidate": True, "execution_witness": self.ENGINE_WITNESS},
+        ):
+            with self.subTest(state=sorted(extra)):
+                subscore = self.fit("execution", None, **extra)
+                self.assertEqual(subscore.value, 0.0)
+                self.assertTrue(subscore.withheld)
+                self.assertIn("task kind not declared", subscore.evidence)
+
+    def test_every_profiled_method_records_what_it_claims_about_execution(
+        self,
+    ) -> None:
+        """Complete over `METHOD_PROFILES`, so a new method forces a decision.
+
+        The same discipline `METHOD_MISMATCH_REASONS` is held to, and for a
+        sharper reason: a method added to the profile table without an entry
+        here would inherit "claims nothing", and the arm that reads a `True`
+        is the arm that stops a declaration earning credit the file has not
+        shown. Silence would be a free pass, so it is not available.
+        """
+        self.assertEqual(
+            sorted(MODULE.METHOD_EXECUTES_CANDIDATE), sorted(MODULE.METHOD_PROFILES)
+        )
+        for method, claim in sorted(MODULE.METHOD_EXECUTES_CANDIDATE.items()):
+            with self.subTest(method=method):
+                self.assertIn(claim, (True, False, None))
+        # The one method that says it runs the answer is the one whose reason
+        # in `METHOD_MISMATCH_REASONS` says it runs the answer. Read out of
+        # that table rather than restated, so the two cannot drift.
+        claims_execution = {
+            method
+            for method, claim in MODULE.METHOD_EXECUTES_CANDIDATE.items()
+            if claim is True
+        }
+        says_it_runs = {
+            method
+            for method, reason in MODULE.METHOD_MISMATCH_REASONS.items()
+            if reason.startswith("runs the answer")
+        }
+        self.assertEqual(claims_execution, says_it_runs)
+        self.assertEqual(claims_execution, {"execution"})
+        # `composite` is the undetermined one, and the profile table says why:
+        # it blends checks this score cannot see.
+        self.assertIsNone(MODULE.METHOD_EXECUTES_CANDIDATE["composite"])
+        self.assertIn("cannot see", MODULE.METHOD_MISMATCH_REASONS["composite"])
+
+    def test_the_evidence_lines_stay_readable_for_a_customer(self) -> None:
+        """No internal names, no em dashes, and the construct quoted verbatim."""
+        lines = [
+            MODULE.task_fit_execution_scope_evidence(method, self.ENGINE_WITNESS)
+            for method in sorted(MODULE.METHOD_EXECUTES_CANDIDATE)
+        ]
+        lines += [
+            MODULE.task_fit_unproven_execution_evidence("execution", read)
+            for read in (True, False)
+        ]
+        for line in lines:
+            with self.subTest(line=line[:40]):
+                self.assertNotIn("—", line)
+                self.assertNotIn("executes_candidate", line)
+                self.assertNotIn("task-fit", line)
+                self.assertNotIn("preflight", line)
+                self.assertTrue(line[0].islower())
+        # A missing witness must not leave a dangling colon on the card.
+        without = MODULE.task_fit_execution_scope_evidence("execution", None)
+        self.assertNotIn(":", without)
+        self.assertIn("runs the answer", without)
+
+
+class TheEvaluatorExecutionReadIsThreeStatedTests(unittest.TestCase):
+    """`evaluator_execution_from_preflight`, and the two states it must keep apart.
+
+    "The walk ran and found nothing" and "no walk ran" are different answers,
+    and collapsing them is how a check that reads a file starts reporting an
+    all-clear about a file it never opened.
+    """
+
+    def read(self, metrics):
+        records = [{"check": "evaluator-shape", "status": "PASS", "metrics": metrics}]
+        return MODULE.evaluator_execution_from_preflight(records)
+
+    def test_no_evaluator_shape_record_reports_no_walk(self) -> None:
+        self.assertEqual(MODULE.evaluator_execution_from_preflight([]), (None, None))
+
+    def test_an_older_payload_without_the_field_reports_no_walk(self) -> None:
+        """A preflight from before this walk existed must not read as clean."""
+        self.assertEqual(self.read({"exists": True, "parses": True}), (None, None))
+
+    def test_a_walk_that_found_nothing_is_false_and_not_none(self) -> None:
+        self.assertEqual(
+            self.read({"exists": True, "parses": True, "executes": False}),
+            (False, None),
+        )
+
+    def test_a_witness_is_carried_through_verbatim(self) -> None:
+        executes, witness = self.read(
+            {
+                "exists": True,
+                "parses": True,
+                "executes": True,
+                "execution_witnesses": [
+                    "imports duckdb (line 4)",
+                    "calls .execute() (line 9)",
+                ],
+            }
+        )
+        self.assertIs(executes, True)
+        self.assertEqual(witness, "imports duckdb (line 4)")
+
+    def test_an_unreadable_verdict_is_no_verdict(self) -> None:
+        """Read the same three-state way as `parses` beside it.
+
+        `bool("false")` is True and `bool(0)` is False, and both are a verdict
+        invented out of a value that carries none. This field gates a refusal,
+        so an unreadable one has to land on "nothing established" rather than
+        on either answer.
+        """
+        for value in ("true", "false", 1, 0, [], {}, None):
+            with self.subTest(value=value):
+                executes, _witness = self.read(
+                    {"exists": True, "parses": True, "executes": value}
+                )
+                self.assertIsNone(executes)
+
+    def test_an_unusable_witness_list_costs_the_verdict_nothing(self) -> None:
+        """The verdict is the boolean; the witness is only the card's sentence."""
+        for witnesses in ([], "imports sqlite3", [""], [42], {}):
+            with self.subTest(witnesses=witnesses):
+                executes, witness = self.read(
+                    {
+                        "exists": True,
+                        "parses": True,
+                        "executes": True,
+                        "execution_witnesses": witnesses,
+                    }
+                )
+                self.assertIs(executes, True)
+                self.assertIsNone(witness)
+
+
+class TaskFitIsMeasuredOnThePairNotOnEitherFieldTests(unittest.TestCase):
+    """traigent-first-run#380, the half neither field shows on its own.
+
+    Measured on one unchanged text comparator, the four combinations read
+    86 / 86 / 86 and then the top band with no caps. Neither `--evaluator-
+    method` nor `--task-kind` moves anything alone, so a check on either field
+    alone passes all four, and the route to the top band is to mis-declare
+    both consistently. `set-f1` + `structured` and `schema` + `structured`
+    took the same file to the same band, so refusing one method would have
+    closed one route out of several.
+
+    Every declaration is therefore measured against the one comparison the
+    file provably performs.
+    """
+
+    WITNESS = "casefold, strip applied before the comparison (line 6)"
+
+    def fit(self, method, kind, shape="normalized-exact", **extra):
+        facts = MODULE.EvaluationFacts(
+            present=True,
+            method=method,
+            task_kind=kind,
+            comparison_shape=shape,
+            comparison_witness=self.WITNESS if shape else None,
+            **{"executes_candidate": False, **extra},
+        )
+        pillar, _caps = MODULE.score_evaluation(facts)
+        return next(sub for sub in pillar.subscores if sub.name == "task-fit")
+
+    def test_the_four_reported_combinations_land_on_one_number(self) -> None:
+        """The reading that was reported, and the three it was measured against.
+
+        One file, four declarations, one credit. The pair that used to reach
+        the top band is the one that moves, and it moves onto the number the
+        other three were already worth.
+        """
+        values = {
+            (method, kind): self.fit(method, kind).value
+            for method, kind in (
+                ("exact", "code-sql"),
+                ("normalized-exact", "structured"),
+                ("normalized-exact", "code-sql"),
+                ("exact", "structured"),
+            )
+        }
+        self.assertEqual(len(values), 4)
+        self.assertEqual(set(values.values()), {MODULE.TASK_FIT_UNFIT_CREDIT})
+        # And the one that used to pay is refused for the file's own reason,
+        # not for a mismatch it does not have: `exact` DOES suit `structured`
+        # output, and what withholds the credit is that this file is not an
+        # exact comparison.
+        self.assertIn(
+            "normalized-exact check rather than exact",
+            self.fit("exact", "structured").evidence,
+        )
+        self.assertIn("structured", MODULE.METHOD_PROFILES["exact"]["fits"])
+
+    def test_the_other_routes_to_the_same_band_close_with_it(self) -> None:
+        """A method-by-method refusal would have left these open.
+
+        `set-f1`, `schema` and `composite` all fit an output kind this file
+        does not check, and each was worth the same as an honest declaration.
+        What refuses them is the same one fact about the file.
+        """
+        for method, kind in (
+            ("set-f1", "structured"),
+            ("schema", "structured"),
+            ("composite", "structured"),
+            ("composite", "code-sql"),
+            ("fuzzy", "free-text"),
+            ("embedding", "free-text"),
+            ("numeric-tolerance", "numeric"),
+            ("llm-judge-rubric", "free-text"),
+        ):
+            with self.subTest(method=method, kind=kind):
+                subscore = self.fit(method, kind)
+                self.assertEqual(subscore.value, MODULE.TASK_FIT_UNFIT_CREDIT)
+                self.assertIn(self.WITNESS, subscore.evidence)
+
+    def test_the_declaration_the_file_supports_keeps_every_point(self) -> None:
+        """The honest pair, and the honest neighbour.
+
+        A normalised whole-value comparison IS `normalized-exact`, and it is
+        also how a route comparison is written, so both keep full credit on
+        the kinds they fit. If this direction moved, the change would be
+        taking points from projects that did exactly what the guide asked.
+        """
+        for method, kind in (
+            ("normalized-exact", "closed-label"),
+            ("normalized-exact", "short-answer"),
+            ("normalized-exact", "routing"),
+            ("routing", "routing"),
+            ("routing", "closed-label"),
+        ):
+            with self.subTest(method=method, kind=kind):
+                subscore = self.fit(method, kind)
+                self.assertEqual(subscore.value, MODULE.TASK_FIT_WEIGHT)
+                self.assertEqual(subscore.evidence, f"{method} suits {kind} output")
+
+    def test_a_bare_equality_file_supports_exact_and_refuses_the_normalised_claim(
+        self,
+    ) -> None:
+        """Read the other way round, on the other shape.
+
+        A file that compares as written is `exact`, and a `normalized-exact`
+        declaration over it is wrong in the opposite direction. The proof
+        resolved the whole comparison, so the absence of a transform in it is
+        something this read established rather than something it failed to
+        find.
+        """
+        honest = self.fit("exact", "structured", shape="exact")
+        self.assertEqual(honest.value, MODULE.TASK_FIT_WEIGHT)
+        overstated = self.fit("normalized-exact", "closed-label", shape="exact")
+        self.assertEqual(overstated.value, MODULE.TASK_FIT_UNFIT_CREDIT)
+        self.assertIn("exact check rather than normalized-exact", overstated.evidence)
+
+    def test_a_file_the_walk_could_not_settle_refuses_nothing(self) -> None:
+        """The commonest answer, and the one that must cost nobody anything."""
+        for method, profile in sorted(MODULE.METHOD_PROFILES.items()):
+            if MODULE.METHOD_EXECUTES_CANDIDATE[method] is True:
+                continue
+            for kind in profile["fits"]:
+                with self.subTest(method=method, kind=kind):
+                    subscore = self.fit(method, kind, shape=None)
+                    self.assertEqual(subscore.value, MODULE.TASK_FIT_WEIGHT)
+
+    def test_every_profiled_method_records_which_comparisons_support_it(
+        self,
+    ) -> None:
+        """Complete over `METHOD_PROFILES`, so a new method forces a decision.
+
+        An absent row would read as "supported by nothing", which refuses, and
+        a refusal nobody decided on is exactly what this table exists to stop
+        being possible by omission.
+        """
+        self.assertEqual(
+            sorted(MODULE.METHOD_COMPARISON_SUPPORT), sorted(MODULE.METHOD_PROFILES)
+        )
+        for method, shapes in sorted(MODULE.METHOD_COMPARISON_SUPPORT.items()):
+            with self.subTest(method=method):
+                self.assertLessEqual(shapes, {"exact", "normalized-exact"})
+        # The three methods a whole-value equality can be, and no others.
+        supported = {
+            method
+            for method, shapes in MODULE.METHOD_COMPARISON_SUPPORT.items()
+            if shapes
+        }
+        self.assertEqual(supported, {"exact", "normalized-exact", "routing"})
+
+    def test_the_engine_finding_outranks_the_comparison_finding(self) -> None:
+        """Both refuse; the one about running the answer is the one to print.
+
+        A file that reaches an engine ends this guide, which is a larger thing
+        to tell somebody than which of two comparison names their file
+        matches.
+        """
+        subscore = self.fit(
+            "exact",
+            "structured",
+            executes_candidate=True,
+            execution_witness="imports sqlite3 (line 3)",
+        )
+        self.assertEqual(subscore.value, MODULE.TASK_FIT_UNFIT_CREDIT)
+        self.assertIn("imports sqlite3 (line 3)", subscore.evidence)
+        self.assertNotIn(self.WITNESS, subscore.evidence)
+
+    def test_an_unrecognised_comparison_name_refuses_nobody(self) -> None:
+        """A value this scorer cannot place must not refuse every declaration.
+
+        It picks a row out of `METHOD_COMPARISON_SUPPORT`, and a name with no
+        row would match no method at all - a refusal of everything, sourced
+        from a string nobody could read. The reader keeps it out.
+        """
+        for value in ("set-f1", "", None, 1, ["exact"], "EXACT"):
+            with self.subTest(value=value):
+                records = [
+                    {
+                        "check": "evaluator-shape",
+                        "status": "PASS",
+                        "metrics": {
+                            "exists": True,
+                            "parses": True,
+                            "executes": False,
+                            "comparison_shape": value,
+                        },
+                    }
+                ]
+                self.assertEqual(
+                    MODULE.evaluator_comparison_from_preflight(records), (None, None)
+                )
+
+    def test_the_comparison_reader_keeps_the_witness_only_when_usable(self) -> None:
+        def read(metrics):
+            return MODULE.evaluator_comparison_from_preflight(
+                [{"check": "evaluator-shape", "status": "PASS", "metrics": metrics}]
+            )
+
+        self.assertEqual(read({}), (None, None))
+        self.assertEqual(
+            read({"comparison_shape": "exact", "comparison_witness": "  x  "}),
+            ("exact", "x"),
+        )
+        for witness in (None, "", "   ", 7, ["x"]):
+            with self.subTest(witness=witness):
+                self.assertEqual(
+                    read(
+                        {
+                            "comparison_shape": "exact",
+                            "comparison_witness": witness,
+                        }
+                    ),
+                    ("exact", None),
+                )
+
+    def test_the_comparison_line_reads_as_a_finding_a_customer_can_check(
+        self,
+    ) -> None:
+        line = MODULE.task_fit_comparison_evidence(
+            "schema", "normalized-exact", self.WITNESS
+        )
+        self.assertNotIn("—", line)
+        self.assertNotIn("comparison_shape", line)
+        self.assertIn(self.WITNESS, line)
+        self.assertTrue(line.startswith("the evaluator file compares"))
+        # And with nothing to quote, no dangling colon.
+        self.assertNotIn(
+            ":", MODULE.task_fit_comparison_evidence("schema", "exact", None)
+        )

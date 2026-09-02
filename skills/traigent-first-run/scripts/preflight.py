@@ -339,6 +339,10 @@ DOMINANCE_EXCESS_THRESHOLD = Fraction(1, 3)
 DOMINANT_OUTCOME_SHARE = Fraction(9, 10)
 MAX_REPORTED_DATASET_ERRORS = 5
 MAX_REPORTED_DATASET_IDS = 10
+# Enough witnesses to show the reader the shape of the call path without
+# turning one check line into a listing. The first is the one to look at; the
+# verdict does not depend on how many there are.
+MAX_REPORTED_EXECUTION_WITNESSES = 5
 WIRING_CHECK_EXAMPLES = 10
 FIRST_RUN_TUNING_ROWS = 18
 BOUNDED_SUBSET_ABOVE_ROWS = 100
@@ -2304,6 +2308,421 @@ def emit_dataset_id_findings(
         emit("dataset-ids", PASS, "stable ids are unique", id_metrics)
 
 
+# The call path `references/run-safety.md` ends this guide on, read out of the
+# evaluator's own tree instead of taken from the method somebody typed.
+#
+# The rule it implements is quoted, not invented: "A scorer enters that path
+# when it executes or imports candidate/model output as code, shells out with
+# it, or submits it to a code or SQL engine." Until this walk existed, nothing
+# in this package asked that question - `check_evaluator` was an `ast.parse`
+# and a verdict about syntax, so a pure text comparator and a scorer that runs
+# candidate SQL emitted byte-identical `evaluator-shape` metrics and the
+# readiness score paid the second one more for saying so.
+#
+# READ IN ONE DIRECTION ONLY, exactly as `readiness.derived_control_flow_loop`
+# is. A witness here PROVES the file's call path reaches one of these
+# constructs. An empty result proves nothing: the candidate can reach an engine
+# through a helper module this walk never opens, through a connection object
+# handed in by `input_data`, or through a name only bound at runtime. So the
+# absence of a witness is never reported as "this evaluator does not execute",
+# and no consumer is allowed to read it that way. What the empty result costs
+# is a claim, not a credit - see `score_evaluation`'s task-fit arms, where an
+# unproven `execution` declaration is refused its credit rather than granted
+# the benefit of the doubt.
+#
+# Both halves stay inside the static gate: `ast.walk` over a tree `ast.parse`
+# already built. Nothing is imported, nothing is called, no module top level
+# runs.
+#
+# Not derived from the grammar, and that is a deliberate difference from
+# `_node_binds`. The hazard there is a statement kind the language may add, so
+# the node set is read out of `ast`. The hazard here is a library surface, and
+# no module exports "the set of ways to reach a database". What can be derived
+# is derived: the DB-API call names are pinned against `sqlite3.Connection` in
+# tests/test_preflight.py, and the process family is matched by prefix rather
+# than by a list of `os` members, so it holds on every platform.
+_EXECUTION_MODULE_NAMES: frozenset[str] = frozenset(
+    {
+        # Candidate text run as a program, or handed to a shell.
+        "runpy",
+        "subprocess",
+        "pty",
+        # Candidate text submitted to a SQL or code engine. Engine imports are
+        # listed because a connection is often built in the evaluator itself;
+        # where it is handed in instead, the DB-API call names below catch it
+        # without needing the module to be named at all.
+        "aiosqlite",
+        "asyncpg",
+        "clickhouse_connect",
+        "clickhouse_driver",
+        "cx_Oracle",
+        "databricks",
+        "duckdb",
+        "google.cloud.bigquery",
+        "MySQLdb",
+        "mysql.connector",
+        "oracledb",
+        "pandasql",
+        "presto",
+        "psycopg",
+        "psycopg2",
+        "pyhive",
+        "pymssql",
+        "pymysql",
+        "pyodbc",
+        "snowflake.connector",
+        "sqlalchemy",
+        "sqlite3",
+        "trino",
+    }
+)
+# Bare-name calls that run text as code.
+#
+# `compile` is deliberately absent. It builds a code object and runs nothing;
+# reaching it is only half a path, and the other half is `exec` or `eval`,
+# which are both here. Listing it would have made every `from re import
+# compile` a witness, which is a false refusal bought for no coverage.
+#
+# `importlib.import_module` is absent for the same kind of reason. Loading a
+# module by name is how ordinary Python reaches a dependency, so a walk that
+# treated it as candidate execution would refuse credit to evaluators at large
+# rather than to the ones this rule is about. `runpy` above is the shape that
+# actually runs a file.
+_EXECUTION_BUILTIN_CALLS: frozenset[str] = frozenset({"eval", "exec", "__import__"})
+# The DB-API 2.0 cursor/connection surface, plus the two psycopg helpers that
+# take the same argument. Matched on the attribute name alone, so it holds for
+# a connection this file never imported a driver to build.
+_ENGINE_CALL_NAMES: frozenset[str] = frozenset(
+    {
+        "execute",
+        "executemany",
+        "executescript",
+        "execute_batch",
+        "execute_values",
+    }
+)
+# `os` members that start a process. Matched by prefix so `execl`, `execve`,
+# `spawnv`, `posix_spawnp` and every sibling are covered without a list that
+# goes stale, and so the answer does not change with the platform the check
+# runs on.
+_PROCESS_ATTRIBUTE_PREFIXES: tuple[str, ...] = ("exec", "spawn", "posix_spawn")
+_PROCESS_ATTRIBUTE_NAMES: frozenset[str] = frozenset(
+    {"system", "popen", "startfile", "fork", "forkpty"}
+)
+
+
+def _is_process_attribute(name: str) -> bool:
+    """Whether this `os` member starts a process."""
+    return name in _PROCESS_ATTRIBUTE_NAMES or name.startswith(
+        _PROCESS_ATTRIBUTE_PREFIXES
+    )
+
+
+def _execution_module_name(module: str) -> str | None:
+    """The listed engine or process module this import reaches, if any.
+
+    Matched on the dotted name so `snowflake.connector` is a witness and a
+    different `snowflake` package is not, and so a submodule of a listed name
+    (`sqlalchemy.orm`, `subprocess.run` under `from`) still resolves.
+    """
+    for name in _EXECUTION_MODULE_NAMES:
+        if module == name or module.startswith(f"{name}."):
+            return name
+    return None
+
+
+def _attribute_root(node: ast.expr) -> str | None:
+    """The leftmost plain name of an attribute chain, or None."""
+    while isinstance(node, ast.Attribute):
+        node = node.value
+    return node.id if isinstance(node, ast.Name) else None
+
+
+def _execution_call_description(call: ast.Call) -> str | None:
+    """How this call reaches an engine or a process, in the reader's terms."""
+    func = call.func
+    if isinstance(func, ast.Name) and func.id in _EXECUTION_BUILTIN_CALLS:
+        return f"calls {func.id}()"
+    if isinstance(func, ast.Attribute):
+        if func.attr in _ENGINE_CALL_NAMES:
+            return f"calls .{func.attr}()"
+        if _attribute_root(func) == "os" and _is_process_attribute(func.attr):
+            return f"calls os.{func.attr}()"
+    return None
+
+
+def candidate_execution_witnesses(tree: ast.Module) -> tuple[str, ...]:
+    """Every construct in this tree that reaches a code or SQL engine.
+
+    Each witness names the construct and the line it sits on, because a
+    refusal a customer cannot check is one they cannot usefully disagree with.
+    Ordered by line, so the first one is the first thing to look at.
+    """
+    witnesses: list[tuple[int, str]] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if _execution_module_name(alias.name) is not None:
+                    witnesses.append((node.lineno, f"imports {alias.name}"))
+        elif isinstance(node, ast.ImportFrom):
+            module = node.module or ""
+            if _execution_module_name(module) is not None:
+                witnesses.append((node.lineno, f"imports from {module}"))
+                continue
+            for alias in node.names:
+                # `from google.cloud import bigquery` and `from mysql import
+                # connector` name the engine in the imported symbol, not in
+                # the module, so the two halves have to be rejoined before the
+                # table is asked. Only for an absolute import: under `from .
+                # import duckdb` the name belongs to the customer's own
+                # package and means nothing to this table.
+                composed = f"{module}.{alias.name}" if module else alias.name
+                if node.level == 0 and _execution_module_name(composed) is not None:
+                    witnesses.append((node.lineno, f"imports {composed}"))
+                elif (module == "os" and _is_process_attribute(alias.name)) or (
+                    module == "builtins" and alias.name in _EXECUTION_BUILTIN_CALLS
+                ):
+                    witnesses.append((node.lineno, f"imports {module}.{alias.name}"))
+        elif isinstance(node, ast.Call):
+            description = _execution_call_description(node)
+            if description is not None:
+                witnesses.append((node.lineno, description))
+    ordered = sorted(dict.fromkeys(witnesses))
+    return tuple(f"{description} (line {line})" for line, description in ordered)
+
+
+# The comparison an evaluator PROVABLY performs, for the half of #380 that a
+# single field cannot see.
+#
+# It is not the declared method that buys the points, it is the matched pair:
+# one unchanged text comparator read 86 under `exact`+`code-sql`,
+# `normalized-exact`+`structured` and `normalized-exact`+`code-sql`, and the
+# top band under `exact`+`structured`. Neither field alone moves anything, so
+# a check on either field alone misses the reading entirely - and the way to
+# reach the top band is to mis-declare both consistently, which is exactly
+# what a run optimising for the number would do. `set-f1`+`structured` and
+# `schema`+`structured` reached it over the same file too, so refuting one
+# method would have closed one route out of several.
+#
+# What closes the class is deriving what the file's comparison IS, and letting
+# every declaration be measured against that one fact. A file whose scorer
+# provably reduces to `output == expected` over named text transforms is a
+# whole-value equality comparison, and no `structured`, `set-f1` or `schema`
+# declaration over it survives that.
+#
+# PROOF, NOT PATTERN MATCH, and the difference is what keeps this safe. The
+# walk resolves the scorer's ONE return statement all the way down to the two
+# answer parameters, through a closed set of transforms, and refuses to answer
+# the moment it meets anything it cannot account for: a second scorer, a
+# branch, a loop, a helper call, a subscript, a comparison that is not `==`.
+# So its `None` is genuinely "this file was not established to be a
+# whole-value comparison", it is the common answer, and it refutes nothing.
+# Every evaluator this walk does not fully understand scores exactly as it did
+# before this branch existed.
+#
+# The narrowness is the safety property and also the honest limit. An author
+# who adds a statement the walk cannot follow gets the old, unrefuted
+# treatment - so this settles a declaration against a file, and is not a
+# defence against somebody editing the file to escape it. Nothing static is.
+_TEXT_NORMALISING_METHODS: frozenset[str] = frozenset(
+    {
+        "capitalize",
+        "casefold",
+        "expandtabs",
+        "lower",
+        "lstrip",
+        "removeprefix",
+        "removesuffix",
+        "replace",
+        "rstrip",
+        "strip",
+        "swapcase",
+        "title",
+        "upper",
+    }
+)
+# `str(...)` changes no text a string comparison would see, so it neither
+# establishes a normalisation nor stops the proof. Nothing else is neutral:
+# `float()` and `int()` reinterpret the value, and a scorer built on those is
+# a numeric comparison this walk deliberately declines to classify.
+_NEUTRAL_TEXT_WRAPPERS: frozenset[str] = frozenset({"str"})
+# The keyword contract references/evaluation-and-dataset.md pins for every
+# grading adapter this guide writes or reads. A callable carrying both names
+# is what this walk treats as the scorer; anything else in the file is left
+# alone.
+_SCORER_ANSWER_PARAMETERS: tuple[str, str] = ("output", "expected")
+_TRUTH_WRAPPERS: frozenset[str] = frozenset({"bool", "float", "int"})
+
+
+def _callable_parameter_names(node: ast.AST) -> set[str]:
+    """Every parameter name a function definition binds."""
+    if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        return set()
+    arguments = node.args
+    names = {
+        argument.arg
+        for argument in (
+            *arguments.posonlyargs,
+            *arguments.args,
+            *arguments.kwonlyargs,
+        )
+    }
+    for extra in (arguments.vararg, arguments.kwarg):
+        if extra is not None:
+            names.add(extra.arg)
+    return names
+
+
+def _comparison_operand(
+    node: ast.expr, aliases: dict[str, tuple[str, frozenset[str]]]
+) -> tuple[str, frozenset[str]] | None:
+    """Which answer this expression is, and what was applied to it first.
+
+    Returns `(parameter name, transforms applied)` or `None` when the
+    expression is anything this walk cannot account for. `None` is the
+    fail-closed answer and the common one.
+    """
+    transforms: set[str] = set()
+    current = node
+    while isinstance(current, ast.Call):
+        function = current.func
+        if (
+            isinstance(function, ast.Name)
+            and function.id in _NEUTRAL_TEXT_WRAPPERS
+            and len(current.args) == 1
+            and not current.keywords
+        ):
+            current = current.args[0]
+            continue
+        if (
+            isinstance(function, ast.Attribute)
+            and function.attr in _TEXT_NORMALISING_METHODS
+        ):
+            transforms.add(function.attr)
+            current = function.value
+            continue
+        return None
+    if not isinstance(current, ast.Name):
+        return None
+    # Aliases first, and the order is load-bearing. A scorer may rebind an
+    # answer onto its own name - `output = output.strip()` is an ordinary way
+    # to write one - and reading the parameter first would resolve the name at
+    # the comparison to the untransformed argument, report the file as `exact`,
+    # and hand full credit to the very declaration this walk exists to refuse.
+    # Aliases are recorded in statement order, so a rebinding's own right-hand
+    # side still resolves through the parameter, which is what it means there.
+    alias = aliases.get(current.id)
+    if alias is not None:
+        return alias[0], frozenset(transforms | alias[1])
+    if current.id in _SCORER_ANSWER_PARAMETERS:
+        return current.id, frozenset(transforms)
+    return None
+
+
+def derived_comparison_shape(
+    tree: ast.Module,
+) -> tuple[str, frozenset[str], int] | None:
+    """The whole-value comparison this file provably performs, or nothing.
+
+    Returns `(shape, transforms, line)` where shape is `exact` when the two
+    answers are compared as written and `normalized-exact` when a text
+    transform is applied to either of them first. `None` means the file was
+    not established to be a whole-value comparison at all, which settles
+    nothing and refuses nothing.
+    """
+    scorers = [
+        node
+        for node in ast.walk(tree)
+        if set(_SCORER_ANSWER_PARAMETERS) <= _callable_parameter_names(node)
+    ]
+    if len(scorers) != 1:
+        # Two callables taking both answers means a helper this walk would
+        # have to follow, and none means no scorer it recognises. Either way
+        # the file is not established.
+        return None
+    scorer = scorers[0]
+    aliases: dict[str, tuple[str, frozenset[str]]] = {}
+    returns: list[ast.Return] = []
+    for index, statement in enumerate(scorer.body):
+        if (
+            index == 0
+            and isinstance(statement, ast.Expr)
+            and isinstance(statement.value, ast.Constant)
+            and isinstance(statement.value.value, str)
+        ):
+            continue
+        if isinstance(statement, ast.Delete):
+            # `del input_data, metadata` is the idiom every adapter in this
+            # guide opens with, and skipping it costs nothing: it unbinds two
+            # names this walk never reads.
+            #
+            # A `del` of an answer or of an alias is a different statement and
+            # stops the proof. Skipping that one too would leave the walk
+            # reasoning about a name the scorer has unbound, which is the one
+            # thing a proof of a whole comparison may not do.
+            unbound = {
+                target.id
+                for target in statement.targets
+                if isinstance(target, ast.Name)
+            }
+            if len(unbound) != len(statement.targets) or unbound & (
+                set(_SCORER_ANSWER_PARAMETERS) | set(aliases)
+            ):
+                return None
+            continue
+        if isinstance(statement, ast.Assign):
+            resolved = _comparison_operand(statement.value, aliases)
+            targets = statement.targets
+            if (
+                resolved is None
+                or len(targets) != 1
+                or not isinstance(targets[0], ast.Name)
+            ):
+                return None
+            aliases[targets[0].id] = resolved
+            continue
+        if isinstance(statement, ast.Return):
+            returns.append(statement)
+            continue
+        return None
+    if len(returns) != 1 or returns[0].value is None:
+        return None
+    value = returns[0].value
+    if (
+        isinstance(value, ast.Call)
+        and isinstance(value.func, ast.Name)
+        and value.func.id in _TRUTH_WRAPPERS
+        and len(value.args) == 1
+        and not value.keywords
+    ):
+        value = value.args[0]
+    if (
+        not isinstance(value, ast.Compare)
+        or len(value.ops) != 1
+        or not isinstance(value.ops[0], ast.Eq)
+    ):
+        return None
+    left = _comparison_operand(value.left, aliases)
+    right = _comparison_operand(value.comparators[0], aliases)
+    if left is None or right is None:
+        return None
+    if {left[0], right[0]} != set(_SCORER_ANSWER_PARAMETERS):
+        # Both answers, once each. `output == output` compares nothing and
+        # `output == metadata` is not a comparison against the expected value.
+        return None
+    transforms = left[1] | right[1]
+    shape = "normalized-exact" if transforms else "exact"
+    return shape, frozenset(transforms), value.lineno
+
+
+def comparison_witness(transforms: frozenset[str], line: int) -> str:
+    """What was read, in terms the reader can check against their own file."""
+    if transforms:
+        applied = ", ".join(sorted(transforms))
+        return f"{applied} applied before the comparison (line {line})"
+    return f"the answers are compared as written (line {line})"
+
+
 def check_evaluator(path: Path) -> None:
     """Static, non-executing structural check for the evaluator source file.
 
@@ -2318,6 +2737,17 @@ def check_evaluator(path: Path) -> None:
     belongs to `calibrate_evaluator.py`, which answers it deliberately, in a
     credential-stripped subprocess, only after explicit approval
     (traigent-first-run#133).
+
+    The same tree also answers one question that is NOT a runtime question:
+    which constructs the file's own call path reaches. `run-safety.md` ends
+    this guide on a scorer that runs candidate output as code or submits it to
+    an engine, and until `candidate_execution_witnesses` was added nothing in
+    this package looked - so a pure text comparator and a scorer that runs
+    candidate SQL emitted the same metrics here, and the readiness score paid
+    more for declaring the second. What is emitted is what the tree shows, in
+    one direction: `executes: true` beside the constructs that establish it,
+    and `executes: false` meaning only that this walk found none of them
+    (traigent-first-run#380).
     """
     if not path.exists():
         emit("evaluator-shape", FAIL, f"{path} does not exist", {"exists": False})
@@ -2333,7 +2763,7 @@ def check_evaluator(path: Path) -> None:
         )
         return
     try:
-        ast.parse(source, filename=str(path))
+        tree = ast.parse(source, filename=str(path))
     except SyntaxError as error:
         emit(
             "evaluator-shape",
@@ -2364,12 +2794,51 @@ def check_evaluator(path: Path) -> None:
             {"exists": True, "parses": False},
         )
         return
+    witnesses = candidate_execution_witnesses(tree)
+    # Both derived facts ride on every emit below, so a reader of this JSON
+    # never has to know which branch produced the record to know what was
+    # established about the file.
+    comparison = derived_comparison_shape(tree)
+    derived: dict[str, Any] = {}
+    if comparison is not None:
+        shape, transforms, line = comparison
+        derived["comparison_shape"] = shape
+        derived["comparison_witness"] = comparison_witness(transforms, line)
+    if witnesses:
+        emit(
+            "evaluator-shape",
+            WARN,
+            f"{path} parses as valid Python, and its call path reaches a code "
+            f"or SQL engine: {'; '.join(witnesses[:MAX_REPORTED_EXECUTION_WITNESSES])}"
+            ". This guide grades with non-executing comparison evaluators, so "
+            "read the call path and, if candidate output reaches it, stop here "
+            "and design containment separately",
+            {
+                "exists": True,
+                "parses": True,
+                "executes": True,
+                "execution_witnesses": list(
+                    witnesses[:MAX_REPORTED_EXECUTION_WITNESSES]
+                ),
+                **derived,
+            },
+        )
+        return
     emit(
         "evaluator-shape",
         PASS,
         f"{path} parses as valid Python; this proves nothing about its "
         "scoring behavior, which is not executed here",
-        {"exists": True, "parses": True},
+        # `executes: false` is "this walk found no engine or process
+        # construct", never "this file does not execute the candidate". The
+        # walk cannot see through a helper module or a connection handed in at
+        # runtime, and `candidate_execution_witnesses` says so at length.
+        #
+        # `comparison_shape` is absent rather than null when the file was not
+        # established to be a whole-value comparison, for the same reason: a
+        # missing key is "not established", and there is no value that could
+        # honestly stand for it.
+        {"exists": True, "parses": True, "executes": False, **derived},
     )
 
 

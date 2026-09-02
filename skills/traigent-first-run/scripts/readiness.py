@@ -716,6 +716,97 @@ DETERMINISTIC_METHODS = {
 }
 CALIBRATION_REQUIRED_CHECKS = frozenset({"good_passes", "bad_fails", "non_constant"})
 
+# The task-fit check's weight, and what a method that is not the right kind of
+# check for this output still earns. Named because three arms now write them:
+# a declaration the file does not support has to land on exactly the number a
+# mismatched method lands on, and two literals hundreds of lines apart drift.
+TASK_FIT_WEIGHT = 25.0
+TASK_FIT_UNFIT_CREDIT = 8.0
+
+# What each declared method claims about running the answer.
+#
+# Keyed by METHOD and complete over `METHOD_PROFILES`, for the reason
+# `METHOD_MISMATCH_REASONS` is: a method added to the profile table without a
+# decision here would quietly inherit "claims nothing", and the one arm that
+# reads a `True` is the arm that stops a declaration earning credit the file
+# has not shown. `tests/test_readiness_scoring.py` holds the two tables equal,
+# so the decision is forced at authoring time rather than discovered on a
+# customer's card.
+#
+# Three values, because two would be a lie about `composite`:
+#
+# * `True`  - the declaration says this evaluator runs the answer.
+# * `False` - the declaration says it compares, and running the answer would
+#             contradict it.
+# * `None`  - the declaration settles nothing either way. `composite` blends
+#             several checks into one number and this score cannot see inside
+#             it, which is the same limit `METHOD_MISMATCH_REASONS` already
+#             states for it, so it neither claims execution nor excludes it.
+#
+# This is a property of the WORD, not of the file. What the file does is read
+# separately, by preflight's `candidate_execution_witnesses`, and the whole
+# point of #380 is that the two are different questions.
+METHOD_EXECUTES_CANDIDATE: dict[str, bool | None] = {
+    "exact": False,
+    "normalized-exact": False,
+    "numeric-tolerance": False,
+    "set-f1": False,
+    "schema": False,
+    "execution": True,
+    "routing": False,
+    "fuzzy": False,
+    "embedding": False,
+    "llm-judge-pointwise": False,
+    "llm-judge-pairwise": False,
+    "llm-judge-rubric": False,
+    "composite": None,
+}
+
+# Which methods a PROVEN whole-value comparison supports.
+#
+# The second half of #380, and the half no single-field check can reach. It is
+# the matched pair that pays: over one unchanged text comparator,
+# `exact`+`code-sql`, `normalized-exact`+`structured` and
+# `normalized-exact`+`code-sql` all read 86, and `exact`+`structured` read the
+# top band with no caps. Neither field alone moves anything, so the way to the
+# top is to mis-declare both consistently - and `set-f1`+`structured` and
+# `schema`+`structured` got there over the same file, so refuting one method
+# would have closed one route out of several.
+#
+# Keyed by METHOD and complete over `METHOD_PROFILES`, the same discipline as
+# the table above, so a method added later cannot inherit a free pass. The
+# values are the shapes `derived_comparison_shape` can establish:
+#
+# * `exact` is supported only by a comparison with no transform in it, because
+#   that is the whole of what `exact` claims - character for character.
+# * `normalized-exact` only by one with a transform, for the same reason read
+#   the other way: a file that compares as written has not normalised
+#   anything.
+# * `routing` by either. Comparing the chosen route with the expected one is a
+#   whole-value equality whether or not the labels are folded first.
+# * Everything else by neither. A file proven to compare two answers and
+#   return that comparison is not scoring overlap, validating a schema,
+#   reading numbers, asking a model, or blending several checks - whichever
+#   word was typed over it.
+#
+# Read against a `None` shape, this table decides nothing: an unestablished
+# file refutes no declaration at all.
+METHOD_COMPARISON_SUPPORT: dict[str, frozenset[str]] = {
+    "exact": frozenset({"exact"}),
+    "normalized-exact": frozenset({"normalized-exact"}),
+    "routing": frozenset({"exact", "normalized-exact"}),
+    "numeric-tolerance": frozenset(),
+    "set-f1": frozenset(),
+    "schema": frozenset(),
+    "execution": frozenset(),
+    "fuzzy": frozenset(),
+    "embedding": frozenset(),
+    "llm-judge-pointwise": frozenset(),
+    "llm-judge-pairwise": frozenset(),
+    "llm-judge-rubric": frozenset(),
+    "composite": frozenset(),
+}
+
 
 def reported_bool(value: object) -> bool | None:
     """A JSON value read as a verdict, or None when it carries none.
@@ -2073,6 +2164,79 @@ def task_fit_evidence(method: str, task_kind: str, fits: Sequence[str]) -> str:
     )
 
 
+def task_fit_execution_scope_evidence(method: str, witness: str | None) -> str:
+    """The card's sentence for a file whose own tree reaches an engine.
+
+    Three sentences, chosen by what the DECLARATION claimed, because the
+    reader's next step differs in each case. A comparison method beside a file
+    that runs the answer is a contradiction and the file wins; `execution`
+    beside one is consistent and still out of scope; `composite` claimed
+    nothing either way and is told what was found rather than what it got
+    wrong.
+
+    The witness is quoted rather than summarised. A refusal that costs 17
+    points and names no construct is one the customer cannot check, cannot
+    disagree with, and cannot tell apart from this score being opinionated
+    about their evaluator - which is the finding `task_fit_evidence` above was
+    rewritten for.
+    """
+    found = f": {witness}" if witness else ""
+    claim = METHOD_EXECUTES_CANDIDATE.get(method)
+    if claim is True:
+        opening = f"the evaluator file runs the answer, as {method} declares{found}"
+    elif claim is False:
+        opening = (
+            f"{method} describes a comparison, and the evaluator file runs "
+            f"the answer instead{found}"
+        )
+    else:
+        opening = f"the evaluator file runs the answer{found}"
+    return (
+        f"{opening}. This guide grades with an evaluator that does not run "
+        "the answer, so a route that runs it is not credited as the right "
+        "kind of check for this output"
+    )
+
+
+def task_fit_unproven_execution_evidence(method: str, read_the_file: bool) -> str:
+    """The card's sentence for a declared executing method the file has not shown.
+
+    `read_the_file` separates the two states that must never be reported as
+    one. True: an evaluator was read and this walk found no engine or process
+    call in it. False: no evaluator file was read for this score at all.
+    Neither DISPROVES execution, and neither sentence says it does - what both
+    say is that the credit was not established, which is the direction credit
+    is allowed to fail in.
+    """
+    unestablished = (
+        "the evaluator file read for this score shows no call that would"
+        if read_the_file
+        else "no evaluator file was read for this score, so nothing shows that it does"
+    )
+    return (
+        f"{method} says the evaluator runs the answer, and {unestablished}. "
+        "This check is credited from what the file does, so an unestablished "
+        "route earns no credit"
+    )
+
+
+def task_fit_comparison_evidence(method: str, shape: str, witness: str | None) -> str:
+    """The card's sentence for a declaration the file's own comparison refutes.
+
+    Names what the file does before it says what the declaration got wrong,
+    because the reader has to be able to check the first half against their
+    own source before the second half means anything to them. The witness
+    carries the line and the transforms, so "that is a normalized-exact check"
+    is a claim they can stand over the file and confirm.
+    """
+    found = f": {witness}" if witness else ""
+    return (
+        f"the evaluator file compares the whole answer with the expected "
+        f"answer and nothing else{found}. That is a {shape} check rather "
+        f"than {method}, so the fit claimed for {method} is not credited"
+    )
+
+
 def binds(cap: Cap, overall: int) -> bool:
     """Whether this cap's ceiling is the one actually holding the score down.
 
@@ -2471,6 +2635,35 @@ class EvaluationFacts:
     # `None` raises nothing, which is a decision and not an oversight - see
     # `origin_cap`.
     origin: str | None = None
+    # Whether the evaluator's own tree reaches a code or SQL engine, from
+    # preflight's `candidate_execution_witnesses` walk over the tree
+    # `evaluator-shape` already parsed. Three states, and the difference
+    # between the last two is the whole contract:
+    #
+    # * `True`  - the walk found a construct that establishes the call path.
+    # * `False` - the walk ran and found none. NOT "this file does not
+    #             execute": a helper module, a connection handed in through
+    #             `input_data`, or a name bound at runtime all escape it.
+    # * `None`  - no such walk ran, because no evaluator was passed to
+    #             preflight or an older payload predates the field.
+    #
+    # Read in one direction, exactly as `derived_control_flow_loop` is. `True`
+    # refutes; the other two settle nothing and are never reported as an
+    # all-clear (traigent-first-run#380).
+    executes_candidate: bool | None = None
+    # The first witness, verbatim, for the card. A refusal a customer cannot
+    # check is one they cannot usefully disagree with, so the line that takes
+    # the points away names the construct and the line it sits on.
+    execution_witness: str | None = None
+    # The whole-value comparison the evaluator provably performs, from
+    # preflight's `derived_comparison_shape`: `exact`, `normalized-exact`, or
+    # `None`. `None` is by far the commonest answer and means the file was not
+    # established to be a whole-value comparison at all - not that it is
+    # something else. Only a non-`None` shape ever refutes a declaration, and
+    # `METHOD_COMPARISON_SUPPORT` says which ones it refutes (#380).
+    comparison_shape: str | None = None
+    # What was read, for the card: the transforms and the line they sit on.
+    comparison_witness: str | None = None
 
 
 @dataclass(frozen=True)
@@ -5540,21 +5733,76 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
     profile = METHOD_PROFILES.get(facts.method or "")
     if profile and facts.task_kind:
         fits = facts.task_kind in profile["fits"]
-        subs.append(
-            SubScore(
-                "task-fit",
-                25.0 if fits else 8.0,
-                25.0,
-                True,
-                (
-                    f"{facts.method} suits {facts.task_kind} output"
-                    if fits
-                    else task_fit_evidence(
-                        facts.method, facts.task_kind, profile["fits"]
-                    )
-                ),
+        # Task fit used to be a lookup of the declared word in a table, so any
+        # declared word earned its row's credit. On a `code-sql` task that
+        # made `execution` - the one route `references/run-safety.md` ends
+        # this guide on - the single highest-paying thing a run could type,
+        # 17 points above a comparison, on a file nobody had read
+        # (traigent-first-run#380).
+        #
+        # Three arms now stand in front of the table. All three WITHHOLD
+        # credit and none invents any, which is the only direction a check
+        # derived from a partial read of a file may fail in. Order matters:
+        # what the file does outranks what was declared about it, because the
+        # file is the thing that will run.
+        #
+        # The third arm is the one that closes the pair. It was never the
+        # declared method alone that bought the points: over one unchanged
+        # text comparator, three of the four (method, kind) pairs read 86 and
+        # `exact`+`structured` read the top band with no caps, so a check on
+        # either field alone sees nothing wrong with any of them. Measuring
+        # every declaration against the comparison the file provably performs
+        # is what makes agreeing with yourself across both fields buy nothing.
+        if facts.executes_candidate is True:
+            # Refutation from proof. Fires only on a witness preflight
+            # actually found, so a walk that saw nothing refuses nothing, and
+            # it fires whatever was declared - a scorer that runs the answer
+            # ends this guide under whichever word was typed over it.
+            value = TASK_FIT_UNFIT_CREDIT
+            evidence = task_fit_execution_scope_evidence(
+                facts.method or "", facts.execution_witness
             )
-        )
+        elif fits and METHOD_EXECUTES_CANDIDATE.get(facts.method or "") is True:
+            # Credit, withheld. The declaration claims the file runs the
+            # answer and nothing read here establishes that, so the claim is
+            # unpaid rather than disproved. Guarded on `fits` so a method that
+            # is ALSO the wrong kind of check for this output keeps the
+            # mismatch sentence, which is worth more to the reader and is
+            # worth the same number of points.
+            value = TASK_FIT_UNFIT_CREDIT
+            evidence = task_fit_unproven_execution_evidence(
+                facts.method or "", facts.executes_candidate is False
+            )
+        elif (
+            fits
+            and facts.comparison_shape is not None
+            and facts.comparison_shape
+            not in METHOD_COMPARISON_SUPPORT.get(facts.method or "", frozenset())
+        ):
+            # Refutation from proof again. `comparison_shape` is set only for
+            # a file whose scorer was resolved all the way down to the two
+            # answers, so this arm never fires on a file the walk merely did
+            # not understand. Guarded on `fits` for the same reason the arm
+            # above is: a pair that was already the wrong kind of check for
+            # this output is worth the same either way, and the mismatch
+            # sentence is the more useful of the two.
+            #
+            # `.get(..., frozenset())` cannot be reached with the tables
+            # complete, and it fails toward refusing rather than crediting an
+            # unknown method - the direction a scorer reading a file has to
+            # fail in.
+            value = TASK_FIT_UNFIT_CREDIT
+            evidence = task_fit_comparison_evidence(
+                facts.method or "", facts.comparison_shape, facts.comparison_witness
+            )
+        else:
+            value = TASK_FIT_WEIGHT if fits else TASK_FIT_UNFIT_CREDIT
+            evidence = (
+                f"{facts.method} suits {facts.task_kind} output"
+                if fits
+                else task_fit_evidence(facts.method, facts.task_kind, profile["fits"])
+            )
+        subs.append(SubScore("task-fit", value, TASK_FIT_WEIGHT, True, evidence))
     else:
         # Name the input that is actually missing. This arm fires when EITHER
         # the method or the task kind is absent -- fit is a property of the
@@ -7779,6 +8027,71 @@ def evaluator_shape_from_preflight(
     return reported_bool(shape.get("exists")), reported_bool(shape.get("parses"))
 
 
+def evaluator_execution_from_preflight(
+    records: Sequence[dict[str, Any]],
+) -> tuple[bool | None, str | None]:
+    """Read preflight's engine/process walk over the evaluator, if one ran.
+
+    Returns `(executes, first witness)`. `executes` is `True` when the walk
+    found a construct that establishes the call path, `False` when it ran and
+    found none, and `None` when no walk ran at all - no evaluator was handed
+    to preflight, or the payload predates the field. Those last two are NOT
+    the same answer and no caller may collapse them: `False` is a walk that
+    settled nothing about a helper module or a connection handed in at
+    runtime, and `None` is a file this run never opened.
+
+    A deliberately separate reader rather than two more return values on
+    `evaluator_shape_from_preflight`. That function answers "is a file there,
+    and is it Python", which every scoring path needs; this one answers a
+    question only the task-fit arms ask, and widening the shared tuple would
+    have made every existing caller carry a fact it does not use.
+
+    Read the same three-state way as `parses` beside it: `reported_bool`, so
+    `"true"`, `1` or `{}` land on "no honest reading" rather than on a
+    verdict. The witness is taken only when it is a non-empty string in a
+    list, because it is printed on a customer's card verbatim.
+    """
+    shape = _metrics_by_check(records).get("evaluator-shape")
+    if not shape:
+        return None, None
+    executes = reported_bool(shape.get("executes"))
+    witnesses = shape.get("execution_witnesses")
+    witness = None
+    if isinstance(witnesses, list) and witnesses:
+        first = witnesses[0]
+        if isinstance(first, str) and first.strip():
+            witness = first.strip()
+    return executes, witness
+
+
+def evaluator_comparison_from_preflight(
+    records: Sequence[dict[str, Any]],
+) -> tuple[str | None, str | None]:
+    """Read the whole-value comparison preflight proved, if it proved one.
+
+    Returns `(shape, witness)`. The shape is `None` unless the field carries
+    one of the two names this scorer can act on, which is the fail-closed
+    reading in both directions at once: a payload that predates the field, a
+    file the walk could not account for, and a value nobody can read all land
+    on "nothing established", and nothing established refutes nothing.
+
+    Deliberately a closed set rather than any string. This value picks a row
+    out of `METHOD_COMPARISON_SUPPORT`, and an unrecognised name would find no
+    row, match no method, and so refute EVERY declaration - a refusal of
+    everything, sourced from a value this scorer does not understand.
+    """
+    shape = _metrics_by_check(records).get("evaluator-shape")
+    if not shape:
+        return None, None
+    reported = shape.get("comparison_shape")
+    if reported not in ("exact", "normalized-exact"):
+        return None, None
+    witness = shape.get("comparison_witness")
+    if not isinstance(witness, str) or not witness.strip():
+        return reported, None
+    return reported, witness.strip()
+
+
 class PreflightInputError(ValueError):
     """Supplied preflight JSON cannot be scored honestly.
 
@@ -8387,6 +8700,10 @@ def evaluation_facts_from_calibration(
     evaluator_present: bool | None = False,
     evaluator_parses: bool | None = None,
     origin: str | None = None,
+    evaluator_executes: bool | None = None,
+    execution_witness: str | None = None,
+    comparison_shape: str | None = None,
+    comparison_witness: str | None = None,
 ) -> EvaluationFacts:
     """Normalize both shapes `calibrate_evaluator` emits into one fact set.
 
@@ -8396,6 +8713,16 @@ def evaluation_facts_from_calibration(
     run could honestly declare a method for it. Without either signal,
     presence still falls back to "a method was declared", the only fact this
     function used to have (traigent-first-run#133).
+
+    `evaluator_executes`/`execution_witness` come from the same record through
+    `evaluator_execution_from_preflight`, and both defaults are `None` - a
+    caller that supplies neither has read no file, which is not the same
+    answer as a file that was read and showed nothing (#380).
+
+    `comparison_shape`/`comparison_witness` come from the same record too,
+    through `evaluator_comparison_from_preflight`, and default to `None` for
+    the same reason: a caller that supplies neither has established nothing
+    about the file's comparison, and nothing established refutes nothing.
     """
     if payload is None:
         return EvaluationFacts(
@@ -8404,6 +8731,10 @@ def evaluation_facts_from_calibration(
             task_kind=task_kind,
             parses=evaluator_parses,
             origin=origin,
+            executes_candidate=evaluator_executes,
+            execution_witness=execution_witness,
+            comparison_shape=comparison_shape,
+            comparison_witness=comparison_witness,
         )
     cases = payload.get("cases")
     if not isinstance(cases, list):
@@ -8486,6 +8817,10 @@ def evaluation_facts_from_calibration(
         timed_out=reported_bool(payload.get("timed_out")),
         parses=evaluator_parses,
         origin=origin,
+        executes_candidate=evaluator_executes,
+        execution_witness=execution_witness,
+        comparison_shape=comparison_shape,
+        comparison_witness=comparison_witness,
     )
 
 
@@ -15109,6 +15444,12 @@ def run(argv: Sequence[str] | None = None) -> int:
         evaluator_present, evaluator_parses = evaluator_shape_from_preflight(
             preflight_records
         )
+        evaluator_executes, execution_witness = evaluator_execution_from_preflight(
+            preflight_records
+        )
+        comparison_shape, comparison_witness = evaluator_comparison_from_preflight(
+            preflight_records
+        )
         evaluation_facts = evaluation_facts_from_calibration(
             load_json(args.calibration) if args.calibration else None,
             method=args.evaluator_method,
@@ -15116,6 +15457,10 @@ def run(argv: Sequence[str] | None = None) -> int:
             evaluator_present=evaluator_present,
             evaluator_parses=evaluator_parses,
             origin=args.evaluator_origin,
+            evaluator_executes=evaluator_executes,
+            execution_witness=execution_witness,
+            comparison_shape=comparison_shape,
+            comparison_witness=comparison_witness,
         )
         # `--config-space` first, and the `elif` is the safety property, not a
         # style choice: a brought document decides the agent pillar outright,
