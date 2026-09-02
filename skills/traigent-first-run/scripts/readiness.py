@@ -6172,12 +6172,16 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
             # `withheld` are all identical to the arm below, so the pillar
             # stays exactly where it was and the declaration still buys
             # nothing - which is the rule this whole seam is held to, and the
-            # reason clearing `withheld` here was rejected: it would lift the
-            # pillar from 51 to about 97 on the strength of a flag nothing
-            # verifies, and make claiming a refusal cheaper than doing the
-            # work. What the run needs is not a higher number for the evidence
-            # it lacks; it is a way to get the evidence, and
-            # `calibrate_evaluator.py --contained` is that route.
+            # reason clearing `withheld` here was rejected: it would renormalize
+            # the check out of the denominator and lift the pillar on the
+            # strength of a flag nothing verifies, making a claimed refusal
+            # cheaper than doing the work. What the run needs is not a higher
+            # number for evidence it lacks; it is a way to get the evidence, and
+            # this package does not have one. `references/run-safety.md` records
+            # why an in-process route is not it, and sends that work to the
+            # containment review instead. So the sentence names what happened
+            # and the cap names the review; neither pretends there is a step
+            # here that would produce the missing probe.
             # The whole sentence is built in the one arm that owns this state,
             # rather than as a tail appended after the chain. An earlier draft
             # keyed that tail on `facts.calibration_scope_refused` outside the
