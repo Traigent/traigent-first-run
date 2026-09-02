@@ -24261,6 +24261,496 @@ def places_an_ask_above_its_evidence(sentence: str) -> bool:
     return False
 
 
+#: A line that RENDERS a lettered route: `A.`, `A)`, `A (`, `**A**`, with the
+#: container prefixes an author may have typed in front of it. One pattern,
+#: used twice on purpose - the parser below matches it against text whose
+#: container prefixes have already been stripped, and `unaccounted_route_lines`
+#: matches it against raw file lines. A second pattern for the second job could
+#: drift, and the whole value of the floor is that the two cannot disagree
+#: about what even looks like a route.
+ROUTE_LINE = re.compile(
+    r"^\s*(?:>\s?)?(?:[-*+]\s+)?\*{0,2}([A-Z])(?:\.|\)|\s*\(|\*{2})"
+)
+
+MARKDOWN_FENCE = re.compile(r"^(\s{0,3})(`{3,}|~{3,})\s*(\S*)\s*$")
+MARKDOWN_QUOTE = re.compile(r"^\s{0,3}>\s?(.*)$")
+MARKDOWN_HEADING = re.compile(r"^\s{0,3}#{1,6}(?:\s|$)")
+MARKDOWN_BREAK = re.compile(r"^\s{0,3}(?:(?:-\s*){3,}|(?:\*\s*){3,}|(?:_\s*){3,})$")
+MARKDOWN_ITEM = re.compile(r"^(\s{0,3})([-*+]|\d{1,9}[.)])(\s+)(.*)$")
+
+
+class MarkdownBlock:
+    """One parsed markdown block: what it is, the lines it owns, what it holds.
+
+    `lines` are `(source line number, text with this block's own container
+    prefix removed)`. A container - a blockquote, a list, a list item - owns no
+    lines of its own and holds `children` instead, so a route line's ancestry
+    is a fact read out of the parse rather than guessed from what sat above it.
+    """
+
+    __slots__ = ("kind", "lines", "children")
+
+    def __init__(
+        self,
+        kind: str,
+        lines: object = (),
+        children: object = (),
+    ) -> None:
+        self.kind = kind
+        self.lines = tuple(lines)
+        self.children = tuple(children)
+
+    def __repr__(self) -> str:
+        first = self.lines[0][0] if self.lines else None
+        return (
+            f"MarkdownBlock({self.kind!r}, at={first}, "
+            f"lines={len(self.lines)}, children={len(self.children)})"
+        )
+
+
+def markdown_blocks(text: str) -> list[MarkdownBlock]:
+    """The block structure of one markdown document.
+
+    Enough of CommonMark to answer one question honestly: which lines are
+    SIBLINGS IN THE SAME CONTAINER. Paragraphs, blockquotes, lists, list items
+    and fenced code each get their own boundaries and their own identity, so
+    "does a lettered line belong to the route block beside it" is decided by
+    the parse and not by counting blank lines - which is the trade
+    traigent-first-run#364 and #372 are both about, reached through the two
+    separators.
+
+    **What this does NOT model**, because a parser that hides its own limits is
+    the defect this file exists to catch:
+
+    * indented (four-space) code blocks - this corpus indents continuation
+      lines inside numbered list items instead, and reading those as code would
+      hide the routes SKILL.md renders inside one;
+    * HTML blocks, link reference definitions, setext headings and tables - a
+      table row opens on `|` and a setext underline on `=`/`-`, so neither can
+      carry a route line past `ROUTE_LINE`;
+    * a list item's content column is taken from its own marker, so a
+      continuation line indented past it keeps that extra indent rather than
+      opening anything;
+    * nesting deeper than three spaces of indent per level: a marker indented
+      four or more reads as continuation text of the item above it.
+
+    Every one of those degrades a line into a paragraph of the level above. It
+    is still parsed, still scanned, and still has to be accounted for by
+    `unaccounted_route_lines`, so no limit here turns into a silent pass.
+    """
+    return _markdown_blocks_in(list(enumerate(text.splitlines(), 1)))
+
+
+def _starts_a_markdown_block(raw: str) -> bool:
+    """Whether this line opens a new block rather than continuing a paragraph."""
+    return bool(
+        MARKDOWN_FENCE.match(raw)
+        or MARKDOWN_QUOTE.match(raw)
+        or MARKDOWN_HEADING.match(raw)
+        or MARKDOWN_BREAK.match(raw)
+        or MARKDOWN_ITEM.match(raw)
+    )
+
+
+def _markdown_blocks_in(lines: list[tuple[int, str]]) -> list[MarkdownBlock]:
+    blocks: list[MarkdownBlock] = []
+    at = 0
+    while at < len(lines):
+        raw = lines[at][1]
+        if not raw.strip():
+            at += 1
+        elif MARKDOWN_FENCE.match(raw):
+            at = _read_markdown_fence(lines, at, blocks)
+        elif MARKDOWN_QUOTE.match(raw):
+            at = _read_markdown_quote(lines, at, blocks)
+        elif MARKDOWN_HEADING.match(raw) or MARKDOWN_BREAK.match(raw):
+            blocks.append(MarkdownBlock("heading", (lines[at],)))
+            at += 1
+        elif MARKDOWN_ITEM.match(raw):
+            at = _read_markdown_list(lines, at, blocks)
+        else:
+            at = _read_markdown_paragraph(lines, at, blocks)
+    return blocks
+
+
+def _read_markdown_fence(lines: list[tuple[int, str]], at: int, blocks: list) -> int:
+    opened = MARKDOWN_FENCE.match(lines[at][1])
+    assert opened is not None
+    marker = opened.group(2)
+    body: list[tuple[int, str]] = []
+    at += 1
+    while at < len(lines):
+        closing = MARKDOWN_FENCE.match(lines[at][1])
+        if (
+            closing
+            and closing.group(2)[0] == marker[0]
+            and len(closing.group(2)) >= len(marker)
+            and not closing.group(3)
+        ):
+            at += 1
+            break
+        body.append(lines[at])
+        at += 1
+    blocks.append(MarkdownBlock("fence", body))
+    return at
+
+
+def _read_markdown_quote(lines: list[tuple[int, str]], at: int, blocks: list) -> int:
+    """One blockquote, ending where the quote does.
+
+    A blank line ends it, quoted or not: `>` on its own is a blank line INSIDE
+    the quote and separates two paragraphs within it, while an unquoted blank
+    line closes the quote and opens a new one. Both facts are read here so that
+    neither has to be inferred later, which is what makes the two renderings of
+    a two-route template parse to the same choice further down.
+    """
+    body: list[tuple[int, str]] = []
+    while at < len(lines):
+        number, raw = lines[at]
+        quoted = MARKDOWN_QUOTE.match(raw)
+        if quoted:
+            body.append((number, quoted.group(1)))
+        elif not raw.strip() or _starts_a_markdown_block(raw):
+            break
+        else:
+            # CommonMark laziness: an unquoted, unindented line under a quoted
+            # paragraph continues it rather than leaving the quote.
+            body.append((number, raw.strip()))
+        at += 1
+    blocks.append(MarkdownBlock("quote", (), _markdown_blocks_in(body)))
+    return at
+
+
+def _read_markdown_list(lines: list[tuple[int, str]], at: int, blocks: list) -> int:
+    """One list, holding its items.
+
+    The LIST is the container, not the item. `- A. proceed` and `- B. fix` are
+    siblings of the same list whether the author left a blank line between them
+    or not, and pooling at the item would make those two renderings of one
+    choice disagree - the same defect as the blockquote separator, one
+    container kind over.
+    """
+    items: list[MarkdownBlock] = []
+    while at < len(lines):
+        raw = lines[at][1]
+        if not raw.strip():
+            ahead = at
+            while ahead < len(lines) and not lines[ahead][1].strip():
+                ahead += 1
+            if ahead < len(lines) and MARKDOWN_ITEM.match(lines[ahead][1]):
+                at = ahead
+                continue
+            break
+        item = MARKDOWN_ITEM.match(raw)
+        if not item:
+            break
+        column = len(item.group(1)) + len(item.group(2)) + len(item.group(3))
+        body = [(lines[at][0], item.group(4))]
+        at += 1
+        while at < len(lines):
+            number, following = lines[at]
+            if not following.strip():
+                # A blank line inside an item, not the end of it: the item goes
+                # on while what follows is still indented into its content
+                # column. SKILL.md renders its one lettered option as a
+                # blockquote sitting under a blank line inside a numbered step,
+                # so an item that ended here would hand that quote to the level
+                # above and lose which step it belongs to.
+                ahead = at
+                while ahead < len(lines) and not lines[ahead][1].strip():
+                    ahead += 1
+                onward = lines[ahead][1] if ahead < len(lines) else ""
+                if not onward.strip() or len(onward) - len(onward.lstrip()) < column:
+                    break
+                body.extend((lines[skip][0], "") for skip in range(at, ahead))
+                at = ahead
+                continue
+            if len(following) - len(following.lstrip()) >= column:
+                body.append((number, following[column:]))
+            elif MARKDOWN_ITEM.match(following) or _starts_a_markdown_block(following):
+                break
+            else:
+                body.append((number, following.strip()))
+            at += 1
+        items.append(MarkdownBlock("item", (), _markdown_blocks_in(body)))
+    blocks.append(MarkdownBlock("list", (), items))
+    return at
+
+
+def _read_markdown_paragraph(
+    lines: list[tuple[int, str]], at: int, blocks: list
+) -> int:
+    body: list[tuple[int, str]] = []
+    while at < len(lines):
+        raw = lines[at][1]
+        if not raw.strip():
+            break
+        if body and _starts_a_markdown_block(raw):
+            break
+        body.append(lines[at])
+        at += 1
+    blocks.append(MarkdownBlock("paragraph", body))
+    return at
+
+
+class RouteScope:
+    """One container route lines are counted as siblings within.
+
+    Four kinds: `document`, one `quote`, one `fence`, one `list`. A scope is
+    compared by identity, never by kind - two blockquotes are two scopes, which
+    is the whole of what separates three quoted blocks from one.
+    """
+
+    __slots__ = ("kind", "candidates")
+
+    def __init__(self, kind: str) -> None:
+        self.kind = kind
+        self.candidates: list[RouteCandidate] = []
+
+    def __repr__(self) -> str:
+        return f"RouteScope({self.kind!r}, candidates={len(self.candidates)})"
+
+
+class RouteCandidate:
+    """A line that renders like a route, with where it came from.
+
+    Carried with its source line because an ambiguous parse has to be readable:
+    when a block is wrong the author needs the swallowed line on the screen,
+    not a letter string - traigent-first-run#372.
+    """
+
+    __slots__ = ("letter", "text", "line", "scope")
+
+    def __init__(self, letter: str, text: str, line: int, scope: RouteScope) -> None:
+        self.letter = letter
+        self.text = text
+        self.line = line
+        self.scope = scope
+
+    def __repr__(self) -> str:
+        return f"{self.letter}@{self.line} {self.text[:40]!r}"
+
+
+def _route_candidates(lines: object, scope: RouteScope) -> list[RouteCandidate]:
+    """Every route-shaped line in ONE leaf block, with the body under it.
+
+    The body stops at the next route line or at the end of this leaf block, so
+    a route carries the continuation lines an author wrapped under it - the
+    mark on SKILL.md's option sits on the line below the letter - and never the
+    rest of the document.
+    """
+    rows = list(lines)
+    opens = [
+        (index, ROUTE_LINE.match(text))
+        for index, (_, text) in enumerate(rows)
+        if ROUTE_LINE.match(text)
+    ]
+    found = []
+    for spot, (index, match) in enumerate(opens):
+        assert match is not None
+        stop = opens[spot + 1][0] if spot + 1 < len(opens) else len(rows)
+        body = " ".join(text.strip() for _, text in rows[index:stop] if text.strip())
+        found.append(RouteCandidate(match.group(1), body, rows[index][0], scope))
+    return found
+
+
+def _route_scopes(
+    blocks: object, kind: str, scopes: list[RouteScope]
+) -> list[RouteScope]:
+    scope = RouteScope(kind)
+    scopes.append(scope)
+    for block in blocks:
+        if block.kind in ("paragraph", "heading"):
+            scope.candidates.extend(_route_candidates(block.lines, scope))
+        else:
+            _route_scopes_within(block, scopes)
+    return scopes
+
+
+def _route_scopes_within(block: MarkdownBlock, scopes: list[RouteScope]) -> None:
+    if block.kind == "fence":
+        # A route rendered inside a fenced sample IS scanned, and this is the
+        # deliberate half of that decision. A fence in this corpus is where a
+        # reply-ready block would be pasted verbatim, so skipping fences would
+        # mean moving a template from `>` to ``` silently removes it from every
+        # shape guard - the "didn't find it, so it passed" branch this whole
+        # redesign exists to close. The cost is real and bounded: a code sample
+        # whose lines begin `A.` and `B.` at column 0, in that order, reads as
+        # a route pair. It is bounded because a fence gets the same bar as
+        # ordinary prose below - one lettered line alone in a fence is code -
+        # and because any line this drops still has to be named in
+        # `NOT_A_ROUTE`. The corpus has no route-shaped line inside any of its
+        # 43 fences today, so this decision costs nothing now and fails closed
+        # later.
+        fence = RouteScope("fence")
+        scopes.append(fence)
+        fence.candidates.extend(_route_candidates(block.lines, fence))
+    elif block.kind == "quote":
+        _route_scopes(block.children, "quote", scopes)
+    elif block.kind == "list":
+        listing = RouteScope("list")
+        scopes.append(listing)
+        for item in block.children:
+            for child in item.children:
+                if child.kind in ("paragraph", "heading"):
+                    listing.candidates.extend(_route_candidates(child.lines, listing))
+                else:
+                    _route_scopes_within(child, scopes)
+
+
+def _is_an_offered_choice(run: list[RouteCandidate]) -> bool:
+    """Whether a run of contiguous lettered lines is a choice a customer is offered.
+
+    Two ways to qualify, and both are properties of the CONTAINER rather than
+    of the line above:
+
+    * the run opens inside a blockquote. `>` is a marker an author typed on
+      purpose, and this package quotes customer-facing wording, so a single
+      quoted route is a rendered route - SKILL.md offers exactly one that way;
+    * or the run has a sibling in its opener's own container. The guidance's
+      own rule is that "a single proposed action with no alternative route
+      beside it is not a route list", so one lettered line alone in a
+      paragraph, a list or a fence is the sentence it looks like.
+
+    That second clause is what a wrapped prose line trips over. A paragraph
+    that hard-wraps onto `A. One ask means one decision in the whole message.`
+    holds one lettered line and no sibling, so it is prose - whether it sits
+    mid-paragraph as `references/component-creation.md` writes it, whether an
+    author reflows it to open its own paragraph, and whether or not a real
+    route block sits directly under it. None of those three is decided here by
+    looking at the previous line.
+
+    **What it still does not model.** A quoted paragraph that hard-wraps onto a
+    line beginning `A. ` is read as a route, because inside a blockquote the
+    marker is taken at its word. And a run whose opener is prose but which
+    reaches a real route in the same container - a stray `A.` sentence at
+    document level followed by a lone quoted `B.` route - is refused as a whole
+    rather than split. Both surface as a red naming the lines, never as a pass.
+    """
+    head = run[0]
+    if head.scope.kind == "quote":
+        return True
+    return sum(1 for candidate in run if candidate.scope is head.scope) >= 2
+
+
+def rendered_route_blocks(text: str) -> list[list[RouteCandidate]]:
+    """Every block of lettered routes one document renders, in order.
+
+    Two questions, answered separately, because conflating them is what both
+    traigent-first-run#364 and #372 are about.
+
+    **Is this line a route?** `_is_an_offered_choice`, off the container. Never
+    off the previous line, which is the trade this replaces: an unquoted opener
+    had to follow a blank line, and that bought a false positive on a wrapped
+    prose sentence back as a blind spot over every unquoted block that does not
+    open a paragraph.
+
+    **Which routes are one choice?** The letters, in document order. A run
+    grows while the next letter is the one that follows, and a letter `A`
+    starts a new run. Nothing about what sits BETWEEN two routes is consulted,
+    which is what makes an explanatory sentence between two quoted routes leave
+    the choice intact while three separate blockquotes stay three containers
+    and two choices.
+
+    A letter that is neither the next one nor `A` is dropped from every run -
+    `A`, `C`, `D` yields no block rather than a wrong one - and every line
+    dropped anywhere in here is then owed an entry in `NOT_A_ROUTE`, so a
+    narrowing shows up as a red rather than as a quieter scan.
+    """
+    scopes = _route_scopes(markdown_blocks(text), "document", [])
+    candidates = sorted(
+        (candidate for scope in scopes for candidate in scope.candidates),
+        key=lambda candidate: candidate.line,
+    )
+    runs: list[list[RouteCandidate]] = []
+    current: list[RouteCandidate] = []
+    for candidate in candidates:
+        if current and candidate.letter == chr(ord("A") + len(current)):
+            current.append(candidate)
+            continue
+        if current:
+            runs.append(current)
+        current = [candidate] if candidate.letter == "A" else []
+    if current:
+        runs.append(current)
+    return [run for run in runs if _is_an_offered_choice(run)]
+
+
+def route_block_outline(path: Path, run: object) -> str:
+    """One block, named item by item with its source line.
+
+    A parse this reports is sometimes genuinely ambiguous, and the difference
+    between a red an author fixes in one read and a red they file a bug about
+    is whether the swallowed line is on the screen - traigent-first-run#372.
+    """
+    return " | ".join(
+        f"{candidate.letter}@{path.name}:{candidate.line} {candidate.text[:60]!r}"
+        for candidate in run
+    )
+
+
+#: Lines that render like a route and are not one, each with the reason it is
+#: prose. This is the floor's escape hatch and it is deliberately an
+#: ENUMERATION: a parser's "this is not a route" branch is a pass, and an
+#: unwritten pass is how every defect in this file's history stayed invisible.
+#: A stale entry fails below, and so does a new route-shaped line nobody has
+#: looked at, so the cost of the parser being wrong is a review rather than a
+#: silence.
+#:
+#: **The cost, stated rather than discovered.** An author who reflows an
+#: ordinary paragraph onto a line beginning `A. ` gets a red and owes one entry
+#: here. That is the price of the floor and it is the price worth paying: the
+#: alternative is the parser deciding on its own that a line is not a route,
+#: which is the branch traigent-first-run#364's second defect lived in. The red
+#: names the file, the line number and the text, and says which of the two
+#: answers to give, so it costs a read and a sentence rather than an
+#: investigation.
+#:
+#: Keyed by the line's own text and not by its position, so moving the sentence
+#: or reflowing the paragraph around it does not invalidate the entry - which
+#: is the change that produced the false red this replaces.
+NOT_A_ROUTE = {
+    "A. One ask means one decision in the whole message, not one decision "
+    "after the last one.": (
+        "component-creation.md. The paragraph explaining that a route may not "
+        "carry a question of its own hard-wraps onto this sentence, near the "
+        "100 columns this corpus wraps at. It is one lettered line in a "
+        "document-level paragraph with no sibling route in it, so it is read "
+        "as the sentence it is - traigent-first-run#372 named this line as the "
+        "shape a reflow turns into a false route block."
+    ),
+}
+
+
+def unaccounted_route_lines() -> list[tuple[Path, int, str]]:
+    """Every route-shaped raw line the parser did not put in a block.
+
+    The per-BLOCK floor. Derived from the raw corpus rather than from the
+    parser's own output, so the two cannot agree with each other by being the
+    same code: `ROUTE_LINE` reads the file's lines, `rendered_route_blocks`
+    reads the parse, and this reports the difference.
+
+    It replaces a per-DOCUMENT floor that asked whether every document
+    rendering a mark appeared somewhere in what the scan found. One block per
+    document satisfied that, so a second block the scan missed - for any
+    reason, in any document that already had one - cost nothing.
+    """
+    missing: list[tuple[Path, int, str]] = []
+    for path in conversation_contract_documents():
+        text = path.read_text(encoding="utf-8")
+        parsed = {
+            candidate.line
+            for block in rendered_route_blocks(text)
+            for candidate in block
+        }
+        for number, raw in enumerate(text.splitlines(), 1):
+            if ROUTE_LINE.match(raw) and number not in parsed:
+                if raw.strip() in NOT_A_ROUTE:
+                    continue
+                missing.append((path, number, raw.strip()))
+    return missing
+
+
 class TheAskIsLastAndNamesWhatIsLackingTests(unittest.TestCase):
     """Five watched runs opened on the decision and buried the evidence.
 
@@ -24666,77 +25156,42 @@ class TheAskIsLastAndNamesWhatIsLackingTests(unittest.TestCase):
         rule pinned to the one example that failed leaves its siblings free to
         carry the same defect, and this package has had exactly that twice.
 
-        Three things widened after review. The corpus is
-        `conversation_contract_documents()`, because the eight-document one
-        leaves README.md - the single most-read file in a public repository -
-        outside every check that owns this distinction. A route no longer has
-        to be inside a blockquote: this package quotes most customer-facing
-        wording, but "most" is not a property a scan may assume, and a route
-        rendered in a list or in plain bold is the same act. And the letters
-        run A-Z rather than A-D, so a fifth route is not silently unscanned.
+        The corpus is `conversation_contract_documents()`, because the
+        eight-document one leaves README.md - the single most-read file in a
+        public repository - outside every check that owns this distinction. A
+        route does not have to be inside a blockquote: this package quotes most
+        customer-facing wording, but "most" is not a property a scan may
+        assume, and a route rendered in a list or in plain bold is the same
+        act. The letters run A-Z, so a fifth route is not silently unscanned.
 
         Grouped into blocks rather than returned flat, because the mandate is
         about a SET: one mark per choice cannot be counted on an option seen
-        alone. A block opens on `A` and runs while the letters keep ascending.
+        alone.
+
+        The grouping itself is `rendered_route_blocks`, which parses the
+        document into containers first. This wrapper keeps the flat
+        `(letter, text)` shape the register and mark checks read; anything that
+        needs to SAY which line a route came from reads the candidates.
         """
-        opener = re.compile(
-            r"^\s*(?:>\s?)?(?:[-*]\s+)?\*{0,2}([A-Z])(?:\.|\)|\s*\(|\*{2})"
-        )
-        quoted = re.compile(r"^\s*>\s?(.*)$")
-        found: list[tuple[Path, list[tuple[str, str]]]] = []
-        for path in conversation_contract_documents():
-            options: list[tuple[str, str]] = []
-            letter: str | None = None
-            body: list[str] = []
+        return [
+            (path, [(candidate.letter, candidate.text) for candidate in block])
+            for path, block in TheAskIsLastAndNamesWhatIsLackingTests.route_runs()
+        ]
 
-            def close() -> None:
-                nonlocal letter, body
-                if letter is not None:
-                    options.append((letter, " ".join(body)))
-                letter, body = None, []
+    @staticmethod
+    def route_runs() -> list[tuple[Path, list[RouteCandidate]]]:
+        """`route_blocks` with each route's source line kept.
 
-            def flush() -> None:
-                nonlocal options
-                if options:
-                    found.append((path, options))
-                options = []
-
-            # A route opener has to START something. Dropping the blockquote
-            # requirement means a wrapped prose line can begin "A. One ask
-            # means one decision", and component-creation.md has exactly that
-            # line - so an unquoted opener counts only where the line before it
-            # was blank or was itself part of this block. Inside a blockquote
-            # the marker already says the line is customer-facing wording.
-            opens = True
-            for line in path.read_text(encoding="utf-8").splitlines():
-                stripped = line.strip()
-                quote = quoted.match(line)
-                text = quote.group(1).strip() if quote else stripped
-                start = opener.match(text) if text else None
-                if start and (quote or opens or letter is not None):
-                    close()
-                    expected = chr(ord("A") + len(options))
-                    if start.group(1) != expected:
-                        flush()
-                    letter, body = start.group(1), [text]
-                    opens = False
-                    continue
-                opens = not stripped
-                if not text:
-                    # A bare `>` is a blank line INSIDE a blockquote: it ends
-                    # the option, never the block. Treating it as the end of
-                    # the block is what split every two-route template in this
-                    # package into two blocks of one, which is exactly the
-                    # shape a one-mark-per-choice count cannot be taken on.
-                    close()
-                    if not quote:
-                        flush()
-                    continue
-                if letter is not None:
-                    body.append(text)
-            close()
-            flush()
-        return found
+        Separate because the two callers want different things and neither
+        should pay for the other: the shape guards count marks and letters, and
+        the failure messages have to name the line an author has to go and look
+        at - traigent-first-run#372.
+        """
+        return [
+            (path, block)
+            for path in conversation_contract_documents()
+            for block in rendered_route_blocks(path.read_text(encoding="utf-8"))
+        ]
 
     def test_the_register_check_reads_both_of_the_options_that_were_written(
         self,
@@ -24773,26 +25228,31 @@ class TheAskIsLastAndNamesWhatIsLackingTests(unittest.TestCase):
     ) -> None:
         """Scoped to every offered option, not to the one that was wrong."""
         options = self._offered_options()
-        # The floor is derived rather than typed. A constant 3 says nothing
-        # about whether the scan still reaches the routes the documents write:
-        # it stays satisfied while the scan silently narrows to one file. Every
-        # document that renders a recommendation mark on a route has to appear
-        # in what the scan found, and the corpus supplies that list.
-        renders_a_route = {
-            path
-            for path in conversation_contract_documents()
-            if "(recommended" in path.read_text(encoding="utf-8").casefold()
-        }
+        # The floor is derived rather than typed, and it counts BLOCKS rather
+        # than documents. The per-document form this replaces asked whether
+        # every document rendering a `(recommended` mark appeared somewhere in
+        # what the scan found; one block per document satisfied that, so a
+        # second block in the same document that the scan missed cost nothing
+        # and a whole option went unread - traigent-first-run#364.
+        #
+        # This reads the raw lines instead. Every line in the corpus that
+        # renders like a route is either in a block this scan reached, or named
+        # in `NOT_A_ROUTE` with the reason it is prose. There is no third
+        # branch, which is the point: a parser's "not a route" answer is a
+        # pass, and an unwritten pass is how a missed option stays invisible.
         self.assertTrue(
-            renders_a_route,
-            "no document renders a marked route, so this scan has nothing to "
+            options,
+            "no document renders a lettered route, so this scan has nothing to "
             "be measured against",
         )
         self.assertEqual(
-            renders_a_route - {path for path, _, _ in options},
-            set(),
-            "a document renders a marked route that this scan did not find, "
-            "so the scan has stopped matching the way routes are written",
+            unaccounted_route_lines(),
+            [],
+            "these lines render like a route and are in no block this scan "
+            "reached. Either the parser has stopped matching the way routes "
+            "are written - in which case the option on that line is offered to "
+            "a customer unread by every shape and register guard here - or the "
+            "line is prose, and it belongs in NOT_A_ROUTE with the reason",
         )
         for path, letter, text in options:
             with self.subTest(document=path.name, option=letter):
@@ -25321,20 +25781,32 @@ class OneShapeAndOneMarkForEveryChoiceTests(unittest.TestCase):
         SKILL.md and nowhere else, so nothing in this suite ever counted a mark
         in a rendered block. This reads the blocks the documents actually
         write and counts.
+
+        The failure names every route in the block with its source line. A
+        block's parse can be genuinely ambiguous - a paragraph explaining
+        routes gets written beside routes - and the difference between a red an
+        author fixes in one read and a red they file a bug about is whether the
+        line that caused it is on the screen (traigent-first-run#372).
         """
-        blocks = TheAskIsLastAndNamesWhatIsLackingTests.route_blocks()
+        blocks = TheAskIsLastAndNamesWhatIsLackingTests.route_runs()
         self.assertTrue(blocks, "no written route blocks were found to check")
-        for path, options in blocks:
-            marked = [text for _, text in options if "(recommended" in text.casefold()]
+        for path, block in blocks:
+            marked = [
+                candidate
+                for candidate in block
+                if "(recommended" in candidate.text.casefold()
+            ]
             with self.subTest(
-                document=path.name, routes="".join(letter for letter, _ in options)
+                document=path.name,
+                routes="".join(candidate.letter for candidate in block),
             ):
                 self.assertEqual(
                     len(marked),
                     1,
                     "this block of routes does not carry exactly one "
                     "recommendation, which is the shape SKILL.md states for "
-                    "every named-route choice this run offers",
+                    "every named-route choice this run offers. The block "
+                    f"reads: {route_block_outline(path, block)}",
                 )
 
     def test_the_route_block_count_reads_a_marked_block_and_an_unmarked_one(
@@ -25841,10 +26313,27 @@ class OneShapeAndOneMarkForEveryChoiceTests(unittest.TestCase):
         reason the shipped text passed, since the author had split the thought
         in two - and it had no polarity at all, so "a statistical tie is not
         headroom", the most natural correct statement of its own rule, went
-        red. A run-up reading does not fix that either: the sale it exists to
-        catch opens "8 of the 18 rows were solved by no configuration and the
-        top three are a statistical tie", where an unrelated `no` thirty words
-        earlier would read as a denial of the pairing.
+        red. A WHOLE-SENTENCE run-up reading does not fix that either: the sale
+        it exists to catch opens "8 of the 18 rows were solved by no
+        configuration and the top three are a statistical tie", where an
+        unrelated `no` thirty words earlier would read as a denial of the
+        pairing.
+
+        The run-up IS read, and the carve-out that stopped it reading is gone.
+        `read_polarity=False` was passed here for the sentence above, and it
+        stopped being needed when `adjacent_runup` gained its clause break:
+        that `no configuration` is cut off at the ` and `, leaving "the top
+        three are a " - unqualified - so the sale is still caught. What the
+        carve-out cost was the rule's own prohibition. "Do not offer within
+        noise as upside." has its governor immediately in front of the tie
+        phrase and in neither of the two windows this scan reads - the gap
+        between the halves and the tie's own sentence tail - so the sentence
+        forbidding the pairing was reported as an instance of it, which is the
+        shape that makes a rule unstatable (traigent-first-run#364, item 10).
+        Measured before and after on the sets in
+        `GuardExemptionsAreNarrowEnoughToCatchTheDefectTests`: 4 of 4 tie
+        defects still caught, 7 of 7 tie paraphrases still green, three
+        prohibitions of this rule no longer refused.
         """
         flat = " ".join(text.casefold().split())
         offending: set[str] = set()
@@ -25871,7 +26360,7 @@ class OneShapeAndOneMarkForEveryChoiceTests(unittest.TestCase):
                             continue
                         if any(token in f"{gap} {tail}" for token in cls.TIE_DENIALS):
                             continue
-                        if guard_issues_at(flat, at, end, read_polarity=False):
+                        if guard_issues_at(flat, at, end):
                             offending.add(span)
         return sorted(offending)
 
@@ -25910,6 +26399,14 @@ class OneShapeAndOneMarkForEveryChoiceTests(unittest.TestCase):
             # And the record of the run that inverted it.
             "The preview previously read a statistical tie as room to move "
             "and sold it.",
+            # The rule's own prohibition, which this scan refused while it
+            # passed `read_polarity=False`. Its governor sits immediately in
+            # front of the tie phrase and in neither window this scan reads,
+            # so nothing but the run-up could ever have seen it -
+            # traigent-first-run#364, item 10.
+            "Do not offer within noise as upside.",
+            "Never sell a statistical tie as headroom.",
+            "Do not name a statistical tie as a reason to spend.",
         ):
             with self.subTest(caution=caution[:44]):
                 self.assertEqual(self._sells_a_tie_as_headroom(caution), [])
@@ -25996,7 +26493,15 @@ class GuardExemptionsAreNarrowEnoughToCatchTheDefectTests(unittest.TestCase):
     phrasing is present", never "this document is clean". The one guard in
     this set that is structural rather than lexical - `route_blocks()`, which
     counts marks in the blocks the documents actually render - is the shape
-    these should move to, and traigent-first-run#364 tracks it.
+    these should move to.
+
+    That one is now a container parse rather than a line-local read
+    (`markdown_blocks` and `rendered_route_blocks`, with
+    `RouteBlocksAreParsedFromContainersNotFromArrangementTests` over it), which
+    closes the two blind spots traigent-first-run#364 recorded against it and
+    the swallowed prose line in #372. The four scanners in this class are
+    unchanged in kind: they are still word lists, and the counts above are
+    still counts of phrasings somebody wrote down.
     """
 
     #: 21 natural phrasings of real defects. Every one must be caught.
@@ -26200,6 +26705,14 @@ class GuardExemptionsAreNarrowEnoughToCatchTheDefectTests(unittest.TestCase):
             "separate the configurations already tried, so it is not "
             "headroom.",
         ),
+        # The rule's own prohibition, written the three ways an author reaches
+        # for. All three were refused while the tie scan skipped its run-up,
+        # which is traigent-first-run#364's item 10: the sale it was skipping
+        # the run-up for is still caught, because `adjacent_runup` cuts the
+        # unrelated `no configuration` off at its clause break.
+        ("tie", "Do not offer within noise as upside."),
+        ("tie", "Never sell a statistical tie as headroom."),
+        ("tie", "Do not name a statistical tie as a reason to spend."),
         (
             "practice",
             "**A.** Pull the metric and the date out of each alert your "
@@ -26287,6 +26800,401 @@ class GuardExemptionsAreNarrowEnoughToCatchTheDefectTests(unittest.TestCase):
             "KNOWN_FALSE_RED and move it into HONEST rather than leaving a "
             "docstring claiming a limitation the code no longer has",
         )
+
+
+class RouteBlocksAreParsedFromContainersNotFromArrangementTests(unittest.TestCase):
+    """The parser, pinned in both directions on markdown written here.
+
+    The corpus tests above are what stops the parser silently narrowing: they
+    read the four blocks the guidance actually renders, so a parser that stops
+    finding one goes red on the real documents. They cannot pin the cases the
+    corpus does not contain, and every defect in traigent-first-run#364 and
+    #372 was one of those - a block one blank line away from the shape the
+    corpus happens to use.
+
+    So each case is written out here as markdown and parsed. The strings are
+    invented rather than read from a document: a fixture built out of the same
+    text the assertion reads proves the two agree with each other and nothing
+    about the guidance.
+
+    Every case below was run against the parser this replaced, and each one is
+    labelled with what that parser answered.
+    """
+
+    def shape(self, markdown: str) -> list[tuple[str, int]]:
+        """One document's blocks as (letters, marks), which is what the guards read."""
+        return [
+            (
+                "".join(candidate.letter for candidate in block),
+                sum(
+                    1
+                    for candidate in block
+                    if "(recommended" in candidate.text.casefold()
+                ),
+            )
+            for block in rendered_route_blocks(markdown)
+        ]
+
+    def test_an_unquoted_block_that_does_not_open_a_paragraph_is_found(
+        self,
+    ) -> None:
+        """traigent-first-run#364, defect 1. The block was invisible.
+
+        Trunk required an unquoted route line to follow a blank line, so this
+        block was not found at all and was never checked for a mark. Appending
+        it verbatim to `references/run-safety.md` left
+        `test_every_written_route_block_marks_exactly_one_route` green;
+        inserting one blank line after the lead-in made the same block found
+        and correctly red. The question "is this a rendered route or a wrapped
+        sentence" is a markdown-block question, and it was being answered by
+        looking at the line above.
+        """
+        run_on = "Offer two routes:\n**A.** proceed\n**B.** fix\n"
+        spaced = "Offer two routes:\n\n**A.** proceed\n**B.** fix\n"
+        self.assertEqual(self.shape(run_on), [("AB", 0)])
+        self.assertEqual(
+            self.shape(run_on),
+            self.shape(spaced),
+            "a blank line after the lead-in is not a change to the choice, and "
+            "it decided whether the choice was checked at all",
+        )
+
+    def test_the_two_separators_between_quoted_routes_parse_identically(
+        self,
+    ) -> None:
+        """traigent-first-run#364, defect 3. A reflow reddened the suite.
+
+        A bare `>` between two routes is a blank line inside one blockquote; an
+        unquoted blank line closes that blockquote and opens another. They
+        render the same choice. Trunk read the second as two blocks of one, so
+        route `B` carried no mark and the suite went red on a change that
+        touched no wording - reproduced by replacing the bare `>` between the
+        two routes of the connected preview's final reply-ready block in
+        `references/run-safety.md`.
+        """
+        bare_caret = (
+            "> **A. proceed** *(recommended)*\n"
+            "> Reply `continue`.\n"
+            ">\n"
+            "> **B. fix**\n"
+            "> Reply `fix`.\n"
+        )
+        blank_line = (
+            "> **A. proceed** *(recommended)*\n"
+            "> Reply `continue`.\n"
+            "\n"
+            "> **B. fix**\n"
+            "> Reply `fix`.\n"
+        )
+        self.assertEqual(self.shape(bare_caret), [("AB", 1)])
+        self.assertEqual(
+            self.shape(bare_caret),
+            self.shape(blank_line),
+            "these are two renderings of one choice, and a guard over rendered "
+            "shape may not depend on which of them an author typed",
+        )
+
+    def test_the_two_list_renderings_of_one_choice_parse_identically(self) -> None:
+        """The same equivalence, one container kind over.
+
+        A tight list and a loose list are the same list; the blank line makes
+        the items' contents paragraphs rather than making them two lists. The
+        list is what routes are siblings of, which is why pooling has to happen
+        at the list and not at the item.
+        """
+        tight = "- **A. proceed** *(recommended)*\n- **B. fix**\n"
+        loose = "- **A. proceed** *(recommended)*\n\n- **B. fix**\n"
+        self.assertEqual(self.shape(tight), [("AB", 1)])
+        self.assertEqual(self.shape(tight), self.shape(loose))
+
+    def test_a_wrapped_prose_line_beside_a_route_block_is_not_swallowed(
+        self,
+    ) -> None:
+        """traigent-first-run#372, first instance.
+
+        A paragraph that hard-wraps onto `A. ` and is separated from a real
+        route block by only blank lines was read as part of that block, giving
+        `AABC` where the document renders `ABC`. The author who caused it
+        changed a paragraph, not a choice.
+
+        Here the two are different containers and the wrapped line has no
+        sibling route in its own, so it is the sentence it is - and the block
+        beside it is untouched. The second string removes even the blank line,
+        so the two are one paragraph: the wrapped `A. ` still has no sibling in
+        the letter run that starts at the real `A`, and is still dropped.
+        """
+        block = (
+            "A. **Repair and re-evaluate (recommended)** - make the smallest fix.\n"
+            "B. **Continue as a workflow demonstration** - keep it limited.\n"
+            "C. **Pause for a user-authored fix** - give the acceptance checks.\n"
+        )
+        wrapped = (
+            "the question was not after the standing line but inside route\n"
+            "A. One ask means one decision in the whole message.\n"
+        )
+        self.assertEqual(self.shape(block), [("ABC", 1)])
+        self.assertEqual(self.shape(f"{wrapped}\n{block}"), [("ABC", 1)])
+        self.assertEqual(self.shape(f"{wrapped}{block}"), [("ABC", 1)])
+
+    def test_a_lettered_prose_line_alone_in_a_paragraph_is_not_a_route(
+        self,
+    ) -> None:
+        """The corpus already holds this shape, and a reflow is enough to move it.
+
+        `references/component-creation.md` hard-wraps onto `A. One ask means
+        one decision in the whole message.` It was inert on trunk only because
+        content followed it; inserting one blank line above it - an ordinary
+        reflow of an ordinary paragraph - made trunk read it as a route block
+        of one with no mark and the suite went red.
+
+        Both positions are prose here, for the reason the guidance itself
+        gives: a single proposed action with no alternative route beside it is
+        not a route list.
+        """
+        mid_paragraph = (
+            "the ask-ends rule below did not reach it, because the question\n"
+            "was not after the standing line but inside route\n"
+            "A. One ask means one decision in the whole message.\n"
+        )
+        reflowed = (
+            "the ask-ends rule below did not reach it, because the question\n"
+            "was not after the standing line but inside route\n"
+            "\n"
+            "A. One ask means one decision in the whole message.\n"
+        )
+        self.assertEqual(self.shape(mid_paragraph), [])
+        self.assertEqual(self.shape(reflowed), [])
+
+    def test_three_blockquotes_are_three_containers_and_two_choices(self) -> None:
+        """traigent-first-run#372, second instance.
+
+        Two correct choices with a quoted note between them. Each is correctly
+        lettered and correctly marked, and a parser that ends a block only on a
+        change of arrangement reads all three quotes as one `ABAB` block with
+        two marks - a double false red, on contiguity and on the mark count.
+
+        Three blockquotes are three containers, and the letters restart at `A`,
+        so this is two choices by both halves of the rule at once.
+        """
+        markdown = (
+            "> **A. proceed** *(recommended)*\n"
+            "> **B. fix**\n"
+            "\n"
+            "> A note that is itself quoted.\n"
+            "\n"
+            "> **A. rows** *(recommended)*\n"
+            "> **B. bounded run**\n"
+        )
+        self.assertEqual(self.shape(markdown), [("AB", 1), ("AB", 1)])
+
+    def test_an_explanation_between_two_quoted_routes_leaves_one_choice(
+        self,
+    ) -> None:
+        """The other half of the same trade, and why it is not a trade here.
+
+        A blockquote holding two routes may hold a paragraph explaining them -
+        `references/component-creation.md` renders exactly that. Ending the
+        block at the explanation splits one choice into two blocks of one,
+        which is defect 3 reached through the quoted separator.
+
+        Nothing about what sits BETWEEN two routes is consulted, so this stays
+        one choice while the three quotes above stay two - the pair of answers
+        traigent-first-run#372 says no single-instance patch can give.
+        """
+        markdown = (
+            "> **A. proceed** *(recommended)*\n"
+            ">\n"
+            "> Either way this first run is a bounded one, priced before it starts.\n"
+            ">\n"
+            "> **B. fix**\n"
+        )
+        self.assertEqual(self.shape(markdown), [("AB", 1)])
+
+    def test_a_single_route_counts_only_where_an_author_marked_the_container(
+        self,
+    ) -> None:
+        """One quoted route is a rendered route; one lettered prose line is not.
+
+        `SKILL.md` offers exactly one lettered option inside a blockquote, and
+        it carries the mark on the line below the letter - so the body has to
+        travel with the route or that block reads as unmarked.
+
+        The `>` is the whole of the difference. It is a marker an author typed
+        on purpose, and this package quotes customer-facing wording; a
+        paragraph, a list and a fence get no such signal, so one lettered line
+        alone in any of them is prose.
+        """
+        quoted = (
+            "> **A.** Turn a plain-English question into a SQL query\n"
+            "> *(recommended - it is what your logs already show)*\n"
+        )
+        plain = (
+            "**A.** Turn a plain-English question into a SQL query\n"
+            "*(recommended - it is what your logs already show)*\n"
+        )
+        self.assertEqual(self.shape(quoted), [("A", 1)])
+        self.assertEqual(self.shape(plain), [])
+
+    def test_a_route_rendered_inside_a_fenced_sample_is_scanned(self) -> None:
+        """The fenced-code decision, stated as a test rather than only as a comment.
+
+        A fence is where a reply-ready block gets pasted verbatim, so a route
+        pair rendered in one IS a customer-facing choice and is checked. The
+        cost is bounded by giving a fence the same bar as prose: one lettered
+        line alone in a fence is code, which is what an ordinary Python sample
+        looks like.
+        """
+        sample = "```\nA. **proceed** *(recommended)*\nB. **fix**\n```\n"
+        code = "```python\nA.run(dataset)\nframe.head()\n```\n"
+        self.assertEqual(self.shape(sample), [("AB", 1)])
+        self.assertEqual(self.shape(code), [])
+
+    def test_the_mark_count_still_reds_on_the_defects_it_exists_for(self) -> None:
+        """The parser is upstream of the count, so the count is probed through it."""
+        unmarked = "> **A. proceed**\n> **B. fix**\n"
+        doubled = "> **A. proceed** *(recommended)*\n> **B. fix** *(recommended)*\n"
+        self.assertEqual(self.shape(unmarked), [("AB", 0)])
+        self.assertEqual(self.shape(doubled), [("AB", 2)])
+
+    def test_a_block_with_a_letter_missing_yields_no_block_to_pass(self) -> None:
+        """A run is contiguous by construction, so a gap has to fail elsewhere.
+
+        `A`, `C`, `D` is not a choice this parser will report as satisfying
+        anything: `C` is neither the letter that follows `A` nor an `A`, so it
+        starts no run and joins none. What is left is a quoted `A` on its own,
+        and the two lines the parser dropped are then owed an entry in
+        `NOT_A_ROUTE` by the floor - which is where a reader sees them.
+        """
+        markdown = "> **A. proceed** *(recommended)*\n> **C. fix**\n> **D. stop**\n"
+        self.assertEqual(self.shape(markdown), [("A", 1)])
+
+    def test_the_containers_the_parser_models_have_their_own_boundaries(
+        self,
+    ) -> None:
+        """The parse itself, not only what it is used for.
+
+        A guard read off a parse is worth what the parse is worth, and the
+        blocks are asserted here so a change that quietly stops seeing
+        blockquotes inside list items shows up as this test rather than as a
+        route silently unscanned.
+        """
+        markdown = (
+            "# A heading\n"
+            "\n"
+            "An ordinary paragraph.\n"
+            "\n"
+            "1. A numbered step, whose text\n"
+            "   wraps onto a second line.\n"
+            "\n"
+            "   > **A.** the quoted option inside that step\n"
+            "\n"
+            "```text\n"
+            "fenced content\n"
+            "```\n"
+            "\n"
+            "> a trailing quote\n"
+        )
+        blocks = markdown_blocks(markdown)
+        self.assertEqual(
+            [block.kind for block in blocks],
+            ["heading", "paragraph", "list", "fence", "quote"],
+        )
+        step = blocks[2].children[0]
+        self.assertEqual(step.kind, "item")
+        self.assertEqual(
+            [child.kind for child in step.children], ["paragraph", "quote"]
+        )
+        self.assertEqual(
+            [text for _, text in blocks[3].lines],
+            ["fenced content"],
+            "a fence owns its content lines and stops at its closing marker",
+        )
+
+    def test_every_route_shaped_line_in_the_corpus_is_parsed_or_named(
+        self,
+    ) -> None:
+        """The floor, as its own test as well as inside the register scan.
+
+        Stated twice on purpose: the register scan needs it as a floor under
+        its own coverage, and it is the thing to read first when the parser
+        changes, because it is the only check here whose failure means "a
+        customer-facing option is not being read by anything".
+        """
+        self.assertEqual(
+            unaccounted_route_lines(),
+            [],
+            "every line the corpus renders that looks like a route is either "
+            "in a parsed block or named in NOT_A_ROUTE with the reason it is "
+            "prose; these are in neither",
+        )
+
+    def test_every_named_prose_line_is_still_written_and_still_not_a_route(
+        self,
+    ) -> None:
+        """A stale exemption hides the next real one.
+
+        `NOT_A_ROUTE` is where the parser's "this is not a route" answer gets
+        written down. An entry that no longer describes any line in the corpus,
+        or that describes a line the parser now reads as a route, is an
+        exemption standing over nothing, and this file has been bitten before
+        by a control that had stopped controlling anything.
+
+        `parsed` is built from the SOURCE line each route was read off, not
+        from the route's text: a route carries the lines wrapped under it, so
+        comparing texts would say "not a route" about a line the parser had
+        started reading as one the moment anything was written below it.
+        """
+        self.assertTrue(NOT_A_ROUTE, "the registry is empty, so nothing is named")
+        lines: set[str] = set()
+        parsed: set[str] = set()
+        for path in conversation_contract_documents():
+            written = path.read_text(encoding="utf-8").splitlines()
+            lines.update(raw.strip() for raw in written)
+            for block in rendered_route_blocks("\n".join(written)):
+                for candidate in block:
+                    parsed.add(written[candidate.line - 1].strip())
+        for named, reason in NOT_A_ROUTE.items():
+            with self.subTest(line=named[:44]):
+                self.assertIn(
+                    named,
+                    lines,
+                    "no document writes this line any more, so this entry "
+                    "excuses nothing and hides the next line that needs it",
+                )
+                self.assertNotIn(
+                    named,
+                    parsed,
+                    "the parser now reads this line as a route, so delete the "
+                    "entry rather than leaving an exemption that suppresses a "
+                    "block from every shape guard here",
+                )
+                self.assertGreater(
+                    len(reason),
+                    80,
+                    "an entry states which document writes the line and why it "
+                    "is prose; a label is not a reason",
+                )
+
+    def test_the_failure_message_names_every_item_with_its_source_line(
+        self,
+    ) -> None:
+        """A red an author can act on in one read.
+
+        `'AABC' != 'ABCD'` says a block is wrong and not which line made it
+        wrong, and the line that made it wrong is usually one an author did not
+        think they were touching. The outline is asserted here rather than only
+        used, because a diagnostic nothing tests is a comment.
+        """
+        markdown = "> **A. proceed** *(recommended)*\n> **B. fix**\n"
+        block = rendered_route_blocks(markdown)[0]
+        outline = route_block_outline(Path("run-safety.md"), block)
+        self.assertIn("A@run-safety.md:1", outline)
+        self.assertIn("B@run-safety.md:2", outline)
+        self.assertIn("proceed", outline)
+        # And it is bounded. `assertIn` against a flattened guidance document
+        # renders the whole haystack on failure; an outline that grew into one
+        # would be the same defect wearing a different name.
+        self.assertLess(len(outline), 400)
 
 
 class TheReadHappensAndAFailedReadIsAQuestionTests(unittest.TestCase):
