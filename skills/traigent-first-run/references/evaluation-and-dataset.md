@@ -20,7 +20,7 @@ Select the lowest-complexity method that measures the real task:
 | JSON or structured extraction | Parse/schema gate plus field-level correctness |
 | Numeric value | Numeric comparison with a justified tolerance |
 | Sets or unordered collections | Order-insensitive set comparison |
-| Code or SQL | Composite (`--evaluator-method composite`): a parser gate, then comparison over canonical form - aliases, case and spacing resolved before matching |
+| Code or SQL | Composite (`--evaluator-method composite`): a parser gate, then comparison over canonical form - a markdown code fence, aliases, case and spacing resolved before matching |
 | Tool/action workflow | Final-state or side-effect check in an isolated environment |
 | Retrieval/grounded answer | Citation/grounding checks plus semantic correctness |
 | Summary, explanation, writing, story | Rubric-based LLM judge, optionally preceded by deterministic gates |
@@ -29,8 +29,10 @@ Do not use exact-string comparison where multiple semantically correct answers a
 not use an LLM judge when deterministic product logic can express correctness. Do not optimize a
 metric merely because it is easy to implement.
 
-Canonical form reaches surface: case, whitespace, a trailing semicolon, paren padding, and aliases
-resolved back to the columns they stand for. It does not reach a different join or subquery shape
+Canonical form reaches surface: a markdown code fence, case, whitespace, a trailing semicolon,
+paren padding, and aliases resolved back to the columns they stand for. The fence is named first
+because it is the one an author does not picture: a chat model wraps code in one unless it is told
+otherwise, and sometimes when it is. It does not reach a different join or subquery shape
 that returns the same rows. Write `equivalent_good` as a surface variant the canonical form
 resolves, and record a differently-shaped equivalent as a known coverage gap rather than widening
 the scorer until it passes.
@@ -42,6 +44,12 @@ Treat the output task kind as run-scoped validation state. Pass it as `--task-ki
 readiness invocation from the opening gate onward only when project evidence grounds a recognized
 kind; never infer it only from a filename, language, or benchmark family. If unresolved, omit
 `--task-kind` and report task fit as not yet measured.
+
+`calibrate_evaluator.py` takes that same resolved value under a narrower rule, stated here rather
+than beside it so one paragraph holds both destinations. It reads a task kind for one purpose - the
+seam probes below, which send a markdown code fence - so it is passed `--task-kind` on `code` and
+`code-sql` and given none on any of the other seven kinds. A run that resolves `numeric` therefore
+passes the flag to one script and not to the other, and both are correct.
 
 When building an evaluator:
 
@@ -187,6 +195,8 @@ TRAIGENT_FIRST_RUN_SKILL_DIR="/absolute/path/to/the-loaded-skill-directory"
 "$TRAIGENT_FIRST_RUN_PYTHON" "$TRAIGENT_FIRST_RUN_SKILL_DIR/scripts/calibrate_evaluator.py" \
   --scorer traigent-runs/evaluator.py:task_score \
   --cases @traigent-runs/calibration-cases.json \
+  --reply-transform traigent-runs/agent.py:extract_sql \
+  --task-kind code-sql \
   --allow-execution \
   --json > traigent-runs/calibration-results.json
 ```
@@ -200,6 +210,11 @@ the work will finish. Once the estimate is minutes -
 a judge, or any evaluator costing about a minute per call - use the detached form in "When
 calibration runs long" instead: this one can be killed from outside before it writes anything, and
 its warnings arrive on a stderr nobody is reading.
+
+The last two lines are the seam probes below, and both examples show a code task with an extraction
+step, which is the shape they apply to. A run without an extraction step, or on any output kind
+other than `code` or `code-sql`, carries fewer of them - the destination rule above says which, the
+section below says why, and the script says on stderr when it expected a probe and ran none.
 
 The calibration adapter must accept the keyword arguments `output`, `expected`, `input_data`, and
 `metadata`. It may translate them into an existing evaluator's unchanged local convention. The
@@ -250,6 +265,71 @@ Read `supplemental_probe_advisory` as unavailable evidence: setup failure, timeo
 exhaustion, or a worker crash prevented one or more generated probes from answering their question.
 It never changes authored PASS. Do not count an unavailable probe as distinguished; inspect or
 rerun it before relying on that supplemental evidence.
+
+### The seam probe
+
+The two sets above are still one half of the wiring. The authored four measure this evaluator
+against strings their author wrote; the generated ones are built from the expected answer, which the
+author also wrote. Neither has been through the step that stands between the model and the
+evaluator - the agent's own extraction or clean-up. Two paid runs were lost in that gap, and in one
+of them the probe set already held the shape that broke it: a `NOT IN` subquery was covered on one
+side of the wiring and never on the other.
+
+So the answers that already exist are put through the step that already exists, in the one shape
+there is evidence a model sends. `--reply-transform FILE.py:FUNCTION` names that step - one
+positional argument, the model's reply, returning what the evaluator is handed - and `--task-kind`
+arms the probes, which send the case's own `good` and `equivalent_good` answers wrapped in a
+markdown code fence. SKILL stage 4 owns when each is passed. Neither buys a provider call, and
+neither probe is an invented fixture: the content is the author's own answer, already scored, so the
+only thing that changed is the wrapper. Reaching the function imports its whole module, which is why
+that module falls under the same inspection the scorer does, and why a module needing an uninstalled
+dependency waits for the environment rather than hurrying it.
+
+**Send only the shape the run has evidence for.** A bare answer is not that shape. A fence-bound
+agent - one whose prompt tells the model to answer inside a ```sql block - correctly returns nothing
+for a reply carrying no fence, and handing it one would report a working agent as a broken one on
+the strength of an assumption nobody stated. That is why no other task kind runs a seam probe at
+all: where this guide has no evidenced reply shape, it has nothing honest to send. Where the agent's
+contract is a shape this check cannot build - a structured-output agent whose model returns JSON -
+omit `--task-kind`, and record that reason where the calibration artifacts are recorded.
+
+Two probes per case, and one property between them: an answer the authored probes scored as right
+must not arrive as one this evaluator scores as wrong. `damaged` names a probe that did, `refused`
+one the step or the evaluator raised on, `preserved` the rest. A step that merely changes the string
+is not damage - trimming, unquoting and case folding all change it and none of them changes the
+verdict, so a check on the string would fire on every well-behaved agent there is. Both answers are
+sent rather than one, because surface variance is what a text-processing step is sensitive to: an
+extractor keyed on an upper-case keyword is right on one authored answer and destructive on the
+lower-case variant the same model emits.
+
+The fenced shape is constructed in every case, and the evidence for it is a class fact rather than
+an observation of this route: chat models fence code by default, and one did so on a paid run
+against a prompt forbidding it. That is why it is worth sending and why no report built on it may
+say the model sends one. It is also the whole of the difference from the bare answer this check used
+to send - for which there is no such record at all.
+
+Four things this reports, and each says only what it can. `seam_probe_advisory` is the finding, and
+it never changes the authored PASS. Where a reply step ran, it names what was sent and what came
+back, and still says the sent shape was constructed. Where none ran there is no second string: it
+says the fenced form is one this check built, that this run observed nothing sending one, and that
+the claim is only that the pair could not read a fence if the model sent it - so put what it
+recorded on the approval and let the customer, who knows their agent, say which shape it returns.
+`seam_probe_off_domain` replaces the finding when every probe was refused, because a refusal cannot
+separate a step whose contract excludes this shape from one that is simply broken - a transform that
+cannot even be loaded is refused earlier, with exit 2, so it can never arrive disguised as this.
+`seam_probe_skipped` says no probe ran and why, so a check that declines itself cannot pass for a
+check that passed. Unavailable probes reach the same `supplemental_probe_advisory` as every other
+generated probe.
+
+None of the four is scored. `readiness.py` reads no seam key and no ceiling moves on one: their
+destination is the run record and, for a standing advisory, the pre-spend approval SKILL stage 6
+names. That is deliberate for the two that cannot tell - an off-domain or skipped check has
+established nothing, and a score is the one place a reader would take it for something.
+
+Read what was sent beside what came back - both are printed on stderr, so a redirected payload
+cannot hide them - and settle it before the paid run. Every trial passes through this same step, and
+configurations that all score a damaged form cannot be told apart. Where the damaged step is code
+this run wrote, the repair is free and SKILL stage 7 owns what may be offered around it.
 
 For LLM judges:
 
@@ -561,9 +641,9 @@ the pairing and can have got it wrong. Stated once, here.
 Before the stage starts, say what it does and how long it may take: it runs the user's evaluator
 over a few known-good and known-bad answers to prove it separates them: four probe calls per
 input/expected pair (the authored probes). A deterministic calibration also makes five exception
-probes and, where the expected answer has a distinct ordering, one permutation probe per pair.
-Those advisory probes are still scorer calls, so the default wait reserves for up to ten calls per
-pair. Multiply every call by what one call costs the evaluator and state the number - for a judge,
+probes, up to two seam probes, and, where the expected answer has a distinct ordering, one
+permutation probe per pair. Those advisory probes are still scorer calls, so the default wait
+reserves for up to 12 calls per pair. Multiply every call by what one call costs the evaluator and state the number - for a judge,
 a model call per probe, that is minutes rather than seconds. Finishing matters more than finishing
 fast: an evaluator nobody could measure makes every later number unverifiable.
 
@@ -576,12 +656,12 @@ which the `ADVISORY` line on stderr names.
 onboarding rather than a full-power run: a calibration that has not separated a good answer from a
 bad one in fifteen minutes most probably will not, and the timeout is itself a result to act on.
 The ceiling bounds the wait, not the work. A deterministic matrix needs at least two pairs, and its
-maximum ten calls per pair means the cap already binds at that minimum: the 900-second default is
-45 seconds per possible call rather than the derived 75. A judge remains whole through two pairs;
-at five pairs a deterministic calibration gets 18 seconds per possible call and a judge gets 45;
+maximum 12 calls per pair means the cap already binds at that minimum: the 900-second default
+is 37 seconds per possible call rather than the derived 75. A judge remains whole through two pairs;
+at five pairs a deterministic calibration gets 15 seconds per possible call and a judge gets 45;
 those are cuts against 75 and 90 respectively. Tell a user whose evaluator takes about a minute per call what
-that means for them: even the two-pair deterministic matrix cannot finish all ten possible probes
-per pair inside the default ceiling, and a five-pair matrix cannot finish for either kind. The
+that means for them: even the two-pair deterministic matrix cannot finish all 12 possible
+probes per pair inside the default ceiling, and a five-pair matrix cannot finish for either kind. The
 ceiling is deliberate onboarding scope, not a promise that a slow calibration completes. Their own
 larger `--timeout` is not capped; the ceiling only bounds what this stage chooses on its own.
 
@@ -604,6 +684,8 @@ nohup "$TRAIGENT_FIRST_RUN_PYTHON" \
   "$TRAIGENT_FIRST_RUN_SKILL_DIR/scripts/calibrate_evaluator.py" \
   --scorer traigent-runs/evaluator.py:task_score \
   --cases @traigent-runs/calibration-cases.json \
+  --reply-transform traigent-runs/agent.py:extract_sql \
+  --task-kind code-sql \
   --allow-execution \
   --json > traigent-runs/calibration-results.json 2> traigent-runs/calibration.log &
 ```

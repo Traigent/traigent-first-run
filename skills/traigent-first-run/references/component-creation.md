@@ -236,6 +236,12 @@ the choice at the top. That way round the customer meets the decision before the
 justifies it and answers a question the evidence has not argued for yet. The ask goes lowermost:
 last on screen, and last read.
 
+One narrowing on what may be OFFERED lives outside this document, and is named here so this one is
+not read as the whole rule. Where the run has diagnosed a fault it can repair for nothing and the
+customer has already paid for the measurement that fault spoiled, SKILL stage 7 withholds routes
+this document would otherwise word. That menu only; everywhere else a route this document offers
+stays offered, and how any route is worded and ordered stays here.
+
 ### When a path arrives
 
 Read it before anything is built. Material the user points at is material this run did not create,
