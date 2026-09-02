@@ -5434,6 +5434,17 @@ class SkillPackageTests(unittest.TestCase):
         self.assertEqual(untracked.returncode, 1)
         self.assertEqual(tracked.returncode, 0)
 
+    # The forbidden shape, and the flattening the sweep below searches through.
+    # Both are named once here so the positive control searches EXACTLY what the
+    # sweep searches: a control that rebuilt either would prove its own copy
+    # works and say nothing about the check that ships.
+    RELATIVE_SCRIPT_INVOCATION = "python3 skills/traigent-first-run/scripts/"
+
+    @staticmethod
+    def flowed(text: str) -> str:
+        """Collapse wrapping, so a line break cannot hide a phrase from a search."""
+        return " ".join(text.casefold().split())
+
     def test_installed_skill_tools_use_absolute_paths_from_the_project_cwd(
         self,
     ) -> None:
@@ -5461,13 +5472,78 @@ class SkillPackageTests(unittest.TestCase):
             '"$TRAIGENT_FIRST_RUN_PYTHON" "$TRAIGENT_FIRST_RUN_SKILL_DIR/scripts/calibrate_evaluator.py"',
             evaluation_source,
         )
-        self.assertNotIn(
-            "python3 skills/traigent-first-run/scripts/",
-            "\n".join(path.read_text() for path in assistant_facing_documents()),
-        )
+        # Searched through the same flattening the sibling sweeps in this file
+        # use, because this one searched the raw bytes and a line break was
+        # therefore enough to satisfy it. A document that ends a line on
+        # `python3` and opens the next on `skills/...` ships the same relative
+        # invocation a customer would copy, and the raw search reported it
+        # absent: a check that did not find the thing, reading as a check that
+        # passed. Measured rather than argued - the wrapped form planted in
+        # `sdk-execution.md` left this test green before this change and reds it
+        # after, while the unwrapped form reds either way.
+        #
+        # Per document rather than over one joined blob, so a failure names the
+        # file that carries it, and so the seam between two documents cannot
+        # manufacture a hit out of a `python3` ending one and a path opening the
+        # next.
+        for path in assistant_facing_documents():
+            with self.subTest(document=path.name):
+                self.assertNotIn(
+                    self.RELATIVE_SCRIPT_INVOCATION, self.flowed(path.read_text())
+                )
         self.assertNotIn("run the command from the repository root", evaluation)
         self.assertIn("installed skill's absolute directory", readme)
         self.assertIn("your project as the working directory", readme)
+
+    def test_the_relative_invocation_sweep_can_still_see_what_it_forbids(self) -> None:
+        """The sweep above can only report absence; this makes it report presence.
+
+        An `assertNotIn` passes when it finds nothing, so it passes just as
+        quietly when it has been made unable to find anything: a needle that no
+        longer matches the shape its haystack is now in, a normalizer that ate
+        the separator the needle still carries, a corpus that went empty. The
+        sweep was repaired for exactly that, one level down, and a repair whose
+        only evidence is that the suite stayed green is not distinguishable from
+        no repair at all.
+
+        The planted documents are written out here rather than derived from the
+        constant they are matched against. A fixture built from the needle
+        agrees with any needle, including a broken one, so it would confirm this
+        check while it was blind.
+        """
+        wrapped = (
+            "# Probe\n\nRun the readiness helper with python3\n"
+            "skills/traigent-first-run/scripts/readiness.py --project .\n"
+        )
+        flat = (
+            "# Probe\n\nRun the readiness helper with "
+            "python3 skills/traigent-first-run/scripts/readiness.py --project .\n"
+        )
+        for shape, planted in (("wrapped", wrapped), ("unwrapped", flat)):
+            with self.subTest(planted=shape):
+                self.assertIn(self.RELATIVE_SCRIPT_INVOCATION, self.flowed(planted))
+
+        # And the wordings the shipped documents legitimately use, which have to
+        # survive it. A sweep that catches the supported invocation too is not a
+        # stricter sweep, it is one nobody can leave switched on.
+        honest = {
+            "the exported-variable form the reference documents": (
+                '"$TRAIGENT_FIRST_RUN_PYTHON" '
+                '"$TRAIGENT_FIRST_RUN_SKILL_DIR/scripts/calibrate_evaluator.py"'
+            ),
+            "a literal absolute path, wrapped": (
+                "python3\n"
+                "/absolute/path/to/the-loaded-skill-directory/scripts/readiness.py"
+            ),
+            "prose naming the directory without invoking it": (
+                "The helpers live in the skill's `scripts/` directory. Invoke them\n"
+                "through the absolute skill directory, never through\n"
+                "`skills/traigent-first-run/scripts/` relative to the project."
+            ),
+        }
+        for description, wording in honest.items():
+            with self.subTest(honest=description):
+                self.assertNotIn(self.RELATIVE_SCRIPT_INVOCATION, self.flowed(wording))
 
     def test_provenance_is_documented_as_a_per_row_average_with_ceilings(self) -> None:
         """Points and ceilings answer different questions; the guide says both.
@@ -5775,6 +5851,12 @@ class SkillPackageTests(unittest.TestCase):
         The sweep is keyed on the PHRASINGS a row count is written in, not on a
         list of files, so a document that gains one of those sentences is
         covered without this test being edited.
+
+        Three of the seven statements are visible only because the pattern
+        below tolerates whitespace between the words of a phrase: two in
+        `references/evaluation-and-dataset.md` and one in `SKILL.md`. Which
+        document that tolerance was bought for, and how to re-derive the list,
+        is recorded at the pattern itself.
         """
         dataset_text = (
             SKILL_ROOT / "references" / "evaluation-and-dataset.md"
@@ -5818,10 +5900,30 @@ class SkillPackageTests(unittest.TestCase):
         )
 
         # Whitespace-tolerant between words, because it was not and that hid a
-        # restatement: `SKILL.md` wraps its own statement across a line, so the
-        # pattern matched six of the seven that existed and the seventh was
-        # uncovered by nothing more than a line break. A sweep whose misses look
-        # exactly like absences is the shape this file keeps finding elsewhere.
+        # restatement. The hidden one was in
+        # `references/evaluation-and-dataset.md`, which had wrapped `18 tuning`
+        # onto the end of one line and `rows` onto the start of the next: the
+        # pattern matched six of the seven statements that existed and the
+        # seventh was uncovered by nothing more than a line break. A sweep whose
+        # misses look exactly like absences is the shape this file keeps finding
+        # elsewhere.
+        #
+        # `SKILL.md` was NOT that hidden site, and this comment said it was
+        # until #366. Its statement stood on one line and the old pattern read
+        # it, so the record of why the pin below moved from six to seven sent
+        # the next auditor of that constant to a file that had nothing to do
+        # with it. Re-derivable in one pass, which is how the misattribution was
+        # caught: replace each `\s+` between words below with a literal space,
+        # run both patterns over `assistant_facing_documents()`, and print the
+        # document each hit came from. The difference is the site the tolerance
+        # bought.
+        #
+        # Three of the seven depend on that tolerance today, not one, and they
+        # sit in two documents: this reference twice and `SKILL.md` once.
+        # `SKILL.md` earned its wrap in the very change that added the
+        # tolerance, when `18 rows by default` was rewritten to `18 questions by
+        # default` and reflowed across a line - so it does wrap now, just not
+        # for the reason and not at the moment the old wording claimed.
         #
         # `tuning questions` and `questions by default` are here because the
         # subset rules now cap the draw in QUESTIONS: eighteen questions bring
@@ -5848,8 +5950,11 @@ class SkillPackageTests(unittest.TestCase):
         # reads. Each new statement is welded here rather than left uncovered.
         #
         # Six to seven is NOT a seventh statement arriving. It is the wrapped
-        # one in `SKILL.md` that the pattern above could not see until it was
-        # made whitespace-tolerant, counted now for the first time. Two
+        # one in `references/evaluation-and-dataset.md` that the pattern above
+        # could not see until it was made whitespace-tolerant, counted now for
+        # the first time. (Recorded here as `SKILL.md` until #366, which is the
+        # one file it was not: that statement was on a single line and was
+        # already among the six.) Two
         # statements also moved in the same change - the row review dropped its
         # copy of the number entirely, and the line that names the bound to the
         # user gained one - which is why the total holds while the membership
