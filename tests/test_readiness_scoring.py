@@ -13827,6 +13827,101 @@ class ALocalBindingIsStillARouteToTheCallTests(unittest.TestCase):
                 )
 
 
+class AFixtureIsCompiledAsTheFileACustomerWritesTests(unittest.TestCase):
+    """Every `compile()` in this module validates a fixture, not this module.
+
+    This file opens with `from __future__ import annotations`, and `compile()`
+    inherits the calling frame's future statements unless told not to. So a
+    fixture checked here was being checked under stringified annotations,
+    which no customer file has unless they asked for them - and it really
+    changes the answer: a walrus in an annotation is ordinary Python and is a
+    `SyntaxError` under that future.
+
+    Four of the five calls were fixed when the difference was found and the
+    fifth was missed, at the site with the most riding on it: the one that
+    guarantees the printed example is a file a customer can use. So the rule
+    is read out of this module's own source rather than left to whoever adds
+    the sixth call.
+    """
+
+    #: The one call that compiles a fixture under this module's own future
+    #: statements ON PURPOSE, keyed by the test that owns it. A sanctioned
+    #: exit rather than a line number, on the same terms as `UNDERIVABLE` and
+    #: `UNREACHABLE_RENDERER_LINES` above: it says why, and the guard fails on
+    #: a stale entry too, so an exemption cannot outlive the call it excuses.
+    INHERITING_ON_PURPOSE = {
+        "test_the_difference_is_real_and_not_theoretical": (
+            "shows what inheriting costs, so it has to inherit; the assertion "
+            "beside it is that this call raises and the guarded one does not"
+        )
+    }
+
+    def _compile_calls(self) -> dict[str, list[ast.Call]]:
+        """Every `compile()` in this module, by the test function holding it."""
+        source = Path(__file__).read_text(encoding="utf-8")
+        found: dict[str, list[ast.Call]] = {}
+        for function in ast.walk(ast.parse(source)):
+            if not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            calls = [
+                node
+                for node in ast.walk(function)
+                if isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == "compile"
+            ]
+            if calls:
+                found[function.name] = calls
+        return found
+
+    def test_every_compile_here_refuses_this_modules_future_statements(self) -> None:
+        by_function = self._compile_calls()
+        self.assertTrue(by_function, "no compile call found; this guard reads nothing")
+        missing = sorted(
+            f"{name}:{call.lineno}"
+            for name, calls in by_function.items()
+            if name not in self.INHERITING_ON_PURPOSE
+            for call in calls
+            if not any(
+                keyword.arg == "dont_inherit"
+                and isinstance(keyword.value, ast.Constant)
+                and keyword.value.value is True
+                for keyword in call.keywords
+            )
+        )
+        self.assertEqual(
+            missing,
+            [],
+            "a fixture compiled under this module's `from __future__ import "
+            "annotations` is checked under semantics the customer's file does "
+            "not have; pass dont_inherit=True",
+        )
+
+    def test_no_exemption_outlives_the_call_it_excuses(self) -> None:
+        """A stale entry fails, so the exit cannot quietly widen."""
+        by_function = self._compile_calls()
+        for name, reason in self.INHERITING_ON_PURPOSE.items():
+            with self.subTest(exempt=name):
+                self.assertIn(name, by_function)
+                self.assertTrue(reason.strip())
+                self.assertTrue(
+                    any(
+                        not any(
+                            keyword.arg == "dont_inherit" for keyword in call.keywords
+                        )
+                        for call in by_function[name]
+                    ),
+                    "this exemption no longer excuses anything",
+                )
+
+    def test_the_difference_is_real_and_not_theoretical(self) -> None:
+        """The guard would be cargo without this, so the effect is exercised."""
+        annotated = "def answer() -> (client := 1):\n    return 1\n"
+        with self.assertRaises(SyntaxError):
+            compile(annotated, "agent.py", "exec")
+        compile(annotated, "agent.py", "exec", dont_inherit=True)
+
+
 class ARouteThatCannotExecuteIsNotARouteTests(unittest.TestCase):
     """A set literal is an inventory, and `MODELS[choice]` over one raises.
 
@@ -14402,7 +14497,14 @@ class TheRefusedRouteIsShownAnAcceptedOneTests(unittest.TestCase):
         it is the defect the fix exists to remove, handed to the reader as the
         thing to copy.
         """
-        compile(MODULE.ACCEPTED_ROUTE_AGENT, "agent.py", "exec")
+        # `dont_inherit`, and this is the site with the most riding on it: the
+        # example a customer copies must be validated as the file THEY will
+        # write, not under this module's `from __future__ import annotations`.
+        # Inert for the example as shipped and wrong anyway - a guard that
+        # checks the artifact under semantics no customer file has is a guard
+        # checking a different thing, which is the defect this class exists to
+        # keep out of the printed block.
+        compile(MODULE.ACCEPTED_ROUTE_AGENT, "agent.py", "exec", dont_inherit=True)
         facts = self._score_printed_agent(
             MODULE.ACCEPTED_ROUTE_AGENT,
             json.loads(json.dumps(MODULE.ACCEPTED_ROUTE_KNOB)),
