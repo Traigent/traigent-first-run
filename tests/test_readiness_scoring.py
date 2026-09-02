@@ -8,6 +8,7 @@ import io
 import itertools
 import json
 import re
+import symtable
 import sys
 import tempfile
 import typing
@@ -13478,12 +13479,96 @@ class ALocalBindingIsStillARouteToTheCallTests(unittest.TestCase):
             with self.subTest(shape=name):
                 self.assertTrue(self._credited(body))
 
+    def test_an_ordinary_read_of_the_selected_value_is_not_a_mutation(self) -> None:
+        """The false refusals the first revision of this pass shipped.
+
+        Each of these is the module's own printed example plus ONE ordinary
+        line, still satisfying every part that example prints. The first
+        revision refused all of them, because it turned down any attribute
+        access on the alias anywhere in the callable - so an author who copied
+        the printed remedy and added a guard met the same refusal with the same
+        sentence, which is the report this pass exists to answer, one shape
+        over.
+
+        They are safe to credit because of the invariant the two call sites
+        enforce and `test_the_credited_value_is_always_an_immutable_literal`
+        pins: a credited alias holds the selection ITSELF, and a checked table
+        may only hold `ast.Constant` entries. Neither a method call nor an
+        opaque helper can change an immutable scalar. The shape where in-place
+        mutation is real is a container, and that one is refused below.
+        """
+        shapes = {
+            "a guard on the selected value": (
+                '    if model.startswith("gpt-4"):\n        pass\n'
+            ),
+            "a derived label": "    label = model.upper()\n",
+            "an f-string built with a method": '    note = "{}".format(model)\n',
+            "a nested helper with a parameter of the same name": (
+                "    def describe(model):\n        return model\n"
+            ),
+            "a reject-unknown guard": (
+                "    if model not in MODELS:\n        raise ValueError(model)\n"
+            ),
+            "the value handed to an opaque helper": "    record(model)\n",
+            "the value compared against the table": "    seen = model in MODELS\n",
+            "the value sliced": "    prefix = model[:3]\n",
+        }
+        for name, extra in shapes.items():
+            with self.subTest(shape=name):
+                self.assertTrue(
+                    self._credited(
+                        "def answer(question, model_choice=0):\n"
+                        "    model = MODELS[model_choice]\n"
+                        f"{extra}"
+                        "    return provider(model=model, text=question)\n"
+                    )
+                )
+        # And the annotation written on the line above, which is not a binding
+        # at all inside a function body and was counted as one.
+        self.assertTrue(
+            self._credited(
+                "def answer(question, model_choice=0):\n"
+                "    model: str\n"
+                "    model = MODELS[model_choice]\n"
+                "    return provider(model=model, text=question)\n"
+            )
+        )
+
+    def test_the_credited_value_is_always_an_immutable_literal(self) -> None:
+        """The invariant the test above rests on, pinned where it is decided.
+
+        Read off the two readers that produce a credited option set rather
+        than asserted about them. If either ever accepted a non-constant
+        entry, an alias could hold a mutable object and an ordinary-looking
+        method call on it would become a real mutation.
+        """
+        self.assertIsNone(
+            MODULE._literal_scalar_options(ast.parse("[[1], [2]]", mode="eval").body)
+        )
+        self.assertIsNone(
+            MODULE._literal_scalar_options(ast.parse("[{'a': 1}]", mode="eval").body)
+        )
+        self.assertIsNone(
+            MODULE._literal_mapping_keys(
+                ast.parse("{'a': ['x'], 'b': ['y']}", mode="eval").body
+            )
+        )
+        self.assertEqual(
+            MODULE._literal_scalar_options(ast.parse('["a", "b"]', mode="eval").body),
+            ("a", "b"),
+        )
+
     def test_a_binding_this_read_cannot_pin_earns_nothing(self) -> None:
         """Every shape where the name at the call is not what the assignment wrote.
 
         Each of these would be a knob credited without a route, which is the
         refusal this class widens, inverted. They are listed one per shape
         rather than folded together so a regression names the shape it broke.
+
+        The seven rebinding forms at the end are the ones a store COUNT could
+        not see, because none of them is an `ast.Name` in `Store` context. Each
+        was verified against `symtable`, which reports the spelling assigned
+        and local in every one of them.
         """
         shapes = {
             "reassigned before the call": (
@@ -13522,6 +13607,19 @@ class ALocalBindingIsStillARouteToTheCallTests(unittest.TestCase):
                 "        pass\n"
                 "    return provider(model=model, text=question)\n"
             ),
+            "rebound by a walrus": (
+                "def answer(question, model_choice=0):\n"
+                "    model = MODELS[model_choice]\n"
+                "    if (model := 'gpt-4o-mini'):\n"
+                "        pass\n"
+                "    return provider(model=model, text=question)\n"
+            ),
+            "rebound by a comprehension walrus": (
+                "def answer(question, model_choice=0):\n"
+                "    model = MODELS[model_choice]\n"
+                "    seen = [(model := str(x)) for x in (1, 2)]\n"
+                "    return provider(model=model, text=question, seen=seen)\n"
+            ),
             "bound in a loop": (
                 "def answer(question, model_choice=0):\n"
                 "    for _ in (0,):\n"
@@ -13539,23 +13637,26 @@ class ALocalBindingIsStillARouteToTheCallTests(unittest.TestCase):
                 "    model = MODELS[model_choice]\n"
                 "    return result\n"
             ),
-            "captured by a nested callable": (
+            "read by a nested callable that does not bind it": (
                 "def answer(question, model_choice=0):\n"
                 "    model = MODELS[model_choice]\n"
                 "    later = lambda: model\n"
                 "    return provider(model=model, text=question, later=later)\n"
+            ),
+            "rebound through nonlocal": (
+                "def answer(question, model_choice=0):\n"
+                "    model = MODELS[model_choice]\n"
+                "    def later():\n"
+                "        nonlocal model\n"
+                "        model = 'gpt-4o-mini'\n"
+                "    later()\n"
+                "    return provider(model=model, text=question)\n"
             ),
             "deleted on one path": (
                 "def answer(question, model_choice=0):\n"
                 "    model = MODELS[model_choice]\n"
                 "    if question:\n"
                 "        del model\n"
-                "    return provider(model=model, text=question)\n"
-            ),
-            "possibly mutated in place": (
-                "def answer(question, model_choice=0):\n"
-                "    model = MODELS[model_choice]\n"
-                "    model.strip()\n"
                 "    return provider(model=model, text=question)\n"
             ),
             "two hops from the table": (
@@ -13569,6 +13670,12 @@ class ALocalBindingIsStillARouteToTheCallTests(unittest.TestCase):
                 "    model = MODELS[model_choice]\n"
                 "    return provider(text=model, model=question)\n"
             ),
+            "held in a container that a later line can change": (
+                "def answer(question, model_choice=0):\n"
+                "    payload = [MODELS[model_choice], question]\n"
+                "    payload.append('gpt-4o-mini')\n"
+                "    return provider(model=payload, text=question)\n"
+            ),
             "never reading the declared table": (
                 "def answer(question, cfg):\n"
                 "    client = OpenAI()\n"
@@ -13579,10 +13686,438 @@ class ALocalBindingIsStillARouteToTheCallTests(unittest.TestCase):
                 "    )\n"
                 "    return reply.choices[0].message.content\n"
             ),
+            # The seven a store count could not see.
+            "rebound by an import alias": (
+                "def answer(question, model_choice=0):\n"
+                "    model = MODELS[model_choice]\n"
+                "    import os as model\n"
+                "    return provider(model=model, text=question)\n"
+            ),
+            "rebound by a from-import alias": (
+                "def answer(question, model_choice=0):\n"
+                "    model = MODELS[model_choice]\n"
+                "    from os import sep as model\n"
+                "    return provider(model=model, text=question)\n"
+            ),
+            "rebound by an except handler": (
+                "def answer(question, model_choice=0):\n"
+                "    model = MODELS[model_choice]\n"
+                "    try:\n"
+                "        pass\n"
+                "    except Exception as model:\n"
+                "        pass\n"
+                "    return provider(model=model, text=question)\n"
+            ),
+            "rebound by a match capture": (
+                "def answer(question, model_choice=0):\n"
+                "    model = MODELS[model_choice]\n"
+                "    match question:\n"
+                "        case model:\n"
+                "            pass\n"
+                "    return provider(model=model, text=question)\n"
+            ),
+            "rebound by a match mapping rest": (
+                "def answer(question, model_choice=0):\n"
+                "    model = MODELS[model_choice]\n"
+                "    match question:\n"
+                "        case {'a': 1, **model}:\n"
+                "            pass\n"
+                "    return provider(model=model, text=question)\n"
+            ),
+            "rebound by a nested def of the same name": (
+                "def answer(question, model_choice=0):\n"
+                "    model = MODELS[model_choice]\n"
+                "    def model():\n"
+                "        return 1\n"
+                "    return provider(model=model, text=question)\n"
+            ),
+            "rebound by a decorated nested def of the same name": (
+                "def answer(question, model_choice=0):\n"
+                "    model = MODELS[model_choice]\n"
+                "    @staticmethod\n"
+                "    def model():\n"
+                "        return 1\n"
+                "    return provider(model=model, text=question)\n"
+            ),
+            "rebound by a nested class of the same name": (
+                "def answer(question, model_choice=0):\n"
+                "    model = MODELS[model_choice]\n"
+                "    class model:\n"
+                "        pass\n"
+                "    return provider(model=model, text=question)\n"
+            ),
+            "rebound by a with-target": (
+                "def answer(question, model_choice=0):\n"
+                "    model = MODELS[model_choice]\n"
+                "    with open('x') as model:\n"
+                "        pass\n"
+                "    return provider(model=model, text=question)\n"
+            ),
+            "rebound by a type alias": (
+                "def answer(question, model_choice=0):\n"
+                "    model = MODELS[model_choice]\n"
+                "    type model = int\n"
+                "    return provider(model=model, text=question)\n"
+            ),
         }
         for name, body in shapes.items():
             with self.subTest(shape=name):
                 self.assertFalse(self._credited(body))
+
+    def test_every_refused_rebinding_really_binds_the_name(self) -> None:
+        """The fixtures above are checked against Python, not against belief.
+
+        A refusal test passes just as well when its fixture does not do what
+        its name says, and seven of those fixtures assert something about a
+        construct rather than about an assignment. `symtable` is the
+        interpreter's own answer to "is this spelling bound in this scope", so
+        it is what says the fixture is the shape the subtest claims.
+        """
+        rebinding = {
+            "import ... as": "    import os as model\n",
+            "from ... import ... as": "    from os import sep as model\n",
+            "except ... as": (
+                "    try:\n        pass\n    except Exception as model:\n        pass\n"
+            ),
+            "match capture": "    match question:\n        case model:\n            pass\n",
+            "match mapping rest": (
+                "    match question:\n        case {'a': 1, **model}:\n            pass\n"
+            ),
+            "nested def": "    def model():\n        return 1\n",
+            "nested class": "    class model:\n        pass\n",
+            "with target": "    with open('x') as model:\n        pass\n",
+            "type alias": "    type model = int\n",
+        }
+        for name, line in rebinding.items():
+            with self.subTest(construct=name):
+                source = f"def answer(question):\n{line}    return model\n"
+                table = symtable.symtable(source, "agent.py", "exec")
+                scope = table.get_children()[0]
+                symbol = scope.lookup("model")
+                # `is_local` is the property that matters and the one true of
+                # all nine: the spelling is bound in this scope. `is_assigned`
+                # is false for the two import forms, which bind through
+                # `is_imported` instead - reading only `is_assigned` would have
+                # let this fixture check silently exempt the two constructs it
+                # was written to catch first.
+                self.assertTrue(symbol.is_local(), name)
+                self.assertTrue(symbol.is_assigned() or symbol.is_imported(), name)
+                # And the module agrees, on the same source.
+                tree = ast.parse(source)
+                callable_node = tree.body[0]
+                self.assertTrue(
+                    any(
+                        isinstance(node, MODULE._BINDING_CAPABLE_NODES)
+                        and MODULE._node_binds("model", node)
+                        for node in MODULE._callable_body_nodes(callable_node)
+                    ),
+                    name,
+                )
+
+
+class TheBindingScanIsDerivedFromThePythonGrammarTests(unittest.TestCase):
+    """#348: the question "is this name written again" defaults to yes.
+
+    `_node_binds` answers a REFUTATION and its answer gates CREDIT, which is
+    the combination `_agent_loops_forever` in the same module already recorded
+    a lesson about: narrow scope fails safe for credit and unsafe for a
+    refutation, and there the wrong answer became the only accepted one.
+
+    Its predecessor counted `ast.Name` nodes in `Store` context and missed
+    seven constructs that bind without one. Enumerating those seven would have
+    left `type X = ...`, which 3.12 added. So the test that guards it does not
+    restate a list either: it reads the statement kinds out of `ast` and fails
+    when this module has not decided about one.
+    """
+
+    def _dispatched_names(self) -> set[str]:
+        source = Path(MODULE.__file__).read_text(encoding="utf-8")
+        function = next(
+            node
+            for node in ast.walk(ast.parse(source))
+            if isinstance(node, ast.FunctionDef) and node.name == "_node_binds"
+        )
+        return {
+            node.attr
+            for node in ast.walk(function)
+            if isinstance(node, ast.Attribute)
+            and isinstance(node.value, ast.Name)
+            and node.value.id == "ast"
+        } | {
+            name.removeprefix("_").removesuffix("_NODES").title().replace("_", "")
+            for name in ("_TRY_STAR_NODES", "_TYPE_ALIAS_NODES")
+        }
+
+    def test_every_statement_python_defines_is_decided_here(self) -> None:
+        """Derived from `ast`, so a new construct fails this rather than pass."""
+        dispatched = self._dispatched_names()
+        # The two version-guarded kinds are referenced through module-level
+        # tuples rather than by attribute, so they are named from those tuples.
+        for guarded in (MODULE._TRY_STAR_NODES, MODULE._TYPE_ALIAS_NODES):
+            dispatched.update(node.__name__ for node in guarded)
+        undecided = sorted(
+            cls.__name__
+            for cls in ast.stmt.__subclasses__()
+            if cls.__name__ not in dispatched
+        )
+        self.assertEqual(
+            undecided,
+            [],
+            "a statement kind this Python defines that `_node_binds` does not "
+            "name. Decide it there - a construct nobody has decided about must "
+            "reach the fail-closed default, and this test exists so that the "
+            "default is never reached silently",
+        )
+
+    def test_an_unrecognised_node_binds_by_default(self) -> None:
+        """The fail-closed default itself, exercised rather than assumed.
+
+        Without this the `return True` below the dispatch is a claim about the
+        code rather than a behaviour, and a refactor that turned it into
+        `return False` would pass every other test in this file.
+        """
+        self.assertTrue(MODULE._node_binds("model", ast.AST()))
+        # And a pattern kind the pattern reader does not name.
+        self.assertTrue(MODULE._pattern_binds("model", ast.AST()))
+
+    def test_a_target_writing_through_a_name_is_not_a_binding(self) -> None:
+        """`TABLE[i] = x` and `obj.attr = x` do not rebind `TABLE` or `obj`."""
+        module = ast.parse("TABLE[0] = 1\nobj.attr = 2\nTABLE, obj = 3, 4\n")
+        through_subscript, through_attribute, unpacked = module.body
+        self.assertFalse(MODULE._node_binds("TABLE", through_subscript))
+        self.assertFalse(MODULE._node_binds("obj", through_attribute))
+        self.assertTrue(MODULE._node_binds("TABLE", unpacked))
+        self.assertTrue(MODULE._node_binds("obj", unpacked))
+        # And the target reader's own fail-closed exit. No assignment Python
+        # can parse reaches it today, so no fixture can, which is exactly why
+        # it is asserted directly: a mutation that turned it into "binds
+        # nothing" survived every behavioural test in this file.
+        self.assertTrue(MODULE._target_binds("model", [ast.AST()]))
+
+    def test_more_than_one_binder_is_not_a_sole_binder(self) -> None:
+        """The "exactly one" requirement, asserted where order cannot hide it.
+
+        The refusal fixtures reach this through a walk whose order is an
+        implementation detail, and a mutation that took the FIRST binder
+        instead of requiring the only one passed all of them. So the count is
+        pinned on the helper, where two binders is two binders whichever the
+        walk yields first.
+        """
+        one = ast.parse("def answer(c):\n    model = TABLE[c]\n    return model\n")
+        two = ast.parse(
+            "def answer(c):\n    model = TABLE[c]\n"
+            "    import os as model\n    return model\n"
+        )
+        none = ast.parse("def answer(c):\n    return TABLE[c]\n")
+        self.assertIsInstance(
+            MODULE._sole_binding_node("model", one.body[0]), ast.Assign
+        )
+        self.assertIsNone(MODULE._sole_binding_node("model", two.body[0]))
+        self.assertIsNone(MODULE._sole_binding_node("model", none.body[0]))
+        self.assertEqual(len(MODULE._callable_binding_nodes("model", two.body[0])), 2)
+
+
+class AClientBuiltAtImportIsStillAClientTests(unittest.TestCase):
+    """#348's second half: the reporter's agent builds its client once.
+
+    The receiver check read only writes INSIDE the selected callable, so an
+    agent with `client = OpenAI()` at module level had no verified request at
+    all and every setting it read from a config mapping was refused. Measured:
+    the four-setting agent the report describes scored the agent pillar 0 with
+    `agent-no-varying-knobs`, and moving that one line into the function scored
+    it 54 with no cap. Source:
+    tests/test_readiness_scoring.py#AClientBuiltAtImportIsStillAClientTests,
+    which keeps both agents.
+
+    That is a rule about where the author put a line, which is the same defect
+    the settings route had one input over, so it is fixed the same way and
+    guarded the same way: any second binding of the client's spelling anywhere
+    in the module refuses, decided by `_node_binds` rather than by counting
+    stores, and a `global` for it anywhere in the file refuses too.
+    """
+
+    TABLE = 'MODELS = {"fast": "gpt-4o-mini", "slow": "gpt-4o"}\n'
+    BODY = (
+        "\n\ndef answer(question, cfg):\n"
+        '    model = MODELS[cfg["model"]]\n'
+        "    reply = client.chat.completions.create(\n"
+        '        model=model, messages=[{"role": "user", "content": question}]\n'
+        "    )\n"
+        "    return reply.choices[0].message.content\n"
+    )
+
+    def _credited(self, source: str) -> bool:
+        compile(source, "agent.py", "exec")
+        line = next(
+            index
+            for index, text in enumerate(source.splitlines(), 1)
+            if text.startswith("MODELS = ")
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "agent.py").write_text(source, encoding="utf-8")
+            facts = MODULE.agent_facts_from_discovery(
+                {
+                    "source": "agent.py",
+                    "knobs": {
+                        "model": {
+                            "values": ["fast", "slow"],
+                            "source_lines": [line],
+                            "evidence": "the model table this agent selects from",
+                        }
+                    },
+                },
+                source_root=root,
+                selected_agent=root / "agent.py",
+                selected_agent_callable="answer",
+            )
+        return facts.discovered[0].credited
+
+    def test_a_client_built_once_at_module_level_is_a_verified_request(self) -> None:
+        self.assertTrue(
+            self._credited(
+                "from openai import OpenAI\n\n"
+                + self.TABLE
+                + "\nclient = OpenAI()\n"
+                + self.BODY
+            )
+        )
+
+    def test_a_client_this_read_cannot_pin_earns_nothing(self) -> None:
+        """Every way the spelling can stop meaning that constructor."""
+        shapes = {
+            "rebound by a second module assignment": (
+                "from openai import OpenAI\n\n"
+                + self.TABLE
+                + "\nclient = OpenAI()\nclient = OpenAI()\n"
+                + self.BODY
+            ),
+            "rebound by an import alias": (
+                "from openai import OpenAI\n\n"
+                + self.TABLE
+                + "\nclient = OpenAI()\nimport os as client\n"
+                + self.BODY
+            ),
+            "declared global somewhere in the file": (
+                "from openai import OpenAI\n\n"
+                + self.TABLE
+                + "\nclient = OpenAI()\n\n\ndef reset():\n"
+                "    global client\n    client = None\n" + self.BODY
+            ),
+            "rebound by a class of the same name": (
+                "from openai import OpenAI\n\n"
+                + self.TABLE
+                + "\nclient = OpenAI()\n\n\nclass client:\n    pass\n"
+                + self.BODY
+            ),
+            "built after the callable that uses it": (
+                "from openai import OpenAI\n\n"
+                + self.TABLE
+                + self.BODY
+                + "\n\nclient = OpenAI()\n"
+            ),
+            "built from a standard-library import": (
+                "from json import JSONDecoder\n\n"
+                + self.TABLE
+                + "\nclient = JSONDecoder()\n"
+                + self.BODY
+            ),
+            "not constructed at all": (
+                "from openai import OpenAI\n\n"
+                + self.TABLE
+                + "\nclient = OpenAI\n"
+                + self.BODY
+            ),
+            "bound by tuple unpacking": (
+                "from openai import OpenAI\n\n"
+                + self.TABLE
+                + "\nclient, spare = OpenAI(), None\n"
+                + self.BODY
+            ),
+            "handed to the callable as a parameter": (
+                "from openai import OpenAI\n\n"
+                + self.TABLE
+                + "\nclient = OpenAI()\n\n\ndef answer(question, cfg, client):\n"
+                '    model = MODELS[cfg["model"]]\n'
+                "    reply = client.chat.completions.create(\n"
+                '        model=model, messages=[{"role": "user", "content": question}]\n'
+                "    )\n"
+                "    return reply.choices[0].message.content\n"
+            ),
+        }
+        for name, source in shapes.items():
+            with self.subTest(shape=name):
+                self.assertFalse(self._credited(source))
+
+    AGENT = (
+        "from openai import OpenAI\n"
+        "\n"
+        'MODELS = {"fast": "gpt-4o-mini", "slow": "gpt-4o"}\n'
+        'PROMPT_STYLES = {"terse": "SQL only.", "explained": "SQL, then why."}\n'
+        'SCHEMA_CONTEXTS = {"none": "", "tables": "Tables: orders, customers."}\n'
+        "TEMPERATURE_BOUNDS = (0.0, 1.0)\n"
+        "\n"
+        "client = OpenAI()\n"
+        "\n"
+        "\n"
+        "def answer(question, cfg):\n"
+        '    model = MODELS[cfg["model"]]\n'
+        '    prompt_style = PROMPT_STYLES[cfg["prompt_style"]]\n'
+        '    schema_context = SCHEMA_CONTEXTS[cfg["schema_context"]]\n'
+        '    temperature = TEMPERATURE_BOUNDS[cfg["temperature"]]\n'
+        "    reply = client.chat.completions.create(\n"
+        "        model=model,\n"
+        "        temperature=temperature,\n"
+        "        messages=[\n"
+        '            {"role": "system", "content": prompt_style},\n'
+        '            {"role": "system", "content": schema_context},\n'
+        '            {"role": "user", "content": question},\n'
+        "        ],\n"
+        "    )\n"
+        "    return reply.choices[0].message.content\n"
+    )
+    KNOBS = {
+        "model": {"values": ["fast", "slow"], "source_lines": [3]},
+        "prompt_style": {"values": ["terse", "explained"], "source_lines": [4]},
+        "schema_context": {"values": ["none", "tables"], "source_lines": [5]},
+        "temperature": {"low": 0.0, "high": 1.0, "source_lines": [6]},
+    }
+
+    def test_the_agent_the_report_describes_is_read(self) -> None:
+        """The whole point, as the reporter meets it.
+
+        Four settings read from a config mapping, a client built once at
+        import, every value passed through a plain local. This is the agent
+        #348 describes, and the assertion is the one the report makes: it
+        scores zero, and it should not.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "agent.py").write_text(self.AGENT, encoding="utf-8")
+            knobs = {
+                name: {**spec, "evidence": f"the {name} table this agent reads"}
+                for name, spec in json.loads(json.dumps(self.KNOBS)).items()
+            }
+            facts = MODULE.agent_facts_from_discovery(
+                {"source": "agent.py", "knobs": knobs},
+                source_root=root,
+                selected_agent=root / "agent.py",
+                selected_agent_callable="answer",
+            )
+        self.assertEqual(
+            sorted(knob.name for knob in facts.discovered if knob.credited),
+            ["model", "prompt_style", "schema_context", "temperature"],
+        )
+        pillar, caps, _ = MODULE.score_agent(facts)
+        self.assertGreater(pillar.score, 0)
+        self.assertEqual(
+            [
+                cap.condition
+                for cap in caps
+                if cap.condition == "agent-no-varying-knobs"
+            ],
+            [],
+        )
 
 
 class TheRefusedRouteIsShownAnAcceptedOneTests(unittest.TestCase):
@@ -13596,6 +14131,17 @@ class TheRefusedRouteIsShownAnAcceptedOneTests(unittest.TestCase):
     example this scorer would itself refuse.
     """
 
+    def _score_printed_agent(self, agent: str, entry: dict):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "agent.py").write_text(agent, encoding="utf-8")
+            return MODULE.agent_facts_from_discovery(
+                {"source": "agent.py", "knobs": entry},
+                source_root=root,
+                selected_agent=root / "agent.py",
+                selected_agent_callable="answer",
+            )
+
     def test_the_printed_route_is_one_this_reader_actually_credits(self) -> None:
         """The anti-drift property, checked through the real reader.
 
@@ -13605,20 +14151,10 @@ class TheRefusedRouteIsShownAnAcceptedOneTests(unittest.TestCase):
         thing to copy.
         """
         compile(MODULE.ACCEPTED_ROUTE_AGENT, "agent.py", "exec")
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            (root / "agent.py").write_text(
-                MODULE.ACCEPTED_ROUTE_AGENT, encoding="utf-8"
-            )
-            facts = MODULE.agent_facts_from_discovery(
-                {
-                    "source": "agent.py",
-                    "knobs": json.loads(json.dumps(MODULE.ACCEPTED_ROUTE_KNOB)),
-                },
-                source_root=root,
-                selected_agent=root / "agent.py",
-                selected_agent_callable="answer",
-            )
+        facts = self._score_printed_agent(
+            MODULE.ACCEPTED_ROUTE_AGENT,
+            json.loads(json.dumps(MODULE.ACCEPTED_ROUTE_KNOB)),
+        )
         self.assertTrue(facts.discovered[0].credited)
         pillar, caps, _ = MODULE.score_agent(facts)
         self.assertGreater(pillar.score, 0)
@@ -13691,30 +14227,56 @@ class TheRefusedRouteIsShownAnAcceptedOneTests(unittest.TestCase):
         "\n"
         "def answer(question, cfg):\n"
         '    model = MODELS[cfg["model"]]\n'
-        "    reply = client.chat.completions.create(\n"
-        "        model=model,\n"
-        '        messages=[{"role": "user", "content": question}],\n'
-        "    )\n"
-        "    return reply.choices[0].message.content\n"
+        "    return summarise(model)\n"
     )
+    REFUSED_KNOB = {
+        "values": ["fast", "slow"],
+        "source_lines": [3],
+        "evidence": "the table this agent selects from",
+    }
+
+    @staticmethod
+    def _fenced(report: str, language: str) -> str:
+        return report.split(f"```{language}\n", 1)[1].split("```", 1)[0]
+
+    def test_the_block_a_reader_copies_is_one_this_reader_credits(self) -> None:
+        """Parsed out of the RENDERED block, not compared to the constants.
+
+        A pin that asserts the constants appear in the output cannot see a
+        renderer that drops a line, reflows the code, or indents it into
+        something that no longer parses. So this takes the two fenced blocks
+        back out of the durable report, parses them as the file and the
+        document they claim to be, and scores THAT through the real reader.
+        """
+        report = self._report(self.REFUSED_AGENT, self.REFUSED_KNOB)
+        agent = self._fenced(report, "python")
+        entry = json.loads(self._fenced(report, "json"))
+        ast.parse(agent)
+        facts = self._score_printed_agent(agent, entry)
+        self.assertTrue(facts.discovered[0].credited)
+        pillar, caps, _ = MODULE.score_agent(facts)
+        self.assertGreater(pillar.score, 0)
+        self.assertFalse(any(cap.condition == "agent-no-varying-knobs" for cap in caps))
 
     def test_the_accepted_route_prints_beside_a_refused_route(self) -> None:
-        card = self._card(
-            self.REFUSED_AGENT,
-            {
-                "values": ["fast", "slow"],
-                "source_lines": [3],
-                "evidence": "the table this agent selects from",
-            },
-        )
+        card = self._card(self.REFUSED_AGENT, self.REFUSED_KNOB)
         self.assertIn(MODULE.ACCEPTED_ROUTE_LABEL, card)
-        for line in MODULE.ACCEPTED_ROUTE_AGENT.splitlines():
-            if line.strip():
-                with self.subTest(line=line):
-                    self.assertIn(line.strip(), card)
+        # The card indents the block rather than fencing it, so it is read back
+        # by removing that indent and parsing what is left.
+        printed = "\n".join(
+            line[6:] if line.startswith("      ") else line
+            for line in card.splitlines()
+        )
+        ast.parse(self._fenced_from_card(printed))
         for part in MODULE.ACCEPTED_ROUTE_PARTS:
             with self.subTest(part=part):
                 self.assertIn(part, card)
+
+    @staticmethod
+    def _fenced_from_card(printed: str) -> str:
+        start = printed.index("from openai import OpenAI")
+        end = printed.index("and the entry that cites it")
+        return printed[start:end]
 
     def test_the_durable_report_carries_it_too(self) -> None:
         """The report is the copy a reader keeps, so the remedy is in it.
@@ -13724,14 +14286,7 @@ class TheRefusedRouteIsShownAnAcceptedOneTests(unittest.TestCase):
         remedies. This block is the same kind of content, so both surfaces
         carry it and both are asserted, or the next reader fixes it twice.
         """
-        report = self._report(
-            self.REFUSED_AGENT,
-            {
-                "values": ["fast", "slow"],
-                "source_lines": [3],
-                "evidence": "the table this agent selects from",
-            },
-        )
+        report = self._report(self.REFUSED_AGENT, self.REFUSED_KNOB)
         self.assertIn("## A settings route this read can follow", report)
         for line in MODULE.ACCEPTED_ROUTE_AGENT.splitlines():
             if line.strip():
@@ -13767,6 +14322,229 @@ class TheRefusedRouteIsShownAnAcceptedOneTests(unittest.TestCase):
             },
         )
         self.assertNotIn(MODULE.ACCEPTED_ROUTE_LABEL, unsettled)
+
+    def test_only_the_state_this_example_answers_sets_the_flag(self) -> None:
+        """Enumerated from the source, not from the two branches I had in mind.
+
+        `unverified` covers four states and only one of them is answered by
+        showing an accepted route. A reviewer found the flag set on a second
+        one - the numeric-bounds refusal - where the printed example is a list
+        of named options and answers nothing the author asked. So the guard
+        reads every `DiscoveredKnob(...)` this module builds with
+        `unverified=True` and requires each to have decided, rather than
+        checking the two the author remembered.
+        """
+        source = Path(MODULE.__file__).read_text(encoding="utf-8")
+        calls = [
+            node
+            for node in ast.walk(ast.parse(source))
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "DiscoveredKnob"
+        ]
+        unverified = [
+            call
+            for call in calls
+            if any(
+                keyword.arg == "unverified"
+                and isinstance(keyword.value, ast.Constant)
+                and keyword.value.value is True
+                for keyword in call.keywords
+            )
+        ]
+        self.assertGreaterEqual(len(unverified), 4)
+        routed = [
+            call
+            for call in unverified
+            if any(keyword.arg == "route_unverified" for keyword in call.keywords)
+        ]
+        self.assertEqual(
+            len(routed),
+            1,
+            "exactly one unverified state is answered by the printed route. "
+            "A new one has to decide, and the decision belongs beside the "
+            "branch rather than in this test",
+        )
+        # And the one that does is the categorical route refusal, identified by
+        # the value it reports rather than by its position in the file.
+        self.assertEqual(routed[0].args[1].value, "categorical")
+
+
+class TheSettingsRouteMovesTheCardTests(unittest.TestCase):
+    """#348: what following the local binding is worth, stated as a number.
+
+    The credit is not a rounding difference. Measured on 200 collected rows,
+    split 180/20, difficulty-tagged, against a brought deterministic evaluator
+    passing all seven calibration checks. Source:
+    tests/test_readiness_scoring.py#TheSettingsRouteMovesTheCardTests, which
+    builds the facts. A read that establishes nothing scores 45 PARTIAL under
+    `agent-no-varying-knobs`; the same run with one two-option setting credited
+    scores 72 WORKABLE with no cap, and the four-setting agent #348 describes
+    scores 79 STRONG with no cap. Two bands and 34 points.
+
+    That magnitude is the reason the pass refuses everything it cannot pin: a
+    knob that never reaches the provider would buy the same 34 points and the
+    same band. So the transition itself is pinned here - not the numbers, which
+    are weights, but the fact that crediting the route is what removes the
+    ceiling and the ask.
+    """
+
+    @staticmethod
+    def _strong_inputs():
+        """The dataset and evaluator the numbers above were taken on."""
+        check = {"good_passes": True, "bad_fails": True, "non_constant": True}
+        return (
+            MODULE.DatasetFacts(
+                exists=True,
+                dataset_supplied=True,
+                rows=200,
+                labelled_rows=200,
+                tuning_rows=180,
+                holdout_rows=20,
+                tuning_labelled_rows=180,
+                holdout_labelled_rows=20,
+                distinct_rows=200,
+                tuning_distinct_rows=180,
+                tuning_distinct_scoreable_rows=180,
+                difficulty_bands=("easy", "medium", "hard", "very-hard"),
+                difficulty_tagged_rows=200,
+                duplicate_status="PASS",
+                near_duplicate_status="PASS",
+                answer_dominance_status="PASS",
+                collected_rows=200,
+                answerable_rows=200,
+                sources=("production-support-desk",),
+            ),
+            MODULE.EvaluationFacts(
+                present=True,
+                method="exact",
+                calibration_present=True,
+                calibration_supplied=True,
+                calibration_complete=True,
+                calibration_passed=True,
+                checks=(check,) * 7,
+                probe_scores=((1.0, 0.0),),
+                parses=True,
+                origin="brought",
+            ),
+        )
+
+    HEADER = 'from openai import OpenAI\n\nMODELS = ["gpt-4o-mini", "gpt-4o"]\n\n'
+    DIRECT = (
+        "def answer(question, model_choice=0):\n"
+        "    return provider(model=MODELS[model_choice], text=question)\n"
+    )
+    THROUGH_A_LOCAL = (
+        "def answer(question, model_choice=0):\n"
+        "    model = MODELS[model_choice]\n"
+        "    return provider(model=model, text=question)\n"
+    )
+
+    def _score(self, body: str):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "agent.py").write_text(self.HEADER + body, encoding="utf-8")
+            facts = MODULE.agent_facts_from_discovery(
+                {
+                    "source": "agent.py",
+                    "knobs": {
+                        "model": {
+                            "values": ["gpt-4o-mini", "gpt-4o"],
+                            "source_lines": [3],
+                            "evidence": "the module table on the call path",
+                        }
+                    },
+                },
+                source_root=root,
+                selected_agent=root / "agent.py",
+                selected_agent_callable="answer",
+            )
+        pillar, caps, _ = MODULE.score_agent(facts)
+        return pillar, caps
+
+    def test_the_route_is_what_removes_the_ceiling_and_the_ask(self) -> None:
+        direct_pillar, direct_caps = self._score(self.DIRECT)
+        local_pillar, local_caps = self._score(self.THROUGH_A_LOCAL)
+        self.assertEqual(direct_pillar.score, local_pillar.score)
+        self.assertEqual(
+            [cap.condition for cap in direct_caps],
+            [cap.condition for cap in local_caps],
+        )
+        self.assertNotIn(
+            "agent-no-varying-knobs", [cap.condition for cap in local_caps]
+        )
+        self.assertGreater(local_pillar.score, 0)
+
+    def test_the_transition_is_a_ceiling_and_an_action_not_only_points(self) -> None:
+        """Both halves of what the customer sees change, so both are asserted.
+
+        A test on the pillar alone would pass while the card still printed a
+        ceiling and asked for a repair, which is the half a reader acts on.
+        """
+        refused = (
+            "def answer(question, cfg):\n"
+            '    model = cfg.get("model") or "gpt-4o-mini"\n'
+            "    return provider(model=model, text=question)\n"
+        )
+        _, refused_caps = self._score(refused)
+        _, credited_caps = self._score(self.THROUGH_A_LOCAL)
+        self.assertIn("agent-no-varying-knobs", [cap.condition for cap in refused_caps])
+        self.assertNotIn(
+            "agent-no-varying-knobs", [cap.condition for cap in credited_caps]
+        )
+        self.assertEqual(
+            MODULE.recommended_action(
+                tuple(sorted(credited_caps, key=MODULE.cap_order))
+            ),
+            MODULE.PROCEED,
+        )
+
+    def test_the_whole_card_moves_two_bands(self) -> None:
+        """The magnitude, on the card a customer reads rather than the pillar.
+
+        Stated because it is what makes the refusals above expensive: a knob
+        this pass credited without a route would buy the same two bands. The
+        numbers are weights and may move; what is asserted is the direction,
+        the ceiling, and that the band really changes.
+        """
+        dataset, evaluation = self._strong_inputs()
+
+        def card_for(body: str):
+            with tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                (root / "agent.py").write_text(self.HEADER + body, encoding="utf-8")
+                facts = MODULE.agent_facts_from_discovery(
+                    {
+                        "source": "agent.py",
+                        "knobs": {
+                            "model": {
+                                "values": ["gpt-4o-mini", "gpt-4o"],
+                                "source_lines": [3],
+                                "evidence": "the module table on the call path",
+                            }
+                        },
+                    },
+                    source_root=root,
+                    selected_agent=root / "agent.py",
+                    selected_agent_callable="answer",
+                )
+            return MODULE.score_run(
+                dataset, evaluation, facts, dict(MODULE.DEFAULT_WEIGHTS)
+            )
+
+        nothing_established = card_for(
+            "def answer(question, cfg):\n"
+            '    model = cfg.get("model") or "gpt-4o-mini"\n'
+            "    return provider(model=model, text=question)\n"
+        )
+        credited = card_for(self.THROUGH_A_LOCAL)
+        self.assertEqual(
+            [cap.condition for cap in nothing_established.caps],
+            ["agent-no-varying-knobs"],
+        )
+        self.assertEqual(list(credited.caps), [])
+        self.assertGreater(credited.overall, nothing_established.overall)
+        self.assertNotEqual(credited.band, nothing_established.band)
 
 
 class TheAgentPillarReadsTheAgentTests(unittest.TestCase):
