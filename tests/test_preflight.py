@@ -3261,25 +3261,29 @@ class TheSubsetProposalCountsDifferentQuestionsTests(unittest.TestCase):
     """The number the bounded-draw rule names has to be the number preflight emits.
 
     `references/evaluation-and-dataset.md` rule 6 tells an assistant to draw
-    distinct inputs and to stop at the tuning split's distinct inputs among the
-    rows this run can score. That is a guidance sentence about a population, and
-    the population and the script can drift apart silently: the sentence is
-    prose and the counting is done here. These run the real check and assert the
-    numbers the rule depends on, so a re-keying here fails beside the document
-    rather than a release later.
+    different questions and to stop at the tuning split's different questions
+    among the rows this run can score. That is a guidance sentence about a
+    POPULATION and an IDENTITY, and the script can drift from either silently.
 
-    The rule names a population rather than a metric key on purpose. A count of
-    the different inputs across ALL tuning rows is a true fact about the file
-    and is larger than the scoreable one wherever some tuning rows carry no
-    expected answer - and a paid draw sized from the larger number keeps exactly
-    the repeats this rule removes.
+    Both axes have already been wrong here, which is why the fixtures below
+    cross them rather than covering each alone. A review found the first
+    version's coverage arranged so that no case tested both at once: the one
+    fixture that declared a split never asserted the proposal, and the three
+    that asserted the proposal never declared a split - two halves covered and
+    the seam between them open, while the seam was where the defect was.
 
-    The re-keying matters most and is the reason the rule says "inputs" twice.
-    A multi-reference split - one question with two accepted golds - is two rows
-    carrying one input. Keyed on the input it is one question, which is what the
-    agent will be asked and what any configuration can be separated on. Keyed on
-    the pair it is two, and a draw sized from that number buys a second call per
-    trial that no comparison can use.
+    * POPULATION. `#356` was the labelled axis: a distinct count over every
+      tuning row bounding a comparison that only reaches the labelled ones.
+      The split axis is the same defect one over: the guide hands preflight the
+      combined file, so a count over every row answers about rows the draw
+      never touches. On a 400-row tuning split asking 12 questions beside a
+      held-out ten, that difference is six rows per configuration in every
+      trial.
+    * IDENTITY. `normalized_identity` keeps word characters and discards every
+      operator, so `is x > 5` and `is x < 5` reach it as one string. Bounding a
+      PAID draw with it deletes real test cases, and the walkthrough's own
+      worked task is text to SQL. The draw uses `exact_input_identity`, which
+      has no false positive.
     """
 
     def setUp(self) -> None:
@@ -3292,13 +3296,120 @@ class TheSubsetProposalCountsDifferentQuestionsTests(unittest.TestCase):
             MODULE.check_dataset(dataset)
         return {result.check: result for result in MODULE.RESULTS}
 
+    @staticmethod
+    def held_out(count: int = 10, questions: int | None = None) -> list[dict]:
+        """A held-out split that asks its own questions, which the draw may not count."""
+        span = count if questions is None else questions
+        return [
+            {
+                "id": f"hold-{index}",
+                "input": f"does exhibit {index % span} contradict the filing",
+                "output": "no",
+                "split": "holdout",
+            }
+            for index in range(count)
+        ]
+
+    def test_the_proposal_counts_the_tuning_split_and_not_the_file(self) -> None:
+        """The seam: a split IS declared and the proposal IS asserted.
+
+        The guide mandates the combined, split-labelled file as preflight's
+        input, so this is the ordinary path rather than a corner. The tuning
+        split asks twelve questions; the held-out ten ask ten more; the file
+        therefore holds twenty-two. Only one of those numbers may bound a draw
+        that never leaves the tuning split.
+
+        Both the count and the scope are asserted, because a count that is
+        right by accident and a count that says what it counted are different
+        guarantees, and only the second survives someone adding a third split.
+        """
+        rows = [
+            {
+                "id": f"tune-{index}",
+                "input": f"question number {index % 12} about the quarterly filing",
+                "output": f"answer {index % 12}",
+                "split": "tuning",
+            }
+            for index in range(400)
+        ]
+        rows += self.held_out()
+        finding = self.scan(rows)["dataset-first-run-rows"]
+        self.assertEqual(finding.metrics["usable_rows"], 410)
+        self.assertEqual(
+            finding.metrics["first_run_distinct_rows"],
+            12,
+            "the count reaches rows outside the tuning split, so it is not the "
+            "population the draw can be sized from",
+        )
+        self.assertEqual(
+            finding.metrics["first_run_distinct_scope"], "the tuning split"
+        )
+        self.assertEqual(
+            finding.metrics["first_run_rows"],
+            12,
+            "the proposal is above the questions the tuning split asks, so it "
+            "prices calls no comparison can use",
+        )
+        self.assertIn("12 different inputs in the tuning split", finding.detail)
+
+    def test_an_operator_is_not_a_repeat(self) -> None:
+        """The identity axis, on the shape this walkthrough actually teaches.
+
+        Forty questions differing only in their comparison operator are forty
+        questions. Under the looser identity they are twenty, and the twenty
+        dropped are test cases the customer wrote - a de-duplication that
+        removes questions, which rule 6 forbids in as many words. Asserted
+        against the SCRIPT's own two identities as well as against the count,
+        so the reason a re-key would be wrong is pinned beside the count it
+        would break.
+        """
+        self.assertEqual(
+            MODULE.normalized_identity("is x > 5"),
+            MODULE.normalized_identity("is x < 5"),
+            "the looser identity stopped collapsing operators, so this fixture "
+            "no longer distinguishes the two measures",
+        )
+        self.assertNotEqual(
+            MODULE.exact_input_identity("is x > 5"),
+            MODULE.exact_input_identity("is x < 5"),
+        )
+        rows = [
+            {
+                "id": f"op-{index}-{sign}",
+                "input": f"is column_{index} {sign} 5",
+                "output": "yes" if sign == ">" else "no",
+                "split": "tuning",
+            }
+            for index in range(20)
+            for sign in (">", "<")
+        ]
+        rows += [
+            {
+                "id": f"pad-{index}",
+                "input": f"how many rows joined table {index}",
+                "output": str(index),
+                "split": "tuning",
+            }
+            for index in range(120)
+        ]
+        rows += self.held_out()
+        finding = self.scan(rows)["dataset-first-run-rows"]
+        self.assertEqual(
+            finding.metrics["first_run_distinct_rows"],
+            160,
+            "the draw counted two operator questions as one, so it would cut "
+            "the budget on a guess the rule refuses",
+        )
+        self.assertEqual(finding.metrics["first_run_rows"], 18)
+
     def test_a_multi_reference_split_counts_its_questions_not_its_rows(self) -> None:
-        """Sixty questions under two accepted golds are sixty different examples.
+        """Sixty questions under two accepted golds are sixty questions.
 
         The fixture is built from the shape rather than from any count this
         script computes: 60 questions written out, each once per accepted gold.
-        Whatever `tuning_distinct_rows` reports has to be the number of
-        questions, because that is what a configuration can be told apart on.
+        The proposal is capped at eighteen QUESTIONS, and the rows those
+        questions bring are what the run pays for - which is rule 6's own
+        wording and the reason the cap is not a row count.
         """
         rows = []
         for index in range(60):
@@ -3311,30 +3422,28 @@ class TheSubsetProposalCountsDifferentQuestionsTests(unittest.TestCase):
                         "split": "tuning",
                     }
                 )
-        rows += [
-            {
-                "id": f"hold-{index}",
-                "input": f"does exhibit {index} contradict the filing",
-                "output": "no",
-                "split": "holdout",
-            }
-            for index in range(12)
-        ]
-        tuning = self.scan(rows)["dataset-tuning-size"]
+        rows += self.held_out(12)
+        found = self.scan(rows)
+        tuning = found["dataset-tuning-size"]
         self.assertEqual(tuning.metrics["tuning_rows"], 120)
         self.assertEqual(
             tuning.metrics["tuning_distinct_rows"],
             60,
-            "the card would tell a reader 120 while the bounded-draw rule sends "
-            "them to this key for the count the run should buy",
+            "the card would tell a reader 120 while the rule counts questions",
         )
+        proposal = found["dataset-first-run-rows"]
+        self.assertEqual(proposal.metrics["first_run_distinct_rows"], 60)
+        self.assertEqual(proposal.metrics["first_run_rows"], 18)
 
     def test_the_subset_proposal_never_exceeds_the_questions_asked(self) -> None:
         """A file of 400 rows asking 12 questions may not be proposed 18 rows.
 
         Both numbers used to travel in one payload - `subset cap: 18` beside a
         distinct count of 12 - with nothing saying which governed, while the
-        difference is six calls per configuration in every trial.
+        difference is six calls per configuration in every trial. No split is
+        declared here on purpose: the fallback population is the whole
+        scoreable set, because an undeclared split is a file the draw comes out
+        of entire.
         """
         rows = [
             {
@@ -3346,14 +3455,15 @@ class TheSubsetProposalCountsDifferentQuestionsTests(unittest.TestCase):
         ]
         finding = self.scan(rows)["dataset-first-run-rows"]
         self.assertEqual(finding.metrics["usable_rows"], 400)
-        self.assertEqual(finding.metrics["distinct_rows"], 12)
+        self.assertEqual(finding.metrics["first_run_distinct_rows"], 12)
+        self.assertEqual(finding.metrics["first_run_distinct_scope"], "this dataset")
         self.assertEqual(
             finding.metrics["first_run_rows"],
             12,
             "the proposal is above the questions this file asks, so it prices "
             "calls no comparison can use",
         )
-        self.assertIn("12 different inputs among them", finding.detail)
+        self.assertIn("12 different inputs in this dataset", finding.detail)
 
     def test_a_file_of_different_questions_keeps_the_full_proposal(self) -> None:
         """The other direction: the bound may not shrink an honest dataset.
@@ -3371,28 +3481,18 @@ class TheSubsetProposalCountsDifferentQuestionsTests(unittest.TestCase):
             for index in range(400)
         ]
         finding = self.scan(rows)["dataset-first-run-rows"]
-        self.assertEqual(finding.metrics["distinct_rows"], 400)
+        self.assertEqual(finding.metrics["first_run_distinct_rows"], 400)
         self.assertEqual(finding.metrics["first_run_rows"], 18)
-        self.assertNotIn("different inputs among them", finding.detail)
+        self.assertNotIn("different inputs in", finding.detail)
 
     def test_the_proposal_counts_only_rows_this_run_can_score(self) -> None:
-        """The population, not just the counting. This is the #356 shape.
+        """The labelled axis, which is #356's own. Crossed with a declared split.
 
         A file half collected and half annotated is the ordinary state of one
         somebody is still working on. Its unlabelled rows cannot be scored, so
-        they are not rows a configuration can be told apart on and they are not
-        rows the bounded draw may be sized from - and they are exactly what
-        makes a distinct count over every present row larger than the one this
-        proposal is allowed to use.
-
-        The fixture is built from the shape and not from either count: 150
-        labelled rows written from a fixed number of questions, beside 150
-        unlabelled rows that repeat nothing. Counted over the rows that can be
-        scored, the proposal is the questions those rows ask; counted over every
-        present row it would be the 18-row default, because 150 unlabelled
-        inputs are more than enough to hide the repeats. Both numbers are
-        asserted, so the test fails if the bound is dropped as well as if it is
-        taken over the wrong rows.
+        they are not rows a configuration can be told apart on and not rows the
+        draw may be sized from - and they are exactly what makes a count over
+        every present row larger than the one the proposal may use.
         """
         questions = 12
         rows = [
@@ -3400,20 +3500,26 @@ class TheSubsetProposalCountsDifferentQuestionsTests(unittest.TestCase):
                 "id": f"labelled-{index}",
                 "input": f"question number {index % questions} about the filing",
                 "output": f"answer {index % questions}",
+                "split": "tuning",
             }
             for index in range(150)
         ]
         rows += [
-            {"id": f"unlabelled-{index}", "input": f"draft question {index}"}
+            {
+                "id": f"unlabelled-{index}",
+                "input": f"draft question {index}",
+                "split": "tuning",
+            }
             for index in range(150)
         ]
+        rows += self.held_out()
         finding = self.scan(rows)["dataset-first-run-rows"]
-        self.assertEqual(finding.metrics["usable_rows"], 150)
+        self.assertEqual(finding.metrics["usable_rows"], 160)
         self.assertEqual(
-            finding.metrics["distinct_rows"],
+            finding.metrics["first_run_distinct_rows"],
             questions,
-            "the distinct count reaches rows that carry no expected answer, so "
-            "it is not the population the draw can be sized from",
+            "the count reaches rows that carry no expected answer, so it is "
+            "not the population the draw can be sized from",
         )
         self.assertEqual(
             finding.metrics["first_run_rows"],
@@ -3422,18 +3528,55 @@ class TheSubsetProposalCountsDifferentQuestionsTests(unittest.TestCase):
             "prices calls no comparison can use",
         )
 
-    def test_the_bound_is_applied_and_not_merely_reported(self) -> None:
-        """The helper itself, at the boundary the emit cannot reach.
+    def test_the_bound_is_applied_only_where_the_subset_applies(self) -> None:
+        """The helper itself, at the two boundaries the emit cannot reach.
 
         A caller with no distinct count gets the row-based answer rather than a
-        wrong one, and a caller with one is bounded by it. Asserted directly
-        because the emit above can only exercise whole datasets.
+        wrong one, and a caller with one is bounded by it - but only above
+        `BOUNDED_SUBSET_ABOVE_ROWS`, because below it the run scores the whole
+        dataset and there is no subset to cap. Bounding there reported a 40-row
+        file at 7 under a rule the guidance does not extend that far.
         """
         self.assertEqual(MODULE.first_run_row_count(400), 18)
         self.assertEqual(MODULE.first_run_row_count(400, 400), 18)
         self.assertEqual(MODULE.first_run_row_count(400, 12), 12)
+        self.assertEqual(MODULE.first_run_row_count(101, 12), 12)
+        self.assertEqual(MODULE.first_run_row_count(100, 12), 100)
         self.assertEqual(MODULE.first_run_row_count(40, 40), 40)
-        self.assertEqual(MODULE.first_run_row_count(40, 7), 7)
+        self.assertEqual(MODULE.first_run_row_count(40, 7), 40)
+
+    def test_the_scope_travels_with_the_number(self) -> None:
+        """A count with no population is the shape both defects wore.
+
+        Every payload states which rows it counted, so a reader never has to
+        infer it from a second field, and a third split cannot silently change
+        what the number means.
+        """
+        for label, rows in (
+            (
+                "the tuning split",
+                [
+                    {
+                        "id": f"t{index}",
+                        "input": f"q{index}",
+                        "output": "a",
+                        "split": "train",
+                    }
+                    for index in range(30)
+                ]
+                + self.held_out(),
+            ),
+            (
+                "this dataset",
+                [
+                    {"id": f"n{index}", "input": f"q{index}", "output": "a"}
+                    for index in range(30)
+                ],
+            ),
+        ):
+            with self.subTest(scope=label):
+                finding = self.scan(rows)["dataset-first-run-rows"]
+                self.assertEqual(finding.metrics["first_run_distinct_scope"], label)
 
 
 if __name__ == "__main__":

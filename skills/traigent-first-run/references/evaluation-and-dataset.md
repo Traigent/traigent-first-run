@@ -929,23 +929,36 @@ Six rules make the subset honest:
 5. **Name the bound to the user.** Report the subset size beside the full row count ("18 tuning
    and 10 held-out rows of your 4,812 for this first run"). Never let a bounded run read as though
    the whole dataset was evaluated.
-6. **Draw distinct inputs, and let their count set the size.** The agent produces one output per
-   input, so two rows carrying the same input are scored as a fixed pair by every configuration and
-   separate none of them - whatever expected answers they carry. The second is a provider call in
-   every trial and no comparison at all. Distinctness here is therefore counted the one way
-   preflight already counts it and the card already prints it: **different normalized inputs**,
-   reported beside the tuning size. Do not re-key it on the expected answer as well - a
-   multi-reference split of 60 questions under two accepted golds is 60 different examples, not
-   120, and re-keying would say 120 while the card says 60.
+6. **Draw different questions, and let their count set the size.** The agent produces one output
+   per input, so two rows carrying the same input are asked the same question by every
+   configuration. Where those rows also carry the same expected answer the second is a provider
+   call in every trial and no comparison at all, and it is the one thing this draw may drop. Where
+   the expected answers differ it is one question with more than one accepted answer, and **every
+   one of its rows is drawn and paid for**: dropping either row narrows what counts as correct, so
+   a configuration that answered acceptably then scores exactly like one that answered wrongly.
+   Count questions, draw rows. A multi-reference split of 60 questions under two accepted golds is
+   60 questions and 120 rows; eighteen caps the questions, and the price is the rows the questions
+   bring. Say both numbers wherever the run is priced.
+
+   Two inputs are the same question only when they are **equal**, and this rule is never applied to
+   a looser measure. `normalized_identity` in `scripts/preflight.py` is the looser one: it keeps
+   word characters and discards every operator and mark, so `is x > 5` and `is x < 5` arrive there
+   as one string, and so do `2 + 2 = ?` and `2 - 2 = ?`. That is the right measure where it is
+   used - finding a leak between splits, or raising an advisory duplicate warning - and the wrong
+   one here, because this count cuts a **paid** draw and a wrong cut deletes a test case the
+   customer wrote. This walkthrough's own worked task is text to SQL, where the characters it
+   discards are the discriminating ones. `dataset-first-run-rows` reports the count this rule uses
+   in `first_run_distinct_rows`, beside the population it counted in `first_run_distinct_scope`.
 
    Distinct **across the whole draw**, not within one band: a row already drawn under one band buys
    nothing when another band offers the same input again. Work the bands in turn, take up to four
-   inputs each band has not already contributed, and stop at eighteen or at the tuning split's
-   distinct inputs **among the rows this run can score**, whichever is smaller. Those are the
+   questions each band has not already contributed, and stop at eighteen or at the tuning split's
+   different questions **among the rows this run can score**, whichever is smaller. Those are the
    labelled tuning rows, or every present tuning row under a method that scores without a
-   reference. A count of the different inputs across all tuning rows is the larger of the two on a
-   part-annotated file, and sizing a paid draw from it buys back the repeats this rule removes.
-   Price and report the number actually drawn, because it is what the run buys.
+   reference. A count taken over the whole file, or over rows the comparison cannot reach, is the
+   larger number on a split or part-annotated dataset, and sizing a paid draw from it buys back the
+   repeats this rule removes. Price and report the rows actually drawn, because they are what the
+   run buys.
 
    **When a band cannot reach four, the draw is short by that much, and the shortfall is not made up
    from the bands that can.** An extra `easy` input is not a `hard` one, so topping the count back
@@ -955,18 +968,18 @@ Six rules make the subset honest:
    That is the dataset tagging one question two ways, which is a finding about the data; report it,
    with the short bands, beside the sample-size limitation.
 
-   Exact inputs, never resemblance: byte-identical rows are the same row under any reading, while
+   Equal inputs, never resemblance: two equal inputs are one question under any reading, while
    rows that merely read alike are routinely two real questions, and a bounded budget must not be
    cut on that guess. What that choice costs belongs in the report rather than in a footnote. A
    dataset whose repeats were REWORDED - one question written out fifty times with a serial number
-   or a `(variant N)` suffix - is fifty different inputs to this rule and to the comparison count on
-   the card, and the run pays for every one of them. `dataset-near-duplicates` is the check that
+   or a `(variant N)` suffix - is fifty different questions to this rule and to the comparison count
+   on the card, and the run pays for every one of them. `dataset-near-duplicates` is the check that
    sees that shape; when it fires, say in the run report that the drawn rows may repeat each other
    in wording and that neither the draw nor the comparison count has subtracted them.
 
-   This rule governs the tuning draw. A held-out split holding fewer distinct inputs is topped up to
-   its composition under "Held-out set and claims" below, never drawn short - ten there is exact in
-   both directions, and this rule does not reach it.
+   This rule sizes the tuning draw and nothing else. The held-out ten carry their own rule under
+   "Held-out set and claims" below, which is where a repeat among them is answered; this rule does
+   not reach it.
 
 Keeping at least four rows from every band is what protects the spread: a careless trim to 18 that
 drops a band costs difficulty points and prints a spread complaint about a dataset that has all four.
@@ -1000,6 +1013,12 @@ search can at least see it. Filling one set with the real rows and generating th
 failure this rule exists to stop, and it fails in both directions: a held-out set of generated rows
 validates nothing about real inputs, and a tuning set of generated rows searches a task the
 customer does not have.
+
+**The ten are ten different questions, and a repeat is replaced rather than removed.** Two held-out
+rows carrying equal inputs measure one thing twice and leave the claim standing on nine, so the
+duplicate is topped up under the paragraph below like any other shortfall - never dropped to leave
+a shorter split, and never left in place. Sameness here is read the way the tuning draw reads it:
+equal inputs, never resemblance, so nothing is replaced on a guess about wording.
 
 Then top each set up to its composition with generated rows rather than dropping a band, placing
 each real row in the band its own difficulty puts it in, and declare the mixture through the

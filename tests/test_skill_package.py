@@ -27045,71 +27045,96 @@ class TheBoundedDrawSpendsOnDifferentRowsTests(unittest.TestCase):
     Five rules governed the bounded first-run subset - which split, which band,
     recorded how, named to the user - and a draw satisfying every one of them
     could put the same input in the eighteen several times. The agent produces
-    one output per input, so those rows are scored as a fixed pair by every
-    configuration and separate none of them: the second is a provider call in
-    every trial and no comparison. The guidance never says how to pick within a
-    band, so compliant behaviour on a 120-row split holding 12 distinct inputs
-    spans 0 to 168 wasted calls of 216; at 12 distinct inputs a draw of eighteen
-    forces at least six repeats by pigeonhole, whatever the picker does.
+    one output per input, so those rows are asked the same question by every
+    configuration: the second is a provider call in every trial and no
+    comparison. Compliant behaviour on a 120-row split holding 12 distinct
+    inputs spans 0 to 168 wasted calls of 216; at 12 distinct inputs a draw of
+    eighteen forces at least six repeats by pigeonhole, whatever the picker
+    does.
 
-    These tests exist because the first version of them was a set of presence
-    welds. Appending "make the shortfall up from the bands that can" and
-    appending "draw the subset short by that shortfall" - opposite
-    instructions - both shipped green, and a sentence directly negating the
-    band invariant passed in a byte-neutral variant. A guard that fires only
-    when a sentence is DELETED cannot see the document being made to say two
-    things.
+    These tests exist because two earlier versions of them were welds. The
+    first was presence-only, and appending "make the shortfall up from the
+    bands that can" and appending "draw the subset short by that shortfall" -
+    opposite instructions - both shipped green. The second added a banned-phrase
+    registry and a subject count, and a review then walked through both: a
+    BYTE-NEUTRAL inversion kept every required phrase and rewrote the clause
+    that carried the instruction, and a second contradicting sentence that
+    simply avoided the one counted word shipped green with the ledger
+    re-measured.
 
-    So the decisions are pinned in three ways that fail differently. `DECIDED`
-    requires the settled answer and forbids the contradictions anyone has
-    actually constructed. The counting guards need no such foreknowledge: a
-    directive that must appear once may not appear twice, and a word scoped to
-    one section may not appear in the section it was scoped out of. And the
-    numbers the rule tells an assistant to use are asserted against what
-    preflight really emits, in `tests/test_preflight.py`, so the guidance cannot
-    name a count the card does not carry.
+    So the required half is no longer `assertIn`. Every clause below is read
+    through `clause_polarity` and `guard_issues`, the filters this file already
+    uses over prose whose job is to name what it forbids: a document that
+    FORBIDS a required clause, states it twice with different polarity, or
+    names it as a misreading rather than issuing it, is refused - and each
+    decision names the clause that carries its consequence as well as the
+    clause that labels it, so half a sentence cannot be inverted under a
+    surviving headline. The subject count is scoped to rule 6 and keyed on a
+    family of markers rather than one word, which is what the word-avoiding
+    construction got past.
+
+    The numbers the rule tells an assistant to use are asserted against what
+    preflight really emits, in `tests/test_preflight.py`, so the guidance
+    cannot name a count the card does not carry.
     """
 
     RULE_COUNTS = {"four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8}
 
-    # (what is decided, phrases that state it, phrases that contradict it)
+    # (what is decided, clauses that state it, phrases that contradict it)
     #
-    # Every banned phrase below is one that was constructed and shipped green
-    # against the previous version of this class, or is the reading the rule
-    # was rewritten to close.
+    # Two required clauses per decision wherever the decision has a consequence:
+    # the first names it, the second carries it. The byte-neutral inversion this
+    # class was rebuilt for kept a naming clause word for word and rewrote the
+    # consequence beneath it, so a decision pinned only by its headline is
+    # pinned by the half that is never the instruction.
+    #
+    # Every banned phrase is one that was constructed and shipped green against
+    # an earlier version of this class, or is the reading the rule was rewritten
+    # to close.
     DECIDED = (
         (
-            "what makes two rows one row",
-            ("different normalized inputs",),
+            "which repeat a draw may drop",
             (
-                "the same input and the same expected answer",
-                "match exactly on the input and the expected answer",
-                "re-key it on the expected answer",
+                "the second is a provider call in every trial and no comparison at all",
+                "and it is the one thing this draw may drop",
+            ),
+            (
+                "drop the row that repeats the input whatever answer it carries",
                 "distinct by input and answer",
+                "re-key it on the expected answer",
             ),
         ),
         (
-            "whether distinctness is measured within a band or across the draw",
-            ("distinct **across the whole draw**",),
+            "what a question with more than one accepted answer costs",
             (
-                "distinct within each band",
-                "distinct within a band",
-                "distinctness is measured within the band",
+                "every one of its rows is drawn and paid for",
+                "a configuration that answered acceptably then scores exactly "
+                "like one that answered wrongly",
+            ),
+            (
+                "scored as a fixed pair by every configuration",
+                "separate none of them - whatever expected answers they carry",
+                "keep one row per input and drop the rest",
             ),
         ),
         (
-            "what happens when a band cannot reach four",
-            ("the draw is short by that much",),
+            "which identity may cut a paid draw",
             (
-                "make the shortfall up from the bands that can",
-                "so the draw is still eighteen",
-                "top the draw back up to eighteen",
-                "pad the remainder from the other bands",
+                "two inputs are the same question only when they are **equal**",
+                "this rule is never applied to a looser measure",
+            ),
+            (
+                "different normalized inputs",
+                "counted the one way preflight already counts it",
+                "`normalized_identity` is the measure this rule uses",
             ),
         ),
         (
             "which rows the draw's size is read off",
-            ("among the rows this run can score",),
+            (
+                "among the rows this run can score",
+                "sizing a paid draw from it buys back the repeats this rule removes",
+            ),
             (
                 "at the tuning split's distinct-input count",
                 "`tuning_distinct_rows`",
@@ -27117,8 +27142,37 @@ class TheBoundedDrawSpendsOnDifferentRowsTests(unittest.TestCase):
             ),
         ),
         (
+            "whether distinctness is measured within a band or across the draw",
+            (
+                "distinct **across the whole draw**",
+                "buys nothing when another band offers the same input again",
+            ),
+            (
+                "distinct within each band",
+                "distinct within a band",
+                "is still worth taking when another band offers that input again",
+            ),
+        ),
+        (
+            "what happens when a band cannot reach four",
+            (
+                "the draw is short by that much",
+                "the shortfall is not made up from the bands that can",
+            ),
+            (
+                "make the shortfall up from the bands that can",
+                "so the draw is still eighteen",
+                "top the draw back up to eighteen",
+                "pad the remainder from the other bands",
+                "so the eighteen is reached",
+            ),
+        ),
+        (
             "whether the rule reaches the held-out split",
-            ("this rule does not reach it",),
+            (
+                "this rule sizes the tuning draw and nothing else",
+                "this rule does not reach it",
+            ),
             (
                 "applies to both draws",
                 "the held-out split is drawn short",
@@ -27127,7 +27181,10 @@ class TheBoundedDrawSpendsOnDifferentRowsTests(unittest.TestCase):
         ),
         (
             "whether de-duplication can cost a question",
-            ("de-duplication removes no question",),
+            (
+                "de-duplication removes no question",
+                "every distinct input a band holds stays eligible",
+            ),
             (
                 "de-duplication may remove a question",
                 "a band's inputs need not stay eligible",
@@ -27136,7 +27193,10 @@ class TheBoundedDrawSpendsOnDifferentRowsTests(unittest.TestCase):
         ),
         (
             "what exact matching cannot see",
-            ("is fifty different inputs to this rule",),
+            (
+                "is fifty different questions to this rule",
+                "the run pays for every one of them",
+            ),
             (
                 "rewording a row is caught here",
                 "this also catches reworded repeats",
@@ -27150,15 +27210,27 @@ class TheBoundedDrawSpendsOnDifferentRowsTests(unittest.TestCase):
         "the draw is short by that much",
         "distinct **across the whole draw**",
         "this rule does not reach it",
+        "two inputs are the same question only when they are **equal**",
     )
 
-    # A subject the subset rules settle once. The count is of the WORD, not of a
-    # sentence somebody has to have written the same way: a second sentence on
-    # the same subject is a second answer whether it agrees with the first or
-    # contradicts it, and "one decision, one home" refuses both. This is what
-    # sees a restatement that a banned-phrase registry cannot, because a
-    # restatement uses words nobody thought to ban.
-    SETTLED_ONCE = {"shortfall": 1}
+    #: Ways a sentence says a band could not fill its four.
+    SHORT_BAND = (
+        "shortfall",
+        "cannot reach four",
+        "comes up empty",
+        "band is short",
+        "short band",
+        "could not give",
+        "runs short",
+        "falls short",
+    )
+    #: Ways a sentence says how big the draw ends up.
+    DRAW_SIZE = (
+        "eighteen",
+        "the draw is short",
+        "the size",
+        "18 rows",
+    )
 
     def dataset_document(self) -> str:
         return (SKILL_ROOT / "references" / "evaluation-and-dataset.md").read_text()
@@ -27168,6 +27240,13 @@ class TheBoundedDrawSpendsOnDifferentRowsTests(unittest.TestCase):
         opening = "## First-run subset for a large dataset"
         self.assertIn(opening, document)
         return document.split(opening, 1)[1].split("\n## ", 1)[0]
+
+    def rule_six(self) -> str:
+        """Rule 6 alone, which is the block whose subjects are counted."""
+        section = self.subset_section()
+        opening = "6. **Draw different questions"
+        self.assertIn(opening, section, "rule 6 lost its lead-in")
+        return section[section.index(opening) :].split("\n\nKeeping at least", 1)[0]
 
     def holdout_section(self) -> str:
         document = self.dataset_document()
@@ -27179,51 +27258,40 @@ class TheBoundedDrawSpendsOnDifferentRowsTests(unittest.TestCase):
         return " ".join(text.casefold().split())
 
     def test_each_decision_is_stated_and_its_contradictions_are_not(self) -> None:
-        """The settled answer, and the readings that were shown to slip past.
+        """The settled answer, read for polarity, and the readings that slipped past.
 
-        A registry rather than a derivation, and bounded on purpose: it refuses
-        the reintroduction of a contradiction somebody already constructed. The
-        two guards after it are the ones that need no foreknowledge.
+        `assertIn` was what the byte-neutral inversion beat: it fires when a
+        phrase is DELETED and says nothing about whether the document tells an
+        assistant to do it, forbids it, or calls it a misreading. Both filters
+        below are the ones this file already applies to prose that has to name
+        what it forbids, so a required clause is checked the same way a banned
+        one is rather than by a weaker rule of its own.
         """
-        section = self.normalized(self.subset_section())
+        section = self.subset_section()
         for decision, required, banned in self.DECIDED:
-            for phrase in required:
-                with self.subTest(decision=decision, states=phrase):
+            for clause in required:
+                with self.subTest(decision=decision, states=clause):
+                    polarity = clause_polarity(section, clause)
                     self.assertIn(
-                        self.normalized(phrase),
-                        section,
-                        f"the subset rules no longer decide {decision}",
+                        polarity,
+                        ("mandates", "unqualified"),
+                        f"the subset rules {polarity} {clause!r}, so they no "
+                        f"longer decide {decision} the way this pins it",
                     )
-            for phrase in banned:
-                with self.subTest(decision=decision, forbids=phrase):
-                    self.assertEqual(
-                        self.instructed(section, phrase),
-                        [],
+                    self.assertTrue(
+                        guard_issues(section, clause),
+                        f"{clause!r} is written but not issued - the sentence "
+                        f"around it names or recalls it - so {decision} is "
+                        "decided by whatever follows instead",
+                    )
+            for clause in banned:
+                with self.subTest(decision=decision, forbids=clause):
+                    self.assertIn(
+                        clause_polarity(section, clause),
+                        ("absent", "forbids"),
                         f"the subset rules now answer {decision} two ways; the "
                         "second answer is the one a reader acts on",
                     )
-
-    @staticmethod
-    def instructed(section: str, phrase: str) -> list[int]:
-        """Where `phrase` is told to the reader rather than ruled out.
-
-        A banned reading and the sentence forbidding it share their words, so a
-        plain substring search reports the rule's own prohibition as the defect
-        it prohibits - which is how the first version of this guard failed on a
-        document that was correct. A phrase directly behind "do not" or "never"
-        is the document deciding against it, and that is the state this registry
-        wants, not the state it refuses.
-        """
-        found = []
-        start = 0
-        while True:
-            at = section.find(phrase, start)
-            if at < 0:
-                return found
-            before = section[max(0, at - 14) : at]
-            if not any(before.rstrip().endswith(n) for n in ("do not", "never", "not")):
-                found.append(at)
-            start = at + 1
 
     def test_a_directive_that_governs_is_stated_exactly_once(self) -> None:
         """Two statements of one rule are two rules, and one of them will drift.
@@ -27232,56 +27300,84 @@ class TheBoundedDrawSpendsOnDifferentRowsTests(unittest.TestCase):
         instruction leaves the original in place, so every assertion about the
         original still passes. Counting sees it.
         """
-        section = self.normalized(self.subset_section())
-        for phrase in self.STATED_ONCE:
-            with self.subTest(directive=phrase):
+        section = self.subset_section()
+        for clause in self.STATED_ONCE:
+            with self.subTest(directive=clause):
+                written = clause_occurrences(section, clause)
                 self.assertEqual(
-                    section.count(self.normalized(phrase)),
+                    len(written),
                     1,
-                    f"{phrase!r} is stated {section.count(self.normalized(phrase))} "
-                    "times in the subset rules; a directive with two homes can be "
-                    "changed in one",
+                    f"{clause!r} is stated {len(written)} times in the subset "
+                    "rules; a directive with two homes can be changed in one",
                 )
 
-    def test_one_subject_is_settled_in_one_place(self) -> None:
-        """A second sentence on a settled subject is a second answer.
+    def test_the_short_band_question_is_answered_in_one_sentence(self) -> None:
+        """A second answer that avoids the counted word is still a second answer.
 
-        Both constructions that shipped green against the previous version of
-        this class added a sentence about the shortfall - one contradicting the
-        rule, one agreeing with it. The agreeing one is the harder case and the
-        reason this counts a subject rather than a phrase: it introduces no
-        banned words, and a reader who follows the second sentence is following
-        a rule nobody reviewed as a rule.
+        The previous version of this counted the word `shortfall` across the
+        whole subset section, and a review beat it from both sides at once.
+        False green: "Where a band comes up empty, take the rows it could not
+        give from the bands that still have inputs left, so the eighteen is
+        reached" contradicts the rule, introduces no banned word, and never
+        writes `shortfall`. False red: rule 2 may legitimately say the word
+        while talking about REPORTING rather than deciding.
+
+        So the count is scoped to rule 6, and it counts SENTENCES that answer
+        the question - one that says a band came up short and says what the
+        draw's size does about it - rather than occurrences of one noun. The
+        de-duplication sentence beside it mentions a band contributing nothing
+        and says nothing about the size, which is why it is not a second answer
+        and is not counted as one.
         """
-        section = self.normalized(self.subset_section())
-        for subject, expected in sorted(self.SETTLED_ONCE.items()):
-            with self.subTest(subject=subject):
-                self.assertEqual(
-                    section.count(subject),
-                    expected,
-                    f"the subset rules mention {subject!r} "
-                    f"{section.count(subject)} times; it is settled in one "
-                    "sentence or it is settled in none",
-                )
-
-    def test_distinctness_is_scoped_out_of_the_held_out_split(self) -> None:
-        """The neighbouring section forbids exactly what this rule would do.
-
-        "Held-out set and claims" says ten is exact in both directions and that a
-        short split is topped up rather than shrunk. Rule 3 binds both draws, so
-        a rule about drawing that does not name its boundary reaches the ten and
-        contradicts two mandates forty lines below. Both halves are checked: the
-        boundary is named here, and the mandate it defers to is still there.
-        """
-        self.assertIn(
-            "this rule does not reach it", self.normalized(self.subset_section())
+        flat = self.normalized(self.rule_six())
+        sentences = [part for part in re.split(r"(?<=[.!?])\s", flat) if part.strip()]
+        answering = [
+            sentence
+            for sentence in sentences
+            if any(marker in sentence for marker in self.SHORT_BAND)
+            and any(marker in sentence for marker in self.DRAW_SIZE)
+        ]
+        self.assertEqual(
+            len(answering),
+            1,
+            "rule 6 answers the short-band question in "
+            f"{len(answering)} sentences: {answering}. It is settled in one "
+            "sentence or it is settled in none.",
         )
+
+    def test_the_held_out_split_owns_its_own_distinctness_rule(self) -> None:
+        """Scoping a rule out of a split is only safe when something else has it.
+
+        The previous version asserted the held-out section never says
+        `distinct`, which decided a semantic question - has ownership been
+        muddled - from a surface signal whose not-found branch was the pass.
+        It also blocked the fix: ten held-out rows all asking one question were
+        fully compliant, under a guide whose held-out claim is about
+        generalisation, and adding the obvious rule went red.
+
+        Both halves are asserted instead. Rule 6 says it stops, the held-out
+        section says what happens there, and the held-out answer is written in
+        exactly one of the two places.
+        """
+        subset = self.subset_section()
         holdout = self.holdout_section()
-        self.assertNotIn(
-            "distinct",
-            holdout.casefold(),
-            "the held-out section now talks about distinctness too, so which "
-            "section decides the held-out draw is no longer written down",
+        owned = "the ten are ten different questions"
+        self.assertIn(
+            clause_polarity(holdout, owned),
+            ("mandates", "unqualified"),
+            "the held-out section no longer states its own distinctness rule, "
+            "so a repeat among the ten is answered by nothing",
+        )
+        self.assertTrue(guard_issues(holdout, owned))
+        self.assertEqual(
+            clause_occurrences(subset, owned),
+            [],
+            "the held-out rule is now stated in the subset rules too; a rule "
+            "with two homes can be changed in one",
+        )
+        self.assertIn(
+            clause_polarity(subset, "this rule does not reach it"),
+            ("mandates", "unqualified"),
         )
         for mandate in (
             "ten is therefore exact in both directions, never a floor to grow from",
@@ -27296,21 +27392,29 @@ class TheBoundedDrawSpendsOnDifferentRowsTests(unittest.TestCase):
 
         "18 rows by default" and "that subset" were unambiguous only while the
         two were always equal. The estimate has to name which of them it is
-        built from, or the resident flow and the reference disagree about what
-        the user is approving.
+        built from.
+
+        The causal clause that used to follow is gone rather than corrected. It
+        named the population #356 proved wrong, in the file that owns pricing,
+        and nothing in this file reads SKILL.md for a banned reading - so the
+        wrong number could be planted there and ship green. A conclusion that
+        routes to the reference for its reason cannot carry the reference's
+        mistake.
         """
         skill = self.normalized(SKILL.read_text())
         self.assertIn("distinct by input across the whole draw", skill)
         self.assertIn(
-            "estimate runtime and spend from the rows actually drawn, which is below "
-            "18 where the tuning split's distinct inputs or a band's own rows run "
-            "short, never from the full row count",
+            "estimate runtime and spend from the rows actually drawn, which can "
+            "be below 18, never from the full row count",
             skill,
         )
-        self.assertNotIn(
+        for stale in (
             "estimate runtime and spend from that subset, not from the full row count",
-            skill,
-        )
+            "the tuning split's distinct inputs or a band's own rows run short",
+            "`tuning_distinct_rows`",
+        ):
+            with self.subTest(stale=stale):
+                self.assertNotIn(self.normalized(stale), skill)
 
     def test_the_stated_rule_count_is_the_number_of_rules(self) -> None:
         """A label that counts nothing goes stale the first time anyone adds a rule.
@@ -27318,11 +27422,15 @@ class TheBoundedDrawSpendsOnDifferentRowsTests(unittest.TestCase):
         Derived from the list rather than compared against a constant: the
         expectation is what the document's own numbered items add up to, so this
         keeps holding for a seventh rule and fails on a sixth left labelled five.
+
+        The item pattern does not require a bold lead-in. Requiring one made a
+        rule written without it invisible to the count, which is the same
+        not-found-is-a-pass shape this file keeps finding elsewhere.
         """
         section = self.subset_section()
         stated = re.search(r"^(\w+) rules make the subset honest:$", section, re.M)
         self.assertIsNotNone(stated, "the subset rules lost their counted preamble")
-        items = re.findall(r"^(\d+)\. \*\*", section, re.M)
+        items = re.findall(r"^(\d+)\. ", section, re.M)
         self.assertEqual(
             [str(number) for number in range(1, len(items) + 1)],
             items,

@@ -959,25 +959,111 @@ def dataset_field_value(row: dict[str, Any], field_path: str) -> tuple[bool, Any
     return True, value
 
 
+#: The split names whose rows a paid first run draws from. Read here rather
+#: than spelled twice: the bounded draw and the tuning-size finding below ask
+#: the same question of the same names, and two copies of this set are two
+#: answers waiting to disagree about what "the tuning split" means.
+TUNING_SPLIT_NAMES = frozenset({"tune", "tuning", "train", "search"})
+#: What `drawable_distinct_inputs` counted over, in the customer's terms.
+TUNING_SPLIT_SCOPE = "the tuning split"
+DATASET_SCOPE = "this dataset"
+
+
+def exact_input_identity(value: Any) -> str:
+    r"""Two inputs are one question only when they are equal. Nothing looser.
+
+    Deliberately NOT `normalized_identity`, and the difference decides money.
+    That function reduces an input to `re.findall(r"\w+", ...)`, which throws
+    away every operator and every mark: `is x > 5` and `is x < 5` reach it as
+    one string, and so do `2 + 2 = ?` and `2 - 2 = ?`. That is the right
+    trade where it is used - a leak between splits, or a duplicate WARN, wants
+    to see past punctuation and is only ever advisory - and it is the wrong
+    trade here, because this count SHRINKS a paid draw. Forty operator
+    questions would be drawn as twenty, and the twenty dropped are real test
+    cases the customer wrote. The walkthrough's own worked task is text to
+    SQL, where the discarded characters are the discriminating tokens.
+
+    So the identity that cuts a budget has no false positive by construction:
+    equal values are one question under every reading anybody could bring, and
+    unequal values are two. It over-counts a pair that differs only in
+    trailing space, which costs one provider call; the alternative costs a
+    question, and only one of those two errors can be found afterwards by
+    reading the run report.
+    """
+    return value if isinstance(value, str) else stable_json(value)
+
+
+def drawable_distinct_inputs(rows: list[dict[str, Any]]) -> tuple[int, str]:
+    """How many different questions a bounded first run can draw, and from where.
+
+    Two scopes, both of which were wrong here before and each in its own way.
+
+    SCOREABLE, which `rows` already is: a row carrying no expected answer is
+    not a row any configuration is compared on, so counting it inflates the
+    bound past what the comparison reaches. That is traigent-first-run#356,
+    one axis.
+
+    TUNING-SCOPED, which is this function: the guide hands preflight the whole
+    file, tuning and held-out together, so a count over every row answers a
+    question about a population the draw never touches. On a 400-row file
+    whose tuning split asks twelve questions and whose held-out ten ask ten
+    more, counting the file returns twenty-two and the draw is proposed at
+    eighteen - six rows per configuration, in every trial, that no comparison
+    can use. Same defect, one axis over, which is why the population is named
+    and returned rather than left implicit in whichever local list was nearest.
+
+    Falls back to the whole scoreable set when no tuning split is declared,
+    because then there is no other population: an undeclared split is a file
+    the draw comes out of entire. The scope travels with the number so a card
+    never prints a count without saying what it counted.
+    """
+    by_split: dict[str, set[str]] = {}
+    unsplit: set[str] = set()
+    for row in rows:
+        identity = exact_input_identity(row["input"])
+        split = row_metadata_value(row, "split")
+        if split:
+            by_split.setdefault(str(split).casefold(), set()).add(identity)
+        else:
+            unsplit.add(identity)
+    tuning = {
+        identity
+        for name, values in by_split.items()
+        if name in TUNING_SPLIT_NAMES
+        for identity in values
+    }
+    if tuning:
+        return len(tuning), TUNING_SPLIT_SCOPE
+    everything = set(unsplit)
+    for values in by_split.values():
+        everything |= values
+    return len(everything), DATASET_SCOPE
+
+
 def first_run_row_count(usable_rows: int, distinct_rows: int | None = None) -> int:
     """Return the rows each paid first-run configuration scores.
 
-    Bounded by the DIFFERENT questions the file asks, not only by how many rows
-    it holds. The agent produces one output per input, so a repeated input is
-    scored as a fixed pair by every configuration and separates none of them:
-    proposing eighteen rows to a file asking twelve questions proposes six calls
-    per configuration, in every trial, that no comparison can use.
+    Bounded by the DIFFERENT questions the draw can reach, not only by how many
+    rows the file holds. The agent produces one output per input, so a repeated
+    input is scored the same way by every configuration and separates none of
+    them: proposing eighteen rows to a split asking twelve questions proposes
+    six calls per configuration, in every trial, that no comparison can use.
+
+    The bound applies only where the bounded subset itself applies. Below
+    `BOUNDED_SUBSET_ABOVE_ROWS` the run scores the whole dataset and there is
+    no subset to cap, so a small repetitive file is reported at its real size
+    rather than being quietly cut to its distinct count by a rule the guidance
+    does not extend that far.
 
     `distinct_rows` is optional so that a caller holding only a row count still
     gets the old answer rather than a wrong one. Absent, the bound is the rows -
     which is what an uncounted file honestly supports.
     """
-    proposed = (
-        FIRST_RUN_TUNING_ROWS
-        if usable_rows > BOUNDED_SUBSET_ABOVE_ROWS
-        else usable_rows
-    )
-    return proposed if distinct_rows is None else min(proposed, distinct_rows)
+    if usable_rows <= BOUNDED_SUBSET_ABOVE_ROWS:
+        return usable_rows
+    if distinct_rows is None:
+        return FIRST_RUN_TUNING_ROWS
+    return min(FIRST_RUN_TUNING_ROWS, distinct_rows)
 
 
 def normalize_dataset_row(
@@ -2285,26 +2371,20 @@ def check_dataset(
             WARN,
             f"{len(rows)} rows is a wiring check, not a credible score",
         )
-    # Built here rather than beside the duplicate finding it also feeds, because
-    # the proposal below is the first number in this file that a repeated row
-    # makes wrong. One pass, two readers, and they cannot disagree about how many
-    # different questions this dataset asks.
-    normalized_inputs: dict[str, list[int]] = {}
-    for index, row in enumerate(rows, 1):
-        normalized_inputs.setdefault(normalized_identity(row["input"]), []).append(
-            index
-        )
-    distinct_inputs = len(normalized_inputs)
-    first_run_rows = first_run_row_count(len(rows), distinct_inputs)
     # The cap named the walkthrough's eighteen whatever the file held, so a
     # dataset of 400 rows asking 12 questions was proposed an 18-row subset in
-    # the same JSON that reports `tuning_distinct_rows: 12`. Two numbers, one
-    # question, and nothing saying which governs - while the difference is six
-    # rows per configuration in every trial.
+    # the same JSON that reported twelve. Two numbers, one question, and nothing
+    # saying which governs - while the difference is six rows per configuration
+    # in every trial. The population is named by the helper rather than taken
+    # from whichever local list of rows was nearest, because getting it wrong
+    # is not one bug: it is one bug per scoping axis, and this file has already
+    # had it on two of them.
+    distinct_inputs, distinct_scope = drawable_distinct_inputs(rows)
+    first_run_rows = first_run_row_count(len(rows), distinct_inputs)
     distinct_clause = (
         ""
-        if distinct_inputs == len(rows)
-        else f" ({distinct_inputs} different inputs among them)"
+        if distinct_inputs >= len(rows)
+        else f" ({distinct_inputs} different inputs in {distinct_scope})"
     )
     emit(
         "dataset-first-run-rows",
@@ -2315,7 +2395,8 @@ def check_dataset(
         {
             "first_run_rows": first_run_rows,
             "usable_rows": len(rows),
-            "distinct_rows": distinct_inputs,
+            "first_run_distinct_rows": distinct_inputs,
+            "first_run_distinct_scope": distinct_scope,
         },
     )
 
@@ -2339,6 +2420,11 @@ def check_dataset(
     )
     emit_dataset_id_findings(present_row_records)
 
+    normalized_inputs: dict[str, list[int]] = {}
+    for index, row in enumerate(rows, 1):
+        normalized_inputs.setdefault(normalized_identity(row["input"]), []).append(
+            index
+        )
     exact_duplicates = [
         positions for positions in normalized_inputs.values() if len(positions) > 1
     ]
@@ -2646,7 +2732,7 @@ def check_dataset(
                 labelled_split_counts[split_name] += 1
             _, input_value = dataset_field_value(row, input_field)
             splits.setdefault(split_name, set()).add(normalized_identity(input_value))
-    tune_names = {"tune", "tuning", "train", "search"}
+    tune_names = TUNING_SPLIT_NAMES
     holdout_names = {"holdout", "test", "validation", "validate"}
     tune_inputs = set().union(
         *(values for name, values in splits.items() if name in tune_names)

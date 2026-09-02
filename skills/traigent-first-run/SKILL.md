@@ -772,9 +772,8 @@ inference provider/route may receive it. Connected synchronization waits until a
 Scope the run before pricing it. When the dataset carries more than 100 usable rows, select the
 bounded first-run subset described in `references/evaluation-and-dataset.md` - 18 rows by default, at
 least four from each difficulty band, drawn within each split rather than across it, and distinct by
-input across the whole draw - and estimate runtime and spend from the rows actually drawn, which is
-below 18 where the tuning split's distinct inputs or a band's own rows run short, never from the
-full row count.
+input across the whole draw - and estimate runtime and spend from the rows actually drawn, which can
+be below 18, never from the full row count.
 
 Select only after scoring the full dataset and before pricing the run. Record the chosen row ids,
 report subset and full sizes, and state that the small first-run sample limits the claim.
