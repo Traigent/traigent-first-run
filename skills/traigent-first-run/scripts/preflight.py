@@ -993,15 +993,24 @@ def exact_input_identity(value: Any) -> str:
     return value if isinstance(value, str) else stable_json(value)
 
 
-def drawable_distinct_inputs(rows: list[dict[str, Any]]) -> tuple[int, str]:
+def drawable_distinct_inputs(
+    rows: list[dict[str, Any]], *, reference_free: bool = False
+) -> tuple[int, str]:
     """How many different questions a bounded first run can draw, and from where.
 
-    Two scopes, both of which were wrong here before and each in its own way.
+    Three scopes, and this file has now had the same defect on all three: a
+    count and the number it bounds taken over populations that are not the
+    same rows.
 
-    SCOREABLE, which `rows` already is: a row carrying no expected answer is
-    not a row any configuration is compared on, so counting it inflates the
-    bound past what the comparison reaches. That is traigent-first-run#356,
-    one axis.
+    SCOREABLE. A row carrying no expected answer is not a row any configuration
+    is compared on, so counting it inflates the bound past what the comparison
+    reaches. `rows` is only most of the way there - a row whose answer is
+    present but BLANK survives normalization and is not scoreable, and 40 of
+    them made this count say 160 in the same payload where
+    `tuning_labelled_rows` said 120. So the predicate is applied here rather
+    than assumed, and it is the same `dataset_row_is_labelled` the aggregate
+    and per-split counts use, under the same `reference_free` condition, so
+    the two can never disagree about one row.
 
     TUNING-SCOPED, which is this function: the guide hands preflight the whole
     file, tuning and held-out together, so a count over every row answers a
@@ -1029,6 +1038,8 @@ def drawable_distinct_inputs(rows: list[dict[str, Any]]) -> tuple[int, str]:
     by_split: dict[str, set[str]] = {}
     unsplit: set[str] = set()
     for row in rows:
+        if not reference_free and not dataset_row_is_labelled(row):
+            continue
         identity = exact_input_identity(row["input"])
         split = row_metadata_value(row, "split")
         if split:
@@ -2398,7 +2409,9 @@ def check_dataset(
     # from whichever local list of rows was nearest, because getting it wrong
     # is not one bug: it is one bug per scoping axis, and this file has already
     # had it on two of them.
-    distinct_inputs, distinct_scope = drawable_distinct_inputs(rows)
+    distinct_inputs, distinct_scope = drawable_distinct_inputs(
+        rows, reference_free=reference_free
+    )
     first_run_rows = first_run_row_count(len(rows), distinct_inputs)
     distinct_clause = (
         ""

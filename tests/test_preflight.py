@@ -3528,6 +3528,53 @@ class TheSubsetProposalCountsDifferentQuestionsTests(unittest.TestCase):
             "prices calls no comparison can use",
         )
 
+    def test_a_blank_expected_answer_is_not_a_drawable_question(self) -> None:
+        """The third scoping axis, and the one `rows` alone gets wrong.
+
+        A row whose expected answer is present but blank survives
+        normalization - the field is there - and is not scoreable, which is the
+        one definition `dataset_row_is_labelled` exists to hold. Counting those
+        rows made the draw's count say 160 in the same payload where
+        `tuning_labelled_rows` said 120, which is the same two-populations
+        shape as the labelled and split axes above, on the axis that looks
+        already handled.
+
+        Both numbers are asserted so the fixture cannot pass by coincidence:
+        the card still reports what the split holds, and the draw reports only
+        what it can be scored on.
+        """
+        self.assertFalse(MODULE.dataset_row_is_labelled({"output": ""}))
+        rows = [
+            {
+                "id": f"answered-{index}",
+                "input": f"question {index} about the filing",
+                "output": "yes",
+                "split": "tuning",
+            }
+            for index in range(120)
+        ]
+        rows += [
+            {
+                "id": f"blank-{index}",
+                "input": f"question awaiting an answer {index}",
+                "output": "",
+                "split": "tuning",
+            }
+            for index in range(40)
+        ]
+        rows += self.held_out()
+        found = self.scan(rows)
+        self.assertEqual(found["dataset-tuning-size"].metrics["tuning_rows"], 160)
+        self.assertEqual(
+            found["dataset-tuning-size"].metrics["tuning_labelled_rows"], 120
+        )
+        self.assertEqual(
+            found["dataset-first-run-rows"].metrics["first_run_distinct_rows"],
+            120,
+            "the draw counted rows whose expected answer is blank, so it is "
+            "sized on questions no configuration can be scored on",
+        )
+
     def test_the_bound_is_applied_only_where_the_subset_applies(self) -> None:
         """The helper itself, at the two boundaries the emit cannot reach.
 
