@@ -2617,7 +2617,22 @@ def derived_comparison_shape(
             continue
         if isinstance(statement, ast.Delete):
             # `del input_data, metadata` is the idiom every adapter in this
-            # guide opens with. It binds nothing and reads no answer.
+            # guide opens with, and skipping it costs nothing: it unbinds two
+            # names this walk never reads.
+            #
+            # A `del` of an answer or of an alias is a different statement and
+            # stops the proof. Skipping that one too would leave the walk
+            # reasoning about a name the scorer has unbound, which is the one
+            # thing a proof of a whole comparison may not do.
+            unbound = {
+                target.id
+                for target in statement.targets
+                if isinstance(target, ast.Name)
+            }
+            if len(unbound) != len(statement.targets) or unbound & (
+                set(_SCORER_ANSWER_PARAMETERS) | set(aliases)
+            ):
+                return None
             continue
         if isinstance(statement, ast.Assign):
             resolved = _comparison_operand(statement.value, aliases)

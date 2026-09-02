@@ -4819,6 +4819,45 @@ class TheComparisonTheFilePerformsIsProvedOrLeftUnsettledTests(unittest.TestCase
             )
         )
 
+    def test_unbinding_a_name_the_comparison_uses_stops_the_proof(self) -> None:
+        """`del input_data, metadata` is skipped; `del expected` is not.
+
+        The idiom every adapter in this guide opens with unbinds two names
+        this walk never reads, so passing over it costs nothing. Unbinding an
+        answer or an alias is a different statement, and skipping that one
+        would leave the walk reasoning about a name the scorer has taken away,
+        which is the one thing a proof of a whole comparison may not do.
+        """
+        idiom = self.shape(
+            "def score(*, output, expected, input_data, metadata):\n"
+            "    del input_data, metadata\n"
+            "    return float(output.strip() == expected.strip())\n"
+        )
+        self.assertEqual(idiom[0], "normalized-exact")
+        self.assertIsNone(
+            self.shape(
+                "def score(*, output, expected, input_data, metadata):\n"
+                "    kept = expected\n"
+                "    del expected\n"
+                "    return float(output == kept)\n"
+            )
+        )
+        self.assertIsNone(
+            self.shape(
+                "def score(*, output, expected, input_data, metadata):\n"
+                "    prepared = output.strip()\n"
+                "    del prepared\n"
+                "    return float(output == expected)\n"
+            )
+        )
+        self.assertIsNone(
+            self.shape(
+                "def score(*, output, expected, input_data, metadata):\n"
+                "    del metadata['seen']\n"
+                "    return float(output == expected)\n"
+            )
+        )
+
     def test_a_numeric_reading_is_not_reported_as_a_text_comparison(self) -> None:
         """`float()` around an answer reinterprets it and stops the proof.
 
