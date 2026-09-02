@@ -5734,24 +5734,46 @@ class SkillPackageTests(unittest.TestCase):
             f"tuning plus {held_out} held-out, which is {expected + held_out}",
         )
 
+        # Whitespace-tolerant between words, because it was not and that hid a
+        # restatement: `SKILL.md` wraps its own statement across a line, so the
+        # pattern matched six of the seven that existed and the seventh was
+        # uncovered by nothing more than a line break. A sweep whose misses look
+        # exactly like absences is the shape this file keeps finding elsewhere.
+        #
+        # `tuning questions` and `questions by default` are here because the
+        # subset rules now cap the draw in QUESTIONS: eighteen questions bring
+        # more than eighteen rows on a file whose questions carry several
+        # accepted answers, so a template quoting rows understates the price on
+        # exactly the datasets that rule is for. The generated walkthrough keeps
+        # the row spelling and keeps it honestly - it creates one accepted
+        # answer per row, so its eighteen is both numbers at once.
         counted = re.compile(
-            r"(\d+)\s+(?:tuning rows|tuning examples|varied synthetic cases"
-            r"|rows by default)"
+            r"(\d+)\s+(?:tuning\s+rows|tuning\s+questions|tuning\s+examples"
+            r"|varied\s+synthetic\s+cases|rows\s+by\s+default"
+            r"|questions\s+by\s+default)"
         )
         statements: list[tuple[str, int]] = []
         for path in assistant_facing_documents():
             for match in counted.finditer(path.read_text()):
                 statements.append((path.name, int(match.group(1))))
-        # The rule plus its five restatements. Pinned so that DELETING a
+        # The rule plus its six restatements. Pinned so that DELETING a
         # restatement is a decision someone makes, not a way for this sweep to
         # quietly cover less than it did. Raised from four when the held-out
         # split arrived - the sampling rule that draws the tuning rows from the
         # tuning split states the count a fifth time - and from five when the
         # row-level sanity check arrived, whose section states how many rows it
         # reads. Each new statement is welded here rather than left uncovered.
+        #
+        # Six to seven is NOT a seventh statement arriving. It is the wrapped
+        # one in `SKILL.md` that the pattern above could not see until it was
+        # made whitespace-tolerant, counted now for the first time. Two
+        # statements also moved in the same change - the row review dropped its
+        # copy of the number entirely, and the line that names the bound to the
+        # user gained one - which is why the total holds while the membership
+        # does not.
         self.assertEqual(
             len(statements),
-            6,
+            7,
             f"the walkthrough row count is now stated {len(statements)} times "
             f"({statements}); one home is better, but a new one must be welded "
             "here and a removed one accounted for",
@@ -7484,7 +7506,7 @@ class SkillPackageTests(unittest.TestCase):
 
         self.assertIn("first-run subset for a large dataset", dataset_text)
         for phrase in (
-            "18 tuning rows by default",
+            "18 tuning questions by default",
             "at least four from each of the four difficulty bands",
             "score the dataset, not the subset",
             "report the run's sample-size limitation separately",
@@ -7511,12 +7533,15 @@ class SkillPackageTests(unittest.TestCase):
         self.assertIn("scope the run before pricing it", skill_text)
         # "that subset" until the draw became distinct-preferring, at which
         # point the drawn count and the 18-row default stopped being the same
-        # number and a sentence naming neither could price either. Which of them
-        # the estimate is built from is
+        # number and a sentence naming neither could price either - and then
+        # "the rows actually drawn", until eighteen was redefined from rows to
+        # questions and the rows a question brings became the figure that is
+        # paid. Which of them the estimate is built from is
         # `TheBoundedDrawSpendsOnDifferentRowsTests`; the ordering below is this
         # test's, and it only needs a stable anchor in that sentence.
         self.assertIn(
-            "estimate runtime and spend from the rows actually drawn", skill_text
+            "estimate runtime and spend from the rows those questions bring",
+            skill_text,
         )
         subset_at = skill_text.index("scope the run before pricing it")
         self.assertGreater(
@@ -7524,7 +7549,9 @@ class SkillPackageTests(unittest.TestCase):
         )
         self.assertLess(
             subset_at,
-            skill_text.index("estimate runtime and spend from the rows actually drawn"),
+            skill_text.index(
+                "estimate runtime and spend from the rows those questions bring"
+            ),
         )
 
     def test_closing_motivation_is_grounded_in_the_opening_gaps(self) -> None:
@@ -27403,25 +27430,33 @@ class TheBoundedDrawSpendsOnDifferentRowsTests(unittest.TestCase):
 
         "18 rows by default" and "that subset" were unambiguous only while the
         two were always equal. The estimate has to name which of them it is
-        built from.
+        built from, and the eighteen has to say which currency it is in: on a
+        multi-reference file eighteen questions bring thirty-six rows, so the
+        flow that says "18 rows" understates the price of exactly the dataset
+        class this rule exists for.
 
-        The causal clause that used to follow is gone rather than corrected. It
-        named the population #356 proved wrong, in the file that owns pricing,
-        and nothing in this file reads SKILL.md for a banned reading - so the
-        wrong number could be planted there and ship green. A conclusion that
-        routes to the reference for its reason cannot carry the reference's
-        mistake.
+        Two clauses that used to follow are gone rather than corrected, for one
+        reason. The first named the population #356 proved wrong; the second
+        admitted only that the draw can come in BELOW eighteen, which is the
+        opposite of the multi-reference case. Both sat in the file that owns
+        pricing, quoting a reference decision they could get wrong, and a
+        conclusion that routes to a reference for its reason must not be able
+        to carry that reference's mistake. Every stale spelling is refused by
+        name here, because nothing else in this file reads SKILL.md for one.
         """
         skill = self.normalized(SKILL.read_text())
         self.assertIn("distinct by input across the whole draw", skill)
+        self.assertIn("18 questions by default", skill)
         self.assertIn(
-            "estimate runtime and spend from the rows actually drawn, which can "
-            "be below 18, never from the full row count",
+            "estimate runtime and spend from the rows those questions bring, "
+            "never from the full row count",
             skill,
         )
         for stale in (
             "estimate runtime and spend from that subset, not from the full row count",
             "the tuning split's distinct inputs or a band's own rows run short",
+            "which can be below 18",
+            "18 rows by default",
             "`tuning_distinct_rows`",
         ):
             with self.subTest(stale=stale):

@@ -1024,12 +1024,27 @@ class DrawableInputs:
         return sum(self.rows_per_question)
 
     def rows_for(self, questions: int) -> tuple[int, int]:
-        """Fewest and most scoreable rows a draw of `questions` questions brings.
+        """An OUTER BOUND on the scoreable rows a draw of `questions` brings.
 
-        Both ends are reachable by a compliant draw, so neither is a estimate:
-        the cheapest draw takes the questions carrying fewest rows and the
-        dearest takes the ones carrying most. A cap at or above the questions
-        this file asks buys all of them, and both ends meet at the whole set.
+        Not a reachable range, and the difference is stated because an earlier
+        version of this docstring claimed otherwise. Both ends are computed by
+        taking the cheapest and the dearest questions, and rule 6 also requires
+        at least four questions from each of four difficulty bands - a
+        constraint this object cannot see, because nothing here reads a row's
+        difficulty. Where cost correlates with difficulty the cheapest
+        questions sit in one band and no compliant draw can take them: on 30
+        easy questions of one row beside 90 harder ones of three, the arithmetic
+        low end is 18 while the cheapest COMPLIANT draw is four easy and
+        fourteen others, which is 46.
+
+        So the true figure is inside this interval and the interval is honest,
+        but neither end is a quote. What a run actually pays is the rows the
+        draw brings once it exists, which is what rule 6 tells an assistant to
+        report; this is the bound available before anybody has drawn.
+
+        A cap at or above the questions this file asks buys all of them, and
+        both ends meet on the whole set - which is exact, because there is
+        nothing left for a band floor to forbid.
         """
         ordered = sorted(self.rows_per_question)
         taken = max(0, min(questions, len(ordered)))

@@ -4,9 +4,9 @@ follows: 0077
 follows-resident-measured: 98_427
 follows-total-measured: 467_226
 resident-ceiling: 98_750
-resident-measured: 98_509
-total-ceiling: 472_500
-total-measured: 472_159
+resident-measured: 98_498
+total-ceiling: 472_600
+total-measured: 472_205
 
 Five rules governed the bounded subset and none of them said the drawn rows
 have to be different. On a file holding three hundred rows that resolve to six
@@ -52,6 +52,16 @@ for a draw that brings thirty-six, so twelve trials priced two hundred and
 sixteen calls and bought four hundred and thirty-two. The finding now says the
 questions and the rows they bring, and the rule tells an assistant to say both
 wherever a run is priced.
+
+Redefining eighteen is what most of the remaining bytes pay for, because the
+number was written down in five other places and three of them are read to a
+customer: the sentence introducing the subset, the sample-size limitation, the
+line naming the bound, the instruction that says what to draw, and the flow's
+own summary. A template quoting eighteen rows understates the price on exactly
+the files this rule was written for, and a template is the surface a customer
+hears. Only the generated walkthrough keeps the old word, and it keeps it
+honestly: rows created for it carry one accepted answer each, so its eighteen
+is both numbers at once.
 
 The resident line moves because stage 6 named eighteen and priced "that
 subset", which read as one number only while the two were always equal. It now

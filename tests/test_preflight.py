@@ -3649,12 +3649,19 @@ class TheSubsetProposalCountsDifferentQuestionsTests(unittest.TestCase):
     def test_an_uneven_file_is_priced_as_the_range_it_is(self) -> None:
         """One row number would be an invention where questions differ in cost.
 
-        Which questions a compliant draw takes is decided by the band floor and
-        by the author, not by this check, so where questions bring different
-        numbers of rows the honest answer is the two ends - both of which a
-        compliant draw can actually reach. 150 questions of one row beside 20
-        of two: eighteen questions bring 18 at the cheapest and 36 at the
-        dearest.
+        Which questions a draw takes is decided by the band floor and by the
+        author, not by this check, so where questions bring different numbers
+        of rows the honest answer is an interval. 150 questions of one row
+        beside 20 of two: eighteen questions bring 18 at the arithmetic
+        cheapest and 36 at the dearest.
+
+        Untagged on purpose, and named as such. With no difficulty tags there
+        is no band floor to forbid the cheapest questions, so both ends of the
+        interval are reachable HERE - which is a property of this fixture, not
+        of the method.
+        `test_the_range_is_an_outer_bound_not_a_reachable_floor` carries the
+        case where it is false, because a test that cannot break the claim it
+        is named for is not evidence for it.
         """
         rows = [
             {
@@ -3680,6 +3687,67 @@ class TheSubsetProposalCountsDifferentQuestionsTests(unittest.TestCase):
         self.assertEqual(finding.metrics["first_run_rows_fewest"], 18)
         self.assertEqual(finding.metrics["first_run_rows_most"], 36)
         self.assertIn("between 18 and 36 scoreable rows", finding.detail)
+
+    def test_the_range_is_an_outer_bound_not_a_reachable_floor(self) -> None:
+        """N5: the band floor can forbid the cheapest questions, and this cannot see it.
+
+        `rows_for` takes the cheapest and dearest questions by cost alone.
+        Rule 6 also requires at least four questions from each of four
+        difficulty bands, and nothing in `DrawableInputs` reads a row's
+        difficulty, so where cost correlates with difficulty the arithmetic low
+        end is below anything a compliant draw can reach.
+
+        30 easy questions of one row beside 90 harder ones of three:
+
+            arithmetic low end   : 18 questions x 1 row              = 18
+            cheapest COMPLIANT   : 4 easy x 1 + 14 harder x 3        = 46
+            arithmetic high end  : 18 questions x 3 rows             = 54
+
+        The interval is honest and neither end is a quote. What is asserted is
+        exactly that: the compliant floor lies strictly inside the reported
+        interval, so the low end understates it. The 46 is computed here from
+        the fixture's own shape and the band floor rule 6 states, never from
+        anything the script returns, so a change that made `rows_for` band-aware
+        would fail this deliberately rather than pass by coincidence.
+        """
+        rows = [
+            {
+                "id": f"easy-{index}",
+                "input": f"cheap question {index}",
+                "output": "a",
+                "difficulty": "easy",
+                "split": "tuning",
+            }
+            for index in range(30)
+        ]
+        rows += [
+            {
+                "id": f"hard-{index}-{gold}",
+                "input": f"expensive question {index}",
+                "output": gold,
+                "difficulty": "hard",
+                "split": "tuning",
+            }
+            for index in range(90)
+            for gold in ("p", "q", "r")
+        ]
+        rows += self.held_out()
+        finding = self.scan(rows)["dataset-first-run-rows"]
+        cap = finding.metrics["first_run_questions"]
+        fewest = finding.metrics["first_run_rows_fewest"]
+        most = finding.metrics["first_run_rows_most"]
+        self.assertEqual((cap, fewest, most), (18, 18, 54))
+
+        band_floor = 4
+        compliant_floor = band_floor * 1 + (cap - band_floor) * 3
+        self.assertEqual(compliant_floor, 46)
+        self.assertLess(
+            fewest,
+            compliant_floor,
+            "the reported low end is at or above the cheapest compliant draw, "
+            "so it is being quoted as a floor rather than as a bound",
+        )
+        self.assertLessEqual(compliant_floor, most)
 
     def test_a_reference_free_method_may_draw_an_unlabelled_row(self) -> None:
         """N3: the other branch of the labelled filter, which nothing pinned.

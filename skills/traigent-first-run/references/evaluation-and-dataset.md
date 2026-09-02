@@ -817,7 +817,7 @@ the run, in this shape:
 > I intend to fix these before the run - do you agree or disagree?
 
 Give every flagged row: the id, the quoted content, and the reason. **Say which of them are inside
-the rows this run will actually use** - the 18 tuning rows and the held-out ten. That is the
+the rows this run will actually use** - the drawn tuning rows and the held-out ten. That is the
 difference between "your file has a bad row" and "the run is about to be tuned on a bad row", and
 only the second one changes what this run measures. Set `in_run` on every entry once those rows are
 drawn, so the readiness card says it too; leave it off every entry while they are not.
@@ -897,8 +897,8 @@ the question wrote its band too, and the row already declares itself generated.
 A first run has to show the capability, not exhaust the dataset. With more than 100 usable rows,
 every trial pays for every row, so a large set turns the walkthrough into a long, expensive run
 that demonstrates nothing the smaller one would not. Select a bounded subset instead: **18 tuning
-rows by default**, at least four from each of the four difficulty bands (`easy`, `medium`, `hard`,
-`very-hard`), so the subset keeps the spread that makes a result informative rather than landing on
+questions by default**, at least four from each of the four difficulty bands (`easy`, `medium`,
+`hard`, `very-hard`), so the subset keeps the spread that makes a result informative rather than landing on
 one cluster - plus the held-out ten below, drawn to their own composition.
 
 Six rules make the subset honest:
@@ -914,12 +914,13 @@ Six rules make the subset honest:
    survive a compliant sample; evidence volume collapses, so that limitation must be attributed
    correctly.
 2. **Report the run's sample-size limitation separately.** It belongs in the run report, not the
-   dataset score: "this run compares configurations on 18 of your 4,812 rows; treat a small
-   difference as directional unless paired uncertainty from the completed outputs supports it."
+   dataset score: "this run compares configurations on 18 questions drawn from your 4,812 rows;
+   treat a small difference as directional unless paired uncertainty from the completed outputs
+   supports it."
    Sample size alone cannot supply a confidence interval or minimum detectable effect for a paired
    comparison, so never invent a percentage-point threshold before those outcomes exist.
-3. **Sample within each split, never across it.** Draw the 18 tuning rows from the tuning split
-   and the held-out ten from the held-out split, keeping them disjoint. A subset drawn over the combined
+3. **Sample within each split, never across it.** Draw the 18 tuning questions from the tuning
+   split and the held-out ten from the held-out split, keeping them disjoint. A subset drawn over the combined
    set can pull the same input into both sides and fabricate a tune/holdout overlap that the
    original dataset did not have.
 4. **Record what was chosen.** Write the selected row `id`s to `traigent-runs/run-plan.md`, plus
@@ -927,8 +928,8 @@ Six rules make the subset honest:
    reproducible - a seed alone does not, because the selection also depends on judgment about which
    rows are hard.
 5. **Name the bound to the user.** Report the subset size beside the full row count ("18 tuning
-   and 10 held-out rows of your 4,812 for this first run"). Never let a bounded run read as though
-   the whole dataset was evaluated.
+   questions in 36 rows, and 10 held-out rows, of your 4,812 for this first run"). Never let a
+   bounded run read as though the whole dataset was evaluated.
 6. **Draw different questions, and let their count set the size.** The agent produces one output
    per input, so two rows carrying the same input are asked the same question by every
    configuration. Where those rows also carry the same expected answer the second is a provider
