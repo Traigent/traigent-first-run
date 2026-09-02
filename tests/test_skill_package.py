@@ -29106,5 +29106,122 @@ class SignpostGuardsRedForTheDefectAndNotForTheProseTests(unittest.TestCase):
         self.assertIn("first-thing", heading_anchors(fenced))
 
 
+class TheAcceptedRouteIsReadableBeforeItIsRefusedTests(unittest.TestCase):
+    """The contract the checker enforces, at the stage the citation is written.
+
+    An external team instrumented a four-setting agent, proved all four alter
+    the outgoing request, and watched the opening read follow one. Their
+    question was whether the narrow shape is the intended contract. It is - and
+    the only full statement of it lived on the card that had already refused
+    them, which is after the document is authored rather than during.
+
+    These are drift guards and are written as drift guards on purpose: they
+    read the same constants the checker applies, because the failure they exist
+    to catch is the reference and the checker disagreeing, and no independently
+    worded copy can catch that. The claim about what a refusal MEANS is
+    asserted separately, from prose no constant supplies.
+    """
+
+    REFERENCE = SKILL_ROOT / "references" / "component-creation.md"
+
+    def _reference(self) -> str:
+        return quoted_prose(self.REFERENCE)
+
+    def test_the_reference_states_every_condition_the_checker_applies(self) -> None:
+        reference = self._reference()
+        for part in READINESS.ACCEPTED_ROUTE_PARTS:
+            self.assertIn(
+                " ".join(part.split()).casefold(),
+                reference,
+                "the reference and the checker disagree about what earns credit",
+            )
+
+    def test_the_reference_carries_the_agent_the_checker_prints(self) -> None:
+        """The fenced block itself, so indentation cannot drift unnoticed."""
+        block = python_block_containing(
+            self.REFERENCE, "def answer(question, model_choice=0):"
+        )
+        self.assertEqual(block.strip(), READINESS.ACCEPTED_ROUTE_AGENT.strip())
+
+    def test_the_reference_carries_the_entry_that_cites_that_agent(self) -> None:
+        """Both halves, because either alone leaves the other to be guessed at.
+
+        Condition 1 tells an author that `source_lines` cites the line the
+        options are written on. Without the entry beside it there is nothing
+        showing what that looks like, which is the reason the card prints the
+        pair rather than the code alone.
+        """
+        blocks = [
+            block
+            for block in re.findall(
+                r"^```json\n(.*?)^```",
+                self.REFERENCE.read_text(),
+                re.DOTALL | re.MULTILINE,
+            )
+            if "agent.py:3 lists the alternatives" in block
+        ]
+        self.assertEqual(len(blocks), 1, "exactly one entry block is required")
+        self.assertEqual(
+            json.loads(blocks[0]),
+            json.loads(json.dumps(READINESS.ACCEPTED_ROUTE_KNOB)),
+        )
+
+    def test_the_reference_keeps_the_hedge_the_card_prints(self) -> None:
+        """One accepted shape, said here too, and for the harm it prevents.
+
+        The card says it out loud because an author who reads the block as the
+        definition of a correct agent will rewrite one that another accepted
+        route already covers. Reproducing the block at the authoring stage
+        without the hedge would commit that harm with more leverage than the
+        card has, and the constant-drift guards above cannot see it - the
+        hedge is prose, not one of the constants they read.
+        """
+        reference = self._reference()
+        self.assertIn("it is one accepted shape and not the only one", reference)
+        self.assertIn("the paragraph below this one names another", reference)
+
+    def test_the_reference_says_a_refusal_withholds_credit_and_finds_nothing(
+        self,
+    ) -> None:
+        """The half a constant cannot supply, and the half that was wrong."""
+        reference = self._reference()
+        self.assertIn(
+            "a setting outside every accepted shape is refused for credit, "
+            "which is not a finding that the setting does not vary",
+            reference,
+        )
+        self.assertIn(
+            "prints the followed count as a floor beside the count those "
+            "settings would reach if they vary",
+            reference,
+        )
+
+    def test_the_reference_states_the_three_silent_limits(self) -> None:
+        """Each one cost the reporting team a setting and had nowhere to be read.
+
+        Not asserted as prose alone: each names a repair, and the repair is
+        what a reader acts on. The mapping limit is stated conditionally on
+        purpose - it does not apply while the mapping is clean, and a flat
+        "one setting per callable" would be false of most agents.
+        """
+        reference = self._reference()
+        self.assertIn(
+            "keep the settings mapping clean, or only its first read survives",
+            reference,
+        )
+        self.assertIn("stop passing the mapping around bare", reference)
+        self.assertIn(
+            "every read of a choice table, anywhere in the file, has to be an "
+            "index, a `.get()`, a bare f-string interpolation, or an `in` "
+            "comparand",
+            reference,
+        )
+        self.assertIn("a range has no options to index", reference)
+        self.assertIn(
+            "do not build a mapping whose keys and values are the same numbers",
+            reference,
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

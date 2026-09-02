@@ -2202,6 +2202,14 @@ class ReadinessScore:
     # answering a semantic question from a surface signal, which is the class
     # this package keeps filing against itself.
     agent_route_unverified: bool = False
+    # And the names, on the same additive terms, because the boolean above
+    # cannot be acted on. A consumer reading this payload could see THAT some
+    # route was not followed and never which setting, so the only record of the
+    # third verdict outside the card's prose was one bit. The count each name
+    # carries is the one `unfollowed_settings` established from the cited
+    # source, so a reader can multiply it out for themselves rather than trust
+    # the sentence that already did.
+    agent_unfollowed_settings: tuple[tuple[str, int], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -2497,6 +2505,26 @@ class DiscoveredKnob:
     # this module keeps filing: a semantic question decided from a surface
     # signal.
     route_unverified: bool = False
+    # How many options the read CONFIRMED the cited source spells out, for a
+    # parameter whose route it could not follow. Zero everywhere else, and
+    # deliberately not `len(values)`: a document may declare options the cited
+    # source does not contain at all, and that parameter is refused on the very
+    # next branch for exactly that. Only the branch where the options were
+    # found sets this, so a fabricated list cannot widen anything.
+    #
+    # It exists because dropping such a parameter from the configuration count
+    # turns "I could not follow this" into "this does not vary" - a refutation
+    # drawn from the reader's own narrowness, where the same narrowness is what
+    # makes the count safe to CREDIT. The count stays narrow; this field is
+    # what lets the sentence beside it say so out loud.
+    unfollowed_options: int = 0
+    # Credited for its route while its extent stays the document's word. Only a
+    # numeric range reaches this: the source of an agent that lets a caller
+    # choose a temperature holds the parameter, not the interval, so requiring
+    # the interval in the source refused every honest spelling and accepted a
+    # mapping written to be indexed and for nothing else. The card says which
+    # half was established rather than letting the credit imply both.
+    bounds_from_document: bool = False
 
     @property
     def credited(self) -> bool:
@@ -5764,12 +5792,55 @@ def search_space_shortfall(configurations: int, budget: int | None) -> str:
     return ""
 
 
+def unfollowed_space_clause(
+    configurations: int,
+    unfollowed: Sequence[tuple[str, int]],
+    budget: int | None,
+) -> str:
+    """What the count leaves out, and the other way to reach the number.
+
+    A configuration count taken over the settings this read could follow is a
+    FLOOR. Printed as "your space has N" it is a refutation of every setting
+    the read could not follow, drawn from where the customer's literals sit
+    rather than from anything their agent does, so the opening claim becomes a
+    floor and this says what it is a floor of.
+
+    The upper figure is stated conditionally, and has to be: this read cannot
+    tell a setting it merely failed to follow from one that is genuinely inert,
+    so "if they all do" is the strongest true form. It buys no points. Nothing
+    in the count changes, because widening credit on an unfollowed route is the
+    one direction that lets a customer pay for a grid of identical requests.
+
+    The ladder sentence STAYS. An earlier revision suppressed it and asserted
+    that adding a setting was not the step, which is the original defect
+    mirrored: the old text over-claimed absence, that one over-claimed
+    presence, and a read that has just said it cannot tell whether these
+    settings vary cannot then rule out that adding one is exactly the step.
+    What was actually missing was the other option, so the other option is what
+    is added - the probe first, because it is the one that always applies,
+    where the accepted route can ask for an agent to be rewritten.
+    """
+    ceiling = configurations * math.prod(count for _, count in unfollowed)
+    named = ", ".join(name for name, _ in unfollowed)
+    return (
+        f"; it could not follow {named}, whose options the cited source does "
+        f"spell out, so the space is {configurations} only if none of those "
+        f"vary and {ceiling} if they all do"
+        + search_space_shortfall(configurations, budget)
+        + "; those settings are already written down, so settling them is the "
+        "other way to that number and needs no new one - run the "
+        "request-difference probe before any paid grid, or cite them on the "
+        "accepted route this card prints"
+    )
+
+
 def search_space_evidence(
     configurations: int,
     declared: int,
     repeats: int,
     budget: int | None,
     uncredited: Sequence[str] = (),
+    unfollowed: Sequence[tuple[str, int]] = (),
 ) -> str:
     """One sentence a person can act on, which a bare number is not.
 
@@ -5778,12 +5849,24 @@ def search_space_evidence(
     argument, and the third is the one the score actually moves on. The
     collapse is named whenever it happened, or the sentence contradicts a
     document the reader can count for themselves.
+
+    `unfollowed` carries the settings whose options this read found in the
+    cited source and whose route to the request it could not follow. Where
+    there are any, the opening claim is a floor rather than the space, and
+    `unfollowed_space_clause` says so instead of the shortfall.
     """
     unit = "configuration" if configurations == 1 else "configurations"
-    line = f"your space has {configurations} distinct {unit}"
+    if unfollowed:
+        line = f"this read followed {configurations} distinct {unit} to the request"
+    else:
+        line = f"your space has {configurations} distinct {unit}"
     if declared > configurations:
         line += f" ({declared} declared - values too close to tell apart count once)"
-    if configurations <= 1:
+    # "Every trial would be identical" is a statement about the agent, and with
+    # a setting this read could not follow it is one the read cannot make - the
+    # clause appended below says in the same breath that the space may be
+    # larger, so leaving both in contradicts the sentence with itself.
+    if configurations <= 1 and not unfollowed:
         line += "; every trial would be identical"
     elif budget is not None:
         line += f"; this run will try up to {min(configurations, budget)} of them"
@@ -5805,6 +5888,8 @@ def search_space_evidence(
         multiplied = all(name == "seed" for name in uncredited) and bool(uncredited)
         verb = "repeated" if multiplied else "multiplied"
         line += f", each {verb} {repeats} times over {named}"
+    if unfollowed:
+        return line + unfollowed_space_clause(configurations, unfollowed, budget)
     return line + search_space_shortfall(configurations, budget)
 
 
@@ -5965,6 +6050,27 @@ def nothing_to_search_pillar(
     )
 
 
+def unfollowed_settings(facts: AgentFacts) -> tuple[tuple[str, int], ...]:
+    """Settings whose options are in the source and whose route was not followed.
+
+    The third verdict, kept apart from the other two. "Verified to vary" is the
+    credited list; "verified inert" is what a run's own request-difference
+    probe can establish and this reader cannot; this is neither, and it is the
+    one that used to be reported as the second by disappearing from the count.
+
+    A single option is dropped for the same reason it is dropped from a
+    credited knob - one option is not a choice - so this never widens a figure
+    by a factor of one, and it is read from `unfollowed_options` rather than
+    from a refusal sentence, because deciding a semantic question from a
+    surface signal is the defect class this module keeps filing against itself.
+    """
+    return tuple(
+        (knob.name, knob.unfollowed_options)
+        for knob in facts.discovered
+        if knob.unfollowed_options > 1
+    )
+
+
 def score_discovered_agent(
     facts: AgentFacts,
 ) -> tuple[Pillar, list[Cap], list[KnobScore]]:
@@ -6004,8 +6110,19 @@ def score_discovered_agent(
         refused = [knob for knob in facts.discovered if not knob.credited]
         unverified = any(knob.unverified for knob in facts.discovered)
         if unverified:
+            # Each name WITH its reason, which is where the rule that refused
+            # it is now written. This branch printed the names alone, so the
+            # state in which every setting was refused - the one where a
+            # customer most needs to know which rule they fell outside - was
+            # the single state that told them nothing. The credited branch
+            # beneath has always printed the reasons; only the all-refused one
+            # dropped them, which is the wrong way round.
             detail = (
-                ", ".join(knob.name for knob in refused if knob.unverified)
+                "; ".join(
+                    f"{knob.name}: {knob.uncredited_reason}"
+                    for knob in refused
+                    if knob.unverified
+                )
                 or "the candidates"
             )
             evidence = (
@@ -6013,6 +6130,18 @@ def score_discovered_agent(
                 "check could not verify how they reach the selected local call: "
                 f"{detail}. It has not established an opening search dimension"
             )
+            # The same figure the credited branch prints, for the same reason.
+            # Learning what the unfollowed settings would come to must not
+            # depend on whether one OTHER setting happened to be followed - a
+            # customer whose four settings all sit outside these shapes is the
+            # one who most needs to see that the read is the limit here.
+            unfollowed = unfollowed_settings(facts)
+            if unfollowed:
+                ceiling = math.prod(count for _, count in unfollowed)
+                evidence += (
+                    f"; their cited options come to {ceiling} configurations if "
+                    "they vary, which this read has not established either way"
+                )
         else:
             evidence = (
                 "the agent was read and no varying setting was established - "
@@ -6052,8 +6181,27 @@ def score_discovered_agent(
         + ", ".join(knob.name for knob in credited)
         + "; this advisory read assumes the selected source does not rewrite "
         "its own functions or imports at runtime. It does not establish final "
-        "request wiring. " + search_space_evidence(configurations, declared, 1, None)
+        "request wiring. "
+        + search_space_evidence(
+            configurations,
+            declared,
+            1,
+            None,
+            unfollowed=unfollowed_settings(facts),
+        )
     )
+    # Named, because the credit is for the route and not for the interval. A
+    # card that printed both halves as established would be claiming the source
+    # shows a range it does not contain.
+    from_document = [knob.name for knob in credited if knob.bounds_from_document]
+    if from_document:
+        detail += (
+            "; the range declared for "
+            + ", ".join(from_document)
+            + " is your figure rather than one the source holds - what this "
+            "read established is that the setting's own value is what the "
+            "request argument of that name receives"
+        )
     if refused:
         detail += "; " + "; ".join(
             f"{knob.name}: {knob.uncredited_reason}" for knob in refused
@@ -6531,6 +6679,7 @@ def aggregate(
     repeated: RepeatedInputs | None = None,
     agent_source_read: bool = False,
     agent_route_unverified: bool = False,
+    agent_unfollowed_settings: Sequence[tuple[str, int]] = (),
 ) -> ReadinessScore:
     # Every declared weight stays in the denominator, and #201 is the reason
     # that sentence is worth writing down rather than assuming.
@@ -6590,6 +6739,7 @@ def aggregate(
         repeated_inputs=repeated,
         agent_source_read=agent_source_read,
         agent_route_unverified=agent_route_unverified,
+        agent_unfollowed_settings=tuple(agent_unfollowed_settings),
     )
 
 
@@ -6642,6 +6792,14 @@ def score_run(
             agent_facts.discovery_supplied
             and not agent_facts.config_space_supplied
             and any(knob.route_unverified for knob in agent_facts.discovered)
+        ),
+        # Gated on the same pair, and for the same reason: under a config-space
+        # document the discovery half is not what decided the space, so naming
+        # settings it could not follow would describe a reading nothing scored.
+        agent_unfollowed_settings=(
+            unfollowed_settings(agent_facts)
+            if agent_facts.discovery_supplied and not agent_facts.config_space_supplied
+            else ()
         ),
     )
 
@@ -12713,6 +12871,93 @@ def _selection_reaches_return(
     ) or _selection_reaches_verified_request(selection, callable_node, source)
 
 
+def _value_is_this_setting(
+    value: ast.expr,
+    knob: str,
+    callable_node: ast.FunctionDef | ast.AsyncFunctionDef,
+    dynamic_parameters: frozenset[str],
+) -> bool:
+    """Whether this expression is the setting itself and nothing else.
+
+    Two spellings and one wrapper. The setting arrives as a parameter of its
+    own name, or as a read of it out of the mapping the callable was given.
+
+    The wrapper is `float` alone, and the reason is arithmetic rather than
+    taste: `float` is injective over the values a range can hold, so two
+    declared bounds that differ still differ after it. `int` is not - `int(0.0)`
+    and `int(0.7)` are the same request - and a clamp such as `min(x, 0.5)`
+    collapses a whole half of a range, so neither is read here. A cast this
+    does not accept is a false refusal and is named as one by the diagnosis
+    rather than passed over in silence.
+    """
+    if (
+        isinstance(value, ast.Call)
+        and isinstance(value.func, ast.Name)
+        and value.func.id == "float"
+        and len(value.args) == 1
+        and not value.keywords
+    ):
+        value = value.args[0]
+    if (
+        isinstance(value, ast.Name)
+        and isinstance(value.ctx, ast.Load)
+        and value.id.casefold() == knob.casefold()
+        and value.id in _callable_parameter_names(callable_node)
+        and _callable_parameter_is_unshadowed(value.id, callable_node)
+    ):
+        return True
+    read = _config_read_key(value, dynamic_parameters)
+    return read is not None and read.casefold() == knob.casefold()
+
+
+def _knob_reaches_its_named_request_argument(
+    knob: str, source: StaticSourceEvidence
+) -> bool:
+    """The request argument of this setting's name receives this setting.
+
+    The route a numeric setting actually has, and the one this reader had no
+    way to credit. A range is not a choice table: an agent that lets a caller
+    pick a temperature writes `temperature=config["temperature"]`, and there is
+    no literal collection anywhere for the read to index. Requiring one meant
+    the only shape that earned credit was a mapping written to be indexed and
+    for no other purpose - a dict whose keys and values are the same numbers -
+    so the check could see the setting exactly when the code had been made
+    worse to satisfy it. That is a check teaching a bad habit inside a guide
+    whose subject is good ones.
+
+    What is established here is stronger than the table route, not weaker. The
+    table route proves a declared option indexes a table whose value reaches
+    the request; this proves the setting's own value is what the request's
+    argument OF THAT NAME receives, on a call this module already recognises as
+    an external request. Two values of it are therefore two different requests.
+
+    What it does NOT establish is the extent, and the caller says so on the
+    card: the bounds stay the customer's declaration. That costs nothing it
+    could inflate - a credited numeric knob contributes its two bounds and no
+    more however wide they are, and `noise_floor` has already refused a range
+    too narrow to tell apart.
+    """
+    for callable_node, dynamic_parameters in _callables_on_the_call_path(source):
+        for call in _callable_body_nodes(callable_node):
+            if not (
+                isinstance(call, ast.Call)
+                and _is_statically_reachable(call, source)
+                and isinstance(call.func, ast.Attribute)
+                and _request_receiver_has_external_constructor(
+                    call.func.value, callable_node, source
+                )
+            ):
+                continue
+            for keyword in call.keywords:
+                if keyword.arg is None or keyword.arg.casefold() != knob.casefold():
+                    continue
+                if _value_is_this_setting(
+                    keyword.value, knob, callable_node, dynamic_parameters
+                ):
+                    return True
+    return False
+
+
 def _selection_reaches_verified_request(
     selection: ast.Subscript,
     callable_node: ast.FunctionDef | ast.AsyncFunctionDef,
@@ -13211,14 +13456,294 @@ def _selection_reaches_request_builder_return(
     )
 
 
-def _request_builder_collections(knob: str, source: StaticSourceEvidence) -> list[str]:
-    """Declared alternatives visibly preserved by one exact prompt producer."""
-    declared = {
+def _declared_module_names(source: StaticSourceEvidence) -> set[str]:
+    """Every name a module-level assignment binds."""
+    return {
         name
         for node in source.tree.body
         if isinstance(node, (ast.Assign, ast.AnnAssign))
         for name in _assignment_names(node)
     }
+
+
+def _knob_selections(
+    knob: str,
+    callable_node: ast.FunctionDef | ast.AsyncFunctionDef,
+    holders: dict[str, ast.Assign | ast.AnnAssign],
+    dynamic_parameters: frozenset[str],
+    declared: set[str],
+    source: StaticSourceEvidence,
+    *,
+    qualified: bool = True,
+) -> list[ast.Subscript]:
+    """Every `TABLE[<this setting>]` in one callable, as the credit path reads it.
+
+    One expression, three consumers. It was written out twice - once for the
+    call path and once for a request-argument builder - and the diagnosis below
+    needs the SAME list, because a sentence telling a customer which condition
+    failed is worthless the moment it is computed from a second copy that has
+    drifted from the one the decision uses.
+
+    `qualified=False` is the DIAGNOSTIC reading. It drops the two conditions
+    that disqualify the TABLE rather than the expression, and it accepts a bare
+    parameter of the setting's own name as a selector, which credit reaches by
+    a different route entirely. Both widenings exist so the diagnosis can tell
+    "nothing here indexes a table with this setting" apart from "it does, and
+    something further along ruled it out" - naming the wrong condition is worse
+    than naming none. Credit always uses the qualified list.
+    """
+    return [
+        node
+        for node in _callable_body_nodes(callable_node)
+        if isinstance(node, ast.Subscript)
+        and _is_statically_reachable(node, source)
+        and isinstance(node.value, ast.Name)
+        and node.value.id in declared
+        and (
+            not qualified
+            or (
+                node.value.id in _module_names_a_subscript_can_reach(source)
+                and not _callable_binds(node.value.id, callable_node)
+            )
+        )
+        and (
+            _selector_reads_knob(node.slice, knob, holders, dynamic_parameters, node)
+            or (
+                not qualified
+                and isinstance(node.slice, ast.Name)
+                and node.slice.id.casefold() == knob.casefold()
+            )
+        )
+    ]
+
+
+def _route_sites(
+    source: StaticSourceEvidence,
+) -> list[tuple[ast.FunctionDef | ast.AsyncFunctionDef, frozenset[str]]]:
+    """Every callable the two credit paths look inside, in one list."""
+    sites = list(_callables_on_the_call_path(source))
+    seen = {id(callable_node) for callable_node, _ in sites}
+    for _, builder, dynamic_parameters in _request_argument_builders(source):
+        if id(builder) not in seen:
+            sites.append((builder, dynamic_parameters))
+            seen.add(id(builder))
+    return sites
+
+
+def _knob_is_read_past_the_first(
+    knob: str,
+    callable_node: ast.FunctionDef | ast.AsyncFunctionDef,
+    dynamic_parameters: frozenset[str],
+    holders: dict[str, ast.Assign | ast.AnnAssign],
+) -> bool:
+    """This setting is taken out of the mapping, and not on the first read.
+
+    `_pristine_direct_config_read` is the reader that takes over once the
+    mapping parameter has been disqualified - leaked to a call this check
+    cannot follow, logged, or forwarded somewhere it stops being provably
+    intact - and it follows exactly one assignment per callable, the first in
+    file order. A customer in that state sees every later setting refused with
+    no hint that its POSITION is what did it.
+
+    The parameter set here is the callable's own, deliberately, and NOT
+    `dynamic_parameters`. A first draft asked `_config_read_key` against the
+    dynamic set and could never fire: that set excludes the mapping parameter
+    in precisely the regime this branch exists for, so the read came back None
+    every time and the whole diagnosis fell through to a sentence about
+    indexing tables, which is not the repair. Measured over seventeen
+    reproductions, the intended message appeared zero times. This is the same
+    defect the module keeps filing - a check whose "did not find it" branch
+    reads as a pass - written into the diagnosis for it.
+    """
+    if holders:
+        return False
+    del dynamic_parameters
+    parameters = frozenset(_callable_parameter_names(callable_node))
+    return any(
+        isinstance(node, (ast.Assign, ast.AnnAssign))
+        and node.value is not None
+        and (read := _config_read_key(node.value, parameters)) is not None
+        and read.casefold() == knob.casefold()
+        for node in _callable_body_nodes(callable_node)
+    )
+
+
+def _unsafely_read_tables(
+    knob: str,
+    tables: set[str],
+    cited: set[int],
+    source: StaticSourceEvidence,
+) -> list[tuple[str, int]]:
+    """Cited choice tables this file reads in a form that disqualifies them.
+
+    `_module_binding_reference_is_safe` is an allowlist over the ACCESS, not
+    over the binding: a table may be indexed, `.get()`, interpolated bare into
+    an f-string, or used as an `in` comparand, and nothing else. One
+    `tuple(TABLE)` or `", ".join(TABLE)` anywhere in the file - most often
+    inside an error message the author never expects to fire - takes the whole
+    table out of credit, and the sharp end is that not mentioning the table at
+    all is safer than mentioning it. Nothing said so.
+    """
+    found: list[tuple[str, int]] = []
+    for node in source.tree.body:
+        if not isinstance(node, (ast.Assign, ast.AnnAssign)):
+            continue
+        if not (_node_lines(node) & cited):
+            continue
+        for name in sorted(set(_assignment_names(node)) & tables):
+            found.extend(
+                (name, reference.lineno)
+                for reference in ast.walk(source.tree)
+                if isinstance(reference, ast.Name)
+                and reference.id == name
+                and isinstance(reference.ctx, ast.Load)
+                and not _module_binding_reference_is_safe(reference, source)
+            )
+    return found
+
+
+def route_refusal_diagnosis(
+    knob: str, lines: Sequence[int], source: StaticSourceEvidence
+) -> str:
+    """Which condition of the accepted route this read could not confirm.
+
+    "Could not verify that changing this setting changes the request" is the
+    one sentence a customer cannot act on, and against an agent that has been
+    instrumented it reads as false: the setting demonstrably does change the
+    request. What failed is a rule about the SHAPE of the source, and naming
+    that rule is the difference between two days and ten minutes.
+
+    Every branch is computed from the predicates the credit path itself
+    applies - `_knob_selections` is shared with both of them - so this can
+    report a condition that was really tested rather than a guess assembled
+    beside the decision. The order is the order of the accepted route, and the
+    first unconfirmed condition is the one reported: later ones cannot be
+    judged once an earlier one has failed.
+    """
+    declared = _declared_module_names(source)
+    reachable = _module_names_a_subscript_can_reach(source)
+    loose: list[ast.Subscript] = []
+    rebound: set[str] = set()
+    survives = False
+    past_the_first = False
+    for callable_node, dynamic_parameters in _route_sites(source):
+        holders = _direct_config_holders(
+            knob, callable_node, dynamic_parameters, source
+        )
+        past_the_first = past_the_first or _knob_is_read_past_the_first(
+            knob, callable_node, dynamic_parameters, holders
+        )
+        here_loose = _knob_selections(
+            knob,
+            callable_node,
+            holders,
+            dynamic_parameters,
+            declared,
+            source,
+            qualified=False,
+        )
+        loose.extend(here_loose)
+        rebound |= {
+            selection.value.id
+            for selection in here_loose
+            if selection.value.id in reachable
+            and _callable_binds(selection.value.id, callable_node)
+        }
+        # Asked of the WIDE list, because whether the value survives is a fact
+        # about the expression rather than about the table, and a diagnosis
+        # that skipped it here would fall through to a later condition and
+        # report the wrong one.
+        survives = survives or any(
+            _selection_reaches_return(selection, callable_node, source)
+            or _selection_reaches_request_builder_return(
+                selection, callable_node, source
+            )
+            for selection in here_loose
+        )
+    unsafe = _unsafely_read_tables(
+        knob,
+        {name for name in declared if _name_matches_knob(name, knob)}
+        | {selection.value.id for selection in loose},
+        set(lines),
+        source,
+    )
+    if unsafe:
+        named_at = ", ".join(
+            f"{name} at {source.display_path}:{line}" for name, line in unsafe
+        )
+        return (
+            "the options table is read in a form that disqualifies it ("
+            + named_at
+            + "): every read of it anywhere in the file has to be an index, a "
+            "`.get()`, a bare f-string interpolation, or an `in` comparand. "
+            "`tuple(TABLE)` in an error message, `for x in TABLE`, and even "
+            "`allowed = TABLE` all take it out of credit, wherever they sit"
+        )
+    if not loose:
+        if past_the_first:
+            return (
+                "this setting is lifted out of the settings mapping, and that "
+                "mapping is read somewhere this check cannot follow - logged, "
+                "serialised, or handed to a call it does not enter - so only "
+                "the FIRST such read in the callable is followed and this one "
+                "is not it. Stop passing the mapping around bare, or move this "
+                "read to the top of the function"
+            )
+        return (
+            "nothing on the selected call path uses this setting to index a "
+            "declared table: the accepted route is a module-level literal "
+            "collection indexed by the setting's own value, and for a setting "
+            "with no options to index it is the value passed straight to the "
+            "request argument named for it"
+        )
+    unreachable = sorted(
+        {
+            selection.value.id
+            for selection in loose
+            if selection.value.id not in reachable
+        }
+    )
+    # Each of these is guarded on the condition it NAMES rather than on
+    # `qualified` being empty. A selector this read follows by another route
+    # entirely - a bare parameter of the setting's name - also leaves
+    # `qualified` empty, and keying the table branches off that emptiness
+    # reported a rebinding that had not happened, with an empty list of names
+    # where the table should have been.
+    if unreachable:
+        return (
+            "the table this setting indexes ("
+            + ", ".join(unreachable)
+            + ") is not a shape a subscript can reach at runtime; a set literal "
+            "is a real guard but raises on indexing, so the route is written as "
+            "a list, tuple or mapping"
+        )
+    if rebound:
+        return (
+            "the table this setting indexes ("
+            + ", ".join(sorted(rebound))
+            + ") is rebound inside the callable that indexes it, so what is "
+            "indexed there is no longer the module-level collection this read "
+            "can see the options in"
+        )
+    if not survives:
+        return (
+            "the selected value does not survive whole to the request: it is "
+            "combined, formatted, or passed through another call on the way, "
+            "and only a value that reaches a request argument intact - "
+            "directly or through one plain local nothing else rewrites - can "
+            "be followed here"
+        )
+    return (
+        "the setting reaches a table and the value reaches the request, but "
+        "not through one single occurrence of each: this read follows exactly "
+        "one read of the setting into exactly one indexed position, because "
+        "two of either can cancel out into one fixed request"
+    )
+
+
+def _request_builder_collections(knob: str, source: StaticSourceEvidence) -> list[str]:
+    """Declared alternatives visibly preserved by one exact prompt producer."""
+    declared = _declared_module_names(source)
     selected: list[str] = []
     for _, builder, dynamic_parameters in _request_argument_builders(source):
         knob_reads = sum(
@@ -13230,19 +13755,9 @@ def _request_builder_collections(knob: str, source: StaticSourceEvidence) -> lis
         if knob_reads != 1:
             continue
         holders = _direct_config_holders(knob, builder, dynamic_parameters, source)
-        selections = [
-            node
-            for node in _callable_body_nodes(builder)
-            if isinstance(node, ast.Subscript)
-            and _is_statically_reachable(node, source)
-            and isinstance(node.value, ast.Name)
-            and node.value.id in declared
-            and node.value.id in _module_names_a_subscript_can_reach(source)
-            and not _callable_binds(node.value.id, builder)
-            and _selector_reads_knob(
-                node.slice, knob, holders, dynamic_parameters, node
-            )
-        ]
+        selections = _knob_selections(
+            knob, builder, holders, dynamic_parameters, declared, source
+        )
         # One setting read routed through two selected positions can cancel
         # itself (two distinct tables can still concatenate to one fixed text).
         # This shallow proof therefore follows one selected occurrence only.
@@ -13286,12 +13801,7 @@ def _module_collections_this_knob_selects(
     reader learns the pair from the expression, so `FORMAT_INSTRUCTIONS` keyed
     by `output_format` is credited exactly like `MODELS` keyed by `model`.
     """
-    declared = {
-        name
-        for node in source.tree.body
-        if isinstance(node, (ast.Assign, ast.AnnAssign))
-        for name in _assignment_names(node)
-    }
+    declared = _declared_module_names(source)
     selected: list[str] = []
     for callable_node, dynamic_parameters in _callables_on_the_call_path(source):
         holders = _direct_config_holders(
@@ -13303,19 +13813,9 @@ def _module_collections_this_knob_selects(
             if (read := _config_read_key(node, dynamic_parameters)) is not None
             and read.casefold() == knob.casefold()
         )
-        selections = [
-            node
-            for node in _callable_body_nodes(callable_node)
-            if isinstance(node, ast.Subscript)
-            and _is_statically_reachable(node, source)
-            and isinstance(node.value, ast.Name)
-            and node.value.id in declared
-            and node.value.id in _module_names_a_subscript_can_reach(source)
-            and not _callable_binds(node.value.id, callable_node)
-            and _selector_reads_knob(
-                node.slice, knob, holders, dynamic_parameters, node
-            )
-        ]
+        selections = _knob_selections(
+            knob, callable_node, holders, dynamic_parameters, declared, source
+        )
         # A pair of individually distinct selections can cancel when combined.
         # Follow exactly one read into exactly one selected occurrence; more
         # needs runtime evidence rather than algebra guessed from syntax.
@@ -13469,6 +13969,48 @@ def _cited_source_declares_values(
     return {repr(value) for value in values} <= found
 
 
+def _knob_named_binding_holds(
+    knob: str,
+    values: Sequence[Any],
+    lines: Sequence[int],
+    source: StaticSourceEvidence,
+) -> bool:
+    """One cited binding NAMED for this setting holds all of these options.
+
+    Stricter than `_cited_source_declares_values`, and the extra condition is
+    the whole point. That predicate answers "do these literals appear anywhere
+    the citation covers", which is the right question for a SENTENCE - the
+    source really does contain them, so telling the author it does not would be
+    false. It is the wrong question for a NUMBER: a document that cites a line
+    holding some other setting's options, and declares those same literals for
+    a setting the agent does not have, would multiply the reported ceiling by
+    writing values into a file nothing checks against the name.
+
+    So the ceiling is drawn only from a binding this reader would have been
+    willing to read the options out of anyway - `_name_matches_knob` is the
+    same association `_values_from_cited_binding` uses for credit.
+    """
+    wanted = {repr(value) for value in values}
+    cited = set(lines)
+    for node in ast.walk(source.tree):
+        if not (
+            isinstance(node, (ast.Assign, ast.AnnAssign))
+            and node.value is not None
+            and _node_lines(node) & cited
+            and _is_statically_reachable(node, source)
+            and any(_name_matches_knob(name, knob) for name in _assignment_names(node))
+        ):
+            continue
+        literal = (
+            _literal_mapping_keys(node.value)
+            if isinstance(node.value, ast.Dict)
+            else _literal_scalar_options(node.value)
+        )
+        if literal is not None and wanted <= set(map(repr, literal)):
+            return True
+    return False
+
+
 def discovered_knob_from_entry(
     name: str,
     spec: Any,
@@ -13579,13 +14121,21 @@ def discovered_knob_from_entry(
             # ...}`, which is the only one of the two that holds an option
             # value. "Quote the options" was already being obeyed off the wrong
             # line, so naming the line is the only part that changes an outcome.
+            confirmed_options = 0
             if _cited_source_declares_values(values, checked_lines, source):
+                # The options are provably in the cited source and only the
+                # route is unfollowed, so how many there are is a fact this
+                # read established rather than one it is taking on trust.
+                if _knob_named_binding_holds(name, values, checked_lines, source):
+                    confirmed_options = len({repr(value) for value in values})
                 reason = (
                     "the cited executable source shows the declared options, but "
-                    "this deliberately narrow static read could not verify that "
-                    "changing this setting changes the request on the selected "
-                    "agent path; no source defect is inferred, and the enhanced "
-                    "run can settle this dimension"
+                    "this deliberately narrow static read could not follow them "
+                    "to the request on the selected agent path: "
+                    + route_refusal_diagnosis(name, checked_lines, source)
+                    + "; no source defect is inferred - the setting may well "
+                    "change the request - and the enhanced run can settle this "
+                    "dimension"
                 )
             else:
                 reason = (
@@ -13605,6 +14155,7 @@ def discovered_knob_from_entry(
                 uncredited_reason=reason,
                 unverified=True,
                 route_unverified=True,
+                unfollowed_options=confirmed_options,
             )
         distinct = len({repr(value) for value in values})
         if distinct < 2:
@@ -13672,6 +14223,46 @@ def discovered_knob_from_entry(
         )
     unevidenced = values_are_in_checked_source(name, (low, high), checked_lines, source)
     if unevidenced:
+        if _knob_reaches_its_named_request_argument(name, source):
+            # The route, which is what this pillar claims to read, without the
+            # extent, which the source of a range-valued setting genuinely does
+            # not hold. The flag carries that split onto the card.
+            return DiscoveredKnob(
+                name,
+                "numeric",
+                evidence,
+                (low, high),
+                bounds_from_document=True,
+            )
+        if _cited_source_declares_values((low, high), checked_lines, source):
+            # The sentence below would be FALSE here. It was reachable against
+            # a cited line reading `TEMPERATURES = (0.0, 0.7)` - which shows
+            # both bounds - because this branch never asked whether the source
+            # holds them, only whether the WIRING route could be followed to
+            # them. Declaring the same setting categorically produced the
+            # honest sentence at the same score, so the two spellings of one
+            # agent disagreed about the customer's own file.
+            return DiscoveredKnob(
+                name,
+                "numeric",
+                evidence,
+                (),
+                "the cited executable source shows the declared bounds, but "
+                "this deliberately narrow static read could not follow the "
+                "setting to the request on the selected agent path: "
+                + route_refusal_diagnosis(name, checked_lines, source)
+                + "; no source defect is inferred - the setting may well "
+                "change the request - and the enhanced run can settle this "
+                "dimension",
+                unverified=True,
+                unfollowed_options=(
+                    2
+                    if _knob_named_binding_holds(
+                        name, (low, high), checked_lines, source
+                    )
+                    else 0
+                ),
+            )
         return DiscoveredKnob(
             name,
             "numeric",
@@ -13679,7 +14270,11 @@ def discovered_knob_from_entry(
             (),
             "declares bound(s) "
             + ", ".join(unevidenced)
-            + " that the cited executable source does not show",
+            + " that the cited executable source does not show, and its value "
+            "is not what the request argument of that name receives either; a "
+            "range has no options to index, so the route this read can follow "
+            "for one is the setting passed straight to the argument named for "
+            "it on the provider client's own request",
             unverified=True,
             # Deliberately NOT `route_unverified`. This branch fires for a
             # numeric range, and the accepted route this card prints is a list
@@ -13896,7 +14491,7 @@ ACCEPTED_ROUTE_KNOB: dict[str, Any] = {
 }
 
 
-# What the four printed parts are, in the order they appear in the file above.
+# What the printed parts are, in the order they appear in the file above.
 # Each one is a condition this reader actually applies, so the list can be
 # checked against the code rather than believed.
 ACCEPTED_ROUTE_PARTS: tuple[str, ...] = (
