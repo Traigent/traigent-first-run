@@ -18227,6 +18227,46 @@ class AnUnfollowedRouteIsNotAnAbsentSettingTests(unittest.TestCase):
         self.assertIn("declaring `max_trials`", wide)
         self.assertIn("settling them is the other way to that number", wide)
 
+    def test_what_a_collapsed_count_actually_costs_is_measured_not_summarised(
+        self,
+    ) -> None:
+        """The severity of the collapse, pinned, because I got it wrong in prose.
+
+        I measured `search_space_points` at one budget - absent - saw 4, 6, 24
+        and 36 all score 70, and wrote that the curve saturates at four, so a
+        space collapsing from 36 to 6 costs nothing. The first half is true of
+        the column I looked at and false of the function: there is a SECOND
+        rung at `SEARCH_SPACE_FULL`, and it is invisible from that column
+        because an undeclared budget is damped one step below it by design.
+
+        Generalising the shape of one fixture into a claim about the code is
+        the class this repository keeps catching, and prose is where it hides,
+        so the grid is asserted here rather than described anywhere.
+
+        The distinction that survives: the opening card passes no budget, so
+        the collapse costs nothing THERE and 35 points whenever the followed
+        count falls under the first rung. It costs 30 wherever the same space
+        meets the budget the guide's own producer always emits.
+        """
+        # Both trial budgets in references/sdk-execution.md default to 12, and
+        # `search_space_points` records in its own docstring that the producer
+        # always emits one. The budget-present case is the normal one.
+        emitted = 12
+        self.assertEqual(MODULE.SEARCH_SPACE_INTERACTION, 4)
+        self.assertEqual(MODULE.SEARCH_SPACE_FULL, emitted)
+        # The second rung, which is the whole correction.
+        self.assertEqual(MODULE.search_space_points(6, emitted), 70.0)
+        self.assertEqual(MODULE.search_space_points(36, emitted), 100.0)
+        # And the column that misled me, kept beside it so the pair cannot be
+        # read as agreeing.
+        self.assertEqual(MODULE.search_space_points(6, None), 70.0)
+        self.assertEqual(MODULE.search_space_points(36, None), 70.0)
+        # The opening read never declares a budget, so this fixture's own cost
+        # is the first rung rather than the second.
+        space = self._space(self._facts())
+        self.assertEqual(space.value, 35.0)
+        self.assertEqual(MODULE.search_space_points(36, None), 70.0)
+
     def test_one_option_never_widens_a_space_by_a_factor_of_one(self) -> None:
         """One option is not a choice on this branch either."""
         self.assertEqual(
