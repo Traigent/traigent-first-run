@@ -15,6 +15,100 @@ from behavioral import harness, outcomes
 ROOT = Path(__file__).resolve().parents[2]
 SCENARIOS = Path(__file__).parent / "scenarios"
 
+# What the wording probe appends. Named once because the interruption guard
+# below has to look for the same bytes the probe writes; two spellings would
+# let the guard pass while the probe wrote something else.
+WORDING_PROBE = b"\n<!-- wording probe -->\n"
+
+
+def behavior_tree_copy(destination: Path) -> Path:
+    """A throwaway copy of the behaviour-bearing tree, for probes that mutate it.
+
+    Three checks below have to observe what `behavior_manifest` does when a
+    behaviour-bearing file changes, and the only way to ask that is to change
+    one. They used to change the file in the working tree and restore it in a
+    `finally`, which restores correctly and still leaves a window: the restore
+    was the ONLY thing between a normal run and a dirty tree, so a Ctrl+C, an
+    OOM kill or a lost machine inside the `try` left `<!-- wording probe -->`
+    appended to a TRACKED guidance document under a byte ceiling, one
+    `git add -A` away from being committed. That is not hypothetical - a person
+    running the suite saw `SKILL.md` in `git status` mid-run (#400).
+
+    So the probes mutate a copy that nothing tracks, and the window closes
+    rather than narrowing.
+
+    `git init` with no commit is enough to make the copy answer the same
+    question the tree does: `behavior_files` asks git for `--cached --others
+    --exclude-standard`, and against an empty index every copied file is an
+    untracked-but-unignored "other". The root `.gitignore` is copied with the
+    tree so the ignore rules - including the `run-plan.md` negation, which a
+    hand-written skip list would have missed - are the tree's own.
+
+    Where git is absent, which is the offline-contract job's pinned image, both
+    sides fall through to `_walk_behavior_files` and there is nothing to
+    initialise. The manifest comparison at the end holds either way, and it is
+    what makes this a stand-in rather than an approximation of one.
+    """
+    root = destination / "tree"
+    (root / "skills").mkdir(parents=True)
+    shutil.copy2(ROOT / ".gitignore", root / ".gitignore")
+    shutil.copy2(ROOT / "GUIDE.md", root / "GUIDE.md")
+    shutil.copytree(
+        ROOT / "skills" / "traigent-first-run",
+        root / "skills" / "traigent-first-run",
+    )
+    try:
+        subprocess.run(
+            ["git", "init", "-q", str(root)], check=True, capture_output=True
+        )
+    except FileNotFoundError:
+        pass
+    if harness.behavior_manifest(root) != harness.behavior_manifest(ROOT):
+        raise AssertionError(
+            "the copy is not a faithful stand-in for the behaviour tree, so a "
+            "probe run against it would be measuring something else"
+        )
+    return root
+
+
+def append_wording_probe(root: Path) -> Path:
+    """Append the probe to the SKILL.md under `root`, and return that file.
+
+    Takes the root rather than reading the module constant, so the tree a probe
+    writes to is the caller's choice and the guard below can prove which choice
+    was made.
+    """
+    document = root / "skills" / "traigent-first-run" / "SKILL.md"
+    document.write_bytes(document.read_bytes() + WORDING_PROBE)
+    return document
+
+
+# The probe, run to the point of the write and then killed. `os._exit` is the
+# whole point: it runs no `finally`, no `atexit` and no buffer flush, which is
+# what a Ctrl+C or an OOM kill does to a five-and-a-half-minute suite. A
+# `sys.exit` here would unwind and prove nothing.
+#
+# `argv[3]` chooses the tree to write into: `-` builds a copy the way the tests
+# above do, and a path writes into that path instead. The second arm is how the
+# guard proves its own instrument - a manifest comparison that cannot notice an
+# interrupted write would report a clean tree for every reason including the
+# wrong one.
+INTERRUPTED_PROBE = (
+    "import os, pathlib, sys\n"
+    "sys.path.insert(0, sys.argv[1])\n"
+    "from behavioral import test_contracts as probe\n"
+    "scratch = pathlib.Path(sys.argv[2])\n"
+    "target = (\n"
+    "    probe.behavior_tree_copy(scratch)\n"
+    "    if sys.argv[3] == '-'\n"
+    "    else pathlib.Path(sys.argv[3])\n"
+    ")\n"
+    "document = probe.append_wording_probe(target)\n"
+    "assert document.read_bytes().endswith(probe.WORDING_PROBE)\n"
+    "(scratch / 'probe-written').write_text('yes')\n"
+    "os._exit(9)\n"
+)
+
 
 class BehavioralContractUnitTests(unittest.TestCase):
     def test_every_declared_scenario_is_the_expected_set(self) -> None:
@@ -118,27 +212,132 @@ class BehavioralContractUnitTests(unittest.TestCase):
         document must move the behaviour manifest - whose digest is stamped
         into every evidence bundle - and leave every recorded outcome
         identical; a changed outcome is then unambiguously the other kind.
+
+        Both halves run against the COPY, not against the working tree - see
+        `behavior_tree_copy` for the window that closes. The outcome half is the
+        one that had to move with it: the chain is pointed at the copy's own
+        scripts, so the recorded cards are derived from the same mutated tree
+        the manifest is. Left pointing at the working tree it would have been
+        asking whether an edit made somewhere else changed anything, which is
+        a question with a free answer.
         """
         before_hashes = harness.behavior_manifest(ROOT)
         before_outcomes = outcomes.outcome_manifest()
 
-        document = ROOT / "skills" / "traigent-first-run" / "SKILL.md"
-        original = document.read_bytes()
-        try:
-            document.write_bytes(original + b"\n<!-- wording probe -->\n")
+        with tempfile.TemporaryDirectory() as scratch:
+            copy = behavior_tree_copy(Path(scratch))
+            append_wording_probe(copy)
             self.assertNotEqual(
-                harness.behavior_manifest(ROOT),
+                harness.behavior_manifest(copy),
                 before_hashes,
                 "a changed behaviour-bearing document did not move the "
                 "behaviour manifest",
             )
-            self.assertEqual(
-                outcomes.outcome_manifest(),
-                before_outcomes,
-                "a wording-only edit changed a recorded outcome",
+            scripts = copy / "skills" / "traigent-first-run" / "scripts"
+            chain = (
+                scripts / "readiness.py",
+                scripts / "preflight.py",
+                scripts / "calibrate_evaluator.py",
             )
-        finally:
-            document.write_bytes(original)
+            # The allowlist moves with the three paths rather than gaining
+            # them. `validate_command` exists so a case cannot run something
+            # nobody vetted, and widening it here would leave the real scripts
+            # runnable alongside the copy's - which is one more command than
+            # this test needs and one fewer guarantee than the harness makes.
+            with unittest.mock.patch.multiple(
+                "behavioral.harness",
+                READINESS=chain[0],
+                PREFLIGHT=chain[1],
+                CALIBRATE=chain[2],
+                ALLOWED_SCRIPTS={path.resolve() for path in chain},
+            ):
+                self.assertEqual(
+                    outcomes.outcome_manifest(),
+                    before_outcomes,
+                    "a wording-only edit changed a recorded outcome",
+                )
+        self.assertEqual(
+            harness.behavior_manifest(ROOT),
+            before_hashes,
+            "the probe reached the working tree instead of its copy",
+        )
+
+    def test_an_interrupted_probe_leaves_the_working_tree_clean(self) -> None:
+        """The guarantee the `finally` could not give, run as an interruption.
+
+        The test above restores what it writes, and so did the version this
+        replaces - the difference is what happens when nothing gets to restore.
+        A `finally` is a promise the process will live long enough to keep it,
+        and the suite it lived in runs for five and a half minutes; a Ctrl+C or
+        an OOM kill inside the `try` left `<!-- wording probe -->` appended to a
+        tracked guidance document, and the person who found it caught it only
+        because they read `git status` before staging rather than after (#400).
+
+        So the probe is killed with `os._exit`, which unwinds nothing, and the
+        working tree is compared through the same manifest the bundles are
+        stamped with. Green here means the write went somewhere disposable, not
+        that it was tidied up afterwards.
+
+        The second arm is the control, and without it this proves nothing: the
+        identical interrupted write, aimed at a stand-in tree, DOES move that
+        tree's manifest. So the clean answer above is the probe staying out of
+        the working tree rather than the comparison failing to see it.
+        """
+        before = harness.behavior_manifest(ROOT)
+        with tempfile.TemporaryDirectory() as scratch:
+            killed = subprocess.run(
+                [
+                    sys.executable,
+                    "-c",
+                    INTERRUPTED_PROBE,
+                    str(ROOT / "tests"),
+                    scratch,
+                    "-",
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(
+                killed.returncode,
+                9,
+                "the probe did not reach the write it was killed at: "
+                f"{killed.stdout}{killed.stderr}",
+            )
+            self.assertTrue(
+                (Path(scratch) / "probe-written").exists(),
+                "the probe exited before writing anything, so a clean tree "
+                "below would say nothing about where it writes",
+            )
+        self.assertEqual(
+            harness.behavior_manifest(ROOT),
+            before,
+            "an interrupted wording probe left the working tree dirty",
+        )
+
+        with tempfile.TemporaryDirectory() as scratch:
+            stand_in = behavior_tree_copy(Path(scratch))
+            untouched = harness.behavior_manifest(stand_in)
+            with tempfile.TemporaryDirectory() as second:
+                subprocess.run(
+                    [
+                        sys.executable,
+                        "-c",
+                        INTERRUPTED_PROBE,
+                        str(ROOT / "tests"),
+                        second,
+                        str(stand_in),
+                    ],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+            self.assertNotEqual(
+                harness.behavior_manifest(stand_in),
+                untouched,
+                "the interrupted write did not move the manifest of the tree "
+                "it was aimed at, so the check above cannot detect one",
+            )
 
     def test_a_conflicted_index_cannot_hash_one_path_twice(self) -> None:
         """The dedupe is structural, not a side effect of the relock refusal.
@@ -180,15 +379,19 @@ class BehavioralContractUnitTests(unittest.TestCase):
         entered the manifest and it matched only on the machine that wrote it -
         green locally, red in CI, on the same commit. Asking git instead makes
         the ignore rules the single source of truth.
+
+        Written into the copy for the reason the wording probe is: a linter
+        cache dropped in the working tree is untracked rather than tracked, so
+        an interrupted run leaves a stray directory rather than an edited
+        document - a smaller mess, made of the same missing guarantee.
         """
-        before = harness.behavior_manifest(ROOT)
-        cache = ROOT / "skills" / "traigent-first-run" / ".ruff_cache" / "0.0.0"
-        cache.parent.mkdir(parents=True, exist_ok=True)
-        cache.write_text("stray tool output")
-        try:
-            self.assertEqual(harness.behavior_manifest(ROOT), before)
-        finally:
-            shutil.rmtree(cache.parent)
+        with tempfile.TemporaryDirectory() as scratch:
+            copy = behavior_tree_copy(Path(scratch))
+            before = harness.behavior_manifest(copy)
+            cache = copy / "skills" / "traigent-first-run" / ".ruff_cache" / "0.0.0"
+            cache.parent.mkdir(parents=True, exist_ok=True)
+            cache.write_text("stray tool output")
+            self.assertEqual(harness.behavior_manifest(copy), before)
 
     def test_an_unignored_new_file_does_enter_the_manifest(self) -> None:
         """The rule is git's ignore list, not "hide anything untracked".
@@ -196,14 +399,18 @@ class BehavioralContractUnitTests(unittest.TestCase):
         A reference added but not yet `git add`-ed is part of the package and
         must be hashed, or a digest stamped before staging would under-report
         the package.
+
+        In the copy, because this one wrote an unignored file into the
+        references directory: interrupted, it left a `_probe.md` that the next
+        `git add -A` would have added to a directory the package guards by
+        byte count.
         """
-        before = harness.behavior_manifest(ROOT)
-        stray = ROOT / "skills" / "traigent-first-run" / "references" / "_probe.md"
-        stray.write_text("not staged yet")
-        try:
-            self.assertNotEqual(harness.behavior_manifest(ROOT), before)
-        finally:
-            stray.unlink()
+        with tempfile.TemporaryDirectory() as scratch:
+            copy = behavior_tree_copy(Path(scratch))
+            before = harness.behavior_manifest(copy)
+            stray = copy / "skills" / "traigent-first-run" / "references" / "_probe.md"
+            stray.write_text("not staged yet")
+            self.assertNotEqual(harness.behavior_manifest(copy), before)
 
     def test_the_git_and_walk_file_lists_agree(self) -> None:
         """The hermetic fallback must hash the same package git would.

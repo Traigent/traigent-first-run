@@ -54,6 +54,12 @@ Limits, stated because the figures depend on them:
 
 * It is a heuristic over ASTs, not an oracle. It reports what a test's shape
   says it does.
+* The SET it walks is unittest's, not "every `def test_`": methods of
+  module-level `TestCase` subclasses, keyed `path::Class::method`. A nested
+  `def test_...`, or one on a class that is not a `TestCase`, is not a test the
+  runner would run, and counting it inflated the denominator every figure here
+  is a share of. `test_the_census_reads_every_test_the_runner_would` compares
+  those keys against discovery's own and prints the difference by name.
 * `derived` is a FLOOR, not a count, and every miss found so far ran in the
   census's favour. Four rounds of spot-checking moved 108 tests out of
   `structural` and into `derived` by teaching it four indirections it could
@@ -116,6 +122,86 @@ _CAPTURE = ("getvalue", "stdout", "stderr", "returncode")
 def test_files() -> list[pathlib.Path]:
     """Every file unittest discovery would collect."""
     return sorted(TEST_ROOT.rglob("test_*.py"))
+
+
+def _base_names(node: ast.ClassDef) -> list[str]:
+    """The base classes this class names, by their last component."""
+    names = []
+    for base in node.bases:
+        if isinstance(base, ast.Name):
+            names.append(base.id)
+        elif isinstance(base, ast.Attribute):
+            names.append(base.attr)
+    return names
+
+
+def discoverable_tests(
+    tree: ast.Module,
+) -> list[tuple[str, str, ast.FunctionDef | ast.AsyncFunctionDef]]:
+    """`(class, method, node)` for every test in one file the RUNNER would run.
+
+    This used to be `ast.walk` for any `FunctionDef` whose name starts with
+    `test`, which is a different set from unittest's in three ways, all of them
+    in the direction of counting something the runner never runs (#400):
+
+    * a `def test_...` nested inside another function is a local, not a method;
+    * a `test_...` method on a class that is not a `TestCase` is never
+      collected - `tests/test_guard_census.py` writes its own fixtures as
+      `class T:` for exactly that reason;
+    * two `def test_x` in one class are one method, because the second binding
+      wins, and the walk counted both.
+
+    Only module-level classes are read, which is also what discovery loads: a
+    class defined inside a function or another class is not collected. A test
+    that lands somewhere this cannot see is not silently dropped - it shows up
+    as a named entry in the symmetric difference
+    `test_the_census_reads_every_test_the_runner_would` prints.
+
+    Inherited methods are attributed to the SUBCLASS, again because that is
+    what runs: a mixin holding `test_x` mixed into two `TestCase` classes is
+    two tests, and the loader reports each under the class it was mixed into.
+    Bases are resolved within the file only, so a base imported from another
+    module contributes nothing here - the same completeness test is what would
+    report it.
+    """
+    classes = {node.name: node for node in tree.body if isinstance(node, ast.ClassDef)}
+    bases = {name: _base_names(node) for name, node in classes.items()}
+
+    def is_test_case(name: str, seen: set[str]) -> bool:
+        if name in seen:
+            return False
+        seen.add(name)
+        return any(
+            base == "TestCase" or is_test_case(base, seen)
+            for base in bases.get(name, ())
+        )
+
+    def ancestry(name: str, seen: set[str]) -> list[str]:
+        """The class, then its bases, nearest first."""
+        if name in seen or name not in classes:
+            return []
+        seen.add(name)
+        order = [name]
+        for base in bases[name]:
+            order.extend(ancestry(base, seen))
+        return order
+
+    found = []
+    for name in classes:
+        if not is_test_case(name, set()):
+            continue
+        # Nearest-last, so a method a subclass redefines overwrites the base's
+        # entry the way Python's own lookup does, and a duplicate `def` in one
+        # class collapses to the later one.
+        methods: dict[str, ast.FunctionDef | ast.AsyncFunctionDef] = {}
+        for ancestor in reversed(ancestry(name, set())):
+            for item in classes[ancestor].body:
+                if isinstance(
+                    item, (ast.FunctionDef, ast.AsyncFunctionDef)
+                ) and item.name.startswith("test"):
+                    methods[item.name] = item
+        found.extend((name, method, node) for method, node in methods.items())
+    return found
 
 
 def _guarded_aliases(tree: ast.Module) -> set[str]:
@@ -432,52 +518,66 @@ def classify_method(
     return "structural", signals
 
 
+def file_entries(
+    tree: ast.Module, label: str
+) -> tuple[dict[str, str], collections.Counter[str]]:
+    """Classify one parsed file: `{key: primary class}` and its signal counts.
+
+    The key is `path::Class::method` and not `path::method`. Two same-named
+    methods in different classes of one file are two tests the runner runs, and
+    under the shorter key they collapsed to one entry while a separate counter
+    still counted both - so `census()` answered its own question two ways and
+    the two answers could differ by exactly the number of collisions (#400).
+    Deriving the count from these keys is only sound because the key is unique
+    per test, which is what the class component buys.
+    """
+    aliases = _guarded_aliases(tree)
+    helpers = _module_helpers(tree)
+    corpora = _corpus_helpers(helpers)
+    containers = _prose_containers(tree)
+    aliases |= _bound_to_guarded_code(tree, aliases)
+    reaching = {
+        name
+        for name, nodes in helpers.items()
+        if any(_reaches_code(node, aliases, set()) for node in nodes)
+    }
+    # `relock = _load()` at module scope is the same alias as
+    # `MODULE = module_from_spec(...)`, one indirection out. Resolving it
+    # needs `reaching` first, so it is a second pass rather than part of
+    # `_guarded_aliases`.
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and isinstance(node.value, ast.Call):
+            if ast.unparse(node.value.func).split(".")[-1] in reaching:
+                for target in node.targets:
+                    if isinstance(target, ast.Name):
+                        aliases.add(target.id)
+    reaching |= {
+        name
+        for name, nodes in helpers.items()
+        if any(_reaches_code(node, aliases, set()) for node in nodes)
+    }
+    entries: dict[str, str] = {}
+    signals: collections.Counter[str] = collections.Counter()
+    for class_name, method_name, node in discoverable_tests(tree):
+        primary, shown = classify_method(node, aliases, corpora, reaching, containers)
+        entries[f"{label}::{class_name}::{method_name}"] = primary
+        for signal in shown:
+            signals[signal] += 1
+    return entries, signals
+
+
 def census() -> dict[str, object]:
     per_file: dict[str, collections.Counter[str]] = {}
     per_test: dict[str, str] = {}
     signals: collections.Counter[str] = collections.Counter()
     for path in test_files():
-        tree = ast.parse(path.read_text(encoding="utf-8"))
-        aliases = _guarded_aliases(tree)
-        helpers = _module_helpers(tree)
-        corpora = _corpus_helpers(helpers)
-        containers = _prose_containers(tree)
-        aliases |= _bound_to_guarded_code(tree, aliases)
-        reaching = {
-            name
-            for name, nodes in helpers.items()
-            if any(_reaches_code(node, aliases, set()) for node in nodes)
-        }
-        # `relock = _load()` at module scope is the same alias as
-        # `MODULE = module_from_spec(...)`, one indirection out. Resolving it
-        # needs `reaching` first, so it is a second pass rather than part of
-        # `_guarded_aliases`.
-        for node in tree.body:
-            if isinstance(node, ast.Assign) and isinstance(node.value, ast.Call):
-                if ast.unparse(node.value.func).split(".")[-1] in reaching:
-                    for target in node.targets:
-                        if isinstance(target, ast.Name):
-                            aliases.add(target.id)
-        reaching |= {
-            name
-            for name, nodes in helpers.items()
-            if any(_reaches_code(node, aliases, set()) for node in nodes)
-        }
-        counts: collections.Counter[str] = collections.Counter()
-        for node in ast.walk(tree):
-            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                continue
-            if not node.name.startswith("test"):
-                continue
-            primary, shown = classify_method(
-                node, aliases, corpora, reaching, containers
-            )
-            counts[primary] += 1
-            key = f"{path.relative_to(REPO_ROOT)}::{node.name}"
-            per_test[key] = primary
-            for signal in shown:
-                signals[signal] += 1
-        per_file[str(path.relative_to(REPO_ROOT))] = counts
+        label = str(path.relative_to(REPO_ROOT))
+        entries, file_signals = file_entries(
+            ast.parse(path.read_text(encoding="utf-8")), label
+        )
+        per_file[label] = collections.Counter(entries.values())
+        per_test.update(entries)
+        signals.update(file_signals)
     total: collections.Counter[str] = collections.Counter()
     for counts in per_file.values():
         total.update(counts)
@@ -486,7 +586,11 @@ def census() -> dict[str, object]:
         "per_test": per_test,
         "signals": dict(signals),
         "total": dict(total),
-        "tests": sum(total.values()),
+        # From `per_test`, not from the counters. They are built from the same
+        # entries now, so they cannot disagree - which is the point: one call
+        # answering "how many tests" two ways was a defect whichever answer was
+        # right, because nothing said which one the reader was holding (#400).
+        "tests": len(per_test),
     }
 
 
