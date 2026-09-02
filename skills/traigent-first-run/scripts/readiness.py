@@ -2027,6 +2027,17 @@ class ReadinessScore:
     # working and keep saying the honest thing, which is that no read reached
     # them.
     agent_source_read: bool = False
+    # Whether any parameter was refused because this read could not follow its
+    # route to the call - carried for the CARD on the same terms as the field
+    # above, and weighting, capping and renormalizing nothing.
+    #
+    # It exists so the card can print an accepted route beside a refusal that
+    # could not follow one. Derived from `DiscoveredKnob.route_unverified`,
+    # which is set where the refusal is decided, rather than re-read at render
+    # time from the evidence prose: a renderer that matched sentences would be
+    # answering a semantic question from a surface signal, which is the class
+    # this package keeps filing against itself.
+    agent_route_unverified: bool = False
 
 
 @dataclass(frozen=True)
@@ -2283,6 +2294,16 @@ class DiscoveredKnob:
     # measured one-option agent.  Keep this structured: cap routing must never
     # infer a safety decision from a sentence written for the customer.
     unverified: bool = False
+    # Narrower than `unverified`, and separate for the reason that field is
+    # separate from the sentence beside it: `unverified` covers four states -
+    # no source root, no values and no range, a bound the source does not show,
+    # and a route this read could not follow - and only the last one is
+    # answered by showing an accepted route. A card that printed the worked
+    # example for all four would answer three questions nobody asked, and a
+    # renderer that told them apart by matching the prose would be the defect
+    # this module keeps filing: a semantic question decided from a surface
+    # signal.
+    route_unverified: bool = False
 
     @property
     def credited(self) -> bool:
@@ -6261,6 +6282,7 @@ def aggregate(
     *,
     repeated: RepeatedInputs | None = None,
     agent_source_read: bool = False,
+    agent_route_unverified: bool = False,
 ) -> ReadinessScore:
     # Every declared weight stays in the denominator, and #201 is the reason
     # that sentence is worth writing down rather than assuming.
@@ -6319,6 +6341,7 @@ def aggregate(
         gaps=collect_gaps(pillars, knobs, ordered_caps, overall),
         repeated_inputs=repeated,
         agent_source_read=agent_source_read,
+        agent_route_unverified=agent_route_unverified,
     )
 
 
@@ -6362,6 +6385,16 @@ def score_run(
             reference_free=scores_without_a_reference(evaluation_facts.method),
         ),
         agent_source_read=agent_facts.discovery_supplied,
+        # The same pair of conditions `score_agent_evidence` branches on to
+        # reach the discovery path at all. A config-space document wins
+        # outright there, so a route refusal recorded under one was never
+        # scored, and printing an accepted route beside it would answer a
+        # question this card did not ask.
+        agent_route_unverified=(
+            agent_facts.discovery_supplied
+            and not agent_facts.config_space_supplied
+            and any(knob.route_unverified for knob in agent_facts.discovered)
+        ),
     )
 
 
@@ -6947,6 +6980,12 @@ def render_card(
             else:
                 label = f"{palette.warn}WOULD LIMIT TO {cap.ceiling}{palette.reset}"
             lines.append(f"  {label} {cap.reason}")
+        lines.append("")
+    if score.agent_route_unverified:
+        # BELOW the ceiling that reports the refusal, for the reason the block
+        # under it is below its own finding: what to write instead is only
+        # readable once the reader has read what was refused.
+        lines.extend(accepted_route_shape())
         lines.append("")
     if score.repeated_inputs is not None:
         # BELOW the pillars and below the caps, and this position is the rule
@@ -9172,6 +9211,143 @@ def _expression_varies_binding(
     return False
 
 
+def _local_alias_initializer(
+    reference: ast.Name,
+    callable_node: ast.FunctionDef | ast.AsyncFunctionDef,
+    source: StaticSourceEvidence,
+) -> ast.expr | None:
+    """The one expression a plain local name still holds where it is read.
+
+    Measured before this existed, by construction rather than by reading the
+    code. Source:
+    tests/test_readiness_scoring.py#ALocalBindingIsStillARouteToTheCallTests,
+    which keeps the pair. Two agents differing by one line - the option table
+    written into the request call, and the same table bound to a local first -
+    scored 35 and 0 on the settings check. Every other line was identical, so
+    the refusal was about the local binding and nothing else, and a local
+    binding is how essentially every agent passes a setting to its provider. A
+    check that can only follow a value written literally inside the call's own
+    argument list refuses the ordinary shape and credits the rare one.
+
+    So this is a def-use pass, and a bounded one. It answers a question a
+    reader answers by looking: does this name still hold what that assignment
+    put in it? Everything it cannot establish is REFUSED rather than credited,
+    which is the only safe direction here - crediting an alias whose value this
+    read cannot pin would let a setting that never reaches the call score as
+    though it did, which is the same defect as the refusal it fixes, pointed
+    the other way.
+
+    Refused, each because the value at the read is then not the value the
+    assignment wrote, or is not decidable from syntax alone:
+
+    * a parameter, which holds whatever the caller passed;
+    * more than one write of the spelling anywhere in this callable, which
+      covers reassignment, augmented assignment, `for`/`with`/`except`
+      targets, and a walrus - the count does not care which form wrote it;
+    * a target that is not one bare name, so tuple unpacking and `a = b = ...`
+      are out;
+    * a binding nested in a branch, loop, or `try`, rather than a direct
+      statement of the callable's own body;
+    * `global`/`nonlocal` for the spelling, or a nested function, lambda, or
+      class that mentions it, either of which can rebind or defer it;
+    * a `del`;
+    * any read that could mutate the bound object in place - a method call on
+      it, or a store through a subscript of it;
+    * a read that does not follow the assignment in the file.
+
+    One level, deliberately: `chosen = model` after `model = TABLE[...]` is a
+    second hop and earns nothing. A chain is where a bounded read stops being
+    bounded, and nothing in the shapes this exists to credit needs two.
+    """
+    name = reference.id
+    if not isinstance(reference.ctx, ast.Load):
+        return None
+    if name in _callable_parameter_names(callable_node):
+        return None
+    if _callable_store_count(name, callable_node) != 1:
+        return None
+    for node in _callable_body_nodes(callable_node):
+        if isinstance(node, (ast.Global, ast.Nonlocal)) and name in node.names:
+            return None
+        if isinstance(
+            node,
+            (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda),
+        ) and _expression_uses_name(node, name):
+            return None
+        if (
+            isinstance(node, ast.Name)
+            and node.id == name
+            and isinstance(node.ctx, ast.Del)
+        ):
+            return None
+    assignment: ast.Assign | ast.AnnAssign | None = None
+    for statement in callable_node.body:
+        if (
+            not isinstance(statement, (ast.Assign, ast.AnnAssign))
+            or statement.value is None
+        ):
+            continue
+        targets = (
+            statement.targets
+            if isinstance(statement, ast.Assign)
+            else (statement.target,)
+        )
+        if (
+            len(targets) == 1
+            and isinstance(targets[0], ast.Name)
+            and targets[0].id == name
+        ):
+            assignment = statement
+            break
+    if assignment is None or not _is_statically_reachable(assignment, source):
+        return None
+    if reference.lineno <= (assignment.end_lineno or assignment.lineno):
+        return None
+    for other in _callable_body_nodes(callable_node):
+        if not (
+            isinstance(other, ast.Name)
+            and other.id == name
+            and isinstance(other.ctx, ast.Load)
+        ):
+            continue
+        parent = source.parents.get(id(other))
+        if isinstance(parent, ast.Attribute) and parent.value is other:
+            return None
+        if (
+            isinstance(parent, ast.Subscript)
+            and parent.value is other
+            and not isinstance(parent.ctx, ast.Load)
+        ):
+            return None
+    return assignment.value
+
+
+def _argument_carried_expressions(
+    expression: ast.expr,
+    callable_node: ast.FunctionDef | ast.AsyncFunctionDef,
+    source: StaticSourceEvidence,
+) -> tuple[ast.expr, ...]:
+    """One call argument, and what a local binding written inside it holds.
+
+    The argument itself always comes first, so a caller that gained this
+    reads at least what it read before. Each extra expression is one local
+    binding's initializer, admitted only where the name is carried whole by
+    the argument - `model=model` and `messages=[model]` qualify, `model=model
+    or "fast"` does not, because a boolean operator can substitute a fixed
+    value for the selected one and this read cannot tell which side ran.
+    """
+    carried: list[ast.expr] = [expression]
+    for child in ast.walk(expression):
+        if not (isinstance(child, ast.Name) and isinstance(child.ctx, ast.Load)):
+            continue
+        if not _node_is_structurally_embedded(child, expression, source):
+            continue
+        initializer = _local_alias_initializer(child, callable_node, source)
+        if initializer is not None:
+            carried.append(initializer)
+    return tuple(carried)
+
+
 def _selected_callable_nodes(source: StaticSourceEvidence) -> Iterator[ast.AST]:
     """Walk only the selected callable's direct lexical body.
 
@@ -9770,6 +9946,7 @@ def _binding_reaches_call_path(
                 call,
                 binding,
                 knob,
+                callable_node=callable_node,
                 dynamic_parameters=dynamic_parameters,
                 source=source,
             ):
@@ -9782,6 +9959,7 @@ def _call_uses_binding(
     binding: str,
     knob: str,
     *,
+    callable_node: ast.FunctionDef | ast.AsyncFunctionDef,
     dynamic_parameters: frozenset[str],
     source: StaticSourceEvidence,
 ) -> bool:
@@ -9789,18 +9967,27 @@ def _call_uses_binding(
         keyword.arg is None for keyword in call.keywords
     ):
         return False
+
+    def carries(expression: ast.expr) -> bool:
+        # The argument, or the one local binding it names. `model = MODELS[c]`
+        # followed by `model=model` is the same wiring as `model=MODELS[c]`
+        # written in the call, and refusing the first while crediting the
+        # second is a rule about where the author put a newline.
+        return any(
+            _expression_varies_binding(candidate, binding, dynamic_parameters, source)
+            for candidate in _argument_carried_expressions(
+                expression, callable_node, source
+            )
+        )
+
     for keyword in call.keywords:
-        if keyword.arg == knob and _expression_varies_binding(
-            keyword.value, binding, dynamic_parameters, source
-        ):
+        if keyword.arg == knob and carries(keyword.value):
             return True
     # A positional argument carries the value exactly as a keyword does. Only
     # same-file module definitions are resolved; imported signatures are unknown.
     parameters = _module_function_parameters(source, call.func)
     return parameters is not None and any(
-        index < len(parameters)
-        and parameters[index] == knob
-        and _expression_varies_binding(argument, binding, dynamic_parameters, source)
+        index < len(parameters) and parameters[index] == knob and carries(argument)
         for index, argument in enumerate(call.args)
     )
 
@@ -11790,7 +11977,15 @@ def _selection_reaches_verified_request(
             expression = (
                 argument.value if isinstance(argument, ast.keyword) else argument
             )
-            if not _node_is_structurally_embedded(selection, expression, source):
+            # The argument, or the one local binding it names: an agent that
+            # writes `model = MODELS[cfg["model"]]` and then passes `model` has
+            # the same route as one that writes the selection into the call.
+            if not any(
+                _node_is_structurally_embedded(selection, candidate, source)
+                for candidate in _argument_carried_expressions(
+                    expression, callable_node, source
+                )
+            ):
                 continue
             if _request_call_consumes_argument(call, callable_node, source):
                 return True
@@ -12634,6 +12829,7 @@ def discovered_knob_from_entry(
                 evidence,
                 uncredited_reason=reason,
                 unverified=True,
+                route_unverified=True,
             )
         distinct = len({repr(value) for value in values})
         if distinct < 2:
@@ -12710,6 +12906,7 @@ def discovered_knob_from_entry(
             + ", ".join(unevidenced)
             + " that the cited executable source does not show",
             unverified=True,
+            route_unverified=True,
         )
     return DiscoveredKnob(name, "numeric", evidence, (low, high))
 
@@ -12859,6 +13056,112 @@ def agent_knobs_shape() -> str:
         "names - and the refusal names the one it wants:\n"
         f"{also_reads}"
     )
+
+
+# An agent whose settings route this read CAN follow, printed beside a refusal
+# that could not follow one.
+#
+# The sibling of `AGENT_KNOBS_EXAMPLE`, for the same measured reason and one
+# level further out. That constant exists because five successive attempts to
+# DESCRIBE the document contract were each wrong and each read correctly; this
+# one exists because a refusal that named only what failed sent five successive
+# rewrites of a working agent at four Python idioms that were never the cause.
+# The reader was told what this check could not verify and never what it can,
+# so the only way to find out was to guess, and every guess cost an edit to
+# code that already worked.
+#
+# A real file rather than a sketch, and checked against the real reader by
+# `tests/test_readiness_scoring.py`, because an example that this scorer would
+# itself refuse is worse than no example: it is the pattern this check exists
+# to refuse, handed to the reader as the thing to copy.
+#
+# It is ONE accepted shape, not the only one, and the printed text says so. A
+# card that implied otherwise would send an author to restructure an agent that
+# a different accepted route already covers, which is the harm this block is
+# here to stop rather than to repeat in a new spelling.
+ACCEPTED_ROUTE_AGENT = """from openai import OpenAI
+
+MODELS = ["gpt-4o-mini", "gpt-4o"]
+
+client = OpenAI()
+
+
+def answer(question, model_choice=0):
+    model = MODELS[model_choice]
+    reply = client.chat.completions.create(
+        model=model,
+        messages=[{"role": "user", "content": question}],
+    )
+    return reply.choices[0].message.content
+"""
+
+
+# The entry that cites the agent above, in the same document this scorer reads.
+# Both halves are printed, because either alone leaves the reader guessing at
+# the other: the code shows the route and the entry shows which line to cite
+# for it.
+ACCEPTED_ROUTE_KNOB: dict[str, Any] = {
+    "model": {
+        # True of the file above line by line, not merely in range of it. The
+        # sibling example shipped `source_lines: [5]` on four checks once and
+        # made a claim about a call that does not do what the claim said, in
+        # the block a reader is told to copy. So each number here is checked
+        # against that file by the suite rather than eyeballed.
+        "evidence": "agent.py:3 lists the alternatives, agent.py:9 selects "
+        "one, and agent.py:11 passes it to the request call.",
+        "source_lines": [3],
+        "values": ["gpt-4o-mini", "gpt-4o"],
+    }
+}
+
+
+# What the four printed parts are, in the order they appear in the file above.
+# Each one is a condition this reader actually applies, so the list can be
+# checked against the code rather than believed.
+ACCEPTED_ROUTE_PARTS: tuple[str, ...] = (
+    "the options are written out as literals in a module-level binding, and "
+    "'source_lines' cites that line",
+    "the selected callable takes the choice as one of its own parameters",
+    "that parameter is what indexes the module binding",
+    "the selected value reaches an argument named for the setting, either "
+    "written into the call or through one plain local that nothing else "
+    "rewrites",
+)
+
+ACCEPTED_ROUTE_LABEL = "ACCEPTED ROUTE"
+
+
+def accepted_route_shape() -> list[str]:
+    """The accepted worked example, as card lines.
+
+    Rendered from the constants above rather than restated, for the reason
+    `agent_knobs_shape` is: a skeleton that drifts from the checker teaches a
+    wrong shape with more authority than no skeleton at all.
+    """
+    entry = json.dumps(ACCEPTED_ROUTE_KNOB, indent=2)
+    lines = [
+        f"  {ACCEPTED_ROUTE_LABEL} One agent whose settings route this check "
+        "does follow, printed because",
+        "  naming what failed does not say what would pass. It is one accepted "
+        "shape and not the",
+        "  only one, so read it for its parts rather than for its names.",
+        "",
+    ]
+    lines.extend(
+        f"      {line}" if line else "" for line in ACCEPTED_ROUTE_AGENT.splitlines()
+    )
+    lines.append("")
+    lines.append('  and the entry that cites it, inside the document\'s "knobs" map:')
+    lines.append("")
+    lines.extend(f"      {line}" if line else "" for line in entry.splitlines())
+    lines.append("")
+    lines.append(
+        "  Four parts make that route readable, and this check wants all four:"
+    )
+    lines.extend(
+        f"    {index}. {part}" for index, part in enumerate(ACCEPTED_ROUTE_PARTS, 1)
+    )
+    return lines
 
 
 # A prompt earns most of its check for existing and the rest for carrying

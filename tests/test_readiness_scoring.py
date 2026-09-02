@@ -13351,6 +13351,379 @@ class StaticAgentSourceEvidenceTests(unittest.TestCase):
                     )
 
 
+class ALocalBindingIsStillARouteToTheCallTests(unittest.TestCase):
+    """#348: an ordinary agent binds its setting to a local before the call.
+
+    Established by construction rather than by reading the checker, because
+    reading it is what produced the wrong answer five times. Two agents were
+    written that differ by exactly one line - the option table indexed inside
+    the request call, and the same selection bound to a local first - and
+    scored through the real reader. The direct one earned the settings check
+    and the local one scored zero, with every other byte identical. Four Python
+    idioms had been blamed before that pair was built (`or ""`, `float()`, an
+    f-string helper, and inlining the option literals) and none of them was the
+    cause; the newline was.
+
+    So the positive half of this class is that pair, asserted to agree, and the
+    negative half attacks the widening. A def-use pass that credited a binding
+    it could not actually verify would be the refusal's own defect pointed the
+    other way: a setting that never reaches the call, scored as though it did.
+    Every shape below where the value at the call is not the value the
+    assignment wrote has to stay refused.
+    """
+
+    HEADER = 'from openai import OpenAI\n\nMODELS = ["gpt-4o-mini", "gpt-4o"]\n\n'
+
+    def _credited(self, body: str) -> bool:
+        source = self.HEADER + body
+        compile(source, "agent.py", "exec")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "agent.py").write_text(source, encoding="utf-8")
+            facts = MODULE.agent_facts_from_discovery(
+                {
+                    "source": "agent.py",
+                    "knobs": {
+                        "model": {
+                            "values": ["gpt-4o-mini", "gpt-4o"],
+                            "source_lines": [3],
+                            "evidence": "the module table reaches the selected call",
+                        }
+                    },
+                },
+                source_root=root,
+                selected_agent=root / "agent.py",
+                selected_agent_callable="answer",
+            )
+        return facts.discovered[0].credited
+
+    DIRECT_REQUEST = (
+        "def answer(question, cfg):\n"
+        "    client = OpenAI()\n"
+        "    reply = client.chat.completions.create(\n"
+        '        model=MODELS[cfg["model"]],\n'
+        '        messages=[{"role": "user", "content": question}],\n'
+        "    )\n"
+        "    return reply.choices[0].message.content\n"
+    )
+    LOCAL_REQUEST = (
+        "def answer(question, cfg):\n"
+        "    client = OpenAI()\n"
+        '    model = MODELS[cfg["model"]]\n'
+        "    reply = client.chat.completions.create(\n"
+        "        model=model,\n"
+        '        messages=[{"role": "user", "content": question}],\n'
+        "    )\n"
+        "    return reply.choices[0].message.content\n"
+    )
+
+    def test_the_one_line_pair_that_reproduced_the_report_now_agrees(self) -> None:
+        """The reproduction, kept as the thing it reproduced.
+
+        Both agents send the same two alternatives to the same request. The
+        only difference is whether the selection was bound to a name first,
+        which is a fact about where the author put a newline and not about
+        what the agent can vary.
+        """
+        self.assertTrue(self._credited(self.DIRECT_REQUEST))
+        self.assertTrue(self._credited(self.LOCAL_REQUEST))
+
+    def test_a_local_carries_a_module_table_into_an_ordinary_call(self) -> None:
+        """The same widening on the other route into a call.
+
+        The paraphrases are here rather than in their own test because they
+        are the same claim: the local's spelling, its annotation, and whether
+        the callee takes it by keyword or by position are all things this read
+        must not be sensitive to.
+        """
+        shapes = {
+            "written into the call": (
+                "def answer(question, model_choice=0):\n"
+                "    return provider(model=MODELS[model_choice], text=question)\n"
+            ),
+            "through one plain local": (
+                "def answer(question, model_choice=0):\n"
+                "    model = MODELS[model_choice]\n"
+                "    return provider(model=model, text=question)\n"
+            ),
+            "through an annotated local": (
+                "def answer(question, model_choice=0):\n"
+                "    model: str = MODELS[model_choice]\n"
+                "    return provider(model=model, text=question)\n"
+            ),
+            "through a differently named local": (
+                "def answer(question, model_choice=0):\n"
+                "    chosen = MODELS[model_choice]\n"
+                "    return provider(model=chosen, text=question)\n"
+            ),
+            "through a local passed by position": (
+                "def send(model, text):\n"
+                "    return provider(model=model, text=text)\n"
+                "def answer(question, model_choice=0):\n"
+                "    model = MODELS[model_choice]\n"
+                "    return send(model, question)\n"
+            ),
+        }
+        for name, body in shapes.items():
+            with self.subTest(shape=name):
+                self.assertTrue(self._credited(body))
+
+    def test_a_binding_this_read_cannot_pin_earns_nothing(self) -> None:
+        """Every shape where the name at the call is not what the assignment wrote.
+
+        Each of these would be a knob credited without a route, which is the
+        refusal this class widens, inverted. They are listed one per shape
+        rather than folded together so a regression names the shape it broke.
+        """
+        shapes = {
+            "reassigned before the call": (
+                "def answer(question, model_choice=0):\n"
+                "    model = MODELS[model_choice]\n"
+                '    model = "gpt-4o-mini"\n'
+                "    return provider(model=model, text=question)\n"
+            ),
+            "augmented before the call": (
+                "def answer(question, model_choice=0):\n"
+                "    model = MODELS[model_choice]\n"
+                '    model += "-preview"\n'
+                "    return provider(model=model, text=question)\n"
+            ),
+            "unpacked from a tuple": (
+                "def answer(question, model_choice=0):\n"
+                "    model, text = MODELS[model_choice], question\n"
+                "    return provider(model=model, text=text)\n"
+            ),
+            "rebound in a branch": (
+                "def answer(question, model_choice=0):\n"
+                "    model = MODELS[model_choice]\n"
+                "    if question:\n"
+                '        model = "gpt-4o-mini"\n'
+                "    return provider(model=model, text=question)\n"
+            ),
+            "bound inside a branch": (
+                "def answer(question, model_choice=0):\n"
+                "    if question:\n"
+                "        model = MODELS[model_choice]\n"
+                "    return provider(model=model, text=question)\n"
+            ),
+            "bound by a walrus": (
+                "def answer(question, model_choice=0):\n"
+                "    if (model := MODELS[model_choice]):\n"
+                "        pass\n"
+                "    return provider(model=model, text=question)\n"
+            ),
+            "bound in a loop": (
+                "def answer(question, model_choice=0):\n"
+                "    for _ in (0,):\n"
+                "        model = MODELS[model_choice]\n"
+                "    return provider(model=model, text=question)\n"
+            ),
+            "replaced by an alternative at the call": (
+                "def answer(question, model_choice=0):\n"
+                "    model = MODELS[model_choice]\n"
+                '    return provider(model=model or "gpt-4o-mini", text=question)\n'
+            ),
+            "read before it is bound": (
+                "def answer(question, model_choice=0):\n"
+                "    result = provider(model=model, text=question)\n"
+                "    model = MODELS[model_choice]\n"
+                "    return result\n"
+            ),
+            "captured by a nested callable": (
+                "def answer(question, model_choice=0):\n"
+                "    model = MODELS[model_choice]\n"
+                "    later = lambda: model\n"
+                "    return provider(model=model, text=question, later=later)\n"
+            ),
+            "deleted on one path": (
+                "def answer(question, model_choice=0):\n"
+                "    model = MODELS[model_choice]\n"
+                "    if question:\n"
+                "        del model\n"
+                "    return provider(model=model, text=question)\n"
+            ),
+            "possibly mutated in place": (
+                "def answer(question, model_choice=0):\n"
+                "    model = MODELS[model_choice]\n"
+                "    model.strip()\n"
+                "    return provider(model=model, text=question)\n"
+            ),
+            "two hops from the table": (
+                "def answer(question, model_choice=0):\n"
+                "    model = MODELS[model_choice]\n"
+                "    chosen = model\n"
+                "    return provider(model=chosen, text=question)\n"
+            ),
+            "carried to a different argument": (
+                "def answer(question, model_choice=0):\n"
+                "    model = MODELS[model_choice]\n"
+                "    return provider(text=model, model=question)\n"
+            ),
+            "never reading the declared table": (
+                "def answer(question, cfg):\n"
+                "    client = OpenAI()\n"
+                '    model = cfg.get("model") or "gpt-4o-mini"\n'
+                "    reply = client.chat.completions.create(\n"
+                "        model=model,\n"
+                '        messages=[{"role": "user", "content": question}],\n'
+                "    )\n"
+                "    return reply.choices[0].message.content\n"
+            ),
+        }
+        for name, body in shapes.items():
+            with self.subTest(shape=name):
+                self.assertFalse(self._credited(body))
+
+
+class TheRefusedRouteIsShownAnAcceptedOneTests(unittest.TestCase):
+    """#348: the refusal named what failed and never what would pass.
+
+    Five rewrites of a working agent were aimed at idioms that were never the
+    cause, because the only thing the card said was that the route could not
+    be verified. The remedy is the one `agent_knobs_shape` already landed for
+    the document half: print a real, complete, accepted example rather than
+    describe one, and pin it against the reader so it cannot drift into an
+    example this scorer would itself refuse.
+    """
+
+    def test_the_printed_route_is_one_this_reader_actually_credits(self) -> None:
+        """The anti-drift property, checked through the real reader.
+
+        This is the whole reason the example is a constant and not prose. A
+        shipped example that scores zero is not a smaller version of the fix;
+        it is the defect the fix exists to remove, handed to the reader as the
+        thing to copy.
+        """
+        compile(MODULE.ACCEPTED_ROUTE_AGENT, "agent.py", "exec")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "agent.py").write_text(
+                MODULE.ACCEPTED_ROUTE_AGENT, encoding="utf-8"
+            )
+            facts = MODULE.agent_facts_from_discovery(
+                {
+                    "source": "agent.py",
+                    "knobs": json.loads(json.dumps(MODULE.ACCEPTED_ROUTE_KNOB)),
+                },
+                source_root=root,
+                selected_agent=root / "agent.py",
+                selected_agent_callable="answer",
+            )
+        self.assertTrue(facts.discovered[0].credited)
+        pillar, caps, _ = MODULE.score_agent(facts)
+        self.assertGreater(pillar.score, 0)
+        self.assertFalse(any(cap.condition == "agent-no-varying-knobs" for cap in caps))
+
+    def test_the_cited_lines_point_at_the_printed_agent(self) -> None:
+        """The entry beside the example describes THAT file, not a nearby one.
+
+        `source_lines` is the field the reader is being taught to fill in, so
+        a printed value that lands on a blank line teaches the wrong lesson
+        while still scoring, because the scorer reads the whole cited set.
+        """
+        lines = MODULE.ACCEPTED_ROUTE_AGENT.splitlines()
+        for number in MODULE.ACCEPTED_ROUTE_KNOB["model"]["source_lines"]:
+            with self.subTest(cited=number):
+                self.assertIn("MODELS", lines[number - 1])
+        for value in MODULE.ACCEPTED_ROUTE_KNOB["model"]["values"]:
+            with self.subTest(value=value):
+                self.assertIn(repr(value).strip("'"), MODULE.ACCEPTED_ROUTE_AGENT)
+        # And every line the prose points at, which `source_lines` does not
+        # cover and which the sibling example got wrong once: the numbers in
+        # the sentence have to name lines that do what the sentence says.
+        quoted = dict(
+            zip(
+                (
+                    int(number)
+                    for number in re.findall(
+                        r"agent\.py:(\d+)",
+                        MODULE.ACCEPTED_ROUTE_KNOB["model"]["evidence"],
+                    )
+                ),
+                ("MODELS = ", "model = MODELS[", "model=model"),
+            )
+        )
+        self.assertEqual(len(quoted), 3)
+        for number, fragment in quoted.items():
+            with self.subTest(quoted=number):
+                self.assertIn(fragment, lines[number - 1])
+
+    def _card(self, agent: str, knob: dict) -> str:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "agent.py").write_text(agent, encoding="utf-8")
+            facts = MODULE.agent_facts_from_discovery(
+                {"source": "agent.py", "knobs": {"model": knob}},
+                source_root=root,
+                selected_agent=root / "agent.py",
+                selected_agent_callable="answer",
+            )
+        score = MODULE.score_run(
+            MODULE.DatasetFacts(),
+            MODULE.EvaluationFacts(),
+            facts,
+            dict(MODULE.DEFAULT_WEIGHTS),
+        )
+        return MODULE.render_card(score, unicode_ok=False)
+
+    REFUSED_AGENT = (
+        "from openai import OpenAI\n"
+        "\n"
+        'MODELS = {"fast": "gpt-4o-mini", "slow": "gpt-4o"}\n'
+        "\n"
+        "client = OpenAI()\n"
+        "\n"
+        "\n"
+        "def answer(question, cfg):\n"
+        '    model = MODELS[cfg["model"]]\n'
+        "    reply = client.chat.completions.create(\n"
+        "        model=model,\n"
+        '        messages=[{"role": "user", "content": question}],\n'
+        "    )\n"
+        "    return reply.choices[0].message.content\n"
+    )
+
+    def test_the_accepted_route_prints_beside_a_refused_route(self) -> None:
+        card = self._card(
+            self.REFUSED_AGENT,
+            {
+                "values": ["fast", "slow"],
+                "source_lines": [3],
+                "evidence": "the table this agent selects from",
+            },
+        )
+        self.assertIn(MODULE.ACCEPTED_ROUTE_LABEL, card)
+        for line in MODULE.ACCEPTED_ROUTE_AGENT.splitlines():
+            if line.strip():
+                with self.subTest(line=line):
+                    self.assertIn(line.strip(), card)
+        for part in MODULE.ACCEPTED_ROUTE_PARTS:
+            with self.subTest(part=part):
+                self.assertIn(part, card)
+
+    def test_nothing_is_printed_where_no_route_was_refused(self) -> None:
+        """Two states that must not draw the block, for different reasons.
+
+        A credited read has no question to answer. A parameter refused for a
+        reason that is not about its route - here, no values and no range -
+        has a question this block does not answer, and printing it would hand
+        the reader a remedy for something else.
+        """
+        credited = self._card(
+            MODULE.ACCEPTED_ROUTE_AGENT,
+            json.loads(json.dumps(MODULE.ACCEPTED_ROUTE_KNOB))["model"],
+        )
+        self.assertNotIn(MODULE.ACCEPTED_ROUTE_LABEL, credited)
+        unsettled = self._card(
+            self.REFUSED_AGENT,
+            {
+                "source_lines": [3],
+                "evidence": "seen in the agent, never settled",
+            },
+        )
+        self.assertNotIn(MODULE.ACCEPTED_ROUTE_LABEL, unsettled)
+
+
 class TheAgentPillarReadsTheAgentTests(unittest.TestCase):
     """#184: `AGENT` over one number that answered a question about our search.
 
