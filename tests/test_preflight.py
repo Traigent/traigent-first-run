@@ -4686,6 +4686,15 @@ def score(*, output, expected, input_data, metadata):
     del input_data, metadata
     return float(str(expected).strip() == str(output))
 '''
+REBINDS_ONTO_ITS_OWN_NAME = '''"""Each answer prepared in place, on its own name."""
+
+
+def score(*, output, expected, input_data, metadata):
+    del input_data, metadata
+    output = str(output).strip().casefold()
+    expected = str(expected).strip().casefold()
+    return float(output == expected)
+'''
 COMPARES_ONE_ANSWER_TWICE = '''"""Compares the answer with itself. Not a comparison against the expectation."""
 
 
@@ -4746,6 +4755,28 @@ class TheComparisonTheFilePerformsIsProvedOrLeftUnsettledTests(unittest.TestCase
         reversed_shape, reversed_transforms, _line = self.shape(REVERSED_OPERANDS)
         self.assertEqual(reversed_shape, "normalized-exact")
         self.assertEqual(reversed_transforms, frozenset({"strip"}))
+
+    def test_an_answer_prepared_onto_its_own_name_is_still_normalised(self) -> None:
+        """The rebinding a scorer is just as likely to be written with.
+
+        `output = output.strip()` is an ordinary way to prepare an answer, and
+        at the comparison the name means the prepared value, not the argument.
+        A read that took the parameter first would report this file as `exact`
+        and hand full credit to the one declaration this walk exists to
+        refuse, on a file that folds case before comparing.
+        """
+        shape, transforms, _line = self.shape(REBINDS_ONTO_ITS_OWN_NAME)
+        self.assertEqual(shape, "normalized-exact")
+        self.assertEqual(transforms, frozenset({"strip", "casefold"}))
+        # One side rebound is enough, and the bare file is still bare.
+        one_side, one_transform, _line = self.shape(
+            "def score(*, output, expected, input_data, metadata):\n"
+            "    output = str(output).strip()\n"
+            "    return float(output == expected)\n"
+        )
+        self.assertEqual(one_side, "normalized-exact")
+        self.assertEqual(one_transform, frozenset({"strip"}))
+        self.assertEqual(self.shape(BARE_EQUALITY)[0], "exact")
 
     def test_every_other_honest_evaluator_is_left_unsettled(self) -> None:
         """The `None` branch, over the same real shapes the other walk uses.

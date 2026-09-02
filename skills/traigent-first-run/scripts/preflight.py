@@ -2568,12 +2568,19 @@ def _comparison_operand(
         return None
     if not isinstance(current, ast.Name):
         return None
+    # Aliases first, and the order is load-bearing. A scorer may rebind an
+    # answer onto its own name - `output = output.strip()` is an ordinary way
+    # to write one - and reading the parameter first would resolve the name at
+    # the comparison to the untransformed argument, report the file as `exact`,
+    # and hand full credit to the very declaration this walk exists to refuse.
+    # Aliases are recorded in statement order, so a rebinding's own right-hand
+    # side still resolves through the parameter, which is what it means there.
+    alias = aliases.get(current.id)
+    if alias is not None:
+        return alias[0], frozenset(transforms | alias[1])
     if current.id in _SCORER_ANSWER_PARAMETERS:
         return current.id, frozenset(transforms)
-    alias = aliases.get(current.id)
-    if alias is None:
-        return None
-    return alias[0], frozenset(transforms | alias[1])
+    return None
 
 
 def derived_comparison_shape(
@@ -2657,7 +2664,7 @@ def derived_comparison_shape(
     return shape, frozenset(transforms), value.lineno
 
 
-def comparison_witness(shape: str, transforms: frozenset[str], line: int) -> str:
+def comparison_witness(transforms: frozenset[str], line: int) -> str:
     """What was read, in terms the reader can check against their own file."""
     if transforms:
         applied = ", ".join(sorted(transforms))
@@ -2745,7 +2752,7 @@ def check_evaluator(path: Path) -> None:
     if comparison is not None:
         shape, transforms, line = comparison
         derived["comparison_shape"] = shape
-        derived["comparison_witness"] = comparison_witness(shape, transforms, line)
+        derived["comparison_witness"] = comparison_witness(transforms, line)
     if witnesses:
         emit(
             "evaluator-shape",
