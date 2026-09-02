@@ -741,6 +741,7 @@ class StaticPreflightTests(unittest.TestCase):
                 "tuning_rows": 18,
                 "tuning_labelled_rows": 18,
                 "tuning_distinct_rows": 18,
+                "tuning_distinct_scoreable_rows": 18,
             },
         )
         self.assertEqual(
@@ -771,6 +772,7 @@ class StaticPreflightTests(unittest.TestCase):
                 "tuning_rows": 18,
                 "tuning_labelled_rows": 18,
                 "tuning_distinct_rows": 18,
+                "tuning_distinct_scoreable_rows": 18,
             },
         )
         self.assertFalse(
@@ -822,6 +824,7 @@ class StaticPreflightTests(unittest.TestCase):
                 "tuning_rows": 8,
                 "tuning_labelled_rows": 8,
                 "tuning_distinct_rows": 8,
+                "tuning_distinct_scoreable_rows": 8,
             },
         )
         self.assertEqual(
@@ -912,6 +915,7 @@ class StaticPreflightTests(unittest.TestCase):
                 "tuning_rows": 10,
                 "tuning_labelled_rows": 10,
                 "tuning_distinct_rows": 10,
+                "tuning_distinct_scoreable_rows": 10,
             },
         )
         self.assertEqual(
@@ -3623,6 +3627,68 @@ class TheSubsetProposalCountsDifferentQuestionsTests(unittest.TestCase):
             "'nobody counted' from 'there is nothing to draw'",
         )
 
+    def test_the_draw_and_the_sibling_key_describe_one_population(self) -> None:
+        """The two counts differ by IDENTITY and must never differ by population.
+
+        `tuning_distinct_scoreable_rows` is the tuning-and-scoreable count a
+        comparison may be bounded by, and it is taken on `normalized_identity`.
+        The draw takes the same population on `exact_input_identity`, because
+        this one cuts a paid budget and that one does not. Keeping the identity
+        different is deliberate; keeping the population different is the defect
+        that has now appeared here on three axes, so it is pinned rather than
+        left to two walks agreeing by habit.
+
+        Two fixtures, because equality alone would also hold if both counts
+        were wrong the same way.
+
+        * Where no two questions collapse under the looser identity the two
+          numbers are EQUAL. A draw that reached held-out rows, unlabelled rows
+          or blank-answer rows would exceed the key here.
+        * Where exactly twenty pairs collapse, the difference is exactly twenty
+          and the draw's count is the larger. A draw that had quietly adopted
+          the looser identity would tie instead.
+        """
+        agreeing = [
+            {
+                "id": f"plain-{index}",
+                "input": f"how many rows joined table {index}",
+                "output": str(index),
+                "split": "tuning",
+            }
+            for index in range(60)
+        ] + self.held_out()
+        found = self.scan(agreeing)
+        self.assertEqual(
+            found["dataset-first-run-rows"].metrics["first_run_distinct_rows"],
+            found["dataset-tuning-size"].metrics["tuning_distinct_scoreable_rows"],
+            "the draw and the key it parallels no longer count the same rows",
+        )
+
+        collapsing = (
+            agreeing[:-10]
+            + [
+                {
+                    "id": f"op-{index}-{sign}",
+                    "input": f"is column_{index} {sign} 5",
+                    "output": "yes" if sign == ">" else "no",
+                    "split": "tuning",
+                }
+                for index in range(20)
+                for sign in (">", "<")
+            ]
+            + self.held_out()
+        )
+        found = self.scan(collapsing)
+        draw = found["dataset-first-run-rows"].metrics["first_run_distinct_rows"]
+        key = found["dataset-tuning-size"].metrics["tuning_distinct_scoreable_rows"]
+        self.assertEqual(
+            draw - key,
+            20,
+            "the draw and the key differ by something other than the twenty "
+            "operator pairs, so one of them changed population",
+        )
+        self.assertGreater(draw, key)
+
     def test_the_scope_travels_with_the_number(self) -> None:
         """A count with no population is the shape both defects wore.
 
@@ -3655,6 +3721,149 @@ class TheSubsetProposalCountsDifferentQuestionsTests(unittest.TestCase):
             with self.subTest(scope=label):
                 finding = self.scan(rows)["dataset-first-run-rows"]
                 self.assertEqual(finding.metrics["first_run_distinct_scope"], label)
+
+
+class TheDistinctCountAndTheCountItBoundsDescribeOneSetTests(unittest.TestCase):
+    """Two counts over two populations cannot bound each other (#356).
+
+    `tuning_distinct_rows` counts the different inputs on the tuning side of the
+    line, every row of it. The number readiness bounds with it counted only the
+    rows it can SCORE. On a file where those are the same rows the mistake is
+    invisible; on a file half annotated they are different rows, and the larger
+    count satisfied the guard on the strength of rows the comparison never sees.
+
+    The fixtures below are built from row counts and question texts, never from
+    the keys the assertions read, so a metric renamed or narrowed in place fails
+    here rather than passing on its own definition.
+    """
+
+    def setUp(self) -> None:
+        MODULE.RESULTS.clear()
+
+    def _tuning_metrics(self, rows: list[dict], **kwargs: str) -> dict:
+        with tempfile.TemporaryDirectory() as raw:
+            dataset = Path(raw) / "dataset.jsonl"
+            dataset.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+            MODULE.RESULTS.clear()
+            MODULE.check_dataset(dataset, **kwargs)
+        return next(
+            result.metrics
+            for result in MODULE.RESULTS
+            if result.check == "dataset-tuning-size"
+        )
+
+    @staticmethod
+    def _mixed_rows() -> list[dict]:
+        """The reproduction filed on the issue, written out rather than derived.
+
+        Twenty labelled tuning rows asking ten questions, forty unlabelled
+        tuning rows each asking its own, and ten held back. The honest count of
+        questions this run can score on the tuning side is ten.
+        """
+        rows = [
+            {
+                "id": f"labelled-{index}",
+                "input": f"question number {index % 10} about the billing system",
+                "output": f"answer-{index % 10}",
+                "split": "tune",
+            }
+            for index in range(20)
+        ]
+        rows += [
+            {
+                "id": f"silent-{index}",
+                "input": f"unlabelled question number {index} about shipping",
+                "split": "tune",
+            }
+            for index in range(40)
+        ]
+        rows += [
+            {
+                "id": f"held-{index}",
+                "input": f"held out question number {index} about accounts",
+                "output": f"answer-h{index}",
+                "split": "holdout",
+            }
+            for index in range(10)
+        ]
+        return rows
+
+    def test_a_half_labelled_tuning_side_counts_the_questions_it_can_score(
+        self,
+    ) -> None:
+        metrics = self._tuning_metrics(self._mixed_rows())
+        self.assertEqual(metrics["tuning_rows"], 60)
+        self.assertEqual(metrics["tuning_labelled_rows"], 20)
+        # The older count is unchanged and still true of the file: fifty
+        # different inputs sit on the tuning side. It is the population that is
+        # wrong for bounding a comparison, not the arithmetic.
+        self.assertEqual(metrics["tuning_distinct_rows"], 50)
+        self.assertEqual(
+            metrics["tuning_distinct_scoreable_rows"],
+            10,
+            "the scoreable distinct count is not counting the labelled rows "
+            "alone, so it can be satisfied by rows no comparison scores",
+        )
+
+    def test_unlabelled_rows_cannot_lift_the_count_that_bounds_the_comparison(
+        self,
+    ) -> None:
+        """Adding rows the run cannot score moves one count and not the other."""
+        rows = self._mixed_rows()
+        fewer = [row for row in rows if not row["id"].startswith("silent-")]
+        with_silent = self._tuning_metrics(rows)
+        without_silent = self._tuning_metrics(fewer)
+        self.assertEqual(
+            with_silent["tuning_distinct_scoreable_rows"],
+            without_silent["tuning_distinct_scoreable_rows"],
+        )
+        self.assertGreater(
+            with_silent["tuning_distinct_rows"],
+            without_silent["tuning_distinct_rows"],
+        )
+
+    def test_a_fully_labelled_tuning_side_gives_both_counts_the_same_answer(
+        self,
+    ) -> None:
+        """Where every tuning row is scoreable the two populations coincide.
+
+        This is the direction that must NOT move: a narrower count is only
+        correct where some rows are unscoreable, and one that came in low on an
+        ordinary fully-labelled file would bound a comparison that has nothing
+        wrong with it.
+        """
+        rows = [
+            {
+                "id": f"row-{index}",
+                "input": f"a distinct question numbered {index}",
+                "output": f"answer-{index}",
+                "split": "tune",
+            }
+            for index in range(14)
+        ]
+        metrics = self._tuning_metrics(rows)
+        self.assertEqual(metrics["tuning_rows"], 14)
+        self.assertEqual(metrics["tuning_distinct_rows"], 14)
+        self.assertEqual(metrics["tuning_distinct_scoreable_rows"], 14)
+
+    def test_a_reference_free_method_can_score_a_row_carrying_no_answer(
+        self,
+    ) -> None:
+        """Under a judge needing no gold answer, every present row is scoreable.
+
+        So the two counts have to agree again on the same file where they
+        disagreed above - the difference between them is a property of the
+        method, not of the rows, and a count that stayed narrow here would
+        report a repetition this dataset does not have.
+        """
+        rows = self._mixed_rows()
+        method = sorted(MODULE.REFERENCE_FREE_METHODS)[0]
+        metrics = self._tuning_metrics(rows, evaluator_method=method)
+        self.assertEqual(
+            metrics["tuning_distinct_scoreable_rows"],
+            metrics["tuning_distinct_rows"],
+        )
+        self.assertEqual(metrics["tuning_distinct_scoreable_rows"], 50)
 
 
 if __name__ == "__main__":

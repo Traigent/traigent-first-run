@@ -14,7 +14,13 @@
     "status": "OK",
     "recommended_action": "review-answer-key",
     "caps": [
-      {"condition": "dataset-generated-answer-key", "ceiling": 74, "blocks": false, "asks": true}
-    ]
+      {
+        "condition": "dataset-generated-answer-key",
+        "ceiling": 74,
+        "blocks": false,
+        "asks": true
+      }
+    ],
+    "asks_about_repeats": false
   }
 }

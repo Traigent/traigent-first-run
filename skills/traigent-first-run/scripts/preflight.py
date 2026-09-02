@@ -2755,19 +2755,44 @@ def check_dataset(
     # `row["input"]`. That subscript is only correct on a normalized row, where
     # "input" is the projected value; on a raw row it is a KeyError under any
     # non-default `--input-field`.
+    # The same walk, keyed twice, because one count cannot answer both questions
+    # it is asked. `splits` is every input on a side, which is what the overlap
+    # test below needs: a held-out row leaks whether or not anybody labelled it.
+    # `scoreable_splits` is the inputs on a side that this run can actually
+    # score, which is what a comparison count may be bounded by.
+    #
+    # Keeping only the first produced traigent-first-run#356. A dataset half
+    # collected and half annotated - the ordinary state of a file somebody is
+    # still working on - published a distinct count over all of its tuning rows
+    # while readiness bounded a count of the labelled ones, so twenty labelled
+    # rows asking ten questions were compared against fifty and the bound did
+    # nothing. Two numbers over two populations cannot bound each other in
+    # either direction; this is the second one, taken over the population the
+    # bound is about.
+    scoreable_splits: dict[str, set[str]] = {}
     for row in present_rows:
         split = row_metadata_value(row, "split")
         if split:
             split_name = str(split).casefold()
             split_counts[split_name] += 1
-            if dataset_row_is_labelled(row, expected_field):
+            labelled_row = dataset_row_is_labelled(row, expected_field)
+            if labelled_row:
                 labelled_split_counts[split_name] += 1
             _, input_value = dataset_field_value(row, input_field)
-            splits.setdefault(split_name, set()).add(normalized_identity(input_value))
+            identity = normalized_identity(input_value)
+            splits.setdefault(split_name, set()).add(identity)
+            # `reference_free` is the same condition `emit_tuning_size` uses to
+            # decide what "scoreable" means, read once here so the count and
+            # the number it will bound cannot disagree about the method.
+            if reference_free or labelled_row:
+                scoreable_splits.setdefault(split_name, set()).add(identity)
     tune_names = TUNING_SPLIT_NAMES
     holdout_names = {"holdout", "test", "validation", "validate"}
     tune_inputs = set().union(
         *(values for name, values in splits.items() if name in tune_names)
+    )
+    tune_scoreable_inputs = set().union(
+        *(values for name, values in scoreable_splits.items() if name in tune_names)
     )
     holdout_inputs = set().union(
         *(values for name, values in splits.items() if name in holdout_names)
@@ -2796,6 +2821,32 @@ def check_dataset(
             # fifteen questions is not the same comparison as one asking thirty,
             # and only the second count can say which one this is.
             "tuning_distinct_rows": len(tune_inputs),
+            # The same question asked of the rows that can be scored, and the
+            # one any count describing what the comparison resolves may be
+            # bounded by (#356). It is published BESIDE the count above rather
+            # than replacing it, because narrowing that key in place would
+            # silently change a number other checks already read.
+            #
+            # THIS IS THE KEY FOR SIZING WHAT A RUN BUYS, and the distinction is
+            # not academic. The count above is scoped to the tuning side and to
+            # nothing else; this one is scoped to the tuning side AND to the
+            # rows a score can actually be computed on. Anything pricing a draw
+            # wants the second, because a row nobody labelled is a row every
+            # configuration pays a provider for and none of them is scored on.
+            # A count taken over the whole file is wrong in a further way again:
+            # it spans the held-out split, which the search never draws from.
+            #
+            # Equal to the count above under a reference-free method, where
+            # every present row is scoreable, and that equality is the point
+            # rather than a redundancy: a reader must not have to know the
+            # evaluator method to know which of the two describes the rows
+            # being compared.
+            #
+            # ABSENT, never zero, on a payload written before it existed. A
+            # consumer must treat a missing key as "not measured" and leave its
+            # own number untouched, the way `resolved_by_distinct` does. Reading
+            # absence as zero would price a run at nothing.
+            "tuning_distinct_scoreable_rows": len(tune_scoreable_inputs),
         }
         if tuning_scoreable < WIRING_CHECK_EXAMPLES:
             emit(

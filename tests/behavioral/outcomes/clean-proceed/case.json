@@ -13,6 +13,7 @@
     "band": "WORKABLE",
     "status": "OK",
     "recommended_action": "proceed",
-    "caps": []
+    "caps": [],
+    "asks_about_repeats": false
   }
 }

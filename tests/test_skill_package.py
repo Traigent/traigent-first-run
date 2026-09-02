@@ -10592,9 +10592,20 @@ class SkillPackageTests(unittest.TestCase):
         # whole percent cannot round into agreement with a card that is.
         self.assertEqual(f"{threshold:.0%}", f"{percent}%")
         near_duplicates = next(
-            check
-            for check in READINESS.DIVERSITY_CHECKS
-            if check.certifier == "near_duplicate_status"
+            (
+                check
+                for check in READINESS.DIVERSITY_CHECKS
+                if any(
+                    certifier.fact == "near_duplicate_status"
+                    for certifier in check.certifiers
+                )
+            ),
+            None,
+        )
+        self.assertIsNotNone(
+            near_duplicates,
+            "no diversity check is certified by the similarity scan any more, "
+            "so nothing here holds the printed threshold to the deciding one",
         )
         for label in (
             near_duplicates.found_label,
