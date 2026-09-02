@@ -10204,6 +10204,64 @@ class TheTopBandsNeedAReadOfTheAnswersTests(unittest.TestCase):
         self.assertEqual(list(score.caps), [])
         self.assertEqual(score.recommended_action, MODULE.PROCEED)
 
+    def test_the_hold_sentence_claims_nothing_the_rest_of_the_card_denies(
+        self,
+    ) -> None:
+        """The sentence beside the hold reads the payload; it does not assert it.
+
+        An unconditional version said "nothing here is capped and the step
+        after this one still reads proceed", and both halves were false on an
+        ordinary card: 10 tuning rows against 10 held out, calibrated, with a
+        wired space, scores 89 and holds the band while
+        `dataset-coarse-resolution` prints its ceiling four lines above and
+        `recommended_action` reads `add-examples`.
+
+        `dataset-coarse-resolution` is the only cap that can coexist with this
+        hold - every other ceiling pulls the band under WORKABLE before the
+        hold applies - so the state is reachable on any dataset under the
+        walkthrough default rather than being exotic. The sweep below is what
+        makes that concrete rather than argued.
+        """
+        reassurance = "is being asked of you before the run"
+        always_true = "This hold is not a cap and does not stop the run"
+        held = 0
+        for tuning in range(6, 39):
+            for holdout in (6, 10):
+                score = _healthy_score(
+                    tuning_rows=tuning,
+                    holdout_rows=holdout,
+                    tuning_labelled_rows=tuning,
+                    holdout_labelled_rows=holdout,
+                    rows=tuning + holdout,
+                    labelled_rows=tuning + holdout,
+                    answerable_rows=tuning + holdout,
+                    collected_rows=tuning + holdout,
+                    distinct_rows=tuning + holdout,
+                    tuning_distinct_rows=tuning,
+                    tuning_distinct_scoreable_rows=tuning,
+                    difficulty_tagged_rows=tuning + holdout,
+                )
+                if not score.band_limited_by_unread_answers:
+                    continue
+                held += 1
+                card = MODULE.render_card(
+                    score, palette=MODULE.Palette(), unicode_ok=False
+                )
+                report = MODULE.render_markdown(score)
+                with self.subTest(tuning=tuning, holdout=holdout):
+                    # The half that is true of this hold in every state.
+                    self.assertIn(always_true, card)
+                    self.assertIn(always_true, report)
+                    # And the half that is true only when the rest of the card
+                    # says nothing, on both surfaces, read off the payload the
+                    # card was rendered from.
+                    quiet = (
+                        not score.caps and score.recommended_action == MODULE.PROCEED
+                    )
+                    self.assertEqual(reassurance in card, quiet)
+                    self.assertEqual(reassurance in report, quiet)
+        self.assertGreater(held, 20, "the sweep stopped reaching the held state")
+
     def test_removing_the_floor_returns_the_card_that_was_filed(self) -> None:
         """The mutation, executed - and what no table check can see.
 

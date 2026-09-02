@@ -7665,6 +7665,29 @@ def render_card(
             f"at {score.band}.{palette.reset}"
         )
     if score.band_limited_by_unread_answers:
+        # READ, never asserted. The clause about the rest of the card is true
+        # only when the rest of the card says nothing, and an unconditional
+        # version of it was false in an ordinary state: 10 tuning rows against
+        # 10 held out, calibrated, with a wired space, scores 89 and holds the
+        # band while `dataset-coarse-resolution` prints `LIMITED TO 89` four
+        # lines above and `recommended_action` reads `add-examples`. Two of
+        # three claims false on one card.
+        #
+        # That condition is not exotic: 89 is the only ceiling that can coexist
+        # with this hold, because every other cap pulls the band under WORKABLE
+        # before the hold can apply, and it asks whenever the top-up offer has
+        # room. The sweep that establishes it is the regression test itself,
+        # which walks the same space and re-derives the counts on every run:
+        # tests/test_readiness_scoring.py#TheTopBandsNeedAReadOfTheAnswersTests
+        # test_the_hold_sentence_claims_nothing_the_rest_of_the_card_denies.
+        #
+        # So the sentence asserts only what is true of THIS hold in every
+        # state - it is not a cap, it does not stop the run, it holds the
+        # verdict - and reads `caps` and `recommended_action` for the rest.
+        # Asserting the value of a field the payload already carries, four
+        # lines from where the card prints that field's consequence, is the
+        # defect class this branch exists to remove.
+        nothing_else_pending = not score.caps and score.recommended_action == PROCEED
         # Beside the confidence sentence and never instead of it: two different
         # gaps hold this band, only one of them is about the answer key, and a
         # reader told about the wrong one goes and closes the wrong gap.
@@ -7694,12 +7717,18 @@ def render_card(
         lines.append(
             f"  {palette.dim}No read covering the expected answers this run is "
             f"graded against has reached this score, so the comparison is not "
-            f"graded above {score.band} whatever it scores. Nothing here is "
-            f"capped and nothing needs repairing, so the run is not stopped "
-            f"and the step after this one still reads proceed: what is held is "
-            f"the verdict, not the work. A row-by-row read of each input "
-            f"beside its expected answer, covering the rows the run is graded "
-            f"on, is what lifts it.{palette.reset}"
+            f"graded above {score.band} whatever it scores. This hold is not a "
+            f"cap and does not stop the run: what it holds is the verdict, not "
+            f"the work."
+            + (
+                " Nothing else here is capped and nothing is being asked of "
+                "you before the run."
+                if nothing_else_pending
+                else ""
+            )
+            + f" A row-by-row read of each input beside its expected answer, "
+            f"covering the rows the run is graded on, is what lifts it."
+            f"{palette.reset}"
         )
     lines.append(
         f"  {palette.dim}Local pre-run planning estimate, not a probability or "
@@ -7759,12 +7788,17 @@ def render_markdown(score: ReadinessScore, timestamp: str | None = None) -> str:
                     "**The band is held here.** No read covering the expected "
                     "answers this run is graded against has reached this "
                     "score, so no score carries this comparison above "
-                    f"{score.band}. Nothing is capped and nothing needs "
-                    "repairing, so the run is not stopped and the recommended "
-                    "action still reads `proceed`: what is held is the "
-                    "verdict, not the work. A row-by-row read of each input "
-                    "beside its expected answer, covering the rows the run is "
-                    "graded on, is what lifts it.",
+                    f"{score.band}. This hold is not a cap and does not stop "
+                    "the run: what it holds is the verdict, not the work."
+                    + (
+                        " Nothing else is capped and nothing is being asked of "
+                        "you before the run."
+                        if not score.caps and score.recommended_action == PROCEED
+                        else ""
+                    )
+                    + " A row-by-row read of each input beside its expected "
+                    "answer, covering the rows the run is graded on, is what "
+                    "lifts it.",
                     "",
                 ]
                 if score.band_limited_by_unread_answers
