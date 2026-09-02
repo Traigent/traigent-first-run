@@ -5734,24 +5734,46 @@ class SkillPackageTests(unittest.TestCase):
             f"tuning plus {held_out} held-out, which is {expected + held_out}",
         )
 
+        # Whitespace-tolerant between words, because it was not and that hid a
+        # restatement: `SKILL.md` wraps its own statement across a line, so the
+        # pattern matched six of the seven that existed and the seventh was
+        # uncovered by nothing more than a line break. A sweep whose misses look
+        # exactly like absences is the shape this file keeps finding elsewhere.
+        #
+        # `tuning questions` and `questions by default` are here because the
+        # subset rules now cap the draw in QUESTIONS: eighteen questions bring
+        # more than eighteen rows on a file whose questions carry several
+        # accepted answers, so a template quoting rows understates the price on
+        # exactly the datasets that rule is for. The generated walkthrough keeps
+        # the row spelling and keeps it honestly - it creates one accepted
+        # answer per row, so its eighteen is both numbers at once.
         counted = re.compile(
-            r"(\d+)\s+(?:tuning rows|tuning examples|varied synthetic cases"
-            r"|rows by default)"
+            r"(\d+)\s+(?:tuning\s+rows|tuning\s+questions|tuning\s+examples"
+            r"|varied\s+synthetic\s+cases|rows\s+by\s+default"
+            r"|questions\s+by\s+default)"
         )
         statements: list[tuple[str, int]] = []
         for path in assistant_facing_documents():
             for match in counted.finditer(path.read_text()):
                 statements.append((path.name, int(match.group(1))))
-        # The rule plus its five restatements. Pinned so that DELETING a
+        # The rule plus its six restatements. Pinned so that DELETING a
         # restatement is a decision someone makes, not a way for this sweep to
         # quietly cover less than it did. Raised from four when the held-out
         # split arrived - the sampling rule that draws the tuning rows from the
         # tuning split states the count a fifth time - and from five when the
         # row-level sanity check arrived, whose section states how many rows it
         # reads. Each new statement is welded here rather than left uncovered.
+        #
+        # Six to seven is NOT a seventh statement arriving. It is the wrapped
+        # one in `SKILL.md` that the pattern above could not see until it was
+        # made whitespace-tolerant, counted now for the first time. Two
+        # statements also moved in the same change - the row review dropped its
+        # copy of the number entirely, and the line that names the bound to the
+        # user gained one - which is why the total holds while the membership
+        # does not.
         self.assertEqual(
             len(statements),
-            6,
+            7,
             f"the walkthrough row count is now stated {len(statements)} times "
             f"({statements}); one home is better, but a new one must be welded "
             "here and a removed one accounted for",
@@ -7484,7 +7506,7 @@ class SkillPackageTests(unittest.TestCase):
 
         self.assertIn("first-run subset for a large dataset", dataset_text)
         for phrase in (
-            "18 tuning rows by default",
+            "18 tuning questions by default",
             "at least four from each of the four difficulty bands",
             "score the dataset, not the subset",
             "report the run's sample-size limitation separately",
@@ -7509,8 +7531,16 @@ class SkillPackageTests(unittest.TestCase):
         # approve a run that never happens - and a number that large may simply
         # get a no.
         self.assertIn("scope the run before pricing it", skill_text)
+        # "that subset" until the draw became distinct-preferring, at which
+        # point the drawn count and the 18-row default stopped being the same
+        # number and a sentence naming neither could price either - and then
+        # "the rows actually drawn", until eighteen was redefined from rows to
+        # questions and the rows a question brings became the figure that is
+        # paid. Which of them the estimate is built from is
+        # `TheBoundedDrawSpendsOnDifferentRowsTests`; the ordering below is this
+        # test's, and it only needs a stable anchor in that sentence.
         self.assertIn(
-            "estimate runtime and spend from that subset, not from the full row count",
+            "estimate runtime and spend from the rows those questions bring",
             skill_text,
         )
         subset_at = skill_text.index("scope the run before pricing it")
@@ -7519,7 +7549,9 @@ class SkillPackageTests(unittest.TestCase):
         )
         self.assertLess(
             subset_at,
-            skill_text.index("estimate runtime and spend from that subset"),
+            skill_text.index(
+                "estimate runtime and spend from the rows those questions bring"
+            ),
         )
 
     def test_closing_motivation_is_grounded_in_the_opening_gaps(self) -> None:
@@ -27043,6 +27075,418 @@ class TrackingRecoveryTests(unittest.TestCase):
         self.assertIn("rather than restarting the phase to recover the link", recovery)
         self.assertIn("re-deciding whether to continue", recovery)
         self.assertNotIn("report the degradation", readiness.casefold())
+
+
+class TheBoundedDrawSpendsOnDifferentRowsTests(unittest.TestCase):
+    """The subset rules said where rows come from, never that they differ.
+
+    Five rules governed the bounded first-run subset - which split, which band,
+    recorded how, named to the user - and a draw satisfying every one of them
+    could put the same input in the eighteen several times. The agent produces
+    one output per input, so those rows are asked the same question by every
+    configuration: the second is a provider call in every trial and no
+    comparison. Compliant behaviour on a 120-row split holding 12 distinct
+    inputs spans 0 to 168 wasted calls of 216; at 12 distinct inputs a draw of
+    eighteen forces at least six repeats by pigeonhole, whatever the picker
+    does.
+
+    These tests exist because two earlier versions of them were welds. The
+    first was presence-only, and appending "make the shortfall up from the
+    bands that can" and appending "draw the subset short by that shortfall" -
+    opposite instructions - both shipped green. The second added a banned-phrase
+    registry and a subject count, and a review then walked through both: a
+    BYTE-NEUTRAL inversion kept every required phrase and rewrote the clause
+    that carried the instruction, and a second contradicting sentence that
+    simply avoided the one counted word shipped green with the ledger
+    re-measured.
+
+    So the required half is no longer `assertIn`. Every clause below is read
+    through `clause_polarity` and `guard_issues`, the filters this file already
+    uses over prose whose job is to name what it forbids: a document that
+    FORBIDS a required clause, states it twice with different polarity, or
+    names it as a misreading rather than issuing it, is refused - and each
+    decision names the clause that carries its consequence as well as the
+    clause that labels it, so half a sentence cannot be inverted under a
+    surviving headline. The subject count is scoped to rule 6 and keyed on a
+    family of markers rather than one word, which is what the word-avoiding
+    construction got past.
+
+    The numbers the rule tells an assistant to use are asserted against what
+    preflight really emits, in `tests/test_preflight.py`, so the guidance
+    cannot name a count the card does not carry.
+    """
+
+    RULE_COUNTS = {"four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8}
+
+    # (what is decided, clauses that state it, phrases that contradict it)
+    #
+    # Two required clauses per decision wherever the decision has a consequence:
+    # the first names it, the second carries it. The byte-neutral inversion this
+    # class was rebuilt for kept a naming clause word for word and rewrote the
+    # consequence beneath it, so a decision pinned only by its headline is
+    # pinned by the half that is never the instruction.
+    #
+    # Every banned phrase is one that was constructed and shipped green against
+    # an earlier version of this class, or is the reading the rule was rewritten
+    # to close.
+    DECIDED = (
+        (
+            "which repeat a draw may drop",
+            (
+                "the second is a provider call in every trial and no comparison at all",
+                "and it is the one thing this draw may drop",
+            ),
+            (
+                "drop the row that repeats the input whatever answer it carries",
+                "distinct by input and answer",
+                "re-key it on the expected answer",
+            ),
+        ),
+        (
+            "what a question with more than one accepted answer costs",
+            (
+                "every one of its rows is drawn and paid for",
+                "a configuration that answered acceptably then scores exactly "
+                "like one that answered wrongly",
+            ),
+            (
+                "scored as a fixed pair by every configuration",
+                "separate none of them - whatever expected answers they carry",
+                "keep one row per input and drop the rest",
+            ),
+        ),
+        (
+            "which identity may cut a paid draw",
+            (
+                "two inputs are the same question only when they are **equal**",
+                "this rule is never applied to a looser measure",
+            ),
+            (
+                "different normalized inputs",
+                "counted the one way preflight already counts it",
+                "`normalized_identity` is the measure this rule uses",
+            ),
+        ),
+        (
+            "which rows the draw's size is read off",
+            (
+                "among the rows this run can score",
+                "sizing a paid draw from it buys back the repeats this rule removes",
+            ),
+            (
+                "at the tuning split's distinct-input count",
+                "`tuning_distinct_rows`",
+                "the tuning split's distinct inputs, whichever is smaller",
+            ),
+        ),
+        (
+            "whether distinctness is measured within a band or across the draw",
+            (
+                "distinct **across the whole draw**",
+                "buys nothing when another band offers the same input again",
+            ),
+            (
+                "distinct within each band",
+                "distinct within a band",
+                "is still worth taking when another band offers that input again",
+            ),
+        ),
+        (
+            "what happens when a band cannot reach four",
+            (
+                "the draw is short by that much",
+                "the shortfall is not made up from the bands that can",
+            ),
+            (
+                "make the shortfall up from the bands that can",
+                "so the draw is still eighteen",
+                "top the draw back up to eighteen",
+                "pad the remainder from the other bands",
+                "so the eighteen is reached",
+            ),
+        ),
+        (
+            "whether the rule reaches the held-out split",
+            (
+                "this rule sizes the tuning draw and nothing else",
+                "this rule does not reach it",
+            ),
+            (
+                "applies to both draws",
+                "the held-out split is drawn short",
+                "draw the held-out split short",
+            ),
+        ),
+        (
+            "whether de-duplication can cost a question",
+            (
+                "de-duplication removes no question",
+                "every distinct input a band holds stays eligible",
+            ),
+            (
+                "de-duplication may remove a question",
+                "a band's inputs need not stay eligible",
+                "drop any band whose rows are all copies",
+            ),
+        ),
+        (
+            "what exact matching cannot see",
+            (
+                "is fifty different questions to this rule",
+                "the run pays for every one of them",
+            ),
+            (
+                "rewording a row is caught here",
+                "this also catches reworded repeats",
+            ),
+        ),
+    )
+
+    # A directive that must be stated once. Stating it twice is how a document
+    # comes to hold two answers, and the second one is what a reader acts on.
+    STATED_ONCE = (
+        "the draw is short by that much",
+        "distinct **across the whole draw**",
+        "this rule does not reach it",
+        "two inputs are the same question only when they are **equal**",
+    )
+
+    #: Ways a sentence says a band could not fill its four.
+    SHORT_BAND = (
+        "shortfall",
+        "cannot reach four",
+        "comes up empty",
+        "band is short",
+        "short band",
+        "could not give",
+        "runs short",
+        "falls short",
+    )
+    #: Ways a sentence says how big the draw ends up.
+    DRAW_SIZE = (
+        "eighteen",
+        "the draw is short",
+        "the size",
+        "18 rows",
+    )
+
+    def dataset_document(self) -> str:
+        return (SKILL_ROOT / "references" / "evaluation-and-dataset.md").read_text()
+
+    def subset_section(self) -> str:
+        document = self.dataset_document()
+        opening = "## First-run subset for a large dataset"
+        self.assertIn(opening, document)
+        return document.split(opening, 1)[1].split("\n## ", 1)[0]
+
+    def rule_six(self) -> str:
+        """Rule 6 alone, which is the block whose subjects are counted."""
+        section = self.subset_section()
+        opening = "6. **Draw different questions"
+        self.assertIn(opening, section, "rule 6 lost its lead-in")
+        return section[section.index(opening) :].split("\n\nKeeping at least", 1)[0]
+
+    def holdout_section(self) -> str:
+        document = self.dataset_document()
+        opening = "## Held-out set and claims"
+        self.assertIn(opening, document)
+        return document.split(opening, 1)[1].split("\n## ", 1)[0]
+
+    def normalized(self, text: str) -> str:
+        return " ".join(text.casefold().split())
+
+    def test_each_decision_is_stated_and_its_contradictions_are_not(self) -> None:
+        """The settled answer, read for polarity, and the readings that slipped past.
+
+        `assertIn` was what the byte-neutral inversion beat: it fires when a
+        phrase is DELETED and says nothing about whether the document tells an
+        assistant to do it, forbids it, or calls it a misreading. Both filters
+        below are the ones this file already applies to prose that has to name
+        what it forbids, so a required clause is checked the same way a banned
+        one is rather than by a weaker rule of its own.
+        """
+        section = self.subset_section()
+        for decision, required, banned in self.DECIDED:
+            for clause in required:
+                with self.subTest(decision=decision, states=clause):
+                    polarity = clause_polarity(section, clause)
+                    self.assertIn(
+                        polarity,
+                        ("mandates", "unqualified"),
+                        f"the subset rules {polarity} {clause!r}, so they no "
+                        f"longer decide {decision} the way this pins it",
+                    )
+                    self.assertTrue(
+                        guard_issues(section, clause),
+                        f"{clause!r} is written but not issued - the sentence "
+                        f"around it names or recalls it - so {decision} is "
+                        "decided by whatever follows instead",
+                    )
+            for clause in banned:
+                with self.subTest(decision=decision, forbids=clause):
+                    self.assertIn(
+                        clause_polarity(section, clause),
+                        ("absent", "forbids"),
+                        f"the subset rules now answer {decision} two ways; the "
+                        "second answer is the one a reader acts on",
+                    )
+
+    def test_a_directive_that_governs_is_stated_exactly_once(self) -> None:
+        """Two statements of one rule are two rules, and one of them will drift.
+
+        This is the guard the presence welds did not have: appending an opposite
+        instruction leaves the original in place, so every assertion about the
+        original still passes. Counting sees it.
+        """
+        section = self.subset_section()
+        for clause in self.STATED_ONCE:
+            with self.subTest(directive=clause):
+                written = clause_occurrences(section, clause)
+                self.assertEqual(
+                    len(written),
+                    1,
+                    f"{clause!r} is stated {len(written)} times in the subset "
+                    "rules; a directive with two homes can be changed in one",
+                )
+
+    def test_the_short_band_question_is_answered_in_one_sentence(self) -> None:
+        """A second answer that avoids the counted word is still a second answer.
+
+        The previous version of this counted the word `shortfall` across the
+        whole subset section, and a review beat it from both sides at once.
+        False green: "Where a band comes up empty, take the rows it could not
+        give from the bands that still have inputs left, so the eighteen is
+        reached" contradicts the rule, introduces no banned word, and never
+        writes `shortfall`. False red: rule 2 may legitimately say the word
+        while talking about REPORTING rather than deciding.
+
+        So the count is scoped to rule 6, and it counts SENTENCES that answer
+        the question - one that says a band came up short and says what the
+        draw's size does about it - rather than occurrences of one noun. The
+        de-duplication sentence beside it mentions a band contributing nothing
+        and says nothing about the size, which is why it is not a second answer
+        and is not counted as one.
+        """
+        flat = self.normalized(self.rule_six())
+        sentences = [part for part in re.split(r"(?<=[.!?])\s", flat) if part.strip()]
+        answering = [
+            sentence
+            for sentence in sentences
+            if any(marker in sentence for marker in self.SHORT_BAND)
+            and any(marker in sentence for marker in self.DRAW_SIZE)
+        ]
+        self.assertEqual(
+            len(answering),
+            1,
+            "rule 6 answers the short-band question in "
+            f"{len(answering)} sentences: {answering}. It is settled in one "
+            "sentence or it is settled in none.",
+        )
+
+    def test_the_held_out_split_owns_its_own_distinctness_rule(self) -> None:
+        """Scoping a rule out of a split is only safe when something else has it.
+
+        The previous version asserted the held-out section never says
+        `distinct`, which decided a semantic question - has ownership been
+        muddled - from a surface signal whose not-found branch was the pass.
+        It also blocked the fix: ten held-out rows all asking one question were
+        fully compliant, under a guide whose held-out claim is about
+        generalisation, and adding the obvious rule went red.
+
+        Both halves are asserted instead. Rule 6 says it stops, the held-out
+        section says what happens there, and the held-out answer is written in
+        exactly one of the two places.
+        """
+        subset = self.subset_section()
+        holdout = self.holdout_section()
+        owned = "the ten are ten different questions"
+        self.assertIn(
+            clause_polarity(holdout, owned),
+            ("mandates", "unqualified"),
+            "the held-out section no longer states its own distinctness rule, "
+            "so a repeat among the ten is answered by nothing",
+        )
+        self.assertTrue(guard_issues(holdout, owned))
+        self.assertEqual(
+            clause_occurrences(subset, owned),
+            [],
+            "the held-out rule is now stated in the subset rules too; a rule "
+            "with two homes can be changed in one",
+        )
+        self.assertIn(
+            clause_polarity(subset, "this rule does not reach it"),
+            ("mandates", "unqualified"),
+        )
+        for mandate in (
+            "ten is therefore exact in both directions, never a floor to grow from",
+            "top each set up to its composition with generated rows rather than "
+            "dropping a band",
+        ):
+            with self.subTest(mandate=mandate[:40]):
+                self.assertIn(mandate, self.normalized(holdout))
+
+    def test_the_flow_prices_the_rows_actually_drawn(self) -> None:
+        """Stage 6 named a number that can now differ from what is bought.
+
+        "18 rows by default" and "that subset" were unambiguous only while the
+        two were always equal. The estimate has to name which of them it is
+        built from, and the eighteen has to say which currency it is in: on a
+        multi-reference file eighteen questions bring thirty-six rows, so the
+        flow that says "18 rows" understates the price of exactly the dataset
+        class this rule exists for.
+
+        Two clauses that used to follow are gone rather than corrected, for one
+        reason. The first named the population #356 proved wrong; the second
+        admitted only that the draw can come in BELOW eighteen, which is the
+        opposite of the multi-reference case. Both sat in the file that owns
+        pricing, quoting a reference decision they could get wrong, and a
+        conclusion that routes to a reference for its reason must not be able
+        to carry that reference's mistake. Every stale spelling is refused by
+        name here, because nothing else in this file reads SKILL.md for one.
+        """
+        skill = self.normalized(SKILL.read_text())
+        self.assertIn("distinct by input across the whole draw", skill)
+        self.assertIn("18 questions by default", skill)
+        self.assertIn(
+            "estimate runtime and spend from the rows those questions bring, "
+            "never from the full row count",
+            skill,
+        )
+        for stale in (
+            "estimate runtime and spend from that subset, not from the full row count",
+            "the tuning split's distinct inputs or a band's own rows run short",
+            "which can be below 18",
+            "18 rows by default",
+            "`tuning_distinct_rows`",
+        ):
+            with self.subTest(stale=stale):
+                self.assertNotIn(self.normalized(stale), skill)
+
+    def test_the_stated_rule_count_is_the_number_of_rules(self) -> None:
+        """A label that counts nothing goes stale the first time anyone adds a rule.
+
+        Derived from the list rather than compared against a constant: the
+        expectation is what the document's own numbered items add up to, so this
+        keeps holding for a seventh rule and fails on a sixth left labelled five.
+
+        The item pattern does not require a bold lead-in. Requiring one made a
+        rule written without it invisible to the count, which is the same
+        not-found-is-a-pass shape this file keeps finding elsewhere.
+        """
+        section = self.subset_section()
+        stated = re.search(r"^(\w+) rules make the subset honest:$", section, re.M)
+        self.assertIsNotNone(stated, "the subset rules lost their counted preamble")
+        items = re.findall(r"^(\d+)\. ", section, re.M)
+        self.assertEqual(
+            [str(number) for number in range(1, len(items) + 1)],
+            items,
+            "the subset rules are not numbered 1..n, so no count describes them",
+        )
+        self.assertEqual(
+            self.RULE_COUNTS.get(stated.group(1).casefold()),
+            len(items),
+            f"the section says {stated.group(1)!r} rules and lists {len(items)}",
+        )
 
 
 if __name__ == "__main__":
