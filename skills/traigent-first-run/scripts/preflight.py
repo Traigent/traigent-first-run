@@ -1016,6 +1016,15 @@ def drawable_distinct_inputs(rows: list[dict[str, Any]]) -> tuple[int, str]:
     because then there is no other population: an undeclared split is a file
     the draw comes out of entire. The scope travels with the number so a card
     never prints a count without saying what it counted.
+
+    Deliberately NOT the same number as `tuning_distinct_rows` beside it, and
+    the difference is the identity rather than the population: that key answers
+    how many questions a comparison count may be bounded by, where seeing past
+    punctuation is acceptable, and this one decides how many questions a
+    customer PAYS for, where it is not. Two numbers over one population, each
+    named for the question it answers, is the shape that survives; one number
+    read by two callers who need different identities is how a bound comes to
+    cut a budget on a guess.
     """
     by_split: dict[str, set[str]] = {}
     unsplit: set[str] = set()
@@ -1058,6 +1067,16 @@ def first_run_row_count(usable_rows: int, distinct_rows: int | None = None) -> i
     `distinct_rows` is optional so that a caller holding only a row count still
     gets the old answer rather than a wrong one. Absent, the bound is the rows -
     which is what an uncounted file honestly supports.
+
+    NONE IS NOT ZERO, and the difference is a priced run against no run at all.
+    `None` means nobody measured, and the honest answer is the unbounded
+    proposal; `0` means somebody measured and found nothing to draw. A caller
+    that collapses the two - `distinct_rows or 0` is the one-character way to
+    do it - prices a first run at zero rows on any payload written before the
+    count existed. That is this rule's own defect pointed the other way: a
+    number standing in for a measurement that was never taken.
+    `test_the_bound_is_applied_only_where_the_subset_applies` pins both
+    branches so the collapse cannot land green.
     """
     if usable_rows <= BOUNDED_SUBSET_ABOVE_ROWS:
         return usable_rows

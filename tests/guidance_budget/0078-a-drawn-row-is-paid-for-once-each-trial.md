@@ -1,12 +1,12 @@
-# 0077 - a drawn row is paid for once each trial
+# 0078 - a drawn row is paid for once each trial
 
-follows: 0076
+follows: 0077
 follows-resident-measured: 98_427
-follows-total-measured: 462_697
+follows-total-measured: 467_226
 resident-ceiling: 98_750
 resident-measured: 98_509
-total-ceiling: 467_800
-total-measured: 467_488
+total-ceiling: 472_350
+total-measured: 472_017
 
 Five rules governed the bounded subset and none of them said the drawn rows
 have to be different. On a file holding three hundred rows that resolve to six

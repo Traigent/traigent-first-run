@@ -3545,6 +3545,37 @@ class TheSubsetProposalCountsDifferentQuestionsTests(unittest.TestCase):
         self.assertEqual(MODULE.first_run_row_count(40, 40), 40)
         self.assertEqual(MODULE.first_run_row_count(40, 7), 40)
 
+    def test_an_unmeasured_count_is_not_a_count_of_zero(self) -> None:
+        """`None` means nobody counted. Reading it as 0 prices the run at nothing.
+
+        The two branches are pinned against each other rather than separately,
+        which is the only arrangement that fails on the collapse. `or 0` turns
+        the unmeasured case into the measured-nothing case, and a payload
+        written before this count existed then proposes a first run of zero
+        rows - the same shape as the defect this rule exists to fix, pointed
+        the other way: a number standing in for a measurement nobody took.
+
+        A genuine zero is left alone on purpose. It is unreachable through
+        `check_dataset`, which returns before this on an empty scoreable set,
+        so the assertion is on the helper's own contract and says what a future
+        caller may rely on.
+        """
+        unmeasured = MODULE.first_run_row_count(400, None)
+        measured_nothing = MODULE.first_run_row_count(400, 0)
+        self.assertEqual(
+            unmeasured,
+            18,
+            "an absent count bounded the proposal, so a payload that predates "
+            "the count prices a run it never measured",
+        )
+        self.assertEqual(measured_nothing, 0)
+        self.assertNotEqual(
+            unmeasured,
+            measured_nothing,
+            "None and 0 now give the same answer, so nothing distinguishes "
+            "'nobody counted' from 'there is nothing to draw'",
+        )
+
     def test_the_scope_travels_with_the_number(self) -> None:
         """A count with no population is the shape both defects wore.
 
