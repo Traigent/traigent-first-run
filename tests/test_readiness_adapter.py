@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import re
 import subprocess
 import sys
 import tempfile
@@ -3622,11 +3623,14 @@ class WhichRowsMayBeSubtractedFromTheComparisonCountTests(unittest.TestCase):
     DIFFERENT rows, and that count is exact-after-normalization. On the fixture
     below it does its job: 40 whole-row copies planted among 132 questions are
     found and reported as 100. That is a statement about this fixture rather
-    than about the mechanism, which has a second gap of its own - the distinct
-    count is taken over ALL tuning rows while the number it bounds counts only
-    the LABELLED ones, so a split mixing the two can carry byte-identical
-    repeats through a comparison that subtracted nothing. Pre-existing, filed
-    as traigent-first-run#356, and not addressed here.
+    than about the mechanism, which had a second gap of its own - the distinct
+    count was taken over ALL tuning rows while the number it bounds counts only
+    the LABELLED ones, so a split mixing the two carried byte-identical repeats
+    through a comparison that subtracted nothing. That was
+    traigent-first-run#356 and it is fixed: both counts are now taken over the
+    rows being compared, and `ARepeatSurvivesAMixedSplitNoLongerTests` below
+    holds them there. Every fixture in THIS class is fully labelled, so none of
+    them could ever have shown it, which is why the two classes are separate.
 
     What the count cannot see at all is a row REWORDED - six questions written
     out fifty times each as `... (variant N)` are 300 byte-distinct rows, and
@@ -3672,18 +3676,30 @@ class WhichRowsMayBeSubtractedFromTheComparisonCountTests(unittest.TestCase):
     THE CLAUSE ONLY REACHES WHAT THE CHECK CATCHES, AND THAT IS LESS THAN THIS
     CLASS MIGHT SUGGEST. It hangs off `dataset-near-duplicates`, which decides
     at 70% similarity, so a reworded repeat that lands under the line is
-    invisible to it - and this repository ships one. Measured on
+    invisible to it - and this repository shipped one. Measured on
     `tests/behavioral/outcomes/clean-proceed/project/evaluation-dataset.jsonl`,
     the canonical CLEAN outcome: 36 tuning rows resolving to 24 questions, with
     `[case 025]`...`[case 036]` repeating `[case 001]`...`[case 012]` word for
     word apart from the number. `dataset-duplicates` PASS, `dataset-near-
     duplicates` PASS at a maximum pairwise similarity of 0.6923 - 0.0077 under
-    the line - so the card prints `36 examples - limited comparison set` with no
-    clause at all, beside a diversity line affirming `no repeated questions at
-    70% similarity or more`. `asking-answer-key` holds the same rows. The
-    numeral-suffix rewording this class condemns is exactly the shape that slips
-    under the check the clause depends on, and the fix for that is a sharper
-    check, not a louder sentence.
+    the line - so the card printed `36 examples - limited comparison set` with
+    no clause at all, beside a diversity line affirming `no repeated questions
+    at 70% similarity or more`. `asking-answer-key` held the same rows.
+
+    BOTH HALVES OF THAT ARE NOW CLOSED, and neither by moving the threshold.
+    The sentence went first: a scan comparing inputs and counting shared word
+    runs may not report on whether two rows ask the same QUESTION, so the clean
+    line says what the two scans established and the similarity scan may no
+    longer clear the question by itself. Then the fixture, because the number
+    beside it was still 36 for 24 questions and no wording fixes that - those
+    two files now hold 48 different questions with a held-out split that shares
+    none of them, and `ACleanOutcomeFixtureIsMadeOfDifferentQuestionsTests` in
+    the behavioral suite keeps them that way. What is NOT claimed is that the
+    threshold has been made right. It cannot be: the reworded fixtures above put
+    120 different tickets at 4 under a shared instruction, and the repaired file
+    put 24 real repeats at 0.6923, so the false-red band and the false-green
+    band overlap and no line between them exists. That is why the bound below
+    is still exact-identity only.
     """
 
     # 34 subjects x 4 measures is 136 phrasings, of which the fixture uses 132.
@@ -4181,6 +4197,641 @@ class WhichRowsMayBeSubtractedFromTheComparisonCountTests(unittest.TestCase):
             "the similarity line is printed more than once on one card, so two "
             "copies of one threshold can drift apart between adjacent rows",
         )
+
+
+class ARepeatSurvivesAMixedSplitNoLongerTests(unittest.TestCase):
+    """The comparison count, end to end, on a dataset half annotated (#356).
+
+    Everything here runs the shipped `preflight.py` and the shipped
+    `readiness.py` as separate processes, so what is asserted is the sentence a
+    customer reads rather than a call into the scorer's internals. The rows are
+    written out from question texts and row counts; no assertion reads a
+    constant the fixture was built from.
+    """
+
+    LABELLED = 20
+    QUESTIONS = 10
+    SILENT = 40
+    HELD = 10
+
+    @classmethod
+    def _rows(cls, *, silent: int | None = None, labelled_answers: bool = True):
+        """Tuning rows asking ten questions twice over, beside unlabelled rows.
+
+        `silent` exists so one test can delete exactly the rows that are not
+        scoreable and compare the two runs. That is the whole finding: rows the
+        comparison never touches were deciding whether the bound applied.
+        """
+        silent = cls.SILENT if silent is None else silent
+        rows = [
+            {
+                "id": f"labelled-{index}",
+                "input": f"question number {index % cls.QUESTIONS} about billing",
+                "output": f"answer-{index % cls.QUESTIONS}",
+                "source": "collected",
+                "split": "tuning",
+            }
+            for index in range(cls.LABELLED)
+        ]
+        if not labelled_answers:
+            for row in rows:
+                row.pop("output")
+        rows += [
+            {
+                "id": f"silent-{index}",
+                "input": f"an unlabelled question numbered {index} about shipping",
+                "source": "collected",
+                "split": "tuning",
+            }
+            for index in range(silent)
+        ]
+        rows += [
+            {
+                "id": f"held-{index}",
+                "input": f"a held out question numbered {index} about accounts",
+                "output": f"answer-h{index}",
+                "source": "collected",
+                "split": "holdout",
+            }
+            for index in range(cls.HELD)
+        ]
+        return rows
+
+    def _score_rows(self, rows: list[dict], method: str | None = None) -> dict:
+        # The method reaches BOTH scripts or neither. Preflight decides which
+        # rows it can score, readiness decides which count describes them, and
+        # telling only one of them is a third population - the very mistake this
+        # class is about, made by the test instead of by the code.
+        extra = () if method is None else ("--evaluator-method", method)
+        with tempfile.TemporaryDirectory() as raw:
+            dataset = _write_jsonl(Path(raw), "dataset.jsonl", rows)
+            return _score(dataset, extra=extra, preflight_extra=extra)
+
+    def _evidence(self, rows: list[dict], method: str | None = None) -> str:
+        return _dataset_subscore(self._score_rows(rows, method), "power")["evidence"]
+
+    def test_a_mixed_split_no_longer_carries_its_repeats_through_the_count(
+        self,
+    ) -> None:
+        """The reproduction on the issue, asserted from both ends.
+
+        Ten of the twenty scoreable tuning rows repeat a question the other ten
+        already ask, so ten is what the comparison resolves. Twenty was the
+        number this card printed, and it is asserted absent as well as ten
+        asserted present: a bound that stopped applying would still print a
+        fluent sentence about twenty examples.
+        """
+        evidence = self._evidence(self._rows())
+        self.assertIn("10 of them repeat an input already counted", evidence)
+        self.assertIn(
+            "10 different example(s) are what a comparison can resolve", evidence
+        )
+        self.assertIn("10 examples - small comparison set", evidence)
+        self.assertNotIn(
+            "20 examples",
+            evidence,
+            "the comparison count is back to counting rows the split's "
+            "unlabelled half made look distinct",
+        )
+
+    def test_rows_the_run_cannot_score_do_not_decide_whether_the_bound_applies(
+        self,
+    ) -> None:
+        """The same twenty scoreable rows, with and without the silent forty.
+
+        One variable moves between these two runs and it is rows that carry no
+        answer. The reported comparison count may not move with it - that
+        dependence IS the defect, and it is the one thing a single fixture
+        cannot show.
+        """
+        with_silent = self._evidence(self._rows())
+        without_silent = self._evidence(self._rows(silent=0))
+        for evidence in (with_silent, without_silent):
+            self.assertIn(
+                "10 different example(s) are what a comparison can resolve",
+                evidence,
+            )
+
+    def test_more_unlabelled_rows_never_loosen_the_bound_further(self) -> None:
+        """Scaling the population that used to satisfy the guard changes nothing."""
+        for silent in (0, 40, 200):
+            with self.subTest(silent=silent):
+                self.assertIn(
+                    "10 different example(s) are what a comparison can resolve",
+                    self._evidence(self._rows(silent=silent)),
+                )
+
+    def test_a_tuning_side_with_no_holdout_is_bounded_the_same_way(self) -> None:
+        """The second call site, which the fixtures above never reach.
+
+        `score_dataset` bounds the comparison count in three branches, and the
+        one for a file declaring a tuning split with nothing held back is its
+        own code path with its own copy of the decision. Reverting just that
+        branch to the count over all tuning rows re-plants #356 there, and
+        every other test in this file stays green - so the branch is exercised
+        here rather than assumed to follow from its neighbour.
+        """
+        rows = [row for row in self._rows() if not row["id"].startswith("held-")]
+        evidence = self._evidence(rows)
+        self.assertIn("no held-out set", evidence)
+        self.assertIn("10 of them repeat an input already counted", evidence)
+        self.assertIn(
+            "10 different example(s) are what a comparison can resolve", evidence
+        )
+        self.assertNotIn("20 examples", evidence)
+
+    def test_a_payload_without_the_scoreable_count_leaves_the_number_alone(
+        self,
+    ) -> None:
+        """An older preflight JSON must not be read as a dataset with no repeats.
+
+        The count is absent there, and absent is not zero and not "the same as
+        the rows". It returns the comparison count untouched, which restores the
+        behaviour from before this bound existed rather than inventing one.
+        """
+        records = _declared_split_records(
+            {
+                "tuning_rows": 60,
+                "tuning_labelled_rows": 20,
+                "tuning_distinct_rows": 50,
+            },
+            {"holdout_rows": 10, "holdout_labelled_rows": 10},
+        )
+        evidence = _dataset_subscore(_score_records(records), "power")["evidence"]
+        self.assertNotIn("repeat an input already counted", evidence)
+
+    def test_a_reference_free_run_still_bounds_on_an_older_payload(self) -> None:
+        """The reason the reference-free arm reads the count that always existed.
+
+        A judge needing no gold answer scores every present row, so the two
+        counts describe the same rows and either answers. Reading the older key
+        there is what keeps a preflight JSON written before the newer one was
+        added from silently losing its bound: the new key is absent, and absent
+        means the comparison count is returned untouched. Choosing the newer key
+        for both arms would pass every fixture in this class and drop the bound
+        on exactly the payloads nobody regenerated.
+        """
+        records = _declared_split_records(
+            {
+                "tuning_rows": 60,
+                "tuning_labelled_rows": 0,
+                "tuning_distinct_rows": 50,
+            },
+            {"holdout_rows": 10, "holdout_labelled_rows": 0},
+        )
+        evidence = _dataset_subscore(
+            _score_records(records, ("--evaluator-method", "llm-judge-rubric")),
+            "power",
+        )["evidence"]
+        self.assertIn("10 of them repeat an input already counted", evidence)
+        self.assertIn(
+            "50 different example(s) are what a comparison can resolve", evidence
+        )
+
+    def test_a_reference_free_method_bounds_on_every_tuning_row(self) -> None:
+        """Where every present row is scoreable, every present row is counted.
+
+        The rows are the same file with no expected answers at all, so under a
+        judge that needs none the scoreable side is all sixty and the questions
+        are fifty. A bound that kept counting only labelled rows would report
+        nothing here, and a bound that kept counting all rows would report
+        nothing on the fixture above; only a count taken over the rows being
+        compared gets both right.
+        """
+        rows = self._rows(labelled_answers=False)
+        evidence = self._evidence(rows, method="llm-judge-rubric")
+        self.assertIn("10 of them repeat an input already counted", evidence)
+        self.assertIn(
+            "50 different example(s) are what a comparison can resolve", evidence
+        )
+
+
+class TheRoutesOfferedWhenRowsRepeatTests(unittest.TestCase):
+    """What the card puts to a customer once repeated rows are found.
+
+    Asserted as rendered by the shipped script, because the whole contract is
+    about what a person reads: which routes exist, that exactly one is marked,
+    that the marked one continues the run, that the mark never disagrees with
+    the payload's own recommendation, and where the block sits relative to the
+    result it follows.
+
+    NUMBERS, MARKS AND POSITIONS - never sentences. An earlier version of this
+    class pinned three phrases, and rewording the prose while keeping every
+    number, the mark and the disclosure correct failed it. A guard that reds
+    correct writing is a defect in the guard.
+    """
+
+    def _rows(self, repeats: int = 6, distinct: int = 12) -> list[dict]:
+        rows = [
+            {
+                "id": f"row-{index}",
+                "input": f"a question numbered {index} about the billing system",
+                "output": f"answer-{index}",
+                "source": "collected",
+                "split": "tuning",
+            }
+            for index in range(distinct)
+        ]
+        rows += [
+            {
+                "id": f"copy-{index}",
+                "input": f"a question numbered {index} about the billing system",
+                "output": f"answer-{index}",
+                "source": "collected",
+                "split": "tuning",
+            }
+            for index in range(repeats)
+        ]
+        rows += [
+            {
+                "id": f"held-{index}",
+                "input": f"a held out question numbered {index} about accounts",
+                "output": f"answer-h{index}",
+                "source": "collected",
+                "split": "holdout",
+            }
+            for index in range(6)
+        ]
+        return rows
+
+    def _flat_rows(self, repeats: int = 5, distinct: int = 15) -> list[dict]:
+        """The same repetition in a file that declares no split at all."""
+        rows = [
+            {
+                "id": f"row-{index}",
+                "input": f"a question numbered {index} about the billing system",
+                "output": f"answer-{index}",
+                "source": "collected",
+            }
+            for index in range(distinct)
+        ]
+        rows += [
+            {
+                "id": f"copy-{index}",
+                "input": f"a question numbered {index} about the billing system",
+                "output": f"answer-{index}",
+                "source": "collected",
+            }
+            for index in range(repeats)
+        ]
+        return rows
+
+    def _card(self, rows: list[dict]) -> str:
+        with tempfile.TemporaryDirectory() as raw:
+            dataset = _write_jsonl(Path(raw), "dataset.jsonl", rows)
+            records = _preflight_records(dataset)
+        return _card_records(records)
+
+    def _clean_rows(self) -> list[dict]:
+        return self._rows(repeats=0)
+
+    @staticmethod
+    def _route_lines(card: str) -> list[str]:
+        return [
+            line.strip() for line in card.splitlines() if re.match(r"\s+[A-Z]\. ", line)
+        ]
+
+    @staticmethod
+    def _quotes(line: str, number: int) -> bool:
+        return re.search(rf"\b{number}\b", line) is not None
+
+    def _marked(self, routes: list[str]) -> str:
+        marked = [line for line in routes if MODULE.RECOMMENDED_MARK in line]
+        self.assertEqual(len(marked), 1, f"not exactly one marked route: {routes}")
+        return marked[0]
+
+    # ---- the shape of the block
+
+    def test_the_routes_are_lettered_from_a_without_a_gap(self) -> None:
+        """Contiguous letters, whichever routes this state actually offers.
+
+        The first route is conditional, so the letters are positions and not
+        names: dropping it must renumber the rest rather than leaving the list
+        starting at B.
+        """
+        for rows in (self._rows(), self._flat_rows()):
+            routes = self._route_lines(self._card(rows))
+            with self.subTest(routes=routes):
+                self.assertTrue(routes)
+                self.assertEqual(
+                    [line[0] for line in routes],
+                    [chr(ord("A") + index) for index in range(len(routes))],
+                )
+
+    def test_exactly_one_route_carries_the_recommendation(self) -> None:
+        """Two marks and none are the same defect from opposite sides."""
+        for rows in (self._rows(), self._flat_rows()):
+            with self.subTest(rows=len(rows)):
+                self._marked(self._route_lines(self._card(rows)))
+
+    def test_the_recommended_route_never_hands_the_work_back(self) -> None:
+        """The mark may not land on the route that ends this run's part.
+
+        Asserted against the LAST route, which is the one that asks the
+        customer to go and edit their own file. Whatever the other routes say
+        and however many of them there are, the mark may not be on that one -
+        continuing is this guide's default and a finding may not turn into a
+        stop.
+        """
+        for rows in (self._rows(), self._flat_rows()):
+            routes = self._route_lines(self._card(rows))
+            with self.subTest(routes=routes):
+                self.assertNotIn(MODULE.RECOMMENDED_MARK, routes[-1])
+
+    # ---- the mark and the payload may not disagree
+
+    def _card_for(self, action_caps: list, finding) -> tuple[str, str]:
+        """A rendered card over hand-built caps, so both arms are reachable.
+
+        The dataset fixtures in this class always carry a blocking
+        `evaluator-absent`, so `recommended_action` is never the size remedy
+        and the arm that offers to write rows is unreachable through them. It
+        is the arm the whole block was rebuilt around, so it is driven here
+        from `aggregate` directly rather than left unexercised.
+        """
+        score = MODULE.aggregate(
+            [MODULE.Pillar("dataset", 70.0, 1.0, ())],
+            action_caps,
+            (),
+            MODULE.DEFAULT_WEIGHTS,
+            repeated=finding,
+        )
+        return score.recommended_action, MODULE.render_card(score, unicode_ok=False)
+
+    @staticmethod
+    def _size_cap(asks: bool):
+        return MODULE.Cap(
+            "dataset-coarse-resolution",
+            89,
+            "a small comparison set",
+            blocks=False,
+            asks=asks,
+        )
+
+    @staticmethod
+    def _blocking_cap():
+        return MODULE.Cap("evaluator-absent", 40, "no evaluator", blocks=True)
+
+    def test_the_offer_to_write_rows_tracks_the_runs_own_recommendation(
+        self,
+    ) -> None:
+        """The defect this block was rebuilt to remove.
+
+        Writing rows is the bounded top-up's offer, and it exists only while a
+        size cap is asking with nothing blocking ahead of it. The routes may
+        point at that offer and may not make a second one, so the extra route
+        appears exactly when the payload's own recommendation is that remedy.
+
+        Identified by POSITION and COUNT, never by a word in the sentence. An
+        earlier version of this test looked for "writes" in the route text, so
+        renaming the verb made the assertion vacuous and a planted second offer
+        went undetected.
+        """
+        finding = MODULE.RepeatedInputs(
+            scoreable=18, distinct=12, side="on the tuning side"
+        )
+        cases = [
+            ("a size cap asks and nothing blocks", [self._size_cap(True)], True),
+            ("a size cap that may not offer", [self._size_cap(False)], False),
+            (
+                "something blocks ahead of it",
+                [self._blocking_cap(), self._size_cap(True)],
+                False,
+            ),
+            ("no cap at all", [], False),
+        ]
+        for name, caps, offers in cases:
+            with self.subTest(case=name):
+                action, card = self._card_for(caps, finding)
+                self.assertEqual(action == MODULE.ADD_EXAMPLES, offers, action)
+                routes = self._route_lines(card)
+                self.assertEqual(
+                    len(routes),
+                    3 if offers else 2,
+                    f"{name}: wrong number of routes: {routes}",
+                )
+                marked = self._marked(routes)
+                self.assertTrue(marked.startswith("A."), marked)
+                self.assertNotIn(MODULE.RECOMMENDED_MARK, routes[-1])
+
+    def test_the_writing_route_names_no_count_of_its_own(self) -> None:
+        """The block may point at the bounded offer and may not restate it.
+
+        A count of rows to write here would be a second offer beside the one
+        the size cap already made, with its own arithmetic and no bound, which
+        is how the earlier version came to offer 30 rows against a 28-row stop.
+        The route is the first one on the offering arm, by position.
+        """
+        for scoreable, distinct in ((18, 12), (40, 20), (9, 3)):
+            with self.subTest(scoreable=scoreable, distinct=distinct):
+                finding = MODULE.RepeatedInputs(
+                    scoreable=scoreable, distinct=distinct, side="on the tuning side"
+                )
+                action, card = self._card_for([self._size_cap(True)], finding)
+                self.assertEqual(action, MODULE.ADD_EXAMPLES)
+                offer = self._route_lines(card)[0]
+                self.assertEqual(
+                    re.findall(r"\b\d+\b", offer),
+                    [],
+                    f"the writing route states a count of its own: {offer!r}",
+                )
+
+    def test_dropping_the_first_route_renumbers_the_rest(self) -> None:
+        """The letters are positions, so removing A must not start the list at B."""
+        finding = MODULE.RepeatedInputs(
+            scoreable=18, distinct=12, side="on the tuning side"
+        )
+        for caps in ([self._size_cap(True)], [self._size_cap(False)]):
+            _action, card = self._card_for(caps, finding)
+            routes = self._route_lines(card)
+            with self.subTest(routes=routes):
+                self.assertEqual(
+                    [line[0] for line in routes],
+                    [chr(ord("A") + index) for index in range(len(routes))],
+                )
+
+    # ---- the numbers
+    # ---- the numbers
+
+    def test_the_routes_quote_the_count_the_card_reported(self) -> None:
+        """One arithmetic, two places on one card, and they may not disagree.
+
+        The block is assembled separately from the comparison count above it,
+        which is exactly how two numbers about one dataset come to contradict
+        each other on the same screen. Several shapes, because a single fixture
+        would agree by coincidence.
+        """
+        for repeats, distinct in ((6, 12), (3, 20), (11, 14)):
+            scoreable = distinct + repeats
+            with self.subTest(repeats=repeats, distinct=distinct):
+                card = self._card(self._rows(repeats=repeats, distinct=distinct))
+                finding = next(
+                    line
+                    for line in card.splitlines()
+                    if MODULE.REPEATED_ROWS_LABEL in line
+                )
+                for number in (repeats, scoreable, distinct):
+                    self.assertTrue(
+                        self._quotes(finding, number),
+                        f"{number} is missing from {finding!r}",
+                    )
+                carry_on = [
+                    line
+                    for line in self._route_lines(card)
+                    if self._quotes(line, distinct)
+                ]
+                self.assertTrue(
+                    carry_on,
+                    "no route offers to continue on the questions the rows "
+                    f"resolve: {self._route_lines(card)}",
+                )
+                for line in self._route_lines(card):
+                    self.assertFalse(
+                        self._quotes(line, scoreable),
+                        "a route is offered on the row count, which is the "
+                        f"count this finding says overstates it: {line!r}",
+                    )
+
+    def test_the_finding_counts_the_rows_it_says_it_counts(self) -> None:
+        """The population named in the sentence is the population counted.
+
+        `scoreable` is the rows this run can score, which on a half-annotated
+        tuning side is fewer than the rows on it. Saying "rows to tune on"
+        beside that number named the wrong set, in a change about naming the
+        right one.
+        """
+        rows = self._rows(repeats=4, distinct=10)
+        for index in range(6):
+            rows.append(
+                {
+                    "id": f"silent-{index}",
+                    "input": f"an unlabelled question numbered {index}",
+                    "source": "collected",
+                    "split": "tuning",
+                }
+            )
+        card = self._card(rows)
+        finding = next(
+            line for line in card.splitlines() if MODULE.REPEATED_ROWS_LABEL in line
+        )
+        self.assertTrue(self._quotes(finding, 14), finding)
+        self.assertFalse(
+            self._quotes(finding, 20),
+            f"the finding counts 14 rows and names 20 of them: {finding!r}",
+        )
+
+    # ---- when the block appears at all
+
+    def test_a_dataset_with_nothing_repeated_is_asked_nothing(self) -> None:
+        """The block is a finding, so its absence is the ordinary card."""
+        card = self._card(self._clean_rows())
+        self.assertNotIn(MODULE.REPEATED_ROWS_LABEL, card)
+        self.assertEqual(self._route_lines(card), [])
+
+    def test_a_file_with_no_declared_split_is_asked_too(self) -> None:
+        """Repetition is not a property of having declared a split.
+
+        A customer who brought one flat file has the same defect and the same
+        three answers to it, and the branch that scores them is a different one
+        - so it is asserted separately rather than assumed to follow.
+        """
+        card = self._card(self._flat_rows())
+        self.assertIn(MODULE.REPEATED_ROWS_LABEL, card)
+        self.assertTrue(self._route_lines(card))
+
+    def test_the_question_sits_below_every_result_it_follows(self) -> None:
+        """Below the pillars AND below every ceiling, not merely below the top.
+
+        A question printed before its own evidence asks a customer to answer
+        before they have read anything. The ceilings are part of that evidence:
+        a card that asks which examples to compare on above `FIX BEFORE PAID
+        RUN` and three limits is asking them to choose while the reasons are
+        still below the fold.
+
+        EACH CAP IS FOUND BY ITS REASON, not by a rendered marker. The first
+        version of this test looked for `LIMITED TO {ceiling}`, which the
+        renderer prints only on the binding branch - every other cap renders
+        `WOULD LIMIT TO n` or `FIX BEFORE PAID RUN`, and `LIMITED TO 89` is not
+        a substring of `WOULD LIMIT TO 89`. So the guarded assertion ran zero
+        times out of four while `assertTrue(score["caps"])` above it made the
+        test look guarded, and the position mutation still passed. The reason
+        is a field of the cap rather than a spelling of the card, so it is
+        present however the line is labelled.
+        """
+        rows = self._rows()
+        with tempfile.TemporaryDirectory() as raw:
+            dataset = _write_jsonl(Path(raw), "dataset.jsonl", rows)
+            records = _preflight_records(dataset)
+        card = _card_records(records)
+        score = _score_records(records)
+        label_at = card.index(MODULE.REPEATED_ROWS_LABEL)
+        for pillar in score["pillars"]:
+            self.assertLess(card.index(pillar["name"].upper()), label_at)
+        self.assertTrue(score["caps"], "this fixture is meant to carry ceilings")
+        checked = 0
+        for cap in score["caps"]:
+            self.assertIn(
+                cap["reason"],
+                card,
+                f"the cap {cap['condition']!r} is not on the card at all, so "
+                "nothing here can say where the question sits relative to it",
+            )
+            self.assertLess(
+                card.index(cap["reason"]),
+                label_at,
+                f"the question is printed above the ceiling {cap['condition']!r}",
+            )
+            checked += 1
+        self.assertEqual(
+            checked,
+            len(score["caps"]),
+            "not every cap was positioned against the question",
+        )
+        self.assertEqual(card.count(MODULE.REPEATED_ROWS_LABEL), 1)
+        self.assertEqual(
+            card.count(MODULE.RECOMMENDED_MARK),
+            1,
+            "the recommendation is marked more than once on one card",
+        )
+
+    def test_the_offer_route_a_points_at_is_printed_above_it(self) -> None:
+        """Route A says "above", so the thing it names has to be above it.
+
+        This is the position rule with teeth on it. Route A is deictic: it does
+        not restate the bounded offer, it points at one, and a block rendered
+        higher up the card would leave that sentence pointing upward at an
+        offer printed below it. Nothing else in this suite ties the two
+        together, so moving the block satisfied every other assertion.
+
+        The cap is built by `power_ceiling`, the function that builds it in a
+        real run, so the sentence asserted here is the shipped remedy's own and
+        not one invented by this test. A hand-written reason could carry any
+        words at all and would prove nothing about what a customer reads.
+        """
+        finding = MODULE.RepeatedInputs(
+            scoreable=16, distinct=12, side="on the tuning side"
+        )
+        cap = MODULE.power_ceiling(12, 16, available_rows=16)
+        self.assertIsNotNone(cap)
+        self.assertTrue(cap.asks, "this fixture is meant to reach the asking arm")
+        action, card = self._card_for([cap], finding)
+        self.assertEqual(action, MODULE.ADD_EXAMPLES)
+        offer = MODULE.top_up_offer(12, 16).strip()
+        self.assertTrue(offer, "this fixture is meant to carry the bounded offer")
+        sentence = offer.split(".")[0]
+        self.assertIn(
+            sentence,
+            card,
+            "the bounded offer is not on this card, so this test is not "
+            "exercising the arm route A points at",
+        )
+        self.assertLess(
+            card.index(sentence),
+            card.index(MODULE.REPEATED_ROWS_LABEL),
+            "route A points upward at an offer printed below it",
+        )
+        # And the route that points at it is the one that is actually there.
+        self.assertTrue(self._route_lines(card)[0].startswith("A."))
 
 
 if __name__ == "__main__":
