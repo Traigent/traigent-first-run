@@ -5607,11 +5607,13 @@ class PowerBoundsTheBandTests(unittest.TestCase):
     def test_a_cap_reason_uses_the_term_the_glossary_defines(self) -> None:
         """A cap reason is a card line, and its vocabulary went unchecked.
 
-        `test_the_glossary_explains_every_line_the_card_prints` enforces only
-        `CHECK_DISPLAY_NAMES`, so cap prose slipped past it: a reason said
-        "enhanced search" where the glossary's headword is "Baseline run vs
-        enhanced run", leaving the assistant nothing to answer with for a phrase
-        the user had just read off their card.
+        `test_the_glossary_explains_every_term_the_card_prints` enforced only
+        `CHECK_DISPLAY_NAMES` when this was written, so cap prose slipped past
+        it: a reason said "enhanced search" where the glossary's headword is
+        "Baseline run vs enhanced run", leaving the assistant nothing to answer
+        with for a phrase the user had just read off their card. That guard now
+        reads the renderer instead, and it is why it was renamed - but it polices
+        the card's TERMS, and this pair of spellings is prose inside a reason.
 
         Narrow on purpose, and says so: it covers the module-level caps and the
         one pair of spellings that actually drifted, not every noun a reason can
@@ -8417,6 +8419,141 @@ if __name__ == "__main__":
     unittest.main()
 
 
+#: A phrase the card sets apart from its prose: a run of capitalised words. It
+#: is how this renderer marks the words it expects a reader to point at -
+#: `BLOCKER`, `LIMITED TO 89`, `FIX BEFORE PAID RUN`, `REPEATED ROWS` - and it
+#: survives the sentence around it being rewritten, which a whole-sentence
+#: needle does not.
+#:
+#: Bounded by `\b` at both ends, so a Title-Case word cannot contribute its
+#: leading capital: without it `FIX BEFORE PAID RUN Nothing is wired` matched
+#: `FIX BEFORE PAID RUN N`, a term no document could ever explain and one that
+#: moves whenever the sentence after the label does.
+_CARD_TERM = re.compile(r"\b[A-Z][A-Z0-9']*(?: [A-Z][A-Z0-9']*)*\b")
+
+
+def _renderer_strings(source: str, entry: str) -> list[tuple[str, str]]:
+    """`(origin, text)` for every string `entry` and its callees can print.
+
+    The closure is followed rather than listed: `entry` plus every module-level
+    function it transitively calls, so a helper written tomorrow is inside the
+    guards below the day it is written and not the day somebody remembers to
+    add it to a tuple.
+
+    Module-level string constants the closure names are read too, because three
+    of the card's own labels live in one (`BLOCKER_KEYWORD`,
+    `REPEATED_ROWS_LABEL`, `ACCEPTED_ROUTE_LABEL`) and a scan of literals alone
+    would see none of them. Docstrings are excluded: they are the only strings
+    in these functions addressed to us rather than to a reader.
+    """
+    tree = ast.parse(source)
+    functions = {
+        node.name: node
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    closure: set[str] = set()
+    pending = [entry]
+    while pending:
+        name = pending.pop()
+        if name in closure or name not in functions:
+            continue
+        closure.add(name)
+        pending.extend(
+            inner.func.id
+            for inner in ast.walk(functions[name])
+            if isinstance(inner, ast.Call) and isinstance(inner.func, ast.Name)
+        )
+
+    constants: dict[str, str] = {}
+    for node in tree.body:
+        if not isinstance(node, ast.Assign) or len(node.targets) != 1:
+            continue
+        if not isinstance(node.targets[0], ast.Name):
+            continue
+        try:
+            value = ast.literal_eval(node.value)
+        except (TypeError, ValueError, SyntaxError, MemoryError, RecursionError):
+            continue
+        if isinstance(value, str):
+            constants[node.targets[0].id] = value
+
+    spoken: list[tuple[str, str]] = []
+    for name in sorted(closure):
+        node = functions[name]
+        docstrings = {
+            id(item.value)
+            for item in ast.walk(node)
+            if isinstance(item, ast.Expr) and isinstance(item.value, ast.Constant)
+        }
+        for item in ast.walk(node):
+            if (
+                isinstance(item, ast.Constant)
+                and isinstance(item.value, str)
+                and id(item) not in docstrings
+            ):
+                spoken.append((name, item.value))
+            elif isinstance(item, ast.Name) and item.id in constants:
+                spoken.append((item.id, constants[item.id]))
+    return spoken
+
+
+def _card_quoted_blocks(source: str, entry: str = "render_card") -> list[str]:
+    """The multi-line constants the card reprints verbatim.
+
+    One worked agent file, printed as an indented block so a reader can see the
+    shape that would pass. It is an artifact being shown, not words addressed to
+    the reader, so the names inside it - `MODELS` - are nobody's vocabulary and
+    the glossary owes them nothing. Identified by carrying a newline rather than
+    by name, so a second quoted artifact is treated the same way on the day it
+    is added.
+    """
+    return [text for _, text in _renderer_strings(source, entry) if "\n" in text]
+
+
+def _card_terms(source: str, entry: str = "render_card") -> dict[str, set[str]]:
+    """The terms one renderer and everything it calls can print, by origin.
+
+    Read off the RENDERER rather than off a table, which is the whole point:
+    the guard this feeds used to iterate `CHECK_DISPLAY_NAMES` and therefore
+    required the glossary to explain the twelve check labels and nothing else.
+    Every sentence the card writes for itself - the caps, the blocker line, the
+    repeated-rows block, the assumption line - was outside it, and cap prose
+    drifted out of the glossary's vocabulary exactly there (#398).
+
+    Taken from the SOURCE and not from rendered cards. A scan over rendered
+    cards can only require what some state it happened to build actually
+    printed, so a branch nobody thought to render would be exempt from the
+    guard while reading as covered - which is the defect class this package
+    keeps filing against itself. Reading the closure covers every branch,
+    including the ones no fixture reaches.
+
+    Multi-line constants are skipped, for the reason `_card_quoted_blocks`
+    gives: they are artifacts the card reprints, not words it addresses to the
+    reader.
+    """
+    terms: dict[str, set[str]] = {}
+    for origin, text in _renderer_strings(source, entry):
+        if "\n" in text:
+            continue
+        for match in _CARD_TERM.findall(text):
+            if len(match) >= 3:
+                terms.setdefault(match, set()).add(origin)
+    return terms
+
+
+def _unexplained_by(terms: set[str], glossary_text: str) -> set[str]:
+    """The terms the glossary has no entry for.
+
+    Case-insensitive, because the card shouts what the glossary spells in
+    sentence case: the card's `LIMITED TO 89` is the glossary's `"limited to"
+    is the ceiling you are at`, and requiring the shout verbatim would report a
+    documented term as undocumented.
+    """
+    flat = " ".join(glossary_text.split()).lower()
+    return {term for term in terms if term.lower() not in flat}
+
+
 def _prose_literals(function: ast.AST) -> list[str]:
     """The sentences a function prints, from its own body.
 
@@ -8533,20 +8670,309 @@ class TheCardSpeaksTheUsersLanguageTests(unittest.TestCase):
             "an internal check name is printed as a label",
         )
 
-    def test_the_glossary_explains_every_line_the_card_prints(self) -> None:
-        """So there is a prepared answer when the user asks what one means."""
+    #: Terms the card sets apart and the glossary has no entry for, each with
+    #: the reason it is here. This register is the point of the guard below, not
+    #: an exception to it: the previous version iterated `CHECK_DISPLAY_NAMES`,
+    #: so the twelve check labels were required and everything the card writes
+    #: for itself was invisible - and a gap read as coverage. Named, they are
+    #: reviewable; and the guard fails on a term that is neither explained nor
+    #: named here, so the next one cannot join them quietly (#398).
+    CARD_TERMS_WITHOUT_A_GLOSSARY_ENTRY = {
+        "TRAIGENT OPTIMIZATION READINESS": (
+            "the card's own title. It names the artifact rather than a word in "
+            "it, and the artifact is what the glossary's `Readiness score (the "
+            "card, the three pillars, bands, caps, blocked)` entry is about."
+        ),
+        "FIX BEFORE PAID RUN": (
+            "the label on a blocking cap. The glossary explains `BLOCKER` and "
+            "what blocking means, and stops one line short of the words the "
+            "card actually prints beside the cap that caused it."
+        ),
+        "ASSUMED GENERATED": (
+            "the label on the assumption line. The glossary explains an "
+            "`undeclared row` and that it is scored as generated; the label a "
+            "customer would quote back has no headword of its own."
+        ),
+        "REPEATED ROWS": (
+            "the label on the repeated-inputs block. The glossary explains the "
+            "`repeated or dominant answers` CHECK and when rows count as "
+            "repeats, but not the block the card prints under this name."
+        ),
+        "ACCEPTED ROUTE": (
+            "the label on the worked example printed beside a refused "
+            "parameter. Nothing in the glossary names it."
+        ),
+    }
+
+    def test_the_glossary_explains_every_term_the_card_prints(self) -> None:
+        """So there is a prepared answer when the user asks what one means.
+
+        Renamed from `..._every_line_the_card_prints`, which promised the whole
+        card and delivered one dict: it iterated `CHECK_DISPLAY_NAMES`, so no
+        guard anywhere required the glossary to explain a sentence the renderer
+        writes for itself. A cap reason drifted out of the glossary's vocabulary
+        through exactly that hole, and the sibling that caught it says so in its
+        own docstring - `test_a_cap_reason_uses_the_term_the_glossary_defines`,
+        which is narrow on purpose because this one was not (#398).
+
+        What is enforced is TERMS and not whole lines, and the name says so.
+        The card's prose explains itself; its capitalised labels are the words a
+        customer points at, and those are what an assistant is sent to the
+        glossary to answer for. The set of them is read off the renderer and
+        everything it calls, so a new label is inside this guard the moment it
+        is written.
+
+        Three assertions rather than one, because the register above can be
+        wrong in two directions and each has a different repair: a term that
+        stopped being printed, a term nothing explains, and a term the glossary
+        has since gained an entry for.
+        """
         glossary = (
             Path(MODULE.__file__).parents[1] / "references" / "glossary.md"
         ).read_text(encoding="utf-8")
-        flat = " ".join(glossary.split())
-        for shown in sorted(set(MODULE.CHECK_DISPLAY_NAMES.values())):
-            with self.subTest(line=shown):
-                self.assertIn(
-                    shown,
-                    flat,
-                    f"the card prints '{shown}' and the glossary does not "
-                    "explain it, so the assistant has nothing to answer with",
-                )
+        printed = set(_card_terms(Path(MODULE.__file__).read_text(encoding="utf-8")))
+        # The labels the card prints through `display_name`, and the two
+        # enumerations it interpolates: bands into the headline, pillar names
+        # into each row. Read off the module for the same reason the terms are
+        # read off the renderer - a thirteenth check or a sixth band is covered
+        # the day it is declared.
+        printed |= set(MODULE.CHECK_DISPLAY_NAMES.values())
+        printed |= set(MODULE.BAND_ORDER)
+        printed |= {name.upper() for name in MODULE.COMPONENTS}
+
+        register = set(self.CARD_TERMS_WITHOUT_A_GLOSSARY_ENTRY)
+        self.assertEqual(
+            sorted(register - printed),
+            [],
+            "the register names a term the card no longer prints. A stale "
+            "entry excuses nothing and hides the next real gap - delete it",
+        )
+        unexplained = _unexplained_by(printed, glossary)
+        self.assertEqual(
+            sorted(unexplained - register),
+            [],
+            "the card prints these and the glossary explains none of them, so "
+            "the assistant sent there has nothing to answer with. Give each an "
+            "entry, or name it in CARD_TERMS_WITHOUT_A_GLOSSARY_ENTRY with the "
+            "reason it needs none",
+        )
+        self.assertEqual(
+            sorted(register - unexplained),
+            [],
+            "the glossary now explains these, so the register entry says a gap "
+            "exists where one was closed - delete it",
+        )
+
+    def test_the_term_scan_reaches_a_label_only_a_helper_prints(self) -> None:
+        """The reach the guard above rests on, on a source it can be wrong about.
+
+        `render_card` prints four of its labels itself and hands the rest to
+        helpers - the blocker line, the repeated-rows block, the accepted route.
+        A scan that read only the entry function would require the glossary to
+        explain the first four and quietly exempt the others, which is the
+        shape of the defect it replaces rather than a smaller version of it.
+
+        Invented source, so what is asserted is what this test wrote and not
+        what the module already believes.
+        """
+        source = (
+            "def helper(palette):\n"
+            "    return f'  {palette.bad}HELD FOR REVIEW{palette.reset} waiting'\n"
+            "\n"
+            "def render_card(score, *, palette, unicode_ok=True):\n"
+            "    return '\\n'.join(helper(palette))\n"
+        )
+        terms = _card_terms(source)
+        self.assertIn("HELD FOR REVIEW", terms)
+        self.assertEqual(terms["HELD FOR REVIEW"], {"helper"})
+
+    def test_a_new_card_term_the_glossary_does_not_explain_is_reported(self) -> None:
+        """The guard REDs on the thing it exists to catch.
+
+        A renderer sentence carrying a label nobody wrote an entry for is the
+        state #398 describes, and under the old guard it was green: the label
+        was not in `CHECK_DISPLAY_NAMES`, so nothing looked at it. Here the
+        same state is reported by name.
+
+        The glossary text is invented too, and it explains one of the two terms.
+        A fixture where nothing is explained would pass a scan that had stopped
+        working, because an empty result and a total failure read alike.
+        """
+        source = (
+            "def render_card(score, *, palette, unicode_ok=True):\n"
+            "    lines = [f'  {palette.bad}BLOCKER{palette.reset} one thing']\n"
+            "    lines.append(f'  {palette.warn}HELD FOR REVIEW{palette.reset} two')\n"
+            "    return '\\n'.join(lines)\n"
+        )
+        terms = set(_card_terms(source))
+        self.assertEqual(terms, {"BLOCKER", "HELD FOR REVIEW"})
+        glossary = (
+            "Blocked: a `BLOCKER` line under the score, shown when a blocking\n"
+            "cap fired. It does not mean every component is broken.\n"
+        )
+        self.assertEqual(_unexplained_by(terms, glossary), {"HELD FOR REVIEW"})
+
+    def test_rewording_the_prose_around_a_term_does_not_move_the_scan(self) -> None:
+        """A guard nobody can satisfy is deleted by the next contributor.
+
+        The card's sentences are edited constantly - this module's own history
+        is mostly rewording - and a guard keyed to whole sentences would go red
+        on every one of those edits while proving nothing about vocabulary. The
+        two sources here print the same two labels inside completely different
+        prose, and the scan has to see one set.
+        """
+        first = (
+            "def render_card(score, *, palette, unicode_ok=True):\n"
+            "    return (\n"
+            "        f'{palette.warn}LIMITED TO {score.cap}{palette.reset} "
+            "generated rows bound what this can claim'\n"
+            "    )\n"
+        )
+        second = (
+            "def render_card(score, *, palette, unicode_ok=True):\n"
+            "    return (\n"
+            "        f'{palette.warn}LIMITED TO {score.cap}{palette.reset} "
+            "a made-up answer key is not evidence about production yet'\n"
+            "    )\n"
+        )
+        self.assertEqual(set(_card_terms(first)), set(_card_terms(second)))
+        self.assertEqual(set(_card_terms(first)), {"LIMITED TO"})
+
+    def test_the_scan_skips_the_worked_code_sample_the_card_quotes(self) -> None:
+        """Somebody's example variable is not vocabulary the glossary owes.
+
+        `accepted_route_shape` prints a whole agent file verbatim so a reader
+        can see the shape that would pass. Counting the names inside it would
+        put `MODELS` on the list of words the glossary must define, which is a
+        false red - and a guard that fires on nothing gets weakened until it
+        fires on nothing real either.
+        """
+        source = (
+            "SAMPLE = '''from openai import OpenAI\n"
+            "\n"
+            'MODELS = ["a", "b"]\n'
+            "'''\n"
+            "\n"
+            "def render_card(score, *, palette, unicode_ok=True):\n"
+            "    lines = [f'  {palette.warn}ACCEPTED ROUTE{palette.reset} one agent']\n"
+            "    lines.extend(SAMPLE.splitlines())\n"
+            "    return '\\n'.join(lines)\n"
+        )
+        terms = set(_card_terms(source))
+        self.assertIn("ACCEPTED ROUTE", terms)
+        self.assertNotIn("MODELS", terms)
+
+    def test_every_term_a_rendered_card_prints_is_inside_the_scan(self) -> None:
+        """The scan read off the source, checked against cards actually printed.
+
+        The direction matters: the source scan is the authority, because it
+        reaches branches no fixture builds. What this asks is the other thing -
+        that it is not NARROWER than the artifact. A label assembled at render
+        time from something the scan cannot see would print on a customer's
+        card while sitting outside the guard above, which is how a set that
+        looks complete stops being one.
+
+        The quoted agent file is subtracted from the artifact side, because the
+        source side deliberately drops it. Subtracted by reading the blocks the
+        card reprints rather than by naming `MODELS`, so a second quoted
+        artifact needs no edit here.
+        """
+        source = Path(MODULE.__file__).read_text(encoding="utf-8")
+        scanned = set(_card_terms(source))
+        scanned |= set(MODULE.CHECK_DISPLAY_NAMES.values())
+        scanned |= set(MODULE.BAND_ORDER)
+        scanned |= {name.upper() for name in MODULE.COMPONENTS}
+        scanned |= {
+            term
+            for block in _card_quoted_blocks(source)
+            for term in _CARD_TERM.findall(block)
+            if len(term) >= 3
+        }
+
+        cards = self._cards_over_the_branches()
+        self.assertGreater(len(cards), 5, "too few states to say anything")
+        printed = {
+            term
+            for card in cards
+            for term in _CARD_TERM.findall(card)
+            if len(term) >= 3
+        }
+        self.assertTrue(printed, "no card printed a term, so nothing was compared")
+        self.assertEqual(
+            sorted(printed - scanned),
+            [],
+            "a rendered card prints these and the source scan does not see "
+            "them, so the glossary guard is not enforced on them",
+        )
+
+    def _cards_over_the_branches(self) -> list[str]:
+        """One card per block `render_card` chooses between.
+
+        Built rather than scored: the question is which LABELS can print, and a
+        state like "a ceiling that binds nothing" is reached by a combination of
+        numbers rather than by a project. The scored paths are covered by the
+        rest of this file.
+        """
+        pillars = [
+            MODULE.Pillar(
+                name=name,
+                score=60,
+                confidence=1.0,
+                subscores=(
+                    MODULE.SubScore("power", 20.0, 25.0, True, "180 rows to score"),
+                    MODULE.SubScore(
+                        "calibration", 0.0, 40.0, False, "no calibration reached"
+                    ),
+                ),
+            )
+            for name in MODULE.COMPONENTS
+        ]
+
+        def scored(caps):
+            return MODULE.aggregate(
+                pillars, list(caps), (), dict(MODULE.DEFAULT_WEIGHTS)
+            )
+
+        plain = scored(())
+        scores = [
+            plain,
+            scored([MODULE.NOTHING_WIRED_CAP]),
+            scored([MODULE.FULLY_SYNTHETIC_CAP]),
+            # A ceiling far above the score, so the subjunctive label prints.
+            scored(
+                [MODULE.Cap("dataset-coarse-resolution", 89, "bounded", blocks=False)]
+            ),
+            replace(plain, band_limited_by_confidence=True),
+            replace(plain, agent_route_unverified=True),
+            replace(plain, agent_source_read=True),
+            replace(
+                plain,
+                provenance_assumption=MODULE.ProvenanceAssumption(
+                    undeclared_rows=4,
+                    scored_rows=30,
+                    scored_as_generated=60,
+                    if_declared_collected=71,
+                ),
+            ),
+            replace(
+                plain,
+                repeated_inputs=MODULE.RepeatedInputs(
+                    scoreable=18, distinct=12, side="to tune on"
+                ),
+                recommended_action=MODULE.ADD_EXAMPLES,
+            ),
+            replace(
+                plain,
+                repeated_inputs=MODULE.RepeatedInputs(
+                    scoreable=18, distinct=12, side="to tune on"
+                ),
+            ),
+        ]
+        return [
+            MODULE.render_card(score, palette=MODULE.PLAIN, unicode_ok=unicode_ok)
+            for score in scores
+            for unicode_ok in (True, False)
+        ]
 
     def test_one_fact_prints_as_one_line(self) -> None:
         """An agent with no config space produced three identical rows.
