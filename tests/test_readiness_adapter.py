@@ -5046,5 +5046,130 @@ class RepeatedRowsAreCappedOnTheirOwnAccountTests(unittest.TestCase):
         )
 
 
+class AFailingIdCheckAlwaysReachesItsCeilingTests(unittest.TestCase):
+    """The ceiling was raised from a count, so a zero count dropped it.
+
+    `dataset-integrity-fail` stops a paid run. Building it out of the counts
+    that EXPLAIN the failure made it conditional on one of them being non-zero:
+    a payload FAILing `dataset-ids` with every count at 0 scored 45 OK where
+    trunk scored 35 BLOCKED, and no test saw it because every fixture in this
+    file hardcodes a count the assertion beside it already agrees with.
+
+    No arm of this SHA's `preflight.py` emits that shape - both FAIL arms
+    guarantee their own count - so these payloads are edited after preflight
+    wrote them, which is exactly the population that reaches this adapter from
+    an older version, a filtered log, or something that is not preflight at all.
+    The cap is raised from the FAILURE now, and a failure this score cannot
+    account for is refused rather than scored.
+
+    The counts are the parameter and never the assertion: each case asserts the
+    ceiling exists, which is a property no shape of the metrics may remove.
+    """
+
+    def _records(self, **ids_metrics: int) -> list[dict]:
+        rows = [
+            {
+                "id": f"row-{index:03d}",
+                "input": f"question {index} about the billing system and its rules",
+                "output": f"answer-{index % 4}",
+                "source": "production-log",
+            }
+            for index in range(40)
+        ]
+        with tempfile.TemporaryDirectory() as raw:
+            records = _preflight_records(_write_jsonl(Path(raw), "d.jsonl", rows))
+        for record in records:
+            if record["check"] == "dataset-ids":
+                record["status"] = "FAIL"
+                record["metrics"] = {
+                    "duplicate_ids": 0,
+                    "rows_without_id": 0,
+                    "generated_rows_without_id": 0,
+                    **ids_metrics,
+                }
+        return records
+
+    def test_every_explained_failure_reaches_the_ceiling(self) -> None:
+        """One property over three count shapes, none of which it reads."""
+        for label, ids_metrics in (
+            ("ids collide", {"duplicate_ids": 3}),
+            (
+                "generated rows carry none",
+                {"rows_without_id": 2, "generated_rows_without_id": 2},
+            ),
+            (
+                "both",
+                {
+                    "duplicate_ids": 3,
+                    "rows_without_id": 2,
+                    "generated_rows_without_id": 2,
+                },
+            ),
+        ):
+            with self.subTest(shape=label):
+                score = _score_records(self._records(**ids_metrics))
+                cap = _cap(score, "dataset-integrity-fail")
+                self.assertTrue(cap["blocks"])
+                self.assertEqual(score["status"], "BLOCKED")
+
+    def test_a_failure_no_count_accounts_for_is_refused_not_scored(self) -> None:
+        """The shape that dropped the cap, and the only two answers allowed.
+
+        Silently scoring it is the defect. Emitting the ceiling under a reason
+        built from nothing would be the sibling defect this same branch was
+        opened to remove, so the payload is refused at read time instead, with
+        the flag to re-run named in the message.
+        """
+        process = _run_readiness(self._records())
+        self.assertEqual(process.returncode, 2)
+        self.assertIn("dataset-ids FAILed", process.stderr)
+        self.assertIn(
+            "nothing in this payload accounts for the failure", process.stderr
+        )
+        self.assertNotIn("dataset-integrity-fail", process.stdout)
+
+    def test_the_scorer_refuses_a_failure_it_cannot_explain(self) -> None:
+        """The backstop, for the FAIL arm nobody has written yet.
+
+        The guard above knows the two counts this version publishes. A third
+        reason to FAIL `dataset-ids`, added later with a metric of its own,
+        would pass that guard and arrive here - and before this branch it would
+        have dropped the blocking ceiling with no test failing. Reached through
+        the facts rather than through a payload, because a payload cannot
+        express a metric that does not exist yet.
+        """
+        facts = MODULE.DatasetFacts(
+            exists=True,
+            dataset_supplied=True,
+            rows=40,
+            labelled_rows=40,
+            collected_rows=40,
+            answerable_rows=40,
+            id_check_failed=True,
+        )
+        with self.assertRaises(MODULE.PreflightInputError) as caught:
+            MODULE.score_dataset(facts, "normalized-exact")
+        self.assertIn("could not be given a reason", str(caught.exception))
+
+    def test_an_id_check_that_passes_still_reaches_no_ceiling(self) -> None:
+        """The false-red direction: the fact is the FAILURE, not the check."""
+        with tempfile.TemporaryDirectory() as raw:
+            rows = [
+                {
+                    "id": f"row-{index:03d}",
+                    "input": f"question {index} about the billing system and its rules",
+                    "output": f"answer-{index % 4}",
+                    "source": "production-log",
+                }
+                for index in range(40)
+            ]
+            score = _score_records(
+                _preflight_records(_write_jsonl(Path(raw), "d.jsonl", rows))
+            )
+        self.assertNotIn(
+            "dataset-integrity-fail", [cap["condition"] for cap in score["caps"]]
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

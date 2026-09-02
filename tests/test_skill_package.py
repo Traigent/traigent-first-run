@@ -14556,6 +14556,14 @@ class SkillPackageTests(unittest.TestCase):
                     "and no words to say - condition ids stay internal",
                 )
                 self.assertLess(routing.index(condition), routing.index(branch))
+        # Every agent condition the scorer can raise is routed here, not just
+        # the ones the table above spells out - the loop the dataset sibling
+        # has had all along, and the half missing here. Without it, deleting a
+        # bullet AND its row left the guard green over guidance that no longer
+        # routes the condition, so the table was checking itself.
+        for condition in conditions:
+            with self.subTest(condition=condition):
+                self.assertIn(condition, routing)
 
     def test_the_advisory_claim_matches_which_branches_actually_block(
         self,

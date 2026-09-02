@@ -2324,6 +2324,20 @@ class DatasetFacts:
     # deliberately not the one carried here - a reason built from it would name
     # rows the check did not object to.
     generated_rows_without_id: int | None = None
+    # THAT `dataset-ids` FAILED, carried apart from WHY it failed.
+    #
+    # The counts above explain the failure; this records it. Deriving the cap
+    # from the counts alone made the ceiling conditional on a count being
+    # non-zero, so a payload FAILing that check with every count at 0 - hand
+    # edited, older, or written by something other than this preflight - lost
+    # the blocking cap entirely and scored 45 OK where trunk scored 35 BLOCKED.
+    # No arm of the current `preflight.py` can emit that shape; both of its FAIL
+    # arms guarantee their own count, and a 340-shape sweep found no violation.
+    # A third FAIL arm added later would need no violation to reintroduce it,
+    # which is the whole reason this is a separate fact: the cap is raised from
+    # the failure, and a failure this score cannot explain fails loud instead of
+    # falling through to no cap.
+    id_check_failed: bool = False
     # True only when EVERY row is generated. Mixtures are read from the counts
     # below; asking "is this dataset synthetic" of a mixture has no true answer.
     synthetic: bool | None = False
@@ -2701,9 +2715,19 @@ class AgentFacts:
     # space answers, so there is nothing here for the document to be talked
     # over about.
     build: tuple[BuildSignal, ...] | None = None
-    # Whose agent this is (#238), read exactly as `EvaluationFacts.origin` is
-    # and declared for the same reason: a walkthrough agent this run writes is
+    # Whose agent this is (#238), declared for the reason
+    # `EvaluationFacts.origin` is: a walkthrough agent this run writes is
     # ordinary Python, and nothing about its source says who typed it.
+    #
+    # It is NO LONGER read exactly as that field is, and the difference is worth
+    # naming because this comment used to claim the two were the same. Silence
+    # about the evaluator's origin still fires nothing (`origin_cap`); silence
+    # about the agent's, with no document and no read beside it, is how a run
+    # says there is no agent at all, and `_unsupplied_space_cap` branches on it.
+    # SKILL.md is what makes that reading available - it requires the flag on
+    # every scoring call and permits omitting it only where the component does
+    # not exist yet - and nothing equivalent distinguishes an absent evaluator,
+    # which preflight reports directly.
     origin: str | None = None
 
 
@@ -3655,7 +3679,9 @@ def row_review_shape() -> str:
     )
 
 
-def _row_count(value: Any, name: str, *, required: bool = True) -> int:
+def _row_count(
+    value: Any, name: str, *, required: bool = True, check: str = "dataset-provenance"
+) -> int:
     """Read one provenance row count, refusing an absent or impossible one.
 
     An absent key used to fall back to 0, on the rationale that "the preflight
@@ -3686,14 +3712,14 @@ def _row_count(value: Any, name: str, *, required: bool = True) -> int:
         if not required:
             return 0
         raise PreflightInputError(
-            f"dataset-provenance carries no {name} count - every count this "
+            f"{check} carries no {name} count - every count this "
             "score reads is emitted together by preflight.py, so this JSON was "
             "edited or predates the current preflight.py; re-run preflight.py "
             "--json from the same version as this script"
         )
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
         raise PreflightInputError(
-            f"dataset-provenance carries no usable {name} count - row counts "
+            f"{check} carries no usable {name} count - row counts "
             "are whole and non-negative, so this preflight JSON was edited or "
             "predates the current preflight.py; re-run preflight.py --json "
             "from the same version as this script"
@@ -4194,8 +4220,16 @@ def origin_cap(pillar: str, origin: str | None) -> Cap | None:
     mandates both on every scoring call, because the run that created the
     substitute is the one party that knows - and the guided run is the only path
     this package ships. A caller scoring by hand and saying nothing gets the
-    behaviour it always got, with no cap invented about material nobody
-    described.
+    behaviour it always got FROM THIS FUNCTION, with no origin cap invented
+    about material nobody described.
+
+    That last sentence is scoped to this function since #375, and the scope is
+    the correction: silence about the agent is no longer free everywhere. With
+    no settings document and no source read beside it, an undeclared agent
+    raises `agent-absent` in `_unsupplied_space_cap` - not because silence is
+    evidence of a generated component, which is what this function refuses to
+    infer, but because three inputs asking about an agent all came back empty
+    and the other two pillars already read their own silence that way.
 
     Re-open this if a hand-built caller ever becomes a supported path: the
     argument above turns on the guide being the thing that passes these flags,
@@ -5091,13 +5125,30 @@ def score_dataset(
                 asks=True,
             )
         )
-    integrity_reason = dataset_integrity_reason(facts)
-    if integrity_reason is not None:
+    # Raised from the FINDINGS, never from whether a sentence could be built
+    # for them. The first draft of this branch tested the reason instead, and a
+    # reason that came back empty then read as "no finding" on the one path that
+    # stops a paid run - a check that answers a semantic question from a surface
+    # signal, with its "didn't find it" arm counting as a pass, which is the
+    # class this repository has shipped most often.
+    if facts.integrity_failed or facts.id_check_failed:
+        reason = dataset_integrity_reason(facts)
+        if reason is None:
+            # Fail loud rather than silently drop the ceiling. Unreachable from
+            # any payload `dataset_facts_from_preflight` admits, which refuses
+            # this shape at read time with a message naming the flag to re-run;
+            # this is the backstop for the arm nobody has written yet.
+            raise PreflightInputError(
+                "a dataset integrity check FAILed and none of the counts this "
+                "score reads explains it, so the ceiling it sets could not be "
+                "given a reason. Re-run preflight.py --json from the same "
+                "version as this script"
+            )
         caps.append(
             Cap(
                 "dataset-integrity-fail",
                 DATASET_INTEGRITY_CEILING,
-                integrity_reason,
+                reason,
             )
         )
     return combine("dataset", subs), caps
@@ -5153,10 +5204,12 @@ def dataset_integrity_reason(facts: DatasetFacts) -> str | None:
             "cannot be named, excluded, or reviewed without ambiguity"
         )
     if facts.generated_rows_without_id:
-        rows = "row carries" if facts.generated_rows_without_id == 1 else "rows carry"
+        one = facts.generated_rows_without_id == 1
+        rows = "row carries" if one else "rows carry"
+        them = "it" if one else "them"
         reasons.append(
             f"{facts.generated_rows_without_id} generated {rows} no stable id, "
-            "so there is nothing to name them by"
+            f"so there is nothing to name {them} by"
         )
     if not reasons:
         return None
@@ -5916,7 +5969,9 @@ NOTHING_IN_THE_AGENT_TO_VARY_CAP = Cap(
 # repository has now shipped in six places. Every other pillar in this module
 # already caps its own absence for the same reason: `dataset-absent` at 20 and
 # `evaluator-absent` at 40. The agent pillar was the only one where saying
-# nothing was free.
+# nothing was free, and #375 closes that with `agent-absent` - so what is left
+# here is the narrower state this cap was always about: an agent the run FOUND
+# and could not read. It keeps this ceiling and stays advisory.
 NO_SEARCH_SPACE_ESTABLISHED_CAP = Cap(
     "agent-no-varying-knobs",
     AGENT_NO_VARYING_KNOBS_CEILING,
@@ -8073,12 +8128,28 @@ def dataset_facts_from_preflight(records: Sequence[dict[str, Any]]) -> DatasetFa
     # older payload's silence costs nothing and refusing it would strand runs
     # over a number that could not have changed an outcome.
     ids_metrics = metrics.get("dataset-ids", {})
-    if _failed(statuses, "dataset-ids") and "duplicate_ids" not in ids_metrics:
-        raise PreflightInputError(
-            "dataset-ids FAILed but carries no duplicate_ids count - this "
-            "preflight JSON predates the current preflight.py; re-run "
-            "preflight.py --json from the same version as this script"
-        )
+    if _failed(statuses, "dataset-ids"):
+        if "duplicate_ids" not in ids_metrics:
+            raise PreflightInputError(
+                "dataset-ids FAILed but carries no duplicate_ids count - this "
+                "preflight JSON predates the current preflight.py; re-run "
+                "preflight.py --json from the same version as this script"
+            )
+        # And the version of that hole the key guard above cannot see: the keys
+        # are present and every one of them is zero, so the check reports a
+        # failure it does not account for. Refused here for the same reason the
+        # missing key is - the cap this feeds stops a paid run, and a ceiling
+        # nothing can explain is worse than no payload at all.
+        if not any(
+            ids_metrics.get(name)
+            for name in ("duplicate_ids", "generated_rows_without_id")
+        ):
+            raise PreflightInputError(
+                "dataset-ids FAILed with no duplicate id and no generated row "
+                "missing one, so nothing in this payload accounts for the "
+                "failure - re-run preflight.py --json from the same version as "
+                "this script"
+            )
     tuning_metrics = metrics.get("dataset-tuning-size", {})
     holdout_metrics = metrics.get("dataset-holdout-resolution", {})
     split_metrics = metrics.get("dataset-split", {})
@@ -8253,12 +8324,18 @@ def dataset_facts_from_preflight(records: Sequence[dict[str, Any]]) -> DatasetFa
             metrics.get("dataset-split-family", {}).get("holdout_forms")
         ),
         integrity_failed=structurally_failed,
+        # Carried whether or not a count explains it - see `id_check_failed`.
+        id_check_failed=_failed(statuses, "dataset-ids"),
         # Read only where the check FAILED, so a WARN about missing ids on a
         # collected corpus - which does not cap - cannot put a count into a
         # reason nothing prints. `_row_count` refuses a value that is not a
         # count rather than comparing it to zero and hoping.
         duplicate_ids=(
-            _row_count(ids_metrics.get("duplicate_ids"), "duplicate_ids")
+            _row_count(
+                ids_metrics.get("duplicate_ids"),
+                "duplicate_ids",
+                check="dataset-ids",
+            )
             if _failed(statuses, "dataset-ids")
             else None
         ),
@@ -8266,6 +8343,7 @@ def dataset_facts_from_preflight(records: Sequence[dict[str, Any]]) -> DatasetFa
             _row_count(
                 ids_metrics.get("generated_rows_without_id"),
                 "generated_rows_without_id",
+                check="dataset-ids",
             )
             if _failed(statuses, "dataset-ids")
             else None
