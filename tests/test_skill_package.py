@@ -28478,6 +28478,23 @@ def section_body(text: str, line: int) -> str:
     return "\n".join(lines[line:end])
 
 
+# Which references owe their reader an index, and which does not.
+# Stated rather than discovered, because a set discovered from the files
+# would be satisfied by deleting an index: the file would simply stop being
+# a file that has one. `test_every_reference_is_classified_as_indexed_or_not`
+# holds the pair to the directory, so a reference added later reds until
+# somebody decides which half it belongs in.
+INDEXED_REFERENCES = (
+    "component-creation.md",
+    "evaluation-and-dataset.md",
+    "run-safety.md",
+    "sdk-execution.md",
+)
+# `glossary.md` is four sections of definitions read by lookup rather than in
+# order. There is no route through it for an index to shorten.
+UNINDEXED_REFERENCES = ("glossary.md",)
+
+
 def unlisted_sections(text: str) -> list[str]:
     """Sections the file's own index does not name.
 
@@ -28485,13 +28502,12 @@ def unlisted_sections(text: str) -> list[str]:
     given a plausible-looking pointer: a section can be pointed at from
     SKILL.md and still be missing from the list its own reference opens with,
     and a reader who lands in the file and reads the index would never learn
-    it exists. It fails closed - a file with no index has every section
-    unlisted - which is why the two files that carry one are named below
-    rather than discovered.
+    it exists. It fails closed: a file with no index has every section
+    unlisted, so deleting the index cannot be the way to satisfy it. Which
+    files owe one is a decision the caller states, in INDEXED_REFERENCES
+    below, rather than one this function infers from what it finds.
     """
     indexes = index_section_titles(text)
-    if not indexes:
-        return []
     listed = set()
     for title in indexes:
         line = next(
@@ -28656,16 +28672,18 @@ class ReferenceSectionsAreSignpostedTests(unittest.TestCase):
         """The detector that survives a split with a plausible pointer.
 
         `sdk-execution.md` is excused, and the reason is arithmetic rather
-        than judgement: its own index is missing two sections, the fix is
-        about 80 bytes, and that file measures 128,943 against a 129,000
-        document ceiling. Completing it needs a ceiling raise, which is a
-        separate decision from this one and is filed as such.
+        than judgement: its own index is missing two sections, the fix is 81
+        bytes, and that file measures 128,943 against a 129,000 document
+        ceiling. Completing it needs a ceiling raise, which is a separate
+        decision from this one, filed as issue #381. The two names are the
+        expected value rather than a skip, so adding either one to the index
+        reds here until #381 also removes this entry.
         """
         self.assertEqual(
             {
-                name: unlisted_sections(body)
-                for name, body in self.references.items()
-                if unlisted_sections(body)
+                name: unlisted_sections(self.references[name])
+                for name in INDEXED_REFERENCES
+                if unlisted_sections(self.references[name])
             },
             {
                 "sdk-execution.md": [
@@ -28673,6 +28691,36 @@ class ReferenceSectionsAreSignpostedTests(unittest.TestCase):
                     "Carrying the local baseline into the portal",
                 ]
             },
+        )
+
+    def test_every_reference_that_owes_an_index_has_one(self) -> None:
+        """Deleting the index must not be a way to satisfy the check above.
+
+        `unlisted_sections` fails closed, so a file that loses its index
+        reports every section unlisted. This states the other half: which
+        files owe one is read from INDEXED_REFERENCES, so the answer cannot
+        be quietly changed by editing the document the check reads.
+        """
+        self.assertEqual(
+            [
+                name
+                for name in INDEXED_REFERENCES
+                if not index_section_titles(self.references[name])
+            ],
+            [],
+        )
+
+    def test_every_reference_is_classified_as_indexed_or_not(self) -> None:
+        """A reference added later cannot be silently exempt.
+
+        Two named tuples covering one directory is a seam, and a seam that
+        nothing holds together is where the next file lands: it would owe an
+        index by the same argument as the other four and be checked by
+        neither list. This reds until somebody decides which half it is in.
+        """
+        self.assertEqual(
+            sorted(INDEXED_REFERENCES + UNINDEXED_REFERENCES),
+            sorted(self.references),
         )
 
     def test_every_marker_is_a_dispatch_or_the_line_that_defines_one(
