@@ -158,6 +158,7 @@ def _run_stored_credential_probe(*, offline: bool) -> dict:
         overrides = {
             "HOME": str(root / "home"),
             "LITELLM_LOCAL_MODEL_COST_MAP": "true",
+            "PYTHONPATH": os.pathsep.join(entry for entry in sys.path if entry),
             "TRAIGENT_ALLOW_PLAINTEXT_CREDENTIALS": "true",
             "TRAIGENT_DATASET_ROOT": str(root / "dataset"),
             "TRAIGENT_LOG_EXAMPLE_CONTENT": "false",

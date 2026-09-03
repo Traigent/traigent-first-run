@@ -20830,14 +20830,23 @@ class AnUnfollowedRouteIsNotAnAbsentSettingTests(unittest.TestCase):
         # read as agreeing.
         self.assertEqual(MODULE.search_space_points(6, None), 70.0)
         self.assertEqual(MODULE.search_space_points(36, None), 70.0)
-        # And the branch under change passes a literal None, so no declared
-        # budget can reach the second rung from here. Asserted rather than
-        # described, because describing it is how the claim went wrong twice.
+        # And the branch under change still passes no budget, because
+        # `--agent-knobs` has no field that could carry one. Asserted rather
+        # than described, because describing it is how the claim went wrong
+        # twice. What changed under traigent-first-run#406 is what that
+        # absence MEANS here: a document that declined to say is evidence
+        # about the run, and a path with no document is not, so this branch
+        # now says which of the two it is instead of being damped as though it
+        # were the first. The config-space reading of a bare None is unchanged
+        # and is asserted beside it.
         space = self._space(self._facts())
         self.assertEqual(space.value, 35.0)
         self.assertEqual(MODULE.search_space_points(36, None), 70.0)
         source = inspect.getsource(MODULE.score_discovered_agent)
-        self.assertIn("search_space_points(configurations, None)", source)
+        self.assertIn(
+            "search_space_points(configurations, None, budget_declarable=False)",
+            source,
+        )
 
     def test_one_option_never_widens_a_space_by_a_factor_of_one(self) -> None:
         """One option is not a choice on this branch either."""
@@ -20891,6 +20900,10 @@ class TheRefusalNamesTheRuleItAppliedTests(unittest.TestCase):
         space = next(sub for sub in pillar.subscores if sub.name == "search-space")
         return space, caps, facts
 
+    # `spell_out` is defined AFTER `run` so the `raise` keeps its line number,
+    # which the assertion below reads. It is the disqualifying callee now that
+    # a builtin that only reads its argument is not: this read does not enter
+    # the author's own function, so what it does to the table is unknown.
     TABLE_AGENT = """\
 from openai import OpenAI
 
@@ -20908,6 +20921,10 @@ def run(config, question):
         schema_context=schema_context,
         messages=[{{"role": "user", "content": question}}],
     )
+
+
+def spell_out(values):
+    return ", ".join(values)
 """
 
     KNOB = {
@@ -20922,16 +20939,21 @@ def run(config, question):
         """The rule that cost the reporting team its longest bisection.
 
         One expression in a message that never fires takes the whole table out
-        of credit, and it does so wherever in the module it sits. The bare
-        interpolation is accepted and the wrapped one is not, which is a
-        difference an author has no reason to think is meaningful.
+        of credit, and it does so wherever in the module it sits. What the
+        author cannot see from the message alone is WHICH expression, so the
+        name and the line are what this pins.
+
+        The disqualifying read here hands the table to the file's own
+        `spell_out`, which this check does not enter. `", ".join(...)` in the
+        same position is credited, and `TableReadWideningTests` holds that
+        pair; the two together are the boundary, not one of them alone.
         """
         safe, _caps, _facts = self._space(
             self.TABLE_AGENT.format(message='f"one of {SCHEMA_CONTEXTS}"'), self.KNOB
         )
         self.assertIn("possible settings schema_context", safe.evidence)
         killed, _caps, _facts = self._space(
-            self.TABLE_AGENT.format(message='f"one of {tuple(SCHEMA_CONTEXTS)}"'),
+            self.TABLE_AGENT.format(message='f"one of {spell_out(SCHEMA_CONTEXTS)}"'),
             self.KNOB,
         )
         self.assertIn(
@@ -20940,8 +20962,11 @@ def run(config, question):
             killed.evidence,
         )
         self.assertIn(
-            "every read of it anywhere in the file has to be an index, a "
-            "`.get()`, a bare f-string interpolation, or an `in` comparand",
+            "a read of it anywhere in the file has to be one this check can "
+            "see cannot change it - an index, a `.get()`, an `in` comparand, "
+            "iteration, a bare f-string interpolation, an alias nothing later "
+            "writes to, or an argument to a builtin that only reads what it "
+            "is given",
             killed.evidence,
         )
 
@@ -21172,7 +21197,7 @@ def run(config, question):
         line that happens to hold the same values.
         """
         _space, _caps, facts = self._space(
-            self.TABLE_AGENT.format(message='f"one of {tuple(SCHEMA_CONTEXTS)}"'),
+            self.TABLE_AGENT.format(message='f"one of {spell_out(SCHEMA_CONTEXTS)}"'),
             {
                 **self.KNOB,
                 "tone": {
@@ -21462,13 +21487,232 @@ def run(config, question):
         self.assertNotIn("your space has", none)
 
     def test_only_the_number_depends_on_the_name(self) -> None:
-        """The half that SHOULD differ, so this is not just asserting sameness."""
+        """The half that SHOULD differ, so this is not just asserting sameness.
+
+        The unmatched example used to be `STYLES`, on the rule that a binding
+        had to carry EVERY token of the setting's name. traigent-first-run#399
+        removed that rule, because `STYLES` for `prompt_style` and `FORMATS`
+        for `output_format` are the ordinary tables an author writes and both
+        were refused. So `STYLES` now names the setting and counts, and this
+        test needs a table that is genuinely about something else to keep
+        testing what it was written to test. The claim is unchanged: the floor
+        SENTENCE does not depend on the name, only the ceiling NUMBER does.
+        """
         matched, _ = self._evidence("PROMPT_STYLES")
         self.assertIn("and 4 if they all do", matched)
         self.assertNotIn("without a factor", matched)
 
-        unmatched, facts = self._evidence("STYLES")
+        also_matched, _ = self._evidence("STYLES")
+        self.assertIn("and 4 if they all do", also_matched)
+
+        unmatched, facts = self._evidence("LOOKUP")
         self.assertNotIn("if they all do", unmatched)
         self.assertIn("2 is a floor rather than the space", unmatched)
         self.assertEqual(dict(MODULE.unfollowed_settings(facts)), {"prompt_style": 0})
-        self.assertFalse(MODULE._name_matches_knob("STYLES", "prompt_style"))
+        self.assertFalse(MODULE._name_matches_knob("LOOKUP", "prompt_style"))
+        self.assertTrue(MODULE._name_matches_knob("STYLES", "prompt_style"))
+
+
+class TableReadWideningTests(unittest.TestCase):
+    """What a read of a choice table may do to it, rather than how it is spelt.
+
+    `_module_binding_reference_is_safe` gates the whole table, and
+    `_module_binding_is_current` applies it to EVERY `Load` of the name
+    anywhere in the file. So a pure read it does not recognise costs an author
+    the table, wherever that read sits, including inside an error message that
+    never fires and including at module level. Measured on the shipped rule,
+    `f"{TABLE}"` was credited and `f"{tuple(TABLE)}"` was not, in the same
+    message, and the safest thing an author could do with their own table was
+    never to mention it.
+
+    The rule these pin is one property, not a longer list of shapes: an access
+    is safe when it cannot write to the table or to what the table holds, and
+    cannot put the table somewhere this read stops being able to say that.
+    Both halves are pinned here, because a relaxation that only widened credit
+    would be worse than the refusal it replaces.
+
+    The pair that carries the whole boundary is `", ".join(MODELS)` against
+    `spell_out(MODELS)`, where `spell_out` is the file's own one-line wrapper
+    around the same join. The first is credited because `str.join` is a
+    checked callee that reads its argument; the second is refused because this
+    check does not enter the author's function and therefore does not know
+    what it does. Nothing about the two spellings decides it.
+    """
+
+    def _space(self, source: str, knobs: dict, callable_name: str = "run"):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "agent.py").write_text(source)
+            facts = MODULE.agent_facts_from_discovery(
+                {"source": "agent.py", "knobs": knobs},
+                source_root=root,
+                selected_agent=root / "agent.py",
+                selected_agent_callable=callable_name,
+            )
+        pillar, caps, _rows = MODULE.score_agent(facts)
+        space = next(sub for sub in pillar.subscores if sub.name == "search-space")
+        return space, caps, facts
+
+    # The indexed route, because it is the one an extra statement does not
+    # disturb. The guard-and-pass-through shape used elsewhere in this file
+    # loses its credit to an unrelated rule as soon as any second statement
+    # joins the callable, which would make every row below unreadable.
+    AGENT = """\
+from openai import OpenAI
+
+MODELS = {{"fast": "gpt-4o-mini", "slow": "gpt-4o"}}
+
+client = OpenAI()
+
+{module_line}
+def run(cfg, question):
+    model = MODELS[cfg["model"]]
+{body_line}
+    reply = client.chat.completions.create(
+        model=model, messages=[{{"role": "user", "content": question}}]
+    )
+    return reply.choices[0].message.content
+"""
+
+    KNOB = {
+        "model": {
+            "values": ["fast", "slow"],
+            "source_lines": [3],
+            "evidence": "agent.py:3 lists the two models.",
+        }
+    }
+
+    DISQUALIFIED = "the options table is read in a form that disqualifies it"
+
+    def _verdict(self, body_line: str = "", module_line: str = "") -> tuple[bool, str]:
+        space, _caps, _facts = self._space(
+            self.AGENT.format(body_line=body_line, module_line=module_line), self.KNOB
+        )
+        return "possible settings model" in space.evidence, space.evidence
+
+    def _assert_credited(self, **rendered: str) -> None:
+        credited, evidence = self._verdict(**rendered)
+        self.assertTrue(credited, evidence)
+
+    def _assert_refused_for_the_table_read(self, **rendered: str) -> None:
+        """Refused, and refused by THIS rule rather than by some other one.
+
+        Asserting only that credit is absent would pass on a fixture that lost
+        it to the setting's own route, which is how a both-directions test
+        quietly stops testing the direction it names.
+        """
+        credited, evidence = self._verdict(**rendered)
+        self.assertFalse(credited, evidence)
+        self.assertIn(self.DISQUALIFIED, evidence)
+
+    def test_a_read_that_cannot_change_the_table_keeps_it(self) -> None:
+        """Every row is a pure read the shipped rule threw the table out for."""
+        for label, rendered in (
+            (
+                "wrapped in a message that never fires",
+                {
+                    "body_line": (
+                        "    if not model:\n"
+                        '        raise ValueError(f"one of {tuple(MODELS)}")'
+                    )
+                },
+            ),
+            ("str.join on a literal", {"body_line": '    label = ", ".join(MODELS)'}),
+            ("len", {"body_line": "    count = len(MODELS)"}),
+            ("sorted", {"body_line": "    ordered = sorted(MODELS)"}),
+            ("str", {"body_line": "    shown = str(MODELS)"}),
+            ("print", {"body_line": "    print(MODELS)"}),
+            (
+                "for over the table",
+                {"body_line": "    for option in MODELS:\n        print(option)"},
+            ),
+            (
+                "comprehension over the table",
+                {"body_line": "    labels = [option for option in MODELS]"},
+            ),
+            (
+                "at module level, where no call path reaches",
+                {"module_line": 'CHOICES = ", ".join(MODELS)\n'},
+            ),
+            ("a plain alias", {"body_line": "    allowed = MODELS"}),
+            (
+                "a plain alias that is then read",
+                {
+                    "body_line": (
+                        "    allowed = MODELS\n" '    label = ", ".join(allowed)'
+                    )
+                },
+            ),
+        ):
+            with self.subTest(read=label):
+                self._assert_credited(**rendered)
+
+    def test_a_read_that_could_change_the_table_still_loses_it(self) -> None:
+        """The other direction, without which the widening is not a rule."""
+        for label, rendered in (
+            ("handed to an unresolved callable", {"body_line": "    shuffle(MODELS)"}),
+            (
+                "handed to the file's own helper",
+                {
+                    "module_line": (
+                        "def spell_out(values):\n" '    return ", ".join(values)\n' "\n"
+                    ),
+                    "body_line": "    label = spell_out(MODELS)",
+                },
+            ),
+            ("appended to", {"body_line": '    MODELS.append("balanced")'}),
+            ("cleared", {"body_line": "    MODELS.clear()"}),
+            ("written through", {"body_line": '    MODELS["fast"]["name"] = "x"'}),
+            (
+                "a method call on the copy a builtin returned",
+                {"body_line": "    list(MODELS)[0].clear()"},
+            ),
+            (
+                "an alias that is rebound",
+                {"body_line": "    allowed = MODELS\n    allowed = {}"},
+            ),
+            (
+                "an alias that is mutated",
+                {"body_line": "    allowed = MODELS\n    allowed.clear()"},
+            ),
+            (
+                "an alias handed on to a second alias",
+                {"body_line": "    allowed = MODELS\n    other = allowed"},
+            ),
+        ):
+            with self.subTest(read=label):
+                self._assert_refused_for_the_table_read(**rendered)
+
+    def test_a_reading_builtin_is_resolved_and_not_merely_spelt(self) -> None:
+        """The shadowing check, which is the point of the callee allowlist.
+
+        Same body in every pair, differing only in whether the module has
+        taken the spelling over. If the check matched the string, both halves
+        would be credited and a file whose own `len` sorts the table in place
+        would score as though nothing touched it. Three binders rather than
+        one: a module `def` and a module assignment, which `_node_binds`
+        reads, and a parameter of some unrelated helper, which it cannot see
+        at all because a parameter is not a statement.
+        """
+        for label, module_line, body_line in (
+            (
+                "a module def",
+                "def len(values):\n    return 0\n\n",
+                "    n = len(MODELS)",
+            ),
+            (
+                "a module assignment",
+                "tuple = list\n",
+                "    shown = tuple(MODELS)",
+            ),
+            (
+                "a parameter in some other function",
+                "def helper(sorted):\n    return sorted\n\n",
+                "    ordered = sorted(MODELS)",
+            ),
+        ):
+            with self.subTest(shadow=label):
+                self._assert_credited(body_line=body_line)
+                self._assert_refused_for_the_table_read(
+                    module_line=module_line, body_line=body_line
+                )

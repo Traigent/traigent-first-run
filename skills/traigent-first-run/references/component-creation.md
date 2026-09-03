@@ -516,11 +516,13 @@ does not enter, that callable loses it, and the only setting still followed is w
 FIRST in file order. Two one-line repairs: stop passing the mapping around bare, or move the read
 you care about to the top of the function.
 
-**Every read of a choice table, anywhere in the file, has to be an index, a `.get()`, a bare
-f-string interpolation, or an `in` comparand.** `tuple(TABLE)` inside an error message that never
-fires, `", ".join(TABLE)`, `for option in TABLE:` and `allowed = TABLE` each take the whole table
-out of credit, wherever in the module they sit - not mentioning it at all is safer than mentioning
-it. `f"{TABLE}"` is fine; `f"{tuple(TABLE)}"` is not.
+**A read of a choice table, anywhere in the file, has to be one this reader can see cannot change
+the table.** An index, a `.get()`, an `in` comparand, a `for` over it, an f-string interpolation, an
+alias nothing later writes to, and an argument to a builtin that only reads it, all keep it. Writing
+through the name loses it, and so does handing the table to your own function, wherever in the
+module that sits: this reader does not enter your function, so it cannot say what happens in there.
+A builtin your file has rebound counts as your own function. `f"{tuple(TABLE)}"` is fine;
+`f"{spell_out(TABLE)}"` is not.
 
 **A range has no options to index, so it has its own route:** the setting passed straight to the
 request argument named for it, on the provider client's own request, as `temperature=temperature`
