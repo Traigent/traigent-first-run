@@ -5112,3 +5112,258 @@ class TheFourCombinationsAreScoredOnTheFileTests(unittest.TestCase):
         shape = next(r for r in records if r["check"] == "evaluator-shape")
         self.assertNotIn("comparison_shape", shape["metrics"])
         self.assertEqual(_task_fit(score)["value"], MODULE.TASK_FIT_WEIGHT)
+
+
+STRUCTURAL_COMPARATOR = SCRIPTS.parent / "assets" / "sql_structure.py"
+DELEGATING_EVALUATOR = (
+    '"""Grade SQL by comparing the two queries as parsed structures."""\n'
+    "\n"
+    "from sql_structure import structural_match\n"
+    "\n"
+    "\n"
+    "def score(*, output, expected, input_data, metadata):\n"
+    "    del input_data, metadata\n"
+    "    return structural_match(output, expected)\n"
+)
+
+
+class TheStructuralSqlRouteIsEarnedFromTheFileTests(unittest.TestCase):
+    """traigent-first-run#414, through the real two-script pipeline.
+
+    The issue: `code-sql` fitted two methods, one of which this guide ends on
+    and the other of which is priced at half reproducibility, so an obedient
+    SQL project could not reach the top band by any honest declaration. The
+    new method fills that gap, and the whole risk of adding it is that it
+    becomes one more word that pays. These run the pipeline the guide tells a
+    customer to run and check both directions on the same declaration.
+    """
+
+    def score(self, source: str, method: str, *, module: str | None) -> dict:
+        """Score `source`, optionally with a `sql_structure.py` beside it."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            evaluator = root / "evaluator.py"
+            evaluator.write_text(source)
+            if module is not None:
+                (root / "sql_structure.py").write_text(module)
+            return _score_evaluator(
+                evaluator, ("--evaluator-method", method, "--task-kind", "code-sql")
+            )
+
+    def shipped(self) -> str:
+        return STRUCTURAL_COMPARATOR.read_text()
+
+    def test_the_documented_route_earns_the_credit_end_to_end(self) -> None:
+        """The route the reference now selects, run as written."""
+        subscore = _task_fit(
+            self.score(DELEGATING_EVALUATOR, "sql-structure", module=self.shipped())
+        )
+        self.assertEqual(subscore["value"], MODULE.TASK_FIT_WEIGHT)
+        self.assertEqual(subscore["evidence"], "sql-structure suits code-sql output")
+
+    def test_a_text_comparator_declaring_the_method_is_refused(self) -> None:
+        """The acceptance test for the whole change, end to end.
+
+        The corpus comparator is a whole-value casefold equality and the walk
+        proves it, so the declaration is refuted by the file rather than
+        merely unpaid, and the sentence names what the file does first.
+        """
+        subscore = _task_fit(
+            self.score(CORPUS_COMPARATOR.read_text(), "sql-structure", module=None)
+        )
+        self.assertEqual(subscore["value"], MODULE.TASK_FIT_UNFIT_CREDIT)
+        self.assertIn(
+            "normalized-exact check rather than sql-structure", subscore["evidence"]
+        )
+
+    def test_a_comparator_the_walk_cannot_classify_earns_nothing(self) -> None:
+        """The unknown case, and the direction it has to fail in.
+
+        This is the canonical-form SQL comparator the reference has always
+        selected under `composite`. Nothing about it is established: a helper
+        call is not a whole-value equality and it does not delegate. Under
+        `composite` that costs it nothing, which is right, because `composite`
+        claims nothing about the file. Under the new method the same silence
+        is a withheld credit, because the new method claims everything about
+        it.
+        """
+        canonical_sql = (
+            '"""Compare SQL over a canonical form: fence, case, spacing."""\n\n'
+            "import re\n\n"
+            'FENCE = re.compile(r"^```(?:sql)?\\s*|\\s*```$", re.MULTILINE)\n'
+            'SPACING = re.compile(r"\\s+")\n\n\n'
+            "def canonical(text):\n"
+            '    stripped = FENCE.sub("", str(text)).strip().rstrip(";")\n'
+            '    return SPACING.sub(" ", stripped).casefold()\n\n\n'
+            "def score(*, output, expected, input_data, metadata):\n"
+            "    del input_data, metadata\n"
+            "    return float(canonical(output) == canonical(expected))\n"
+        )
+        unestablished = _task_fit(
+            self.score(canonical_sql, "sql-structure", module=None)
+        )
+        self.assertEqual(unestablished["value"], MODULE.TASK_FIT_UNFIT_CREDIT)
+        self.assertIn("does not establish that it does", unestablished["evidence"])
+        # And the route it honestly belongs to keeps every point it had.
+        unchanged = _task_fit(self.score(canonical_sql, "composite", module=None))
+        self.assertEqual(unchanged["value"], MODULE.TASK_FIT_WEIGHT)
+
+    def test_a_forged_module_under_the_bundled_name_earns_nothing(self) -> None:
+        """The name is the guide's, the call is the guide's, the file is not.
+
+        Without the identity half of the proof this is a text comparator
+        collecting full task fit for a structural claim, which is the reading
+        traigent-first-run#380 was filed about, one indirection further out.
+        """
+        forged = (
+            '"""Compare two queries as parsed structures."""\n'
+            "\n"
+            "\n"
+            "def structural_match(candidate, expected):\n"
+            "    return float(str(candidate).casefold() == str(expected).casefold())\n"
+        )
+        subscore = _task_fit(
+            self.score(DELEGATING_EVALUATOR, "sql-structure", module=forged)
+        )
+        self.assertEqual(subscore["value"], MODULE.TASK_FIT_UNFIT_CREDIT)
+        self.assertIn("does not establish that it does", subscore["evidence"])
+
+    def test_the_structural_file_refuses_the_declarations_it_is_not(self) -> None:
+        """Read the other way, which is the half a one-directional check misses.
+
+        A file proven to compare two parses is not comparing whole values and
+        is not a blend of checks, so `exact` and `composite` over it are
+        refused with the sentence that says what it does instead. Without this
+        the new shape would have been a way to keep an older method's credit
+        on a file that contradicts it.
+        """
+        refuted = _task_fit(
+            self.score(DELEGATING_EVALUATOR, "composite", module=self.shipped())
+        )
+        self.assertEqual(refuted["value"], MODULE.TASK_FIT_UNFIT_CREDIT)
+        self.assertIn(
+            "reads both answers as SQL and compares them as parsed structures",
+            refuted["evidence"],
+        )
+        self.assertIn("rather than composite", refuted["evidence"])
+        # And the documented precedence holds over the new shape too: a method
+        # that was already the wrong kind of check for this output keeps the
+        # sentence about the output kind, which is worth more to the reader
+        # and is worth the same number of points.
+        mismatched = _task_fit(
+            self.score(DELEGATING_EVALUATOR, "exact", module=self.shipped())
+        )
+        self.assertEqual(mismatched["value"], MODULE.TASK_FIT_UNFIT_CREDIT)
+        self.assertIn("wrong kind of check for code-sql output", mismatched["evidence"])
+
+    def test_the_new_method_moves_no_other_projects_score(self) -> None:
+        """Nothing already honest may lose a point to this change.
+
+        Every method the guide already offered, over the evaluator this
+        repository actually grades with, on the kind that evaluator is
+        declared for. A new row in a shared table is exactly the change that
+        silently reprices somebody else's card, so this is measured rather
+        than reasoned about.
+        """
+        comparator = CORPUS_COMPARATOR.read_text()
+        with tempfile.TemporaryDirectory() as directory:
+            evaluator = Path(directory) / "evaluator.py"
+            evaluator.write_text(comparator)
+            honest = _score_evaluator(
+                evaluator,
+                (
+                    "--evaluator-method",
+                    "normalized-exact",
+                    "--task-kind",
+                    "closed-label",
+                ),
+            )
+        subscore = _task_fit(honest)
+        self.assertEqual(subscore["value"], MODULE.TASK_FIT_WEIGHT)
+        self.assertEqual(
+            subscore["evidence"], "normalized-exact suits closed-label output"
+        )
+
+
+class TheRouteTheReferencePrintsIsTheRouteTheScoreCreditsTests(unittest.TestCase):
+    """The document and the derivation, held against each other.
+
+    Every other test here builds its evaluator from a literal in this file, so
+    all of them would stay green if the reference printed a different route
+    than the one the score can read. That gap is the whole failure mode worth
+    guarding: the credit for this method is derived from the file's exact
+    form, so a route worded even slightly differently pays a correct evaluator
+    what a mismatched method earns, and the customer is given no way to see
+    why.
+
+    So the evaluator here is BUILT FROM THE DOCUMENT: the two lines are pulled
+    out of the reference's own row and assembled, and the assertion lands on
+    what the scorer says about the result. Nothing in it restates the route.
+    """
+
+    ROUTE = SCRIPTS.parent / "references" / "evaluation-and-dataset.md"
+    ROW = "| A SQL SELECT statement |"
+
+    def _line_from_the_row(self, pattern: str) -> str:
+        rows = [
+            line
+            for line in self.ROUTE.read_text().splitlines()
+            if line.startswith(self.ROW)
+        ]
+        self.assertEqual(
+            len(rows),
+            1,
+            f"the reference no longer offers exactly one {self.ROW!r} route, so "
+            "this test is reading something other than the route it is about",
+        )
+        found = re.findall(rf"`({pattern})`", rows[0])
+        self.assertEqual(
+            len(found),
+            1,
+            f"the route row does not print exactly one {pattern!r}; an author "
+            "following it cannot write the form the score is able to credit",
+        )
+        return found[0]
+
+    def test_an_evaluator_assembled_from_the_row_earns_the_credit(self) -> None:
+        binding = self._line_from_the_row(r"from sql_structure import \w+")
+        returned = self._line_from_the_row(r"return \w+\(output, expected\)")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "sql_structure.py").write_text(STRUCTURAL_COMPARATOR.read_text())
+            evaluator = root / "evaluator.py"
+            evaluator.write_text(
+                '"""Grade SQL by comparing the two queries as parsed structures."""\n'
+                "\n"
+                f"{binding}\n"
+                "\n"
+                "\n"
+                "def score(*, output, expected, input_data, metadata):\n"
+                "    del input_data, metadata\n"
+                f"    {returned}\n"
+            )
+            score = _score_evaluator(
+                evaluator,
+                ("--evaluator-method", "sql-structure", "--task-kind", "code-sql"),
+            )
+        subscore = _task_fit(score)
+        self.assertEqual(
+            subscore["value"],
+            MODULE.TASK_FIT_WEIGHT,
+            "the reference prints a route the score cannot read, so a customer "
+            "who follows it exactly is paid what a mismatched method earns",
+        )
+        self.assertEqual(subscore["evidence"], "sql-structure suits code-sql output")
+
+    def test_the_module_the_row_names_is_the_one_that_ships(self) -> None:
+        """A row naming a file that is not there is a route to nothing."""
+        named = re.findall(
+            r"`(assets/[\w./-]+\.py)`",
+            next(
+                line
+                for line in self.ROUTE.read_text().splitlines()
+                if line.startswith(self.ROW)
+            ),
+        )
+        self.assertEqual(named, ["assets/sql_structure.py"])
+        self.assertTrue((SCRIPTS.parent / named[0]).is_file())

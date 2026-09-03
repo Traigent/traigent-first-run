@@ -23,6 +23,7 @@ Select the lowest-complexity method that measures the real task:
 | Numeric value | Numeric comparison with a justified tolerance |
 | Sets or unordered collections | Order-insensitive set comparison |
 | Code or SQL | Composite (`--evaluator-method composite`): a parser gate, then comparison over canonical form - a markdown code fence, aliases, case and spacing resolved before matching |
+| A SQL SELECT statement | Structural comparison (`--evaluator-method sql-structure`): copy `assets/sql_structure.py` beside the evaluator, then `from sql_structure import structural_match` and `return structural_match(output, expected)` |
 | Tool/action workflow | Final-state or side-effect check in an isolated environment |
 | Retrieval/grounded answer | Citation/grounding checks plus semantic correctness |
 | Summary, explanation, writing, story | Rubric-based LLM judge, optionally preceded by deterministic gates |
@@ -38,6 +39,24 @@ otherwise, and sometimes when it is. It does not reach a different join or subqu
 that returns the same rows. Write `equivalent_good` as a surface variant the canonical form
 resolves, and record a differently-shaped equivalent as a known coverage gap rather than widening
 the scorer until it passes.
+
+Structural comparison is bounded differently, and it is the row to take when the answer is one
+`SELECT`. It compares the select set, predicates, grouping, ordering, aggregates and nesting of
+two parses, so reordered conjuncts and renamed aliases match while a differently shaped subquery
+does not. Take the row above instead for code that is not a single `SELECT`: this comparator reads
+that as nothing and scores it 0 on both sides. It resolves no identifiers against a schema,
+because it opens no catalog: `amount` and `orders.amount` are two names to it, `SELECT *` is no
+column list, and `USING (id)` is not the `ON` it stands for. Write `equivalent_good` as a surface,
+conjunct-order or alias variant, never as a reordered `ORDER BY`, whose order it reads as meaning;
+record a schema-dependent equivalent as a coverage gap. It imports only the standard library and
+reaches no engine, so it calibrates at the opening gate.
+
+Its task fit is read from the evaluator file rather than from the declared word, so the form is
+the contract. The score settles it only for an evaluator whose body is the `del input_data,
+metadata` idiom and that one `return` of that one call, over a copy of the module left unchanged.
+A structural comparator you wrote yourself grades as well and this score cannot read it, so it
+earns what a mismatched method earns; declare `composite` for one of those, which the
+canonical-form row already pays in full.
 
 When the user's existing evaluator is present, preserve it and explain "correct" in one sentence.
 Validate it; do not silently redesign it.

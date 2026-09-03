@@ -4896,3 +4896,341 @@ class TheComparisonTheFilePerformsIsProvedOrLeftUnsettledTests(unittest.TestCase
         result = next(r for r in MODULE.RESULTS if r.check == "evaluator-shape")
         self.assertNotIn("comparison_shape", result.metrics)
         self.assertNotIn("comparison_witness", result.metrics)
+
+
+DELEGATES_TO_BUNDLED_COMPARATOR = '''"""Grade SQL by comparing the two queries as parsed structures."""
+
+from sql_structure import structural_match
+
+
+def score(*, output, expected, input_data, metadata):
+    del input_data, metadata
+    return structural_match(output, expected)
+'''
+
+
+class TheStructuralSqlComparisonAFileDelegatesToTests(unittest.TestCase):
+    """#414: the one method whose credit is a claim about the file itself.
+
+    `code-sql` fitted two methods. One is the executing route this guide ends
+    on, the other is `composite` at half reproducibility, and every
+    deterministic method excluded the kind - correctly, because two
+    different-looking queries can mean the same thing and text equality scores
+    a right answer zero. The method that fills the gap has to be earned from
+    the file, or it is one more word that pays.
+
+    "This file compares SQL structure" is not decidable over arbitrary Python,
+    so nothing here tries. What is proven is DELEGATION to a comparator whose
+    behaviour is known: the scorer hands both answers to the bundled module,
+    and the copy of that module beside the evaluator is the one this guide
+    ships. Either half alone is worthless - a name anyone can type, or a file
+    anyone can copy and not call - so both are required and every other file
+    comes back unestablished.
+    """
+
+    def settle(self, source: str, *, module: str | None = "shipped"):
+        """Derive the shape for `source`, with `module` written beside it."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            evaluator = root / "evaluator.py"
+            evaluator.write_text(source)
+            if module == "shipped":
+                (root / "sql_structure.py").write_text(
+                    MODULE.STRUCTURAL_SQL_ASSET.read_text()
+                )
+            elif module is not None:
+                (root / "sql_structure.py").write_text(module)
+            return MODULE.derived_structural_sql_shape(ast.parse(source), evaluator)
+
+    def test_the_documented_route_settles_and_names_the_line(self) -> None:
+        """The one file the guide's own route produces, end to end."""
+        line = self.settle(DELEGATES_TO_BUNDLED_COMPARATOR)
+        self.assertEqual(line, 8)
+        self.assertIn(
+            "the copy beside this evaluator is unchanged (line 8)",
+            MODULE.structural_comparison_witness(line),
+        )
+
+    def test_a_copy_reformatted_but_not_changed_still_settles(self) -> None:
+        """Trees, not bytes. A copy may be re-commented and may not be rewritten."""
+        shipped = MODULE.STRUCTURAL_SQL_ASSET.read_text()
+        recommented = "# a note the customer added\n" + shipped.replace(
+            "\n\n\n", "\n\n\n\n"
+        )
+        self.assertNotEqual(recommented, shipped)
+        self.assertIsNotNone(
+            self.settle(DELEGATES_TO_BUNDLED_COMPARATOR, module=recommented)
+        )
+
+    def test_a_module_that_is_not_the_shipped_one_settles_nothing(self) -> None:
+        """The forgery this half exists for, and #380 one indirection out.
+
+        The names are the guide's, the call is the guide's, and the comparison
+        inside is `casefold` equality. Without the identity half this file
+        would have earned full task fit for a text comparator, which is the
+        exact reading the method was added to avoid creating.
+        """
+        forged = (
+            '"""Compare two queries as parsed structures."""\n'
+            "\n"
+            "\n"
+            "def structural_match(candidate, expected):\n"
+            "    return float(str(candidate).casefold() == str(expected).casefold())\n"
+        )
+        self.assertIsNone(self.settle(DELEGATES_TO_BUNDLED_COMPARATOR, module=forged))
+
+    def test_no_module_beside_the_evaluator_settles_nothing(self) -> None:
+        """An import this walk cannot resolve to the shipped file proves nothing."""
+        self.assertIsNone(self.settle(DELEGATES_TO_BUNDLED_COMPARATOR, module=None))
+
+    def test_a_module_that_does_not_parse_settles_nothing(self) -> None:
+        """Every refusal `ast.parse` can make is the fail-closed answer here."""
+        self.assertIsNone(
+            self.settle(DELEGATES_TO_BUNDLED_COMPARATOR, module="def (:\n")
+        )
+
+    def test_either_spelling_of_the_import_settles(self) -> None:
+        """Both forms an author writes, and neither is harder to prove.
+
+        The reference shows the `from` import. Refusing the module import
+        would have cost an honest evaluator its credit for a choice the
+        guidance never asked about, and a refusal a customer cannot see is
+        the half of a check nobody reports.
+        """
+        through_name = self.settle(DELEGATES_TO_BUNDLED_COMPARATOR)
+        self.assertIsNotNone(through_name)
+        through_module = self.settle(
+            '"""Grade SQL by comparing the two queries as parsed structures."""\n'
+            "\n"
+            "import sql_structure\n"
+            "\n"
+            "\n"
+            "def score(*, output, expected, input_data, metadata):\n"
+            "    del input_data, metadata\n"
+            "    return sql_structure.structural_match(output, expected)\n"
+        )
+        self.assertIsNotNone(through_module)
+
+    def test_the_call_has_to_match_the_binding_it_was_reached_through(self) -> None:
+        """A file that would not run is not a file this walk establishes."""
+        for name, source in (
+            (
+                "bare name under a module import",
+                "import sql_structure\n\n\n"
+                "def score(*, output, expected, input_data, metadata):\n"
+                "    return structural_match(output, expected)\n",
+            ),
+            (
+                "attribute under a from import",
+                "from sql_structure import structural_match\n\n\n"
+                "def score(*, output, expected, input_data, metadata):\n"
+                "    return sql_structure.structural_match(output, expected)\n",
+            ),
+        ):
+            with self.subTest(mismatch=name):
+                self.assertIsNone(self.settle(source))
+
+    def test_the_binding_has_to_be_the_one_the_route_writes(self) -> None:
+        """Three import forms, each a different file's business.
+
+        An alias binds a name the return would not show. A relative import
+        names the customer's own package rather than the copied module. An
+        import inside the function is a binding this walk did not follow to
+        the return. None of them is caught out; each is simply not read.
+        """
+        body = (
+            "\n\ndef score(*, output, expected, input_data, metadata):\n"
+            "    del input_data, metadata\n"
+            "    return structural_match(output, expected)\n"
+        )
+        for name, header in (
+            ("aliased", "from sql_structure import structural_match as compare"),
+            ("relative", "from .sql_structure import structural_match"),
+            ("aliased module", "import sql_structure as sql"),
+            ("no import at all", "pass"),
+        ):
+            with self.subTest(binding=name):
+                self.assertIsNone(self.settle(header + body))
+
+    def test_the_call_has_to_hand_over_both_answers_once_each(self) -> None:
+        """The whole point of the proof, and every way of missing it."""
+        header = "from sql_structure import structural_match\n\n\n"
+        for name, returned in (
+            ("one answer twice", "structural_match(output, output)"),
+            ("reversed", "structural_match(expected, output)"),
+            ("by keyword", "structural_match(output, expected=expected)"),
+            ("a third argument", "structural_match(output, expected, metadata)"),
+            ("one argument", "structural_match(output)"),
+            ("something else", "structural_match(str(output), expected)"),
+            ("a different callable", "other_match(output, expected)"),
+        ):
+            with self.subTest(call=name):
+                self.assertIsNone(
+                    self.settle(
+                        header
+                        + "def score(*, output, expected, input_data, metadata):\n"
+                        f"    return {returned}\n"
+                    )
+                )
+
+    def test_a_truth_wrapper_is_read_through_and_nothing_else_is(self) -> None:
+        """`float(...)` changes no verdict; anything else is a file to read."""
+        header = "from sql_structure import structural_match\n\n\n"
+        wrapped = self.settle(
+            header + "def score(*, output, expected, input_data, metadata):\n"
+            "    return float(structural_match(output, expected))\n"
+        )
+        self.assertIsNotNone(wrapped)
+        self.assertIsNone(
+            self.settle(
+                header + "def score(*, output, expected, input_data, metadata):\n"
+                "    return round(structural_match(output, expected), 2)\n"
+            )
+        )
+
+    def test_a_body_doing_anything_else_stops_the_proof(self) -> None:
+        """Stricter than the whole-value walk, and deliberately so.
+
+        There is nothing for this scorer to prepare - the comparator owns the
+        fence stripping and the canonicalisation - so a statement that
+        prepares a value is a file doing something this walk has not read.
+        """
+        header = "from sql_structure import structural_match\n\n\n"
+        for name, body in (
+            (
+                "an assignment",
+                "    answer = str(output)\n"
+                "    return structural_match(answer, expected)\n",
+            ),
+            (
+                "a branch",
+                "    if not output:\n"
+                "        return 0.0\n"
+                "    return structural_match(output, expected)\n",
+            ),
+            (
+                "a second return",
+                "    return structural_match(output, expected)\n" "    return 0.0\n",
+            ),
+            (
+                "an unbound answer",
+                "    del expected\n    return structural_match(output, output)\n",
+            ),
+            ("no return at all", "    structural_match(output, expected)\n"),
+        ):
+            with self.subTest(body=name):
+                self.assertIsNone(
+                    self.settle(
+                        header
+                        + "def score(*, output, expected, input_data, metadata):\n"
+                        + body
+                    )
+                )
+
+    def test_a_second_answer_taking_callable_stops_the_proof(self) -> None:
+        """The same refusal the whole-value walk makes, for the same reason."""
+        self.assertIsNone(
+            self.settle(
+                "from sql_structure import structural_match\n\n\n"
+                "def helper(*, output, expected):\n"
+                "    return structural_match(output, expected)\n\n\n"
+                "def score(*, output, expected, input_data, metadata):\n"
+                "    return structural_match(output, expected)\n"
+            )
+        )
+
+    def test_the_opening_idiom_is_skipped_and_nothing_else_is(self) -> None:
+        """`del input_data, metadata` opens every adapter this guide writes."""
+        self.assertIsNotNone(self.settle(DELEGATES_TO_BUNDLED_COMPARATOR))
+        self.assertIsNone(
+            self.settle(
+                "from sql_structure import structural_match\n\n\n"
+                "def score(*, output, expected, input_data, metadata):\n"
+                "    del metadata['seen']\n"
+                "    return structural_match(output, expected)\n"
+            )
+        )
+
+    def test_the_two_proofs_can_never_both_settle_one_file(self) -> None:
+        """A file reported as two shapes at once would be a card nobody can read.
+
+        They are mutually exclusive by construction - a call to the comparator
+        is a helper call, which stops the whole-value walk at its first
+        operand - and this asserts the construction rather than trusting it.
+        """
+        for name, source in (
+            ("delegating", DELEGATES_TO_BUNDLED_COMPARATOR),
+            ("casefold", CASEFOLD_COMPARISON),
+            ("bare equality", BARE_EQUALITY),
+            ("canonical SQL", SQL_CANONICAL_COMPARISON),
+        ):
+            with self.subTest(evaluator=name):
+                whole_value = MODULE.derived_comparison_shape(ast.parse(source))
+                structural = self.settle(source)
+                self.assertFalse(whole_value is not None and structural is not None)
+
+    def test_every_honest_evaluator_in_the_corpus_stays_unsettled(self) -> None:
+        """The direction that decides whether this is safe to ship.
+
+        None of the evaluators a customer would plausibly hand this guide
+        delegates to the bundled comparator, so none of them may be read as
+        doing so. A walk that guessed at any of these would credit a
+        structural claim to a file that makes none.
+        """
+        for name, source in NON_EXECUTING_EVALUATORS.items():
+            with self.subTest(evaluator=name):
+                self.assertIsNone(self.settle(source))
+
+    def test_the_shipped_comparator_opens_nothing_and_runs_nothing(self) -> None:
+        """The property that puts this route in the pre-install stage.
+
+        `run-safety.md` lets the opening gate run a non-executing evaluator
+        whose complete call path is local-only, side-effect-free and
+        standard-library-only, and defers one that needs a declared local
+        dependency until that dependency is installed. This module is the
+        evaluator's whole call path, so the claim is checked against the file
+        rather than asserted about it: it reaches no engine, and it imports
+        nothing that is not in the standard library.
+        """
+        source = MODULE.STRUCTURAL_SQL_ASSET.read_text()
+        tree = ast.parse(source)
+        self.assertEqual(MODULE.candidate_execution_witnesses(tree), ())
+        imported = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                imported.update(alias.name.split(".")[0] for alias in node.names)
+            elif isinstance(node, ast.ImportFrom) and node.level == 0:
+                imported.add((node.module or "").split(".")[0])
+        self.assertLessEqual(imported, set(sys.stdlib_module_names))
+        for name in ("structural_match", "structural_signature"):
+            with self.subTest(symbol=name):
+                self.assertIn(name, dir(self.comparator()))
+
+    def comparator(self):
+        """The shipped module, imported from its own file."""
+        spec = importlib.util.spec_from_file_location(
+            "shipped_sql_structure", MODULE.STRUCTURAL_SQL_ASSET
+        )
+        module = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        spec.loader.exec_module(module)
+        return module
+
+    def test_the_proof_reaches_the_metrics_with_a_line_to_check_it_on(self) -> None:
+        MODULE.RESULTS.clear()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = root / "evaluator.py"
+            path.write_text(DELEGATES_TO_BUNDLED_COMPARATOR)
+            (root / "sql_structure.py").write_text(
+                MODULE.STRUCTURAL_SQL_ASSET.read_text()
+            )
+            MODULE.check_evaluator(path)
+        result = next(r for r in MODULE.RESULTS if r.check == "evaluator-shape")
+        self.assertEqual(result.metrics["comparison_shape"], "sql-structure")
+        self.assertEqual(
+            result.metrics["comparison_witness"],
+            "both answers are handed to the bundled structural SQL comparator, "
+            "and the copy beside this evaluator is unchanged (line 8)",
+        )
+        self.assertIs(result.metrics["executes"], False)
