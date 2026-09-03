@@ -544,8 +544,13 @@ class ReadinessAdapterReplayTests(unittest.TestCase):
             )
             everything = directory / "everything.jsonl"
             everything.write_text("\n".join([broken] * 100) + "\n")
-            partial_score = _score(partial)
-            everything_score = _score(everything)
+            # Both runs name the agent, so the remedy this test reads is the
+            # DATASET's. An undeclared agent blocks at a lower ceiling and its
+            # own remedy would win `recommended_action` on both sides, which
+            # would hide the very discontinuity being asserted.
+            named_agent = ("--agent-origin", "brought")
+            partial_score = _score(partial, extra=named_agent)
+            everything_score = _score(everything, extra=named_agent)
 
         self.assertEqual(partial_score["recommended_action"], "repair-dataset")
         self.assertEqual(everything_score["recommended_action"], "read-dataset")
@@ -1669,7 +1674,12 @@ class ReadinessAdapterReplayTests(unittest.TestCase):
 
             # And it is disclosed, not punished: the card names the tokens, the
             # remedy is a relabel, and the second grade is printed.
-            payload = _score(dataset)
+            #
+            # The agent is named for the counterfactual's sake: the second grade
+            # is only printable while relabelling would MOVE the card, and an
+            # undeclared agent holds both readings at one ceiling, so the
+            # disclosure would correctly report nothing to show.
+            payload = _score(dataset, extra=("--agent-origin", "brought"))
             self.assertIn(
                 "dataset-undeclared-provenance",
                 [cap["condition"] for cap in payload["caps"]],
@@ -2331,7 +2341,14 @@ class EvaluatorPresenceAdapterTests(unittest.TestCase):
                         MODULE.EVALUATOR_UNVALIDATED_CEILING,
                     )
                     self.assertFalse(unvalidated["blocks"])
-                    self.assertEqual(unvalidated["action_kind"], "proceed")
+                    # Not `proceed`, which is what this asserted while a
+                    # deferred card and a calibrated one routed alike. The cap
+                    # still does not block - a verdict with nothing behind it
+                    # is not a conviction - and the remedy now names the check
+                    # that has not run (traigent-first-run#379).
+                    self.assertEqual(
+                        unvalidated["action_kind"], MODULE.COMPLETE_CALIBRATION
+                    )
                     evaluation = next(
                         pillar
                         for pillar in score["pillars"]
@@ -3348,7 +3365,16 @@ class TheFamilyPartitionedSplitReachesTheCardTests(unittest.TestCase):
             dataset = _write_jsonl(Path(raw), "dataset.jsonl", self._rows(partitioned))
             return _score(
                 dataset,
-                extra=("--evaluator-method", "normalized-exact"),
+                # The agent is declared so the card is about the SPLIT. Leaving
+                # it out would put a blocking absent-agent cap on both sides of
+                # the comparison, and this test's whole content is that the
+                # family-partitioned side stops nothing.
+                extra=(
+                    "--evaluator-method",
+                    "normalized-exact",
+                    "--agent-origin",
+                    "brought",
+                ),
                 preflight_extra=("--evaluator-method", "normalized-exact"),
             )
 
@@ -3369,8 +3395,16 @@ class TheFamilyPartitionedSplitReachesTheCardTests(unittest.TestCase):
         self.assertTrue(cap["asks"])
         self.assertEqual(cap["action_kind"], "review-split")
         self.assertEqual(score["status"], "OK")
-        self.assertEqual(score["recommended_action"], "review-split")
         self.assertLessEqual(score["overall"], cap["ceiling"])
+        # This card carries two open questions, and `recommended_action` names
+        # the worse one: it returns the lowest-ceiling asking cap, and nothing
+        # calibrated the evaluator here, so `evaluator-unvalidated` at 45 sits
+        # below this cap at 50 and wins. That ordering is the field's whole
+        # contract; what this test is about is that the split cap reaches the
+        # card, asks, and carries its own remedy - which it does, above.
+        unvalidated = _cap(score, "evaluator-unvalidated")
+        self.assertLess(unvalidated["ceiling"], cap["ceiling"])
+        self.assertEqual(score["recommended_action"], unvalidated["action_kind"])
 
     def test_the_same_rows_split_across_the_families_reach_no_cap(self) -> None:
         """The counterfactual, so the cap is pinned to the LINE and not the rows.
@@ -3446,9 +3480,18 @@ class TheDeclaredOriginTravelsFromArgvToTheCardTests(unittest.TestCase):
         return sorted(cap["condition"] for cap in score["caps"])
 
     def test_declaring_nothing_is_the_baseline_these_are_measured_against(self) -> None:
+        """The baseline, and since #375 the agent half of it is not free.
+
+        Declaring nothing about the agent is now a finding rather than a
+        neutral starting point: SKILL.md leaves the flag off only where no
+        agent exists, so the payload reads that silence the way it already
+        reads silence about the dataset and the evaluator. The two calls below
+        differ in the declaration alone, which is what makes the flag visible
+        here rather than assumed.
+        """
         self.assertEqual(
             self._conditions(),
-            ["agent-no-varying-knobs", "evaluator-unvalidated"],
+            ["agent-absent", "evaluator-unvalidated"],
         )
         self.assertEqual(
             self._conditions(
@@ -3462,7 +3505,9 @@ class TheDeclaredOriginTravelsFromArgvToTheCardTests(unittest.TestCase):
         self.assertEqual(
             self._conditions("--evaluator-origin", "generated"),
             [
-                "agent-no-varying-knobs",
+                # No `--agent-origin` in this call, so the agent half reports
+                # its own silence rather than an unestablished search space.
+                "agent-absent",
                 "evaluator-generated",
                 "evaluator-unvalidated",
             ],
@@ -4846,6 +4891,437 @@ class TheRoutesOfferedWhenRowsRepeatTests(unittest.TestCase):
         self.assertTrue(self._route_lines(card)[0].startswith("A."))
 
 
+class RepeatedRowsAreCappedOnTheirOwnAccountTests(unittest.TestCase):
+    """#378: the same rows were stopped or cleared by their ids.
+
+    Ninety rows, thirty of them exact repeats of another row. Preflight's only
+    dataset FAIL was `dataset-ids`, the repetition itself only WARNed, and
+    `dataset-shape` PASSed ninety valid rows - so the blocking readiness cap was
+    `dataset-integrity-fail`, printing "some rows could not be read as data -
+    malformed lines, or missing the input or expected-answer field" over a file
+    where nothing was malformed and no field was missing. The same card said
+    "90/90 rows carry an expected output" two lines above it.
+
+    Renumbering the thirty ids and changing nothing else cleared the file
+    completely. A duplicated export normally does renumber, so the commonest
+    shape of the defect was the one that walked through.
+
+    Driven end to end through both real scripts, because the finding is
+    assembled from a preflight metric this branch adds and a readiness reason
+    built out of it; hand-built facts on either side of that seam would test one
+    half against a fixture of its own.
+    """
+
+    CATEGORIES = ("billing", "cancellation", "technical-support", "account")
+
+    def _distinct(self) -> list[dict]:
+        return [
+            {
+                "id": f"support-{index:03d}",
+                "input": (
+                    f"Ticket {index}: the customer writes about "
+                    f"{self.CATEGORIES[index % len(self.CATEGORIES)]} "
+                    "and asks what to do next."
+                ),
+                "output": self.CATEGORIES[index % len(self.CATEGORIES)],
+                "source": "production-support-log",
+                "difficulty": ("easy", "medium", "hard")[index % 3],
+            }
+            for index in range(1, 61)
+        ]
+
+    def _scored(self, *, renumber: bool) -> dict:
+        """One file, thirty repeated rows, ids colliding or not.
+
+        The two files differ in the `id` field of thirty rows and in nothing
+        else. That is the whole experiment: the inputs, the answers, the
+        provenance and the difficulty tags are byte-identical, so any difference
+        in the payload is attributable to the ids alone.
+        """
+        distinct = self._distinct()
+        repeats = [dict(row) for row in distinct[:30]]
+        if renumber:
+            for offset, row in enumerate(repeats, start=1):
+                row["id"] = f"support-{60 + offset:03d}"
+        with tempfile.TemporaryDirectory() as raw:
+            dataset = _write_jsonl(Path(raw), "duplicated.jsonl", distinct + repeats)
+            return _score(
+                dataset,
+                # The agent and the evaluation method are declared so the card
+                # is about the DATASET. Their own absences cap lower and would
+                # decide `recommended_action` on both sides.
+                extra=(
+                    "--evaluator-method",
+                    "normalized-exact",
+                    "--agent-origin",
+                    "brought",
+                    "--evaluator-origin",
+                    "brought",
+                ),
+                preflight_extra=("--evaluator-method", "normalized-exact"),
+            )
+
+    def test_the_repetition_caps_whether_or_not_the_ids_collide(self) -> None:
+        """The load-bearing test from the report, in both directions.
+
+        The renumbered file is the one that used to be cleared, so it is the
+        one that has to carry the finding now. The colliding file keeps it too:
+        a cap that appeared only when the ids happened to agree would be the
+        same accident with a new name.
+        """
+        for renumber in (False, True):
+            with self.subTest(renumbered=renumber):
+                score = self._scored(renumber=renumber)
+                cap = _cap(score, "dataset-repeated-rows")
+                self.assertFalse(cap["blocks"])
+                self.assertTrue(cap["asks"])
+                self.assertEqual(cap["action_kind"], "review-repeats")
+                # The counts come out of the finding the card already prints,
+                # so the cap and the routes below it cannot quote two numbers.
+                self.assertEqual(
+                    score["repeated_inputs"],
+                    {"scoreable": 90, "distinct": 60, "side": "in your dataset"},
+                )
+                self.assertIn("30 of the 90 rows", cap["reason"])
+                self.assertIn("resolves 60 different examples", cap["reason"])
+
+    def test_the_renumbered_export_no_longer_walks_straight_through(self) -> None:
+        """What the customer sees change, on the file that used to pass.
+
+        Nothing about it blocks - the rows are real and a comparison over sixty
+        different questions is worth making - so the change is in what the
+        payload ASKS. `proceed` said there was nothing to answer while the card
+        printed two routes to answer it.
+        """
+        score = self._scored(renumber=True)
+        self.assertEqual(score["status"], "OK")
+        self.assertEqual(score["recommended_action"], "review-repeats")
+        self.assertNotIn(
+            "dataset-integrity-fail",
+            [cap["condition"] for cap in score["caps"]],
+            "renumbering the ids repaired nothing about the rows",
+        )
+
+    def test_the_integrity_reason_names_the_ids_and_not_malformed_rows(
+        self,
+    ) -> None:
+        """The customer-facing sentence that was false.
+
+        Both halves are asserted. The new sentence has to name the collision and
+        its count; the old one may not survive anywhere in it, because a reason
+        that still mentions malformed lines sends a reader looking for lines
+        that parse perfectly.
+        """
+        score = self._scored(renumber=False)
+        cap = _cap(score, "dataset-integrity-fail")
+        self.assertTrue(cap["blocks"])
+        self.assertIn("30 ids are used by more than one row", cap["reason"])
+        for absent in ("malformed", "missing the input", "could not be read as data"):
+            with self.subTest(phrase=absent):
+                self.assertNotIn(absent, cap["reason"])
+        # And the card is no longer contradicting itself two lines apart.
+        labels = _dataset_subscore(score, "labels")
+        self.assertIn("90/90", labels["evidence"])
+
+    def test_a_genuinely_malformed_row_still_reads_as_malformed(self) -> None:
+        """The honest direction, so the reason is not simply reworded.
+
+        A file with unreadable lines and unique ids must still be told that its
+        lines are unreadable. Without this the fix would be a rename that moved
+        the false sentence rather than removing it.
+        """
+        rows = self._distinct()
+        with tempfile.TemporaryDirectory() as raw:
+            dataset = Path(raw) / "broken.jsonl"
+            dataset.write_text(
+                "\n".join([json.dumps(row) for row in rows] + ["{not json at all"] * 10)
+                + "\n"
+            )
+            score = _score(
+                dataset,
+                extra=("--agent-origin", "brought"),
+            )
+        cap = _cap(score, "dataset-integrity-fail")
+        self.assertIn("could not be read as data", cap["reason"])
+        self.assertIn("malformed lines", cap["reason"])
+        self.assertNotIn("used by more than one row", cap["reason"])
+
+    def test_a_file_with_no_repeats_carries_no_repetition_cap(self) -> None:
+        """The false-red direction the cap would otherwise have.
+
+        Sixty different questions, no repeats, everything else identical to the
+        fixtures above. A cap that fires here would be reading something other
+        than repetition, and the finding it is built from would be absent too.
+        """
+        with tempfile.TemporaryDirectory() as raw:
+            dataset = _write_jsonl(Path(raw), "clean.jsonl", self._distinct())
+            score = _score(
+                dataset,
+                extra=(
+                    "--evaluator-method",
+                    "normalized-exact",
+                    "--agent-origin",
+                    "brought",
+                    "--evaluator-origin",
+                    "brought",
+                ),
+                preflight_extra=("--evaluator-method", "normalized-exact"),
+            )
+        self.assertIsNone(score["repeated_inputs"])
+        self.assertNotIn(
+            "dataset-repeated-rows", [cap["condition"] for cap in score["caps"]]
+        )
+
+
+class AFailingIdCheckAlwaysReachesItsCeilingTests(unittest.TestCase):
+    """The ceiling was raised from a count, so a zero count dropped it.
+
+    `dataset-integrity-fail` stops a paid run. Building it out of the counts
+    that EXPLAIN the failure made it conditional on one of them being non-zero:
+    a payload FAILing `dataset-ids` with every count at 0 scored 45 OK where
+    trunk scored 35 BLOCKED, and no test saw it because every fixture in this
+    file hardcodes a count the assertion beside it already agrees with.
+
+    No arm of this SHA's `preflight.py` emits that shape - both FAIL arms
+    guarantee their own count - so these payloads are edited after preflight
+    wrote them, which is exactly the population that reaches this adapter from
+    an older version, a filtered log, or something that is not preflight at all.
+    The cap is raised from the FAILURE now, and a failure this score cannot
+    account for is refused rather than scored.
+
+    The counts are the parameter and never the assertion: each case asserts the
+    ceiling exists, which is a property no shape of the metrics may remove.
+    """
+
+    def _records(self, **ids_metrics: int) -> list[dict]:
+        rows = [
+            {
+                "id": f"row-{index:03d}",
+                "input": f"question {index} about the billing system and its rules",
+                "output": f"answer-{index % 4}",
+                "source": "production-log",
+            }
+            for index in range(40)
+        ]
+        with tempfile.TemporaryDirectory() as raw:
+            records = _preflight_records(_write_jsonl(Path(raw), "d.jsonl", rows))
+        for record in records:
+            if record["check"] == "dataset-ids":
+                record["status"] = "FAIL"
+                record["metrics"] = {
+                    "duplicate_ids": 0,
+                    "rows_without_id": 0,
+                    "generated_rows_without_id": 0,
+                    **ids_metrics,
+                }
+        return records
+
+    def test_every_explained_failure_reaches_the_ceiling(self) -> None:
+        """One property over three count shapes, none of which it reads."""
+        for label, ids_metrics in (
+            ("ids collide", {"duplicate_ids": 3}),
+            (
+                "generated rows carry none",
+                {"rows_without_id": 2, "generated_rows_without_id": 2},
+            ),
+            (
+                "both",
+                {
+                    "duplicate_ids": 3,
+                    "rows_without_id": 2,
+                    "generated_rows_without_id": 2,
+                },
+            ),
+        ):
+            with self.subTest(shape=label):
+                score = _score_records(self._records(**ids_metrics))
+                cap = _cap(score, "dataset-integrity-fail")
+                self.assertTrue(cap["blocks"])
+                self.assertEqual(score["status"], "BLOCKED")
+
+    def test_a_failure_no_count_accounts_for_is_refused_not_scored(self) -> None:
+        """The shape that dropped the cap, and the only two answers allowed.
+
+        Silently scoring it is the defect. Emitting the ceiling under a reason
+        built from nothing would be the sibling defect this same branch was
+        opened to remove, so the payload is refused at read time instead, with
+        the flag to re-run named in the message.
+        """
+        process = _run_readiness(self._records())
+        self.assertEqual(process.returncode, 2)
+        self.assertIn("dataset-ids FAILed", process.stderr)
+        self.assertIn(
+            "nothing in this payload accounts for the failure", process.stderr
+        )
+        self.assertNotIn("dataset-integrity-fail", process.stdout)
+
+    def test_the_scorer_refuses_a_failure_it_cannot_explain(self) -> None:
+        """The backstop, for the FAIL arm nobody has written yet.
+
+        The guard above knows the two counts this version publishes. A third
+        reason to FAIL `dataset-ids`, added later with a metric of its own,
+        would pass that guard and arrive here - and before this branch it would
+        have dropped the blocking ceiling with no test failing. Reached through
+        the facts rather than through a payload, because a payload cannot
+        express a metric that does not exist yet.
+        """
+        facts = MODULE.DatasetFacts(
+            exists=True,
+            dataset_supplied=True,
+            rows=40,
+            labelled_rows=40,
+            collected_rows=40,
+            answerable_rows=40,
+            id_check_failed=True,
+        )
+        with self.assertRaises(MODULE.PreflightInputError) as caught:
+            MODULE.score_dataset(facts, "normalized-exact")
+        self.assertIn("could not be given a reason", str(caught.exception))
+
+    def test_an_id_check_that_passes_still_reaches_no_ceiling(self) -> None:
+        """The false-red direction: the fact is the FAILURE, not the check."""
+        with tempfile.TemporaryDirectory() as raw:
+            rows = [
+                {
+                    "id": f"row-{index:03d}",
+                    "input": f"question {index} about the billing system and its rules",
+                    "output": f"answer-{index % 4}",
+                    "source": "production-log",
+                }
+                for index in range(40)
+            ]
+            score = _score_records(
+                _preflight_records(_write_jsonl(Path(raw), "d.jsonl", rows))
+            )
+        self.assertNotIn(
+            "dataset-integrity-fail", [cap["condition"] for cap in score["caps"]]
+        )
+
+
+class TheRepeatedRowsTieDecidesWhichRouteIsOfferedTests(unittest.TestCase):
+    """The tie at 89 is not decoration: it chooses what the card offers.
+
+    `dataset-repeated-rows` and `dataset-coarse-resolution` share a ceiling and
+    both ask, so `CAP_RANK` decides which remedy `recommended_action` carries.
+    `repeated_input_routes` reads that field to decide whether the bounded
+    top-up appears as a route at all, so the declaration order picks between two
+    different cards for one project.
+
+    #384 ranked the repetition rung after resolution and argued the consequence
+    in a comment without ever building a project where the two meet. This is
+    that project. The dataset is the smallest one that raises both - twenty-four
+    scoreable rows asking twenty questions, which is under the thirty a stable
+    comparison wants and over the ten a wiring check needs - and the second test
+    reverses the declaration to show the card actually changes.
+
+    Scored in-process rather than through the CLI because the second half has to
+    reorder `CAP_RANK`, which a subprocess cannot be handed. The preflight half
+    is still the real script over a real file, so the counts both caps quote are
+    the ones preflight computed.
+    """
+
+    def _score(self) -> object:
+        rows = [
+            {
+                "id": f"row-{index:03d}",
+                "input": (
+                    f"Ticket {index}: the customer writes about "
+                    f"{('billing', 'cancellation', 'technical-support', 'account')[index % 4]} "
+                    "and asks what to do next."
+                ),
+                "output": ("billing", "cancellation", "technical-support", "account")[
+                    index % 4
+                ],
+                "source": "production-log",
+                "difficulty": ("easy", "medium", "hard")[index % 3],
+            }
+            for index in range(1, 21)
+        ]
+        rows += [
+            dict(row, id=f"row-{20 + offset:03d}")
+            for offset, row in enumerate(rows[:4], start=1)
+        ]
+        with tempfile.TemporaryDirectory() as raw:
+            records = _preflight_records(
+                _write_jsonl(Path(raw), "dataset.jsonl", rows),
+                "--evaluator-method",
+                "normalized-exact",
+            )
+        present, parses = MODULE.evaluator_shape_from_preflight(records)
+        return MODULE.score_run(
+            MODULE.dataset_facts_from_preflight(records),
+            MODULE.evaluation_facts_from_calibration(
+                None,
+                method="normalized-exact",
+                task_kind="closed-label",
+                evaluator_present=present,
+                evaluator_parses=parses,
+                origin=MODULE.BROUGHT,
+            ),
+            MODULE.AgentFacts(origin=MODULE.BROUGHT),
+            dict(MODULE.DEFAULT_WEIGHTS),
+        )
+
+    def test_both_conditions_ask_at_the_shared_ceiling(self) -> None:
+        """The tie has to exist before the order can decide anything.
+
+        Asserted separately from the routes below so a fixture that stopped
+        raising one of the two fails as "this project no longer makes the tie"
+        rather than as a route that moved.
+        """
+        score = self._score()
+        asking = {
+            cap.condition: cap.ceiling
+            for cap in score.caps
+            if cap.asks and cap.blocks is False
+        }
+        self.assertEqual(
+            asking,
+            {"dataset-coarse-resolution": 89, "dataset-repeated-rows": 89},
+            "the fixture no longer produces the tie this test is about",
+        )
+        self.assertFalse([cap for cap in score.caps if cap.blocks])
+
+    def test_the_declared_order_keeps_the_top_up_on_the_card(self) -> None:
+        """What ships: resolution wins the tie, so the offer is still routed."""
+        score = self._score()
+        self.assertEqual(score.recommended_action, MODULE.ADD_EXAMPLES)
+        card = MODULE.render_card(score, unicode_ok=False)
+        self.assertIn("Answer the bounded top-up above with yes", card)
+        self.assertIn(
+            MODULE.RECOMMENDED_MARK, card.split("A. ", 1)[1].split("\n", 1)[0]
+        )
+
+    def test_reversing_the_order_takes_the_offer_off_the_card(self) -> None:
+        """The half the comment asserted and nothing executed.
+
+        Rank the repetition rung first and `recommended_action` becomes its
+        remedy, `offers_top_up` goes false, and the customer is no longer
+        offered the top-up this card printed two lines above them. That is the
+        cost of the tie, and it is why the order is a decision rather than a
+        sequence somebody happened to type.
+        """
+        original = dict(MODULE.CAP_RANK)
+        swapped = dict(original)
+        swapped["dataset-coarse-resolution"], swapped["dataset-repeated-rows"] = (
+            original["dataset-repeated-rows"],
+            original["dataset-coarse-resolution"],
+        )
+        MODULE.CAP_RANK.clear()
+        MODULE.CAP_RANK.update(swapped)
+        try:
+            score = self._score()
+            card = MODULE.render_card(score, unicode_ok=False)
+        finally:
+            MODULE.CAP_RANK.clear()
+            MODULE.CAP_RANK.update(original)
+        self.assertEqual(score.recommended_action, "review-repeats")
+        self.assertNotIn("Answer the bounded top-up above with yes", card)
+        # And the repetition block is still printed - what moved is the offer
+        # inside it, not the finding.
+        self.assertIn(MODULE.REPEATED_ROWS_LABEL, card)
+
+
 if __name__ == "__main__":
     unittest.main()
 
@@ -5097,3 +5573,258 @@ class TheFourCombinationsAreScoredOnTheFileTests(unittest.TestCase):
         shape = next(r for r in records if r["check"] == "evaluator-shape")
         self.assertNotIn("comparison_shape", shape["metrics"])
         self.assertEqual(_task_fit(score)["value"], MODULE.TASK_FIT_WEIGHT)
+
+
+STRUCTURAL_COMPARATOR = SCRIPTS.parent / "assets" / "sql_structure.py"
+DELEGATING_EVALUATOR = (
+    '"""Grade SQL by comparing the two queries as parsed structures."""\n'
+    "\n"
+    "from sql_structure import structural_match\n"
+    "\n"
+    "\n"
+    "def score(*, output, expected, input_data, metadata):\n"
+    "    del input_data, metadata\n"
+    "    return structural_match(output, expected)\n"
+)
+
+
+class TheStructuralSqlRouteIsEarnedFromTheFileTests(unittest.TestCase):
+    """traigent-first-run#414, through the real two-script pipeline.
+
+    The issue: `code-sql` fitted two methods, one of which this guide ends on
+    and the other of which is priced at half reproducibility, so an obedient
+    SQL project could not reach the top band by any honest declaration. The
+    new method fills that gap, and the whole risk of adding it is that it
+    becomes one more word that pays. These run the pipeline the guide tells a
+    customer to run and check both directions on the same declaration.
+    """
+
+    def score(self, source: str, method: str, *, module: str | None) -> dict:
+        """Score `source`, optionally with a `sql_structure.py` beside it."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            evaluator = root / "evaluator.py"
+            evaluator.write_text(source)
+            if module is not None:
+                (root / "sql_structure.py").write_text(module)
+            return _score_evaluator(
+                evaluator, ("--evaluator-method", method, "--task-kind", "code-sql")
+            )
+
+    def shipped(self) -> str:
+        return STRUCTURAL_COMPARATOR.read_text()
+
+    def test_the_documented_route_earns_the_credit_end_to_end(self) -> None:
+        """The route the reference now selects, run as written."""
+        subscore = _task_fit(
+            self.score(DELEGATING_EVALUATOR, "sql-structure", module=self.shipped())
+        )
+        self.assertEqual(subscore["value"], MODULE.TASK_FIT_WEIGHT)
+        self.assertEqual(subscore["evidence"], "sql-structure suits code-sql output")
+
+    def test_a_text_comparator_declaring_the_method_is_refused(self) -> None:
+        """The acceptance test for the whole change, end to end.
+
+        The corpus comparator is a whole-value casefold equality and the walk
+        proves it, so the declaration is refuted by the file rather than
+        merely unpaid, and the sentence names what the file does first.
+        """
+        subscore = _task_fit(
+            self.score(CORPUS_COMPARATOR.read_text(), "sql-structure", module=None)
+        )
+        self.assertEqual(subscore["value"], MODULE.TASK_FIT_UNFIT_CREDIT)
+        self.assertIn(
+            "normalized-exact check rather than sql-structure", subscore["evidence"]
+        )
+
+    def test_a_comparator_the_walk_cannot_classify_earns_nothing(self) -> None:
+        """The unknown case, and the direction it has to fail in.
+
+        This is the canonical-form SQL comparator the reference has always
+        selected under `composite`. Nothing about it is established: a helper
+        call is not a whole-value equality and it does not delegate. Under
+        `composite` that costs it nothing, which is right, because `composite`
+        claims nothing about the file. Under the new method the same silence
+        is a withheld credit, because the new method claims everything about
+        it.
+        """
+        canonical_sql = (
+            '"""Compare SQL over a canonical form: fence, case, spacing."""\n\n'
+            "import re\n\n"
+            'FENCE = re.compile(r"^```(?:sql)?\\s*|\\s*```$", re.MULTILINE)\n'
+            'SPACING = re.compile(r"\\s+")\n\n\n'
+            "def canonical(text):\n"
+            '    stripped = FENCE.sub("", str(text)).strip().rstrip(";")\n'
+            '    return SPACING.sub(" ", stripped).casefold()\n\n\n'
+            "def score(*, output, expected, input_data, metadata):\n"
+            "    del input_data, metadata\n"
+            "    return float(canonical(output) == canonical(expected))\n"
+        )
+        unestablished = _task_fit(
+            self.score(canonical_sql, "sql-structure", module=None)
+        )
+        self.assertEqual(unestablished["value"], MODULE.TASK_FIT_UNFIT_CREDIT)
+        self.assertIn("does not establish that it does", unestablished["evidence"])
+        # And the route it honestly belongs to keeps every point it had.
+        unchanged = _task_fit(self.score(canonical_sql, "composite", module=None))
+        self.assertEqual(unchanged["value"], MODULE.TASK_FIT_WEIGHT)
+
+    def test_a_forged_module_under_the_bundled_name_earns_nothing(self) -> None:
+        """The name is the guide's, the call is the guide's, the file is not.
+
+        Without the identity half of the proof this is a text comparator
+        collecting full task fit for a structural claim, which is the reading
+        traigent-first-run#380 was filed about, one indirection further out.
+        """
+        forged = (
+            '"""Compare two queries as parsed structures."""\n'
+            "\n"
+            "\n"
+            "def structural_match(candidate, expected):\n"
+            "    return float(str(candidate).casefold() == str(expected).casefold())\n"
+        )
+        subscore = _task_fit(
+            self.score(DELEGATING_EVALUATOR, "sql-structure", module=forged)
+        )
+        self.assertEqual(subscore["value"], MODULE.TASK_FIT_UNFIT_CREDIT)
+        self.assertIn("does not establish that it does", subscore["evidence"])
+
+    def test_the_structural_file_refuses_the_declarations_it_is_not(self) -> None:
+        """Read the other way, which is the half a one-directional check misses.
+
+        A file proven to compare two parses is not comparing whole values and
+        is not a blend of checks, so `exact` and `composite` over it are
+        refused with the sentence that says what it does instead. Without this
+        the new shape would have been a way to keep an older method's credit
+        on a file that contradicts it.
+        """
+        refuted = _task_fit(
+            self.score(DELEGATING_EVALUATOR, "composite", module=self.shipped())
+        )
+        self.assertEqual(refuted["value"], MODULE.TASK_FIT_UNFIT_CREDIT)
+        self.assertIn(
+            "reads both answers as SQL and compares them as parsed structures",
+            refuted["evidence"],
+        )
+        self.assertIn("rather than composite", refuted["evidence"])
+        # And the documented precedence holds over the new shape too: a method
+        # that was already the wrong kind of check for this output keeps the
+        # sentence about the output kind, which is worth more to the reader
+        # and is worth the same number of points.
+        mismatched = _task_fit(
+            self.score(DELEGATING_EVALUATOR, "exact", module=self.shipped())
+        )
+        self.assertEqual(mismatched["value"], MODULE.TASK_FIT_UNFIT_CREDIT)
+        self.assertIn("wrong kind of check for code-sql output", mismatched["evidence"])
+
+    def test_the_new_method_moves_no_other_projects_score(self) -> None:
+        """Nothing already honest may lose a point to this change.
+
+        Every method the guide already offered, over the evaluator this
+        repository actually grades with, on the kind that evaluator is
+        declared for. A new row in a shared table is exactly the change that
+        silently reprices somebody else's card, so this is measured rather
+        than reasoned about.
+        """
+        comparator = CORPUS_COMPARATOR.read_text()
+        with tempfile.TemporaryDirectory() as directory:
+            evaluator = Path(directory) / "evaluator.py"
+            evaluator.write_text(comparator)
+            honest = _score_evaluator(
+                evaluator,
+                (
+                    "--evaluator-method",
+                    "normalized-exact",
+                    "--task-kind",
+                    "closed-label",
+                ),
+            )
+        subscore = _task_fit(honest)
+        self.assertEqual(subscore["value"], MODULE.TASK_FIT_WEIGHT)
+        self.assertEqual(
+            subscore["evidence"], "normalized-exact suits closed-label output"
+        )
+
+
+class TheRouteTheReferencePrintsIsTheRouteTheScoreCreditsTests(unittest.TestCase):
+    """The document and the derivation, held against each other.
+
+    Every other test here builds its evaluator from a literal in this file, so
+    all of them would stay green if the reference printed a different route
+    than the one the score can read. That gap is the whole failure mode worth
+    guarding: the credit for this method is derived from the file's exact
+    form, so a route worded even slightly differently pays a correct evaluator
+    what a mismatched method earns, and the customer is given no way to see
+    why.
+
+    So the evaluator here is BUILT FROM THE DOCUMENT: the two lines are pulled
+    out of the reference's own row and assembled, and the assertion lands on
+    what the scorer says about the result. Nothing in it restates the route.
+    """
+
+    ROUTE = SCRIPTS.parent / "references" / "evaluation-and-dataset.md"
+    ROW = "| A SQL SELECT statement |"
+
+    def _line_from_the_row(self, pattern: str) -> str:
+        rows = [
+            line
+            for line in self.ROUTE.read_text().splitlines()
+            if line.startswith(self.ROW)
+        ]
+        self.assertEqual(
+            len(rows),
+            1,
+            f"the reference no longer offers exactly one {self.ROW!r} route, so "
+            "this test is reading something other than the route it is about",
+        )
+        found = re.findall(rf"`({pattern})`", rows[0])
+        self.assertEqual(
+            len(found),
+            1,
+            f"the route row does not print exactly one {pattern!r}; an author "
+            "following it cannot write the form the score is able to credit",
+        )
+        return found[0]
+
+    def test_an_evaluator_assembled_from_the_row_earns_the_credit(self) -> None:
+        binding = self._line_from_the_row(r"from sql_structure import \w+")
+        returned = self._line_from_the_row(r"return \w+\(output, expected\)")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "sql_structure.py").write_text(STRUCTURAL_COMPARATOR.read_text())
+            evaluator = root / "evaluator.py"
+            evaluator.write_text(
+                '"""Grade SQL by comparing the two queries as parsed structures."""\n'
+                "\n"
+                f"{binding}\n"
+                "\n"
+                "\n"
+                "def score(*, output, expected, input_data, metadata):\n"
+                "    del input_data, metadata\n"
+                f"    {returned}\n"
+            )
+            score = _score_evaluator(
+                evaluator,
+                ("--evaluator-method", "sql-structure", "--task-kind", "code-sql"),
+            )
+        subscore = _task_fit(score)
+        self.assertEqual(
+            subscore["value"],
+            MODULE.TASK_FIT_WEIGHT,
+            "the reference prints a route the score cannot read, so a customer "
+            "who follows it exactly is paid what a mismatched method earns",
+        )
+        self.assertEqual(subscore["evidence"], "sql-structure suits code-sql output")
+
+    def test_the_module_the_row_names_is_the_one_that_ships(self) -> None:
+        """A row naming a file that is not there is a route to nothing."""
+        named = re.findall(
+            r"`(assets/[\w./-]+\.py)`",
+            next(
+                line
+                for line in self.ROUTE.read_text().splitlines()
+                if line.startswith(self.ROW)
+            ),
+        )
+        self.assertEqual(named, ["assets/sql_structure.py"])
+        self.assertTrue((SCRIPTS.parent / named[0]).is_file())

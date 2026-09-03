@@ -178,7 +178,11 @@ are wired into the agent, which this run builds afterwards and checks against th
 A source read that finds no usable dimension blocks the paid run because a search would compare one
 configuration. An empty settings document also blocks because it establishes no usable dimension.
 Unchecked source claims and no source read/settings document are advisory: they do not make a claim
-about the project's usable search space. A verified source read can establish opening credit, but
+about the project's usable search space. That advisory reading is for an agent this run found and
+named. Where nothing names an agent at all - no settings document, no source read, and no
+declaration that one exists - the score reports that instead and stops the paid run, because a
+search compares configurations of a program and there is none to configure. A verified source read
+can establish opening credit, but
 the separate pre-approval request-difference proof decides whether a paid grid may run. The
 current-run Enhanced config-space artifact is the closing evidence of what actually ran.
 
