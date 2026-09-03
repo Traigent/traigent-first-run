@@ -16774,7 +16774,7 @@ class AFoundAgentDoesNotLookLikeAMissingOneTests(unittest.TestCase):
 
 
 class TheBuildHalfCitesTheAgentItReadTests(unittest.TestCase):
-    """A build read is a claim about the customer's code, and nothing checked it.
+    """A build read is a claim about the customer'sr code, and nothing checked it.
 
     The knobs half refuses a document whose `source_lines` fall outside the
     selected agent. The build half carried no coordinate at all - `evidence` is
@@ -17796,13 +17796,13 @@ class TheBuildHalfCitesTheAgentItReadTests(unittest.TestCase):
         """
         cases = {
             "bare pipe": "MODEL: list | None = None",
-            "escaped pipe in a regex": 'ANSWER = re.compile(r"^(yes\\|no)$")',
+            "escaped pipe in a regex": r'ANSWER = re.compile(r"^(yes\|no)$")',
             "trailing backslash": 'MODEL = "a\\\\"',
             "doubled backslash then pipe": 'MODEL = "a\\\\" + "|b"',
             "many pipes": 'MODEL = "a|b|c|d|e"',
             # Long enough to be truncated, and carrying escapes at the cut, so
             # the property is asserted on the truncated form too.
-            "pipes past the width bound": 'MODEL = "' + "x|y\\|z" * 40 + '"',
+            "pipes past the width bound": 'MODEL = r"' + "x|y\\|z" * 40 + '"',
         }
         for label, first_line in cases.items():
             with self.subTest(source=label):
