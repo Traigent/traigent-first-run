@@ -388,9 +388,9 @@ claims; dropping those observations would report four checks falling to unanswer
 while nothing about the agent changed. Where no document reaches the close, pass nothing: the knobs
 half would establish a space the search never received, and the two halves arrive in one file.
 
-`agent-no-varying-knobs` is advisory whenever neither a document nor a reading reached the scorer,
-because the scorer cannot tell a document withheld before the search from one the search failed to
-produce - both are the same absent input. So on a closing card after a stopped, failed, or
+`agent-no-varying-knobs` is advisory whenever a named agent's document and reading both fail to
+reach the scorer, because the scorer cannot tell a document withheld before the search from one the
+search failed to produce - both are the same absent input. So on a closing card after a stopped, failed, or
 zero-trial search, `status: OK` describes only the evidence this cap was given, and is not a verdict
 that the search succeeded. `recommended_action` reads `proceed` there only when nothing else blocks
 and nothing else is asking: an asking cap carries its own remedy into that field, so `proceed` on

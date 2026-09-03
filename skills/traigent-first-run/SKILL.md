@@ -276,7 +276,11 @@ host. Stage 5 remains authoritative for the connected run.
 
 Run the bundled static preflight with `--defer-missing-sdk` over whatever dataset was discovered,
 omitting `--dataset` when none exists. Then include every safe measurement that can finish now in
-the first readiness card. When `existing-traigent-use` reports a declaration, or a Traigent key is
+the first readiness card. When rows carry expected answers, do the row-level sanity check in
+`references/evaluation-and-dataset.md` here and pass it as `--row-review` - on every opening scoring
+call and not only where calibration is deferred: it is your own read, it spends nothing, and no
+generated row competes with it yet. Nothing counted off a dataset can establish that an answer
+answers its own question, and that reference states what the read is worth once it enters. When `existing-traigent-use` reports a declaration, or a Traigent key is
 already configured, say so in the readiness turn: Traigent was set up in this project before this
 run started, so this may not be a first run, and this run still charges for its own baseline and
 search. Never read that as a blocker or a reason to stop - the evidence cannot tell an install apart
@@ -298,9 +302,11 @@ Otherwise run readiness without `--calibration` and name the concrete deferral: 
 semantics, no defensible probe matrix, an uninstalled local dependency, a slow, uncertain, external,
 or executing path, or an LLM judge that needs paid approval. Missing calibration is then unmeasured,
 not a failed evaluator; the `evaluator-unvalidated` ceiling limits the readiness claim to 45 until
-the evaluation method is actually checked. When rows exist, do the row-level sanity check in
-`references/evaluation-and-dataset.md` here and pass it as `--row-review`: it is your own read, it
-spends nothing, and no generated row competes with it yet. Apply the run-scoped evaluator-method rule above to both
+the evaluation method is actually checked, and the card's recommended action names that outstanding
+calibration rather than reading `proceed`. Where the deferral is the evaluator-execution scope gate
+rather than a step this run could take, pass `--calibration-scope-refused` so the card asks for the
+containment review instead of for the calibration the gate forbids; it moves no number, because
+nothing here can check it. Apply the run-scoped evaluator-method rule above to both
 scripts, and apply the run-scoped task-kind rule to readiness only here - narrower than its
 destination rule in `references/evaluation-and-dataset.md`, because this gate's calibration takes no
 seam flags and so establishes nothing about delivery for stage 4 to reuse - and the origin rule with
@@ -627,7 +633,9 @@ Follow this order:
    calibration twice merely because the flow reached this step. Run here anything the opening gate
    truthfully deferred and can now establish.
 5. Re-run `scripts/readiness.py` on the fresh preflight JSON plus any applicable calibration
-   result. Omit every config-space file found before this run's enhanced search here just as at the
+   result and the row-level read of the drawn rows `references/evaluation-and-dataset.md` asks for
+   at this step; the hold that read releases applies to this card too, not only the opening one.
+   Omit every config-space file found before this run's enhanced search here just as at the
    opening gate. This score is required even when a low score or cap is expected. Record its gate
    result in `traigent-runs/run-plan.md`. If calibration was deferred for an installed local
    dependency, record the preflight-only result now and re-run the score immediately after that
@@ -723,6 +731,8 @@ paragraph below carries both halves:
 - `dataset-below-measurable-size` - more comparable examples is what lifts this; until then call
   rankings exploratory, not stable comparisons. The run is worth making, so where the card asks,
   carry the top-up on the one ask rather than sending anyone away for data.
+- `dataset-repeated-rows` - fewer questions than rows: bounded, not stopped. Take the card's two
+  routes on the one ask - carry on over the examples that differ, or have them replace the repeats.
 - `dataset-coarse-resolution` - more comparable examples is what lifts this too, and the same
   bounded offer carries it wherever the card asks; after paired outputs exist, report paired outcome counts and justified
   uncertainty, calling a small or flat difference directional or inconclusive.
@@ -738,6 +748,11 @@ component on purpose, the run continues, and what the ceiling refuses is the cla
 `evaluator-unvalidated` routes through the opening/stage-4 calibration gate above: measure it once
 when that gate establishes eligibility, or keep the ceiling and name the concrete deferral. It is
 an evidence boundary, not a repair finding.
+`evaluator-calibration-refused` is that same evidence boundary reached by the scope gate rather than
+by a step nobody took, and it routes to the manual-containment route in
+`references/run-safety.md`, never to running the check here. Say that the ceiling is about missing
+evidence and not a finding against their evaluator, and never present the unsafe route as the way
+to lift it.
 `evaluator-timeout` is neither a repair to route nor the invalid-evaluator
 paragraph: calibration ran and did not finish, which establishes nothing about this evaluator and
 does not make it invalid - slow and broken look identical from here. Settle it while gaps are still
@@ -750,9 +765,12 @@ close if it was not fixed. After any repair or substitute creation, re-run the a
 applicable calibration, and the score, then record that gate result without overwriting the opening
 one.
 
+`agent-absent` blocks where no document, read, or declared origin names an agent at all: connect the
+one they have, or create it.
 `agent-no-varying-knobs` blocks when a settings document or a statically checked source read finds
 no usable dimension. Mark one setting with a second value or expose a direct request parameter. It
-is advisory only with no evidence or source candidates whose references could not be verified.
+is advisory only for a declared agent with no evidence, or source candidates whose references could
+not be verified.
 Before either paid grid, the local request-difference proof—not the opening score—must establish
 every selected direct dimension. Report stops/zero trials when that proof cannot do so.
 
@@ -1144,7 +1162,8 @@ interpreted.
 Do not close on a second number. Re-run `scripts/readiness.py` on the post-run evidence for the one
 reading nothing earlier could take - the agent pillar, scored from the space the enhanced search
 actually received - passing the current run's `--config-space traigent-runs/config-space.json` only
-when that search emitted it; otherwise score the agent from absent evidence. The opening and stage-4
+when that search emitted it, and the same row-level read, so this score is not held for a gap an
+earlier card already closed; otherwise score the agent from absent evidence. The opening and stage-4
 scores withhold every config-space document by construction, so this is the run's only measurement
 of the space the customer paid to search. Its dataset and evaluation caps rank nothing and settle
 nothing about what is still open: a gap this run filled with a substitute reads exactly like one the

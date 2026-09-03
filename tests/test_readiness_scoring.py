@@ -4,6 +4,7 @@ import ast
 import contextlib
 import dataclasses
 import importlib.util
+import inspect
 import io
 import itertools
 import json
@@ -4633,14 +4634,29 @@ class CliTests(unittest.TestCase):
             space.write_text(
                 json.dumps({"knobs": {"model": ["gpt-4o-mini", "gpt-4o"]}})
             )
+            # `--agent-origin` on BOTH, and it is not decoration. The question
+            # here is what a settings document buys, so the two runs may differ
+            # in the document and in nothing else; a run that also stops naming
+            # the agent is the absent-agent condition at its own lower ceiling,
+            # and the comparison would then be between two different findings.
             without = json.loads(
-                self._run(["--preflight", str(preflight), "--json"])[1]
+                self._run(
+                    [
+                        "--preflight",
+                        str(preflight),
+                        "--agent-origin",
+                        "brought",
+                        "--json",
+                    ]
+                )[1]
             )
             with_document = json.loads(
                 self._run(
                     [
                         "--preflight",
                         str(preflight),
+                        "--agent-origin",
+                        "brought",
                         "--config-space",
                         str(space),
                         "--json",
@@ -5030,8 +5046,10 @@ class PowerBoundsTheBandTests(unittest.TestCase):
                 pillars, caps, knobs, dict(MODULE.DEFAULT_WEIGHTS)
             )
 
-        # No document reached the scorer - the ordinary opening state.
-        caps, score = scored(MODULE.AgentFacts())
+        # No document reached the scorer, on an agent this run found and named.
+        # The declaration is what makes this the unestablished-space state
+        # rather than the absent-agent one #378 split out beside it.
+        caps, score = scored(MODULE.AgentFacts(origin=MODULE.BROUGHT))
         self.assertEqual([cap.condition for cap in caps], ["agent-no-varying-knobs"])
         # The ceiling stands and the run proceeds. That pair is the whole
         # finding: nothing here is known to be broken, so nothing waits.
@@ -5264,7 +5282,10 @@ class PowerBoundsTheBandTests(unittest.TestCase):
                 },
             )
         )
-        silent = overall(MODULE.AgentFacts())
+        # Declared and unread, which is the state this comparison is about: a
+        # source read that credited nothing may not score below the run that
+        # never looked. An undeclared agent is a different finding.
+        silent = overall(MODULE.AgentFacts(origin=MODULE.BROUGHT))
         found_nothing = overall(
             self._knob(
                 model={
@@ -6055,7 +6076,17 @@ class LessEvidenceMayNotOutscoreMoreTests(unittest.TestCase):
             "chat.completions.create"
         )
         states: list[tuple[str, int, object]] = [
-            ("no document and no read", 1, MODULE.AgentFacts()),
+            # An agent this run FOUND and could not read, which is what the
+            # unestablished-space state is since #378. The declaration is what
+            # keeps it in this sweep: without it there is no agent at all, which
+            # is a different condition at a lower ceiling and belongs to the
+            # absence tests rather than to a sweep about how much of a search
+            # space each document establishes.
+            (
+                "no document and no read",
+                1,
+                MODULE.AgentFacts(origin=MODULE.BROUGHT),
+            ),
             ("read: nothing at all", 1, read()),
             (
                 "read: one pinned value",
@@ -6511,11 +6542,32 @@ class TheCapOrderingIsWrittenDownAndCheckedTests(unittest.TestCase):
                 # trustworthy; `evaluator-invalid` is ranked first because it
                 # produces believable numbers, where the unrecognised shape
                 # produces none.
-                25: ["evaluator-invalid", "dataset-shape-unrecognised"],
+                # #375 joins them: no agent reached the score at all. It clears
+                # 20 only because the dataset and the evaluation method that
+                # would measure the agent are still there, which is the same
+                # sentence `evaluator-invalid` carries one pillar over. Ranked
+                # last of the three under the counted-before-inferred rule the
+                # 40 and 70 ties already apply - the other two are read off a
+                # ruler that ran and a file that was parsed, and this one off
+                # three inputs that did not arrive.
+                25: [
+                    "evaluator-invalid",
+                    "dataset-shape-unrecognised",
+                    "agent-absent",
+                ],
                 40: ["evaluator-absent", "evaluator-unresolved"],
                 45: [
                     "evaluator-timeout",
                     "evaluator-unvalidated",
+                    # The same absent behavioural evidence reached by obeying
+                    # the evaluator-execution scope gate instead of by
+                    # skipping a step. Equal, because a ceiling grades the
+                    # state and having a good reason is not a property of the
+                    # state; ranked directly after the condition it mirrors,
+                    # and the rank decides nothing observable because the two
+                    # are mutually exclusive by construction - one branch
+                    # raises one or the other and no card carries both.
+                    "evaluator-calibration-refused",
                     "agent-no-varying-knobs",
                 ],
                 # One split defect read from each end: the same rows on both
@@ -6572,6 +6624,17 @@ class TheCapOrderingIsWrittenDownAndCheckedTests(unittest.TestCase):
                     # the same reason the 65 tie puts its own rung last: the
                     # three before it are counted, and this one is declared.
                     "evaluator-generated",
+                ],
+                # #378's rung, on the band edge below EXCELLENT that its
+                # neighbour already takes: a file whose rows repeat each other
+                # may be workable and may not present as the best a card can
+                # say. Ranked second because resolution is the older rung at
+                # this number and a reader has been taught to read 89 as it,
+                # and because both are counted - neither is inferred, so the
+                # rule the ties above use leaves the order to seniority.
+                89: [
+                    "dataset-coarse-resolution",
+                    "dataset-repeated-rows",
                 ],
             },
             "a tie in the ceiling order is a decision; record it here with its "
@@ -7035,9 +7098,15 @@ def _six_rows(dataset, evaluation, agent) -> None:
     _resize(dataset, 6)
 
 
-@_fragment("a dataset of twenty rows")
-def _twenty_rows(dataset, evaluation, agent) -> None:
-    _resize(dataset, 20)
+@_fragment("a dataset of twenty-four rows")
+def _twenty_four_rows(dataset, evaluation, agent) -> None:
+    _resize(dataset, 24)
+    dataset.update(
+        tuning_rows=15,
+        holdout_rows=9,
+        tuning_labelled_rows=15,
+        holdout_labelled_rows=9,
+    )
 
 
 @_fragment("no dataset at all")
@@ -7196,6 +7265,39 @@ def _generated_agent(dataset, evaluation, agent) -> None:
     agent.update(origin="generated")
 
 
+@_fragment("repeated inputs on the tuning side")
+def _repeated_inputs(dataset, evaluation, agent) -> None:
+    scoreable = dataset["tuning_labelled_rows"]
+    distinct = max(10, scoreable - 2) if scoreable >= 12 else max(1, scoreable - 1)
+    dataset.update(
+        tuning_distinct_scoreable_rows=distinct,
+        distinct_rows=dataset["rows"] - (scoreable - distinct),
+    )
+
+
+@_fragment("an evaluator whose calibration was refused by scope")
+def _calibration_scope_refused(dataset, evaluation, agent) -> None:
+    evaluation.update(
+        calibration_present=False,
+        calibration_supplied=False,
+        calibration_complete=None,
+        calibration_passed=None,
+        calibration_scope_refused=True,
+        checks=(),
+    )
+
+
+@_fragment("an agent nobody declared or described")
+def _absent_agent(dataset, evaluation, agent) -> None:
+    agent.update(
+        config_space_supplied=False,
+        discovery_supplied=False,
+        origin=None,
+        knobs={},
+        wired=(),
+    )
+
+
 # The row review is an axis rather than a fragment because it is a separate
 # argument to `score_dataset`, not a field on any of the three fact classes.
 _SURVEY_REVIEWS = ("no row review", "rows the review called unsound")
@@ -7346,6 +7448,13 @@ _TIED_PAIRS_WITH_NO_WITNESS: dict[tuple[str, str], str] = {
         "opposite directions, so no one payload carries both. That is a "
         "reading of one function rather than a proof over every input, which "
         "is why this pair is recorded here instead of pinned."
+    ),
+    ("evaluator-unvalidated", "evaluator-calibration-refused"): (
+        "`score_evaluation` branches on `facts.calibration_scope_refused`: when "
+        "false it emits `evaluator-unvalidated`, and when true it emits "
+        "`evaluator-calibration-refused`. The two read the same flag in "
+        "opposite directions and are mutually exclusive, so no one payload "
+        "carries both."
     ),
 }
 
@@ -8588,7 +8697,20 @@ class ACheckThatCouldNotAnswerIsNotAPassTests(unittest.TestCase):
             }
         ]
         payload.extend(
-            {"check": check.replace("_", "-"), "status": status, "metrics": {}}
+            {
+                "check": check.replace("_", "-"),
+                "status": status,
+                # `dataset-ids` publishes its two counts on every arm since
+                # #378, and a FAILing record without them is refused as an
+                # older payload. The metrics travel with the fixture so this
+                # class keeps testing what it is about - a status nothing may
+                # read as a pass - rather than tripping that guard first.
+                "metrics": (
+                    {"duplicate_ids": 1, "generated_rows_without_id": 0}
+                    if check == "dataset_ids"
+                    else {}
+                ),
+            }
             for check, status in records.items()
         )
         return MODULE.dataset_facts_from_preflight(payload)
@@ -8619,7 +8741,41 @@ class ACheckThatCouldNotAnswerIsNotAPassTests(unittest.TestCase):
     def test_a_real_failure_still_reads_as_a_failure(self) -> None:
         facts = self._facts(dataset_split="FAIL", dataset_ids="FAIL")
         self.assertTrue(facts.split_overlap)
-        self.assertTrue(facts.integrity_failed)
+        # `integrity_failed` is the structural half only since #378 - rows that
+        # could not be read as data - and a FAILing id check reaches its own
+        # counts instead. Both still cap; what changed is which sentence the
+        # customer is shown.
+        self.assertFalse(facts.integrity_failed)
+        self.assertEqual(facts.duplicate_ids, 1)
+
+    def test_an_id_failure_with_no_counts_beside_it_is_refused(self) -> None:
+        """The older-payload guard, in the direction that actually caps.
+
+        A `dataset-ids` FAIL carrying no counts is a preflight JSON written
+        before they existed. Reading it as zero would print no reason at all
+        under a cap that stops the run, which is the state this whole branch
+        exists to remove - so it refuses and says which flag to re-run.
+        """
+        with self.assertRaises(MODULE.PreflightInputError) as caught:
+            MODULE.dataset_facts_from_preflight(
+                [
+                    {
+                        "check": "dataset-provenance",
+                        "status": "PASS",
+                        "metrics": {
+                            "rows": 40,
+                            "labelled_rows": 40,
+                            "collected_rows": 40,
+                            "synthesised_rows": 0,
+                            "undeclared_rows": 0,
+                            "generated_answer_rows": 0,
+                            "answerable_rows": 40,
+                        },
+                    },
+                    {"check": "dataset-ids", "status": "FAIL", "metrics": {}},
+                ]
+            )
+        self.assertIn("duplicate_ids", str(caught.exception))
 
 
 class TheRemedyIsMachineReadableTests(unittest.TestCase):
@@ -8728,9 +8884,17 @@ class TheRemedyIsMachineReadableTests(unittest.TestCase):
         self.assertEqual(payload["caps"][0]["action_kind"], "repair-evaluator")
         self.assertEqual(
             payload["schema_version"],
-            2,
+            3,
             "a consumer must be able to tell 'emits no remedy' from 'has none'",
         )
+        # 3 rather than 2, and the reason is a value rather than a key.
+        # `recommended_action` is a slug from a closed set, and a schema-2
+        # consumer read `proceed` for a run whose mandatory calibration was
+        # outstanding. It now reads `complete-calibration`, which that set did
+        # not contain - a reader of 2 no longer working, in the direction that
+        # matters, since `proceed` was routed to "start the paid run".
+        self.assertIn(MODULE.COMPLETE_CALIBRATION, MODULE.ACTION_KINDS)
+        self.assertIn("band_limited_by_unread_answers", payload)
         # And `weighted_average` still means what schema 2 says it means: an
         # average over every declared weight. #201 bumped this to 3 while a
         # pillar could drop out of that denominator; that renormalization is
@@ -10338,6 +10502,12 @@ class TheCardSpeaksTheUsersLanguageTests(unittest.TestCase):
             replace(plain, provenance_assumption=assumption),
             replace(plain, provenance_assumption=every_row_silent),
             replace(plain, band_limited_by_confidence=True),
+            # The other reason a band is held, and it renders on both
+            # surfaces. It has to be here for the reason the agent read states
+            # below are: it is the one hold no cap row explains, so the
+            # sentence carrying its remedy is exactly the text these rules are
+            # for, and a state nothing renders exempts it from all of them.
+            replace(plain, band_limited_by_unread_answers=True),
             replace(plain, gaps=("a ranked gap",)),
             # Both agent read states. `plain` is the unread one by default, so
             # only its opposite has to be named here - and it has to be, or the
@@ -11159,6 +11329,683 @@ class TheUnsoundAnswerCapBoundsRatherThanBlocksTests(unittest.TestCase):
         )
         self.assertIn("among the rows this run tunes", cap.reason)
         self.assertNotIn("28 rows this run", cap.reason)
+
+
+# A 48-row support-routing corpus the customer collected, split 36/12.
+#
+# Written from the shape a real project arrives in rather than from what the
+# floor happens to read: counted rows, a declared split, difficulty tags, a
+# provenance token preflight recognises. It is the same shape as the committed
+# `tests/behavioral/outcomes/clean-proceed` fixture, which is what makes it a
+# fair probe - the corpus that reaches the top of the scale here is the one
+# that reaches it in a real run.
+#
+# Kept as kwargs rather than as a built object so the mutation test below can
+# build the same facts inside a separately imported copy of the module.
+_ROUTING_CORPUS = dict(
+    exists=True,
+    dataset_supplied=True,
+    rows=48,
+    labelled_rows=48,
+    answerable_rows=48,
+    collected_rows=48,
+    tuning_rows=36,
+    holdout_rows=12,
+    tuning_labelled_rows=36,
+    holdout_labelled_rows=12,
+    distinct_rows=48,
+    tuning_distinct_rows=36,
+    tuning_distinct_scoreable_rows=36,
+    difficulty_bands=("easy", "medium", "hard", "very-hard"),
+    difficulty_tagged_rows=48,
+    duplicate_status="PASS",
+    near_duplicate_status="PASS",
+    answer_dominance_status="PASS",
+    sources=("production-support-log",),
+)
+_CALIBRATION_CASE = {"good_passes": True, "bad_fails": True, "non_constant": True}
+# A brought evaluator whose current-run calibration completed and passed.
+_PASSING_CALIBRATION = dict(
+    present=True,
+    method="normalized-exact",
+    task_kind="closed-label",
+    parses=True,
+    origin="brought",
+    calibration_present=True,
+    calibration_supplied=True,
+    calibration_complete=True,
+    calibration_passed=True,
+    checks=(_CALIBRATION_CASE, _CALIBRATION_CASE, _CALIBRATION_CASE),
+    probe_scores=((1.0, 0.0), (1.0, 0.0), (1.0, 0.0)),
+)
+# The customer's own agent, with three knobs a document attests are wired.
+_WIRED_SPACE = dict(
+    max_trials=24,
+    knobs={
+        "temperature": [0.0, 0.5, 1.0],
+        "prompt_style": ["direct", "structured"],
+        "model": ["fast", "large"],
+    },
+    wired=("temperature", "prompt_style", "model"),
+    config_space_supplied=True,
+    origin="brought",
+)
+
+
+def _routing_corpus(**extra) -> "MODULE.DatasetFacts":
+    facts = dict(_ROUTING_CORPUS)
+    facts.update(extra)
+    return MODULE.DatasetFacts(**facts)
+
+
+def _passing_calibration() -> "MODULE.EvaluationFacts":
+    return MODULE.EvaluationFacts(**_PASSING_CALIBRATION)
+
+
+def _wired_space() -> "MODULE.AgentFacts":
+    return MODULE.AgentFacts(**_WIRED_SPACE)
+
+
+def _healthy_score(
+    review: "MODULE.RowReview | None" = None, **dataset_extra
+) -> "MODULE.ReadinessScore":
+    return MODULE.score_run(
+        _routing_corpus(**dataset_extra),
+        _passing_calibration(),
+        _wired_space(),
+        dict(MODULE.DEFAULT_WEIGHTS),
+        review,
+    )
+
+
+class TheTopBandsNeedAReadOfTheAnswersTests(unittest.TestCase):
+    """A verdict the run has not established is the card overclaiming.
+
+    Every dataset check in this scorer is structural. Rotating a corpus's
+    expected answers within their own domains - so each answer stays a valid
+    answer to some other row's question - preserves validity, distinctness, id
+    uniqueness, split disjointness and band coverage, and destroys the only
+    property that decides whether the search can rank anything. Measured: 60 of
+    60 answers execute, 0 error, 0 empty, every dataset check PASS, and the
+    card reached its strongest verdict over material where every configuration
+    scores about the same as every other (traigent-first-run#377).
+
+    So the top two bands ask for a behavioural signal about the ANSWERS, and
+    calibration is not one. Calibration probes the scorer against a hand-built
+    case matrix; on the rotated corpus it passes honestly, which is precisely
+    how the strongest verdict was reached - a lift earned by evidence about a
+    different question.
+
+    These tests pin the DECISION rather than the band name, on the pattern the
+    model-written-answer-key tests set: each one asks the module where its own
+    STRONG band starts instead of asserting a string, so renumbering the bands
+    cannot quietly reopen the claim.
+    """
+
+    def _strong(self) -> int:
+        return MODULE.BAND_ORDER.index("STRONG")
+
+    def test_structure_and_a_passing_calibration_do_not_reach_the_top_bands(
+        self,
+    ) -> None:
+        """The report's own shape: everything measured, nobody read a row."""
+        score = _healthy_score()
+        uncapped, _limited = MODULE.band_for(score.weighted_average, 1.0, 1.0)
+        self.assertGreaterEqual(
+            MODULE.BAND_ORDER.index(uncapped),
+            self._strong(),
+            "the fixture no longer scores into the top bands on its own, so it "
+            "cannot show that the floor is what holds it",
+        )
+        self.assertLess(
+            MODULE.BAND_ORDER.index(score.band),
+            self._strong(),
+            f"scored {score.weighted_average} with no read of the answers and "
+            f"presented as {score.band}",
+        )
+        self.assertTrue(score.band_limited_by_unread_answers)
+        # And nothing was deducted for it. Every measurement behind the number
+        # is real; what is refused is the verdict, not the arithmetic.
+        self.assertEqual(score.overall, score.weighted_average)
+        self.assertEqual(list(score.caps), [])
+
+    def test_a_calibration_that_passes_is_not_a_read_of_the_answer_key(
+        self,
+    ) -> None:
+        """The planted lift, refused for the reason under test.
+
+        `evaluator-unvalidated` lifting on an honest calibration is exactly
+        what let the rotated corpus present at the top of the scale. A signal
+        that says nothing about the answers may not answer the question about
+        the answers, so this asserts the calibration really is complete and
+        passing - the fixture is not silently a deferred one - while the floor
+        still holds.
+        """
+        evaluation = _passing_calibration()
+        pillar, caps = MODULE.score_evaluation(evaluation)
+        self.assertEqual([cap.condition for cap in caps], [])
+        self.assertEqual(pillar.score, 100)
+        self.assertTrue(_healthy_score().band_limited_by_unread_answers)
+
+    def test_a_read_of_every_provided_row_lifts_it(self) -> None:
+        held = _healthy_score()
+        lifted = _healthy_score(_review(reviewed=48))
+        self.assertTrue(held.band_limited_by_unread_answers)
+        self.assertFalse(lifted.band_limited_by_unread_answers)
+        self.assertGreaterEqual(MODULE.BAND_ORDER.index(lifted.band), self._strong())
+        # The lift is the band and nothing else: the review carries no points,
+        # so the number either side of it is the same number.
+        self.assertEqual(lifted.overall, held.overall)
+
+    def test_a_read_of_the_rows_the_run_reads_lifts_it_on_a_corpus_nobody_reads_whole(
+        self,
+    ) -> None:
+        """The variation that makes the floor liftable at real dataset sizes.
+
+        A 4,812-row export is not read end to end by anybody. What the search
+        is graded against is the declared split, the review says which rows
+        those are, and covering them is the whole of what this floor asks.
+        """
+        large = dict(
+            rows=4812,
+            labelled_rows=4812,
+            answerable_rows=4812,
+            collected_rows=4812,
+            distinct_rows=4812,
+        )
+        lifted = _healthy_score(
+            _review(reviewed=60, reviewed_in_run=48, unsound_in_run=0), **large
+        )
+        self.assertFalse(lifted.band_limited_by_unread_answers)
+        self.assertGreaterEqual(MODULE.BAND_ORDER.index(lifted.band), self._strong())
+        # And a read of the same size that never says which rows it covered is
+        # a read of 60 rows out of 4,812, which clears nothing.
+        partial = _healthy_score(_review(reviewed=60), **large)
+        self.assertTrue(partial.band_limited_by_unread_answers)
+
+    def test_a_partial_read_lifts_nothing(self) -> None:
+        """Coverage is the claim, and half of it is not a smaller version of it."""
+        partial = _healthy_score(_review(reviewed=20))
+        self.assertTrue(partial.band_limited_by_unread_answers)
+        self.assertLess(MODULE.BAND_ORDER.index(partial.band), self._strong())
+
+    def test_a_corpus_with_no_answer_key_is_never_held(self) -> None:
+        """A reference-free judge grades inputs; there is no key to read.
+
+        Holding a band for an unread answer key that does not exist would be
+        unliftable by construction, which is the shape this predicate's three
+        no-question branches exist to refuse.
+        """
+        facts = _routing_corpus(answerable_rows=0, labelled_rows=0)
+        self.assertTrue(MODULE.answer_key_read(facts, MODULE.RowReview()))
+
+    def test_a_walkthrough_corpus_this_run_wrote_is_never_held(self) -> None:
+        """The review input refuses generated rows, so no read can be supplied.
+
+        Those rows are bounded by the synthetic ceiling, well below the bands
+        this floor holds, and asking for a read nothing will accept would put
+        an instruction on the card that the reader cannot carry out.
+        """
+        facts = _routing_corpus(collected_rows=0, synthesised_rows=48, synthetic=True)
+        self.assertTrue(MODULE.answer_key_read(facts, MODULE.RowReview()))
+
+    def test_a_payload_predating_the_provenance_counts_is_never_held(self) -> None:
+        """This module does not charge a caller for a field it could not send."""
+        facts = MODULE.DatasetFacts(exists=True, rows=48, labelled_rows=48)
+        self.assertTrue(MODULE.answer_key_read(facts, MODULE.RowReview()))
+
+    def test_a_band_already_at_or_below_the_ceiling_is_not_held_again(self) -> None:
+        """Two reasons to hold one band compose; only the live one is reported.
+
+        A card that reported this hold beside a band already held for thin
+        evidence would print a remedy for a band with nothing left to lift.
+        """
+        edge = MODULE.BAND_ORDER.index(MODULE.ANSWER_KEY_BAND_CEILING)
+        untouched = MODULE.BAND_ORDER[: edge + 1]
+        held = MODULE.BAND_ORDER[edge + 1 :]
+        # Both halves are non-empty, or the loops below assert nothing. Read
+        # off the table rather than counted here, so renumbering the bands
+        # cannot leave this test iterating over an empty list and passing.
+        self.assertEqual(untouched, ["NOT READY", "PARTIAL", "WORKABLE"])
+        self.assertEqual(held, ["STRONG", "EXCELLENT"])
+        for band in untouched:
+            with self.subTest(band=band, expected="unchanged"):
+                self.assertEqual(
+                    MODULE.hold_band_for_unread_answers(band, False), (band, False)
+                )
+        for band in held:
+            with self.subTest(band=band, expected="held"):
+                self.assertEqual(
+                    MODULE.hold_band_for_unread_answers(band, False),
+                    (MODULE.ANSWER_KEY_BAND_CEILING, True),
+                )
+                # And a read of the answers leaves every one of them alone.
+                self.assertEqual(
+                    MODULE.hold_band_for_unread_answers(band, True), (band, False)
+                )
+
+    def test_the_committed_clean_case_shape_keeps_the_card_it_has(self) -> None:
+        """The honest project this must not punish, at its own confidence.
+
+        `outcomes/clean-proceed` scores 81 and is already held at WORKABLE for
+        thin evidence - no task kind was declared, so the evaluation pillar is
+        under the confidence gate. A ceiling on the SCORE would have taken it
+        to 74 and given it a cap; a gate on the BAND leaves every field it
+        publishes exactly where it was.
+        """
+        evaluation = dataclasses.replace(
+            _passing_calibration(), task_kind=None, probe_scores=()
+        )
+        score = MODULE.score_run(
+            _routing_corpus(),
+            evaluation,
+            _wired_space(),
+            dict(MODULE.DEFAULT_WEIGHTS),
+        )
+        self.assertTrue(score.band_limited_by_confidence)
+        self.assertFalse(score.band_limited_by_unread_answers)
+        self.assertEqual(score.overall, score.weighted_average)
+        self.assertEqual(list(score.caps), [])
+        self.assertEqual(score.recommended_action, MODULE.PROCEED)
+
+    def test_the_hold_sentence_claims_nothing_the_rest_of_the_card_denies(
+        self,
+    ) -> None:
+        """The sentence beside the hold reads the payload; it does not assert it.
+
+        An unconditional version said "nothing here is capped and the step
+        after this one still reads proceed", and both halves were false on an
+        ordinary card: 10 tuning rows against 10 held out, calibrated, with a
+        wired space, scores 89 and holds the band while
+        `dataset-coarse-resolution` prints its ceiling four lines above and
+        `recommended_action` reads `add-examples`.
+
+        `dataset-coarse-resolution` is the only cap that can coexist with this
+        hold - every other ceiling pulls the band under WORKABLE before the
+        hold applies - so the state is reachable on any dataset under the
+        walkthrough default rather than being exotic. The sweep below is what
+        makes that concrete rather than argued.
+        """
+        reassurance = "is being asked of you before the run"
+        always_true = "This hold is not a cap and does not stop the run"
+        held = 0
+        for tuning in range(6, 39):
+            for holdout in (6, 10):
+                score = _healthy_score(
+                    tuning_rows=tuning,
+                    holdout_rows=holdout,
+                    tuning_labelled_rows=tuning,
+                    holdout_labelled_rows=holdout,
+                    rows=tuning + holdout,
+                    labelled_rows=tuning + holdout,
+                    answerable_rows=tuning + holdout,
+                    collected_rows=tuning + holdout,
+                    distinct_rows=tuning + holdout,
+                    tuning_distinct_rows=tuning,
+                    tuning_distinct_scoreable_rows=tuning,
+                    difficulty_tagged_rows=tuning + holdout,
+                )
+                if not score.band_limited_by_unread_answers:
+                    continue
+                held += 1
+                card = MODULE.render_card(
+                    score, palette=MODULE.Palette(), unicode_ok=False
+                )
+                report = MODULE.render_markdown(score)
+                with self.subTest(tuning=tuning, holdout=holdout):
+                    # The half that is true of this hold in every state.
+                    self.assertIn(always_true, card)
+                    self.assertIn(always_true, report)
+                    # And the half that is true only when the rest of the card
+                    # says nothing, on both surfaces, read off the payload the
+                    # card was rendered from.
+                    quiet = (
+                        not score.caps and score.recommended_action == MODULE.PROCEED
+                    )
+                    self.assertEqual(reassurance in card, quiet)
+                    self.assertEqual(reassurance in report, quiet)
+        self.assertGreater(held, 20, "the sweep stopped reaching the held state")
+
+    def test_removing_the_floor_returns_the_card_that_was_filed(self) -> None:
+        """The mutation, executed - and what no table check can see.
+
+        `answers_read` is a keyword argument computed at one call site, so no
+        registry, ordering or round-trip check in this suite can reach it. The
+        mutation is trunk's own behaviour: pass `True` unconditionally, which
+        is what a scorer that never asks the question does. Both halves are
+        measured against a real copy of the module rather than argued.
+        """
+        source = Path(MODULE.__file__).read_text(encoding="utf-8")
+        live = "answers_read=answer_key_read(dataset_facts, review or RowReview()),"
+        self.assertIn(live, source, "the floor's one call site moved")
+        mutated = source.replace(live, "answers_read=True,", 1)
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "readiness_unfloored.py"
+            path.write_text(mutated, encoding="utf-8")
+            spec = importlib.util.spec_from_file_location("readiness_unfloored", path)
+            unfloored = importlib.util.module_from_spec(spec)
+            sys.modules[spec.name] = unfloored
+            try:
+                spec.loader.exec_module(unfloored)
+            finally:
+                sys.modules.pop(spec.name, None)
+
+        # Half one: every table a check could read is identical, so no
+        # table-level check in this file goes red on the mutated scorer.
+        for table in ("ACTION_FOR_CONDITION", "CAP_CEILING", "ROUTE_CATEGORY"):
+            with self.subTest(table=table):
+                self.assertEqual(getattr(unfloored, table), getattr(MODULE, table))
+        self.assertEqual(unfloored.BAND_THRESHOLDS, MODULE.BAND_THRESHOLDS)
+
+        # Half two: on identical facts the mutated scorer issues the verdict
+        # the report was filed about, and this one does not.
+        reverted = unfloored.score_run(
+            unfloored.DatasetFacts(**_ROUTING_CORPUS),
+            unfloored.EvaluationFacts(**_PASSING_CALIBRATION),
+            unfloored.AgentFacts(**_WIRED_SPACE),
+            dict(unfloored.DEFAULT_WEIGHTS),
+        )
+        kept = _healthy_score()
+        self.assertEqual(reverted.overall, kept.overall)
+        self.assertGreaterEqual(
+            unfloored.BAND_ORDER.index(reverted.band), self._strong()
+        )
+        self.assertLess(MODULE.BAND_ORDER.index(kept.band), self._strong())
+
+
+class ADeferredCalibrationSaysSoInTheFieldConsumersReadTests(unittest.TestCase):
+    """A run that never asked the behavioural question is not one that passed it.
+
+    A correct evaluator and one that never reads its `output` argument produce
+    byte-identical readiness JSON while calibration is outstanding - measured,
+    on two projects differing in that one file. Nothing static separates them,
+    and that half is evidence calibration earns its place rather than a defect
+    in this scorer: calibration convicts the mis-wired scorer on its first
+    probe, and the card goes to `evaluator-invalid` at 25.
+
+    What was filable is that deferral is permitted for six named reasons and
+    the deferred card emitted `recommended_action: "proceed"` - the same slug
+    the calibrated, passing run emits - so the one field a consumer routes on
+    could not tell "asked and passed" from "never asked"
+    (traigent-first-run#379).
+    """
+
+    def _deferred(self) -> "MODULE.ReadinessScore":
+        deferred = MODULE.EvaluationFacts(
+            present=True,
+            method="normalized-exact",
+            task_kind="closed-label",
+            parses=True,
+            origin="brought",
+        )
+        return MODULE.score_run(
+            _routing_corpus(),
+            deferred,
+            _wired_space(),
+            dict(MODULE.DEFAULT_WEIGHTS),
+            _review(reviewed=48),
+        )
+
+    def test_the_outstanding_check_is_named_instead_of_proceed(self) -> None:
+        score = self._deferred()
+        cap = next(c for c in score.caps if c.condition == "evaluator-unvalidated")
+        self.assertEqual(cap.ceiling, MODULE.EVALUATOR_UNVALIDATED_CEILING)
+        self.assertEqual(score.recommended_action, MODULE.COMPLETE_CALIBRATION)
+        self.assertNotEqual(score.recommended_action, MODULE.PROCEED)
+
+    def test_deferring_still_proceeds(self) -> None:
+        """Six named reasons permit it, so the fix is visibility, not a stop."""
+        score = self._deferred()
+        cap = next(c for c in score.caps if c.condition == "evaluator-unvalidated")
+        self.assertFalse(cap.blocks)
+        self.assertTrue(cap.asks)
+        self.assertEqual(score.status, "OK")
+        self.assertEqual(
+            MODULE.ROUTE_CATEGORY["evaluator-unvalidated"], MODULE.CLAIM_SCOPING
+        )
+
+    def test_the_calibrated_run_and_the_deferred_one_no_longer_route_alike(
+        self,
+    ) -> None:
+        """The property the report asked for, stated as a comparison."""
+        calibrated = _healthy_score(_review(reviewed=48))
+        deferred = self._deferred()
+        self.assertEqual(calibrated.recommended_action, MODULE.PROCEED)
+        self.assertNotEqual(deferred.recommended_action, calibrated.recommended_action)
+
+    def test_the_remedy_is_not_a_second_spelling_of_an_existing_one(self) -> None:
+        """`repair-evaluator` accuses a file no probe has read; this does not."""
+        carriers = sorted(
+            condition
+            for condition, remedy in MODULE.ACTION_FOR_CONDITION.items()
+            if remedy == MODULE.COMPLETE_CALIBRATION
+        )
+        self.assertEqual(carriers, ["evaluator-unvalidated"])
+        self.assertIn(MODULE.COMPLETE_CALIBRATION, MODULE.ACTION_KINDS)
+        self.assertNotIn(
+            MODULE.COMPLETE_CALIBRATION, ("repair-evaluator", MODULE.PROCEED)
+        )
+
+    def _outstanding(self, *, scope_refused: bool) -> "MODULE.ReadinessScore":
+        """A text-to-SQL project whose calibration has not happened.
+
+        One base, one field varied, so the comparison below is about the
+        declaration and not about two differently-shaped fixtures. `execution`
+        over `code-sql` is the shape the scope gate is written for: a scorer
+        whose complete path runs the candidate's own SQL.
+        """
+        facts = MODULE.EvaluationFacts(
+            present=True,
+            method="execution",
+            task_kind="code-sql",
+            parses=True,
+            origin="brought",
+            calibration_scope_refused=scope_refused,
+        )
+        return MODULE.score_run(
+            _routing_corpus(),
+            facts,
+            _wired_space(),
+            dict(MODULE.DEFAULT_WEIGHTS),
+            _review(reviewed=48),
+        )
+
+    def _scope_refused(self) -> "MODULE.ReadinessScore":
+        return self._outstanding(scope_refused=True)
+
+    def test_a_run_that_obeyed_the_scope_gate_is_not_told_to_break_it(self) -> None:
+        """The remedy a deferral for safety may not carry.
+
+        SKILL.md calibrates only where the complete path does not execute
+        candidate-generated code or SQL, and routes an evaluator that fails
+        that gate to a separate containment review. `complete-calibration` is
+        then an instruction to do the forbidden thing, so the two states may
+        not share a condition, a sentence or a remedy.
+        """
+        refused = self._scope_refused()
+        conditions = [cap.condition for cap in refused.caps]
+        self.assertIn("evaluator-calibration-refused", conditions)
+        self.assertNotIn("evaluator-unvalidated", conditions)
+        self.assertEqual(
+            refused.recommended_action, MODULE.REVIEW_EVALUATOR_CONTAINMENT
+        )
+        self.assertNotEqual(refused.recommended_action, MODULE.COMPLETE_CALIBRATION)
+        cap = next(c for c in refused.caps if c.condition.endswith("refused"))
+        self.assertIn("outside the scope this guide permits", cap.reason)
+        self.assertIn("not a finding against your project", cap.reason)
+        self.assertNotIn("Complete calibration", cap.reason)
+        # It bounds and does not stop, exactly as the deferral it mirrors.
+        self.assertFalse(cap.blocks)
+        self.assertTrue(cap.asks)
+        self.assertEqual(refused.status, "OK")
+
+    def test_the_declaration_changes_the_ask_and_never_the_number(self) -> None:
+        """An unverified declaration may bound a claim; it may not earn credit.
+
+        Nothing in this module can read whether a scorer's complete path
+        executes its own input, so the flag is a claim about the run. If it
+        moved a score, claiming a refusal would be cheaper than doing the
+        work - the same inversion `SubScore.withheld` exists to refuse, and
+        the same rule the row review is held to.
+        """
+        plain = self._outstanding(scope_refused=False)
+        refused = self._outstanding(scope_refused=True)
+        # The fixture really is in the state under test on both sides.
+        self.assertEqual(
+            [cap.condition for cap in plain.caps], ["evaluator-unvalidated"]
+        )
+        self.assertEqual(
+            [cap.condition for cap in refused.caps], ["evaluator-calibration-refused"]
+        )
+        self.assertEqual(refused.overall, plain.overall)
+        self.assertEqual(refused.weighted_average, plain.weighted_average)
+        self.assertEqual(refused.band, plain.band)
+        self.assertEqual(
+            [(p.name, p.score, p.confidence) for p in refused.pillars],
+            [(p.name, p.score, p.confidence) for p in plain.pillars],
+        )
+        self.assertEqual(
+            MODULE.CAP_CEILING["evaluator-calibration-refused"],
+            MODULE.CAP_CEILING["evaluator-unvalidated"],
+        )
+
+    def test_the_two_calibration_states_are_mutually_exclusive(self) -> None:
+        """One branch raises one or the other, and no card carries both."""
+        for refused in (False, True):
+            with self.subTest(scope_refused=refused):
+                facts = MODULE.EvaluationFacts(
+                    present=True,
+                    method="execution",
+                    parses=True,
+                    calibration_scope_refused=refused,
+                )
+                _pillar, caps = MODULE.score_evaluation(facts)
+                raised = {
+                    cap.condition
+                    for cap in caps
+                    if cap.condition
+                    in ("evaluator-unvalidated", "evaluator-calibration-refused")
+                }
+                self.assertEqual(len(raised), 1, raised)
+        # And a calibration that completed clears both, whatever was declared.
+        established = MODULE.EvaluationFacts(
+            **{**_PASSING_CALIBRATION, "calibration_scope_refused": True}
+        )
+        self.assertEqual(
+            [cap.condition for cap in MODULE.score_evaluation(established)[1]], []
+        )
+
+    def test_the_cli_refuses_a_run_claiming_both_at_once(self) -> None:
+        """Calibrating and being refused permission to calibrate are opposites.
+
+        Accepting the pair would let a card carry the containment sentence
+        over evidence produced by the very path that sentence says was not
+        taken.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            calibration = Path(directory) / "calibration.json"
+            calibration.write_text(json.dumps({"cases": [], "passed": True}))
+            preflight = Path(directory) / "preflight.json"
+            preflight.write_text(json.dumps([]))
+            errors = io.StringIO()
+            with contextlib.redirect_stderr(errors):
+                code = MODULE.run(
+                    [
+                        "--preflight",
+                        str(preflight),
+                        "--calibration",
+                        str(calibration),
+                        "--calibration-scope-refused",
+                        "--evaluator-method",
+                        "execution",
+                        "--json",
+                    ]
+                )
+        self.assertEqual(code, 2)
+        self.assertIn("--calibration-scope-refused", errors.getvalue())
+        self.assertIn("Pass one.", errors.getvalue())
+
+    def test_un_asking_it_returns_proceed_and_no_table_notices(self) -> None:
+        """The mutation, executed, on the pattern the sibling remedy test set.
+
+        `asks` lives on the cap and not in a registry, so every membership,
+        order and round-trip check over the three tables passes on a scorer
+        that has un-asked this cap - which is exactly how the deferred card
+        came to emit `proceed` under a full green suite.
+        """
+        source = Path(MODULE.__file__).read_text(encoding="utf-8")
+        opener = '                "evaluator-unvalidated",\n'
+        self.assertIn(opener, source, "the un-asking mutation point moved")
+        head, _, rest = source.partition(opener)
+        construction, closer, tail = rest.partition("\n            )\n")
+        self.assertIn("asks=True,", construction, "the cap no longer asks")
+        mutated = (
+            head
+            + opener
+            + construction.replace("asks=True,", "asks=False,", 1)
+            + closer
+            + tail
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "readiness_unasked.py"
+            path.write_text(mutated, encoding="utf-8")
+            spec = importlib.util.spec_from_file_location("readiness_unasked", path)
+            unasked = importlib.util.module_from_spec(spec)
+            sys.modules[spec.name] = unasked
+            try:
+                spec.loader.exec_module(unasked)
+            finally:
+                sys.modules.pop(spec.name, None)
+
+        for table in ("ACTION_FOR_CONDITION", "CAP_CEILING", "ROUTE_CATEGORY"):
+            with self.subTest(table=table):
+                self.assertEqual(getattr(unasked, table), getattr(MODULE, table))
+
+        # THROUGH `score_evaluation`, which is the line the mutation edits.
+        # An earlier revision of this test hand-built the cap and passed no
+        # `asks`, so the flag took its `False` default on both modules and the
+        # two assertions below held identically on the UNMUTATED scorer - a
+        # probe that could not fail for the reason it names. The cap now comes
+        # from the constructor the mutation rewrites, and the same call is made
+        # against this module so the pair is a comparison rather than a claim.
+        outstanding = dict(
+            present=True,
+            method="normalized-exact",
+            parses=True,
+        )
+        reverted_caps = unasked.score_evaluation(
+            unasked.EvaluationFacts(**outstanding)
+        )[1]
+        kept_caps = MODULE.score_evaluation(MODULE.EvaluationFacts(**outstanding))[1]
+        self.assertEqual(
+            [cap.condition for cap in reverted_caps], ["evaluator-unvalidated"]
+        )
+        self.assertEqual(
+            [cap.condition for cap in kept_caps], ["evaluator-unvalidated"]
+        )
+        self.assertFalse(reverted_caps[0].asks)
+        self.assertTrue(kept_caps[0].asks)
+
+        pillars = [
+            unasked.Pillar(name=name, score=60, confidence=1.0, subscores=())
+            for name in ("dataset", "evaluation", "agent")
+        ]
+        reverted = unasked.aggregate(
+            pillars, list(reverted_caps), [], dict(unasked.DEFAULT_WEIGHTS)
+        )
+        kept = MODULE.aggregate(
+            [
+                MODULE.Pillar(name=name, score=60, confidence=1.0, subscores=())
+                for name in ("dataset", "evaluation", "agent")
+            ],
+            list(kept_caps),
+            [],
+            dict(MODULE.DEFAULT_WEIGHTS),
+        )
+        self.assertEqual(reverted.recommended_action, unasked.PROCEED)
+        self.assertEqual(kept.recommended_action, MODULE.COMPLETE_CALIBRATION)
 
 
 class MeasuredOpeningInvocationTests(unittest.TestCase):
@@ -16275,37 +17122,59 @@ class TheAgentPillarReadsTheAgentTests(unittest.TestCase):
             ),
         )
 
+    OPENING_PROJECT_EVALUATION = MODULE.EvaluationFacts(
+        calibration_passed=True,
+        present=True,
+        method="normalized-exact",
+        task_kind="closed-label",
+        calibration_present=True,
+        calibration_supplied=True,
+        checks=(
+            {
+                "good_passes": True,
+                "bad_fails": True,
+                "non_constant": True,
+            },
+        ),
+        probe_scores=((1.0, 0.0),),
+    )
+
+    @staticmethod
+    def opening_project_dataset() -> MODULE.DatasetFacts:
+        """The strongest realistic opening corpus, in one place.
+
+        Shared with the absent-agent tests below rather than copied there: both
+        measurements are about what the AGENT half does to a card whose other
+        two pillars are as good as this package can score, and two hand-written
+        copies of that corpus are two chances for one of them to stop being the
+        project the other one's number was taken on.
+        """
+        return _clean_dataset(
+            rows=200,
+            labelled_rows=200,
+            tuning_rows=180,
+            holdout_rows=20,
+            tuning_labelled_rows=180,
+            holdout_labelled_rows=20,
+            difficulty_tagged_rows=200,
+            collected_rows=200,
+            answerable_rows=200,
+        )
+
     def test_the_opening_cap_measurement_has_an_executable_fixture(self) -> None:
-        """Keep the source comment's score and producer re-runnable."""
+        """Keep the source comment's score and producer re-runnable.
+
+        `origin` is what makes these facts the state the comment describes. It
+        is about an opening card whose config-space document the guide
+        deliberately withheld - a project that HAS an agent - and since #378
+        that is said by declaring the agent rather than by supplying nothing at
+        all. Without it the fixture would score the absent-agent condition and
+        pin a number this comment is not about.
+        """
         score = MODULE.score_run(
-            _clean_dataset(
-                rows=200,
-                labelled_rows=200,
-                tuning_rows=180,
-                holdout_rows=20,
-                tuning_labelled_rows=180,
-                holdout_labelled_rows=20,
-                difficulty_tagged_rows=200,
-                collected_rows=200,
-                answerable_rows=200,
-            ),
-            MODULE.EvaluationFacts(
-                calibration_passed=True,
-                present=True,
-                method="normalized-exact",
-                task_kind="closed-label",
-                calibration_present=True,
-                calibration_supplied=True,
-                checks=(
-                    {
-                        "good_passes": True,
-                        "bad_fails": True,
-                        "non_constant": True,
-                    },
-                ),
-                probe_scores=((1.0, 0.0),),
-            ),
-            MODULE.AgentFacts(),
+            self.opening_project_dataset(),
+            self.OPENING_PROJECT_EVALUATION,
+            MODULE.AgentFacts(origin=MODULE.BROUGHT),
             dict(MODULE.DEFAULT_WEIGHTS),
         )
         self.assertEqual(
@@ -16620,6 +17489,212 @@ class TheAgentPillarReadsTheAgentTests(unittest.TestCase):
             "the read moved the search space, which is the thing it may not do",
         )
         self.assertGreater(both.score, document_only.score)
+
+
+class TheThirdPillarNamesItsOwnAbsenceTests(unittest.TestCase):
+    """#375: two pillars name their own absence and block, and one did not.
+
+    `dataset-absent` at 20 and `evaluator-absent` at 40 each say their component
+    did not reach the score and each stops the paid run. The agent pillar had no
+    such condition. What a project with no agent met instead was
+    `agent-no-varying-knobs` - a statement about a SEARCH SPACE, advisory, at
+    45, with `vary-knobs` as its remedy - so the card told somebody to change
+    the settings of a program they do not have.
+
+    The number is what made it invisible. An agent pillar is worth a quarter of
+    the weight, so scoring it 0 against a dataset in the nineties cannot pull a
+    card below a ceiling something else has already set, and a card capped at 45
+    by an uncalibrated evaluator reads the same either way.
+
+    Every fixture here is built from the same corpus the sibling class above
+    pins its opening measurement on, so the two cannot describe different
+    projects while quoting each other's numbers.
+    """
+
+    HEALTHY_SPACE = {
+        "knobs": {
+            "model": ["fast-model", "strong-model"],
+            "temperature": [0.0, 0.4, 0.8],
+            "style": ["terse", "detailed"],
+            "examples": [0, 2, 4],
+        },
+        "wired": ["model", "temperature", "style", "examples"],
+    }
+
+    def _score(
+        self,
+        agent: MODULE.AgentFacts,
+        evaluation: MODULE.EvaluationFacts | None = None,
+    ) -> MODULE.ReadinessScore:
+        eval_facts = (
+            MODULE.EvaluationFacts(
+                present=True,
+                method="normalized-exact",
+                task_kind="closed-label",
+            )
+            if evaluation is None
+            else evaluation
+        )
+        return MODULE.score_run(
+            TheAgentPillarReadsTheAgentTests.opening_project_dataset(),
+            # The evaluator is DECLARED and not calibrated, which is what makes
+            # this the reported card rather than a card of this test's own
+            # invention: `evaluator-unvalidated` sets a 45 ceiling, and the
+            # complaint is that the agent half could not move a score off it.
+            eval_facts,
+            agent,
+            dict(MODULE.DEFAULT_WEIGHTS),
+        )
+
+    def test_no_agent_and_a_healthy_agent_no_longer_score_alike(self) -> None:
+        """The reported measurement, both directions, on one project.
+
+        Before this branch both cards read 45 PARTIAL OK proceed and differed
+        by one non-blocking cap. The healthy card is asserted unchanged, because
+        a fix that moved it would be capping healthy projects rather than
+        separating two states.
+        """
+        absent = self._score(MODULE.AgentFacts())
+        healthy = self._score(MODULE.agent_facts_from_config_space(self.HEALTHY_SPACE))
+
+        # Same project, same evaluator, and the agent half is now the whole
+        # difference. Every field the customer reads moves.
+        self.assertNotEqual(absent.overall, healthy.overall)
+        self.assertNotEqual(absent.band, healthy.band)
+        self.assertNotEqual(absent.status, healthy.status)
+        self.assertNotEqual(absent.recommended_action, healthy.recommended_action)
+
+        self.assertEqual(absent.overall, MODULE.AGENT_ABSENT_CEILING)
+        self.assertEqual(absent.band, "NOT READY")
+        self.assertEqual(absent.status, "BLOCKED")
+        self.assertEqual(absent.recommended_action, "connect-agent")
+        self.assertEqual(
+            [cap.condition for cap in absent.caps],
+            ["agent-absent", "evaluator-unvalidated"],
+        )
+
+        self.assertEqual(healthy.overall, MODULE.EVALUATOR_UNVALIDATED_CEILING)
+        self.assertEqual(healthy.band, "PARTIAL")
+        self.assertEqual(healthy.status, "OK")
+        self.assertEqual(healthy.recommended_action, MODULE.COMPLETE_CALIBRATION)
+        self.assertEqual(
+            [cap.condition for cap in healthy.caps], ["evaluator-unvalidated"]
+        )
+
+        # And the dataset half of the same measurement, because the argument for
+        # the ceiling rests on it: this is not "nothing was measured at all",
+        # which is what 20 is reserved for. Two thirds of this card is read.
+        self.assertEqual(
+            [(pillar.name, pillar.score) for pillar in absent.pillars],
+            [("agent", 0), ("dataset", 98), ("evaluation", 53)],
+        )
+
+    def test_an_agent_the_run_could_not_read_keeps_the_advisory_ceiling(
+        self,
+    ) -> None:
+        """The direction a wrong fix breaks, which is why it is pinned here.
+
+        SKILL.md tells a run whose read of an existing agent was defeated to
+        leave `--agent-knobs` off and still declare what it found. That run has
+        an agent. Capping it as absent would print "connect or create one" to
+        somebody looking at their own agent on screen, which is the complaint
+        `ReadinessScore.agent_source_read` was added to answer once already.
+        """
+        unread = self._score(MODULE.AgentFacts(origin=MODULE.BROUGHT))
+        self.assertEqual(unread.overall, MODULE.EVALUATOR_UNVALIDATED_CEILING)
+        self.assertEqual(unread.band, "PARTIAL")
+        self.assertEqual(unread.status, "OK")
+        self.assertEqual(unread.recommended_action, MODULE.COMPLETE_CALIBRATION)
+        self.assertEqual(
+            [cap.condition for cap in unread.caps],
+            ["evaluator-unvalidated", "agent-no-varying-knobs"],
+        )
+        agent_cap = unread.caps[-1]
+        self.assertFalse(agent_cap.blocks)
+        self.assertEqual(agent_cap.ceiling, MODULE.AGENT_NO_VARYING_KNOBS_CEILING)
+
+    def test_a_generated_agent_is_present_and_is_never_read_as_absent(
+        self,
+    ) -> None:
+        """The other declaration, and the one a walkthrough run makes.
+
+        An agent this run wrote exists as surely as one the customer brought, so
+        the absence condition may not fire over it. It keeps the advisory
+        search-space ceiling and picks up the origin cap beside it.
+        """
+        generated = self._score(MODULE.AgentFacts(origin=MODULE.GENERATED))
+        conditions = [cap.condition for cap in generated.caps]
+        self.assertNotIn("agent-absent", conditions)
+        self.assertIn("agent-no-varying-knobs", conditions)
+        self.assertIn("agent-generated", conditions)
+
+    def test_the_absent_ceiling_sits_between_the_other_two_absences(self) -> None:
+        """The argument for 25, asserted rather than left in a comment.
+
+        Above `dataset-absent`, because this project's dataset and evaluation
+        method are both measured and 20 is reserved for a card where nothing is.
+        Below `evaluator-absent`, because an absent evaluator leaves the program
+        and the evidence intact and asks for a choice, while an absent agent
+        removes the subject the other two pillars describe.
+        """
+        self.assertLess(MODULE.DATASET_ABSENT_CEILING, MODULE.AGENT_ABSENT_CEILING)
+        self.assertLess(MODULE.AGENT_ABSENT_CEILING, MODULE.EVALUATOR_ABSENT_CEILING)
+        # And inside NOT READY, which is the band claim the number makes.
+        self.assertEqual(
+            MODULE.band_for(MODULE.AGENT_ABSENT_CEILING, 1.0)[0], "NOT READY"
+        )
+        # The remedy names the agent and never its settings, and it is a remedy
+        # of its own rather than one borrowed from the generated rung, which
+        # means "there is one and this run wrote it".
+        self.assertEqual(MODULE.ACTION_FOR_CONDITION["agent-absent"], "connect-agent")
+        self.assertNotEqual(
+            MODULE.ACTION_FOR_CONDITION["agent-absent"],
+            MODULE.ACTION_FOR_CONDITION["agent-no-varying-knobs"],
+        )
+        self.assertNotEqual(
+            MODULE.ACTION_FOR_CONDITION["agent-absent"],
+            MODULE.ACTION_FOR_CONDITION["agent-generated"],
+        )
+
+    def test_the_three_pillars_now_name_their_absence_in_one_vocabulary(
+        self,
+    ) -> None:
+        """The asymmetry the issue is about, read off the module.
+
+        Each of the three says its component did not reach this score, each
+        stops the paid run, and each names a remedy about that component. A
+        branch that makes any one of them advisory again fails here rather than
+        leaving one pillar free to say nothing.
+        """
+        for condition in ("dataset-absent", "evaluator-absent", "agent-absent"):
+            with self.subTest(condition=condition):
+                self.assertEqual(
+                    MODULE.ROUTE_CATEGORY[condition], MODULE.CREATION_OR_REPAIR
+                )
+                self.assertTrue(
+                    MODULE.Cap(condition, MODULE.CAP_CEILING[condition], "x").blocks
+                )
+
+    def test_the_absent_agent_card_says_no_agent_and_not_no_knobs(self) -> None:
+        """The words, because the remedy alone is not what the customer reads.
+
+        The rendered line is what a first-time reader acts on, and the sentence
+        it replaces described a search space. Asserting the absence of the old
+        vocabulary matters as much as the presence of the new: the reason may
+        not send anyone to vary settings.
+        """
+        card = MODULE.render_card(self._score(MODULE.AgentFacts()), unicode_ok=False)
+        # The CAP line, not the banner above it that names the same words. The
+        # banner is prose about there being a blocker; only this line carries
+        # the reason a reader acts on.
+        blocker = next(
+            line
+            for line in card.splitlines()
+            if line.strip().startswith("FIX BEFORE PAID RUN")
+        )
+        self.assertIn("No agent reached this score", blocker)
+        self.assertNotIn("settings a search would vary", blocker)
+        self.assertNotIn("vary", blocker)
 
 
 class RecordingAnUnsettledKnobHasOneShapeAndItWorksTests(unittest.TestCase):
@@ -17002,7 +18077,7 @@ class AFoundAgentDoesNotLookLikeAMissingOneTests(unittest.TestCase):
 
 
 class TheBuildHalfCitesTheAgentItReadTests(unittest.TestCase):
-    """A build read is a claim about the customer's code, and nothing checked it.
+    """A build read is a claim about the customer'sr code, and nothing checked it.
 
     The knobs half refuses a document whose `source_lines` fall outside the
     selected agent. The build half carried no coordinate at all - `evidence` is
@@ -18024,13 +19099,13 @@ class TheBuildHalfCitesTheAgentItReadTests(unittest.TestCase):
         """
         cases = {
             "bare pipe": "MODEL: list | None = None",
-            "escaped pipe in a regex": 'ANSWER = re.compile(r"^(yes\\|no)$")',
+            "escaped pipe in a regex": r'ANSWER = re.compile(r"^(yes\|no)$")',
             "trailing backslash": 'MODEL = "a\\\\"',
             "doubled backslash then pipe": 'MODEL = "a\\\\" + "|b"',
             "many pipes": 'MODEL = "a|b|c|d|e"',
             # Long enough to be truncated, and carrying escapes at the cut, so
             # the property is asserted on the truncated form too.
-            "pipes past the width bound": 'MODEL = "' + "x|y\\|z" * 40 + '"',
+            "pipes past the width bound": 'MODEL = r"' + "x|y\\|z" * 40 + '"',
         }
         for label, first_line in cases.items():
             with self.subTest(source=label):
@@ -18238,6 +19313,14 @@ class WhoWroteItBoundsWhatItMayClaimTests(unittest.TestCase):
             self._evaluation(origins.get("evaluation")),
             replace(agent, origin=origins.get("agent")),
             dict(MODULE.DEFAULT_WEIGHTS),
+            # The row-level read, because "the whole reachable case" now
+            # includes it: the opening method requires it on every scoring
+            # call, and the top two bands are held until it enters. Without it
+            # every card below would be held at WORKABLE for a gap that has
+            # nothing to do with who wrote the evaluator, and the class would
+            # stop measuring origin ceilings at all. It earns no points, so
+            # every number here is the number it always was.
+            _review(reviewed=120),
         )
 
     def test_the_reachable_case_no_longer_scores_as_if_the_ruler_were_real(
@@ -18772,11 +19855,23 @@ class TaskFitIsEarnedFromTheEvaluatorFileTests(unittest.TestCase):
 
         A run that never handed an evaluator to preflight has established
         nothing about it, and this check refutes only from proof. So every
-        method that is not a claim about running the answer keeps exactly what
-        it had, in both of the states that establish nothing.
+        method that is not a claim about the file keeps exactly what it had,
+        in both of the states that establish nothing.
+
+        Two families of method are a claim about the file and are excluded
+        here, each with its own test that they withhold: the one that says the
+        evaluator runs the answer, and the one that says it compares two
+        queries as parsed structures. Excluding them without asserting the
+        exclusion would let this test pass over a method that quietly stopped
+        being either, so the count below is checked against the tables.
         """
+        excused = 0
         for method, profile in sorted(MODULE.METHOD_PROFILES.items()):
-            if MODULE.METHOD_EXECUTES_CANDIDATE[method] is True:
+            if (
+                MODULE.METHOD_EXECUTES_CANDIDATE[method] is True
+                or method in MODULE.METHOD_REQUIRES_PROVEN_COMPARISON
+            ):
+                excused += 1
                 continue
             for kind in profile["fits"]:
                 for extra in ({}, {"executes_candidate": False}):
@@ -18786,6 +19881,17 @@ class TaskFitIsEarnedFromTheEvaluatorFileTests(unittest.TestCase):
                         self.assertEqual(
                             subscore.evidence, f"{method} suits {kind} output"
                         )
+        self.assertEqual(
+            excused,
+            len(
+                {
+                    method
+                    for method, claims in MODULE.METHOD_EXECUTES_CANDIDATE.items()
+                    if claims is True
+                }
+                | MODULE.METHOD_REQUIRES_PROVEN_COMPARISON
+            ),
+        )
 
     def test_a_mismatched_method_keeps_the_sentence_about_the_mismatch(self) -> None:
         """The arm about the file does not talk over the arm about the output.
@@ -19078,14 +20184,99 @@ class TaskFitIsMeasuredOnThePairNotOnEitherFieldTests(unittest.TestCase):
         self.assertIn("exact check rather than normalized-exact", overstated.evidence)
 
     def test_a_file_the_walk_could_not_settle_refuses_nothing(self) -> None:
-        """The commonest answer, and the one that must cost nobody anything."""
+        """The commonest answer, and the one that must cost nobody anything.
+
+        True of every method whose declaration is a claim about the OUTPUT
+        kind, which is all of them but two. `execution` and the methods in
+        `METHOD_REQUIRES_PROVEN_COMPARISON` are claims about the FILE, and for
+        those an unsettled file is the answer "not established" rather than a
+        clean bill - asserted directly below rather than merely skipped.
+        """
         for method, profile in sorted(MODULE.METHOD_PROFILES.items()):
-            if MODULE.METHOD_EXECUTES_CANDIDATE[method] is True:
+            if (
+                MODULE.METHOD_EXECUTES_CANDIDATE[method] is True
+                or method in MODULE.METHOD_REQUIRES_PROVEN_COMPARISON
+            ):
                 continue
             for kind in profile["fits"]:
                 with self.subTest(method=method, kind=kind):
                     subscore = self.fit(method, kind, shape=None)
                     self.assertEqual(subscore.value, MODULE.TASK_FIT_WEIGHT)
+
+    def test_a_method_that_claims_a_comparison_earns_nothing_from_an_unread_file(
+        self,
+    ) -> None:
+        """#414. The unknown case has to fail closed, and this is where.
+
+        The twelve older methods say what output kind they suit, so a file
+        nobody could classify refutes none of them. A method whose whole
+        content is a claim about the comparison the file performs is the other
+        case: "the walk could not account for this file" and "this file does
+        not do that" are the same answer to a customer, and crediting the
+        first would make the method the highest-paying word a run could type
+        over any evaluator - which is the reading #380 was filed about, one
+        indirection further out.
+        """
+        for method in sorted(MODULE.METHOD_REQUIRES_PROVEN_COMPARISON):
+            supported = MODULE.METHOD_COMPARISON_SUPPORT[method]
+            self.assertTrue(supported, f"{method} supports no comparison at all")
+            for kind in MODULE.METHOD_PROFILES[method]["fits"]:
+                with self.subTest(method=method, kind=kind):
+                    unread = self.fit(method, kind, shape=None)
+                    self.assertEqual(unread.value, MODULE.TASK_FIT_UNFIT_CREDIT)
+                    self.assertIn("does not establish that it does", unread.evidence)
+                    for shape in sorted(supported):
+                        proven = self.fit(method, kind, shape=shape)
+                        self.assertEqual(proven.value, MODULE.TASK_FIT_WEIGHT)
+                        self.assertEqual(
+                            proven.evidence, f"{method} suits {kind} output"
+                        )
+
+    def test_a_text_comparator_wearing_a_structural_name_is_refused(self) -> None:
+        """The acceptance test for #414, at the scoring layer.
+
+        The method exists so a SQL project has an in-scope route to a real
+        evaluation pillar. It must not become a second way to be paid for a
+        declaration: a file proven to be a whole-value text comparison is
+        refused under it, with the sentence that names what the file does
+        first so the reader can check it against their own source.
+        """
+        for method in sorted(MODULE.METHOD_REQUIRES_PROVEN_COMPARISON):
+            for kind in MODULE.METHOD_PROFILES[method]["fits"]:
+                for shape in ("exact", "normalized-exact"):
+                    with self.subTest(method=method, kind=kind, shape=shape):
+                        subscore = self.fit(method, kind, shape=shape)
+                        self.assertEqual(subscore.value, MODULE.TASK_FIT_UNFIT_CREDIT)
+                        self.assertIn(
+                            f"{shape} check rather than {method}", subscore.evidence
+                        )
+                        self.assertIn(
+                            MODULE.COMPARISON_SHAPE_DESCRIPTIONS[shape],
+                            subscore.evidence,
+                        )
+
+    def test_every_provable_shape_says_what_the_file_does(self) -> None:
+        """A refusal opens by describing the customer's own file, so it must fit.
+
+        The sentence used to be one literal, true of the two whole-value
+        shapes. A third shape that is not a whole-value comparison would have
+        been announced as one, and a refusal whose first half misdescribes the
+        file is a refusal nobody can check.
+        """
+        self.assertEqual(
+            sorted(MODULE.COMPARISON_SHAPE_DESCRIPTIONS),
+            sorted(
+                {
+                    shape
+                    for shapes in MODULE.METHOD_COMPARISON_SUPPORT.values()
+                    for shape in shapes
+                }
+            ),
+        )
+        for shape, described in sorted(MODULE.COMPARISON_SHAPE_DESCRIPTIONS.items()):
+            with self.subTest(shape=shape):
+                self.assertTrue(described[:1].islower())
+                self.assertNotIn("-", described.replace("well-", ""))
 
     def test_every_profiled_method_records_which_comparisons_support_it(
         self,
@@ -19101,14 +20292,27 @@ class TaskFitIsMeasuredOnThePairNotOnEitherFieldTests(unittest.TestCase):
         )
         for method, shapes in sorted(MODULE.METHOD_COMPARISON_SUPPORT.items()):
             with self.subTest(method=method):
-                self.assertLessEqual(shapes, {"exact", "normalized-exact"})
+                self.assertLessEqual(
+                    shapes, {"exact", "normalized-exact", "sql-structure"}
+                )
         # The three methods a whole-value equality can be, and no others.
         supported = {
             method
             for method, shapes in MODULE.METHOD_COMPARISON_SUPPORT.items()
-            if shapes
+            if shapes & {"exact", "normalized-exact"}
         }
         self.assertEqual(supported, {"exact", "normalized-exact", "routing"})
+        # And the one a proven structural SQL comparison supports, which is
+        # deliberately not one of those three: a file that reads both answers
+        # as queries is not comparing them as whole values, so crediting
+        # `exact` or `routing` from it would be the same mistake read
+        # backwards.
+        structural = {
+            method
+            for method, shapes in MODULE.METHOD_COMPARISON_SUPPORT.items()
+            if "sql-structure" in shapes
+        }
+        self.assertEqual(structural, {"sql-structure"})
 
     def test_the_engine_finding_outranks_the_comparison_finding(self) -> None:
         """Both refuse; the one about running the answer is the one to print.
@@ -19189,3 +20393,994 @@ class TaskFitIsMeasuredOnThePairNotOnEitherFieldTests(unittest.TestCase):
         self.assertNotIn(
             ":", MODULE.task_fit_comparison_evidence("schema", "exact", None)
         )
+
+
+# One agent, written out rather than generated, whose four settings every one
+# reach the outgoing request. Instrumented locally against a stub client - two
+# calls per setting, everything else held - it produces 3, 3, 2 and 2 distinct
+# requests and 36 over the whole grid, and at `schema_context="none"` an 86
+# character prompt carrying neither "Database schema" nor "CREATE TABLE". This
+# reader follows exactly one of the four to the call, because the other three
+# put their literals somewhere its narrow shapes do not reach.
+FOUR_SETTING_AGENT = '''\
+"""A small text-to-SQL agent with four tunable settings."""
+
+from openai import OpenAI
+
+MODELS = {
+    "fast": "gpt-4o-mini",
+    "balanced": "gpt-4o",
+    "strong": "gpt-4.1",
+}
+
+PROMPT_STYLES = {
+    "plain": "Write one SQL query that answers the question.",
+    "cot": "Think step by step, then write one SQL query.",
+    "terse": "SQL only. No prose.",
+}
+
+SCHEMA_CONTEXTS = ("none", "ddl")
+
+TEMPERATURES = (0.0, 0.7)
+
+client = OpenAI()
+
+
+def _schema_block(schema_context, schema):
+    if schema_context not in SCHEMA_CONTEXTS:
+        raise ValueError("unknown schema_context")
+    if schema_context == "none":
+        return ""
+    if schema_context == "ddl":
+        return "Database schema:\\n" + schema
+    return ""
+
+
+def _context_for(schema_context, schema):
+    return _schema_block(schema_context, schema)
+
+
+def answer(question, schema, model, prompt_style, schema_context, temperature):
+    if temperature not in TEMPERATURES:
+        raise ValueError("unknown temperature")
+    prompt = (
+        PROMPT_STYLES[prompt_style]
+        + "\\n"
+        + _context_for(schema_context, schema)
+        + "\\n\\nQuestion: "
+        + question
+    )
+    reply = client.chat.completions.create(
+        model=MODELS[model],
+        temperature=temperature,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    return reply.choices[0].message.content
+'''
+
+
+class AnUnfollowedRouteIsNotAnAbsentSettingTests(unittest.TestCase):
+    """A count taken over what the reader could follow is a floor, not a space.
+
+    The reader is narrow on purpose, and that narrowness is right where it
+    decides CREDIT: refusing a route it cannot follow costs a false refusal and
+    never a paid grid of identical requests. The same narrowness was also
+    deciding a REFUTATION. Every setting it could not follow left the
+    configuration count silently, so the card printed the surviving product as
+    the customer's space and then asked them to add a setting to an agent
+    already holding three it had just refused.
+
+    These pin both halves: the floor is still the only thing credited, and the
+    sentence beside it now says what it is a floor of.
+    """
+
+    def _facts(self, extra_knobs=None, drop=()):
+        knobs = {
+            "model": {
+                "values": ["fast", "balanced", "strong"],
+                "source_lines": [5, 6, 7, 8, 9, 49],
+                "evidence": "agent.py:49 passes MODELS[model] to the request call.",
+            },
+            "prompt_style": {
+                "values": ["plain", "cot", "terse"],
+                "source_lines": [11, 12, 13, 14, 15, 41],
+                "evidence": "agent.py:41 puts PROMPT_STYLES[prompt_style] in the prompt.",
+            },
+            "schema_context": {
+                "values": ["none", "ddl"],
+                "source_lines": [17, 25, 27, 29, 30, 44],
+                "evidence": "agent.py:44 sends schema_context into the block builder.",
+            },
+            "temperature": {
+                "values": [0.0, 0.7],
+                "source_lines": [19, 39, 50],
+                "evidence": "agent.py:39 refuses a temperature outside TEMPERATURES.",
+            },
+        }
+        knobs.update(extra_knobs or {})
+        for name in drop:
+            del knobs[name]
+        document = {"source": "agent.py", "knobs": knobs}
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "agent.py").write_text(FOUR_SETTING_AGENT)
+            # The fixture checks its own coordinates before anything is asserted
+            # about the reading. A citation that drifted onto a blank line would
+            # otherwise turn this whole class green for the wrong reason.
+            lines = FOUR_SETTING_AGENT.splitlines()
+            self.assertIn("PROMPT_STYLES = {", lines[10])
+            self.assertIn("SCHEMA_CONTEXTS = ", lines[16])
+            self.assertIn("TEMPERATURES = ", lines[18])
+            self.assertIn("MODELS[model]", lines[48])
+            return MODULE.agent_facts_from_discovery(
+                document,
+                source_root=root,
+                selected_agent=root / "agent.py",
+                selected_agent_callable="answer",
+            )
+
+    def _space(self, facts):
+        pillar, _caps, _rows = MODULE.score_agent(facts)
+        return next(sub for sub in pillar.subscores if sub.name == "search-space")
+
+    def test_the_followed_count_is_reported_as_a_floor_with_what_it_omits(
+        self,
+    ) -> None:
+        """Three settings the reader could not follow, named and multiplied out."""
+        space = self._space(self._facts())
+        self.assertIn(
+            "this read followed 3 distinct configurations to the request",
+            space.evidence,
+        )
+        self.assertIn(
+            "it could not follow prompt_style, schema_context, temperature, "
+            "whose options the cited source does spell out, so the space is 3 "
+            "only if none of those vary and 36 if they all do",
+            space.evidence,
+        )
+        # The claim this replaces. It is asserted as the whole clause the
+        # renderer emits, because "3 distinct configurations" on its own is a
+        # substring of the floor sentence above and would pass either way.
+        self.assertNotIn("your space has 3 distinct configurations", space.evidence)
+
+    def test_the_remedy_offers_the_option_that_needs_no_new_setting(self) -> None:
+        """Both, because this read cannot rule either of them out.
+
+        The ladder sentence is true about the credited floor and about the
+        score, so suppressing it would be the original defect mirrored: a read
+        that has just said it cannot tell whether three settings vary cannot
+        then assert that adding a fourth is not the step. What was missing was
+        the other option, and the probe leads because it always applies where
+        the accepted route can ask for an agent to be rewritten.
+        """
+        space = self._space(self._facts())
+        self.assertIn("1 more would reach the 4", space.evidence)
+        self.assertIn(
+            "those settings are already written down, so settling them is the "
+            "other way to that number and needs no new one - run the "
+            "request-difference probe before any paid grid, or cite them on "
+            "the accepted route this card prints",
+            space.evidence,
+        )
+        # NOT `assertNotIn("is not the step here", ...)`, which was here and
+        # could never red: that phrase is emitted nowhere in this repository,
+        # so it asserted only that a sentence nobody writes was not written.
+        # The live risk is the opposite one - that the ladder sentence gets
+        # suppressed again - and this is the assertion that catches it.
+        self.assertIn(
+            "1 more would reach the 4 this guide scores as room for two "
+            "settings to interact",
+            space.evidence,
+        )
+
+    def test_an_unfollowed_route_still_earns_nothing(self) -> None:
+        """The floor is the credit, and widening it is the unsafe direction.
+
+        A reader that cannot follow a route cannot tell a setting it merely
+        failed to follow from one that is genuinely inert, so paying for the
+        wider figure would be paying for a grid that might be 36 identical
+        requests. The sentence carries it; the score does not.
+        """
+        space = self._space(self._facts())
+        self.assertEqual(space.value, MODULE.search_space_points(3, None))
+        self.assertLess(space.value, MODULE.search_space_points(36, None))
+
+    def test_options_the_cited_source_does_not_hold_widen_nothing(self) -> None:
+        """The other direction, which is the one that would make this a lie.
+
+        A parameter may declare options the source does not contain anywhere.
+        That is refused today on its own terms, and it must go on being
+        refused: counting it would let a document widen its own reported space
+        by writing values down. Only the branch that found the options in the
+        cited source contributes a factor.
+        """
+        facts = self._facts(
+            {
+                "top_p": {
+                    "values": [0.5, 0.9],
+                    "source_lines": [19],
+                    "evidence": "agent.py:19 is where this agent's numbers live.",
+                }
+            }
+        )
+        space = self._space(facts)
+        self.assertIn("and 36 if they all do", space.evidence)
+        self.assertNotIn("and 72 if they all do", space.evidence)
+        self.assertNotIn("top_p, whose options", space.evidence)
+        # And its own refusal is untouched - the parameter is still reported,
+        # with the reason a reader can act on.
+        self.assertIn(
+            "top_p: declares '0.5', '0.9' which the cited executable "
+            "selected-agent call path does not show",
+            space.evidence,
+        )
+        self.assertEqual(
+            [name for name, _count in MODULE.unfollowed_settings(facts)],
+            ["prompt_style", "schema_context", "temperature"],
+        )
+
+    def test_the_payload_carries_the_settings_and_not_only_a_bit(self) -> None:
+        """A consumer could see THAT a route was unfollowed and never which one."""
+        facts = self._facts()
+        score = MODULE.score_run(
+            MODULE.DatasetFacts(),
+            MODULE.EvaluationFacts(),
+            facts,
+            dict(MODULE.DEFAULT_WEIGHTS),
+        )
+        payload = json.loads(json.dumps(asdict(score), sort_keys=True))
+        self.assertTrue(payload["agent_route_unverified"])
+        self.assertEqual(
+            payload["agent_unfollowed_settings"],
+            [["prompt_style", 3], ["schema_context", 2], ["temperature", 2]],
+        )
+
+    def test_a_config_space_document_leaves_the_names_out(self) -> None:
+        """A document decides the space, so a read it overrode names nothing."""
+        facts = dataclasses.replace(
+            self._facts(),
+            config_space_supplied=True,
+        )
+        score = MODULE.score_run(
+            MODULE.DatasetFacts(),
+            MODULE.EvaluationFacts(),
+            facts,
+            dict(MODULE.DEFAULT_WEIGHTS),
+        )
+        self.assertEqual(score.agent_unfollowed_settings, ())
+
+    def test_the_ceiling_is_printed_when_nothing_at_all_was_followed(self) -> None:
+        """Learning it must not depend on one other setting being credited.
+
+        A customer whose four settings all sit outside these shapes is the one
+        who most needs the figure, and is the one the credited branch never
+        reaches. The cap that fires here already says the ceiling records a
+        limit of the read rather than a finding about the agent; this puts a
+        number beside that sentence.
+        """
+        facts = self._facts(drop=("model",))
+        pillar, caps, _rows = MODULE.score_agent(facts)
+        space = next(sub for sub in pillar.subscores if sub.name == "search-space")
+        self.assertIn(
+            "their cited options come to 12 configurations if they vary, "
+            "which this read has not established either way",
+            space.evidence,
+        )
+        # The condition id is shared by three different caps, so on its own it
+        # settles nothing; the reason is what says which of them fired, and
+        # which of them fired is the whole claim being made here.
+        self.assertEqual([cap.condition for cap in caps], ["agent-no-varying-knobs"])
+        self.assertIn(
+            "This ceiling records that limit, not a finding that the agent has "
+            "no setting",
+            caps[0].reason,
+        )
+        self.assertFalse(caps[0].blocks)
+
+    def test_the_sentence_does_not_contradict_itself_at_one_configuration(
+        self,
+    ) -> None:
+        """Two clauses of one sentence may not disagree about the same agent.
+
+        "Every trial would be identical" is a statement about the agent, and a
+        read holding a setting it could not follow cannot make it. The three
+        ladder positions are exercised here rather than through a fixture,
+        because reaching each of them from real source would need three agents
+        and would be testing the reader rather than the sentence.
+        """
+        one = MODULE.search_space_evidence(1, 1, 1, None, unfollowed=[("style", 2)])
+        self.assertNotIn("every trial would be identical", one)
+        self.assertIn("the space is 1 only if none of those vary and 2", one)
+        # Past the last rung what is left to say is about the trial budget,
+        # which no unfollowed route makes any less true.
+        wide = MODULE.search_space_evidence(24, 24, 1, None, unfollowed=[("style", 2)])
+        self.assertIn("declaring `max_trials`", wide)
+        self.assertIn("settling them is the other way to that number", wide)
+
+    def test_what_a_collapsed_count_actually_costs_is_measured_not_summarised(
+        self,
+    ) -> None:
+        """The severity of the collapse, pinned, because I got it wrong in prose.
+
+        I measured `search_space_points` at one budget - absent - saw 4, 6, 24
+        and 36 all score 70, and wrote that the curve saturates at four, so a
+        space collapsing from 36 to 6 costs nothing. The first half is true of
+        the column I looked at and false of the function: there is a SECOND
+        rung at `SEARCH_SPACE_FULL`, and it is invisible from that column
+        because an undeclared budget is damped one step below it by design.
+
+        Generalising the shape of one fixture into a claim about the code is
+        the class this repository keeps catching, and prose is where it hides,
+        so the grid is asserted here rather than described anywhere.
+
+        The correction then overshot in the other direction, which is the
+        mirrored defect: it said the collapse costs thirty points wherever the
+        space meets the budget the guide's producer emits. There is no such
+        place. A collapsed count exists only on the source-read branch, and
+        that branch passes a literal `None`; the budgeted call never reads
+        `facts.discovered`, so no budget a document declares can meet this
+        number. Forcing one leaves the score where it was. #406 is the standing
+        record of that branch being capped, and it is what makes the thirty
+        point rung unreachable from here.
+
+        So: the rung at `SEARCH_SPACE_FULL` is real and reachable with a
+        budget, the collapse never meets it, and what the collapse actually
+        costs on the opening card is 35 points whenever the followed count
+        falls under the FIRST rung, which is what this fixture does.
+        """
+        # `SEARCH_SPACE_FULL` is the second rung. Both trial budgets in
+        # references/sdk-execution.md happen to equal it, but that is not what
+        # makes the rung real, and it is not reachable from the branch this
+        # change touches - see the docstring above.
+        emitted = 12
+        self.assertEqual(MODULE.SEARCH_SPACE_INTERACTION, 4)
+        self.assertEqual(MODULE.SEARCH_SPACE_FULL, emitted)
+        # The second rung, which is the whole correction.
+        self.assertEqual(MODULE.search_space_points(6, emitted), 70.0)
+        self.assertEqual(MODULE.search_space_points(36, emitted), 100.0)
+        # And the column that misled me, kept beside it so the pair cannot be
+        # read as agreeing.
+        self.assertEqual(MODULE.search_space_points(6, None), 70.0)
+        self.assertEqual(MODULE.search_space_points(36, None), 70.0)
+        # And the branch under change passes a literal None, so no declared
+        # budget can reach the second rung from here. Asserted rather than
+        # described, because describing it is how the claim went wrong twice.
+        space = self._space(self._facts())
+        self.assertEqual(space.value, 35.0)
+        self.assertEqual(MODULE.search_space_points(36, None), 70.0)
+        source = inspect.getsource(MODULE.score_discovered_agent)
+        self.assertIn("search_space_points(configurations, None)", source)
+
+    def test_one_option_never_widens_a_space_by_a_factor_of_one(self) -> None:
+        """One option is not a choice on this branch either."""
+        self.assertEqual(
+            MODULE.unfollowed_settings(
+                MODULE.AgentFacts(
+                    discovery_supplied=True,
+                    discovered=(
+                        MODULE.DiscoveredKnob(
+                            "style",
+                            "categorical",
+                            "agent.py:1",
+                            uncredited_reason="unfollowed",
+                            unverified=True,
+                            route_unverified=True,
+                            unfollowed_options=1,
+                        ),
+                    ),
+                )
+            ),
+            (),
+        )
+
+
+class TheRefusalNamesTheRuleItAppliedTests(unittest.TestCase):
+    """A refusal that names no rule is one a customer cannot act on.
+
+    An external team took two days to recover three settings from this reader.
+    Every hour went on rules the card never mentioned, under one sentence -
+    "could not verify that changing this setting changes the request" - which
+    against an instrumented agent reads as false, because the setting
+    demonstrably does change the request. What failed was the SHAPE of the
+    source, and these pin that the shape is now named.
+
+    Each fixture is the smallest source that reaches one rule, and each
+    assertion is on the whole clause the renderer emits rather than on a
+    fragment of it.
+    """
+
+    def _space(self, source: str, knobs: dict, callable_name: str = "run"):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "agent.py").write_text(source)
+            facts = MODULE.agent_facts_from_discovery(
+                {"source": "agent.py", "knobs": knobs},
+                source_root=root,
+                selected_agent=root / "agent.py",
+                selected_agent_callable=callable_name,
+            )
+        pillar, caps, _rows = MODULE.score_agent(facts)
+        space = next(sub for sub in pillar.subscores if sub.name == "search-space")
+        return space, caps, facts
+
+    TABLE_AGENT = """\
+from openai import OpenAI
+
+SCHEMA_CONTEXTS = ("none", "ddl")
+
+client = OpenAI()
+
+
+def run(config, question):
+    schema_context = config["schema_context"]
+    if schema_context not in SCHEMA_CONTEXTS:
+        raise ValueError({message})
+    return client.chat.completions.create(
+        model="gpt-4o-mini",
+        schema_context=schema_context,
+        messages=[{{"role": "user", "content": question}}],
+    )
+"""
+
+    KNOB = {
+        "schema_context": {
+            "values": ["none", "ddl"],
+            "source_lines": [3],
+            "evidence": "agent.py:3 spells the schema contexts out.",
+        }
+    }
+
+    def test_a_table_read_that_disqualifies_it_is_named_with_its_line(self) -> None:
+        """The rule that cost the reporting team its longest bisection.
+
+        One expression in a message that never fires takes the whole table out
+        of credit, and it does so wherever in the module it sits. The bare
+        interpolation is accepted and the wrapped one is not, which is a
+        difference an author has no reason to think is meaningful.
+        """
+        safe, _caps, _facts = self._space(
+            self.TABLE_AGENT.format(message='f"one of {SCHEMA_CONTEXTS}"'), self.KNOB
+        )
+        self.assertIn("possible settings schema_context", safe.evidence)
+        killed, _caps, _facts = self._space(
+            self.TABLE_AGENT.format(message='f"one of {tuple(SCHEMA_CONTEXTS)}"'),
+            self.KNOB,
+        )
+        self.assertIn(
+            "the options table is read in a form that disqualifies it "
+            "(SCHEMA_CONTEXTS at agent.py:11)",
+            killed.evidence,
+        )
+        self.assertIn(
+            "every read of it anywhere in the file has to be an index, a "
+            "`.get()`, a bare f-string interpolation, or an `in` comparand",
+            killed.evidence,
+        )
+
+    LEAKED_AGENT = """\
+import logging
+
+from openai import OpenAI
+
+MODELS = ["fast", "balanced"]
+STYLES = ["terse", "warm"]
+
+client = OpenAI()
+
+
+def run(config, question):
+    model = config["model"]
+    style = config["style"]
+    if model not in MODELS:
+        raise ValueError("bad model")
+    if style not in STYLES:
+        raise ValueError("bad style")
+    logging.debug("served %s", config)
+    return client.chat.completions.create(
+        model=model,
+        style=style,
+        messages=[{"role": "user", "content": question}],
+    )
+"""
+
+    def test_the_mapping_budget_is_named_and_its_two_repairs_with_it(self) -> None:
+        """A setting refused for its POSITION, told so.
+
+        The message this replaces could not fire at all: it asked whether the
+        setting was read out of a mapping the reader still trusted, in the one
+        state where the reader has already stopped trusting it. Seventeen
+        reproductions produced it zero times, and every one of them was handed
+        advice about indexing tables instead.
+        """
+        space, _caps, _facts = self._space(
+            self.LEAKED_AGENT,
+            {
+                "model": {
+                    "values": ["fast", "balanced"],
+                    "source_lines": [5],
+                    "evidence": "agent.py:5 lists the models.",
+                },
+                "style": {
+                    "values": ["terse", "warm"],
+                    "source_lines": [6],
+                    "evidence": "agent.py:6 lists the styles.",
+                },
+            },
+        )
+        self.assertIn("possible settings model", space.evidence)
+        self.assertIn(
+            "this setting is lifted out of the settings mapping, and that "
+            "mapping is read somewhere this check cannot follow",
+            space.evidence,
+        )
+        self.assertIn(
+            "only the FIRST such read in the callable is followed and this one "
+            "is not it. Stop passing the mapping around bare, or move this "
+            "read to the top of the function",
+            space.evidence,
+        )
+
+    def test_a_value_that_does_not_survive_whole_is_told_so(self) -> None:
+        """The third rule, and the one the accepted route reads as permitting."""
+        source = """\
+from openai import OpenAI
+
+STYLES = {"terse": "Be brief.", "warm": "Be friendly."}
+
+client = OpenAI()
+
+
+def run(style, question):
+    return client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{"role": "user", "content": STYLES[style] + question}],
+    )
+"""
+        space, _caps, _facts = self._space(
+            source,
+            {
+                "style": {
+                    "values": ["terse", "warm"],
+                    "source_lines": [3],
+                    "evidence": "agent.py:3 spells the styles out.",
+                }
+            },
+        )
+        self.assertIn(
+            "the selected value does not survive whole to the request",
+            space.evidence,
+        )
+
+    NUMERIC_AGENT = """\
+from openai import OpenAI
+
+TEMPERATURES = (0.0, 0.7)
+
+client = OpenAI()
+
+
+def run(config, question):
+    if config["temperature"] not in TEMPERATURES:
+        raise ValueError("bad temperature")
+    return client.chat.completions.create(
+        model="gpt-4o-mini",
+        temperature={passed},
+        messages=[{{"role": "user", "content": question}}],
+    )
+"""
+
+    NUMERIC_KNOB = {
+        "temperature": {
+            "low": 0.0,
+            "high": 0.7,
+            "source_lines": [3],
+            "evidence": "agent.py:3 spells both temperatures out.",
+        }
+    }
+
+    def test_a_numeric_refusal_may_not_deny_a_bound_the_cited_line_holds(
+        self,
+    ) -> None:
+        """The message was false about the customer's own file.
+
+        Against a cited line reading `TEMPERATURES = (0.0, 0.7)` it said the
+        source does not show 0.0 or 0.7. It reached that sentence because the
+        numeric branch asked only whether the WIRING could be followed, and
+        never whether the source holds the bounds - so declaring the same
+        setting categorically produced the honest sentence about the same file.
+        """
+        space, _caps, _facts = self._space(
+            self.NUMERIC_AGENT.format(passed="0.2"), self.NUMERIC_KNOB
+        )
+        self.assertNotIn(
+            "that the cited executable source does not show", space.evidence
+        )
+        self.assertIn(
+            "the cited executable source shows the declared bounds, but this "
+            "deliberately narrow static read could not follow the setting to "
+            "the request",
+            space.evidence,
+        )
+
+    def test_a_numeric_bound_the_source_really_lacks_is_still_refused_as_absent(
+        self,
+    ) -> None:
+        """The other direction: the old sentence is right when it is true."""
+        space, _caps, _facts = self._space(
+            self.NUMERIC_AGENT.format(passed="0.2"),
+            {
+                "temperature": {
+                    "low": 0.0,
+                    "high": 1.0,
+                    "source_lines": [3],
+                    "evidence": "agent.py:3 is where the temperatures live.",
+                }
+            },
+        )
+        self.assertIn(
+            "declares bound(s) 0.0, 1.0 that the cited executable source does not show",
+            space.evidence,
+        )
+
+    def test_a_numeric_setting_earns_its_route_without_an_identity_mapping(
+        self,
+    ) -> None:
+        """A range has no options to index, so indexing may not be the price.
+
+        Earning credit here used to require `TEMPERATURES = {0.0: 0.0, 0.7:
+        0.7}` - a mapping whose only purpose is to be indexed - so the check
+        could see the setting exactly when the code had been made worse for it.
+        The value reaching the request argument of its own name is the stronger
+        evidence of the two, and it is what is read now.
+        """
+        space, _caps, facts = self._space(
+            self.NUMERIC_AGENT.format(passed='config["temperature"]'),
+            self.NUMERIC_KNOB,
+        )
+        self.assertIn("possible settings temperature", space.evidence)
+        self.assertIn(
+            "the range declared for temperature is your figure rather than one "
+            "the source holds - what this read established is that the "
+            "setting's own value is what the request argument of that name "
+            "receives",
+            space.evidence,
+        )
+        self.assertTrue(
+            next(
+                knob for knob in facts.discovered if knob.name == "temperature"
+            ).bounds_from_document
+        )
+
+    def test_that_route_is_the_value_itself_and_not_any_expression(self) -> None:
+        """Both directions of the wrapper rule, which is arithmetic not taste.
+
+        `float` cannot map two distinct bounds onto one request, so it is read
+        through. `int` can - `int(0.0)` and `int(0.7)` are the same request -
+        so it is not, and neither is a clamp.
+        """
+        for passed, credited in (
+            ('float(config["temperature"])', True),
+            ('int(config["temperature"])', False),
+            ('min(config["temperature"], 0.5)', False),
+            ("0.2", False),
+        ):
+            with self.subTest(passed=passed):
+                space, _caps, _facts = self._space(
+                    self.NUMERIC_AGENT.format(passed=passed), self.NUMERIC_KNOB
+                )
+                self.assertEqual(
+                    "possible settings temperature" in space.evidence,
+                    credited,
+                    space.evidence,
+                )
+
+    def test_options_cited_off_another_settings_binding_widen_nothing(self) -> None:
+        """The ceiling is a number, so it needs the stricter of the two tests.
+
+        Whether the cited source contains these literals is the right question
+        for the SENTENCE - it does, and saying otherwise would be false. It is
+        the wrong question for the ceiling: a document could otherwise multiply
+        the figure by declaring a setting the agent does not have and citing a
+        line that happens to hold the same values.
+        """
+        _space, _caps, facts = self._space(
+            self.TABLE_AGENT.format(message='f"one of {tuple(SCHEMA_CONTEXTS)}"'),
+            {
+                **self.KNOB,
+                "tone": {
+                    "values": ["none", "ddl"],
+                    "source_lines": [3],
+                    "evidence": "agent.py:3 is where this agent's words live.",
+                },
+            },
+        )
+        # `tone` is NAMED, because the line it cites really does hold those
+        # literals and saying otherwise would be false about the file. What it
+        # does not get is a FACTOR: the count is what a document could inflate,
+        # so that half needs the binding to be named for the setting, and
+        # `SCHEMA_CONTEXTS` does not name `tone`.
+        self.assertEqual(
+            dict(MODULE.unfollowed_settings(facts)),
+            {"schema_context": 2, "tone": 0},
+        )
+        # This fixture credits nothing, so it exercises the all-refused
+        # sentence, where an uncounted setting must not be multiplied through.
+        # Letting a zero into that product printed "come to 0 configurations".
+        pillar, _caps, _rows = MODULE.score_agent(facts)
+        space = next(sub for sub in pillar.subscores if sub.name == "search-space")
+        self.assertNotIn("come to 0 configurations", space.evidence)
+        self.assertIn("their cited options come to 2 configurations", space.evidence)
+
+
+class TheNamedRequestArgumentRouteFollowsTheArgumentTests(unittest.TestCase):
+    """What the request RECEIVES, not what a parameter happens to be called.
+
+    The numeric route credits a setting whose value is what the request
+    argument of its own name receives. A first revision established that by
+    finding a parameter of the right name in whichever callable it was
+    scanning, and never looked at what the caller passed. Every shape below
+    puts a constant in the request while a helper's body still reads
+    `temperature=temperature`, and every one of them was credited, over a card
+    asserting that the setting's own value is what the request received.
+
+    The selected callable is the one exception and is different in kind: its
+    caller is the customer's harness, outside this file, and varying it is the
+    premise of the score.
+    """
+
+    HEAD = "from openai import OpenAI\n\nTEMPERATURES = (0.0, 0.7)\n\nclient = OpenAI()\n\n"
+    KNOB = {
+        "temperature": {
+            "low": 0.0,
+            "high": 0.7,
+            "source_lines": [3],
+            "evidence": "agent.py:3 spells both temperatures out.",
+        }
+    }
+
+    def _credited(self, body: str) -> bool:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "agent.py").write_text(self.HEAD + body)
+            facts = MODULE.agent_facts_from_discovery(
+                {"source": "agent.py", "knobs": self.KNOB},
+                source_root=root,
+                selected_agent=root / "agent.py",
+                selected_agent_callable="run",
+            )
+        return facts.discovered[0].credited
+
+    LITERAL_AT_THE_CALL_SITE = """
+def _send(temperature, question):
+    return client.chat.completions.create(
+        model="gpt-4o-mini", temperature=temperature,
+        messages=[{"role": "user", "content": question}])
+
+
+def run(config, question):
+    if config["temperature"] not in TEMPERATURES:
+        raise ValueError("bad temperature")
+    return _send(0.2, question)
+"""
+
+    DEFAULT_ONLY = """
+def _send(question, temperature=0.2):
+    return client.chat.completions.create(
+        model="gpt-4o-mini", temperature=temperature,
+        messages=[{"role": "user", "content": question}])
+
+
+def run(config, question):
+    if config["temperature"] not in TEMPERATURES:
+        raise ValueError("bad temperature")
+    return _send(question)
+"""
+
+    TELEMETRY_NAMES_IT = """
+def run(config, question):
+    client.log.record(temperature=config["temperature"])
+    return client.chat.completions.create(
+        model="gpt-4o-mini", temperature=0.2,
+        messages=[{"role": "user", "content": question}])
+"""
+
+    def test_a_constant_at_the_call_site_earns_nothing(self) -> None:
+        """The helper's body reads the parameter; the request received 0.2."""
+        self.assertFalse(self._credited(self.LITERAL_AT_THE_CALL_SITE))
+
+    def test_a_helper_parameter_that_only_takes_its_default_earns_nothing(
+        self,
+    ) -> None:
+        self.assertFalse(self._credited(self.DEFAULT_ONLY))
+
+    def test_a_call_on_the_client_that_is_not_the_request_earns_nothing(self) -> None:
+        """The receiver check resolves the chain root, so every method passes it.
+
+        `client.log.record(temperature=...)` satisfies the receiver and names
+        the setting, beside a request sending a constant. What separates them
+        is that the request's result is what the callable returns.
+        """
+        self.assertFalse(self._credited(self.TELEMETRY_NAMES_IT))
+
+    def test_the_shapes_that_really_do_reach_the_request_still_earn_it(self) -> None:
+        """The other direction, four ways, or the rule above is just a refusal."""
+        for name, body in (
+            (
+                "read straight into the request",
+                """
+def run(config, question):
+    return client.chat.completions.create(
+        model="gpt-4o-mini", temperature=config["temperature"],
+        messages=[{"role": "user", "content": question}])
+""",
+            ),
+            (
+                "the selected callable's own parameter",
+                """
+def run(question, temperature):
+    return client.chat.completions.create(
+        model="gpt-4o-mini", temperature=temperature,
+        messages=[{"role": "user", "content": question}])
+""",
+            ),
+            (
+                "a helper reading the forwarded mapping",
+                """
+def _send(config, question):
+    return client.chat.completions.create(
+        model="gpt-4o-mini", temperature=config["temperature"],
+        messages=[{"role": "user", "content": question}])
+
+
+def run(config, question):
+    return _send(config, question)
+""",
+            ),
+            (
+                "the result assigned, then returned",
+                """
+def run(config, question):
+    reply = client.chat.completions.create(
+        model="gpt-4o-mini", temperature=config["temperature"],
+        messages=[{"role": "user", "content": question}])
+    return reply.choices[0].message.content
+""",
+            ),
+        ):
+            with self.subTest(shape=name):
+                self.assertTrue(self._credited(body), name)
+
+
+class TheFloorSentenceDoesNotDependOnHowATableIsNamedTests(unittest.TestCase):
+    """Two byte-identical agents, one table renamed, and the fix reverting.
+
+    The ceiling is gated behind `_name_matches_knob`, which wants every token
+    of the setting's name. `STYLES` does not name `prompt_style`. When that was
+    also the gate on the SENTENCE, an agent whose tables are named for their
+    nouns had every refused setting drop out of the list, and the card fell
+    back to printing `your space has N distinct configurations` - the exact
+    sentence this change exists to remove, reached by a different route. Every
+    fixture in the change used a table named after its setting, which is why it
+    never showed.
+
+    Naming and counting are separate now. The name-match rule itself is #399.
+    """
+
+    AGENT = """from openai import OpenAI
+
+MODELS = {{"fast": "gpt-4o-mini", "balanced": "gpt-4o"}}
+{table} = {{"terse": "Be brief.", "warm": "Be friendly."}}
+
+client = OpenAI()
+
+
+def run(config, question):
+    reply = client.chat.completions.create(
+        model=MODELS[config["model"]],
+        messages=[{{"role": "user", "content": {table}[config["prompt_style"]] + question}}],
+    )
+    return reply.choices[0].message.content
+"""
+
+    def _evidence(self, table: str):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "agent.py").write_text(self.AGENT.format(table=table))
+            facts = MODULE.agent_facts_from_discovery(
+                {
+                    "source": "agent.py",
+                    "knobs": {
+                        "model": {
+                            "values": ["fast", "balanced"],
+                            "source_lines": [3],
+                            "evidence": "agent.py:3 lists the models.",
+                        },
+                        "prompt_style": {
+                            "values": ["terse", "warm"],
+                            "source_lines": [4],
+                            "evidence": "agent.py:4 lists the styles.",
+                        },
+                    },
+                },
+                source_root=root,
+                selected_agent=root / "agent.py",
+                selected_agent_callable="run",
+            )
+        pillar, _caps, _rows = MODULE.score_agent(facts)
+        space = next(sub for sub in pillar.subscores if sub.name == "search-space")
+        return space.evidence, facts
+
+    def test_the_floor_survives_a_table_named_for_its_noun(self) -> None:
+        for table in ("PROMPT_STYLES", "STYLES"):
+            with self.subTest(table=table):
+                evidence, _facts = self._evidence(table)
+                self.assertIn("this read followed 2 distinct configurations", evidence)
+                self.assertNotIn("your space has", evidence)
+                self.assertIn("could not follow prompt_style", evidence)
+
+    def test_the_lower_bound_disclosure_is_pinned_in_every_direction(self) -> None:
+        """The clause that says the ceiling counted only some of them.
+
+        It was observable and unheld: deleting the whole
+        `if len(counted) < len(unfollowed):` block left this file at Ran 539 /
+        OK / exit 0, byte-identical to baseline, while the customer lost the
+        only sentence saying the figure beside those names is a floor. The
+        phrase appeared repo-wide exactly once, as an `assertNotIn`, so its
+        ABSENCE was pinned on the fixture where it must not appear and its
+        PRESENCE was pinned nowhere.
+
+        The gap was structural rather than an oversight in any one test: the
+        two source fixtures cover all-counted and none-counted, and the branch
+        only runs on a MIXED list. Driving `search_space_evidence` directly
+        reaches it without a fourth agent, and partitions the branch completely
+        - which is the point, because a pin on the middle case alone would
+        leave the two early exits free to drift onto it.
+        """
+        mixed = MODULE.search_space_evidence(
+            3, 3, 1, None, unfollowed=[("model", 4), ("prompt_style", 0)]
+        )
+        # 12, not 3: the ceiling multiplies the counted setting and no other.
+        self.assertIn(
+            "so the space is 3 only if none of those vary and 12 if they all do",
+            mixed,
+        )
+        self.assertIn(
+            "12 counts only the ones whose options this read found under a "
+            "binding named for them, so prompt_style is named here without a "
+            "factor and the figure is a lower bound",
+            mixed,
+        )
+        # Both settings are still NAMED, which is the half that must not depend
+        # on whether a factor could be drawn from either of them.
+        self.assertIn("it could not follow model, prompt_style", mixed)
+
+        # All counted: a ceiling that counts everything it names owes no
+        # disclosure, and printing one would be a false qualification.
+        every = MODULE.search_space_evidence(
+            3, 3, 1, None, unfollowed=[("model", 4), ("prompt_style", 2)]
+        )
+        self.assertIn("and 24 if they all do", every)
+        self.assertNotIn("without a factor", every)
+        self.assertNotIn("counts only the ones", every)
+
+        # None counted: the early return, where there is no ceiling to qualify
+        # and the floor has to be stated as a floor rather than as the space.
+        none = MODULE.search_space_evidence(
+            3, 3, 1, None, unfollowed=[("model", 0), ("prompt_style", 0)]
+        )
+        self.assertIn("so 3 is a floor rather than the space", none)
+        self.assertNotIn("if they all do", none)
+        self.assertNotIn("without a factor", none)
+        self.assertNotIn("your space has", none)
+
+    def test_only_the_number_depends_on_the_name(self) -> None:
+        """The half that SHOULD differ, so this is not just asserting sameness."""
+        matched, _ = self._evidence("PROMPT_STYLES")
+        self.assertIn("and 4 if they all do", matched)
+        self.assertNotIn("without a factor", matched)
+
+        unmatched, facts = self._evidence("STYLES")
+        self.assertNotIn("if they all do", unmatched)
+        self.assertIn("2 is a floor rather than the space", unmatched)
+        self.assertEqual(dict(MODULE.unfollowed_settings(facts)), {"prompt_style": 0})
+        self.assertFalse(MODULE._name_matches_knob("STYLES", "prompt_style"))

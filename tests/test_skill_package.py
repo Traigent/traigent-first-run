@@ -6905,11 +6905,17 @@ class SkillPackageTests(unittest.TestCase):
         to the branch shows up as a change to the modelled card instead of
         being masked by a fixture that restates the old behaviour.
 
-        `agent_facts` defaults to the state where nothing about the agent
-        reached the score. Since #201 that is no longer the ordinary opening
-        card - the assistant reads the agent instead - so callers pass
-        `OPENING_READ` for the conformant one and the default for the run that
-        supplied nothing.
+        `agent_facts` defaults to the state where an agent was found and no
+        evidence about it reached the score. Since #201 that is no longer the
+        ordinary opening card - the assistant reads the agent instead - so
+        callers pass `OPENING_READ` for the conformant one and the default for
+        the run whose read was defeated or withheld.
+
+        The default carries `origin` because #378 splits that state in two. An
+        agent nobody described at all is `agent-absent` and blocks; an agent the
+        run declared and could not read keeps the advisory ceiling this sweep is
+        about, and the declaration is the only thing separating them. Sweeping
+        the undeclared state here would measure the wrong one of the two.
 
         The other two pillars are what a real project varies, so they are the
         sweep.
@@ -6917,7 +6923,7 @@ class SkillPackageTests(unittest.TestCase):
         agent, caps, knobs = READINESS.score_agent(
             READINESS.agent_facts_from_discovery(agent_facts)
             if agent_facts is not None
-            else READINESS.AgentFacts()
+            else READINESS.AgentFacts(origin=READINESS.BROUGHT)
         )
         pillars = [
             READINESS.Pillar(
@@ -6998,11 +7004,26 @@ class SkillPackageTests(unittest.TestCase):
         # it is. It is advisory because it is a statement about absent evidence,
         # not a finding about this customer's agent.
         self.assertEqual(max(silent), READINESS.AGENT_NO_VARYING_KNOBS_CEILING)
-        _agent, silent_caps, _knobs = READINESS.score_agent(READINESS.AgentFacts())
+        _agent, silent_caps, _knobs = READINESS.score_agent(
+            READINESS.AgentFacts(origin=READINESS.BROUGHT)
+        )
         self.assertEqual(
             [cap.condition for cap in silent_caps], ["agent-no-varying-knobs"]
         )
         self.assertFalse(silent_caps[0].blocks)
+        # #378's other half of the same state, asserted beside it so the two
+        # cannot drift back together. An agent nobody described is not an agent
+        # somebody could not read: it is capped lower, it blocks, and its remedy
+        # names the agent rather than its settings. The two ceilings and the two
+        # `blocks` answers are read off the module, so a branch that merged them
+        # again fails here rather than quietly telling a project with no agent
+        # to vary the knobs of one.
+        _agent, absent_caps, _knobs = READINESS.score_agent(READINESS.AgentFacts())
+        self.assertEqual([cap.condition for cap in absent_caps], ["agent-absent"])
+        self.assertTrue(absent_caps[0].blocks)
+        self.assertLess(absent_caps[0].ceiling, silent_caps[0].ceiling)
+        self.assertEqual(absent_caps[0].action_kind, "connect-agent")
+        self.assertNotEqual(absent_caps[0].action_kind, silent_caps[0].action_kind)
 
         # Calibration still changes lower cards, but cannot lift this
         # unprobed request-space state above its ceiling.
@@ -7214,6 +7235,9 @@ class SkillPackageTests(unittest.TestCase):
             "a source read that finds no usable dimension blocks the paid run",
             "an empty settings document also blocks because it establishes no usable dimension",
             "unchecked source claims and no source read/settings document are advisory",
+            # And the state that reading does not cover, spelled out where a
+            # customer reads it: no agent named anywhere stops the paid run.
+            "where nothing names an agent at all - no settings document, no source read, and no declaration that one exists - the score reports that instead and stops the paid run",
             "a verified source read can establish opening credit",
             "the separate pre-approval request-difference proof decides whether a paid grid may run",
         ):
@@ -7224,7 +7248,12 @@ class SkillPackageTests(unittest.TestCase):
         # must retain the same blocks-versus-advisories partition.
         for route in (
             "a settings document or source read establishes no usable dimension",
-            "source evidence could not be checked, or where neither source nor a settings document reached the score",
+            # #378 scopes the advisory half to an agent this run named, and
+            # gives the state where nothing names one its own sentence. Both
+            # are pinned, because a glossary carrying only the first would tell
+            # a reader that every evidence-free card carries on.
+            "source evidence could not be checked, or where a named agent's source and settings document both failed to reach the score",
+            "`agent-absent` holds the card lower and stops the paid run where nothing names an agent at all",
             "the separate pre-approval request-difference proof decides whether any paid grid may proceed",
         ):
             with self.subTest(glossary_route=route):
@@ -7900,8 +7929,13 @@ class SkillPackageTests(unittest.TestCase):
         # source, and `45/100 PARTIAL` with `0 of 1 checks measured` where no
         # agent evidence was supplied at all. "Usually" sends a reader who
         # cannot find their document looking for a mistake they did not make.
+        #
+        # Scoped to a NAMED agent by #378, and the scoping is the point of
+        # keeping this assertion rather than deleting it: a reader who cannot
+        # find their document is still told nothing is wrong, and a reader who
+        # has no agent is told something different one sentence later.
         self.assertIn(
-            "source evidence could not be checked, or where neither source nor a settings document reached the score",
+            "source evidence could not be checked, or where a named agent's source and settings document both failed to reach the score",
             glossary,
         )
 
@@ -10499,8 +10533,10 @@ class SkillPackageTests(unittest.TestCase):
         never sees that script, so no import and no runtime comparison exists
         and the comparison has to be made here. Coverage as well as names: the
         same drift had left two routes the gate can report as available with no
-        mapping in the wrapper at all, which is the identical stop reached
-        through a different sentence.
+        mapping in the wrapper at all. That used to be the identical stop
+        reached through a different sentence; since the wrapper stopped
+        refusing an unmapped literal it is worse than a stop, because the gate
+        reports a route as available and the run then never checks it.
         """
         gate = {
             label.split()[0].casefold(): set(names)
@@ -10577,6 +10613,12 @@ class SkillPackageTests(unittest.TestCase):
                     "ROUTE_ALIASES": aliases,
                     "SELECTED_CURRENT_PROVIDER": route,
                     "SELECTED_CURRENT_MODEL": f"{route}/some-model",
+                    # Swallowed rather than left to the builtin: the unmapped
+                    # route below now prints its advisory, and a suite that
+                    # reports a paragraph after `OK` trains its readers to
+                    # scroll past output. What the advisory says is asserted
+                    # in the test named after it, not here.
+                    "print": lambda *_: None,
                 },
             )
 
@@ -10610,8 +10652,173 @@ class SkillPackageTests(unittest.TestCase):
                 # names - not refused for being a spelling nothing recognises.
                 for name in published[route]:
                     self.assertIn(name, str(refused.exception))
-        with self.assertRaises(RuntimeError):
-            check_with("a-route-nobody-mapped", {"OPENAI_API_KEY": "x"})()
+        # A literal the table does not carry is no longer a refusal. What it is
+        # instead is pinned in
+        # `test_an_unrecognised_literal_withholds_the_check_instead_of_refusing`;
+        # all this line holds is that reaching it does not stop the run.
+        check_with("a-route-nobody-mapped", {"OPENAI_API_KEY": "x"})()
+
+    def test_an_unrecognised_literal_withholds_the_check_instead_of_refusing(
+        self,
+    ) -> None:
+        """Both directions of the gate, on literals measured out of the client.
+
+        The defect this pins was a refusal keyed to a lookup miss: the wrapper
+        answered "no credential mapping is declared" to a customer whose
+        `ANTHROPIC_API_KEY` was correct, and answered it without ever reading
+        the variable - the raise stood in front of the branch that reads it.
+        "I do not know this spelling" and "you have no credential" are
+        different facts, and only the second is a reason to stop in front of a
+        paid call.
+
+        The two literals below are not drawn from the table this test checks,
+        which is the point: a fixture built out of `PROVIDER_KEY_NAMES` could
+        only ever confirm that the table agrees with itself. They are what the
+        installed client was measured resolving to.
+
+        `anthropic_text` is what `anthropic/claude-2` and
+        `anthropic/claude-instant-1` dispatch to, through a hardcoded
+        `model == "claude-2" or model == "claude-instant-1"` in the client -
+        so neither slug appears in `models_by_provider["anthropic"]`, and the
+        sweep in `litellm_dispatch_literals` structurally cannot emit it.
+        `litellm_proxy` is what every route dispatches to when
+        `USE_LITELLM_PROXY` is set; that one is not keyed on the model at all,
+        so it reaches all eight routes rather than two retired models. The
+        second is why this is not a two-model curiosity: the table is already
+        incomplete in a way that can meet any customer.
+
+        The other direction is held in the same test on purpose. A fix that
+        opened the gate for everything would be worse than the defect, so a
+        route the table DOES carry, with nothing set and with a placeholder
+        set, still refuses and still names the variables that would have
+        satisfied it.
+        """
+        published = guide_constant(SDK_EXECUTION, "PROVIDER_KEY_NAMES")
+        aliases = guide_constant(SDK_EXECUTION, "ROUTE_ALIASES")
+
+        def run_guard(route: str, model: str, environment: dict[str, str]):
+            said: list[str] = []
+            guide_function(
+                SDK_EXECUTION,
+                "require_current_route_credential",
+                {
+                    "os": SimpleNamespace(environ=environment),
+                    "PROVIDER_KEY_NAMES": published,
+                    "ROUTE_ALIASES": aliases,
+                    "SELECTED_CURRENT_PROVIDER": route,
+                    "SELECTED_CURRENT_MODEL": model,
+                    # Resolved from this namespace before builtins, so the
+                    # advisory is captured as the value it is rather than
+                    # scraped back off the process's stdout.
+                    "print": lambda *said_now: said.append(" ".join(said_now)),
+                },
+            )()
+            return "\n".join(said)
+
+        unrecognised = (
+            ("anthropic_text", "anthropic/claude-2", "ANTHROPIC_API_KEY"),
+            ("anthropic_text", "anthropic/claude-instant-1", "ANTHROPIC_API_KEY"),
+            ("litellm_proxy", "openai/gpt-4o", "OPENAI_API_KEY"),
+        )
+        for literal, model, held in unrecognised:
+            with self.subTest(literal=literal, model=model):
+                # The working key that used to be refused. No exception is the
+                # assertion; `run_guard` raising would fail the test here.
+                said = run_guard(literal, model, {held: "a-working-key"})
+                self.assertIn(literal, said)
+                self.assertIn(model, said)
+                # It says what it could not do, not what the customer failed
+                # to do. The old sentence is named so it cannot come back
+                # under a branch that only looks like it proceeds.
+                self.assertNotIn("No first-run credential mapping", said)
+                self.assertNotIn("is not set", said)
+                self.assertIn("is not reporting one missing", said)
+                self.assertIn("gap in the guide rather than in your setup", said)
+                self.assertIn("first call", said)
+                # Held with nothing in the environment too: with no variable
+                # names on file there is nothing to conclude from an empty one,
+                # and concluding anyway is the defect in the other direction.
+                self.assertEqual(said, run_guard(literal, model, {}))
+
+        # A route it can check, with no credential, is still refused - by the
+        # branch that reads the environment, naming what would have satisfied
+        # it. `ANTHROPIC_API_KEY` is written out rather than read from the
+        # table for the same reason the literals above are.
+        for environment in ({}, {"ANTHROPIC_API_KEY": "# paste your key here"}):
+            with self.subTest(environment=sorted(environment)):
+                with self.assertRaises(RuntimeError) as refused:
+                    run_guard(
+                        "anthropic", "anthropic/claude-3-5-sonnet-20241022", environment
+                    )
+                self.assertIn("ANTHROPIC_API_KEY", str(refused.exception))
+
+        # `bedrock` is declared with no names on purpose. That is a different
+        # state from undeclared - it has been decided - so it passes in
+        # silence. Without this, the two collapse into one: the advisory is
+        # TRUE of bedrock, which reads as no names on file, so truth alone
+        # would not have kept the decided case out of the undecided branch.
+        self.assertEqual(run_guard("bedrock", "bedrock/anthropic.claude-v2", {}), "")
+
+        # The whole sentence, once, rather than a list of phrases it contains.
+        # A message whose job is to be true cannot be held by the presence of
+        # the right clauses: an advisory carrying every phrase asserted above
+        # and one added false claim about the reader's key satisfies all of
+        # them, and so does one whose route list has stopped tracking the
+        # table and hardcodes a stale answer. Both are caught here and nowhere
+        # else. The route names are written out for the same reason the
+        # literals above are: read from `PROVIDER_KEY_NAMES`, this could only
+        # confirm the table agrees with itself, and `bedrock` - declared,
+        # unchecked - is the one that must not appear.
+        self.assertEqual(
+            run_guard(
+                "anthropic_text", "anthropic/claude-2", {"ANTHROPIC_API_KEY": "k"}
+            ),
+            "Unverified route: this guide holds no credential variable names "
+            "for the provider route 'anthropic_text', so this check has read "
+            "nothing about the credential for 'anthropic/claude-2' and is not "
+            "reporting one missing. The route is left to fail, if it fails, "
+            "on its own first call, where an absent or rejected key arrives "
+            "as an authentication failure. The spellings this check knows are "
+            "anthropic, cohere, cohere_chat, gemini, huggingface, mistral, "
+            "openai, openrouter; this one is not among them, which is a gap "
+            "in the guide rather than in your setup, and worth reporting as "
+            "one.",
+        )
+
+        # `cohere_chat` is checked, through the route it aliases, so the
+        # sentence has to say so. Listing only `PROVIDER_KEY_NAMES` made it
+        # under-inclusive in exactly the way naming `bedrock` made it
+        # over-inclusive, and only one of those two was noticed first.
+        alias_named = run_guard("nobody-maps-this", "x/y", {})
+        self.assertIn("cohere_chat", alias_named)
+
+        # Whitespace must not reach the unverified branch. While an unknown
+        # spelling raised, `"openai "` was refused for the wrong reason and
+        # the run still stopped; now it would take the advisory and skip a
+        # check the table can actually make, so the strip has to happen before
+        # the lookup. The published assignment is executed rather than read,
+        # because what matters is the value it produces.
+        literal_assignment = next(
+            node
+            for node in ast.parse(
+                python_block_containing(SDK_EXECUTION, "SELECTED_CURRENT_PROVIDER = ")
+            ).body
+            if isinstance(node, ast.Assign)
+            and any(
+                isinstance(target, ast.Name)
+                and target.id == "SELECTED_CURRENT_PROVIDER"
+                for target in node.targets
+            )
+        )
+        for raw in (" openai", "openai ", "OpenAI\n", "\tOPENAI "):
+            with self.subTest(raw=raw):
+                namespace = {
+                    "os": SimpleNamespace(
+                        environ={"TRAIGENT_FIRST_RUN_CURRENT_PROVIDER": raw}
+                    )
+                }
+                exec(ast.unparse(literal_assignment), namespace)  # noqa: S102
+                self.assertEqual(namespace["SELECTED_CURRENT_PROVIDER"], "openai")
 
     def test_both_inventories_accept_every_name_litellm_will(self) -> None:
         """The comparison the other two structurally cannot make.
@@ -10792,9 +10999,15 @@ class SkillPackageTests(unittest.TestCase):
     ) -> None:
         """Which spelling goes into the environment variable, asked of the client.
 
-        `TRAIGENT_FIRST_RUN_CURRENT_PROVIDER` is read once, casefolded, and
-        looked up, and a value that is not a key raises before anything is
-        spent. No document says which values are keys, so the value comes from
+        `TRAIGENT_FIRST_RUN_CURRENT_PROVIDER` is read once, stripped,
+        casefolded, and looked up. A value that is not a key no longer raises;
+        it takes the unverified path, which means the run reaches its first
+        paid call with this credential unchecked rather than refused. That
+        makes the question below sharper, not weaker: an inventory that misses
+        a literal now buys silence instead of a stop, and a missing check is
+        harder to notice than a refusal.
+
+        No document says which values are keys, so the value comes from
         wherever the route was read: the model string, or the client's own
         `custom_llm_provider`. Both say the same word, and for one route that
         word was not the key - so the assistant that derived it correctly was
@@ -10853,10 +11066,10 @@ class SkillPackageTests(unittest.TestCase):
                     f"the client dispatches a {route} model on a literal the "
                     "wrapper does not accept, so a route derived from the "
                     "model string or from `custom_llm_provider` - the two "
-                    "places a route can be read - is refused as unmapped "
-                    "before the first paid call, by a customer holding a key "
-                    "that works. Accept it as an alias of the route it shares "
-                    "its credentials with.",
+                    "places a route can be read - reaches the first paid call "
+                    "with no credential check at all, by a customer whose key "
+                    "this inventory could have confirmed. Accept it as an "
+                    "alias of the route it shares its credentials with.",
                 )
         for alias, route in aliases.items():
             with self.subTest(alias=alias):
@@ -10873,7 +11086,8 @@ class SkillPackageTests(unittest.TestCase):
                     published,
                     f"{alias!r} is accepted as another spelling of {route!r}, "
                     "which the wrapper maps no credential names to, so the "
-                    "route it resolves to is refused as unmapped anyway.",
+                    "alias resolves to a route that checks nothing and buys "
+                    "the run no credential check at all.",
                 )
                 self.assertEqual(
                     names_read(alias),
@@ -14912,11 +15126,14 @@ class SkillPackageTests(unittest.TestCase):
         "repair-evaluator": ("inspect, repair, or replace",),
         "connect-evaluator": ("create or select",),
         "connect-real-evaluator": ("walkthrough labeling",),
+        "connect-agent": ("connect the one they have",),
         "connect-real-agent": ("walkthrough labeling",),
-        # `evaluator-unvalidated`'s remedy is the vocabulary's `proceed`, which
-        # names no work: what the route has to say is where the measurement
-        # happens instead, and that is the calibration gate.
-        "proceed": ("opening/stage-4 calibration gate",),
+        "review-repeats": (
+            "take the card's two routes",
+            "carry on over the examples that differ",
+        ),
+        "complete-calibration": ("opening/stage-4 calibration gate",),
+        "review-evaluator-containment": ("manual-containment route",),
         "bound-evaluator-cost": ("five-option question",),
         "vary-knobs": (
             "report stops/zero trials",
@@ -15348,7 +15565,13 @@ class SkillPackageTests(unittest.TestCase):
         # #238 adds the second: whose agent this is, which is a different
         # question from how much of it can vary, and needs a route of its own
         # for the same reason the first one did.
-        self.assertEqual(conditions, {"agent-no-varying-knobs", "agent-generated"})
+        # #375 adds the third: whether an agent reached this score at all, which
+        # is a different question from how much of one can vary and from whose
+        # it is. Before it, a project with no agent met the search-space cap and
+        # was told to vary the knobs of a thing it did not have.
+        self.assertEqual(
+            conditions, {"agent-no-varying-knobs", "agent-generated", "agent-absent"}
+        )
         passages = self.cap_routing_passages(
             self.cap_routing_region(), self.constructed_cap_conditions()
         )
@@ -15410,8 +15633,14 @@ class SkillPackageTests(unittest.TestCase):
         # The scoped claim, and it has to name the read as a blocking branch or
         # an assistant meeting that card routes it as advisory.
         self.assertIn("source read finds no usable dimension", routing)
+        # Scoped again by #378, and the added words are the whole of it. The
+        # advisory reading belongs to a run that NAMED the agent it could not
+        # read; a run that named none meets `agent-absent`, which blocks at a
+        # lower ceiling. "No evidence" alone now describes both cards and would
+        # route the second one as advisory.
         self.assertIn(
-            "advisory only with no evidence or source candidates whose references could not be verified",
+            "advisory only for a declared agent with no evidence, or source "
+            "candidates whose references could not be verified",
             routing,
         )
         self.assertIn("request-difference proof", routing)
@@ -15489,10 +15718,30 @@ class SkillPackageTests(unittest.TestCase):
         self.assertIn("may withhold a claim; it may not manufacture one", normalized)
         self.assertIn("may not cancel a paid run", normalized)
         self.assertIn(
-            "a clean pass earns no points, no band, and no credit of any kind",
+            "a clean pass adds no points and no credit of any kind to the score",
             normalized,
         )
         self.assertIn("sentence in the readiness evidence line", normalized)
+        # And the one thing a clean pass DOES earn, which is not a point and
+        # not a band the run climbs into: it releases a hold. The top two bands
+        # are held until some read of the answers enters, because a run that
+        # never looked is not a run that looked and found nothing, and the
+        # sentence has to say what covering the rows means or the hold reads as
+        # unliftable (traigent-first-run#377).
+        self.assertIn(
+            "held at `WORKABLE` however high the score until some read of the "
+            "answers has entered",
+            normalized,
+        )
+        self.assertIn("A partial read names its count and releases nothing", normalized)
+        # And the two sentences beside it, which are what stop this rule
+        # contradicting "Say how much you read" below it: the opening pass
+        # above the subset size names a count and releases nothing by design
+        # rather than by failing, and the release is taken on the reviewer's
+        # word because readiness counts entries and never matches them to rows
+        # (traigent-first-run#391).
+        self.assertIn("The hold comes off at the stage-4 re-score", normalized)
+        self.assertIn("this release is taken on your word", normalized)
         # 4. A finding is a question, never an edit - and the question has a
         #    shape: every flagged row's id, its quoted content, the reason, and
         #    whether the run will actually read it. Then the user's answer
@@ -15677,7 +15926,10 @@ class SkillPackageTests(unittest.TestCase):
         # that is disjoint and drawn in the wrong place, which is the third
         # reading of the same "the line is wrong" defect and the only one of
         # the three that scopes the claim rather than stopping the run.
-        self.assertEqual(len(conditions), 16)
+        # #378 added `dataset-repeated-rows` as the seventeenth: rows that
+        # repeat another row's input, which used to reach a ceiling only when
+        # their ids happened to collide and then under the integrity reason.
+        self.assertEqual(len(conditions), 17)
         normalized = " ".join(SKILL.read_text().casefold().split())
         # The `(condition, phrase)` table that used to sit here is gone with
         # #389. It carried one pasted pair per condition, each phrase chosen to
@@ -15698,6 +15950,8 @@ class SkillPackageTests(unittest.TestCase):
             self.cap_routing_region(), self.constructed_cap_conditions()
         )
         for condition in sorted(conditions):
+            with self.subTest(condition=condition):
+                self.assert_the_route_is_written_for(condition, passages)
             with self.subTest(condition=condition):
                 self.assert_the_route_is_written_for(condition, passages)
         self.assertIn("present the reason rather than the condition id", normalized)
@@ -15782,6 +16036,14 @@ class SkillPackageTests(unittest.TestCase):
             # `blocks=False`, `asks=True`, and SKILL.md routes it as "ask before
             # repairing".
             "dataset-split-by-task-family",
+            # #378's repetition rung, and it scopes for the plainest reason of
+            # the three: nothing is broken. Every row parses, every row carries
+            # an answer, and the questions that differ are compared exactly as
+            # they would be in a file with no repeats - what is smaller is the
+            # evidence, not the material. It carries `blocks=False`, `asks=True`
+            # because only the customer knows whether the repeats were meant,
+            # and SKILL.md routes it as "bounded, not stopped".
+            "dataset-repeated-rows",
         }
         # The third category, derived rather than listed, and empty since #197.
         #
@@ -16115,7 +16377,7 @@ class SkillPackageTests(unittest.TestCase):
             for condition in re.findall(r'Cap\(\s*"([a-z0-9-]+)"', source)
             if condition.startswith("evaluator-")
         }
-        self.assertEqual(len(conditions), 6)
+        self.assertEqual(len(conditions), 7)
         # Read per route since #389, not across the rest of the file, and read
         # for what the route SAYS rather than for a phrase that follows the id
         # somewhere. `evaluator-unresolved` and `evaluator-invalid` share the
@@ -28543,7 +28805,13 @@ class TheReadHappensAndAFailedReadIsAQuestionTests(unittest.TestCase):
 
         # The scorer half. The silent state still caps, still does not block,
         # and still sits at the shared ceiling.
-        silent = READINESS.AgentFacts()
+        #
+        # `origin` is what makes it that state since #378: this gate is reached
+        # by a run whose read of an EXISTING agent was defeated, and such a run
+        # declares the agent it found. A fixture without it would be the
+        # different state one condition over, and this assertion would then be
+        # pinning the wrong cap under the right name.
+        silent = READINESS.AgentFacts(origin=READINESS.BROUGHT)
         _pillar, caps, _knobs = READINESS.score_agent(silent)
         self.assertEqual(len(caps), 1)
         self.assertEqual(caps[0].condition, "agent-no-varying-knobs")
@@ -30742,13 +31010,23 @@ class ReferenceSectionsAreSignpostedTests(unittest.TestCase):
     def test_each_reference_index_lists_every_section_in_its_file(self) -> None:
         """The detector that survives a split with a plausible pointer.
 
-        `sdk-execution.md` is excused, and the reason is arithmetic rather
-        than judgement: its own index is missing two sections, the fix is 81
-        bytes, and that file measures 128,943 against a 129,000 document
-        ceiling. Completing it needs a ceiling raise, which is a separate
-        decision from this one, filed as issue #381. The two names are the
-        expected value rather than a skip, so adding either one to the index
-        reds here until #381 also removes this entry.
+        There is no exemption now, and the empty expectation is the point:
+        every indexed reference lists every section it contains.
+
+        `sdk-execution.md` used to be excused, and the excuse was arithmetic
+        rather than judgement. Its index was missing `Reading the result for
+        insight` and `Carrying the local baseline into the portal`, the fix
+        was 81 bytes, and the file measured 128,943 against a 129,000
+        document ceiling - so completing the index needed a ceiling raise,
+        which was a separate decision and was filed as issue #381. Ledger 0084
+        raised that ceiling for the credential-guard change and left room, so
+        the 81 bytes were spent and the two names went in. What that exemption
+        cost while it stood is worth recording: a reader who landed in this
+        file and read its index never learned those two sections existed.
+
+        The expectation is a mapping rather than a skip so that a NEW gap
+        fails here loudly, naming the file and the sections, instead of being
+        absorbed into a standing allowance.
         """
         self.assertEqual(
             {
@@ -30756,12 +31034,7 @@ class ReferenceSectionsAreSignpostedTests(unittest.TestCase):
                 for name in INDEXED_REFERENCES
                 if unlisted_sections(self.references[name])
             },
-            {
-                "sdk-execution.md": [
-                    "Reading the result for insight",
-                    "Carrying the local baseline into the portal",
-                ]
-            },
+            {},
         )
 
     def test_every_reference_that_owes_an_index_has_one(self) -> None:
@@ -31175,6 +31448,153 @@ class SignpostGuardsRedForTheDefectAndNotForTheProseTests(unittest.TestCase):
         fenced = self.REFERENCE + "\n```python\n# Not a heading\n```\n"
         self.assertNotIn("not-a-heading", heading_anchors(fenced))
         self.assertIn("first-thing", heading_anchors(fenced))
+
+
+class TheAcceptedRouteIsReadableBeforeItIsRefusedTests(unittest.TestCase):
+    """The contract the checker enforces, at the stage the citation is written.
+
+    An external team instrumented a four-setting agent, proved all four alter
+    the outgoing request, and watched the opening read follow one. Their
+    question was whether the narrow shape is the intended contract. It is - and
+    the only full statement of it lived on the card that had already refused
+    them, which is after the document is authored rather than during.
+
+    These are drift guards and are written as drift guards on purpose: they
+    read the same constants the checker applies, because the failure they exist
+    to catch is the reference and the checker disagreeing, and no independently
+    worded copy can catch that. The claim about what a refusal MEANS is
+    asserted separately, from prose no constant supplies.
+    """
+
+    REFERENCE = SKILL_ROOT / "references" / "component-creation.md"
+
+    def _reference(self) -> str:
+        return quoted_prose(self.REFERENCE)
+
+    def test_the_condition_list_is_not_empty_and_is_counted_the_same_everywhere(
+        self,
+    ) -> None:
+        """An emptied tuple ran zero assertions and reported OK.
+
+        Every other guard in this class iterates `ACCEPTED_ROUTE_PARTS`, so
+        emptying it satisfied all of them vacuously while the card printed
+        "0 parts make a route readable" and the reference printed no
+        conditions at all. The count is the one thing none of them checked.
+        """
+        parts = READINESS.ACCEPTED_ROUTE_PARTS
+        self.assertGreaterEqual(len(parts), 1)
+        card = "\n".join(READINESS.accepted_route_shape())
+        self.assertIn(f"{len(parts)} parts make a route readable", card)
+        for index in range(1, len(parts) + 1):
+            self.assertIn(f"    {index}. ", card)
+        self.assertNotIn(f"    {len(parts) + 1}. ", card)
+        # And the reference carries the same number, so the two renderings
+        # cannot drift apart in count while each stays self-consistent. Scoped
+        # to the block that lists them: the document holds other numbered
+        # lists, and a whole-file scan would be answering a different question.
+        body = self.REFERENCE.read_text()
+        block = body.split("**The route this reader follows", 1)[1].split(
+            "Three limits are worth knowing", 1
+        )[0]
+        for index in range(1, len(parts) + 1):
+            self.assertIn(f"\n{index}. ", block)
+        self.assertNotIn(f"\n{len(parts) + 1}. ", block)
+
+    def test_the_reference_states_every_condition_the_checker_applies(self) -> None:
+        reference = self._reference()
+        self.assertTrue(READINESS.ACCEPTED_ROUTE_PARTS)
+        for part in READINESS.ACCEPTED_ROUTE_PARTS:
+            self.assertIn(
+                " ".join(part.split()).casefold(),
+                reference,
+                "the reference and the checker disagree about what earns credit",
+            )
+
+    def test_the_reference_carries_the_agent_the_checker_prints(self) -> None:
+        """The fenced block itself, so indentation cannot drift unnoticed."""
+        block = python_block_containing(
+            self.REFERENCE, "def answer(question, model_choice=0):"
+        )
+        self.assertEqual(block.strip(), READINESS.ACCEPTED_ROUTE_AGENT.strip())
+
+    def test_the_reference_carries_the_entry_that_cites_that_agent(self) -> None:
+        """Both halves, because either alone leaves the other to be guessed at.
+
+        Condition 1 tells an author that `source_lines` cites the line the
+        options are written on. Without the entry beside it there is nothing
+        showing what that looks like, which is the reason the card prints the
+        pair rather than the code alone.
+        """
+        blocks = [
+            block
+            for block in re.findall(
+                r"^```json\n(.*?)^```",
+                self.REFERENCE.read_text(),
+                re.DOTALL | re.MULTILINE,
+            )
+            if "agent.py:3 lists the alternatives" in block
+        ]
+        self.assertEqual(len(blocks), 1, "exactly one entry block is required")
+        self.assertEqual(
+            json.loads(blocks[0]),
+            json.loads(json.dumps(READINESS.ACCEPTED_ROUTE_KNOB)),
+        )
+
+    def test_the_reference_keeps_the_hedge_the_card_prints(self) -> None:
+        """One accepted shape, said here too, and for the harm it prevents.
+
+        The card says it out loud because an author who reads the block as the
+        definition of a correct agent will rewrite one that another accepted
+        route already covers. Reproducing the block at the authoring stage
+        without the hedge would commit that harm with more leverage than the
+        card has, and the constant-drift guards above cannot see it - the
+        hedge is prose, not one of the constants they read.
+        """
+        reference = self._reference()
+        self.assertIn("it is one accepted shape and not the only one", reference)
+        self.assertIn("the paragraph below this one names another", reference)
+
+    def test_the_reference_says_a_refusal_withholds_credit_and_finds_nothing(
+        self,
+    ) -> None:
+        """The half a constant cannot supply, and the half that was wrong."""
+        reference = self._reference()
+        self.assertIn(
+            "a setting outside every accepted shape is refused for credit, "
+            "which is not a finding that the setting does not vary",
+            reference,
+        )
+        self.assertIn(
+            "prints the followed count as a floor beside the count those "
+            "settings would reach if they vary",
+            reference,
+        )
+
+    def test_the_reference_states_the_three_silent_limits(self) -> None:
+        """Each one cost the reporting team a setting and had nowhere to be read.
+
+        Not asserted as prose alone: each names a repair, and the repair is
+        what a reader acts on. The mapping limit is stated conditionally on
+        purpose - it does not apply while the mapping is clean, and a flat
+        "one setting per callable" would be false of most agents.
+        """
+        reference = self._reference()
+        self.assertIn(
+            "keep the settings mapping clean, or only its first read survives",
+            reference,
+        )
+        self.assertIn("stop passing the mapping around bare", reference)
+        self.assertIn(
+            "every read of a choice table, anywhere in the file, has to be an "
+            "index, a `.get()`, a bare f-string interpolation, or an `in` "
+            "comparand",
+            reference,
+        )
+        self.assertIn("a range has no options to index", reference)
+        self.assertIn(
+            "do not build a mapping whose keys and values are the same numbers",
+            reference,
+        )
 
 
 if __name__ == "__main__":

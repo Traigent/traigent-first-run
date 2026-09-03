@@ -3,6 +3,7 @@
   "state": "clean",
   "why": "The arm nothing else reaches: no cap at all, so `recommended_action` falls through both loops and returns `proceed`. Without it the declared cards would cover only degraded runs and could not tell a regression that invents a cap from a healthy run.",
   "dataset": "evaluation-dataset.jsonl",
+  "agent_origin": "brought",
   "config_space": "config-space.json",
   "calibration": {
     "scorer": "evaluator.py:score_intent",

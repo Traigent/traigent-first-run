@@ -454,6 +454,84 @@ answer is right. An agent whose loop is in a helper it calls passes both checks 
 "bounded": true` and may still never return. The card says how far each check reached for exactly
 this reason; read the source, not the refusal.
 
+**The route this reader follows, and what it costs to step off it.** One agent whose settings it
+does follow, the entry that cites it, and the conditions it applies. It is one accepted shape and
+not the only one - the paragraph below this one names another - so read it for its parts rather
+than for its names. A setting outside every accepted shape is refused for CREDIT, which is not a
+finding that the setting does not vary.
+
+```python
+from openai import OpenAI
+
+MODELS = ["gpt-4o-mini", "gpt-4o"]
+
+client = OpenAI()
+
+
+def answer(question, model_choice=0):
+    model = MODELS[model_choice]
+    reply = client.chat.completions.create(
+        model=model,
+        messages=[{"role": "user", "content": question}],
+    )
+    return reply.choices[0].message.content
+```
+
+and the entry that cites it, inside the document's `knobs` map:
+
+```json
+{
+  "model": {
+    "evidence": "agent.py:3 lists the alternatives, agent.py:9 selects one, and agent.py:11 passes it to the request call.",
+    "source_lines": [
+      3
+    ],
+    "values": [
+      "gpt-4o-mini",
+      "gpt-4o"
+    ]
+  }
+}
+```
+
+1. the options are written out as literals in a module-level binding, and 'source_lines' cites that
+   line
+2. the selected callable chooses among them from something it is given: one of its own parameters, as
+   above, or a key it reads from a mapping passed to it
+3. that choice is what indexes the module binding
+4. the selected value reaches an argument named for the setting, either written into the call or
+   through one plain local that nothing else rewrites
+5. and where the choice is read from a mapping rather than taken as a parameter, the call has to be a
+   provider client's own request; that client can be built at module level or inside the callable,
+   either reads
+
+Three limits are worth knowing before you write the citation, because each one is silent in the
+code and costs a setting.
+
+**Keep the settings mapping clean, or only its first read survives.** While `config` is only ever
+read as `config["x"]` or `config.get("x")` - in the callable that owns it, and in any same-file
+helper you hand it to - every setting it holds can be credited, with no limit on how many. The
+moment it appears as a bare name anywhere else, logged or serialised or passed to a call this read
+does not enter, that callable loses it, and the only setting still followed is whichever is assigned
+FIRST in file order. Two one-line repairs: stop passing the mapping around bare, or move the read
+you care about to the top of the function.
+
+**Every read of a choice table, anywhere in the file, has to be an index, a `.get()`, a bare
+f-string interpolation, or an `in` comparand.** `tuple(TABLE)` inside an error message that never
+fires, `", ".join(TABLE)`, `for option in TABLE:` and `allowed = TABLE` each take the whole table
+out of credit, wherever in the module they sit - not mentioning it at all is safer than mentioning
+it. `f"{TABLE}"` is fine; `f"{tuple(TABLE)}"` is not.
+
+**A range has no options to index, so it has its own route:** the setting passed straight to the
+request argument named for it, on the provider client's own request, as `temperature=temperature`
+or `temperature=config["temperature"]`. Do not build a mapping whose keys and values are the same
+numbers to satisfy the table route. It is worse code and it buys nothing.
+
+A setting outside all of these is still recorded with its options, and the card names it as one this
+read could not follow, says which of these rules it fell outside, and prints the followed count as a
+floor beside the count those settings would reach if they vary. Neither figure is credit for them.
+The pre-approval request-difference probe is what settles them before a paid grid.
+
 A parameter's `source_lines` are positive physical lines in relative `source`; that file must be
 `--selected-agent` below `--agent-source-root`. `--selected-agent-callable` names the selected
 top-level Python function. Without importing code, the scorer accepts only a cited executable

@@ -217,7 +217,24 @@ def render_text(plan: ReadinessPlan) -> str:
 # script computed. That renormalization is gone (see `aggregate`), the average
 # is once again over every declared weight, and no key changed meaning - so
 # there is nothing for a consumer to find out and nothing to bump.
-SCHEMA_VERSION = 2
+#
+# 3: `evaluator-unvalidated` stops emitting `proceed`, and the band can be held
+# for an answer key nobody has read.
+#
+# Additive in keys - `band_limited_by_unread_answers` is new and nothing was
+# removed or renamed - and NOT additive in meaning, which is what decides it.
+# A schema-2 consumer read `recommended_action` as a slug from a closed set and
+# saw `proceed` for a run whose mandatory calibration was outstanding; it now
+# sees `complete-calibration`, a value that set did not contain. That is a
+# reader of 2 no longer working, in the one direction that matters: a consumer
+# routing `proceed` to "start the paid run" was starting it. The version is what
+# lets it tell "this scorer names the outstanding check" from "this run has no
+# outstanding check", exactly the distinction 2 was bumped for.
+#
+# The band key is the second half of the same answer. Held at WORKABLE, an 83
+# reads identically to a run that scored 83 and earned WORKABLE, and a consumer
+# on 2 has no key to ask which it is looking at.
+SCHEMA_VERSION = 3
 DEFAULT_WEIGHTS = {"dataset": 40.0, "evaluation": 35.0, "agent": 25.0}
 # Read each entry as "score BELOW this number is that band" - these are
 # exclusive upper bounds, not the score a band requires. The last entry is an
@@ -238,6 +255,38 @@ BAND_THRESHOLDS = (
 BAND_ORDER = ["NOT READY", "PARTIAL", "WORKABLE", "STRONG", "EXCELLENT"]
 CONFIDENCE_BAND_CEILING = "WORKABLE"
 MIN_CONFIDENCE_FOR_TOP_BANDS = 0.75
+# The second reason a band is held here, and it is the same ceiling on purpose.
+#
+# The two gates ask different questions and reach the same answer, so they
+# share the number rather than each picking one. The confidence gate asks how
+# much of the score was measured at all; this one asks whether the one thing no
+# measurement in this scorer can see - whether the expected answers answer their
+# own questions - was ever looked at. Both are the same claim about the top two
+# bands: STRONG and EXCELLENT are what this card says when it is willing to
+# stand behind the comparison, and it may not say that over material no
+# behavioural read has touched. WORKABLE is what it says instead, which is the
+# band the ladder already reserves for a real comparison with a bounded claim.
+#
+# A ceiling on the SCORE was the obvious alternative and it is wrong here, which
+# is worth recording because every other claim of this shape in this module IS a
+# ceiling. `GENERATED_ANSWER_KEY_CEILING` takes 74 precisely to keep a
+# model-written key out of STRONG, and copying that shape would put a flat 74
+# over every run that never reviewed its rows. Measured by re-running the
+# committed case in `tests/behavioral/outcomes/clean-proceed/case.json` through
+# `tests/behavioral/outcomes.py`, which declares the card that fixture produces:
+# a flat ceiling moves it from 81 to 74 and gives it a cap it does not deserve -
+# 48 collected rows, a brought evaluator that calibrates, and a band already
+# held at WORKABLE for thin evidence. Nothing about that run overclaims.
+#
+# And no ceiling can do both jobs, which is arithmetic rather than judgement.
+# STRONG begins at 75. Keeping the rotated corpus, which scores 83, out of it
+# needs a ceiling at or below 74; leaving the committed case, which scores 81,
+# where it is needs one at or above 81. No single number satisfies both, so a
+# flat ceiling either misses the corpus this was filed about or moves an
+# honest case - whatever else the two payloads differ in, and they differ in
+# plenty. A gate on the band is not a number on that scale at all: it reads
+# the verdict each run was about to reach, which is the thing being refused.
+ANSWER_KEY_BAND_CEILING = "WORKABLE"
 
 # Vendored from the installed SDK's canonical presets
 # (traigent/config_generator/presets/range_presets.py, read at 0.23.0). The
@@ -569,6 +618,30 @@ METHOD_PROFILES: dict[str, dict[str, Any]] = {
         "cost": 1.0,
         "fits": ("code-sql", "code"),
     },
+    # #414. `code-sql` fitted exactly two methods, and one of them is the one
+    # `references/run-safety.md` ends this guide on. Every deterministic
+    # method excluded it, correctly: two different-looking queries can mean
+    # the same thing, so text equality scores a right answer zero. What was
+    # missing is the comparison the standard SQL benchmarks call exact set
+    # match - parse both queries and compare clause components, executing
+    # nothing and opening nothing.
+    #
+    # 0.95 is a deliberate placement, not a rounding. This method is a better
+    # ruler than string equality and a weaker one than running the queries,
+    # because it can still score a semantically equivalent query written a
+    # different way as wrong, and `reproducibility` is the only dial in this
+    # table that can say so: `fits` is a membership test with two payouts and
+    # cannot express "fits, imperfectly". It sits above `execution` at 0.9,
+    # which is right - no database state enters and nothing varies between
+    # runs - and below the whole-value text methods at 1.0, which is also
+    # right, because their 1.0 is over the question they actually answer and
+    # this one is a proxy for a semantic question, bounded by how much of the
+    # dialect the comparator covers.
+    "sql-structure": {
+        "reproducibility": 0.95,
+        "cost": 1.0,
+        "fits": ("code-sql",),
+    },
     "routing": {
         "reproducibility": 1.0,
         "cost": 1.0,
@@ -703,6 +776,11 @@ METHOD_MISMATCH_REASONS: dict[str, str] = {
         "blends several checks into one number, so it is only as good for "
         "{kind} output as the checks inside it, which this score cannot see"
     ),
+    "sql-structure": (
+        "reads both answers as SQL queries and compares their clauses, so a "
+        "{kind} answer that is not a query parses as nothing and is scored as "
+        "wrong however right it is"
+    ),
 }
 DETERMINISTIC_METHODS = {
     "exact",
@@ -713,6 +791,7 @@ DETERMINISTIC_METHODS = {
     "execution",
     "routing",
     "fuzzy",
+    "sql-structure",
 }
 CALIBRATION_REQUIRED_CHECKS = frozenset({"good_passes", "bad_fails", "non_constant"})
 
@@ -760,6 +839,7 @@ METHOD_EXECUTES_CANDIDATE: dict[str, bool | None] = {
     "llm-judge-pairwise": False,
     "llm-judge-rubric": False,
     "composite": None,
+    "sql-structure": False,
 }
 
 # Which methods a PROVEN whole-value comparison supports.
@@ -805,7 +885,37 @@ METHOD_COMPARISON_SUPPORT: dict[str, frozenset[str]] = {
     "llm-judge-pairwise": frozenset(),
     "llm-judge-rubric": frozenset(),
     "composite": frozenset(),
+    # The one method whose supported shape is not a whole-value comparison.
+    # Read both ways: a file proven to compare two queries as parsed
+    # structures does not support `exact` or any other word above, and a file
+    # proven to be a text comparison does not support this one.
+    "sql-structure": frozenset({"sql-structure"}),
 }
+
+# The methods whose credit requires the file to have ESTABLISHED the
+# comparison, rather than merely not to have contradicted it.
+#
+# #414 adds a method whose whole content is a claim about what the evaluator
+# does - it compares two queries as parsed structures - and the table above,
+# read alone, would have credited that claim on the word. `METHOD_COMPARISON
+# _SUPPORT` refutes from proof: it fires only where a shape was settled, so a
+# file the walk could not account for refutes nothing and keeps full credit.
+# That asymmetry is right for the twelve methods it was written for, whose
+# claim is about the OUTPUT kind and not about the file. It is wrong for this
+# one, where "the walk could not account for the file" and "the file does not
+# do this" are the same answer to the customer, and the didn't-find-it branch
+# would be a pass - the defect class this package keeps catching.
+#
+# So this set names the methods that fail closed instead: an unestablished
+# file earns `TASK_FIT_UNFIT_CREDIT`, exactly as a text comparator wearing
+# this method's name does, and the card says which of the two the reader is
+# in. Nothing is invented in either direction - credit is withheld, never
+# taken below the floor a mismatched method already lands on.
+#
+# Deliberately a set and not a default over `METHOD_PROFILES`: adding a method
+# here changes what an existing honest project scores, so it is a decision per
+# method rather than a policy a new row inherits.
+METHOD_REQUIRES_PROVEN_COMPARISON: frozenset[str] = frozenset({"sql-structure"})
 
 
 def reported_bool(value: object) -> bool | None:
@@ -904,6 +1014,31 @@ PROCEED = "proceed"
 # branch on it: the table below routes two size caps to it, and the repeated-row
 # routes offer to write replacements only while it is the live recommendation.
 ADD_EXAMPLES = "add-examples"
+# The obligation a deferred calibration leaves behind, and the reason it needed
+# a slug of its own rather than one of the ones already here.
+#
+# `repair-evaluator` is the wrong sentence: nothing has established that this
+# evaluator is defective, and telling a customer to mend a file no probe has
+# read is the accusation `evaluator-unvalidated` was separated from
+# `evaluator-invalid` to avoid. `PROCEED` is the wrong sentence in the other
+# direction, and it was the one being emitted - a payload saying there is
+# nothing to do about the one check able to tell a working scorer from a
+# mis-wired one. Nothing else in the vocabulary means "the mandatory check has
+# not run yet; run it", so this is a new instruction and not a second spelling
+# of an existing one.
+COMPLETE_CALIBRATION = "complete-calibration"
+# The other terminus of the same gate, and the reason it may not share the slug
+# above.
+#
+# SKILL.md runs opening calibration only where "the complete path does not
+# execute candidate-generated code or SQL", and routes an evaluator that fails
+# that scope gate to the separate containment review in
+# `references/run-safety.md`. A run that obeys that rule has not skipped a check
+# it could have made; it has been refused one. Telling it to `complete-calibration`
+# is telling it to do the thing the guide forbids, which is what one slug for
+# both states would say - and the score would then be the only party in the
+# package arguing for the unsafe route.
+REVIEW_EVALUATOR_CONTAINMENT = "review-evaluator-containment"
 ACTION_FOR_CONDITION: dict[str, str] = {
     "dataset-absent": "get-data",
     # A file was named and no row in it matched the shape preflight read it
@@ -1005,10 +1140,64 @@ ACTION_FOR_CONDITION: dict[str, str] = {
     "evaluator-unresolved": "repair-evaluator",
     "evaluator-invalid": "repair-evaluator",
     # Calibration is evidence collection, not a repair: no execution has
-    # established that the connected evaluator is defective.
-    "evaluator-unvalidated": PROCEED,
+    # established that the connected evaluator is defective. It is still
+    # something the run OWES, and `PROCEED` said the opposite.
+    #
+    # Measured, on two projects differing only in their evaluator: a correct
+    # scorer and one that never reads its `output` argument produce
+    # byte-identical readiness JSON while calibration is outstanding, because
+    # nothing static separates them - `evaluator-shape` is an `ast.parse` and
+    # says so. Calibration separates them on its first probe. So the deferred
+    # card is the one card that cannot answer the question, and it was
+    # answering `recommended_action: "proceed"` - the same slug the calibrated,
+    # passing run emits. A consumer routing on that field could not tell a run
+    # that asked the behavioural question and passed from one that never asked
+    # it (traigent-first-run#379).
+    #
+    # Deferral stays legitimate and this does not stop the run: the cap is
+    # advisory, `status` is unchanged, and SKILL.md's six named deferral
+    # reasons are untouched. What changes is that the outstanding obligation is
+    # named in the field a consumer reads instead of being visible only to
+    # someone who reads the cap list.
+    "evaluator-unvalidated": COMPLETE_CALIBRATION,
+    # The same absent evidence, reached by obeying a rule rather than by
+    # skipping a step, and it needs its own remedy for that reason alone. See
+    # `REVIEW_EVALUATOR_CONTAINMENT`.
+    "evaluator-calibration-refused": REVIEW_EVALUATOR_CONTAINMENT,
     "evaluator-timeout": "bound-evaluator-cost",
     "agent-no-varying-knobs": "vary-knobs",
+    # The third pillar's own absence, and the remedy it could not reach before.
+    #
+    # `vary-knobs` was the instruction a project with no agent got, because the
+    # only condition the agent pillar could raise was one about a search space.
+    # It asks for a change to a config space on an agent, so a run that has no
+    # agent was told to edit the settings of a thing it does not have - the
+    # wrong instruction, not merely a badly named condition.
+    #
+    # NOT `vary-knobs` and NOT `connect-real-agent`. The first is the defect.
+    # The second is #238's rung and means "there is one, and this run wrote it",
+    # which stops nothing; this means "there is nothing here, select or create
+    # one", which is the same pair `evaluator-absent` and `evaluator-generated`
+    # already are one pillar over. Reusing either slug would be #197 again - one
+    # instruction meaning "stop, there is nothing here" on one card and "carry
+    # on, this is ours" on the next.
+    "agent-absent": "connect-agent",
+    # The other half of #359's repetition finding, which counted the repeats and
+    # asked about them on the card while `recommended_action` still said
+    # `proceed`. A question the card puts to the customer and the payload does
+    # not carry is a question a consumer cannot route.
+    #
+    # `review-repeats` and not `repair-dataset`: the parallel is `review-split`
+    # one axis over, where the remedy is a question about material that may be
+    # perfectly good rather than a verdict that the file is broken. Repeated
+    # rows are usually an export that ran twice, and they are sometimes rows the
+    # customer meant to keep; only they know which, and the answer decides what
+    # the number means rather than whether anything needs mending.
+    #
+    # Not `add-examples` either. That remedy is the bounded top-up this run can
+    # carry out itself, and the repeat routes deliberately do not offer to write
+    # rows on their own authority - see `repeated_input_routes`.
+    "dataset-repeated-rows": "review-repeats",
 }
 ACTION_KINDS = frozenset({PROCEED, *ACTION_FOR_CONDITION.values()})
 
@@ -1166,6 +1355,11 @@ ROUTE_CATEGORY: dict[str, str] = {
     "evaluator-unresolved": DIAGNOSTIC,
     "evaluator-invalid": CREATION_OR_REPAIR,
     "evaluator-unvalidated": CLAIM_SCOPING,
+    # Scopes, exactly as the condition above it does and for the same reason:
+    # the run proceeds, the evaluator is not asserted to be defective, and what
+    # is bounded is the claim. A diagnostic route would stop the run, and
+    # SKILL.md permits this deferral rather than halting on it.
+    "evaluator-calibration-refused": CLAIM_SCOPING,
     "evaluator-timeout": CREATION_OR_REPAIR,
     # Conditional, and classified the same way `dataset-below-measurable-size`
     # above already is: by what the result IS, not by whether the run waits.
@@ -1186,6 +1380,29 @@ ROUTE_CATEGORY: dict[str, str] = {
     # advisory branch, and the two compose only under the category that admits
     # both.
     "agent-no-varying-knobs": CLAIM_SCOPING,
+    # Something must be connected before this can be measured, which is the
+    # first category exactly, and it is the category `dataset-absent` and
+    # `evaluator-absent` already carry for the same state one pillar over.
+    #
+    # NOT `DIAGNOSTIC`, and the near miss is worth recording. That category is
+    # for material that may be perfectly good and owes a look rather than a
+    # change - which describes a run whose read of an existing agent was
+    # defeated. That run is not this condition: it declares the agent's origin,
+    # so it keeps the advisory `agent-no-varying-knobs` ceiling it always had.
+    # This condition is reached only where nothing about an agent reached the
+    # score AND the run declared no agent, and there is then nothing to look at.
+    "agent-absent": CREATION_OR_REPAIR,
+    # A real comparison, on fewer examples than the file holds rows. The rows
+    # parse, they are labelled, and the questions that differ are compared
+    # exactly as they would be in a file with no repeats - so nothing is broken
+    # and nothing needs creating. What is bounded is what the result may be said
+    # to rest on, which is the whole of this category.
+    #
+    # It ASKS, on the same terms `dataset-split-by-task-family` does: the
+    # customer is the only party who knows whether a repeat is an export that
+    # ran twice or a case they meant to keep, and saying so changes what the
+    # number means. `repeated_input_routes` already prints the two answers.
+    "dataset-repeated-rows": CLAIM_SCOPING,
 }
 
 
@@ -1267,6 +1484,54 @@ DATASET_SHAPE_UNRECOGNISED_CEILING = 25
 # `dataset-no-expected-outputs` (30) and `dataset-integrity-fail` (35) because
 # each of those has at least one row that confirmed the shape, which is
 # positive evidence this state does not have.
+AGENT_ABSENT_CEILING = 25
+# The third pillar's absence, which had no ceiling of its own at all. Two of the
+# three name theirs and stop the paid run - `dataset-absent` at 20 and
+# `evaluator-absent` at 40 - and the agent pillar could only say that a search
+# space was not counted, at 45 and advisory. Measured on one 200-row collected,
+# difficulty-tagged, split corpus with a declared exact method: a project with
+# no agent and a project with a healthy four-knob agent both scored 45 PARTIAL
+# and both recommended `proceed`, differing in the payload by one non-blocking
+# cap. A pillar worth a quarter of the weight cannot move a card off a ceiling
+# another condition already set, so the absence of the thing being optimized
+# cost nothing. Both cards are re-runnable, before and after. Source:
+# tests/test_readiness_scoring.py#TheThirdPillarNamesItsOwnAbsenceTests.test_no_agent_and_a_healthy_agent_no_longer_score_alike.
+#
+# WHY 25, argued against the two precedents rather than picked.
+#
+# Not 20. That is the floor and its sentence is "nothing was measured at all",
+# which is false here: the dataset scored 98 on the corpus that fixture shares
+# with `TheAgentPillarReadsTheAgentTests.opening_project_dataset`, and the
+# evaluation pillar was fully read. Some of this project IS measured, so it may
+# not share the number reserved for a project where none of it is.
+#
+# Below `evaluator-absent` at 40, and this is the load-bearing half. That
+# ceiling sits high because "the dataset - the expensive half - is intact;
+# choosing an evaluation method is the cheapest of these gaps to close", and
+# both the subject and the evidence survive it - a run with no evaluator still
+# has a program and the rows to run it on, and cannot only grade the result. An
+# absent agent removes the SUBJECT the other two pillars exist to describe: the
+# dataset's 98 and a calibrated evaluator then grade a program that is not
+# there. The condition that removes what is being optimized may not be the less
+# capped of the two.
+#
+# 25 exactly, equal to `evaluator-invalid` and `dataset-shape-unrecognised`, on
+# `evaluator-invalid`'s own sentence read one pillar over: it "sits above 20
+# only because the dataset it would measure is still there". An absent agent
+# sits above 20 only because the dataset and the evaluation method that would
+# measure it are still there. NOT READY is the band that follows, and it is the
+# right one: a run with nothing to optimize is not partially ready to optimize.
+#
+# It BLOCKS, for the reason its two precedents do and for one of its own. A paid
+# search buys a comparison between configurations of an agent; with no agent
+# there is no configuration to compare, so every trial is spend against nothing.
+# The three other caps this pillar can raise already block for the weaker
+# version of that statement - a search that would compare ONE configuration -
+# and a search that would compare none may not be the one that proceeds.
+#
+# It may not exceed 45, and that is asserted rather than left to this comment:
+# an absent agent is also an agent with no varying knobs, so `CAP_IMPLICATIONS`
+# holds the stricter condition at or below the looser one's ceiling.
 DATASET_NO_EXPECTED_OUTPUTS_CEILING = 30
 # The bottom of PARTIAL. Rows exist and are readable - real material, and the
 # gap is one addition away - but nothing can be scored until it is made.
@@ -1290,6 +1555,27 @@ EVALUATOR_UNVALIDATED_CEILING = 45
 # A declared method describes intended semantics, but only a complete current-
 # run calibration establishes the connected evaluator's behavior. The ceiling
 # bounds that unverified claim without calling the evaluator defective.
+CALIBRATION_REFUSED_CEILING = 45
+# EQUAL to `evaluator-unvalidated`, and the equality is the decision rather
+# than an oversight.
+#
+# The two states differ in why the evidence is missing and not in how much of
+# it is missing: neither run has established that the connected evaluator
+# distinguishes answers, so neither may claim it. A ceiling grades the current
+# state, which is the rule recorded above `CAP_SEVERITY_ORDER`, and "we had a
+# good reason" is not a property of the state.
+#
+# It is worth saying what this deliberately does NOT fix. A project whose
+# scorer executes candidate-generated SQL is held here by obeying the scope
+# gate and scores far higher by running the calibration anyway, because the
+# calibration sub-score and the probe spread are only earned by a probe that
+# ran. That gap is an honest statement about evidence: the second run really
+# did establish something the first did not. What is wrong is that this
+# package offers no safe route to that evidence, so the only way to earn it is
+# to break the rule - and a route is a change to `calibrate_evaluator.py`, not
+# a number here. Raising this ceiling to close the gap would buy the incentive
+# back by having the card claim what no probe established, which is the defect
+# this whole branch exists to remove. Filed as traigent-first-run#392.
 AGENT_NO_VARYING_KNOBS_CEILING = 45
 # Equal to the timeout for the same reason: nothing is broken, and the run
 # compares nothing. An optimization with one configuration is a single
@@ -1474,6 +1760,34 @@ COARSE_RESOLUTION_CEILING = 89
 # thirty comparable examples a small difference may be chance, so the result
 # may not present as EXCELLENT. The highest ceiling here, because nothing is
 # wrong with this run at all. See `COARSE_RESOLUTION_EXAMPLES`.
+REPEATED_ROWS_CEILING = 89
+# Equal to the rung above and ranked after it, on the same band-edge claim: a
+# file that repeats itself may be workable and may not present as EXCELLENT.
+# 90 IS the EXCELLENT threshold, and a dataset a third of whose rows are copies
+# of another row is the one card this ceiling exists to keep out of that band.
+#
+# It is a CEILING and not a deduction, which is the distinction that keeps this
+# clear of the rule two tables down: `DIVERSITY_CHECKS` grants ONE deduction for
+# repetition, and this takes none. The points for repeated rows are already
+# spent in exactly two places and neither changes here - the diversity sub-score
+# (once, on the near-duplicate check that subsumes the exact one) and the
+# comparison count, which subtracts repeats before the size ladder reads it. So
+# no third population is counted: this reads `RepeatedInputs`, the finding #359
+# already built over the rows the card printed, and bounds a claim rather than
+# re-charging for one.
+#
+# It is the highest ceiling on the ladder because nothing here is broken. The
+# rows parse, they carry answers, and the questions that differ are compared
+# exactly as they would be in a file with no repeats. What is not true is the
+# size the file appears to have, and the customer is the party who can say
+# whether that was meant - so it ASKS and does not block, and the answer is one
+# of the two routes the card already prints.
+#
+# RANKED AFTER `dataset-coarse-resolution` at the shared 89, under the rule the
+# ties above it already follow: where two conditions bound the claim by the same
+# amount, the counted one ranks as the worse. Resolution is counted off the
+# comparison size; this is counted too, so the tie falls to the older rung,
+# which is the one a reader has already been taught to read at that number.
 
 CAP_SEVERITY_ORDER: tuple[tuple[str, tuple[tuple[str, int], ...]], ...] = (
     (
@@ -1482,6 +1796,13 @@ CAP_SEVERITY_ORDER: tuple[tuple[str, tuple[tuple[str, int], ...]], ...] = (
             ("dataset-absent", DATASET_ABSENT_CEILING),
             ("evaluator-invalid", EVALUATOR_INVALID_CEILING),
             ("dataset-shape-unrecognised", DATASET_SHAPE_UNRECOGNISED_CEILING),
+            # Third of the three at 25, and ranked last of them under the rule
+            # the ties below already follow: a severity you counted outranks
+            # one you did not. `evaluator-invalid` is proven by probes that
+            # ran, `dataset-shape-unrecognised` by a file that was read and
+            # matched nothing, and this one is established by omission - the
+            # weakest positive evidence of the three, so it ranks after both.
+            ("agent-absent", AGENT_ABSENT_CEILING),
             ("dataset-no-expected-outputs", DATASET_NO_EXPECTED_OUTPUTS_CEILING),
             ("dataset-integrity-fail", DATASET_INTEGRITY_CEILING),
             ("evaluator-absent", EVALUATOR_ABSENT_CEILING),
@@ -1493,6 +1814,12 @@ CAP_SEVERITY_ORDER: tuple[tuple[str, tuple[tuple[str, int], ...]], ...] = (
         (
             ("evaluator-timeout", EVALUATOR_TIMEOUT_CEILING),
             ("evaluator-unvalidated", EVALUATOR_UNVALIDATED_CEILING),
+            # Ranked directly after the condition it shares a ceiling with,
+            # and the rank decides nothing observable: the two are mutually
+            # exclusive by construction, so no card carries both. Declared
+            # anyway, because this table refuses an unranked condition and a
+            # tie left to declaration order is the failure it was written for.
+            ("evaluator-calibration-refused", CALIBRATION_REFUSED_CEILING),
             ("agent-no-varying-knobs", AGENT_NO_VARYING_KNOBS_CEILING),
             ("dataset-tune-holdout-overlap", SPLIT_OVERLAP_CEILING),
             ("dataset-tuning-split-empty", TUNING_SPLIT_EMPTY_CEILING),
@@ -1529,6 +1856,7 @@ CAP_SEVERITY_ORDER: tuple[tuple[str, tuple[tuple[str, int], ...]], ...] = (
             # declared.
             ("evaluator-generated", EVALUATOR_GENERATED_CEILING),
             ("dataset-coarse-resolution", COARSE_RESOLUTION_CEILING),
+            ("dataset-repeated-rows", REPEATED_ROWS_CEILING),
         ),
     ),
 )
@@ -1616,6 +1944,14 @@ CAP_IMPLICATIONS: tuple[tuple[str, str], ...] = (
     ("dataset-no-expected-outputs", "dataset-tuning-split-empty"),
     ("dataset-tuning-split-empty", "dataset-below-measurable-size"),
     ("dataset-tuning-split-empty", "dataset-coarse-resolution"),
+    # No agent is also no setting an agent can vary, so the agent pillar gains
+    # the relation its one condition never had. It is declared here rather than
+    # in the table below because it is a real narrowing: the stricter statement
+    # may not carry the looser one's higher number, and 25 against 45 is that
+    # constraint asserted rather than remembered. Neither implies any DATASET
+    # condition in either direction - both are about the search space, and no
+    # fact about the rows establishes one.
+    ("agent-absent", "agent-no-varying-knobs"),
 )
 
 # The other half of that declaration, and the half that was doing nothing.
@@ -1664,8 +2000,31 @@ CAP_NO_IMPLICATION: dict[str, str] = {
         "with the unnamed and timeout routes and says nothing about data or "
         "search-space conditions"
     ),
+    "evaluator-calibration-refused": (
+        "mutually exclusive with the unvalidated route it shares a ceiling "
+        "with - one branch raises one or the other and never both - and a "
+        "refusal to execute this evaluator says nothing about where the rows "
+        "came from or how large the search space is"
+    ),
     "evaluator-timeout": "a run that did not finish says nothing about the material",
-    "agent-no-varying-knobs": "about the search space, which no dataset fact implies",
+    # Repetition against everything else, and both directions were checked
+    # rather than assumed.
+    #
+    # It narrows no size condition. Repeats are already subtracted before the
+    # comparison count reaches the size ladder, so a file with repeats can leave
+    # any number of different questions standing - three or three hundred - and
+    # a file with none can be tiny. Neither count follows from the other.
+    #
+    # And no split condition. `dataset-tune-holdout-overlap` is the same input
+    # on both sides of the line and is measured on the split rather than on the
+    # file: a file whose repeats all fall on one side raises this and not that,
+    # and a file with no repeats at all can still be split across itself by a
+    # declaration that names one row twice.
+    "dataset-repeated-rows": (
+        "a count of rows that repeat another row's input, which implies nothing "
+        "about how many different questions are left, where the split falls, or "
+        "where the rows came from"
+    ),
     "dataset-integrity-fail": (
         "fires only when at least one row DID parse, so it is the complement of "
         "dataset-absent rather than a narrowing of it"
@@ -2056,6 +2415,23 @@ def task_fit_unproven_execution_evidence(method: str, read_the_file: bool) -> st
     )
 
 
+# What each provable shape says the file DOES, in the reader's terms.
+#
+# Split out when #414 added a third shape, because the one sentence that used
+# to be inlined below is true of the two whole-value shapes and false of the
+# new one: a structural SQL comparison does not compare the whole answer with
+# the expected answer, which is the entire reason it exists. A refusal whose
+# first half misdescribes the customer's own file is a refusal they cannot
+# check, and this package has an open pattern of exactly that.
+COMPARISON_SHAPE_DESCRIPTIONS: dict[str, str] = {
+    "exact": "compares the whole answer with the expected answer and nothing else",
+    "normalized-exact": (
+        "compares the whole answer with the expected answer and nothing else"
+    ),
+    "sql-structure": "reads both answers as SQL and compares them as parsed structures",
+}
+
+
 def task_fit_comparison_evidence(method: str, shape: str, witness: str | None) -> str:
     """The card's sentence for a declaration the file's own comparison refutes.
 
@@ -2066,10 +2442,41 @@ def task_fit_comparison_evidence(method: str, shape: str, witness: str | None) -
     is a claim they can stand over the file and confirm.
     """
     found = f": {witness}" if witness else ""
+    performs = COMPARISON_SHAPE_DESCRIPTIONS[shape]
     return (
-        f"the evaluator file compares the whole answer with the expected "
-        f"answer and nothing else{found}. That is a {shape} check rather "
+        f"the evaluator file {performs}{found}. That is a {shape} check rather "
         f"than {method}, so the fit claimed for {method} is not credited"
+    )
+
+
+def task_fit_unproven_comparison_evidence(
+    method: str, shape: str | None, witness: str | None
+) -> str:
+    """Why a method whose whole claim is about the file earns nothing yet.
+
+    The sibling of `task_fit_unproven_execution_evidence`, and it exists for
+    the same reason. `sql-structure` says the evaluator reads both answers as
+    SQL and compares them as parsed structures. That is a statement about the
+    file, so it is credited from the file, and the two ways it can fail read
+    differently to the customer and must be said differently:
+
+    * a comparison was proven and it is a different one - the file is a text
+      comparator wearing this name, and `task_fit_comparison_evidence` already
+      says exactly that, so it says it here too rather than a second sentence
+      about the same situation drifting away from the first;
+    * nothing was proven - the claim is unpaid rather than disproved, and the
+      line says which of the two states the reader is in and what would settle
+      it, because "not established" with no route out is a refusal a customer
+      can only shrug at.
+    """
+    if shape is not None:
+        return task_fit_comparison_evidence(method, shape, witness)
+    return (
+        f"{method} says the evaluator reads both answers as SQL and compares "
+        "them as parsed structures, and the evaluator file read for this score "
+        "does not establish that it does. This check is credited from what the "
+        "file does, so an unestablished comparison earns no credit; the route "
+        "in references/evaluation-and-dataset.md is the one this score can read"
     )
 
 
@@ -2202,6 +2609,18 @@ class ReadinessScore:
     # answering a semantic question from a surface signal, which is the class
     # this package keeps filing against itself.
     agent_route_unverified: bool = False
+    # And the names, on the same additive terms, because the boolean above
+    # cannot be acted on. A consumer reading this payload could see THAT some
+    # route was not followed and never which setting, so the only record of the
+    # third verdict outside the card's prose was one bit. The count each name
+    # carries is the one `unfollowed_settings` established from the cited
+    # source, so a reader can multiply it out for themselves rather than trust
+    # the sentence that already did.
+    agent_unfollowed_settings: tuple[tuple[str, int], ...] = ()
+    # Whether the top-band floor is what is holding this band - the answer to
+    # "was the behavioural question about the answer key ever asked", carried
+    # as its own key because no other field in this payload answers it.
+    band_limited_by_unread_answers: bool = False
 
 
 @dataclass(frozen=True)
@@ -2294,7 +2713,50 @@ class DatasetFacts:
     # settles whether two forms are one task is a person looking at them.
     tuning_forms: tuple[str, ...] = ()
     holdout_forms: tuple[str, ...] = ()
+    # Rows preflight could not read as data at all - a malformed line, or a row
+    # missing the input or expected-answer field. Structural, and ONLY that.
+    #
+    # It carried a second, unrelated finding until #378: a FAILing `dataset-ids`
+    # was folded in here, so a file whose 90 rows all parsed and all carried an
+    # answer was capped under a reason that said some of them could not be read.
+    # Measured on a 90-row file with 30 exact repeats sharing their ids:
+    # `dataset-shape` PASSed 90 valid rows, the card said "90/90 rows carry an
+    # expected output" two lines above, and the blocking cap beside it said
+    # "malformed lines, or missing the input or expected-answer field". Nothing
+    # was malformed and no field was missing. The two findings are counted
+    # separately now and the reason is built from whichever of them fired. That
+    # file, and the same file with its ids renumbered, are both scored. Source:
+    # tests/test_readiness_adapter.py#RepeatedRowsAreCappedOnTheirOwnAccountTests.
     integrity_failed: bool = False
+    # Id values used by more than one row, and rows carrying no stable id: the
+    # two ways `dataset-ids` FAILs, as counts rather than as one boolean.
+    #
+    # `None` means preflight published no such count, which for a FAILing check
+    # is a payload older than the metric. The adapter refuses that rather than
+    # scoring it, on the same terms as the `dataset-duplicates` and
+    # `dataset-integrity` guards beside it - reading a missing count as zero
+    # would restore the wrong reason for exactly the files that have the defect.
+    duplicate_ids: int | None = None
+    # The generated rows with no id, which is the half that decides the status:
+    # a collected row missing an id is a WARN and caps nothing, a generated one
+    # is what makes `dataset-ids` FAIL. The wider count of rows missing an id is
+    # deliberately not the one carried here - a reason built from it would name
+    # rows the check did not object to.
+    generated_rows_without_id: int | None = None
+    # THAT `dataset-ids` FAILED, carried apart from WHY it failed.
+    #
+    # The counts above explain the failure; this records it. Deriving the cap
+    # from the counts alone made the ceiling conditional on a count being
+    # non-zero, so a payload FAILing that check with every count at 0 - hand
+    # edited, older, or written by something other than this preflight - lost
+    # the blocking cap entirely and scored 45 OK where trunk scored 35 BLOCKED.
+    # No arm of the current `preflight.py` can emit that shape; both of its FAIL
+    # arms guarantee their own count, and a 340-shape sweep found no violation.
+    # A third FAIL arm added later would need no violation to reintroduce it,
+    # which is the whole reason this is a separate fact: the cap is raised from
+    # the failure, and a failure this score cannot explain fails loud instead of
+    # falling through to no cap.
+    id_check_failed: bool = False
     # True only when EVERY row is generated. Mixtures are read from the counts
     # below; asking "is this dataset synthetic" of a mixture has no true answer.
     synthetic: bool | None = False
@@ -2371,6 +2833,16 @@ class RowReview:
     # provided row is a row the run uses, which is the case where this is worth
     # saying and the case where it is knowable.
     unsound_in_run: int | None = None
+    # How many rows the review read that the run actually reads, on the same
+    # `in_run` declaration `unsound_in_run` is read from and `None` in the same
+    # state - nothing has been drawn yet, so no membership can be claimed.
+    #
+    # A COVERAGE count where the field above is a FINDING count, and they are
+    # kept apart for the reason every other pair in this class is: "how many of
+    # the run's rows were read" and "how many of them were wrong" answer
+    # different questions, and one number answering both would make a review
+    # that found nothing look like a review that read nothing.
+    reviewed_in_run: int | None = None
 
 
 @dataclass(frozen=True)
@@ -2457,6 +2929,29 @@ class EvaluationFacts:
     comparison_shape: str | None = None
     # What was read, for the card: the transforms and the line they sit on.
     comparison_witness: str | None = None
+    # Whether the run declared that SKILL.md's evaluator-execution scope gate
+    # is what stopped calibration, rather than a step nobody took.
+    #
+    # DECLARED, never measured, and it moves no number for that reason. There
+    # is nothing here to measure: whether a scorer's complete path executes
+    # candidate-generated code or SQL is settled by the inspection SKILL.md
+    # already mandates, and no property of a scoring function this module can
+    # read answers it. A declaration that lowered a ceiling would be fine; one
+    # that RAISED a score would make claiming a refusal cheaper than doing the
+    # work, which is the rule this package applies to every other unverified
+    # input - a judgement may withhold a claim and may not manufacture one.
+    #
+    # So it changes the condition, the sentence and the remedy, and leaves the
+    # ceiling, the sub-scores and the pillar exactly where they were.
+    #
+    # Two things this does not reach, both filed rather than guessed at. A run
+    # that takes the forbidden path and declares nothing is indistinguishable
+    # from a compliant one, and whether this state should stop the run at all
+    # is a question `references/run-safety.md` answers differently from the cap
+    # it raises: traigent-first-run#393. And the `calibration` sub-score is
+    # still marked withheld for a run that was refused rather than asked:
+    # traigent-first-run#394.
+    calibration_scope_refused: bool = False
 
 
 @dataclass(frozen=True)
@@ -2497,6 +2992,36 @@ class DiscoveredKnob:
     # this module keeps filing: a semantic question decided from a surface
     # signal.
     route_unverified: bool = False
+    # How many options the read CONFIRMED the cited source spells out, for a
+    # parameter whose route it could not follow. Zero everywhere else, and
+    # deliberately not `len(values)`: a document may declare options the cited
+    # source does not contain at all, and that parameter is refused on the very
+    # next branch for exactly that. Only the branch where the options were
+    # found sets this, so a fabricated list cannot widen anything.
+    #
+    # It exists because dropping such a parameter from the configuration count
+    # turns "I could not follow this" into "this does not vary" - a refutation
+    # drawn from the reader's own narrowness, where the same narrowness is what
+    # makes the count safe to CREDIT. The count stays narrow; this field is
+    # what lets the sentence beside it say so out loud.
+    unfollowed_options: int = 0
+    # Credited for its route while its extent stays the document's word. Only a
+    # numeric range reaches this: the source of an agent that lets a caller
+    # choose a temperature holds the parameter, not the interval, so requiring
+    # the interval in the source refused every honest spelling and accepted a
+    # mapping written to be indexed and for nothing else. The card says which
+    # half was established rather than letting the credit imply both.
+    bounds_from_document: bool = False
+    # Whether the cited source shows this setting's options at all. Separate
+    # from `unfollowed_options` because the two answer different questions and
+    # tying them together made the headline fix revert silently: the count
+    # needs a binding NAMED for the setting, and a table called `STYLES` does
+    # not name `prompt_style`, so an agent whose tables are all named that way
+    # had every refused setting drop out of the list - and the card fell back
+    # to printing the space as settled, which is the sentence this all exists
+    # to remove. What the source shows is the right question for the sentence
+    # and the wrong one for a number.
+    options_shown: bool = False
 
     @property
     def credited(self) -> bool:
@@ -2701,9 +3226,19 @@ class AgentFacts:
     # space answers, so there is nothing here for the document to be talked
     # over about.
     build: tuple[BuildSignal, ...] | None = None
-    # Whose agent this is (#238), read exactly as `EvaluationFacts.origin` is
-    # and declared for the same reason: a walkthrough agent this run writes is
+    # Whose agent this is (#238), declared for the reason
+    # `EvaluationFacts.origin` is: a walkthrough agent this run writes is
     # ordinary Python, and nothing about its source says who typed it.
+    #
+    # It is NO LONGER read exactly as that field is, and the difference is worth
+    # naming because this comment used to claim the two were the same. Silence
+    # about the evaluator's origin still fires nothing (`origin_cap`); silence
+    # about the agent's, with no document and no read beside it, is how a run
+    # says there is no agent at all, and `_unsupplied_space_cap` branches on it.
+    # SKILL.md is what makes that reading available - it requires the flag on
+    # every scoring call and permits omitting it only where the component does
+    # not exist yet - and nothing equivalent distinguishes an absent evaluator,
+    # which preflight reports directly.
     origin: str | None = None
 
 
@@ -2749,6 +3284,30 @@ def band_for(
     if BAND_ORDER.index(band) <= ceiling_index:
         return band, False
     return CONFIDENCE_BAND_CEILING, True
+
+
+def hold_band_for_unread_answers(band: str, answers_read: bool) -> tuple[str, bool]:
+    """Hold the top two bands until a read of the expected answers has entered.
+
+    The top-band floor, applied after `band_for` because it is a statement
+    about the band and not about the score. Every measurement behind the number
+    stays exactly what it was measured to be; what this refuses is a VERDICT
+    the run has not established. A card reachable on structure alone, over an
+    answer key nobody has read, is the card claiming more than the run did.
+
+    Returns the band unchanged, and False, in every state below the floor -
+    including the state where `band_for` has already held the band for thin
+    evidence. Two reasons to hold one band compose by both being true, and the
+    payload reports each separately so a reader is told which one is theirs;
+    reporting the second as ALSO holding a band already at WORKABLE would put a
+    remedy on a card that has nothing left to lift.
+    """
+    if answers_read:
+        return band, False
+    ceiling_index = BAND_ORDER.index(ANSWER_KEY_BAND_CEILING)
+    if BAND_ORDER.index(band) <= ceiling_index:
+        return band, False
+    return ANSWER_KEY_BAND_CEILING, True
 
 
 def combine(name: str, subscores: Sequence[SubScore]) -> Pillar:
@@ -3215,6 +3774,47 @@ def repeated_inputs(
     return RepeatedInputs(scoreable=scoreable, distinct=distinct, side=side)
 
 
+def repeated_rows_cap(finding: RepeatedInputs) -> Cap:
+    """The ceiling the repetition finding sets, read off the finding itself.
+
+    NO SECOND COUNT. Every number in this sentence comes out of `RepeatedInputs`
+    - the object #359 already built over the rows the card prints - and this
+    function computes nothing. A count taken over a third population is this
+    repository's most-repeated defect, and the way it happens is a new check
+    deciding for itself which rows it means.
+
+    WHY THERE IS A CEILING HERE AT ALL, when the repeats are already priced.
+    They are, twice, and neither changes: the diversity sub-score deducts once
+    for repetition, and the comparison count subtracts repeats before the size
+    ladder reads it. What neither of those does is bound what the card may
+    PRESENT as, and what the payload could not do was carry the question. On a
+    90-row file with 30 exact repeats the card asked the customer about them and
+    `recommended_action` said `proceed` in the same payload - so a consumer
+    routing on that field could not see a question the card had already put on
+    screen. This cap is the payload's half of that question.
+
+    IT IS INDEPENDENT OF THE IDS, which is the whole of the second half of #378.
+    Before it, the same file was stopped only when its 30 repeats happened to
+    copy their ids too: renumber them, change nothing else, and 90 rows spelling
+    60 questions were cleared to proceed. A duplicated export usually DOES
+    renumber, so the file that walked through was the commonest shape of the
+    defect. Nothing here reads an id.
+    """
+    return Cap(
+        "dataset-repeated-rows",
+        REPEATED_ROWS_CEILING,
+        f"{finding.repeats} of the {finding.scoreable} rows this run can score "
+        f"{finding.side} repeat an input already counted, so this comparison "
+        f"resolves {finding.distinct} different examples rather than "
+        f"{finding.scoreable}. Nothing here is broken and the run can carry on, "
+        "but every copy is a trial paid for that teaches what the first one "
+        "already did. Continue on the examples that differ, or replace the "
+        "repeats in your own file and this run reads it again.",
+        blocks=False,
+        asks=True,
+    )
+
+
 def tuning_distinct_for(facts: DatasetFacts, *, reference_free: bool) -> int | None:
     """Which distinct count describes the tuning rows this run can score.
 
@@ -3614,7 +4214,9 @@ def row_review_shape() -> str:
     )
 
 
-def _row_count(value: Any, name: str, *, required: bool = True) -> int:
+def _row_count(
+    value: Any, name: str, *, required: bool = True, check: str = "dataset-provenance"
+) -> int:
     """Read one provenance row count, refusing an absent or impossible one.
 
     An absent key used to fall back to 0, on the rationale that "the preflight
@@ -3645,14 +4247,14 @@ def _row_count(value: Any, name: str, *, required: bool = True) -> int:
         if not required:
             return 0
         raise PreflightInputError(
-            f"dataset-provenance carries no {name} count - every count this "
+            f"{check} carries no {name} count - every count this "
             "score reads is emitted together by preflight.py, so this JSON was "
             "edited or predates the current preflight.py; re-run preflight.py "
             "--json from the same version as this script"
         )
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
         raise PreflightInputError(
-            f"dataset-provenance carries no usable {name} count - row counts "
+            f"{check} carries no usable {name} count - row counts "
             "are whole and non-negative, so this preflight JSON was edited or "
             "predates the current preflight.py; re-run preflight.py --json "
             "from the same version as this script"
@@ -4057,6 +4659,112 @@ REFERENCE_FREE_METHODS = frozenset(
 )
 
 
+def provided_rows(facts: DatasetFacts) -> int:
+    """The rows a row review is allowed to have read: the ones the user brought.
+
+    Generated rows are excluded because `row_review_from_document` refuses
+    them outright - a model re-judging output it just wrote is not evidence -
+    and because the synthetic ceiling already prices them.
+
+    Extracted rather than inlined twice. The evidence line prints this as the
+    denominator of the coverage sentence a customer reads, and
+    `answer_key_read` below decides the top-band floor against the same
+    population; two spellings of one denominator is how a card comes to print
+    "read 28 of 28" beside a floor that is still holding.
+    """
+    counted = facts.collected_rows + facts.synthesised_rows + facts.undeclared_rows
+    if counted:
+        return facts.collected_rows + facts.undeclared_rows
+    return facts.rows or 0
+
+
+def graded_rows(facts: DatasetFacts) -> int | None:
+    """The labelled rows this run is graded on, when the split says which.
+
+    `run_rows` counts the tuning and held-out rows; this counts the ones among
+    them that carry an expected answer, which is the population an answer-key
+    read is about. They differ exactly when some row the run reads has no
+    answer to check, and a review cannot be asked for a verdict on an answer
+    that is not there.
+
+    `None` when no split has been declared, which is the ordinary opening
+    state on one undivided file.
+    """
+    if facts.tuning_labelled_rows is None or facts.holdout_labelled_rows is None:
+        return None
+    return facts.tuning_labelled_rows + facts.holdout_labelled_rows
+
+
+def answer_key_read(facts: DatasetFacts, review: RowReview) -> bool:
+    """Whether a read of the expected answers this run is graded against exists.
+
+    The one behavioural question about the DATASET, and the question no
+    structural check can answer. Rotating a corpus's expected answers within
+    each of its own domains leaves every structural property intact - the
+    answers stay valid, distinct, uniquely keyed, disjointly split and evenly
+    banded - and destroys the only property that decides whether the search can
+    rank anything (traigent-first-run#377). Nothing counted off the file
+    separates that corpus from a sound one; a person reading an input beside
+    its expected answer does, and `--row-review` is where that read enters.
+
+    Calibration does NOT answer it, which is why this is a second question and
+    not a second reading of the evaluator one. Calibration probes the scorer
+    against a hand-written case matrix; it establishes that the ruler separates
+    good answers from bad, and says nothing whatever about whether the dataset's
+    answers answer their own questions. On the rotated corpus calibration passes
+    honestly, `evaluator-unvalidated` lifts on that honest pass, and the card
+    then issues its strongest verdict over material where every configuration
+    scores near zero. A release bought by evidence about a different question
+    is the failure this predicate exists to refuse.
+
+    DECLARED, and not earned, which is the honest word for what this returns.
+    Entries are counted and never matched against rows: `preflight.py` emits no
+    row ids for them to be matched to, so a review of the right size whose ids
+    name nothing in the dataset releases the hold exactly as a real read does.
+    What is checked is everything counts can carry - `row_review_from_document`
+    refuses a repeated id, an origin the review may not claim, more collected
+    or undeclared rows than preflight counted, and more `in_run` rows than the
+    declared split holds - and identity is not among them.
+
+    So this is a bounded improvement on no gate at all, not a proof that anyone
+    read anything, and the guidance and the flag's own help say so in those
+    words. Closing it needs preflight to publish the ids it already reads,
+    which is a decision about writing customer row ids into a payload rather
+    than a small change: traigent-first-run#391.
+
+    True in the three states where there is no such question to ask, and each
+    is a real state rather than a convenience:
+
+    * No row carries an expected answer. Under a reference-free judge the rows
+      are inputs and there is no answer key; holding a band for an unread key
+      that does not exist would be unliftable by construction.
+    * Every provided row is one this run generated. The review input refuses
+      generated rows, so no read can be supplied - and those rows are already
+      bounded by the synthetic ceiling, well below the bands this floor holds.
+    * A payload written before `answerable_rows` existed, which reaches the
+      first branch at that field's zero default. This module does not punish a
+      caller for a field it could not have sent.
+    """
+    if facts.answerable_rows <= 0:
+        return True
+    provided = provided_rows(facts)
+    if provided <= 0:
+        return True
+    if not review.supplied:
+        return False
+    # Two honest coverage claims, and which one applies is decided by the
+    # review rather than chosen here. A review that declared `in_run` on every
+    # entry has named the rows the search is graded against, and covering those
+    # is the whole of what this floor asks - that is what makes the floor
+    # liftable on a corpus far larger than anyone will read end to end. A
+    # review that did not is a read of the file, and then the file is the
+    # population it has to cover.
+    graded = graded_rows(facts)
+    if review.reviewed_in_run is not None and graded is not None:
+        return review.reviewed_in_run >= graded
+    return review.reviewed >= provided
+
+
 def row_review_evidence(review: RowReview, facts: DatasetFacts) -> str:
     """Say what the read covered and what it found, in the line that costs nothing.
 
@@ -4070,11 +4778,20 @@ def row_review_evidence(review: RowReview, facts: DatasetFacts) -> str:
     """
     if not review.supplied:
         return ""
-    counted = facts.collected_rows + facts.synthesised_rows + facts.undeclared_rows
-    provided = (
-        facts.collected_rows + facts.undeclared_rows if counted else (facts.rows or 0)
-    )
+    provided = provided_rows(facts)
     line = f"the coding assistant read {review.reviewed} of {provided} provided rows"
+    # And what those rows COVER, where the review said which rows the run
+    # reads. Without this clause the card printed "read 60 of 4812 provided
+    # rows" beside a top band, because the sentence counts the file and the
+    # floor counts the rows the comparison is graded on - two denominators for
+    # one read, which is the class `provided_rows` was extracted to close and
+    # this is the same class in the other direction.
+    graded = graded_rows(facts)
+    if review.reviewed_in_run is not None and graded is not None:
+        line += (
+            f", covering {review.reviewed_in_run} of the {graded} rows this "
+            "run is graded on"
+        )
     if review.unsound == 1:
         line += "; 1 expected answer contradicts its input"
     elif review.unsound:
@@ -4153,8 +4870,16 @@ def origin_cap(pillar: str, origin: str | None) -> Cap | None:
     mandates both on every scoring call, because the run that created the
     substitute is the one party that knows - and the guided run is the only path
     this package ships. A caller scoring by hand and saying nothing gets the
-    behaviour it always got, with no cap invented about material nobody
-    described.
+    behaviour it always got FROM THIS FUNCTION, with no origin cap invented
+    about material nobody described.
+
+    That last sentence is scoped to this function since #375, and the scope is
+    the correction: silence about the agent is no longer free everywhere. With
+    no settings document and no source read beside it, an undeclared agent
+    raises `agent-absent` in `_unsupplied_space_cap` - not because silence is
+    evidence of a generated component, which is what this function refuses to
+    infer, but because three inputs asking about an agent all came back empty
+    and the other two pillars already read their own silence that way.
 
     Re-open this if a hand-built caller ever becomes a supported path: the
     argument above turns on the guide being the thing that passes these flags,
@@ -5050,16 +5775,96 @@ def score_dataset(
                 asks=True,
             )
         )
-    if facts.integrity_failed:
+    # Raised from the FINDINGS, never from whether a sentence could be built
+    # for them. The first draft of this branch tested the reason instead, and a
+    # reason that came back empty then read as "no finding" on the one path that
+    # stops a paid run - a check that answers a semantic question from a surface
+    # signal, with its "didn't find it" arm counting as a pass, which is the
+    # class this repository has shipped most often.
+    if facts.integrity_failed or facts.id_check_failed:
+        reason = dataset_integrity_reason(facts)
+        if reason is None:
+            # Fail loud rather than silently drop the ceiling. Unreachable from
+            # any payload `dataset_facts_from_preflight` admits, which refuses
+            # this shape at read time with a message naming the flag to re-run;
+            # this is the backstop for the arm nobody has written yet.
+            raise PreflightInputError(
+                "a dataset integrity check FAILed and none of the counts this "
+                "score reads explains it, so the ceiling it sets could not be "
+                "given a reason. Re-run preflight.py --json from the same "
+                "version as this script"
+            )
         caps.append(
             Cap(
                 "dataset-integrity-fail",
                 DATASET_INTEGRITY_CEILING,
-                "Some rows could not be read as data - malformed lines, or missing "
-                "the input or expected-answer field.",
+                reason,
             )
         )
     return combine("dataset", subs), caps
+
+
+def dataset_integrity_reason(facts: DatasetFacts) -> str | None:
+    """What this ceiling is actually standing on, in the words of what fired.
+
+    `None` when nothing did, so the caller has one condition to test rather than
+    a boolean beside a sentence that may describe something else.
+
+    THREE FINDINGS SHARE THIS CEILING and the reason used to name only the
+    first. Rows that could not be read as data is the structural one; ids that
+    collide and rows carrying no stable id are the two ways `dataset-ids` FAILs,
+    and both were folded into the same boolean. Measured on a 90-row file whose
+    30 exact repeats copied their ids: every row parsed, every row carried an
+    answer, `dataset-shape` PASSed "90 valid JSONL rows", the card printed
+    "90/90 rows carry an expected output" - and the blocking cap two lines below
+    said some rows could not be read as data. That sentence was false about the
+    file it was printed over, and a customer reading it was sent looking for
+    malformed lines that do not exist. Source:
+    tests/test_readiness_adapter.py#RepeatedRowsAreCappedOnTheirOwnAccountTests,
+    which scores that file beside a genuinely malformed one that still reads as
+    malformed.
+
+    So the reason is BUILT from the findings that fired rather than written once
+    for the commonest of them. Each clause names its own count, because a count
+    is what the reader checks against their own file - and because a sentence
+    that has to be true of three different states at once is a sentence that
+    ends up specific about none of them.
+
+    The ceiling does not move. All three say the same thing about what the run
+    may do: some of this material cannot be used as it stands, and the rest can,
+    which is exactly what 35 is for. What changes is only which of them the
+    customer is told about.
+    """
+    reasons: list[str] = []
+    if facts.integrity_failed:
+        reasons.append(
+            "some rows could not be read as data - malformed lines, or missing "
+            "the input or expected-answer field"
+        )
+    if facts.duplicate_ids:
+        # "Rows share an id", not "rows are duplicated". Two rows can carry one
+        # id and ask different questions, and this check has not looked at their
+        # inputs - repeated INPUTS are counted separately and reach their own
+        # ceiling. Saying "duplicate rows" here would answer a question about
+        # content from a signal that only read identity, which is the class of
+        # defect this sentence is being corrected for.
+        rows = "id is" if facts.duplicate_ids == 1 else "ids are"
+        reasons.append(
+            f"{facts.duplicate_ids} {rows} used by more than one row, so a row "
+            "cannot be named, excluded, or reviewed without ambiguity"
+        )
+    if facts.generated_rows_without_id:
+        one = facts.generated_rows_without_id == 1
+        rows = "row carries" if one else "rows carry"
+        them = "it" if one else "them"
+        reasons.append(
+            f"{facts.generated_rows_without_id} generated {rows} no stable id, "
+            f"so there is nothing to name {them} by"
+        )
+    if not reasons:
+        return None
+    joined = "; ".join(reasons)
+    return joined[0].upper() + joined[1:] + "."
 
 
 def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
@@ -5427,6 +6232,30 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
             )
         elif (
             fits
+            and facts.method in METHOD_REQUIRES_PROVEN_COMPARISON
+            and facts.comparison_shape
+            not in METHOD_COMPARISON_SUPPORT.get(facts.method or "", frozenset())
+        ):
+            # Credit, withheld, and the arm that keeps #414 from being #380
+            # again. The three arms around it all key on the file having
+            # ESTABLISHED something, which is the only safe direction for a
+            # refutation. This one is a credit decision, so it fails the other
+            # way on purpose: a method whose entire claim is about the
+            # comparison the file performs earns nothing until that comparison
+            # is proven, and `comparison_shape is None` - the walk could not
+            # account for the file - lands here rather than falling through to
+            # full credit.
+            #
+            # Without it the new method would have been the highest-paying
+            # thing a `code-sql` run could type over any evaluator the walk
+            # does not settle, which is precisely the reading #380 was filed
+            # about, one indirection further out.
+            value = TASK_FIT_UNFIT_CREDIT
+            evidence = task_fit_unproven_comparison_evidence(
+                facts.method or "", facts.comparison_shape, facts.comparison_witness
+            )
+        elif (
+            fits
             and facts.comparison_shape is not None
             and facts.comparison_shape
             not in METHOD_COMPARISON_SUPPORT.get(facts.method or "", frozenset())
@@ -5578,6 +6407,11 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
         and not established
         and not disqualifying
         and facts.timed_out is not True
+        # The run said the scope gate refused this evaluator, so the sentence
+        # below - "complete calibration" - is an instruction to do what
+        # SKILL.md forbids. The condition after this one says the true thing
+        # instead, at the same ceiling.
+        and not facts.calibration_scope_refused
     ):
         caps.append(
             Cap(
@@ -5588,6 +6422,43 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
                 "evaluator, so this card cannot claim that it distinguishes "
                 "answers. Complete calibration to establish that evidence.",
                 blocks=False,
+                # And ASKS, on the same argument its `review-answer-key`
+                # siblings carry and for the reason recorded beside
+                # `COMPLETE_CALIBRATION`. `blocks` stays False, so a deferral
+                # permitted by SKILL.md still proceeds; what `asks` changes is
+                # that `recommended_action` names the outstanding check instead
+                # of returning `proceed` about a finding whose entire content
+                # is a check that has not run.
+                asks=True,
+            )
+        )
+    if (
+        facts.method is not None
+        and facts.calibration_scope_refused
+        and not established
+        and not disqualifying
+        and facts.timed_out is not True
+    ):
+        caps.append(
+            Cap(
+                "evaluator-calibration-refused",
+                CALIBRATION_REFUSED_CEILING,
+                f"An evaluator method ({facts.method}) was declared, and this "
+                "run did not calibrate it because running it here is outside "
+                "the scope this guide permits. Nothing about the evaluator is "
+                "known to be wrong, and nothing about it has been established "
+                "either, so this card cannot claim that it distinguishes "
+                "answers. The ceiling is about the missing evidence and is not "
+                "a finding against your project. Settle it through the "
+                "separate containment review rather than by running this "
+                "check here.",
+                blocks=False,
+                # ASKS, on the same argument the condition above it carries:
+                # there is genuinely something for a person to settle, it
+                # changes the answer, and `recommended_action` returning
+                # `proceed` would say there is nothing to do about the one
+                # check that is outstanding.
+                asks=True,
             )
         )
     return combine("evaluation", subs), caps
@@ -5764,12 +6635,83 @@ def search_space_shortfall(configurations: int, budget: int | None) -> str:
     return ""
 
 
+def unfollowed_space_clause(
+    configurations: int,
+    unfollowed: Sequence[tuple[str, int]],
+    budget: int | None,
+) -> str:
+    """What the count leaves out, and the other way to reach the number.
+
+    A configuration count taken over the settings this read could follow is a
+    FLOOR. Printed as "your space has N" it is a refutation of every setting
+    the read could not follow, drawn from where the customer's literals sit
+    rather than from anything their agent does, so the opening claim becomes a
+    floor and this says what it is a floor of.
+
+    The upper figure is stated conditionally, and has to be: this read cannot
+    tell a setting it merely failed to follow from one that is genuinely inert,
+    so "if they all do" is the strongest true form. It buys no points. Nothing
+    in the count changes, because widening credit on an unfollowed route is the
+    one direction that lets a customer pay for a grid of identical requests.
+
+    The ladder sentence STAYS. An earlier revision suppressed it and asserted
+    that adding a setting was not the step, which is the original defect
+    mirrored: the old text over-claimed absence, that one over-claimed
+    presence, and a read that has just said it cannot tell whether these
+    settings vary cannot then rule out that adding one is exactly the step.
+    What was actually missing was the other option, so the other option is what
+    is added - the probe first, because it is the one that always applies,
+    where the accepted route can ask for an agent to be rewritten.
+    """
+    counted = [(name, count) for name, count in unfollowed if count > 1]
+    named = ", ".join(name for name, _ in unfollowed)
+    if not counted:
+        # Named without a number, which is the honest form when nothing here
+        # can be multiplied out. The floor sentence still has to say it is a
+        # floor: falling back to "your space has N" would be the refutation
+        # this whole clause exists to remove, arrived at by a different route.
+        return (
+            (
+                f"; it could not follow {named}, whose options the cited source "
+                f"does spell out, so {configurations} is a floor rather than the "
+                "space"
+            )
+            + search_space_shortfall(configurations, budget)
+            + _settling_clause()
+        )
+    ceiling = configurations * math.prod(count for _, count in counted)
+    clause = (
+        f"; it could not follow {named}, whose options the cited source does "
+        f"spell out, so the space is {configurations} only if none of those "
+        f"vary and {ceiling} if they all do"
+    )
+    if len(counted) < len(unfollowed):
+        uncounted = ", ".join(name for name, count in unfollowed if count <= 1)
+        clause += (
+            f"; {ceiling} counts only the ones whose options this read found "
+            f"under a binding named for them, so {uncounted} is named here "
+            "without a factor and the figure is a lower bound"
+        )
+    return clause + search_space_shortfall(configurations, budget) + _settling_clause()
+
+
+def _settling_clause() -> str:
+    """The option that needs no new setting, offered rather than asserted."""
+    return (
+        "; those settings are already written down, so settling them is the "
+        "other way to that number and needs no new one - run the "
+        "request-difference probe before any paid grid, or cite them on the "
+        "accepted route this card prints"
+    )
+
+
 def search_space_evidence(
     configurations: int,
     declared: int,
     repeats: int,
     budget: int | None,
     uncredited: Sequence[str] = (),
+    unfollowed: Sequence[tuple[str, int]] = (),
 ) -> str:
     """One sentence a person can act on, which a bare number is not.
 
@@ -5778,12 +6720,24 @@ def search_space_evidence(
     argument, and the third is the one the score actually moves on. The
     collapse is named whenever it happened, or the sentence contradicts a
     document the reader can count for themselves.
+
+    `unfollowed` carries the settings whose options this read found in the
+    cited source and whose route to the request it could not follow. Where
+    there are any, the opening claim is a floor rather than the space, and
+    `unfollowed_space_clause` says so instead of the shortfall.
     """
     unit = "configuration" if configurations == 1 else "configurations"
-    line = f"your space has {configurations} distinct {unit}"
+    if unfollowed:
+        line = f"this read followed {configurations} distinct {unit} to the request"
+    else:
+        line = f"your space has {configurations} distinct {unit}"
     if declared > configurations:
         line += f" ({declared} declared - values too close to tell apart count once)"
-    if configurations <= 1:
+    # "Every trial would be identical" is a statement about the agent, and with
+    # a setting this read could not follow it is one the read cannot make - the
+    # clause appended below says in the same breath that the space may be
+    # larger, so leaving both in contradicts the sentence with itself.
+    if configurations <= 1 and not unfollowed:
         line += "; every trial would be identical"
     elif budget is not None:
         line += f"; this run will try up to {min(configurations, budget)} of them"
@@ -5805,6 +6759,8 @@ def search_space_evidence(
         multiplied = all(name == "seed" for name in uncredited) and bool(uncredited)
         verb = "repeated" if multiplied else "multiplied"
         line += f", each {verb} {repeats} times over {named}"
+    if unfollowed:
+        return line + unfollowed_space_clause(configurations, unfollowed, budget)
     return line + search_space_shortfall(configurations, budget)
 
 
@@ -5869,7 +6825,9 @@ NOTHING_IN_THE_AGENT_TO_VARY_CAP = Cap(
 # repository has now shipped in six places. Every other pillar in this module
 # already caps its own absence for the same reason: `dataset-absent` at 20 and
 # `evaluator-absent` at 40. The agent pillar was the only one where saying
-# nothing was free.
+# nothing was free, and #375 closes that with `agent-absent` - so what is left
+# here is the narrower state this cap was always about: an agent the run FOUND
+# and could not read. It keeps this ceiling and stays advisory.
 NO_SEARCH_SPACE_ESTABLISHED_CAP = Cap(
     "agent-no-varying-knobs",
     AGENT_NO_VARYING_KNOBS_CEILING,
@@ -5877,6 +6835,44 @@ NO_SEARCH_SPACE_ESTABLISHED_CAP = Cap(
     "the settings a search would vary cannot be counted. Reading the agent is "
     "what counts them.",
     blocks=False,
+)
+
+# The state the cap above could not separate itself from, and the whole of #375.
+#
+# "Nothing about the agent reached this score" is two customer situations. In
+# one, an agent exists and this run has not read it - the guide's own case,
+# where a source read was defeated and the flag was left off deliberately
+# (SKILL.md). In the other there is no agent at all. Both produce the identical
+# input to this scorer, which is why the cap above claims nothing about the
+# customer's project - and why, before this branch, a project with no agent was
+# told to vary the knobs of one.
+#
+# WHAT SEPARATES THEM IS ALREADY DECLARED, and it is not a new input. SKILL.md
+# requires `--agent-origin` on every scoring call and says exactly when it may
+# be left off: "Omit a flag only where that component does not exist yet;
+# nothing has an origin before it is there." So a run whose read was defeated
+# still declares `brought` - the agent was found, it has an origin - and keeps
+# the advisory ceiling above unchanged. Silence about the origin, with no
+# document and no read beside it, is a run that has said nothing about an agent
+# in any of the three places it is asked to.
+#
+# That is the same reading the other two pillars already give their own silence.
+# `dataset-absent` fires when no dataset reached this score and blocks;
+# `evaluator-absent` fires when no evaluation method reached it and blocks. The
+# agent pillar was the only one where saying nothing at all was free, and
+# `SubScore.withheld` exists in this module because omission outscoring
+# declaration is the defect it has shipped in six places.
+#
+# The reason names what is established rather than what is inferred: no
+# document, no read, no declaration. A customer who does have an agent reads
+# three specific things this run did not do, and every one of them is true.
+AGENT_ABSENT_CAP = Cap(
+    "agent-absent",
+    AGENT_ABSENT_CEILING,
+    "No agent reached this score - no settings document, no reading of its "
+    "source, and no declaration that one exists - so there is nothing for a "
+    "paid search to compare configurations of. Point this run at the agent to "
+    "optimize, or create one.",
 )
 
 UNATTESTED_WIRING_CAP = Cap(
@@ -5965,6 +6961,36 @@ def nothing_to_search_pillar(
     )
 
 
+def unfollowed_settings(facts: AgentFacts) -> tuple[tuple[str, int], ...]:
+    """Settings whose options are in the source and whose route was not followed.
+
+    The third verdict, kept apart from the other two. "Verified to vary" is the
+    credited list; "verified inert" is what a run's own request-difference
+    probe can establish and this reader cannot; this is neither, and it is the
+    one that used to be reported as the second by disappearing from the count.
+
+    Every setting whose options the cited source shows is listed, and the count
+    beside each is what it may be MULTIPLIED by - zero where this read declined
+    to draw a number from it, because the binding holding the options is not
+    named for the setting. Naming and counting are separate on purpose: a
+    number a document could inflate needs the stricter test, and a sentence
+    saying "I could not follow this" needs only the weaker one. Gating both on
+    the strict test made the whole sentence vanish for an agent whose tables
+    are named for their nouns.
+
+    A single option is never counted, for the same reason it is dropped from a
+    credited knob - one option is not a choice - so this cannot widen a figure
+    by a factor of one. Both fields are structured, never re-read from a
+    refusal sentence, because deciding a semantic question from a surface
+    signal is the defect class this module keeps filing against itself.
+    """
+    return tuple(
+        (knob.name, knob.unfollowed_options)
+        for knob in facts.discovered
+        if knob.options_shown
+    )
+
+
 def score_discovered_agent(
     facts: AgentFacts,
 ) -> tuple[Pillar, list[Cap], list[KnobScore]]:
@@ -6004,8 +7030,19 @@ def score_discovered_agent(
         refused = [knob for knob in facts.discovered if not knob.credited]
         unverified = any(knob.unverified for knob in facts.discovered)
         if unverified:
+            # Each name WITH its reason, which is where the rule that refused
+            # it is now written. This branch printed the names alone, so the
+            # state in which every setting was refused - the one where a
+            # customer most needs to know which rule they fell outside - was
+            # the single state that told them nothing. The credited branch
+            # beneath has always printed the reasons; only the all-refused one
+            # dropped them, which is the wrong way round.
             detail = (
-                ", ".join(knob.name for knob in refused if knob.unverified)
+                "; ".join(
+                    f"{knob.name}: {knob.uncredited_reason}"
+                    for knob in refused
+                    if knob.unverified
+                )
                 or "the candidates"
             )
             evidence = (
@@ -6013,6 +7050,25 @@ def score_discovered_agent(
                 "check could not verify how they reach the selected local call: "
                 f"{detail}. It has not established an opening search dimension"
             )
+            # The same figure the credited branch prints, for the same reason.
+            # Learning what the unfollowed settings would come to must not
+            # depend on whether one OTHER setting happened to be followed - a
+            # customer whose four settings all sit outside these shapes is the
+            # one who most needs to see that the read is the limit here.
+            # Only the settings this read drew a number from, for the reason
+            # `unfollowed_space_clause` uses the same filter: the list now
+            # carries settings it can name but not count, and multiplying a
+            # zero through produced "their cited options come to 0
+            # configurations", which is not a sentence about anything.
+            unfollowed = [
+                (name, count) for name, count in unfollowed_settings(facts) if count > 1
+            ]
+            if unfollowed:
+                ceiling = math.prod(count for _, count in unfollowed)
+                evidence += (
+                    f"; their cited options come to {ceiling} configurations if "
+                    "they vary, which this read has not established either way"
+                )
         else:
             evidence = (
                 "the agent was read and no varying setting was established - "
@@ -6052,8 +7108,27 @@ def score_discovered_agent(
         + ", ".join(knob.name for knob in credited)
         + "; this advisory read assumes the selected source does not rewrite "
         "its own functions or imports at runtime. It does not establish final "
-        "request wiring. " + search_space_evidence(configurations, declared, 1, None)
+        "request wiring. "
+        + search_space_evidence(
+            configurations,
+            declared,
+            1,
+            None,
+            unfollowed=unfollowed_settings(facts),
+        )
     )
+    # Named, because the credit is for the route and not for the interval. A
+    # card that printed both halves as established would be claiming the source
+    # shows a range it does not contain.
+    from_document = [knob.name for knob in credited if knob.bounds_from_document]
+    if from_document:
+        detail += (
+            "; the range declared for "
+            + ", ".join(from_document)
+            + " is your figure rather than one the source holds - what this "
+            "read established is that the setting's own value is what the "
+            "request argument of that name receives"
+        )
     if refused:
         detail += "; " + "; ".join(
             f"{knob.name}: {knob.uncredited_reason}" for knob in refused
@@ -6159,6 +7234,29 @@ def score_agent(facts: AgentFacts) -> tuple[Pillar, list[Cap], list[KnobScore]]:
     return pillar, caps, knobs
 
 
+def _unsupplied_space_cap(facts: AgentFacts) -> Cap:
+    """Which ceiling a pillar with no declared knobs carries, in three states.
+
+    One function rather than a conditional expression at the call site, because
+    the three states are decided by two independent facts and a nested
+    conditional is where the third one gets forgotten. Each state is named here
+    once, and the caps themselves carry the argument for their ceilings.
+
+    A supplied document that lists nothing is a finding about the project and
+    blocks. Nothing supplied, with the run declaring the agent's origin, is a
+    statement about this score's inputs and stays advisory - the read was
+    defeated or withheld, and the agent is still there. Nothing supplied and no
+    origin declared is the third state: this run has said nothing about an agent
+    in any of the three places it is asked to, which is how the other two
+    pillars already read their own silence.
+    """
+    if facts.config_space_supplied:
+        return NOTHING_WIRED_CAP
+    if facts.origin is None:
+        return AGENT_ABSENT_CAP
+    return NO_SEARCH_SPACE_ESTABLISHED_CAP
+
+
 def score_agent_evidence(
     facts: AgentFacts,
 ) -> tuple[Pillar, list[Cap], list[KnobScore]]:
@@ -6240,13 +7338,7 @@ def score_agent_evidence(
                 ),
                 facts,
             ),
-            [
-                (
-                    NOTHING_WIRED_CAP
-                    if facts.config_space_supplied
-                    else NO_SEARCH_SPACE_ESTABLISHED_CAP
-                )
-            ],
+            [_unsupplied_space_cap(facts)],
             [],
         )
 
@@ -6531,6 +7623,8 @@ def aggregate(
     repeated: RepeatedInputs | None = None,
     agent_source_read: bool = False,
     agent_route_unverified: bool = False,
+    agent_unfollowed_settings: Sequence[tuple[str, int]] = (),
+    answers_read: bool = True,
 ) -> ReadinessScore:
     # Every declared weight stays in the denominator, and #201 is the reason
     # that sentence is worth writing down rather than assuming.
@@ -6573,6 +7667,13 @@ def aggregate(
         confidence,
         min((pillar.confidence for pillar in pillars), default=None),
     )
+    # After the confidence gate, and after the ceiling, because it reads the
+    # band those two produce. `answers_read` defaults True so that the callers
+    # which build a score from pillars alone - every one of them scoring no
+    # dataset - are not held for an answer key they were never given. The one
+    # path a customer reaches is `score_run`, which computes it from the facts
+    # and the review.
+    band, held_for_answers = hold_band_for_unread_answers(band, answers_read)
     return ReadinessScore(
         schema_version=SCHEMA_VERSION,
         overall=overall,
@@ -6590,6 +7691,8 @@ def aggregate(
         repeated_inputs=repeated,
         agent_source_read=agent_source_read,
         agent_route_unverified=agent_route_unverified,
+        agent_unfollowed_settings=tuple(agent_unfollowed_settings),
+        band_limited_by_unread_answers=held_for_answers,
     )
 
 
@@ -6619,19 +7722,28 @@ def score_run(
     )
     evaluation_pillar, evaluation_caps = score_evaluation(evaluation_facts)
     agent_pillar, agent_caps, knobs = score_agent(agent_facts)
+    # Computed once here rather than at both use sites. The ceiling and the
+    # routes on the card have to describe the same rows, and the way they stop
+    # doing that is two calls with two `reference_free` answers between them.
+    repeated = repeated_inputs(
+        dataset_facts,
+        reference_free=scores_without_a_reference(evaluation_facts.method),
+    )
     return aggregate(
         [dataset_pillar, evaluation_pillar, agent_pillar],
-        [*dataset_caps, *evaluation_caps, *agent_caps],
+        [
+            *dataset_caps,
+            *([repeated_rows_cap(repeated)] if repeated is not None else []),
+            *evaluation_caps,
+            *agent_caps,
+        ],
         knobs,
         weights,
         # By keyword, both of them. This call gained a keyword-only marker and
         # a second optional argument in the same window; a positional argument
         # resolved against that marker raises rather than mis-binding, which is
         # why neither of these is passed by position.
-        repeated=repeated_inputs(
-            dataset_facts,
-            reference_free=scores_without_a_reference(evaluation_facts.method),
-        ),
+        repeated=repeated,
         agent_source_read=agent_facts.discovery_supplied,
         # The same pair of conditions `score_agent_evidence` branches on to
         # reach the discovery path at all. A config-space document wins
@@ -6643,6 +7755,19 @@ def score_run(
             and not agent_facts.config_space_supplied
             and any(knob.route_unverified for knob in agent_facts.discovered)
         ),
+        # Gated on the same pair, and for the same reason: under a config-space
+        # document the discovery half is not what decided the space, so naming
+        # settings it could not follow would describe a reading nothing scored.
+        agent_unfollowed_settings=(
+            unfollowed_settings(agent_facts)
+            if agent_facts.discovery_supplied and not agent_facts.config_space_supplied
+            else ()
+        ),
+        # Computed from the same two inputs the dataset pillar was scored from,
+        # so the floor and the evidence line beside it describe one review.
+        # `score_run` is where both are in scope, and it is the one entry point
+        # a customer's card is produced through.
+        answers_read=answer_key_read(dataset_facts, review or RowReview()),
     )
 
 
@@ -7239,9 +8364,16 @@ def render_card(
         # BELOW the pillars and below the caps, and this position is the rule
         # rather than the layout that happened. A customer reads the result and
         # then the question the result raises; a question printed above its own
-        # evidence asks them to answer before they have read it. Nothing
-        # summarising it goes higher up the card either, which is why this block
-        # is not also a cap - a cap line prints in the section above.
+        # evidence asks them to answer before they have read it.
+        #
+        # There IS a cap line above now (#378), and this comment said there was
+        # not: the routes carried the whole finding, so the payload beside them
+        # recommended `proceed` while the card asked a question, and the same
+        # file was stopped or cleared according to whether its repeats happened
+        # to copy their ids. What the position rule actually protects is that
+        # the ANSWER is not asked for above its evidence, and that still holds -
+        # `dataset-repeated-rows` states the ceiling and the finding, and the
+        # routes a customer replies to are only here.
         lines.extend(
             repeated_input_routes(
                 score.repeated_inputs,
@@ -7277,6 +8409,72 @@ def render_card(
             f"  {palette.dim}Some checks could not run (marked {unchecked} above), "
             f"so this score rests on less evidence than a full one and stays "
             f"at {score.band}.{palette.reset}"
+        )
+    if score.band_limited_by_unread_answers:
+        # READ, never asserted. The clause about the rest of the card is true
+        # only when the rest of the card says nothing, and an unconditional
+        # version of it was false in an ordinary state: 10 tuning rows against
+        # 10 held out, calibrated, with a wired space, scores 89 and holds the
+        # band while `dataset-coarse-resolution` prints `LIMITED TO 89` four
+        # lines above and `recommended_action` reads `add-examples`. Two of
+        # three claims false on one card.
+        #
+        # That condition is not exotic: 89 is the only ceiling that can coexist
+        # with this hold, because every other cap pulls the band under WORKABLE
+        # before the hold can apply, and it asks whenever the top-up offer has
+        # room. The sweep that establishes it is the regression test itself,
+        # which walks the same space and re-derives the counts on every run:
+        # tests/test_readiness_scoring.py#TheTopBandsNeedAReadOfTheAnswersTests
+        # test_the_hold_sentence_claims_nothing_the_rest_of_the_card_denies.
+        #
+        # So the sentence asserts only what is true of THIS hold in every
+        # state - it is not a cap, it does not stop the run, it holds the
+        # verdict - and reads `caps` and `recommended_action` for the rest.
+        # Asserting the value of a field the payload already carries, four
+        # lines from where the card prints that field's consequence, is the
+        # defect class this branch exists to remove.
+        nothing_else_pending = not score.caps and score.recommended_action == PROCEED
+        # Beside the confidence sentence and never instead of it: two different
+        # gaps hold this band, only one of them is about the answer key, and a
+        # reader told about the wrong one goes and closes the wrong gap.
+        #
+        # It carries the remedy in words because no cap carries it. Nothing
+        # here is capped - every measurement stands - so `recommended_action`
+        # has nothing to route, and the one sentence that says what would lift
+        # this band has to say it here or nowhere.
+        #
+        # The `proceed` clause is words on purpose, and the alternatives were
+        # weighed rather than skipped (traigent-first-run#396). A cap would
+        # route a remedy and reopen the argument recorded above
+        # `ANSWER_KEY_BAND_CEILING` about why no ceiling can express this hold;
+        # a payload field for asks that are not caps is a schema decision that
+        # belongs with the contract nothing documents yet
+        # (traigent-first-run#401). Neither is needed to stop the card reading
+        # as a contradiction: the band and the next step answer different
+        # questions, exactly as the band and the block already do, and saying
+        # so costs one sentence.
+        #
+        # In words, and not by naming the flag that carries the read. No line
+        # this card renders names an argument today - the only customer-facing
+        # strings that do are `--help`, which is a different reader - and the
+        # person holding this card is not the one who types it. SKILL.md orders
+        # the read and the evaluation reference owns its shape; what belongs
+        # here is what is missing and what would supply it.
+        lines.append(
+            f"  {palette.dim}No read covering the expected answers this run is "
+            f"graded against has reached this score, so the comparison is not "
+            f"graded above {score.band} whatever it scores. This hold is not a "
+            f"cap and does not stop the run: what it holds is the verdict, not "
+            f"the work."
+            + (
+                " Nothing else here is capped and nothing is being asked of "
+                "you before the run."
+                if nothing_else_pending
+                else ""
+            )
+            + f" A row-by-row read of each input beside its expected answer, "
+            f"covering the rows the run is graded on, is what lifts it."
+            f"{palette.reset}"
         )
     lines.append(
         f"  {palette.dim}Local pre-run planning estimate, not a probability or "
@@ -7326,6 +8524,32 @@ def render_markdown(score: ReadinessScore, timestamp: str | None = None) -> str:
             f"Weighted average before caps: {score.weighted_average}/100. "
             f"Evidence coverage: {score.confidence:.0%}.",
             "",
+            # The card says this and the durable report has to as well, for the
+            # reason the agent pillar's "not covered" list is repeated here: a
+            # reader who keeps the report and not the session would otherwise
+            # see a band with no account of what is holding it, and this is the
+            # one hold that no cap row below explains.
+            *(
+                [
+                    "**The band is held here.** No read covering the expected "
+                    "answers this run is graded against has reached this "
+                    "score, so no score carries this comparison above "
+                    f"{score.band}. This hold is not a cap and does not stop "
+                    "the run: what it holds is the verdict, not the work."
+                    + (
+                        " Nothing else is capped and nothing is being asked of "
+                        "you before the run."
+                        if not score.caps and score.recommended_action == PROCEED
+                        else ""
+                    )
+                    + " A row-by-row read of each input beside its expected "
+                    "answer, covering the rows the run is graded on, is what "
+                    "lifts it.",
+                    "",
+                ]
+                if score.band_limited_by_unread_answers
+                else []
+            ),
             *(
                 [assumption_sentence(score.provenance_assumption), ""]
                 if score.provenance_assumption is not None
@@ -7646,10 +8870,10 @@ def evaluator_execution_from_preflight(
 def evaluator_comparison_from_preflight(
     records: Sequence[dict[str, Any]],
 ) -> tuple[str | None, str | None]:
-    """Read the whole-value comparison preflight proved, if it proved one.
+    """Read the comparison preflight proved, if it proved one.
 
     Returns `(shape, witness)`. The shape is `None` unless the field carries
-    one of the two names this scorer can act on, which is the fail-closed
+    one of the three names this scorer can act on, which is the fail-closed
     reading in both directions at once: a payload that predates the field, a
     file the walk could not account for, and a value nobody can read all land
     on "nothing established", and nothing established refutes nothing.
@@ -7663,7 +8887,7 @@ def evaluator_comparison_from_preflight(
     if not shape:
         return None, None
     reported = shape.get("comparison_shape")
-    if reported not in ("exact", "normalized-exact"):
+    if reported not in ("exact", "normalized-exact", "sql-structure"):
         return None, None
     witness = shape.get("comparison_witness")
     if not isinstance(witness, str) or not witness.strip():
@@ -7913,6 +9137,11 @@ def row_review_from_document(document: Any, facts: DatasetFacts) -> RowReview:
         reviewed_collected=origins["collected"],
         reviewed_undeclared=origins["undeclared"],
         unsound_in_run=unsound_in_run if in_run_declared == {True} else None,
+        # `marked_in_run` is already checked against the declared split above,
+        # so this count is the verified one rather than the claimed one. It is
+        # set on the same all-or-nothing `in_run` condition its sibling uses:
+        # a half-answered file cannot support either count.
+        reviewed_in_run=marked_in_run if in_run_declared == {True} else None,
     )
 
 
@@ -8007,6 +9236,41 @@ def dataset_facts_from_preflight(records: Sequence[dict[str, Any]]) -> DatasetFa
             unreadable_detail=_dataset_absence_detail(records),
         )
     structurally_failed = integrity_status == "FAIL" and integrity["malformed_rows"] > 0
+    # The third guard of the same shape, and it is here for the reason the two
+    # above it are: preflight found something, this scorer needs the arithmetic
+    # of it, and a payload carrying the finding without the numbers is one
+    # written by an older preflight. `dataset-ids` FAILs for two unrelated
+    # reasons - ids that collide, and generated rows carrying none - and the cap
+    # it feeds has to say which. Reading a missing count as zero would print
+    # neither reason, which is the state this whole branch is being changed to
+    # remove.
+    #
+    # Only when the check FAILED. On a PASS or a WARN nothing is capped, so an
+    # older payload's silence costs nothing and refusing it would strand runs
+    # over a number that could not have changed an outcome.
+    ids_metrics = metrics.get("dataset-ids", {})
+    if _failed(statuses, "dataset-ids"):
+        if "duplicate_ids" not in ids_metrics:
+            raise PreflightInputError(
+                "dataset-ids FAILed but carries no duplicate_ids count - this "
+                "preflight JSON predates the current preflight.py; re-run "
+                "preflight.py --json from the same version as this script"
+            )
+        # And the version of that hole the key guard above cannot see: the keys
+        # are present and every one of them is zero, so the check reports a
+        # failure it does not account for. Refused here for the same reason the
+        # missing key is - the cap this feeds stops a paid run, and a ceiling
+        # nothing can explain is worse than no payload at all.
+        if not any(
+            ids_metrics.get(name)
+            for name in ("duplicate_ids", "generated_rows_without_id")
+        ):
+            raise PreflightInputError(
+                "dataset-ids FAILed with no duplicate id and no generated row "
+                "missing one, so nothing in this payload accounts for the "
+                "failure - re-run preflight.py --json from the same version as "
+                "this script"
+            )
     tuning_metrics = metrics.get("dataset-tuning-size", {})
     holdout_metrics = metrics.get("dataset-holdout-resolution", {})
     split_metrics = metrics.get("dataset-split", {})
@@ -8180,7 +9444,31 @@ def dataset_facts_from_preflight(records: Sequence[dict[str, Any]]) -> DatasetFa
         holdout_forms=_family_forms(
             metrics.get("dataset-split-family", {}).get("holdout_forms")
         ),
-        integrity_failed=structurally_failed or _failed(statuses, "dataset-ids"),
+        integrity_failed=structurally_failed,
+        # Carried whether or not a count explains it - see `id_check_failed`.
+        id_check_failed=_failed(statuses, "dataset-ids"),
+        # Read only where the check FAILED, so a WARN about missing ids on a
+        # collected corpus - which does not cap - cannot put a count into a
+        # reason nothing prints. `_row_count` refuses a value that is not a
+        # count rather than comparing it to zero and hoping.
+        duplicate_ids=(
+            _row_count(
+                ids_metrics.get("duplicate_ids"),
+                "duplicate_ids",
+                check="dataset-ids",
+            )
+            if _failed(statuses, "dataset-ids")
+            else None
+        ),
+        generated_rows_without_id=(
+            _row_count(
+                ids_metrics.get("generated_rows_without_id"),
+                "generated_rows_without_id",
+                check="dataset-ids",
+            )
+            if _failed(statuses, "dataset-ids")
+            else None
+        ),
         # Same three-answer read as everything else off this payload:
         # `{"synthetic": "false"}` flipped the cap from "no row of this dataset
         # was observed" to "the dataset is generated", on a string.
@@ -8224,6 +9512,7 @@ def evaluation_facts_from_calibration(
     execution_witness: str | None = None,
     comparison_shape: str | None = None,
     comparison_witness: str | None = None,
+    calibration_scope_refused: bool = False,
 ) -> EvaluationFacts:
     """Normalize both shapes `calibrate_evaluator` emits into one fact set.
 
@@ -8255,6 +9544,7 @@ def evaluation_facts_from_calibration(
             execution_witness=execution_witness,
             comparison_shape=comparison_shape,
             comparison_witness=comparison_witness,
+            calibration_scope_refused=calibration_scope_refused,
         )
     cases = payload.get("cases")
     if not isinstance(cases, list):
@@ -8341,6 +9631,11 @@ def evaluation_facts_from_calibration(
         execution_witness=execution_witness,
         comparison_shape=comparison_shape,
         comparison_witness=comparison_witness,
+        # Carried on this branch too, though the CLI refuses the pair that
+        # reaches it: a direct caller can construct both, and the condition
+        # that reads it fires only where no complete calibration was
+        # established, so a payload that carries one raises nothing here.
+        calibration_scope_refused=calibration_scope_refused,
     )
 
 
@@ -12713,6 +14008,115 @@ def _selection_reaches_return(
     ) or _selection_reaches_verified_request(selection, callable_node, source)
 
 
+def _value_is_this_setting(
+    value: ast.expr,
+    knob: str,
+    callable_node: ast.FunctionDef | ast.AsyncFunctionDef,
+    dynamic_parameters: frozenset[str],
+    source: StaticSourceEvidence,
+) -> bool:
+    """Whether this expression is the setting itself and nothing else.
+
+    Two spellings and one wrapper. The setting arrives as a parameter of its
+    own name, or as a read of it out of the mapping the callable was given.
+
+    The wrapper is `float` alone, and the reason is arithmetic rather than
+    taste: `float` is injective over the values a range can hold, so two
+    declared bounds that differ still differ after it. `int` is not - `int(0.0)`
+    and `int(0.7)` are the same request - and a clamp such as `min(x, 0.5)`
+    collapses a whole half of a range, so neither is read here. A cast this
+    does not accept is a false refusal and is named as one by the diagnosis
+    rather than passed over in silence.
+    """
+    if (
+        isinstance(value, ast.Call)
+        and isinstance(value.func, ast.Name)
+        and value.func.id == "float"
+        and len(value.args) == 1
+        and not value.keywords
+    ):
+        value = value.args[0]
+    if (
+        isinstance(value, ast.Name)
+        and isinstance(value.ctx, ast.Load)
+        and value.id.casefold() == knob.casefold()
+        # The SELECTED callable only. A parameter of a helper says nothing
+        # about what the selected callable hands it: `_send(0.2, question)`
+        # into `def _send(temperature, ...)` puts a literal in the request
+        # while the helper's body still reads `temperature=temperature`. This
+        # check followed the name and never the argument, so it credited that
+        # agent and printed that the setting's own value is what the request
+        # received, over a request that received 0.2. The selected callable is
+        # different in kind: its caller is the customer's harness, outside this
+        # file and outside anything this read could inspect, and varying it is
+        # the whole premise of the score.
+        and callable_node is source.selected_callable
+        and value.id in _callable_parameter_names(callable_node)
+        and _callable_parameter_is_unshadowed(value.id, callable_node)
+    ):
+        return True
+    read = _config_read_key(value, dynamic_parameters)
+    return read is not None and read.casefold() == knob.casefold()
+
+
+def _knob_reaches_its_named_request_argument(
+    knob: str, source: StaticSourceEvidence
+) -> bool:
+    """The request argument of this setting's name receives this setting.
+
+    The route a numeric setting actually has, and the one this reader had no
+    way to credit. A range is not a choice table: an agent that lets a caller
+    pick a temperature writes `temperature=config["temperature"]`, and there is
+    no literal collection anywhere for the read to index. Requiring one meant
+    the only shape that earned credit was a mapping written to be indexed and
+    for no other purpose - a dict whose keys and values are the same numbers -
+    so the check could see the setting exactly when the code had been made
+    worse to satisfy it. That is a check teaching a bad habit inside a guide
+    whose subject is good ones.
+
+    What is established here is stronger than the table route, not weaker. The
+    table route proves a declared option indexes a table whose value reaches
+    the request; this proves the setting's own value is what the request's
+    argument OF THAT NAME receives, on a call this module already recognises as
+    an external request. Two values of it are therefore two different requests.
+
+    What it does NOT establish is the extent, and the caller says so on the
+    card: the bounds stay the customer's declaration. That costs nothing it
+    could inflate - a credited numeric knob contributes its two bounds and no
+    more however wide they are, and `noise_floor` has already refused a range
+    too narrow to tell apart.
+    """
+    for callable_node, dynamic_parameters in _callables_on_the_call_path(source):
+        for call in _callable_body_nodes(callable_node):
+            if not (
+                isinstance(call, ast.Call)
+                and _is_statically_reachable(call, source)
+                and isinstance(call.func, ast.Attribute)
+                and _request_receiver_has_external_constructor(
+                    call.func.value, callable_node, source
+                )
+                # The receiver check resolves the chain ROOT, so every method
+                # on a provider client satisfies it - `client.log.record(...)`
+                # as readily as `client.chat.completions.create(...)`. What
+                # separates a request from a call that merely happens to sit on
+                # the same object is that the request's result is what the
+                # callable returns, which is the condition `_request_parameters`
+                # already applies for exactly this reason. Without it a
+                # telemetry line naming the setting credited a route while the
+                # real request beside it sent a constant.
+                and _request_result_return_nodes(call, callable_node, source)
+            ):
+                continue
+            for keyword in call.keywords:
+                if keyword.arg is None or keyword.arg.casefold() != knob.casefold():
+                    continue
+                if _value_is_this_setting(
+                    keyword.value, knob, callable_node, dynamic_parameters, source
+                ):
+                    return True
+    return False
+
+
 def _selection_reaches_verified_request(
     selection: ast.Subscript,
     callable_node: ast.FunctionDef | ast.AsyncFunctionDef,
@@ -13211,14 +14615,294 @@ def _selection_reaches_request_builder_return(
     )
 
 
-def _request_builder_collections(knob: str, source: StaticSourceEvidence) -> list[str]:
-    """Declared alternatives visibly preserved by one exact prompt producer."""
-    declared = {
+def _declared_module_names(source: StaticSourceEvidence) -> set[str]:
+    """Every name a module-level assignment binds."""
+    return {
         name
         for node in source.tree.body
         if isinstance(node, (ast.Assign, ast.AnnAssign))
         for name in _assignment_names(node)
     }
+
+
+def _knob_selections(
+    knob: str,
+    callable_node: ast.FunctionDef | ast.AsyncFunctionDef,
+    holders: dict[str, ast.Assign | ast.AnnAssign],
+    dynamic_parameters: frozenset[str],
+    declared: set[str],
+    source: StaticSourceEvidence,
+    *,
+    qualified: bool = True,
+) -> list[ast.Subscript]:
+    """Every `TABLE[<this setting>]` in one callable, as the credit path reads it.
+
+    One expression, three consumers. It was written out twice - once for the
+    call path and once for a request-argument builder - and the diagnosis below
+    needs the SAME list, because a sentence telling a customer which condition
+    failed is worthless the moment it is computed from a second copy that has
+    drifted from the one the decision uses.
+
+    `qualified=False` is the DIAGNOSTIC reading. It drops the two conditions
+    that disqualify the TABLE rather than the expression, and it accepts a bare
+    parameter of the setting's own name as a selector, which credit reaches by
+    a different route entirely. Both widenings exist so the diagnosis can tell
+    "nothing here indexes a table with this setting" apart from "it does, and
+    something further along ruled it out" - naming the wrong condition is worse
+    than naming none. Credit always uses the qualified list.
+    """
+    return [
+        node
+        for node in _callable_body_nodes(callable_node)
+        if isinstance(node, ast.Subscript)
+        and _is_statically_reachable(node, source)
+        and isinstance(node.value, ast.Name)
+        and node.value.id in declared
+        and (
+            not qualified
+            or (
+                node.value.id in _module_names_a_subscript_can_reach(source)
+                and not _callable_binds(node.value.id, callable_node)
+            )
+        )
+        and (
+            _selector_reads_knob(node.slice, knob, holders, dynamic_parameters, node)
+            or (
+                not qualified
+                and isinstance(node.slice, ast.Name)
+                and node.slice.id.casefold() == knob.casefold()
+            )
+        )
+    ]
+
+
+def _route_sites(
+    source: StaticSourceEvidence,
+) -> list[tuple[ast.FunctionDef | ast.AsyncFunctionDef, frozenset[str]]]:
+    """Every callable the two credit paths look inside, in one list."""
+    sites = list(_callables_on_the_call_path(source))
+    seen = {id(callable_node) for callable_node, _ in sites}
+    for _, builder, dynamic_parameters in _request_argument_builders(source):
+        if id(builder) not in seen:
+            sites.append((builder, dynamic_parameters))
+            seen.add(id(builder))
+    return sites
+
+
+def _knob_is_read_past_the_first(
+    knob: str,
+    callable_node: ast.FunctionDef | ast.AsyncFunctionDef,
+    dynamic_parameters: frozenset[str],
+    holders: dict[str, ast.Assign | ast.AnnAssign],
+) -> bool:
+    """This setting is taken out of the mapping, and not on the first read.
+
+    `_pristine_direct_config_read` is the reader that takes over once the
+    mapping parameter has been disqualified - leaked to a call this check
+    cannot follow, logged, or forwarded somewhere it stops being provably
+    intact - and it follows exactly one assignment per callable, the first in
+    file order. A customer in that state sees every later setting refused with
+    no hint that its POSITION is what did it.
+
+    The parameter set here is the callable's own, deliberately, and NOT
+    `dynamic_parameters`. A first draft asked `_config_read_key` against the
+    dynamic set and could never fire: that set excludes the mapping parameter
+    in precisely the regime this branch exists for, so the read came back None
+    every time and the whole diagnosis fell through to a sentence about
+    indexing tables, which is not the repair. Measured over seventeen
+    reproductions, the intended message appeared zero times. This is the same
+    defect the module keeps filing - a check whose "did not find it" branch
+    reads as a pass - written into the diagnosis for it.
+    """
+    if holders:
+        return False
+    del dynamic_parameters
+    parameters = frozenset(_callable_parameter_names(callable_node))
+    return any(
+        isinstance(node, (ast.Assign, ast.AnnAssign))
+        and node.value is not None
+        and (read := _config_read_key(node.value, parameters)) is not None
+        and read.casefold() == knob.casefold()
+        for node in _callable_body_nodes(callable_node)
+    )
+
+
+def _unsafely_read_tables(
+    knob: str,
+    tables: set[str],
+    cited: set[int],
+    source: StaticSourceEvidence,
+) -> list[tuple[str, int]]:
+    """Cited choice tables this file reads in a form that disqualifies them.
+
+    `_module_binding_reference_is_safe` is an allowlist over the ACCESS, not
+    over the binding: a table may be indexed, `.get()`, interpolated bare into
+    an f-string, or used as an `in` comparand, and nothing else. One
+    `tuple(TABLE)` or `", ".join(TABLE)` anywhere in the file - most often
+    inside an error message the author never expects to fire - takes the whole
+    table out of credit, and the sharp end is that not mentioning the table at
+    all is safer than mentioning it. Nothing said so.
+    """
+    found: list[tuple[str, int]] = []
+    for node in source.tree.body:
+        if not isinstance(node, (ast.Assign, ast.AnnAssign)):
+            continue
+        if not (_node_lines(node) & cited):
+            continue
+        for name in sorted(set(_assignment_names(node)) & tables):
+            found.extend(
+                (name, reference.lineno)
+                for reference in ast.walk(source.tree)
+                if isinstance(reference, ast.Name)
+                and reference.id == name
+                and isinstance(reference.ctx, ast.Load)
+                and not _module_binding_reference_is_safe(reference, source)
+            )
+    return found
+
+
+def route_refusal_diagnosis(
+    knob: str, lines: Sequence[int], source: StaticSourceEvidence
+) -> str:
+    """Which condition of the accepted route this read could not confirm.
+
+    "Could not verify that changing this setting changes the request" is the
+    one sentence a customer cannot act on, and against an agent that has been
+    instrumented it reads as false: the setting demonstrably does change the
+    request. What failed is a rule about the SHAPE of the source, and naming
+    that rule is the difference between two days and ten minutes.
+
+    Every branch is computed from the predicates the credit path itself
+    applies - `_knob_selections` is shared with both of them - so this can
+    report a condition that was really tested rather than a guess assembled
+    beside the decision. The order is the order of the accepted route, and the
+    first unconfirmed condition is the one reported: later ones cannot be
+    judged once an earlier one has failed.
+    """
+    declared = _declared_module_names(source)
+    reachable = _module_names_a_subscript_can_reach(source)
+    loose: list[ast.Subscript] = []
+    rebound: set[str] = set()
+    survives = False
+    past_the_first = False
+    for callable_node, dynamic_parameters in _route_sites(source):
+        holders = _direct_config_holders(
+            knob, callable_node, dynamic_parameters, source
+        )
+        past_the_first = past_the_first or _knob_is_read_past_the_first(
+            knob, callable_node, dynamic_parameters, holders
+        )
+        here_loose = _knob_selections(
+            knob,
+            callable_node,
+            holders,
+            dynamic_parameters,
+            declared,
+            source,
+            qualified=False,
+        )
+        loose.extend(here_loose)
+        rebound |= {
+            selection.value.id
+            for selection in here_loose
+            if selection.value.id in reachable
+            and _callable_binds(selection.value.id, callable_node)
+        }
+        # Asked of the WIDE list, because whether the value survives is a fact
+        # about the expression rather than about the table, and a diagnosis
+        # that skipped it here would fall through to a later condition and
+        # report the wrong one.
+        survives = survives or any(
+            _selection_reaches_return(selection, callable_node, source)
+            or _selection_reaches_request_builder_return(
+                selection, callable_node, source
+            )
+            for selection in here_loose
+        )
+    unsafe = _unsafely_read_tables(
+        knob,
+        {name for name in declared if _name_matches_knob(name, knob)}
+        | {selection.value.id for selection in loose},
+        set(lines),
+        source,
+    )
+    if unsafe:
+        named_at = ", ".join(
+            f"{name} at {source.display_path}:{line}" for name, line in unsafe
+        )
+        return (
+            "the options table is read in a form that disqualifies it ("
+            + named_at
+            + "): every read of it anywhere in the file has to be an index, a "
+            "`.get()`, a bare f-string interpolation, or an `in` comparand. "
+            "`tuple(TABLE)` in an error message, `for x in TABLE`, and even "
+            "`allowed = TABLE` all take it out of credit, wherever they sit"
+        )
+    if not loose:
+        if past_the_first:
+            return (
+                "this setting is lifted out of the settings mapping, and that "
+                "mapping is read somewhere this check cannot follow - logged, "
+                "serialised, or handed to a call it does not enter - so only "
+                "the FIRST such read in the callable is followed and this one "
+                "is not it. Stop passing the mapping around bare, or move this "
+                "read to the top of the function"
+            )
+        return (
+            "nothing on the selected call path uses this setting to index a "
+            "declared table: the accepted route is a module-level literal "
+            "collection indexed by the setting's own value, and for a setting "
+            "with no options to index it is the value passed straight to the "
+            "request argument named for it"
+        )
+    unreachable = sorted(
+        {
+            selection.value.id
+            for selection in loose
+            if selection.value.id not in reachable
+        }
+    )
+    # Each of these is guarded on the condition it NAMES rather than on
+    # `qualified` being empty. A selector this read follows by another route
+    # entirely - a bare parameter of the setting's name - also leaves
+    # `qualified` empty, and keying the table branches off that emptiness
+    # reported a rebinding that had not happened, with an empty list of names
+    # where the table should have been.
+    if unreachable:
+        return (
+            "the table this setting indexes ("
+            + ", ".join(unreachable)
+            + ") is not a shape a subscript can reach at runtime; a set literal "
+            "is a real guard but raises on indexing, so the route is written as "
+            "a list, tuple or mapping"
+        )
+    if rebound:
+        return (
+            "the table this setting indexes ("
+            + ", ".join(sorted(rebound))
+            + ") is rebound inside the callable that indexes it, so what is "
+            "indexed there is no longer the module-level collection this read "
+            "can see the options in"
+        )
+    if not survives:
+        return (
+            "the selected value does not survive whole to the request: it is "
+            "combined, formatted, or passed through another call on the way, "
+            "and only a value that reaches a request argument intact - "
+            "directly or through one plain local nothing else rewrites - can "
+            "be followed here"
+        )
+    return (
+        "the setting reaches a table and the value reaches the request, but "
+        "not through one single occurrence of each: this read follows exactly "
+        "one read of the setting into exactly one indexed position, because "
+        "two of either can cancel out into one fixed request"
+    )
+
+
+def _request_builder_collections(knob: str, source: StaticSourceEvidence) -> list[str]:
+    """Declared alternatives visibly preserved by one exact prompt producer."""
+    declared = _declared_module_names(source)
     selected: list[str] = []
     for _, builder, dynamic_parameters in _request_argument_builders(source):
         knob_reads = sum(
@@ -13230,19 +14914,9 @@ def _request_builder_collections(knob: str, source: StaticSourceEvidence) -> lis
         if knob_reads != 1:
             continue
         holders = _direct_config_holders(knob, builder, dynamic_parameters, source)
-        selections = [
-            node
-            for node in _callable_body_nodes(builder)
-            if isinstance(node, ast.Subscript)
-            and _is_statically_reachable(node, source)
-            and isinstance(node.value, ast.Name)
-            and node.value.id in declared
-            and node.value.id in _module_names_a_subscript_can_reach(source)
-            and not _callable_binds(node.value.id, builder)
-            and _selector_reads_knob(
-                node.slice, knob, holders, dynamic_parameters, node
-            )
-        ]
+        selections = _knob_selections(
+            knob, builder, holders, dynamic_parameters, declared, source
+        )
         # One setting read routed through two selected positions can cancel
         # itself (two distinct tables can still concatenate to one fixed text).
         # This shallow proof therefore follows one selected occurrence only.
@@ -13286,12 +14960,7 @@ def _module_collections_this_knob_selects(
     reader learns the pair from the expression, so `FORMAT_INSTRUCTIONS` keyed
     by `output_format` is credited exactly like `MODELS` keyed by `model`.
     """
-    declared = {
-        name
-        for node in source.tree.body
-        if isinstance(node, (ast.Assign, ast.AnnAssign))
-        for name in _assignment_names(node)
-    }
+    declared = _declared_module_names(source)
     selected: list[str] = []
     for callable_node, dynamic_parameters in _callables_on_the_call_path(source):
         holders = _direct_config_holders(
@@ -13303,19 +14972,9 @@ def _module_collections_this_knob_selects(
             if (read := _config_read_key(node, dynamic_parameters)) is not None
             and read.casefold() == knob.casefold()
         )
-        selections = [
-            node
-            for node in _callable_body_nodes(callable_node)
-            if isinstance(node, ast.Subscript)
-            and _is_statically_reachable(node, source)
-            and isinstance(node.value, ast.Name)
-            and node.value.id in declared
-            and node.value.id in _module_names_a_subscript_can_reach(source)
-            and not _callable_binds(node.value.id, callable_node)
-            and _selector_reads_knob(
-                node.slice, knob, holders, dynamic_parameters, node
-            )
-        ]
+        selections = _knob_selections(
+            knob, callable_node, holders, dynamic_parameters, declared, source
+        )
         # A pair of individually distinct selections can cancel when combined.
         # Follow exactly one read into exactly one selected occurrence; more
         # needs runtime evidence rather than algebra guessed from syntax.
@@ -13469,6 +15128,48 @@ def _cited_source_declares_values(
     return {repr(value) for value in values} <= found
 
 
+def _knob_named_binding_holds(
+    knob: str,
+    values: Sequence[Any],
+    lines: Sequence[int],
+    source: StaticSourceEvidence,
+) -> bool:
+    """One cited binding NAMED for this setting holds all of these options.
+
+    Stricter than `_cited_source_declares_values`, and the extra condition is
+    the whole point. That predicate answers "do these literals appear anywhere
+    the citation covers", which is the right question for a SENTENCE - the
+    source really does contain them, so telling the author it does not would be
+    false. It is the wrong question for a NUMBER: a document that cites a line
+    holding some other setting's options, and declares those same literals for
+    a setting the agent does not have, would multiply the reported ceiling by
+    writing values into a file nothing checks against the name.
+
+    So the ceiling is drawn only from a binding this reader would have been
+    willing to read the options out of anyway - `_name_matches_knob` is the
+    same association `_values_from_cited_binding` uses for credit.
+    """
+    wanted = {repr(value) for value in values}
+    cited = set(lines)
+    for node in ast.walk(source.tree):
+        if not (
+            isinstance(node, (ast.Assign, ast.AnnAssign))
+            and node.value is not None
+            and _node_lines(node) & cited
+            and _is_statically_reachable(node, source)
+            and any(_name_matches_knob(name, knob) for name in _assignment_names(node))
+        ):
+            continue
+        literal = (
+            _literal_mapping_keys(node.value)
+            if isinstance(node.value, ast.Dict)
+            else _literal_scalar_options(node.value)
+        )
+        if literal is not None and wanted <= set(map(repr, literal)):
+            return True
+    return False
+
+
 def discovered_knob_from_entry(
     name: str,
     spec: Any,
@@ -13579,13 +15280,22 @@ def discovered_knob_from_entry(
             # ...}`, which is the only one of the two that holds an option
             # value. "Quote the options" was already being obeyed off the wrong
             # line, so naming the line is the only part that changes an outcome.
-            if _cited_source_declares_values(values, checked_lines, source):
+            confirmed_options = 0
+            options_shown = _cited_source_declares_values(values, checked_lines, source)
+            if options_shown:
+                # The options are provably in the cited source and only the
+                # route is unfollowed, so how many there are is a fact this
+                # read established rather than one it is taking on trust.
+                if _knob_named_binding_holds(name, values, checked_lines, source):
+                    confirmed_options = len({repr(value) for value in values})
                 reason = (
                     "the cited executable source shows the declared options, but "
-                    "this deliberately narrow static read could not verify that "
-                    "changing this setting changes the request on the selected "
-                    "agent path; no source defect is inferred, and the enhanced "
-                    "run can settle this dimension"
+                    "this deliberately narrow static read could not follow them "
+                    "to the request on the selected agent path: "
+                    + route_refusal_diagnosis(name, checked_lines, source)
+                    + "; no source defect is inferred - the setting may well "
+                    "change the request - and the enhanced run can settle this "
+                    "dimension"
                 )
             else:
                 reason = (
@@ -13605,6 +15315,8 @@ def discovered_knob_from_entry(
                 uncredited_reason=reason,
                 unverified=True,
                 route_unverified=True,
+                unfollowed_options=confirmed_options,
+                options_shown=options_shown,
             )
         distinct = len({repr(value) for value in values})
         if distinct < 2:
@@ -13672,6 +15384,47 @@ def discovered_knob_from_entry(
         )
     unevidenced = values_are_in_checked_source(name, (low, high), checked_lines, source)
     if unevidenced:
+        if _knob_reaches_its_named_request_argument(name, source):
+            # The route, which is what this pillar claims to read, without the
+            # extent, which the source of a range-valued setting genuinely does
+            # not hold. The flag carries that split onto the card.
+            return DiscoveredKnob(
+                name,
+                "numeric",
+                evidence,
+                (low, high),
+                bounds_from_document=True,
+            )
+        if _cited_source_declares_values((low, high), checked_lines, source):
+            # The sentence below would be FALSE here. It was reachable against
+            # a cited line reading `TEMPERATURES = (0.0, 0.7)` - which shows
+            # both bounds - because this branch never asked whether the source
+            # holds them, only whether the WIRING route could be followed to
+            # them. Declaring the same setting categorically produced the
+            # honest sentence at the same score, so the two spellings of one
+            # agent disagreed about the customer's own file.
+            return DiscoveredKnob(
+                name,
+                "numeric",
+                evidence,
+                (),
+                "the cited executable source shows the declared bounds, but "
+                "this deliberately narrow static read could not follow the "
+                "setting to the request on the selected agent path: "
+                + route_refusal_diagnosis(name, checked_lines, source)
+                + "; no source defect is inferred - the setting may well "
+                "change the request - and the enhanced run can settle this "
+                "dimension",
+                unverified=True,
+                unfollowed_options=(
+                    2
+                    if _knob_named_binding_holds(
+                        name, (low, high), checked_lines, source
+                    )
+                    else 0
+                ),
+                options_shown=True,
+            )
         return DiscoveredKnob(
             name,
             "numeric",
@@ -13679,7 +15432,11 @@ def discovered_knob_from_entry(
             (),
             "declares bound(s) "
             + ", ".join(unevidenced)
-            + " that the cited executable source does not show",
+            + " that the cited executable source does not show, and its value "
+            "is not what the request argument of that name receives either; a "
+            "range has no options to index, so the route this read can follow "
+            "for one is the setting passed straight to the argument named for "
+            "it on the provider client's own request",
             unverified=True,
             # Deliberately NOT `route_unverified`. This branch fires for a
             # numeric range, and the accepted route this card prints is a list
@@ -13896,9 +15653,19 @@ ACCEPTED_ROUTE_KNOB: dict[str, Any] = {
 }
 
 
-# What the four printed parts are, in the order they appear in the file above.
-# Each one is a condition this reader actually applies, so the list can be
-# checked against the code rather than believed.
+# What the printed parts are, in the order they appear in the file above.
+#
+# Each one names a condition this reader applies, and the honest scope of that
+# claim is narrower than an earlier wording here said. What IS mechanically
+# checked is that the worked agent and its entry are rendered from
+# `ACCEPTED_ROUTE_AGENT` and `ACCEPTED_ROUTE_KNOB` rather than restated, that
+# this tuple is non-empty, and that the card and the reference print exactly as
+# many conditions as it holds. The PROSE of each condition is not bound to the
+# predicate it describes; nothing here compares a sentence to an expression,
+# and claiming otherwise invited exactly the trust the sentence was warning
+# against. Keeping them true is a reviewer's job, and
+# `route_refusal_diagnosis` is where a drift shows up first, because it reports
+# these conditions by name.
 ACCEPTED_ROUTE_PARTS: tuple[str, ...] = (
     "the options are written out as literals in a module-level binding, and "
     "'source_lines' cites that line",
@@ -14688,13 +16455,31 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help=(
             "the coding assistant's own read of each provided row (path or -): "
             "does this expected output answer this input? Lowers the ceiling "
-            "when a material share do not, and never raises the score"
+            "when a material share do not, and adds no points. It is not "
+            "scoreless, and this sentence used to say so: a read covering the "
+            "rows the run is graded on releases the hold that keeps an "
+            "unreviewed answer key out of the top two bands. Entries are "
+            "counted, never matched against the dataset - preflight emits no "
+            "row ids to match them to - so the release is on this document's "
+            "word"
         ),
     )
     parser.add_argument(
         "--evaluator-method",
         choices=tuple(sorted(METHOD_PROFILES)),
         help="declared evaluation method (recorded as declared, not measured)",
+    )
+    parser.add_argument(
+        "--calibration-scope-refused",
+        action="store_true",
+        help=(
+            "declare that this run did not calibrate because the evaluator-"
+            "execution scope gate refused it, rather than because the step was "
+            "skipped. Changes the condition, the sentence and the remedy on the "
+            "card, and no number: it is a declaration nothing here can check, "
+            "so it may bound a claim and may not earn credit. Refused beside "
+            "--calibration, which says the opposite"
+        ),
     )
     parser.add_argument(
         "--evaluator-origin",
@@ -14817,6 +16602,36 @@ def run(argv: Sequence[str] | None = None) -> int:
     # this is the one input allowed to move the score on nothing but its own
     # word. The planner half takes no evidence at all, so a review reaching it
     # is the same mistake spelled differently.
+    # A run cannot both have calibrated this evaluator and have been refused
+    # permission to. Accepting the pair would let a card carry the safety
+    # sentence over evidence produced by the very path that sentence says was
+    # not taken - which is the one way this declaration could be used to
+    # describe a run that did the opposite of what it claims.
+    if args.calibration and args.calibration_scope_refused:
+        print(
+            "cannot read scoring input: --calibration-scope-refused says this "
+            "run was not permitted to execute the evaluator, and --calibration "
+            "is the result of executing it. Pass one.",
+            file=sys.stderr,
+        )
+        return 2
+
+    # Refused rather than ignored, for the reason `--row-review` is refused
+    # below: `scoring_requested` does not count this flag, so a run passing it
+    # with no evidence took the planner branch and the declaration vanished -
+    # accepted at the boundary, honoured nowhere. An option that means one
+    # thing in one mode and nothing in another is a defect in any case, and a
+    # safety declaration is the worst one to lose quietly.
+    if args.calibration_scope_refused and not scoring_requested(args):
+        print(
+            "cannot read scoring input: --calibration-scope-refused describes "
+            "a scoring call. The planner half takes no evidence, so there is "
+            "no calibration for it to describe and nothing would record it. "
+            "Pass it beside --preflight.",
+            file=sys.stderr,
+        )
+        return 2
+
     if args.row_review and not args.preflight:
         print(
             "cannot read scoring input: --row-review needs --preflight - its "
@@ -14981,6 +16796,7 @@ def run(argv: Sequence[str] | None = None) -> int:
             execution_witness=execution_witness,
             comparison_shape=comparison_shape,
             comparison_witness=comparison_witness,
+            calibration_scope_refused=args.calibration_scope_refused,
         )
         # `--config-space` first, and the `elif` is the safety property, not a
         # style choice: a brought document decides the agent pillar outright,
