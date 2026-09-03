@@ -5628,11 +5628,13 @@ class PowerBoundsTheBandTests(unittest.TestCase):
     def test_a_cap_reason_uses_the_term_the_glossary_defines(self) -> None:
         """A cap reason is a card line, and its vocabulary went unchecked.
 
-        `test_the_glossary_explains_every_line_the_card_prints` enforces only
-        `CHECK_DISPLAY_NAMES`, so cap prose slipped past it: a reason said
-        "enhanced search" where the glossary's headword is "Baseline run vs
-        enhanced run", leaving the assistant nothing to answer with for a phrase
-        the user had just read off their card.
+        `test_the_glossary_explains_every_term_the_card_prints` enforced only
+        `CHECK_DISPLAY_NAMES` when this was written, so cap prose slipped past
+        it: a reason said "enhanced search" where the glossary's headword is
+        "Baseline run vs enhanced run", leaving the assistant nothing to answer
+        with for a phrase the user had just read off their card. That guard now
+        reads the renderer instead, and it is why it was renamed - but it polices
+        the card's TERMS, and this pair of spellings is prose inside a reason.
 
         Narrow on purpose, and says so: it covers the module-level caps and the
         one pair of spellings that actually drifted, not every noun a reason can
@@ -6916,6 +6918,883 @@ class TheDeclaredCapOrderDecidesTheRunTests(unittest.TestCase):
             ["dataset-absent", "dataset-coarse-resolution"],
         )
         self.assertEqual(score.recommended_action, "get-data")
+
+
+# The CONSEQUENCE half of `test_every_tie_in_the_order_was_broken_on_purpose`.
+#
+# That registry records every tie with the reason it was broken. It is a good
+# check on the DECLARATION and says nothing about what the tie DOES, which is
+# the shape the ranking was introduced to fix, one level up: the earlier defect
+# was a sort key that made the order unobservable, and the residue is an order
+# that is observable in principle and unobserved in fact. A tie is also exactly
+# where a merge reorders silently - two branches each append a condition to the
+# same severity group, both merge clean, and the sequence is one nobody chose.
+#
+# Measured on this tree before the class below existed. Reversing
+# `evaluator-invalid`/`dataset-shape-unrecognised`,
+# `dataset-mostly-undeclared`/`dataset-unsound-expected-outputs`, or either
+# `dataset-below-measurable-size` pairing at 74 in `CAP_RANK` and running this
+# whole file red NOTHING: 515 tests, 0 failures, four times over. Four live
+# customer-facing decisions rested on declaration order alone, and only the 45
+# tie was exercised, by
+# `test_moving_a_condition_in_the_declaration_moves_the_recommendation`.
+#
+# The pairs are DERIVED from `CAP_SEVERITY_ORDER`, never listed here. A survey
+# typed out beside the table agrees with whoever edited the table last, which
+# is the same defect one level up again.
+
+# The queue a cap is standing in inside `recommended_action`: it returns the
+# first BLOCKING cap's remedy, else the first ASKING one's, else `proceed`. So
+# a tie is only observable when both conditions are in the SAME queue - a
+# blocking cap wins over an asking one whatever the rank says - and when their
+# remedies differ.
+_DISPLACING_QUEUES = frozenset({"BLOCKS", "ASKS"})
+_EVERY_QUEUE = frozenset({"BLOCKS", "ASKS", "NEITHER"})
+
+
+def _queue_of(cap: "MODULE.Cap") -> str:
+    return "BLOCKS" if cap.blocks else ("ASKS" if cap.asks else "NEITHER")
+
+
+def _pinned_flag(node: ast.expr | None, default: bool) -> bool | None:
+    """The flag a construction site pins, or None where only the run decides."""
+    if node is None:
+        return default
+    if isinstance(node, ast.Constant) and isinstance(node.value, bool):
+        return node.value
+    return None
+
+
+def _queues_declared_at(blocks: ast.expr | None, asks: ast.expr | None) -> set[str]:
+    """Every queue one `Cap(...)` site can put its condition in.
+
+    An OVER-approximation on purpose: `dataset-below-measurable-size` passes
+    `asks=asks_for_generation`, so its site admits both ASKS and NEITHER, and a
+    reader that guessed one of them would decide a semantic question from a
+    surface signal. The conclusion this feeds is "these two can never meet in
+    one queue", and over-approximating is the safe direction for it.
+    """
+    pinned_blocks = _pinned_flag(blocks, True)
+    pinned_asks = _pinned_flag(asks, False)
+    if pinned_blocks is None:
+        return set(_EVERY_QUEUE)
+    if pinned_blocks:
+        return {"BLOCKS"}
+    if pinned_asks is None:
+        return {"ASKS", "NEITHER"}
+    return {"ASKS"} if pinned_asks else {"NEITHER"}
+
+
+_CAP_SITE_QUEUES: dict[str, frozenset[str]] = {}
+
+
+def _declared_queues() -> dict[str, frozenset[str]]:
+    """Read every `Cap(...)` site's flags, the way `_cap_constructions` reads
+    its ceilings.
+
+    Complete over the module rather than sampled, which is what lets a "these
+    two never share a queue" verdict stand without a payload behind it:
+    `agent-no-varying-knobs` is built at six sites and blocks at four of them,
+    so no single site answers the question.
+
+    A ranked condition with NO construction site is read as capable of any
+    queue rather than of none. Other tests in this file already refuse a cap
+    that is half declared, so this case does not survive a run; the point is
+    which way it fails while it lasts. "No site found" reading as "these two
+    can never meet" would excuse a tie on the strength of something the reader
+    could not find, which is the branch this whole class exists to stop
+    counting as a pass.
+    """
+    if _CAP_SITE_QUEUES:
+        return {
+            condition: _CAP_SITE_QUEUES.get(condition, _EVERY_QUEUE)
+            for condition in set(MODULE.CAP_CEILING) | set(_CAP_SITE_QUEUES)
+        }
+    queues: dict[str, set[str]] = {}
+    source = Path(MODULE.__file__).read_text(encoding="utf-8")
+    for node in ast.walk(ast.parse(source)):
+        if not (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "Cap"
+            and len(node.args) >= 2
+            and isinstance(node.args[0], ast.Constant)
+        ):
+            continue
+        keywords = {word.arg: word.value for word in node.keywords if word.arg}
+        blocks = node.args[3] if len(node.args) > 3 else keywords.get("blocks")
+        asks = node.args[4] if len(node.args) > 4 else keywords.get("asks")
+        queues.setdefault(node.args[0].value, set()).update(
+            _queues_declared_at(blocks, asks)
+        )
+    _CAP_SITE_QUEUES.update(
+        (condition, frozenset(found)) for condition, found in queues.items()
+    )
+    return _declared_queues()
+
+
+# The evaluator and agent this survey holds still while the dataset moves, and
+# the other way round. Both are clean: the base of the sweep below raises no
+# cap at all, so every cap in it was put there by a fragment and nothing is
+# competing with the pair under test by accident.
+_SURVEY_EVALUATION = dict(
+    present=True,
+    method="normalized-exact",
+    task_kind="short-answer",
+    calibration_present=True,
+    calibration_supplied=True,
+    calibration_complete=True,
+    calibration_passed=True,
+    checks=({"good_passes": True, "bad_fails": True, "non_constant": True},),
+    probe_scores=((0.9, 0.1), (0.85, 0.15)),
+    timed_out=False,
+    origin="brought",
+)
+_SURVEY_AGENT = dict(
+    max_trials=8,
+    knobs={"temperature": [0.0, 0.5, 1.0], "top_p": [0.1, 0.9]},
+    wired=("temperature", "top_p"),
+    config_space_supplied=True,
+    origin="brought",
+)
+
+_SURVEY_FRAGMENTS: list[tuple[str, object]] = []
+
+
+def _fragment(name: str):
+    """Register one perturbation of the clean facts.
+
+    A fragment names a FINDING, never a pair, so the co-occurrences below fall
+    out of running them together rather than out of a list of pairs somebody
+    typed. Sizes are declared first because the provenance and answer-key
+    fragments are shares of whatever row count is in the dict when they run.
+    """
+
+    def register(function):
+        _SURVEY_FRAGMENTS.append((name, function))
+        return function
+
+    return register
+
+
+def _resize(dataset: dict, rows: int) -> None:
+    dataset.update(
+        rows=rows,
+        labelled_rows=rows,
+        answerable_rows=rows,
+        collected_rows=rows,
+        synthesised_rows=0,
+        undeclared_rows=0,
+        tuning_rows=rows // 2,
+        holdout_rows=rows - rows // 2,
+        tuning_labelled_rows=rows // 2,
+        holdout_labelled_rows=rows - rows // 2,
+        difficulty_tagged_rows=rows,
+    )
+
+
+@_fragment("a dataset of six rows")
+def _six_rows(dataset, evaluation, agent) -> None:
+    _resize(dataset, 6)
+
+
+@_fragment("a dataset of twenty-four rows")
+def _twenty_four_rows(dataset, evaluation, agent) -> None:
+    _resize(dataset, 24)
+    dataset.update(
+        tuning_rows=15,
+        holdout_rows=9,
+        tuning_labelled_rows=15,
+        holdout_labelled_rows=9,
+    )
+
+
+@_fragment("no dataset at all")
+def _no_dataset(dataset, evaluation, agent) -> None:
+    _resize(dataset, 0)
+    dataset.update(exists=False)
+
+
+@_fragment("a file no row of which matched the shape")
+def _unreadable_dataset(dataset, evaluation, agent) -> None:
+    _resize(dataset, 0)
+    dataset.update(exists=False, dataset_supplied=True, unreadable_rows=240)
+
+
+@_fragment("no expected outputs")
+def _unlabelled_dataset(dataset, evaluation, agent) -> None:
+    dataset.update(
+        labelled_rows=0,
+        tuning_labelled_rows=0,
+        holdout_labelled_rows=0,
+        answerable_rows=0,
+    )
+
+
+@_fragment("rows that could not be read as data")
+def _broken_rows(dataset, evaluation, agent) -> None:
+    dataset.update(integrity_failed=True)
+
+
+@_fragment("the same rows on both sides of the split")
+def _split_overlap(dataset, evaluation, agent) -> None:
+    dataset.update(split_overlap=True)
+
+
+@_fragment("nothing scoreable on the tuning side")
+def _empty_tuning_side(dataset, evaluation, agent) -> None:
+    dataset.update(tuning_labelled_rows=0)
+
+
+@_fragment("a split drawn along the task families")
+def _family_split(dataset, evaluation, agent) -> None:
+    dataset.update(shared_families=0, tuning_forms=("add",), holdout_forms=("fib",))
+
+
+@_fragment("every row generated")
+def _every_row_generated(dataset, evaluation, agent) -> None:
+    dataset.update(
+        collected_rows=0,
+        synthesised_rows=dataset["rows"],
+        undeclared_rows=0,
+        sources=("synthetic",),
+    )
+
+
+@_fragment("every row silent about where it came from")
+def _every_row_silent(dataset, evaluation, agent) -> None:
+    dataset.update(
+        collected_rows=0,
+        synthesised_rows=0,
+        undeclared_rows=dataset["rows"],
+        sources=(),
+    )
+
+
+@_fragment("most rows generated")
+def _most_rows_generated(dataset, evaluation, agent) -> None:
+    generated = int(dataset["rows"] * 0.8)
+    dataset.update(
+        synthesised_rows=generated,
+        collected_rows=dataset["rows"] - generated,
+        undeclared_rows=0,
+        sources=("synthetic", "production-support-desk"),
+    )
+
+
+@_fragment("most rows silent about where they came from")
+def _most_rows_silent(dataset, evaluation, agent) -> None:
+    silent = int(dataset["rows"] * 0.8)
+    dataset.update(
+        undeclared_rows=silent,
+        collected_rows=dataset["rows"] - silent,
+        synthesised_rows=0,
+        sources=("production-support-desk",),
+    )
+
+
+@_fragment("every expected answer written by a model")
+def _every_answer_generated(dataset, evaluation, agent) -> None:
+    dataset.update(generated_answer_rows=dataset["answerable_rows"])
+
+
+@_fragment("most expected answers written by a model")
+def _most_answers_generated(dataset, evaluation, agent) -> None:
+    dataset.update(generated_answer_rows=int(dataset["answerable_rows"] * 0.8))
+
+
+@_fragment("no evaluator connected")
+def _no_evaluator(dataset, evaluation, agent) -> None:
+    evaluation.update(present=False)
+
+
+@_fragment("an evaluator no method could be declared for")
+def _unresolved_evaluator(dataset, evaluation, agent) -> None:
+    evaluation.update(
+        method=None,
+        calibration_present=False,
+        calibration_supplied=False,
+        calibration_complete=None,
+        calibration_passed=None,
+        checks=(),
+        timed_out=None,
+    )
+
+
+@_fragment("a calibration that convicted the evaluator")
+def _convicted_evaluator(dataset, evaluation, agent) -> None:
+    evaluation.update(
+        checks=({"good_passes": False, "bad_fails": True, "non_constant": True},),
+        calibration_passed=False,
+    )
+
+
+@_fragment("an evaluator that did not finish")
+def _timed_out_evaluator(dataset, evaluation, agent) -> None:
+    evaluation.update(timed_out=True)
+
+
+@_fragment("no completed calibration")
+def _uncalibrated_evaluator(dataset, evaluation, agent) -> None:
+    evaluation.update(
+        calibration_present=False,
+        calibration_supplied=False,
+        calibration_complete=None,
+        calibration_passed=None,
+        checks=(),
+    )
+
+
+@_fragment("an evaluator this run wrote")
+def _generated_evaluator(dataset, evaluation, agent) -> None:
+    evaluation.update(origin="generated")
+
+
+@_fragment("an agent with nothing to search")
+def _no_search_space(dataset, evaluation, agent) -> None:
+    agent.update(knobs={}, wired=())
+
+
+@_fragment("an agent read from its own source")
+def _discovered_agent(dataset, evaluation, agent) -> None:
+    agent.update(config_space_supplied=False, discovery_supplied=True, discovered=())
+
+
+@_fragment("an agent this run wrote")
+def _generated_agent(dataset, evaluation, agent) -> None:
+    agent.update(origin="generated")
+
+
+@_fragment("repeated inputs on the tuning side")
+def _repeated_inputs(dataset, evaluation, agent) -> None:
+    scoreable = dataset["tuning_labelled_rows"]
+    distinct = max(10, scoreable - 2) if scoreable >= 12 else max(1, scoreable - 1)
+    dataset.update(
+        tuning_distinct_scoreable_rows=distinct,
+        distinct_rows=dataset["rows"] - (scoreable - distinct),
+    )
+
+
+@_fragment("an evaluator whose calibration was refused by scope")
+def _calibration_scope_refused(dataset, evaluation, agent) -> None:
+    evaluation.update(
+        calibration_present=False,
+        calibration_supplied=False,
+        calibration_complete=None,
+        calibration_passed=None,
+        calibration_scope_refused=True,
+        checks=(),
+    )
+
+
+@_fragment("an agent nobody declared or described")
+def _absent_agent(dataset, evaluation, agent) -> None:
+    agent.update(
+        config_space_supplied=False,
+        discovery_supplied=False,
+        origin=None,
+        knobs={},
+        wired=(),
+    )
+
+
+# The row review is an axis rather than a fragment because it is a separate
+# argument to `score_dataset`, not a field on any of the three fact classes.
+_SURVEY_REVIEWS = ("no row review", "rows the review called unsound")
+
+
+def _survey_review(name: str) -> "MODULE.RowReview | None":
+    if name == "no row review":
+        return None
+    return MODULE.RowReview(
+        supplied=True, reviewed=20, unsound=10, reviewed_collected=20
+    )
+
+
+def _survey_facts(chosen: tuple[str, ...], review_name: str):
+    """The clean facts with the named fragments applied, in declaration order."""
+    dataset = asdict(_clean_dataset())
+    evaluation = dict(_SURVEY_EVALUATION)
+    agent = dict(_SURVEY_AGENT)
+    agent["knobs"] = {name: list(values) for name, values in agent["knobs"].items()}
+    for name, apply in _SURVEY_FRAGMENTS:
+        if name in chosen:
+            apply(dataset, evaluation, agent)
+    return (
+        MODULE.DatasetFacts(**dataset),
+        MODULE.EvaluationFacts(**evaluation),
+        MODULE.AgentFacts(**agent),
+        _survey_review(review_name),
+    )
+
+
+def _survey_score(chosen: tuple[str, ...], review_name: str):
+    dataset, evaluation, agent, review = _survey_facts(chosen, review_name)
+    return MODULE.score_run(
+        dataset, evaluation, agent, dict(MODULE.DEFAULT_WEIGHTS), review
+    )
+
+
+_SURVEY_SWEEP: list[tuple[tuple[str, ...], str, tuple["MODULE.Cap", ...]]] = []
+
+
+def _survey_sweep() -> list[tuple[tuple[str, ...], str, tuple["MODULE.Cap", ...]]]:
+    """Every fragment singly and in pairs, SCORED - never reasoned about.
+
+    Fragments are combined up to two at a time. That is the honest limit of
+    this sweep and the reason a pair with no witness is reported rather than
+    called impossible: two conditions that need three findings at once to meet
+    would come out of here unwitnessed, and the registry below is where
+    somebody has to say which it is.
+
+    The caps are kept, not their names, so everything downstream reads
+    `cap.blocks`, `cap.asks` and `cap_order` off the object the scorer built
+    rather than off a second description of it.
+    """
+    if _SURVEY_SWEEP:
+        return _SURVEY_SWEEP
+    names = [name for name, _apply in _SURVEY_FRAGMENTS]
+    chosen = [()] + [(name,) for name in names] + list(itertools.combinations(names, 2))
+    for combination in chosen:
+        for review_name in _SURVEY_REVIEWS:
+            score = _survey_score(combination, review_name)
+            _SURVEY_SWEEP.append((combination, review_name, tuple(score.caps)))
+    return _SURVEY_SWEEP
+
+
+def _declared_rank() -> dict[str, int]:
+    """`CAP_RANK`, re-read off the DECLARATION rather than off the table.
+
+    The module derives `CAP_RANK` from `CAP_SEVERITY_ORDER` by exactly this
+    comprehension, so on a healthy tree the two are the same mapping and this
+    looks redundant. It is the anchor the pinned assertions need, and the
+    reason is the defect those assertions exist to catch: the ORIGINAL failure
+    here was a runtime key that disagreed with the declaration - both consumers
+    sorted by `(ceiling, condition)`, so at the 45 tie the declaration ranked
+    `evaluator-timeout` first and the card recommended `vary-knobs` because "a"
+    sorts before "e".
+
+    An expectation read out of the same table the runtime sorts by cannot see
+    that. Reorder the table and the expectation follows it, and the test agrees
+    with whatever the code does - which is the "reads the same tuple the code
+    reads" shape the class above already refuses. Read out of the declaration,
+    the assertion says the thing worth saying: the remedy on the card is the
+    one the ORDER THAT IS WRITTEN DOWN chose.
+    """
+    return {
+        condition: index
+        for index, condition in enumerate(
+            condition
+            for _group, entries in MODULE.CAP_SEVERITY_ORDER
+            for condition, _ceiling in entries
+        )
+    }
+
+
+def _tied_groups() -> dict[int, list[str]]:
+    """Ceilings carrying more than one condition, in declaration order."""
+    groups: dict[int, list[str]] = {}
+    for _group, entries in MODULE.CAP_SEVERITY_ORDER:
+        for condition, ceiling in entries:
+            groups.setdefault(ceiling, []).append(condition)
+    return {ceiling: members for ceiling, members in groups.items() if len(members) > 1}
+
+
+def _decides_the_recommendation(
+    caps: tuple["MODULE.Cap", ...], first: str, second: str
+) -> bool:
+    """Whether these two caps, and not some third, pick the remedy.
+
+    Structural, and deliberately not "reversing them changes the answer" - that
+    would make the assertion true by the way its fixture was chosen. What is
+    checked here is only that both are present, in the same queue, and that no
+    other cap stands ahead of them in it. Whether `recommended_action` then
+    reads the rank is the thing left for the assertion to find out.
+
+    `cap_order` is the only sort key consulted, so the front of the queue is
+    read the same way the scorer reads it. The pair's own two keys differ only
+    in the rank column, so swapping them leaves `ahead` where it was and this
+    verdict holds under the reversal it is selecting a witness for.
+    """
+    wanted = {cap.condition: cap for cap in caps if cap.condition in (first, second)}
+    if len(wanted) != 2:
+        return False
+    queue = _queue_of(wanted[first])
+    if queue != _queue_of(wanted[second]) or queue not in _DISPLACING_QUEUES:
+        return False
+    if queue == "ASKS" and any(cap.blocks for cap in caps):
+        return False
+    ahead = min(MODULE.cap_order(wanted[first]), MODULE.cap_order(wanted[second]))
+    return not any(
+        cap.condition not in wanted
+        and _queue_of(cap) == queue
+        and MODULE.cap_order(cap) < ahead
+        for cap in caps
+    )
+
+
+# The one tied pair whose two conditions share a queue, carry different
+# remedies, and never appeared together in the sweep above.
+#
+# This registry is the same shape as the tie registry this class exists to
+# supplement, and it is kept to exactly that residue on purpose: everything
+# with a witness is EXECUTED below, and an entry here is a claim somebody has
+# to defend. It is also checked both ways - a pair that gains a witness stops
+# being allowed to sit here, and a pair that loses one has to be added.
+_TIED_PAIRS_WITH_NO_WITNESS: dict[tuple[str, str], str] = {
+    ("evaluator-absent", "evaluator-unresolved"): (
+        "`score_evaluation` returns from its `not facts.present` branch before "
+        "the unresolved branch is reached, and the two read the same flag in "
+        "opposite directions, so no one payload carries both. That is a "
+        "reading of one function rather than a proof over every input, which "
+        "is why this pair is recorded here instead of pinned."
+    ),
+    ("evaluator-unvalidated", "evaluator-calibration-refused"): (
+        "`score_evaluation` branches on `facts.calibration_scope_refused`: when "
+        "false it emits `evaluator-unvalidated`, and when true it emits "
+        "`evaluator-calibration-refused`. The two read the same flag in "
+        "opposite directions and are mutually exclusive, so no one payload "
+        "carries both."
+    ),
+}
+
+
+def _tie_survey() -> list[tuple[int, str, str, str, object]]:
+    """Every tied pair, classified, with the evidence for the classification.
+
+    Four verdicts, tried in order:
+
+      one remedy        the two conditions route to the same remedy, so the
+                        rank decides nothing observable whichever way it runs
+      queues never meet no `Cap(...)` site of one can put it in the same queue
+                        as any site of the other, so a blocking cap or a silent
+                        ceiling settles it before the rank is consulted
+      pinned            they meet, their remedies differ, and the sweep found a
+                        payload where those two alone pick the remedy
+      no witness        they meet and differ and the sweep never raised both
+    """
+    queues = _declared_queues()
+    sweep = _survey_sweep()
+    survey = []
+    for ceiling, members in sorted(_tied_groups().items()):
+        for first, second in itertools.combinations(members, 2):
+            remedy = MODULE.ACTION_FOR_CONDITION
+            if remedy[first] == remedy[second]:
+                survey.append((ceiling, first, second, "one remedy", remedy[first]))
+                continue
+            shared = queues[first] & queues[second] & _DISPLACING_QUEUES
+            if not shared:
+                survey.append(
+                    (
+                        ceiling,
+                        first,
+                        second,
+                        "queues never meet",
+                        (sorted(queues[first]), sorted(queues[second])),
+                    )
+                )
+                continue
+            witnesses = [
+                row
+                for row in sweep
+                if _decides_the_recommendation(row[2], first, second)
+            ]
+            if witnesses:
+                survey.append((ceiling, first, second, "pinned", witnesses[0]))
+            else:
+                survey.append((ceiling, first, second, "no witness", None))
+    return survey
+
+
+class EveryTiedPairInTheOrderIsSurveyedAndTheLiveOnesArePinnedTests(unittest.TestCase):
+    """What each tie DOES, rather than why it was broken that way.
+
+    `cap_order` is `(ceiling, CAP_RANK[condition])` and `recommended_action`
+    returns the first blocking cap's remedy, else the first asking one's. So at
+    a shared ceiling the DECLARATION ORDER picks which remedy the card carries,
+    and until this class the registry above recorded the reason for every tie
+    while nothing executed the result for four of the five ties that decide
+    one.
+
+    What this does NOT cover, said plainly because a survey that hides its
+    limits is worth less than no survey. The sweep combines fragments up to two
+    at a time, so a pair needing three findings at once reports as unwitnessed
+    rather than as impossible. Reachability is measured at the SCORER, which is
+    the surface `recommended_action` runs on; whether today's `preflight.py`
+    can emit the payload behind a given pair is a second question this file
+    does not ask, and the answer is sometimes no - preflight emits
+    `dataset-split-family` only where `dataset-split` passed, so the overlap
+    and family conditions cannot meet through it even though `score_dataset`
+    accepts both. Pinning at the scorer is deliberate: it is the contract this
+    module publishes, and a guard that only held for one producer would go
+    stale the moment a second one appeared.
+    """
+
+    def _reversed_recommendation(self, row) -> str:
+        """Re-score the witness with two ranks swapped, and put them back.
+
+        In-process because a subprocess cannot be handed a reordered dict, and
+        in a `finally` because every later test in this process reads the same
+        table.
+        """
+        combination, review_name, _caps = row
+        return _survey_score(combination, review_name).recommended_action
+
+    def _with_swapped_rank(self, first: str, second: str, work):
+        original = dict(MODULE.CAP_RANK)
+        swapped = dict(original)
+        swapped[first], swapped[second] = original[second], original[first]
+        MODULE.CAP_RANK.clear()
+        MODULE.CAP_RANK.update(swapped)
+        try:
+            return work()
+        finally:
+            MODULE.CAP_RANK.clear()
+            MODULE.CAP_RANK.update(original)
+
+    def test_the_sweep_raises_every_condition_the_module_ranks(self) -> None:
+        """Fail closed on a condition no payload in the survey reaches.
+
+        A survey whose "did not find it" branch counts as a pass is the defect
+        this class exists to stop being an instance of. So a condition the
+        sweep never raises is a failure here rather than a pair quietly
+        classified from an empty search: add a fragment that raises it.
+        """
+        reached: dict[str, set[str]] = {}
+        for _combination, _review, caps in _survey_sweep():
+            for cap in caps:
+                reached.setdefault(cap.condition, set()).add(_queue_of(cap))
+        self.assertEqual(
+            set(MODULE.CAP_CEILING) - set(reached),
+            set(),
+            "the survey below classifies ties for conditions no payload in it "
+            "raises, so its answers for them rest on an empty search",
+        )
+        # And the static read of the construction sites agrees with what
+        # running them actually produced. The "queues never meet" verdict rests
+        # on that read, so a bug in it would silently excuse a live tie.
+        declared = _declared_queues()
+        for condition, observed in sorted(reached.items()):
+            with self.subTest(condition=condition):
+                self.assertLessEqual(
+                    observed,
+                    set(declared[condition]),
+                    f"{condition} was scored into a queue no Cap(...) site for "
+                    "it admits, so the flags read off the source are wrong",
+                )
+
+    def test_the_clean_facts_the_survey_perturbs_raise_no_cap(self) -> None:
+        """The base has to be silent or every pair competes with a stray cap."""
+        self.assertEqual(_survey_score((), "no row review").caps, ())
+
+    def test_every_tied_pair_is_classified_and_the_live_ones_have_a_witness(
+        self,
+    ) -> None:
+        """No pair falls off the end, and no live pair is excused by silence."""
+        survey = _tie_survey()
+        pairs = {(first, second) for _c, first, second, _v, _e in survey}
+        expected = {
+            pair
+            for _ceiling, members in _tied_groups().items()
+            for pair in itertools.combinations(members, 2)
+        }
+        self.assertEqual(pairs, expected, "a tied pair was not classified")
+        self.assertTrue(expected, "there is no tie left for this class to check")
+        unwitnessed = {
+            (first, second)
+            for _c, first, second, verdict, _e in survey
+            if verdict == "no witness"
+        }
+        self.assertEqual(
+            unwitnessed,
+            set(_TIED_PAIRS_WITH_NO_WITNESS),
+            "a tied pair whose order decides the card has no payload behind "
+            "it; either the sweep needs a fragment that raises both, or the "
+            "pair needs an entry in _TIED_PAIRS_WITH_NO_WITNESS saying which "
+            "branch keeps them apart",
+        )
+        pinned = [row for row in survey if row[3] == "pinned"]
+        self.assertTrue(
+            pinned,
+            "the survey pinned nothing, which is what it would report if the "
+            "sweep had stopped raising caps",
+        )
+
+    def test_reversing_a_pinned_tie_moves_the_recommendation(self) -> None:
+        """The assertion the registry above could not make.
+
+        For each pair the survey found live, the remedy the card carries is
+        read from `ACTION_FOR_CONDITION` at whichever of the two the ceiling
+        and the DECLARED rank put first - never from a literal written beside
+        the pair - and reversing the two in `CAP_RANK` has to move it to the
+        other one. Measured before this class existed: that reversal red
+        nothing at all for four of these five.
+        """
+        for ceiling, first, second, verdict, witness in _tie_survey():
+            if verdict != "pinned":
+                continue
+            with self.subTest(ceiling=ceiling, pair=(first, second)):
+                # The remedy is looked up, never typed: `ACTION_FOR_CONDITION`
+                # at whichever of the two the DECLARATION puts first. The two
+                # caps carry one ceiling by definition of a tie, so the second
+                # column of `cap_order` is the whole of what separates them,
+                # and `_declared_rank` is that column read off the source the
+                # runtime derives it from rather than off the derived table.
+                declared = _declared_rank()
+                ranked = sorted(
+                    (
+                        cap.condition
+                        for cap in witness[2]
+                        if cap.condition in (first, second)
+                    ),
+                    key=lambda condition: (
+                        MODULE.CAP_CEILING[condition],
+                        declared[condition],
+                    ),
+                )
+                first, second = ranked
+                expected = MODULE.ACTION_FOR_CONDITION[first]
+                other = MODULE.ACTION_FOR_CONDITION[second]
+                self.assertNotEqual(
+                    expected,
+                    other,
+                    "a pinned pair carries one remedy, so the survey put it in "
+                    "the wrong class",
+                )
+                self.assertEqual(
+                    self._reversed_recommendation(witness),
+                    expected,
+                    f"{witness[0]} raises {first} and {second} at {ceiling} "
+                    f"and the card recommends neither of their remedies",
+                )
+                self.assertEqual(
+                    self._with_swapped_rank(
+                        first,
+                        second,
+                        lambda: self._reversed_recommendation(witness),
+                    ),
+                    other,
+                    f"swapping {first} and {second} in CAP_RANK left the "
+                    "recommendation where it was, so the declared order is "
+                    "not what decides this tie after all",
+                )
+
+    def test_a_tie_between_two_remedies_that_are_one_decides_nothing(
+        self,
+    ) -> None:
+        """The false-red direction, on a condition that does not exist.
+
+        Adding a condition to a tied group whose neighbour carries the SAME
+        remedy must not red anything, because the order genuinely decides
+        nothing then. Probed with an invented condition rather than by moving a
+        shipped one, so the check cannot be satisfied by editing the tables it
+        reads - and probed in both directions, because a guard that reports "no
+        change" for a remedy that DID change would pass this half by accident.
+        """
+        survey = _tie_survey()
+        pinned = [row for row in survey if row[3] == "pinned"]
+        self.assertTrue(pinned, "no live tie to build the probe against")
+        _ceiling, first, _second, _verdict, witness = pinned[0]
+        anchor = next(
+            cap
+            for cap in _survey_score(witness[0], witness[1]).caps
+            if cap.condition == first
+        )
+        invented = "a-condition-a-later-branch-appended"
+        elsewhere = sorted(MODULE.ACTION_KINDS - {anchor.action_kind, MODULE.PROCEED})[
+            0
+        ]
+        pillars = [
+            MODULE.Pillar(name, 100, 1.0, ())
+            for name in ("dataset", "evaluation", "agent")
+        ]
+        for remedy, moves in ((anchor.action_kind, False), (elsewhere, True)):
+            with self.subTest(remedy=remedy):
+                reviewed = MODULE.CAP_OVERLAP_REVIEWED
+                MODULE.ACTION_FOR_CONDITION[invented] = remedy
+                MODULE.CAP_CEILING[invented] = anchor.ceiling
+                MODULE.ROUTE_CATEGORY[invented] = (
+                    MODULE.CREATION_OR_REPAIR if anchor.blocks else MODULE.CLAIM_SCOPING
+                )
+                MODULE.CAP_OVERLAP_REVIEWED = reviewed | {invented}
+                MODULE.CAP_RANK[invented] = len(MODULE.CAP_RANK)
+                try:
+                    caps = [
+                        anchor,
+                        MODULE.Cap(
+                            invented,
+                            anchor.ceiling,
+                            "a finding a later branch learned how to raise",
+                            blocks=anchor.blocks,
+                            asks=anchor.asks,
+                        ),
+                    ]
+                    forward = MODULE.aggregate(
+                        pillars, caps, [], dict(MODULE.DEFAULT_WEIGHTS)
+                    ).recommended_action
+                    backward = self._with_swapped_rank(
+                        first,
+                        invented,
+                        lambda: MODULE.aggregate(
+                            pillars, caps, [], dict(MODULE.DEFAULT_WEIGHTS)
+                        ).recommended_action,
+                    )
+                finally:
+                    del MODULE.ACTION_FOR_CONDITION[invented]
+                    del MODULE.CAP_CEILING[invented]
+                    del MODULE.ROUTE_CATEGORY[invented]
+                    del MODULE.CAP_RANK[invented]
+                    MODULE.CAP_OVERLAP_REVIEWED = reviewed
+                self.assertEqual(forward, anchor.action_kind)
+                if moves:
+                    self.assertEqual(backward, remedy)
+                else:
+                    self.assertEqual(
+                        backward,
+                        anchor.action_kind,
+                        "two conditions carrying one remedy changed the card "
+                        "when their order changed, so the order is deciding "
+                        "something nobody chose",
+                    )
+
+    def test_a_shipped_tie_carrying_one_remedy_survives_being_reversed(
+        self,
+    ) -> None:
+        """The same false-red direction, on real caps rather than an invented one.
+
+        `dataset-tune-holdout-overlap` and `dataset-tuning-split-empty` both
+        block at 50 and both route to `resplit-dataset`, so the sweep does
+        raise them together and their order is genuinely free. Read out of the
+        survey rather than named, so the day one of them gains its own remedy
+        this stops being the example and the pair moves into the pinned set
+        above instead of quietly staying here.
+        """
+        checked = 0
+        for ceiling, first, second, verdict, _evidence in _tie_survey():
+            if verdict != "one remedy":
+                continue
+            witnesses = [
+                row
+                for row in _survey_sweep()
+                if _decides_the_recommendation(row[2], first, second)
+            ]
+            if not witnesses:
+                continue
+            with self.subTest(ceiling=ceiling, pair=(first, second)):
+                remedy = MODULE.ACTION_FOR_CONDITION[first]
+                self.assertEqual(self._reversed_recommendation(witnesses[0]), remedy)
+                self.assertEqual(
+                    self._with_swapped_rank(
+                        first,
+                        second,
+                        lambda: self._reversed_recommendation(witnesses[0]),
+                    ),
+                    remedy,
+                )
+                checked += 1
+        self.assertTrue(
+            checked, "no shipped tie carrying one remedy was reachable to check"
+        )
 
 
 def score_space(facts):
@@ -8535,6 +9414,141 @@ if __name__ == "__main__":
     unittest.main()
 
 
+#: A phrase the card sets apart from its prose: a run of capitalised words. It
+#: is how this renderer marks the words it expects a reader to point at -
+#: `BLOCKER`, `LIMITED TO 89`, `FIX BEFORE PAID RUN`, `REPEATED ROWS` - and it
+#: survives the sentence around it being rewritten, which a whole-sentence
+#: needle does not.
+#:
+#: Bounded by `\b` at both ends, so a Title-Case word cannot contribute its
+#: leading capital: without it `FIX BEFORE PAID RUN Nothing is wired` matched
+#: `FIX BEFORE PAID RUN N`, a term no document could ever explain and one that
+#: moves whenever the sentence after the label does.
+_CARD_TERM = re.compile(r"\b[A-Z][A-Z0-9']*(?: [A-Z][A-Z0-9']*)*\b")
+
+
+def _renderer_strings(source: str, entry: str) -> list[tuple[str, str]]:
+    """`(origin, text)` for every string `entry` and its callees can print.
+
+    The closure is followed rather than listed: `entry` plus every module-level
+    function it transitively calls, so a helper written tomorrow is inside the
+    guards below the day it is written and not the day somebody remembers to
+    add it to a tuple.
+
+    Module-level string constants the closure names are read too, because three
+    of the card's own labels live in one (`BLOCKER_KEYWORD`,
+    `REPEATED_ROWS_LABEL`, `ACCEPTED_ROUTE_LABEL`) and a scan of literals alone
+    would see none of them. Docstrings are excluded: they are the only strings
+    in these functions addressed to us rather than to a reader.
+    """
+    tree = ast.parse(source)
+    functions = {
+        node.name: node
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    closure: set[str] = set()
+    pending = [entry]
+    while pending:
+        name = pending.pop()
+        if name in closure or name not in functions:
+            continue
+        closure.add(name)
+        pending.extend(
+            inner.func.id
+            for inner in ast.walk(functions[name])
+            if isinstance(inner, ast.Call) and isinstance(inner.func, ast.Name)
+        )
+
+    constants: dict[str, str] = {}
+    for node in tree.body:
+        if not isinstance(node, ast.Assign) or len(node.targets) != 1:
+            continue
+        if not isinstance(node.targets[0], ast.Name):
+            continue
+        try:
+            value = ast.literal_eval(node.value)
+        except (TypeError, ValueError, SyntaxError, MemoryError, RecursionError):
+            continue
+        if isinstance(value, str):
+            constants[node.targets[0].id] = value
+
+    spoken: list[tuple[str, str]] = []
+    for name in sorted(closure):
+        node = functions[name]
+        docstrings = {
+            id(item.value)
+            for item in ast.walk(node)
+            if isinstance(item, ast.Expr) and isinstance(item.value, ast.Constant)
+        }
+        for item in ast.walk(node):
+            if (
+                isinstance(item, ast.Constant)
+                and isinstance(item.value, str)
+                and id(item) not in docstrings
+            ):
+                spoken.append((name, item.value))
+            elif isinstance(item, ast.Name) and item.id in constants:
+                spoken.append((item.id, constants[item.id]))
+    return spoken
+
+
+def _card_quoted_blocks(source: str, entry: str = "render_card") -> list[str]:
+    """The multi-line constants the card reprints verbatim.
+
+    One worked agent file, printed as an indented block so a reader can see the
+    shape that would pass. It is an artifact being shown, not words addressed to
+    the reader, so the names inside it - `MODELS` - are nobody's vocabulary and
+    the glossary owes them nothing. Identified by carrying a newline rather than
+    by name, so a second quoted artifact is treated the same way on the day it
+    is added.
+    """
+    return [text for _, text in _renderer_strings(source, entry) if "\n" in text]
+
+
+def _card_terms(source: str, entry: str = "render_card") -> dict[str, set[str]]:
+    """The terms one renderer and everything it calls can print, by origin.
+
+    Read off the RENDERER rather than off a table, which is the whole point:
+    the guard this feeds used to iterate `CHECK_DISPLAY_NAMES` and therefore
+    required the glossary to explain the twelve check labels and nothing else.
+    Every sentence the card writes for itself - the caps, the blocker line, the
+    repeated-rows block, the assumption line - was outside it, and cap prose
+    drifted out of the glossary's vocabulary exactly there (#398).
+
+    Taken from the SOURCE and not from rendered cards. A scan over rendered
+    cards can only require what some state it happened to build actually
+    printed, so a branch nobody thought to render would be exempt from the
+    guard while reading as covered - which is the defect class this package
+    keeps filing against itself. Reading the closure covers every branch,
+    including the ones no fixture reaches.
+
+    Multi-line constants are skipped, for the reason `_card_quoted_blocks`
+    gives: they are artifacts the card reprints, not words it addresses to the
+    reader.
+    """
+    terms: dict[str, set[str]] = {}
+    for origin, text in _renderer_strings(source, entry):
+        if "\n" in text:
+            continue
+        for match in _CARD_TERM.findall(text):
+            if len(match) >= 3:
+                terms.setdefault(match, set()).add(origin)
+    return terms
+
+
+def _unexplained_by(terms: set[str], glossary_text: str) -> set[str]:
+    """The terms the glossary has no entry for.
+
+    Case-insensitive, because the card shouts what the glossary spells in
+    sentence case: the card's `LIMITED TO 89` is the glossary's `"limited to"
+    is the ceiling you are at`, and requiring the shout verbatim would report a
+    documented term as undocumented.
+    """
+    flat = " ".join(glossary_text.split()).lower()
+    return {term for term in terms if term.lower() not in flat}
+
+
 def _prose_literals(function: ast.AST) -> list[str]:
     """The sentences a function prints, from its own body.
 
@@ -8651,20 +9665,309 @@ class TheCardSpeaksTheUsersLanguageTests(unittest.TestCase):
             "an internal check name is printed as a label",
         )
 
-    def test_the_glossary_explains_every_line_the_card_prints(self) -> None:
-        """So there is a prepared answer when the user asks what one means."""
+    #: Terms the card sets apart and the glossary has no entry for, each with
+    #: the reason it is here. This register is the point of the guard below, not
+    #: an exception to it: the previous version iterated `CHECK_DISPLAY_NAMES`,
+    #: so the twelve check labels were required and everything the card writes
+    #: for itself was invisible - and a gap read as coverage. Named, they are
+    #: reviewable; and the guard fails on a term that is neither explained nor
+    #: named here, so the next one cannot join them quietly (#398).
+    CARD_TERMS_WITHOUT_A_GLOSSARY_ENTRY = {
+        "TRAIGENT OPTIMIZATION READINESS": (
+            "the card's own title. It names the artifact rather than a word in "
+            "it, and the artifact is what the glossary's `Readiness score (the "
+            "card, the three pillars, bands, caps, blocked)` entry is about."
+        ),
+        "FIX BEFORE PAID RUN": (
+            "the label on a blocking cap. The glossary explains `BLOCKER` and "
+            "what blocking means, and stops one line short of the words the "
+            "card actually prints beside the cap that caused it."
+        ),
+        "ASSUMED GENERATED": (
+            "the label on the assumption line. The glossary explains an "
+            "`undeclared row` and that it is scored as generated; the label a "
+            "customer would quote back has no headword of its own."
+        ),
+        "REPEATED ROWS": (
+            "the label on the repeated-inputs block. The glossary explains the "
+            "`repeated or dominant answers` CHECK and when rows count as "
+            "repeats, but not the block the card prints under this name."
+        ),
+        "ACCEPTED ROUTE": (
+            "the label on the worked example printed beside a refused "
+            "parameter. Nothing in the glossary names it."
+        ),
+    }
+
+    def test_the_glossary_explains_every_term_the_card_prints(self) -> None:
+        """So there is a prepared answer when the user asks what one means.
+
+        Renamed from `..._every_line_the_card_prints`, which promised the whole
+        card and delivered one dict: it iterated `CHECK_DISPLAY_NAMES`, so no
+        guard anywhere required the glossary to explain a sentence the renderer
+        writes for itself. A cap reason drifted out of the glossary's vocabulary
+        through exactly that hole, and the sibling that caught it says so in its
+        own docstring - `test_a_cap_reason_uses_the_term_the_glossary_defines`,
+        which is narrow on purpose because this one was not (#398).
+
+        What is enforced is TERMS and not whole lines, and the name says so.
+        The card's prose explains itself; its capitalised labels are the words a
+        customer points at, and those are what an assistant is sent to the
+        glossary to answer for. The set of them is read off the renderer and
+        everything it calls, so a new label is inside this guard the moment it
+        is written.
+
+        Three assertions rather than one, because the register above can be
+        wrong in two directions and each has a different repair: a term that
+        stopped being printed, a term nothing explains, and a term the glossary
+        has since gained an entry for.
+        """
         glossary = (
             Path(MODULE.__file__).parents[1] / "references" / "glossary.md"
         ).read_text(encoding="utf-8")
-        flat = " ".join(glossary.split())
-        for shown in sorted(set(MODULE.CHECK_DISPLAY_NAMES.values())):
-            with self.subTest(line=shown):
-                self.assertIn(
-                    shown,
-                    flat,
-                    f"the card prints '{shown}' and the glossary does not "
-                    "explain it, so the assistant has nothing to answer with",
-                )
+        printed = set(_card_terms(Path(MODULE.__file__).read_text(encoding="utf-8")))
+        # The labels the card prints through `display_name`, and the two
+        # enumerations it interpolates: bands into the headline, pillar names
+        # into each row. Read off the module for the same reason the terms are
+        # read off the renderer - a thirteenth check or a sixth band is covered
+        # the day it is declared.
+        printed |= set(MODULE.CHECK_DISPLAY_NAMES.values())
+        printed |= set(MODULE.BAND_ORDER)
+        printed |= {name.upper() for name in MODULE.COMPONENTS}
+
+        register = set(self.CARD_TERMS_WITHOUT_A_GLOSSARY_ENTRY)
+        self.assertEqual(
+            sorted(register - printed),
+            [],
+            "the register names a term the card no longer prints. A stale "
+            "entry excuses nothing and hides the next real gap - delete it",
+        )
+        unexplained = _unexplained_by(printed, glossary)
+        self.assertEqual(
+            sorted(unexplained - register),
+            [],
+            "the card prints these and the glossary explains none of them, so "
+            "the assistant sent there has nothing to answer with. Give each an "
+            "entry, or name it in CARD_TERMS_WITHOUT_A_GLOSSARY_ENTRY with the "
+            "reason it needs none",
+        )
+        self.assertEqual(
+            sorted(register - unexplained),
+            [],
+            "the glossary now explains these, so the register entry says a gap "
+            "exists where one was closed - delete it",
+        )
+
+    def test_the_term_scan_reaches_a_label_only_a_helper_prints(self) -> None:
+        """The reach the guard above rests on, on a source it can be wrong about.
+
+        `render_card` prints four of its labels itself and hands the rest to
+        helpers - the blocker line, the repeated-rows block, the accepted route.
+        A scan that read only the entry function would require the glossary to
+        explain the first four and quietly exempt the others, which is the
+        shape of the defect it replaces rather than a smaller version of it.
+
+        Invented source, so what is asserted is what this test wrote and not
+        what the module already believes.
+        """
+        source = (
+            "def helper(palette):\n"
+            "    return f'  {palette.bad}HELD FOR REVIEW{palette.reset} waiting'\n"
+            "\n"
+            "def render_card(score, *, palette, unicode_ok=True):\n"
+            "    return '\\n'.join(helper(palette))\n"
+        )
+        terms = _card_terms(source)
+        self.assertIn("HELD FOR REVIEW", terms)
+        self.assertEqual(terms["HELD FOR REVIEW"], {"helper"})
+
+    def test_a_new_card_term_the_glossary_does_not_explain_is_reported(self) -> None:
+        """The guard REDs on the thing it exists to catch.
+
+        A renderer sentence carrying a label nobody wrote an entry for is the
+        state #398 describes, and under the old guard it was green: the label
+        was not in `CHECK_DISPLAY_NAMES`, so nothing looked at it. Here the
+        same state is reported by name.
+
+        The glossary text is invented too, and it explains one of the two terms.
+        A fixture where nothing is explained would pass a scan that had stopped
+        working, because an empty result and a total failure read alike.
+        """
+        source = (
+            "def render_card(score, *, palette, unicode_ok=True):\n"
+            "    lines = [f'  {palette.bad}BLOCKER{palette.reset} one thing']\n"
+            "    lines.append(f'  {palette.warn}HELD FOR REVIEW{palette.reset} two')\n"
+            "    return '\\n'.join(lines)\n"
+        )
+        terms = set(_card_terms(source))
+        self.assertEqual(terms, {"BLOCKER", "HELD FOR REVIEW"})
+        glossary = (
+            "Blocked: a `BLOCKER` line under the score, shown when a blocking\n"
+            "cap fired. It does not mean every component is broken.\n"
+        )
+        self.assertEqual(_unexplained_by(terms, glossary), {"HELD FOR REVIEW"})
+
+    def test_rewording_the_prose_around_a_term_does_not_move_the_scan(self) -> None:
+        """A guard nobody can satisfy is deleted by the next contributor.
+
+        The card's sentences are edited constantly - this module's own history
+        is mostly rewording - and a guard keyed to whole sentences would go red
+        on every one of those edits while proving nothing about vocabulary. The
+        two sources here print the same two labels inside completely different
+        prose, and the scan has to see one set.
+        """
+        first = (
+            "def render_card(score, *, palette, unicode_ok=True):\n"
+            "    return (\n"
+            "        f'{palette.warn}LIMITED TO {score.cap}{palette.reset} "
+            "generated rows bound what this can claim'\n"
+            "    )\n"
+        )
+        second = (
+            "def render_card(score, *, palette, unicode_ok=True):\n"
+            "    return (\n"
+            "        f'{palette.warn}LIMITED TO {score.cap}{palette.reset} "
+            "a made-up answer key is not evidence about production yet'\n"
+            "    )\n"
+        )
+        self.assertEqual(set(_card_terms(first)), set(_card_terms(second)))
+        self.assertEqual(set(_card_terms(first)), {"LIMITED TO"})
+
+    def test_the_scan_skips_the_worked_code_sample_the_card_quotes(self) -> None:
+        """Somebody's example variable is not vocabulary the glossary owes.
+
+        `accepted_route_shape` prints a whole agent file verbatim so a reader
+        can see the shape that would pass. Counting the names inside it would
+        put `MODELS` on the list of words the glossary must define, which is a
+        false red - and a guard that fires on nothing gets weakened until it
+        fires on nothing real either.
+        """
+        source = (
+            "SAMPLE = '''from openai import OpenAI\n"
+            "\n"
+            'MODELS = ["a", "b"]\n'
+            "'''\n"
+            "\n"
+            "def render_card(score, *, palette, unicode_ok=True):\n"
+            "    lines = [f'  {palette.warn}ACCEPTED ROUTE{palette.reset} one agent']\n"
+            "    lines.extend(SAMPLE.splitlines())\n"
+            "    return '\\n'.join(lines)\n"
+        )
+        terms = set(_card_terms(source))
+        self.assertIn("ACCEPTED ROUTE", terms)
+        self.assertNotIn("MODELS", terms)
+
+    def test_every_term_a_rendered_card_prints_is_inside_the_scan(self) -> None:
+        """The scan read off the source, checked against cards actually printed.
+
+        The direction matters: the source scan is the authority, because it
+        reaches branches no fixture builds. What this asks is the other thing -
+        that it is not NARROWER than the artifact. A label assembled at render
+        time from something the scan cannot see would print on a customer's
+        card while sitting outside the guard above, which is how a set that
+        looks complete stops being one.
+
+        The quoted agent file is subtracted from the artifact side, because the
+        source side deliberately drops it. Subtracted by reading the blocks the
+        card reprints rather than by naming `MODELS`, so a second quoted
+        artifact needs no edit here.
+        """
+        source = Path(MODULE.__file__).read_text(encoding="utf-8")
+        scanned = set(_card_terms(source))
+        scanned |= set(MODULE.CHECK_DISPLAY_NAMES.values())
+        scanned |= set(MODULE.BAND_ORDER)
+        scanned |= {name.upper() for name in MODULE.COMPONENTS}
+        scanned |= {
+            term
+            for block in _card_quoted_blocks(source)
+            for term in _CARD_TERM.findall(block)
+            if len(term) >= 3
+        }
+
+        cards = self._cards_over_the_branches()
+        self.assertGreater(len(cards), 5, "too few states to say anything")
+        printed = {
+            term
+            for card in cards
+            for term in _CARD_TERM.findall(card)
+            if len(term) >= 3
+        }
+        self.assertTrue(printed, "no card printed a term, so nothing was compared")
+        self.assertEqual(
+            sorted(printed - scanned),
+            [],
+            "a rendered card prints these and the source scan does not see "
+            "them, so the glossary guard is not enforced on them",
+        )
+
+    def _cards_over_the_branches(self) -> list[str]:
+        """One card per block `render_card` chooses between.
+
+        Built rather than scored: the question is which LABELS can print, and a
+        state like "a ceiling that binds nothing" is reached by a combination of
+        numbers rather than by a project. The scored paths are covered by the
+        rest of this file.
+        """
+        pillars = [
+            MODULE.Pillar(
+                name=name,
+                score=60,
+                confidence=1.0,
+                subscores=(
+                    MODULE.SubScore("power", 20.0, 25.0, True, "180 rows to score"),
+                    MODULE.SubScore(
+                        "calibration", 0.0, 40.0, False, "no calibration reached"
+                    ),
+                ),
+            )
+            for name in MODULE.COMPONENTS
+        ]
+
+        def scored(caps):
+            return MODULE.aggregate(
+                pillars, list(caps), (), dict(MODULE.DEFAULT_WEIGHTS)
+            )
+
+        plain = scored(())
+        scores = [
+            plain,
+            scored([MODULE.NOTHING_WIRED_CAP]),
+            scored([MODULE.FULLY_SYNTHETIC_CAP]),
+            # A ceiling far above the score, so the subjunctive label prints.
+            scored(
+                [MODULE.Cap("dataset-coarse-resolution", 89, "bounded", blocks=False)]
+            ),
+            replace(plain, band_limited_by_confidence=True),
+            replace(plain, agent_route_unverified=True),
+            replace(plain, agent_source_read=True),
+            replace(
+                plain,
+                provenance_assumption=MODULE.ProvenanceAssumption(
+                    undeclared_rows=4,
+                    scored_rows=30,
+                    scored_as_generated=60,
+                    if_declared_collected=71,
+                ),
+            ),
+            replace(
+                plain,
+                repeated_inputs=MODULE.RepeatedInputs(
+                    scoreable=18, distinct=12, side="to tune on"
+                ),
+                recommended_action=MODULE.ADD_EXAMPLES,
+            ),
+            replace(
+                plain,
+                repeated_inputs=MODULE.RepeatedInputs(
+                    scoreable=18, distinct=12, side="to tune on"
+                ),
+            ),
+        ]
+        return [
+            MODULE.render_card(score, palette=MODULE.PLAIN, unicode_ok=unicode_ok)
+            for score in scores
+            for unicode_ok in (True, False)
+        ]
 
     def test_one_fact_prints_as_one_line(self) -> None:
         """An agent with no config space produced three identical rows.

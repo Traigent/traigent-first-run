@@ -76,6 +76,56 @@ def assistant_facing_documents() -> list[Path]:
     ]
 
 
+#: How much of a document a failed statement check may print.
+#:
+#: `assertIn(phrase, flattened_document)` renders the WHOLE haystack as its
+#: standard message. Measured on this tree: the connected-preview guard's
+#: haystack is `SKILL.md` flattened, 91_078 characters, so the actionable half
+#: of the failure - which phrase is missing - arrived buried in a document
+#: dump and the author had to search the failure for the answer.
+#: traigent-first-run#372.
+DOCUMENT_EXCERPT = 240
+
+
+def document_states(text: str, phrase: str) -> str | None:
+    """None when `text` states `phrase`, or a bounded diagnosis when it does not.
+
+    The diagnosis names the phrase, says how large the document searched was,
+    and shows where the document STOPS agreeing with it - the longest leading
+    run of the phrase the document does contain, with what follows that run in
+    the document beside what the phrase expected. A reworded sentence then
+    reads as a rewording rather than as an absence, which is the difference
+    between an author fixing it in one read and an author deleting the guard.
+
+    Bounded on purpose. A check that answers "not found" by printing the thing
+    it searched is answering with the question.
+    """
+    if phrase in text:
+        return None
+    low, high = 0, len(phrase)
+    while low < high:
+        middle = (low + high + 1) // 2
+        if phrase[:middle] in text:
+            low = middle
+        else:
+            high = middle - 1
+    shared = phrase[:low]
+    if not shared:
+        return (
+            f"the document does not state {phrase!r}, and shares no leading "
+            f"run with it at all, so this is an absence rather than a "
+            f"rewording ({len(text)} characters searched)"
+        )
+    at = text.index(shared)
+    found = text[at : at + min(len(phrase) + 40, DOCUMENT_EXCERPT)]
+    return (
+        f"the document does not state {phrase!r}. It agrees as far as "
+        f"{shared[-DOCUMENT_EXCERPT:]!r} and then says "
+        f"{found[len(shared) :]!r} where the phrase expects "
+        f"{phrase[low : low + 40]!r} ({len(text)} characters searched)"
+    )
+
+
 GUIDANCE_BUDGET_LEDGER = Path(__file__).resolve().parent / "guidance_budget"
 BUDGET_ENTRY_NAME = re.compile(r"^(\d{4})-[a-z0-9][a-z0-9-]*\.md$")
 BUDGET_FIGURE = re.compile(
@@ -443,8 +493,52 @@ def guidance_budget_defects(entries: list[SimpleNamespace]) -> list[str]:
                 and previous_ceiling is not None
                 and later.ceilings[which] < previous_ceiling
             ):
-                # A prune lowers both the ceiling and the measurement; that is a
-                # different decision and this check has nothing to say about it.
+                # A prune lowers both the ceiling and the measurement, and only
+                # one of those two halves was ever looked at. The ceiling
+                # falling is the author's CLAIM that a prune happened; the
+                # measurement falling is what a prune actually produces. This
+                # branch used to `continue` on the claim alone, which made "the
+                # ceiling went down" a surface signal standing in for "the
+                # package shrank" with the didn't-find-it side counting as a
+                # pass - so the renumber this rule was added for walked
+                # straight through it. Two branches both take the next number,
+                # the polite second author renumbers in place and re-points at
+                # the first, and keeps their own figures rather than measuring
+                # the merge; if the branch they were written on had a lower
+                # ceiling, the kept ceiling reads as a prune and a ceiling
+                # nobody chose to lower ships.
+                #
+                # What this cannot detect, because the rule is narrow: it
+                # compares two figures the author typed, not the package. A
+                # renumber whose kept figure happens to be BELOW its new
+                # predecessor's is the same arithmetic a real prune produces
+                # and is still believed - there is no signal in the file that
+                # tells those two apart, and the live ceiling check in
+                # `test_the_guidance_budget_is_not_silently_exceeded` with the
+                # newest-entry check is what weighs anything for real. It also
+                # says nothing about an entry that restates a ceiling
+                # unchanged, which never reaches this branch.
+                #
+                # And it refuses one thing that is not a renumber: tightening a
+                # ceiling toward a package that did not shrink. That is a third
+                # decision, it has never been made here - both lowering entries
+                # on record, 0046 and 0067, brought the measurement down with
+                # the ceiling - and it should arrive with a field of its own
+                # rather than on the signal a stale renumber already uses.
+                if measurement >= previous_measurement:
+                    monotone.append(
+                        f"{later.path.name} lowers the {which} ceiling from "
+                        f"{previous_ceiling} to {later.ceilings[which]} while "
+                        f"measuring {which} at {measurement}, at or above "
+                        f"{previous_entry.path.name}'s {previous_measurement} "
+                        "which it follows. A prune lowers the measurement as "
+                        "well as the ceiling, and this one lowers only the "
+                        "ceiling - which is what a renumber leaves when its "
+                        "figures were kept instead of taken again. Re-measure "
+                        "the merged package and state the figure it gives: a "
+                        "renumber is not a prune, and this ceiling is "
+                        "otherwise one nobody decided to lower."
+                    )
                 continue
             if measurement < previous_measurement:
                 monotone.append(
@@ -565,6 +659,165 @@ def guidance_budget_measured(document_bytes: dict[Path, int]) -> dict[str, int]:
         "total": sum(document_bytes.values()),
         "document": max(document_bytes.values()),
     }
+
+
+def _median(values: list[int]) -> int:
+    """The middle of `values`, and the lower middle of an even-length one."""
+    ordered = sorted(values)
+    middle = len(ordered) // 2
+    if len(ordered) % 2:
+        return ordered[middle]
+    return (ordered[middle - 1] + ordered[middle]) // 2
+
+
+def guidance_budget_raises(chain: list[SimpleNamespace]) -> dict[str, list[int]]:
+    """How many bytes each raise of each ceiling added, along the chain.
+
+    Ceiling movement rather than measured movement, because a raise is the
+    decision this ledger records and the measured figure is only what it was
+    weighed against. The choice is not load bearing: over the committed
+    ledger the median ceiling raise is 475 bytes for resident and 1_342 for
+    total, against median measured steps of 556 and 1_297.5 - close enough
+    that either population puts the line in the same place.
+
+    A ceiling that goes DOWN is not a raise and is not counted, so a prune
+    cannot pull the typical raise toward zero and quieten the note below.
+
+    A budget that has been declared and never raised maps to an empty list
+    rather than being absent from the result, so a caller can tell "this
+    ledger records no raise of it" apart from "there is no such budget".
+    """
+    raises: dict[str, list[int]] = {}
+    in_force: dict[str, int] = {}
+    for entry in chain:
+        for which, ceiling in sorted(entry.ceilings.items()):
+            raises.setdefault(which, [])
+            if which in in_force and ceiling > in_force[which]:
+                raises[which].append(ceiling - in_force[which])
+            in_force[which] = ceiling
+    return raises
+
+
+def guidance_budget_typical_raise(
+    raises: dict[str, list[int]],
+) -> dict[str, tuple[int, str]]:
+    """What an ordinary raise of each budget costs, and over what population.
+
+    Derived rather than picked, which is the point of putting it here: "the
+    remaining headroom is smaller than a typical raise" is computable from
+    the ledger's own record, and a round constant would be the one number in
+    this mechanism nobody measured, sitting beside a directory whose entries
+    are nothing but measurements.
+
+    The median rather than the mean, because the population is skewed by
+    design: the largest total raise on record is 41_741 bytes against a
+    median of 1_342, so a mean would set the line four figures above the
+    raise an ordinary branch makes and the note would fire on packages with
+    room to spare.
+
+    A budget with no raise of its own falls back to every raise the ledger
+    records - which is `document` today, declared once and not moved since.
+    That fallback is deliberate. Returning no threshold for it would make "no
+    history to compare with" arrive as "nothing to say", which is the same
+    didn't-find-it-so-pass shape these checks exist to refuse. The population
+    is returned beside the figure so the note can name it, because a
+    threshold whose population the reader cannot see is the round constant
+    this exists instead of.
+    """
+    pooled = [size for sizes in raises.values() for size in sizes]
+    typical: dict[str, tuple[int, str]] = {}
+    for which, sizes in sorted(raises.items()):
+        if sizes:
+            typical[which] = (
+                _median(sizes),
+                f"the {len(sizes)} {which} raises this ledger records",
+            )
+        elif pooled:
+            typical[which] = (
+                _median(pooled),
+                f"all {len(pooled)} raises this ledger records, because it "
+                f"records no {which} raise of its own",
+            )
+    return typical
+
+
+def guidance_budget_headroom_notes(
+    document_bytes: dict[Path, int],
+    ceilings: dict[str, int],
+    typical: dict[str, tuple[int, str]],
+) -> list[str]:
+    """One line per budget with less room left than a raise usually takes.
+
+    Every budget is a single `assertLess`, so a branch is green one byte under
+    and red one byte over and nothing between those two states says anything.
+    The first signal that a budget is nearly spent therefore arrives as a
+    failing build on somebody else's branch, carrying arithmetic that belongs
+    to two branches neither of which could see the other, and the branch that
+    goes red is rarely the branch that spent the bytes.
+
+    It is not a distant prospect. Measured on the tree this arrived in, all
+    three budgets are already inside one typical raise: 465 bytes of resident
+    headroom, 497 of total, and 57 on the largest single document.
+
+    This is a note and not an assertion: it reports a distance rather than a
+    rule anybody broke, and the three ceiling checks beside it are what refuse.
+    A budget that is over its ceiling gets a negative headroom here and a
+    failure from the check a moment later, which is the right way round.
+
+    Returned rather than printed, so the wording is exercised against an
+    invented package and an invented ledger instead of by waiting for the
+    real one to walk up to its wall.
+    """
+    measured = guidance_budget_measured(document_bytes)
+    largest = max(document_bytes, key=lambda path: document_bytes[path])
+    notes: list[str] = []
+    for which, ceiling in sorted(ceilings.items()):
+        headroom = ceiling - measured[which]
+        if which in typical:
+            size, population = typical[which]
+            if headroom >= size:
+                continue
+            against = (
+                f"less than the {size} bytes a raise of it usually takes, "
+                f"the median over {population}"
+            )
+        else:
+            # A ledger holding no raise at all cannot say what a typical one
+            # costs. Staying quiet here would make "no history" read as "no
+            # problem", so the note is unconditional instead and says why.
+            against = (
+                "and this ledger records no raise at all, so there is no "
+                "typical raise to measure that against"
+            )
+        # DOCUMENT is `max()` over the set rather than a named file, so the
+        # gap belongs to whichever document currently holds the maximum and
+        # not to the package. Naming it is what makes the number legible:
+        # 57 bytes reads as a wall the next paragraph anywhere hits, and it is
+        # nothing of the sort until an edit lands in this one file.
+        where = (
+            f"{largest.relative_to(ROOT)} at {measured[which]}"
+            if which == "document"
+            else str(measured[which])
+        )
+        qualifier = (
+            " That ceiling is the largest single document rather than a named "
+            "one, so this gap is that file's alone: every other document has "
+            "room to grow until it becomes the maximum without moving this "
+            "number."
+            if which == "document"
+            else ""
+        )
+        notes.append(
+            f"guidance budget: {which} has {headroom} bytes of headroom "
+            f"({where} against a {ceiling} ceiling), {against}. Prune, or "
+            "raise the ceiling deliberately with an entry in "
+            "tests/guidance_budget/ measured on the merged package: the "
+            "branch that goes over will not be the one that spent this, and "
+            f"it finds out from a red build.{qualifier} Nothing here fails - "
+            "this is the state between green and red that used to say "
+            "nothing at all."
+        )
+    return notes
 
 
 SKILL_PREFIX = "skills/traigent-first-run/"
@@ -5434,6 +5687,17 @@ class SkillPackageTests(unittest.TestCase):
         self.assertEqual(untracked.returncode, 1)
         self.assertEqual(tracked.returncode, 0)
 
+    # The forbidden shape, and the flattening the sweep below searches through.
+    # Both are named once here so the positive control searches EXACTLY what the
+    # sweep searches: a control that rebuilt either would prove its own copy
+    # works and say nothing about the check that ships.
+    RELATIVE_SCRIPT_INVOCATION = "python3 skills/traigent-first-run/scripts/"
+
+    @staticmethod
+    def flowed(text: str) -> str:
+        """Collapse wrapping, so a line break cannot hide a phrase from a search."""
+        return " ".join(text.casefold().split())
+
     def test_installed_skill_tools_use_absolute_paths_from_the_project_cwd(
         self,
     ) -> None:
@@ -5461,13 +5725,78 @@ class SkillPackageTests(unittest.TestCase):
             '"$TRAIGENT_FIRST_RUN_PYTHON" "$TRAIGENT_FIRST_RUN_SKILL_DIR/scripts/calibrate_evaluator.py"',
             evaluation_source,
         )
-        self.assertNotIn(
-            "python3 skills/traigent-first-run/scripts/",
-            "\n".join(path.read_text() for path in assistant_facing_documents()),
-        )
+        # Searched through the same flattening the sibling sweeps in this file
+        # use, because this one searched the raw bytes and a line break was
+        # therefore enough to satisfy it. A document that ends a line on
+        # `python3` and opens the next on `skills/...` ships the same relative
+        # invocation a customer would copy, and the raw search reported it
+        # absent: a check that did not find the thing, reading as a check that
+        # passed. Measured rather than argued - the wrapped form planted in
+        # `sdk-execution.md` left this test green before this change and reds it
+        # after, while the unwrapped form reds either way.
+        #
+        # Per document rather than over one joined blob, so a failure names the
+        # file that carries it, and so the seam between two documents cannot
+        # manufacture a hit out of a `python3` ending one and a path opening the
+        # next.
+        for path in assistant_facing_documents():
+            with self.subTest(document=path.name):
+                self.assertNotIn(
+                    self.RELATIVE_SCRIPT_INVOCATION, self.flowed(path.read_text())
+                )
         self.assertNotIn("run the command from the repository root", evaluation)
         self.assertIn("installed skill's absolute directory", readme)
         self.assertIn("your project as the working directory", readme)
+
+    def test_the_relative_invocation_sweep_can_still_see_what_it_forbids(self) -> None:
+        """The sweep above can only report absence; this makes it report presence.
+
+        An `assertNotIn` passes when it finds nothing, so it passes just as
+        quietly when it has been made unable to find anything: a needle that no
+        longer matches the shape its haystack is now in, a normalizer that ate
+        the separator the needle still carries, a corpus that went empty. The
+        sweep was repaired for exactly that, one level down, and a repair whose
+        only evidence is that the suite stayed green is not distinguishable from
+        no repair at all.
+
+        The planted documents are written out here rather than derived from the
+        constant they are matched against. A fixture built from the needle
+        agrees with any needle, including a broken one, so it would confirm this
+        check while it was blind.
+        """
+        wrapped = (
+            "# Probe\n\nRun the readiness helper with python3\n"
+            "skills/traigent-first-run/scripts/readiness.py --project .\n"
+        )
+        flat = (
+            "# Probe\n\nRun the readiness helper with "
+            "python3 skills/traigent-first-run/scripts/readiness.py --project .\n"
+        )
+        for shape, planted in (("wrapped", wrapped), ("unwrapped", flat)):
+            with self.subTest(planted=shape):
+                self.assertIn(self.RELATIVE_SCRIPT_INVOCATION, self.flowed(planted))
+
+        # And the wordings the shipped documents legitimately use, which have to
+        # survive it. A sweep that catches the supported invocation too is not a
+        # stricter sweep, it is one nobody can leave switched on.
+        honest = {
+            "the exported-variable form the reference documents": (
+                '"$TRAIGENT_FIRST_RUN_PYTHON" '
+                '"$TRAIGENT_FIRST_RUN_SKILL_DIR/scripts/calibrate_evaluator.py"'
+            ),
+            "a literal absolute path, wrapped": (
+                "python3\n"
+                "/absolute/path/to/the-loaded-skill-directory/scripts/readiness.py"
+            ),
+            "prose naming the directory without invoking it": (
+                "The helpers live in the skill's `scripts/` directory. Invoke them\n"
+                "through the absolute skill directory, never through\n"
+                "`skills/traigent-first-run/scripts/` relative to the project."
+            ),
+        }
+        for description, wording in honest.items():
+            with self.subTest(honest=description):
+                self.assertNotIn(self.RELATIVE_SCRIPT_INVOCATION, self.flowed(wording))
 
     def test_provenance_is_documented_as_a_per_row_average_with_ceilings(self) -> None:
         """Points and ceilings answer different questions; the guide says both.
@@ -5775,6 +6104,12 @@ class SkillPackageTests(unittest.TestCase):
         The sweep is keyed on the PHRASINGS a row count is written in, not on a
         list of files, so a document that gains one of those sentences is
         covered without this test being edited.
+
+        Three of the seven statements are visible only because the pattern
+        below tolerates whitespace between the words of a phrase: two in
+        `references/evaluation-and-dataset.md` and one in `SKILL.md`. Which
+        document that tolerance was bought for, and how to re-derive the list,
+        is recorded at the pattern itself.
         """
         dataset_text = (
             SKILL_ROOT / "references" / "evaluation-and-dataset.md"
@@ -5818,10 +6153,30 @@ class SkillPackageTests(unittest.TestCase):
         )
 
         # Whitespace-tolerant between words, because it was not and that hid a
-        # restatement: `SKILL.md` wraps its own statement across a line, so the
-        # pattern matched six of the seven that existed and the seventh was
-        # uncovered by nothing more than a line break. A sweep whose misses look
-        # exactly like absences is the shape this file keeps finding elsewhere.
+        # restatement. The hidden one was in
+        # `references/evaluation-and-dataset.md`, which had wrapped `18 tuning`
+        # onto the end of one line and `rows` onto the start of the next: the
+        # pattern matched six of the seven statements that existed and the
+        # seventh was uncovered by nothing more than a line break. A sweep whose
+        # misses look exactly like absences is the shape this file keeps finding
+        # elsewhere.
+        #
+        # `SKILL.md` was NOT that hidden site, and this comment said it was
+        # until #366. Its statement stood on one line and the old pattern read
+        # it, so the record of why the pin below moved from six to seven sent
+        # the next auditor of that constant to a file that had nothing to do
+        # with it. Re-derivable in one pass, which is how the misattribution was
+        # caught: replace each `\s+` between words below with a literal space,
+        # run both patterns over `assistant_facing_documents()`, and print the
+        # document each hit came from. The difference is the site the tolerance
+        # bought.
+        #
+        # Three of the seven depend on that tolerance today, not one, and they
+        # sit in two documents: this reference twice and `SKILL.md` once.
+        # `SKILL.md` earned its wrap in the very change that added the
+        # tolerance, when `18 rows by default` was rewritten to `18 questions by
+        # default` and reflowed across a line - so it does wrap now, just not
+        # for the reason and not at the moment the old wording claimed.
         #
         # `tuning questions` and `questions by default` are here because the
         # subset rules now cap the draw in QUESTIONS: eighteen questions bring
@@ -5848,8 +6203,11 @@ class SkillPackageTests(unittest.TestCase):
         # reads. Each new statement is welded here rather than left uncovered.
         #
         # Six to seven is NOT a seventh statement arriving. It is the wrapped
-        # one in `SKILL.md` that the pattern above could not see until it was
-        # made whitespace-tolerant, counted now for the first time. Two
+        # one in `references/evaluation-and-dataset.md` that the pattern above
+        # could not see until it was made whitespace-tolerant, counted now for
+        # the first time. (Recorded here as `SKILL.md` until #366, which is the
+        # one file it was not: that statement was on a single line and was
+        # already among the six.) Two
         # statements also moved in the same change - the row review dropped its
         # copy of the number entirely, and the line that names the bound to the
         # user gained one - which is why the total holds while the membership
@@ -14709,6 +15067,506 @@ class SkillPackageTests(unittest.TestCase):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, f"{skill} {safety} {sdk}")
 
+    # ------------------------------------------------------------------
+    # Cap routing, read as a claim rather than as two substrings (#389)
+    # ------------------------------------------------------------------
+    #
+    # The three guards below used to assert that a condition id appeared
+    # somewhere after an anchor sentence and that some phrase appeared after
+    # it:
+    #
+    #     self.assertIn(condition, routing)
+    #     self.assertLess(routing.index(condition), routing.index(branch))
+    #
+    # That checks a condition is MENTIONED. It never checks what the mention
+    # says, and both directions were measured on this tree before the change.
+    #
+    # STUFFABLE. SKILL.md writes `evaluator-generated` and `agent-generated`
+    # into one sentence. Splitting it in two and replacing the agent half with
+    # "`agent-generated` needs no branch and stops nothing, so never carry the
+    # substitute's provenance into the words" left both guards green: the
+    # matched phrase `walkthrough labeling` was still present two hundred bytes
+    # later, inside the OTHER condition's sentence. The guidance told an
+    # assistant not to do the one thing the module's remedy asks, and nothing
+    # in 1,621 tests noticed.
+    #
+    # FALSE-RED. A correct rewrite that used different words failed as a bare
+    # `ValueError: substring not found` out of `routing.index`, naming neither
+    # the condition, nor the phrase, nor where it looked. So the guard rejected
+    # true guidance for its wording and accepted false guidance for its
+    # substrings, and its whole cost landed on the honest author.
+    #
+    # Three things changed, and each closes a different half of that:
+    #
+    #   1. The window is the condition's OWN passage, parsed out of what the
+    #      document renders, rather than everything after an anchor. A phrase
+    #      belonging to another route can no longer answer for this one, and
+    #      the test's own comment already recorded a phrase 1,600 bytes away
+    #      satisfying a pair.
+    #   2. The phrase has to be ISSUED there, read with `clause_polarity`. A
+    #      route written backwards - "needs no walkthrough labeling", "never
+    #      enter the creation dependency matrix" - is refused where the module
+    #      says that is the route the condition takes.
+    #   3. The expectation is keyed by the module's REMEDY rather than pasted
+    #      per condition. `ACTION_FOR_CONDITION` is where this package decides
+    #      which conditions share an instruction, so a new condition on an
+    #      existing remedy is covered with nothing written here and a new
+    #      remedy fails closed. Every condition added since these guards were
+    #      written arrived as a `(condition, phrase)` pair chosen to match text
+    #      its author had just written, which is how the table came to agree
+    #      with every author by construction.
+    #
+    # What this still does not do, said plainly because a one-sided disclosure
+    # is its own defect: it reads words, not meaning. A passage that keeps one
+    # of its remedy's phrasings un-negated and writes something false around it
+    # is not detected. A rewrite that drops every listed phrasing reds - but it
+    # reds with the condition, the remedy, the polarity read for each phrasing
+    # and the passage on the screen, so the author can act on it in one read
+    # and the fix is another phrasing beside the ones below, never a wider
+    # window.
+
+    #: The sentence SKILL.md opens its cap routing with. The region runs from
+    #: here to the next heading, so a guard over routes reads the routes.
+    CAP_ROUTING_OPENER = "Route every active dataset cap"
+
+    #: Every remedy the scorer can emit, and the phrasings SKILL.md may route
+    #: it with.
+    #:
+    #: A SET per remedy rather than one string per condition, because a route
+    #: can honestly be written more than one way and a guard that pins one
+    #: wording pushes the next author away from the rule instead of towards
+    #: it. Exactly one of them has to be ISSUED in the condition's own passage;
+    #: the rest may be absent, and one being absent is never a failure on its
+    #: own.
+    CAP_ROUTE_PHRASINGS: dict[str, tuple[str, ...]] = {
+        "get-data": ("enter the creation dependency matrix",),
+        "read-dataset": ("read and re-map it", "re-map it per the dataset reference"),
+        "label-data": ("repairing a labelled working copy",),
+        "repair-dataset": ("repair and revalidate a working copy",),
+        "resplit-dataset": ("repair a disjoint split", "repair the split"),
+        "review-split": ("ask before repairing", "redraw the split"),
+        "connect-real-data": (
+            "walkthrough labeling rules",
+            "apply those rules",
+            "name the split out loud",
+        ),
+        "declare-data-provenance": (
+            "say the assumption and both card scores",
+            "offer declaring the real source",
+        ),
+        "review-answer-key": (
+            "a person reviews a sample of the answers",
+            "the same review",
+            "put the flagged rows to the user",
+            "approval-gated question",
+        ),
+        "add-examples": (
+            "more comparable examples is what lifts this",
+            "carry the top-up on the one ask",
+        ),
+        "repair-evaluator": ("inspect, repair, or replace",),
+        "connect-evaluator": ("create or select",),
+        "connect-real-evaluator": ("walkthrough labeling",),
+        "connect-agent": ("connect the one they have",),
+        "connect-real-agent": ("walkthrough labeling",),
+        "review-repeats": (
+            "take the card's two routes",
+            "carry on over the examples that differ",
+        ),
+        "complete-calibration": ("opening/stage-4 calibration gate",),
+        "review-evaluator-containment": ("manual-containment route",),
+        "bound-evaluator-cost": ("five-option question",),
+        "vary-knobs": (
+            "report stops/zero trials",
+            "mark one setting with a second value",
+        ),
+    }
+
+    #: What a route has to rule OUT, where saying only what to do is not enough.
+    #:
+    #: Per condition rather than per remedy, because it is a property of the
+    #: condition: three routes exist largely to stop an assistant taking the
+    #: branch a neighbouring condition takes, and a customer holding a
+    #: perfectly good file was sent into dataset creation exactly that way.
+    #:
+    #: Read for polarity rather than pinned as "do not ...", which is what the
+    #: old table did. "Never enter the creation dependency matrix" says the
+    #: same thing and used to red.
+    CAP_ROUTE_REFUSALS: dict[str, tuple[str, ...]] = {
+        "dataset-shape-unrecognised": ("enter the creation dependency matrix",),
+        "dataset-tuning-split-empty": (
+            "enter the creation dependency matrix",
+            "ask for more data",
+        ),
+        "dataset-split-by-task-family": (
+            "enter the creation dependency matrix",
+            "ask for more data",
+        ),
+    }
+
+    #: A route denied by a bare determiner rather than by a negator.
+    #:
+    #: `POLARITY_NEGATORS` deliberately does not carry a bare `no` in front of
+    #: a noun, and it should not: "no configuration is enough on its own" opens
+    #: honest sentences all over this package, and reading that as a
+    #: prohibition is the false red that list was narrowed to remove. In front
+    #: of a ROUTE the two words are a denial and nothing else - "needs no
+    #: walkthrough labeling" is the route written backwards - so they are read
+    #: here, where the clause is known to be a route, and not there, where it
+    #: is not.
+    ROUTE_DENIALS = re.compile(r"\b(?:no|without)\s*$")
+
+    @classmethod
+    def route_polarity(cls, passage: str, phrase: str) -> frozenset[str]:
+        """What every occurrence of `phrase` in `passage` does to it.
+
+        `clause_polarity` collapses disagreeing occurrences to `mixed`, which
+        is right for a prohibition and wrong for a route: a route may be stated
+        and then carry a caveat, and one caveat does not unwrite it. The set is
+        returned instead, so the caller decides and the message can say what
+        was read where.
+        """
+        flat = " ".join(passage.casefold().split())
+        needle = " ".join(phrase.casefold().split())
+        answers = set()
+        for at in clause_occurrences(flat, needle):
+            runup = adjacent_runup(flat, at)
+            answers.add(
+                "forbids" if cls.ROUTE_DENIALS.search(runup) else polarity_of(runup)
+            )
+        return frozenset(answers) or frozenset({"absent"})
+
+    @staticmethod
+    def constructed_cap_conditions() -> set[str]:
+        """Every condition this package's scorer constructs a `Cap` for.
+
+        Read off the module's source, as the three guards below already did
+        one prefix at a time. Read whole here because a passage boundary is a
+        mention of ANY condition: a scan that knew only the dataset ids would
+        read the evaluator paragraph as part of the last dataset route.
+        """
+        source = (SKILL_ROOT / "scripts" / "readiness.py").read_text()
+        return set(re.findall(r'Cap\(\s*"([a-z0-9-]+)"', source))
+
+    @classmethod
+    def cap_routing_region(cls) -> str:
+        """SKILL.md's cap routing, from the sentence that opens it to the next heading."""
+        text = SKILL.read_text()
+        opener = text.find(cls.CAP_ROUTING_OPENER)
+        if opener < 0:
+            raise AssertionError(
+                f"SKILL.md no longer opens its cap routing with "
+                f"{cls.CAP_ROUTING_OPENER!r}. The routing guards read the "
+                "region between that sentence and the next heading; move this "
+                "anchor with the prose rather than leaving them reading a "
+                "region that starts somewhere else"
+            )
+        end = text.find("\n### ", opener)
+        return text[opener : end if end >= 0 else len(text)]
+
+    @staticmethod
+    def cap_routing_passages(region: str, conditions: set[str]) -> dict[str, str]:
+        """The passage that routes each condition, one per condition.
+
+        Parsed out of what markdown renders rather than sliced at an offset. A
+        `- ` item is one unit whole, however many sentences it takes, because a
+        bullet is one route and splitting it would let its second half answer
+        for its first. Prose is split at `POLARITY_SENTENCE_BREAK`, which
+        breaks on `;` as well as on `.` - the evaluator paragraph separates
+        three routes with semicolons and nothing else.
+
+        A route runs from the unit that first names its condition through every
+        following unit that names none, so the paragraph explaining a route
+        belongs to it. A condition named again later is a cross-reference and
+        does not open a second passage: `dataset-tuning-split-empty`'s bullet
+        cites `dataset-tune-holdout-overlap`, and a citation is not a route.
+
+        What it does not model, measured rather than assumed. Two routes
+        written into one sentence share a passage, so a phrase belonging to one
+        of them can still answer for the other - three sentences in this
+        document rather than the whole region, which is why the refusals above
+        are per condition. And a fenced block inside the region would be read
+        as prose; there are none there today (0 fences in 6_993 bytes), so this
+        is a bound on the parse and not a live blind spot, and a fence arriving
+        would show up as a sentence claiming a route.
+        """
+        units: list[str] = []
+        prose: list[str] = []
+        item: list[str] = []
+
+        def close_prose() -> None:
+            if prose:
+                units.extend(POLARITY_SENTENCE_BREAK.split(" ".join(prose)))
+                prose.clear()
+
+        def close_item() -> None:
+            if item:
+                units.append(" ".join(item))
+                item.clear()
+
+        for line in region.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("- "):
+                close_prose()
+                close_item()
+                item.append(stripped)
+            elif item:
+                if stripped:
+                    item.append(stripped)
+                else:
+                    close_item()
+            elif stripped:
+                prose.append(stripped)
+            else:
+                close_prose()
+        close_item()
+        close_prose()
+
+        named = re.compile(r"`([a-z0-9][a-z0-9-]*)`")
+        passages: dict[str, str] = {}
+        current: list[str] = []
+        for unit in units:
+            opening = [
+                name
+                for name in dict.fromkeys(named.findall(unit))
+                if name in conditions and name not in passages
+            ]
+            if opening:
+                current = opening
+                for condition in opening:
+                    passages[condition] = unit
+            elif current:
+                for condition in current:
+                    passages[condition] = f"{passages[condition]} {unit}"
+        return passages
+
+    def assert_the_route_is_written_for(
+        self, condition: str, passages: dict[str, str]
+    ) -> None:
+        """`condition` has a passage of its own, and that passage issues its remedy."""
+        remedy = READINESS.ACTION_FOR_CONDITION.get(condition)
+        self.assertIsNotNone(
+            remedy,
+            f"`{condition}` is constructed as a cap and has no entry in "
+            "ACTION_FOR_CONDITION, so there is no remedy for a route to carry",
+        )
+        self.assertIn(
+            remedy,
+            self.CAP_ROUTE_PHRASINGS,
+            f"`{condition}` routes to the remedy {remedy!r} and nothing here "
+            "says how SKILL.md may write it. Add the phrasings that route it - "
+            "otherwise the next condition on this remedy ships with a guard "
+            "that cannot read its route",
+        )
+        passage = passages.get(condition)
+        self.assertIsNotNone(
+            passage,
+            f"SKILL.md's cap routing never names `{condition}`, so an "
+            "assistant meeting the one cap it fires on has no branch to take "
+            f"and no words to say. The scorer raises it and routes it to "
+            f"{remedy!r}; write that route in the reader's language, because "
+            "condition ids stay internal. Routes found here: "
+            f"{sorted(passages)}",
+        )
+        phrasings = self.CAP_ROUTE_PHRASINGS[remedy]
+        read = {
+            phrase: sorted(self.route_polarity(passage, phrase)) for phrase in phrasings
+        }
+        issued = [
+            phrase
+            for phrase, answers in read.items()
+            if {"mandates", "unqualified"}.intersection(answers)
+        ]
+        self.assertTrue(
+            issued,
+            f"`{condition}`'s own passage does not tell the assistant to do "
+            f"what the module's remedy {remedy!r} asks. Read there: {read}. "
+            "`forbids` is the route written backwards, which is the defect "
+            "this guard exists for; `absent` means the route is written in "
+            "words this guard does not know, and the fix for that is another "
+            "phrasing in CAP_ROUTE_PHRASINGS, never a wider window. The "
+            f"passage read: {passage!r}",
+        )
+        # Not wrapped in `subTest`: this helper is exercised by a probe below
+        # that asserts it RAISES, and a subTest records a failure instead of
+        # raising, so the probe would pass while proving nothing.
+        for phrase in self.CAP_ROUTE_REFUSALS.get(condition, ()):
+            self.assertEqual(
+                sorted(self.route_polarity(passage, phrase)),
+                ["forbids"],
+                f"`{condition}`'s route has to rule {phrase!r} out and not "
+                "merely omit it: an assistant reading only what to do takes "
+                "the neighbouring condition's branch, which is how a customer "
+                "holding a usable file was sent to create one. The passage "
+                f"read: {passage!r}",
+            )
+
+    def test_every_cap_remedy_the_scorer_emits_has_a_written_route(self) -> None:
+        """The phrasings table covers the module's remedies, and only those.
+
+        Both directions. A remedy with no phrasings is a condition nobody can
+        route, and it fails closed at the first guard that meets it. A phrasing
+        set for a remedy the module no longer emits is dead text that reads
+        like a control, which is the shape this repository has been bitten by
+        before, so it is named here rather than left to rot.
+        """
+        emitted = {
+            READINESS.ACTION_FOR_CONDITION[condition]
+            for condition in self.constructed_cap_conditions()
+        }
+        self.assertEqual(
+            emitted - set(self.CAP_ROUTE_PHRASINGS),
+            set(),
+            "the scorer emits a remedy that no route in CAP_ROUTE_PHRASINGS "
+            "knows how to read, so every condition on it is routed by a guard "
+            "that cannot tell a route from an absence",
+        )
+        self.assertEqual(
+            set(self.CAP_ROUTE_PHRASINGS) - emitted,
+            set(),
+            "CAP_ROUTE_PHRASINGS carries a remedy the scorer no longer emits; "
+            "delete it rather than leaving a control nothing exercises",
+        )
+
+    def test_the_cap_routing_guard_reads_what_the_route_says(self) -> None:
+        """The mechanism above, probed both ways on invented routing regions.
+
+        Invented rather than read off SKILL.md, and deliberately: a fixture
+        built from the document the assertion reads proves only that the two
+        agree, which is the circularity this guard was rebuilt to remove.
+        """
+        honest = (
+            "Route every active dataset cap to the branch this flow defines.\n"
+            "\n"
+            "- `dataset-absent` - enter the creation dependency matrix, and "
+            "put both ways out on the one ask.\n"
+            "\n"
+            "`evaluator-generated` and `agent-generated` route through the "
+            "walkthrough labeling rules and nothing else - carry the "
+            "substitute's provenance into the words. Neither is a repair.\n"
+        )
+        conditions = {"dataset-absent", "evaluator-generated", "agent-generated"}
+        passages = self.cap_routing_passages(honest, conditions)
+        self.assertEqual(set(passages), conditions)
+        for condition in sorted(conditions):
+            with self.subTest(honest=condition):
+                self.assert_the_route_is_written_for(condition, passages)
+        # The paragraph that explains a route belongs to it, so a guard reading
+        # the route can read the explanation too.
+        self.assertIn("neither is a repair", passages["agent-generated"].casefold())
+
+        # 1. The stuffing this guard was rebuilt for, measured on SKILL.md
+        # itself: the agent half split off and written backwards, with the
+        # matched phrase left standing in the sentence beside it.
+        stuffed = honest.replace(
+            "`evaluator-generated` and `agent-generated` route through the "
+            "walkthrough labeling rules and nothing else - carry the "
+            "substitute's provenance into the words.",
+            "`agent-generated` needs no branch and stops nothing, so never "
+            "carry the substitute's provenance into the words. "
+            "`evaluator-generated` routes through the walkthrough labeling "
+            "rules and nothing else.",
+        )
+        stuffed_passages = self.cap_routing_passages(stuffed, conditions)
+        with self.assertRaises(AssertionError) as refused:
+            self.assert_the_route_is_written_for("agent-generated", stuffed_passages)
+        self.assertIn("agent-generated", str(refused.exception))
+        self.assertIn("connect-real-agent", str(refused.exception))
+        # `evaluator-generated` keeps its route in the same document, so the
+        # refusal is of this route and not of the file.
+        self.assert_the_route_is_written_for("evaluator-generated", stuffed_passages)
+
+        # 2. The same phrase, kept inside the passage and negated there.
+        negated = honest.replace(
+            "route through the walkthrough labeling rules and nothing else",
+            "need no walkthrough labeling rules and bound nothing",
+        )
+        with self.assertRaises(AssertionError):
+            self.assert_the_route_is_written_for(
+                "agent-generated", self.cap_routing_passages(negated, conditions)
+            )
+
+        # 3. A route rewritten in the remedy's other words stays green, which
+        # is the half a false red is silent about: nobody reports one, and the
+        # next contributor deletes the guard instead.
+        reworded = honest.replace(
+            "- `dataset-absent` - enter the creation dependency matrix, and "
+            "put both ways out on the one ask.",
+            "- `dataset-absent` - stop the paid run wherever nothing names a "
+            "dataset: enter the creation dependency matrix, then point this "
+            "run at the rows they already hold or derive some from what the "
+            "project does have.",
+        )
+        self.assert_the_route_is_written_for(
+            "dataset-absent", self.cap_routing_passages(reworded, conditions)
+        )
+        # And a reflow of the same bullet, because a hard wrap is not an edit.
+        wrapped = honest.replace(
+            "- `dataset-absent` - enter the creation dependency matrix, and "
+            "put both ways out on the one ask.",
+            "- `dataset-absent` - enter the creation\n  dependency matrix, and "
+            "put both ways\n  out on the one ask.",
+        )
+        self.assert_the_route_is_written_for(
+            "dataset-absent", self.cap_routing_passages(wrapped, conditions)
+        )
+
+        # 4. A missing route reds by name rather than as `substring not found`.
+        deleted = honest.replace("`agent-generated` ", "")
+        with self.assertRaises(AssertionError) as missing:
+            self.assert_the_route_is_written_for(
+                "agent-generated", self.cap_routing_passages(deleted, conditions)
+            )
+        self.assertIn("never names `agent-generated`", str(missing.exception))
+        self.assertIn("condition ids stay internal", str(missing.exception))
+
+        # 5. A refusal is read for polarity, so the rule may be written in any
+        # of the words that forbid.
+        refusing = (
+            "Route every active dataset cap to the branch this flow defines.\n"
+            "\n"
+            "- `dataset-shape-unrecognised` - no row matched the shape: never "
+            "enter the creation dependency matrix. Read and re-map it per the "
+            "dataset reference, then re-score.\n"
+        )
+        self.assert_the_route_is_written_for(
+            "dataset-shape-unrecognised",
+            self.cap_routing_passages(refusing, {"dataset-shape-unrecognised"}),
+        )
+        with self.assertRaises(AssertionError) as unrefused:
+            self.assert_the_route_is_written_for(
+                "dataset-shape-unrecognised",
+                self.cap_routing_passages(
+                    refusing.replace("never enter", "enter"),
+                    {"dataset-shape-unrecognised"},
+                ),
+            )
+        self.assertIn("rule", str(unrefused.exception))
+
+    def test_a_route_cannot_be_answered_by_the_sentence_beside_it(self) -> None:
+        """The window is the route's own passage, not the rest of the file.
+
+        The old guards read everything after an anchor sentence, so a phrase
+        1,600 bytes away in another condition's bullet satisfied a pair. The
+        comment above the agent guard recorded that hazard and the guard kept
+        it, because bounding an `.index()` needs somewhere to bound it to.
+        """
+        region = (
+            "Route every active dataset cap to the branch this flow defines.\n"
+            "\n"
+            "- `dataset-integrity-fail` - treat it as invalid.\n"
+            "- `dataset-absent` - enter the creation dependency matrix.\n"
+        )
+        passages = self.cap_routing_passages(
+            region, {"dataset-absent", "dataset-integrity-fail"}
+        )
+        self.assertNotIn(
+            "creation dependency matrix", passages["dataset-integrity-fail"]
+        )
+        with self.assertRaises(AssertionError):
+            self.assert_the_route_is_written_for("dataset-integrity-fail", passages)
+        self.assert_the_route_is_written_for("dataset-absent", passages)
+
     def test_every_agent_cap_condition_has_a_documented_branch(self) -> None:
         """The sibling below covers the dataset caps; nothing covered the agent one.
 
@@ -14730,11 +15588,19 @@ class SkillPackageTests(unittest.TestCase):
 
         Enumerated from the module rather than listed here, for the same reason
         the dataset check pins its count: a second agent cap must be routed too.
+
+        Since #389 the pair table is gone. What each route has to SAY is read
+        off the module's remedy through `CAP_ROUTE_PHRASINGS`, inside the
+        condition's own passage, with the polarity read - see the comment above
+        `CAP_ROUTING_OPENER` for the two directions that were measured broken.
+        The anchor this used to split on is gone with it: the region now runs
+        from the routing opener to the next heading, so the hazard that comment
+        recorded - reading a phrase 1_600 bytes before the condition it is
+        supposed to be routing - is no longer reachable rather than avoided.
         """
-        source = (SKILL_ROOT / "scripts" / "readiness.py").read_text()
         conditions = {
             condition
-            for condition in re.findall(r'Cap\(\s*"([a-z0-9-]+)"', source)
+            for condition in self.constructed_cap_conditions()
             if condition.startswith("agent-")
         }
         # #238 adds the second: whose agent this is, which is a different
@@ -14747,44 +15613,12 @@ class SkillPackageTests(unittest.TestCase):
         self.assertEqual(
             conditions, {"agent-no-varying-knobs", "agent-generated", "agent-absent"}
         )
-        normalized = " ".join(SKILL.read_text().casefold().split())
-        # Split at the evaluator/agent sentence, not at the dataset one. This
-        # branch also teaches the dataset intro the blocks-vs-advisory rule in
-        # the same words ("an advisory ceiling, never a repair to route"), so a
-        # search from the dataset anchor finds that sentence first and the
-        # ordering assertion below reads a phrase 1_600 bytes before the
-        # condition it is supposed to be routing.
-        routing = normalized.split(
-            "evaluator and agent caps route through the rules that already own them", 1
-        )[1]
-        for condition, branch in (
-            ("agent-no-varying-knobs", "report stops/zero trials"),
-            # #238: routed to the walkthrough labeling rules, which is the one
-            # place this guide already decides what may be said about material
-            # it wrote itself.
-            ("agent-generated", "walkthrough labeling"),
-            # #375: the remedy names the agent, never its settings. A run that
-            # has no agent is sent to connect or create one, which is what the
-            # other two pillars already do for their own absence.
-            ("agent-absent", "connect the one they have"),
-        ):
+        passages = self.cap_routing_passages(
+            self.cap_routing_region(), self.constructed_cap_conditions()
+        )
+        for condition in sorted(conditions):
             with self.subTest(condition=condition):
-                self.assertIn(
-                    condition,
-                    routing,
-                    f"{condition} can stop or bound a run and the guidance "
-                    "never names it, so the assistant has no branch to take "
-                    "and no words to say - condition ids stay internal",
-                )
-                self.assertLess(routing.index(condition), routing.index(branch))
-        # Every agent condition the scorer can raise is routed here, not just
-        # the ones the table above spells out - the loop the dataset sibling
-        # has had all along, and the half missing here. Without it, deleting a
-        # bullet AND its row left the guard green over guidance that no longer
-        # routes the condition, so the table was checking itself.
-        for condition in conditions:
-            with self.subTest(condition=condition):
-                self.assertIn(condition, routing)
+                self.assert_the_route_is_written_for(condition, passages)
 
     def test_the_advisory_claim_matches_which_branches_actually_block(
         self,
@@ -14855,9 +15689,12 @@ class SkillPackageTests(unittest.TestCase):
     def test_an_unrecognised_shape_is_read_before_it_is_called_broken(self) -> None:
         """The route has to say READ, not just "not creation".
 
-        Removing "do not enter the creation dependency matrix" is caught by the
-        branch table below. Replacing the rest of the sentence with the repair
-        instruction it used to carry is not: the branch still routes away from
+        Removing the refusal of the creation dependency matrix is caught by
+        `CAP_ROUTE_REFUSALS` above, which reads it for polarity rather than for
+        the literal "do not ..." this line used to name, so "never enter the
+        creation dependency matrix" says it too. Replacing the rest of the
+        sentence with the repair instruction it used to carry is not caught
+        there: the branch still routes away from
         creation, and the assistant is still told to fix a file nobody has
         opened. Both halves are the fix, so both are asserted.
 
@@ -15135,84 +15972,29 @@ class SkillPackageTests(unittest.TestCase):
         # their ids happened to collide and then under the integrity reason.
         self.assertEqual(len(conditions), 17)
         normalized = " ".join(SKILL.read_text().casefold().split())
-        routing = normalized.split("route every active dataset cap", 1)[1]
-        for condition, branch in (
-            ("dataset-absent", "creation dependency matrix"),
-            # An unrecognised shape routes to reading the file, and explicitly
-            # NOT to creation: the id it used to share sent a customer holding
-            # a perfectly good file into the dataset-creation branch. It does
-            # not route to repair either - most files that reach it are not
-            # broken, so the branch must not open by calling them invalid.
-            (
-                "dataset-shape-unrecognised",
-                "do not enter the creation dependency matrix",
-            ),
-            ("dataset-no-expected-outputs", "repairing a labelled working copy"),
-            ("dataset-integrity-fail", "repair and revalidate a working copy"),
-            ("dataset-tune-holdout-overlap", "repair a disjoint split"),
-            ("dataset-fully-synthetic", "walkthrough labeling rules"),
-            ("dataset-mostly-synthetic", "name the split out loud"),
-            (
-                "dataset-undeclared-provenance",
-                "say the assumption and both card scores",
-            ),
-            ("dataset-mostly-undeclared", "say the assumption and both card scores"),
-            (
-                "dataset-generated-answer-key",
-                "a person reviews a sample of the answers",
-            ),
-            # The rung between "none of it" and "all of it", which the ladder
-            # did not have: with one rung the cap turned on the last row.
-            (
-                "dataset-mostly-generated-answer-key",
-                "the same review, on the model-written answers only",
-            ),
-            # Both map to `get-data`, and neither bullet said anything about
-            # data: one said "call rankings exploratory" and the other said
-            # report paired uncertainty. Read together with the action they
-            # emit, the guidance told a customer to hedge the claim and never
-            # what would lift the ceiling. The branch has to do what the action
-            # name says, or the two halves route differently.
-            # Distinct phrases, because the two conditions kept separate
-            # bullets: #149 gave `below-measurable-size` a second, blocking
-            # half that a merged bullet cannot carry, so `.index()` on one
-            # shared phrase would find the earlier bullet for both.
-            # Its own bullet since #197, and it must say the two things the
-            # small-dataset bullet used to have to carry as a second half: the
-            # repair is the split, and nobody is sent for data.
-            (
-                "dataset-tuning-split-empty",
-                "the rows are fine and the split is not",
-            ),
-            (
-                "dataset-below-measurable-size",
-                "more comparable examples is what lifts this",
-            ),
-            (
-                "dataset-coarse-resolution",
-                "more comparable examples is what lifts this too",
-            ),
-            (
-                "dataset-unsound-expected-outputs",
-                "approval-gated question",
-            ),
-            # #378: the routes are the customer's two answers and neither is a
-            # repair the assistant makes for them, so the branch has to carry
-            # both of them rather than the recommended one alone.
-            (
-                "dataset-repeated-rows",
-                "carry on over the examples that differ",
-            ),
-        ):
+        # The `(condition, phrase)` table that used to sit here is gone with
+        # #389. It carried one pasted pair per condition, each phrase chosen to
+        # match text its author had just written, and it read them across the
+        # whole rest of the file: the comment it carried recorded that
+        # `dataset-coarse-resolution` needed its own phrase spelled "...too"
+        # only because `.index()` on the shared one found the earlier bullet.
+        # Bounding a route to its own passage removes that reason, and keying
+        # the phrasings on `ACTION_FOR_CONDITION` removes the pasting - two
+        # conditions that share a remedy now share its phrasings, and that is
+        # derived rather than noticed.
+        #
+        # Every dataset condition the scorer can raise is routed, not only the
+        # ones a table spelled out. The count above pins how many exist; this
+        # pins that each one reaches a reader with a branch that says what the
+        # module's remedy asks.
+        passages = self.cap_routing_passages(
+            self.cap_routing_region(), self.constructed_cap_conditions()
+        )
+        for condition in sorted(conditions):
             with self.subTest(condition=condition):
-                self.assertIn(condition, conditions)
-                self.assertLess(routing.index(condition), routing.index(branch))
-        # Every dataset condition the scorer can raise is routed here, not just
-        # the ones this table spells out. The count above pins how many exist;
-        # this pins that none of them reaches a reader with no branch at all.
-        for condition in conditions:
+                self.assert_the_route_is_written_for(condition, passages)
             with self.subTest(condition=condition):
-                self.assertIn(condition, routing)
+                self.assert_the_route_is_written_for(condition, passages)
         self.assertIn("present the reason rather than the condition id", normalized)
         # And the rule that decides which routes stop the run, checked against
         # the scorer rather than only quoted. Without it the routing list is
@@ -15401,7 +16183,12 @@ class SkillPackageTests(unittest.TestCase):
                     # prints for a 240-row dataset whose tuning side carries no
                     # labels - measured `FIX BEFORE PAID RUN no example can be
                     # scored`, status BLOCKED.
-                    bullet = routing.split(f"`{condition}`", 1)[1].split("- `", 1)[0]
+                    # The bullet, taken from the same parse the routes above
+                    # are read with rather than sliced out again here: two
+                    # readings of "where does this bullet end" are two chances
+                    # to disagree, and this one used to stop at the next `- `
+                    # while the routes stopped somewhere else.
+                    bullet = passages[condition].casefold()
                     self.assertIn("only where", bullet)
                     self.assertIn("the same condition blocks", bullet)
                     self.assertIn("fix before paid run", bullet)
@@ -15632,24 +16419,17 @@ class SkillPackageTests(unittest.TestCase):
             if condition.startswith("evaluator-")
         }
         self.assertEqual(len(conditions), 7)
-        normalized = " ".join(SKILL.read_text().casefold().split())
-        routing = normalized.split(
-            "evaluator and agent caps route through the rules that already own them", 1
-        )[1]
-        for condition, branch in (
-            ("evaluator-unresolved", "inspect, repair, or replace"),
-            ("evaluator-invalid", "inspect, repair, or replace"),
-            ("evaluator-unvalidated", "opening/stage-4 calibration gate"),
-            # The same evidence boundary reached by the scope gate, routed to
-            # the containment review and never to running the check here.
-            ("evaluator-calibration-refused", "manual-containment route"),
-            ("evaluator-timeout", "five-option question"),
-            ("evaluator-absent", "create or select"),
-            ("evaluator-generated", "walkthrough labeling"),
-        ):
+        # Read per route since #389, not across the rest of the file, and read
+        # for what the route SAYS rather than for a phrase that follows the id
+        # somewhere. `evaluator-unresolved` and `evaluator-invalid` share the
+        # `repair-evaluator` remedy and therefore share its phrasings, which is
+        # derived from the module rather than written twice here.
+        passages = self.cap_routing_passages(
+            self.cap_routing_region(), self.constructed_cap_conditions()
+        )
+        for condition in sorted(conditions):
             with self.subTest(condition=condition):
-                self.assertIn(condition, conditions)
-                self.assertLess(routing.index(condition), routing.index(branch))
+                self.assert_the_route_is_written_for(condition, passages)
 
     def test_the_timeout_route_has_exactly_one_home(self) -> None:
         """Three branches wrote three routes; only one of them may survive.
@@ -22170,6 +22950,24 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
             "budgets is unenforced",
         )
 
+        # And every budget gets a headroom threshold off this ledger. The
+        # derivation falls back to the pooled population for a budget the
+        # ledger has never raised, so the only way a budget can arrive here
+        # without one is a ledger with no raise anywhere in it - which would
+        # leave the note below with nothing to say and no way to tell that
+        # apart from having nothing to report.
+        self.assertEqual(
+            sorted(
+                guidance_budget_typical_raise(
+                    guidance_budget_raises(guidance_budget_chain(entries))
+                )
+            ),
+            ["document", "resident", "total"],
+            "a declared budget has no derived headroom threshold, so the note "
+            "in the ceiling check is silent about it for want of a number "
+            "rather than for want of a problem",
+        )
+
     def test_the_guidance_budget_is_not_silently_exceeded(self) -> None:
         """Size is a contradiction surface, so it gets a number and a ceiling.
 
@@ -22208,6 +23006,36 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         measured = guidance_budget_measured(document_bytes)
         resident = measured["resident"]
         ceilings = guidance_budget_ceilings()
+
+        # Imported here rather than at the top of the file: this is the one
+        # place that warns, and the import block is a line every branch
+        # touching this file crosses - which is the conflict surface the whole
+        # per-raise ledger exists to avoid making bigger.
+        import warnings
+
+        # Emitted BEFORE the three assertions, so a budget that is nearly spent
+        # is still reported on a run that goes red for a different one.
+        #
+        # `warnings.warn` and not a print, and that is measured rather than
+        # assumed. Under pytest 8.4.2 with default options a passing test's
+        # stderr is captured and discarded, so a bare print says nothing at all
+        # to anyone running the suite that way, while a warning is listed in
+        # the run's warnings summary. `unittest`, which is what CI runs, shows
+        # either. The `catch_warnings` guard is what keeps the note from ever
+        # becoming a failure: under `-W error` an unguarded `warnings.warn`
+        # errors the test in BOTH runners, and a note about spare bytes must
+        # never be the thing that reds a branch.
+        for note in guidance_budget_headroom_notes(
+            document_bytes,
+            ceilings,
+            guidance_budget_typical_raise(
+                guidance_budget_raises(guidance_budget_chain())
+            ),
+        ):
+            with warnings.catch_warnings():
+                warnings.simplefilter("always")
+                warnings.warn(note)
+
         self.assertLess(
             resident,
             ceilings["resident"],
@@ -22238,19 +23066,30 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         # sums, so a reference that takes 38KB in one step reads as a small
         # fraction of TOTAL and barely moves RESIDENT - which is
         # exactly what 0052 did, and it was found by adding up ledger entries
-        # afterwards rather than by anything failing. This one names the file.
+        # afterwards rather than by anything failing. This one names the file,
+        # and says that it is naming one: the ceiling governs `max()` over the
+        # set rather than a document chosen by name, so the gap it reports
+        # belongs to whichever file currently holds the maximum. Read without
+        # that qualifier the number is a package-wide wall, and it is not one -
+        # today's runner-up is 30KB clear, so the gap is a red herring for
+        # every edit that does not land in the file named here, and it becomes
+        # the whole story for one that does with no state in between.
         largest = max(document_bytes, key=lambda path: document_bytes[path])
         self.assertLess(
             measured["document"],
             ceilings["document"],
             f"{largest.relative_to(ROOT)} is {measured['document']} bytes "
-            f"against a {ceilings['document']} per-document ceiling. This "
-            "budget is per file on purpose: the two sums above cannot tell one "
-            "document growing by a third from forty growing a little, and the "
-            "stage that loads this one now carries every byte of it at once. "
-            "Move detail to the reference that owns that stage, or raise the "
-            "ceiling deliberately with an entry in tests/guidance_budget/ "
-            "stating which document grew and what the growth buys.",
+            f"against a {ceilings['document']} per-document ceiling, and it is "
+            "the file this ceiling is currently measuring: the budget is "
+            "`max()` over the set rather than a named document, so this gap is "
+            "that file's and every other document has room until it becomes "
+            "the maximum. This budget is per file on purpose: the two sums "
+            "above cannot tell one document growing by a third from forty "
+            "growing a little, and the stage that loads this one now carries "
+            "every byte of it at once. Move detail to the reference that owns "
+            "that stage, or raise the ceiling deliberately with an entry in "
+            "tests/guidance_budget/ stating which document grew and what the "
+            "growth buys.",
         )
 
     def test_a_single_document_that_steps_is_visible_where_the_sums_are_not(
@@ -23121,6 +23960,257 @@ class GuidanceBudgetLedgerRulesTests(unittest.TestCase):
             }
         )
         self.assertEqual(guidance_budget_defects(entries), [])
+
+    def test_a_renumber_that_kept_its_figures_is_not_a_prune(self) -> None:
+        """A lowered ceiling used to be believed with nothing checking it.
+
+        The test above is the prune this mechanism has to keep allowing. This
+        is what the same branch let through while it read only the ceiling:
+        two branches both take the next number, the polite second author
+        renumbers in place and re-points at the first, and keeps their own two
+        figures instead of measuring the merge. Their branch had the lower
+        ceiling, so the kept ceiling reads as a deliberate prune, the
+        monotonicity rule is skipped whole, and 240_000 becomes 235_000 with
+        nobody having decided that.
+
+        Branch A raised with room here, and that is the point rather than a
+        convenience: 0002 measures 231_402 under a 240_000 ceiling, so branch
+        B's kept 234_112 is ABOVE its new predecessor's figure and the
+        monotonicity rule would have had nothing to say even if it had run.
+        Every check in the file passes and the ceiling still falls. Observed
+        on this exact ledger before the evidence check existed:
+        `guidance_budget_defects` returned `[]` and `guidance_budget_ceilings`
+        returned `{'resident': 61500, 'total': 235000}`.
+
+        The figures are literal on purpose. A fixture built from
+        `guidance_budget_ceilings()` would follow the committed ledger
+        wherever it goes and stop describing this scenario the first time
+        somebody raises a ceiling.
+        """
+        renumbered = self.ledger(
+            **{
+                "0001-inherited-ledger.md": self.root(),
+                # Branch A landed first, measured on the root, and raised with
+                # room to spare - which is ordinary and is what leaves branch
+                # B's figure above this one.
+                "0002-branch-a.md": self.entry(
+                    "0002 - branch A",
+                    follows=1,
+                    follows_measured={"total": 228_407},
+                    total_ceiling=240_000,
+                    total_measured=231_402,
+                ),
+                # Branch B wrote 235_000/234_112 against `follows: 0001`. On
+                # the merge it was renumbered and re-pointed at 0002, its
+                # predecessor binding was restated as instructed, and its own
+                # two figures were carried over untouched.
+                "0003-branch-b.md": self.entry(
+                    "0003 - branch B",
+                    follows=2,
+                    follows_measured={"total": 231_402},
+                    total_ceiling=235_000,
+                    total_measured=234_112,
+                ),
+            }
+        )
+        defects = guidance_budget_defects(renumbered)
+        # Exactly one, which is the claim: no other rule in this file was
+        # catching this ledger, so the refusal below is this check working
+        # rather than a fixture that is malformed in some second way.
+        self.assertEqual(len(defects), 1, defects)
+        self.assertDefect(
+            renumbered, "0003-branch-b.md lowers the total ceiling from 240000"
+        )
+        self.assertDefect(renumbered, "to 235000 while measuring total at 234112")
+        self.assertDefect(renumbered, "at or above 0002-branch-a.md's 231402")
+        self.assertDefect(renumbered, "a renumber is not a prune")
+        self.assertDefect(renumbered, "Re-measure the merged package")
+
+        # The control, and it is deliberately not the fixture above with one
+        # number changed: a different pair of entries, about a different
+        # change, doing the thing a prune actually does. The ceiling comes
+        # down AND the measurement lands below the predecessor's, which is
+        # what removing bytes produces, and the ledger takes it.
+        pruned = self.ledger(
+            **{
+                "0001-inherited-ledger.md": self.root(),
+                "0014-stage-detail-moved-out.md": self.entry(
+                    "0014 - stage detail moved to the reference that owns it",
+                    follows=1,
+                    follows_measured={"total": 228_407},
+                    total_ceiling=230_500,
+                    total_measured=229_800,
+                ),
+                "0015-the-duplicated-card-is-gone.md": self.entry(
+                    "0015 - the duplicated card is gone",
+                    follows=14,
+                    follows_measured={"total": 229_800},
+                    total_ceiling=230_000,
+                    total_measured=229_100,
+                ),
+            }
+        )
+        self.assertEqual(guidance_budget_defects(pruned), [])
+
+        # The boundary, which is `>=` and not `>`: a measurement that merely
+        # FAILED TO RISE is not a prune either. The lowered ceiling is 230_000
+        # and the restated figure 229_800, so the entry is under its own
+        # ceiling and reaches this rule rather than being refused on the way
+        # in for a breach.
+        unchanged = self.ledger(
+            **{
+                "0001-inherited-ledger.md": self.root(),
+                "0014-stage-detail-moved-out.md": self.entry(
+                    "0014 - stage detail moved to the reference that owns it",
+                    follows=1,
+                    follows_measured={"total": 228_407},
+                    total_ceiling=230_500,
+                    total_measured=229_800,
+                ),
+                "0015-the-duplicated-card-is-gone.md": self.entry(
+                    "0015 - the duplicated card is gone",
+                    follows=14,
+                    follows_measured={"total": 229_800},
+                    total_ceiling=230_000,
+                    total_measured=229_800,
+                ),
+            }
+        )
+        self.assertDefect(unchanged, "at or above 0014-stage-detail-moved-out.md's")
+
+    def test_the_headroom_threshold_is_derived_from_the_ledgers_own_raises(
+        self,
+    ) -> None:
+        """The note's line is computed from the record, not chosen.
+
+        Two halves. `guidance_budget_raises` reads what a raise has cost off
+        the chain, and a ceiling that goes DOWN is not one - otherwise a prune
+        would pull the typical raise toward zero and quieten the note it is
+        supposed to inform. `guidance_budget_typical_raise` turns those
+        populations into one figure per budget, and falls back to the pooled
+        population for a budget the ledger has never raised rather than
+        returning nothing for it.
+
+        The populations below are literal lists, not the committed ledger's,
+        so the medians asserted here are arithmetic a reader can check.
+        """
+        entries = self.ledger(
+            **{
+                "0001-inherited-ledger.md": self.root(),
+                "0002-branch-a.md": self.entry(
+                    "0002 - branch A",
+                    follows=1,
+                    follows_measured={"total": 228_407},
+                    total_ceiling=232_000,
+                    total_measured=231_402,
+                ),
+                # A prune, and so not a raise: 231_500 is lower than 232_000.
+                "0003-branch-b.md": self.entry(
+                    "0003 - branch B",
+                    follows=2,
+                    follows_measured={"total": 231_402},
+                    total_ceiling=231_500,
+                    total_measured=230_900,
+                ),
+            }
+        )
+        self.assertEqual(
+            guidance_budget_raises(guidance_budget_chain(entries)),
+            # 228_750 -> 232_000 is the only raise here, and resident is
+            # declared once and never moved, which is an empty population
+            # rather than an absent budget.
+            {"resident": [], "total": [3_250]},
+        )
+
+        typical = guidance_budget_typical_raise(
+            {"resident": [100, 200, 900], "total": [50, 60], "document": []}
+        )
+        self.assertEqual(typical["resident"][0], 200)
+        self.assertIn("the 3 resident raises", typical["resident"][1])
+        # Even-length, so the lower of the two middles.
+        self.assertEqual(typical["total"][0], 55)
+        # Pooled: 50, 60, 100, 200, 900.
+        self.assertEqual(typical["document"][0], 100)
+        self.assertIn("records no document raise of its own", typical["document"][1])
+
+        # And the one case that genuinely has nothing to derive from. It is
+        # reported as no threshold rather than as a large one, so the note can
+        # say so instead of going quiet.
+        self.assertEqual(guidance_budget_typical_raise({"document": []}), {})
+
+    def test_the_headroom_note_fires_before_the_ceiling_does(self) -> None:
+        """The state between green and red that nothing used to report.
+
+        Driven by an invented package and an invented set of raise sizes, in
+        both directions. Waiting for the real package to walk up to its own
+        wall would prove nothing today and would prove something different
+        every time somebody raises a ceiling.
+
+        The literal figures matter here: 300 and 50 bytes of headroom against
+        a 500-byte typical raise are the fixture, and 12_000 against the same
+        500 is the budget that has to stay silent in the same call. A note
+        that cannot stay silent carries no information when it speaks.
+        """
+        guide, skill = ROOT / "GUIDE.md", SKILL
+        reference = SKILL_ROOT / "references" / "sdk-execution.md"
+        package = {guide: 8_000, skill: 40_000, reference: 60_000}
+        # resident 48_000, total 108_000, document 60_000.
+        ceilings = {"resident": 48_300, "total": 120_000, "document": 60_050}
+        typical = {
+            "resident": (500, "the 9 resident raises this ledger records"),
+            "total": (500, "the 9 total raises this ledger records"),
+            "document": (
+                500,
+                "all 18 raises this ledger records, because it records no "
+                "document raise of its own",
+            ),
+        }
+
+        notes = guidance_budget_headroom_notes(package, ceilings, typical)
+        self.assertEqual(len(notes), 2, notes)
+        document_note, resident_note = notes
+        self.assertIn("document has 50 bytes of headroom", document_note)
+        self.assertIn(
+            "references/sdk-execution.md at 60000 against a 60050 ceiling",
+            document_note,
+        )
+        # The qualifier #390 asked to be recorded: the ceiling is a maximum
+        # over the set, so this gap is one file's rather than the package's.
+        self.assertIn(
+            "the largest single document rather than a named one", document_note
+        )
+        self.assertIn("resident has 300 bytes of headroom", resident_note)
+        self.assertIn("(48000 against a 48300 ceiling)", resident_note)
+        self.assertIn(
+            "less than the 500 bytes a raise of it usually takes", resident_note
+        )
+        # TOTAL has 12_000 bytes of room on the same measurement, and says
+        # nothing. This is the half that keeps the note worth reading.
+        self.assertEqual(
+            [note for note in notes if note.startswith("guidance budget: total")], []
+        )
+        # The resident note names no file, because RESIDENT is a sum and
+        # naming one document in it would be the wrong story.
+        self.assertNotIn("sdk-execution.md", resident_note)
+
+        # Ample room everywhere: nothing fires at all.
+        self.assertEqual(
+            guidance_budget_headroom_notes(
+                package,
+                {"resident": 60_000, "total": 200_000, "document": 90_000},
+                typical,
+            ),
+            [],
+        )
+
+        # A ledger with no raise anywhere in it cannot say what a typical one
+        # costs. Every budget is reported, saying exactly that - because "no
+        # history" reported as silence is indistinguishable from "no problem",
+        # which is the shape this whole mechanism exists to refuse.
+        for note in guidance_budget_headroom_notes(package, ceilings, {}):
+            with self.subTest(note=note[:60]):
+                self.assertIn("records no raise at all", note)
+        self.assertEqual(len(guidance_budget_headroom_notes(package, ceilings, {})), 3)
 
     def test_a_ceiling_needs_the_figure_it_was_measured_against(self) -> None:
         """A ceiling with no measurement leaves the next merge nothing to
@@ -24599,6 +25689,496 @@ def places_an_ask_above_its_evidence(sentence: str) -> bool:
     return False
 
 
+#: A line that RENDERS a lettered route: `A.`, `A)`, `A (`, `**A**`, with the
+#: container prefixes an author may have typed in front of it. One pattern,
+#: used twice on purpose - the parser below matches it against text whose
+#: container prefixes have already been stripped, and `unaccounted_route_lines`
+#: matches it against raw file lines. A second pattern for the second job could
+#: drift, and the whole value of the floor is that the two cannot disagree
+#: about what even looks like a route.
+ROUTE_LINE = re.compile(
+    r"^\s*(?:>\s?)?(?:[-*+]\s+)?\*{0,2}([A-Z])(?:\.|\)|\s*\(|\*{2})"
+)
+
+MARKDOWN_FENCE = re.compile(r"^(\s{0,3})(`{3,}|~{3,})\s*(\S*)\s*$")
+MARKDOWN_QUOTE = re.compile(r"^\s{0,3}>\s?(.*)$")
+MARKDOWN_HEADING = re.compile(r"^\s{0,3}#{1,6}(?:\s|$)")
+MARKDOWN_BREAK = re.compile(r"^\s{0,3}(?:(?:-\s*){3,}|(?:\*\s*){3,}|(?:_\s*){3,})$")
+MARKDOWN_ITEM = re.compile(r"^(\s{0,3})([-*+]|\d{1,9}[.)])(\s+)(.*)$")
+
+
+class MarkdownBlock:
+    """One parsed markdown block: what it is, the lines it owns, what it holds.
+
+    `lines` are `(source line number, text with this block's own container
+    prefix removed)`. A container - a blockquote, a list, a list item - owns no
+    lines of its own and holds `children` instead, so a route line's ancestry
+    is a fact read out of the parse rather than guessed from what sat above it.
+    """
+
+    __slots__ = ("kind", "lines", "children")
+
+    def __init__(
+        self,
+        kind: str,
+        lines: object = (),
+        children: object = (),
+    ) -> None:
+        self.kind = kind
+        self.lines = tuple(lines)
+        self.children = tuple(children)
+
+    def __repr__(self) -> str:
+        first = self.lines[0][0] if self.lines else None
+        return (
+            f"MarkdownBlock({self.kind!r}, at={first}, "
+            f"lines={len(self.lines)}, children={len(self.children)})"
+        )
+
+
+def markdown_blocks(text: str) -> list[MarkdownBlock]:
+    """The block structure of one markdown document.
+
+    Enough of CommonMark to answer one question honestly: which lines are
+    SIBLINGS IN THE SAME CONTAINER. Paragraphs, blockquotes, lists, list items
+    and fenced code each get their own boundaries and their own identity, so
+    "does a lettered line belong to the route block beside it" is decided by
+    the parse and not by counting blank lines - which is the trade
+    traigent-first-run#364 and #372 are both about, reached through the two
+    separators.
+
+    **What this does NOT model**, because a parser that hides its own limits is
+    the defect this file exists to catch:
+
+    * indented (four-space) code blocks - this corpus indents continuation
+      lines inside numbered list items instead, and reading those as code would
+      hide the routes SKILL.md renders inside one;
+    * HTML blocks, link reference definitions, setext headings and tables - a
+      table row opens on `|` and a setext underline on `=`/`-`, so neither can
+      carry a route line past `ROUTE_LINE`;
+    * a list item's content column is taken from its own marker, so a
+      continuation line indented past it keeps that extra indent rather than
+      opening anything;
+    * nesting deeper than three spaces of indent per level: a marker indented
+      four or more reads as continuation text of the item above it.
+
+    Every one of those degrades a line into a paragraph of the level above. It
+    is still parsed, still scanned, and still has to be accounted for by
+    `unaccounted_route_lines`, so no limit here turns into a silent pass.
+    """
+    return _markdown_blocks_in(list(enumerate(text.splitlines(), 1)))
+
+
+def _starts_a_markdown_block(raw: str) -> bool:
+    """Whether this line opens a new block rather than continuing a paragraph."""
+    return bool(
+        MARKDOWN_FENCE.match(raw)
+        or MARKDOWN_QUOTE.match(raw)
+        or MARKDOWN_HEADING.match(raw)
+        or MARKDOWN_BREAK.match(raw)
+        or MARKDOWN_ITEM.match(raw)
+    )
+
+
+def _markdown_blocks_in(lines: list[tuple[int, str]]) -> list[MarkdownBlock]:
+    blocks: list[MarkdownBlock] = []
+    at = 0
+    while at < len(lines):
+        raw = lines[at][1]
+        if not raw.strip():
+            at += 1
+        elif MARKDOWN_FENCE.match(raw):
+            at = _read_markdown_fence(lines, at, blocks)
+        elif MARKDOWN_QUOTE.match(raw):
+            at = _read_markdown_quote(lines, at, blocks)
+        elif MARKDOWN_HEADING.match(raw) or MARKDOWN_BREAK.match(raw):
+            blocks.append(MarkdownBlock("heading", (lines[at],)))
+            at += 1
+        elif MARKDOWN_ITEM.match(raw):
+            at = _read_markdown_list(lines, at, blocks)
+        else:
+            at = _read_markdown_paragraph(lines, at, blocks)
+    return blocks
+
+
+def _read_markdown_fence(lines: list[tuple[int, str]], at: int, blocks: list) -> int:
+    opened = MARKDOWN_FENCE.match(lines[at][1])
+    assert opened is not None
+    marker = opened.group(2)
+    body: list[tuple[int, str]] = []
+    at += 1
+    while at < len(lines):
+        closing = MARKDOWN_FENCE.match(lines[at][1])
+        if (
+            closing
+            and closing.group(2)[0] == marker[0]
+            and len(closing.group(2)) >= len(marker)
+            and not closing.group(3)
+        ):
+            at += 1
+            break
+        body.append(lines[at])
+        at += 1
+    blocks.append(MarkdownBlock("fence", body))
+    return at
+
+
+def _read_markdown_quote(lines: list[tuple[int, str]], at: int, blocks: list) -> int:
+    """One blockquote, ending where the quote does.
+
+    A blank line ends it, quoted or not: `>` on its own is a blank line INSIDE
+    the quote and separates two paragraphs within it, while an unquoted blank
+    line closes the quote and opens a new one. Both facts are read here so that
+    neither has to be inferred later, which is what makes the two renderings of
+    a two-route template parse to the same choice further down.
+    """
+    body: list[tuple[int, str]] = []
+    while at < len(lines):
+        number, raw = lines[at]
+        quoted = MARKDOWN_QUOTE.match(raw)
+        if quoted:
+            body.append((number, quoted.group(1)))
+        elif not raw.strip() or _starts_a_markdown_block(raw):
+            break
+        else:
+            # CommonMark laziness: an unquoted, unindented line under a quoted
+            # paragraph continues it rather than leaving the quote.
+            body.append((number, raw.strip()))
+        at += 1
+    blocks.append(MarkdownBlock("quote", (), _markdown_blocks_in(body)))
+    return at
+
+
+def _read_markdown_list(lines: list[tuple[int, str]], at: int, blocks: list) -> int:
+    """One list, holding its items.
+
+    The LIST is the container, not the item. `- A. proceed` and `- B. fix` are
+    siblings of the same list whether the author left a blank line between them
+    or not, and pooling at the item would make those two renderings of one
+    choice disagree - the same defect as the blockquote separator, one
+    container kind over.
+    """
+    items: list[MarkdownBlock] = []
+    while at < len(lines):
+        raw = lines[at][1]
+        if not raw.strip():
+            ahead = at
+            while ahead < len(lines) and not lines[ahead][1].strip():
+                ahead += 1
+            if ahead < len(lines) and MARKDOWN_ITEM.match(lines[ahead][1]):
+                at = ahead
+                continue
+            break
+        item = MARKDOWN_ITEM.match(raw)
+        if not item:
+            break
+        column = len(item.group(1)) + len(item.group(2)) + len(item.group(3))
+        body = [(lines[at][0], item.group(4))]
+        at += 1
+        while at < len(lines):
+            number, following = lines[at]
+            if not following.strip():
+                # A blank line inside an item, not the end of it: the item goes
+                # on while what follows is still indented into its content
+                # column. SKILL.md renders its one lettered option as a
+                # blockquote sitting under a blank line inside a numbered step,
+                # so an item that ended here would hand that quote to the level
+                # above and lose which step it belongs to.
+                ahead = at
+                while ahead < len(lines) and not lines[ahead][1].strip():
+                    ahead += 1
+                onward = lines[ahead][1] if ahead < len(lines) else ""
+                if not onward.strip() or len(onward) - len(onward.lstrip()) < column:
+                    break
+                body.extend((lines[skip][0], "") for skip in range(at, ahead))
+                at = ahead
+                continue
+            if len(following) - len(following.lstrip()) >= column:
+                body.append((number, following[column:]))
+            elif MARKDOWN_ITEM.match(following) or _starts_a_markdown_block(following):
+                break
+            else:
+                body.append((number, following.strip()))
+            at += 1
+        items.append(MarkdownBlock("item", (), _markdown_blocks_in(body)))
+    blocks.append(MarkdownBlock("list", (), items))
+    return at
+
+
+def _read_markdown_paragraph(
+    lines: list[tuple[int, str]], at: int, blocks: list
+) -> int:
+    body: list[tuple[int, str]] = []
+    while at < len(lines):
+        raw = lines[at][1]
+        if not raw.strip():
+            break
+        if body and _starts_a_markdown_block(raw):
+            break
+        body.append(lines[at])
+        at += 1
+    blocks.append(MarkdownBlock("paragraph", body))
+    return at
+
+
+class RouteScope:
+    """One container route lines are counted as siblings within.
+
+    Four kinds: `document`, one `quote`, one `fence`, one `list`. A scope is
+    compared by identity, never by kind - two blockquotes are two scopes, which
+    is the whole of what separates three quoted blocks from one.
+    """
+
+    __slots__ = ("kind", "candidates")
+
+    def __init__(self, kind: str) -> None:
+        self.kind = kind
+        self.candidates: list[RouteCandidate] = []
+
+    def __repr__(self) -> str:
+        return f"RouteScope({self.kind!r}, candidates={len(self.candidates)})"
+
+
+class RouteCandidate:
+    """A line that renders like a route, with where it came from.
+
+    Carried with its source line because an ambiguous parse has to be readable:
+    when a block is wrong the author needs the swallowed line on the screen,
+    not a letter string - traigent-first-run#372.
+    """
+
+    __slots__ = ("letter", "text", "line", "scope")
+
+    def __init__(self, letter: str, text: str, line: int, scope: RouteScope) -> None:
+        self.letter = letter
+        self.text = text
+        self.line = line
+        self.scope = scope
+
+    def __repr__(self) -> str:
+        return f"{self.letter}@{self.line} {self.text[:40]!r}"
+
+
+def _route_candidates(lines: object, scope: RouteScope) -> list[RouteCandidate]:
+    """Every route-shaped line in ONE leaf block, with the body under it.
+
+    The body stops at the next route line or at the end of this leaf block, so
+    a route carries the continuation lines an author wrapped under it - the
+    mark on SKILL.md's option sits on the line below the letter - and never the
+    rest of the document.
+    """
+    rows = list(lines)
+    opens = [
+        (index, ROUTE_LINE.match(text))
+        for index, (_, text) in enumerate(rows)
+        if ROUTE_LINE.match(text)
+    ]
+    found = []
+    for spot, (index, match) in enumerate(opens):
+        assert match is not None
+        stop = opens[spot + 1][0] if spot + 1 < len(opens) else len(rows)
+        body = " ".join(text.strip() for _, text in rows[index:stop] if text.strip())
+        found.append(RouteCandidate(match.group(1), body, rows[index][0], scope))
+    return found
+
+
+def _route_scopes(
+    blocks: object, kind: str, scopes: list[RouteScope]
+) -> list[RouteScope]:
+    scope = RouteScope(kind)
+    scopes.append(scope)
+    for block in blocks:
+        if block.kind in ("paragraph", "heading"):
+            scope.candidates.extend(_route_candidates(block.lines, scope))
+        else:
+            _route_scopes_within(block, scopes)
+    return scopes
+
+
+def _route_scopes_within(block: MarkdownBlock, scopes: list[RouteScope]) -> None:
+    if block.kind == "fence":
+        # A route rendered inside a fenced sample IS scanned, and this is the
+        # deliberate half of that decision. A fence in this corpus is where a
+        # reply-ready block would be pasted verbatim, so skipping fences would
+        # mean moving a template from `>` to ``` silently removes it from every
+        # shape guard - the "didn't find it, so it passed" branch this whole
+        # redesign exists to close. The cost is real and bounded: a code sample
+        # whose lines begin `A.` and `B.` at column 0, in that order, reads as
+        # a route pair. It is bounded because a fence gets the same bar as
+        # ordinary prose below - one lettered line alone in a fence is code -
+        # and because any line this drops still has to be named in
+        # `NOT_A_ROUTE`. The corpus has no route-shaped line inside any of its
+        # 43 fences today, so this decision costs nothing now and fails closed
+        # later.
+        fence = RouteScope("fence")
+        scopes.append(fence)
+        fence.candidates.extend(_route_candidates(block.lines, fence))
+    elif block.kind == "quote":
+        _route_scopes(block.children, "quote", scopes)
+    elif block.kind == "list":
+        listing = RouteScope("list")
+        scopes.append(listing)
+        for item in block.children:
+            for child in item.children:
+                if child.kind in ("paragraph", "heading"):
+                    listing.candidates.extend(_route_candidates(child.lines, listing))
+                else:
+                    _route_scopes_within(child, scopes)
+
+
+def _is_an_offered_choice(run: list[RouteCandidate]) -> bool:
+    """Whether a run of contiguous lettered lines is a choice a customer is offered.
+
+    Two ways to qualify, and both are properties of the CONTAINER rather than
+    of the line above:
+
+    * the run opens inside a blockquote. `>` is a marker an author typed on
+      purpose, and this package quotes customer-facing wording, so a single
+      quoted route is a rendered route - SKILL.md offers exactly one that way;
+    * or the run has a sibling in its opener's own container. The guidance's
+      own rule is that "a single proposed action with no alternative route
+      beside it is not a route list", so one lettered line alone in a
+      paragraph, a list or a fence is the sentence it looks like.
+
+    That second clause is what a wrapped prose line trips over. A paragraph
+    that hard-wraps onto `A. One ask means one decision in the whole message.`
+    holds one lettered line and no sibling, so it is prose - whether it sits
+    mid-paragraph as `references/component-creation.md` writes it, whether an
+    author reflows it to open its own paragraph, and whether or not a real
+    route block sits directly under it. None of those three is decided here by
+    looking at the previous line.
+
+    **What it still does not model.** A quoted paragraph that hard-wraps onto a
+    line beginning `A. ` is read as a route, because inside a blockquote the
+    marker is taken at its word. And a run whose opener is prose but which
+    reaches a real route in the same container - a stray `A.` sentence at
+    document level followed by a lone quoted `B.` route - is refused as a whole
+    rather than split. Both surface as a red naming the lines, never as a pass.
+    """
+    head = run[0]
+    if head.scope.kind == "quote":
+        return True
+    return sum(1 for candidate in run if candidate.scope is head.scope) >= 2
+
+
+def rendered_route_blocks(text: str) -> list[list[RouteCandidate]]:
+    """Every block of lettered routes one document renders, in order.
+
+    Two questions, answered separately, because conflating them is what both
+    traigent-first-run#364 and #372 are about.
+
+    **Is this line a route?** `_is_an_offered_choice`, off the container. Never
+    off the previous line, which is the trade this replaces: an unquoted opener
+    had to follow a blank line, and that bought a false positive on a wrapped
+    prose sentence back as a blind spot over every unquoted block that does not
+    open a paragraph.
+
+    **Which routes are one choice?** The letters, in document order. A run
+    grows while the next letter is the one that follows, and a letter `A`
+    starts a new run. Nothing about what sits BETWEEN two routes is consulted,
+    which is what makes an explanatory sentence between two quoted routes leave
+    the choice intact while three separate blockquotes stay three containers
+    and two choices.
+
+    A letter that is neither the next one nor `A` is dropped from every run -
+    `A`, `C`, `D` yields no block rather than a wrong one - and every line
+    dropped anywhere in here is then owed an entry in `NOT_A_ROUTE`, so a
+    narrowing shows up as a red rather than as a quieter scan.
+    """
+    scopes = _route_scopes(markdown_blocks(text), "document", [])
+    candidates = sorted(
+        (candidate for scope in scopes for candidate in scope.candidates),
+        key=lambda candidate: candidate.line,
+    )
+    runs: list[list[RouteCandidate]] = []
+    current: list[RouteCandidate] = []
+    for candidate in candidates:
+        if current and candidate.letter == chr(ord("A") + len(current)):
+            current.append(candidate)
+            continue
+        if current:
+            runs.append(current)
+        current = [candidate] if candidate.letter == "A" else []
+    if current:
+        runs.append(current)
+    return [run for run in runs if _is_an_offered_choice(run)]
+
+
+def route_block_outline(path: Path, run: object) -> str:
+    """One block, named item by item with its source line.
+
+    A parse this reports is sometimes genuinely ambiguous, and the difference
+    between a red an author fixes in one read and a red they file a bug about
+    is whether the swallowed line is on the screen - traigent-first-run#372.
+    """
+    return " | ".join(
+        f"{candidate.letter}@{path.name}:{candidate.line} {candidate.text[:60]!r}"
+        for candidate in run
+    )
+
+
+#: Lines that render like a route and are not one, each with the reason it is
+#: prose. This is the floor's escape hatch and it is deliberately an
+#: ENUMERATION: a parser's "this is not a route" branch is a pass, and an
+#: unwritten pass is how every defect in this file's history stayed invisible.
+#: A stale entry fails below, and so does a new route-shaped line nobody has
+#: looked at, so the cost of the parser being wrong is a review rather than a
+#: silence.
+#:
+#: **The cost, stated rather than discovered.** An author who reflows an
+#: ordinary paragraph onto a line beginning `A. ` gets a red and owes one entry
+#: here. That is the price of the floor and it is the price worth paying: the
+#: alternative is the parser deciding on its own that a line is not a route,
+#: which is the branch traigent-first-run#364's second defect lived in. The red
+#: names the file, the line number and the text, and says which of the two
+#: answers to give, so it costs a read and a sentence rather than an
+#: investigation.
+#:
+#: Keyed by the line's own text and not by its position, so moving the sentence
+#: or reflowing the paragraph around it does not invalidate the entry - which
+#: is the change that produced the false red this replaces.
+NOT_A_ROUTE = {
+    "A. One ask means one decision in the whole message, not one decision "
+    "after the last one.": (
+        "component-creation.md. The paragraph explaining that a route may not "
+        "carry a question of its own hard-wraps onto this sentence, near the "
+        "100 columns this corpus wraps at. It is one lettered line in a "
+        "document-level paragraph with no sibling route in it, so it is read "
+        "as the sentence it is - traigent-first-run#372 named this line as the "
+        "shape a reflow turns into a false route block."
+    ),
+}
+
+
+def unaccounted_route_lines() -> list[tuple[Path, int, str]]:
+    """Every route-shaped raw line the parser did not put in a block.
+
+    The per-BLOCK floor. Derived from the raw corpus rather than from the
+    parser's own output, so the two cannot agree with each other by being the
+    same code: `ROUTE_LINE` reads the file's lines, `rendered_route_blocks`
+    reads the parse, and this reports the difference.
+
+    It replaces a per-DOCUMENT floor that asked whether every document
+    rendering a mark appeared somewhere in what the scan found. One block per
+    document satisfied that, so a second block the scan missed - for any
+    reason, in any document that already had one - cost nothing.
+    """
+    missing: list[tuple[Path, int, str]] = []
+    for path in conversation_contract_documents():
+        text = path.read_text(encoding="utf-8")
+        parsed = {
+            candidate.line
+            for block in rendered_route_blocks(text)
+            for candidate in block
+        }
+        for number, raw in enumerate(text.splitlines(), 1):
+            if ROUTE_LINE.match(raw) and number not in parsed:
+                if raw.strip() in NOT_A_ROUTE:
+                    continue
+                missing.append((path, number, raw.strip()))
+    return missing
+
+
 class TheAskIsLastAndNamesWhatIsLackingTests(unittest.TestCase):
     """Five watched runs opened on the decision and buried the evidence.
 
@@ -25004,77 +26584,42 @@ class TheAskIsLastAndNamesWhatIsLackingTests(unittest.TestCase):
         rule pinned to the one example that failed leaves its siblings free to
         carry the same defect, and this package has had exactly that twice.
 
-        Three things widened after review. The corpus is
-        `conversation_contract_documents()`, because the eight-document one
-        leaves README.md - the single most-read file in a public repository -
-        outside every check that owns this distinction. A route no longer has
-        to be inside a blockquote: this package quotes most customer-facing
-        wording, but "most" is not a property a scan may assume, and a route
-        rendered in a list or in plain bold is the same act. And the letters
-        run A-Z rather than A-D, so a fifth route is not silently unscanned.
+        The corpus is `conversation_contract_documents()`, because the
+        eight-document one leaves README.md - the single most-read file in a
+        public repository - outside every check that owns this distinction. A
+        route does not have to be inside a blockquote: this package quotes most
+        customer-facing wording, but "most" is not a property a scan may
+        assume, and a route rendered in a list or in plain bold is the same
+        act. The letters run A-Z, so a fifth route is not silently unscanned.
 
         Grouped into blocks rather than returned flat, because the mandate is
         about a SET: one mark per choice cannot be counted on an option seen
-        alone. A block opens on `A` and runs while the letters keep ascending.
+        alone.
+
+        The grouping itself is `rendered_route_blocks`, which parses the
+        document into containers first. This wrapper keeps the flat
+        `(letter, text)` shape the register and mark checks read; anything that
+        needs to SAY which line a route came from reads the candidates.
         """
-        opener = re.compile(
-            r"^\s*(?:>\s?)?(?:[-*]\s+)?\*{0,2}([A-Z])(?:\.|\)|\s*\(|\*{2})"
-        )
-        quoted = re.compile(r"^\s*>\s?(.*)$")
-        found: list[tuple[Path, list[tuple[str, str]]]] = []
-        for path in conversation_contract_documents():
-            options: list[tuple[str, str]] = []
-            letter: str | None = None
-            body: list[str] = []
+        return [
+            (path, [(candidate.letter, candidate.text) for candidate in block])
+            for path, block in TheAskIsLastAndNamesWhatIsLackingTests.route_runs()
+        ]
 
-            def close() -> None:
-                nonlocal letter, body
-                if letter is not None:
-                    options.append((letter, " ".join(body)))
-                letter, body = None, []
+    @staticmethod
+    def route_runs() -> list[tuple[Path, list[RouteCandidate]]]:
+        """`route_blocks` with each route's source line kept.
 
-            def flush() -> None:
-                nonlocal options
-                if options:
-                    found.append((path, options))
-                options = []
-
-            # A route opener has to START something. Dropping the blockquote
-            # requirement means a wrapped prose line can begin "A. One ask
-            # means one decision", and component-creation.md has exactly that
-            # line - so an unquoted opener counts only where the line before it
-            # was blank or was itself part of this block. Inside a blockquote
-            # the marker already says the line is customer-facing wording.
-            opens = True
-            for line in path.read_text(encoding="utf-8").splitlines():
-                stripped = line.strip()
-                quote = quoted.match(line)
-                text = quote.group(1).strip() if quote else stripped
-                start = opener.match(text) if text else None
-                if start and (quote or opens or letter is not None):
-                    close()
-                    expected = chr(ord("A") + len(options))
-                    if start.group(1) != expected:
-                        flush()
-                    letter, body = start.group(1), [text]
-                    opens = False
-                    continue
-                opens = not stripped
-                if not text:
-                    # A bare `>` is a blank line INSIDE a blockquote: it ends
-                    # the option, never the block. Treating it as the end of
-                    # the block is what split every two-route template in this
-                    # package into two blocks of one, which is exactly the
-                    # shape a one-mark-per-choice count cannot be taken on.
-                    close()
-                    if not quote:
-                        flush()
-                    continue
-                if letter is not None:
-                    body.append(text)
-            close()
-            flush()
-        return found
+        Separate because the two callers want different things and neither
+        should pay for the other: the shape guards count marks and letters, and
+        the failure messages have to name the line an author has to go and look
+        at - traigent-first-run#372.
+        """
+        return [
+            (path, block)
+            for path in conversation_contract_documents()
+            for block in rendered_route_blocks(path.read_text(encoding="utf-8"))
+        ]
 
     def test_the_register_check_reads_both_of_the_options_that_were_written(
         self,
@@ -25111,26 +26656,31 @@ class TheAskIsLastAndNamesWhatIsLackingTests(unittest.TestCase):
     ) -> None:
         """Scoped to every offered option, not to the one that was wrong."""
         options = self._offered_options()
-        # The floor is derived rather than typed. A constant 3 says nothing
-        # about whether the scan still reaches the routes the documents write:
-        # it stays satisfied while the scan silently narrows to one file. Every
-        # document that renders a recommendation mark on a route has to appear
-        # in what the scan found, and the corpus supplies that list.
-        renders_a_route = {
-            path
-            for path in conversation_contract_documents()
-            if "(recommended" in path.read_text(encoding="utf-8").casefold()
-        }
+        # The floor is derived rather than typed, and it counts BLOCKS rather
+        # than documents. The per-document form this replaces asked whether
+        # every document rendering a `(recommended` mark appeared somewhere in
+        # what the scan found; one block per document satisfied that, so a
+        # second block in the same document that the scan missed cost nothing
+        # and a whole option went unread - traigent-first-run#364.
+        #
+        # This reads the raw lines instead. Every line in the corpus that
+        # renders like a route is either in a block this scan reached, or named
+        # in `NOT_A_ROUTE` with the reason it is prose. There is no third
+        # branch, which is the point: a parser's "not a route" answer is a
+        # pass, and an unwritten pass is how a missed option stays invisible.
         self.assertTrue(
-            renders_a_route,
-            "no document renders a marked route, so this scan has nothing to "
+            options,
+            "no document renders a lettered route, so this scan has nothing to "
             "be measured against",
         )
         self.assertEqual(
-            renders_a_route - {path for path, _, _ in options},
-            set(),
-            "a document renders a marked route that this scan did not find, "
-            "so the scan has stopped matching the way routes are written",
+            unaccounted_route_lines(),
+            [],
+            "these lines render like a route and are in no block this scan "
+            "reached. Either the parser has stopped matching the way routes "
+            "are written - in which case the option on that line is offered to "
+            "a customer unread by every shape and register guard here - or the "
+            "line is prose, and it belongs in NOT_A_ROUTE with the reason",
         )
         for path, letter, text in options:
             with self.subTest(document=path.name, option=letter):
@@ -25659,20 +27209,32 @@ class OneShapeAndOneMarkForEveryChoiceTests(unittest.TestCase):
         SKILL.md and nowhere else, so nothing in this suite ever counted a mark
         in a rendered block. This reads the blocks the documents actually
         write and counts.
+
+        The failure names every route in the block with its source line. A
+        block's parse can be genuinely ambiguous - a paragraph explaining
+        routes gets written beside routes - and the difference between a red an
+        author fixes in one read and a red they file a bug about is whether the
+        line that caused it is on the screen (traigent-first-run#372).
         """
-        blocks = TheAskIsLastAndNamesWhatIsLackingTests.route_blocks()
+        blocks = TheAskIsLastAndNamesWhatIsLackingTests.route_runs()
         self.assertTrue(blocks, "no written route blocks were found to check")
-        for path, options in blocks:
-            marked = [text for _, text in options if "(recommended" in text.casefold()]
+        for path, block in blocks:
+            marked = [
+                candidate
+                for candidate in block
+                if "(recommended" in candidate.text.casefold()
+            ]
             with self.subTest(
-                document=path.name, routes="".join(letter for letter, _ in options)
+                document=path.name,
+                routes="".join(candidate.letter for candidate in block),
             ):
                 self.assertEqual(
                     len(marked),
                     1,
                     "this block of routes does not carry exactly one "
                     "recommendation, which is the shape SKILL.md states for "
-                    "every named-route choice this run offers",
+                    "every named-route choice this run offers. The block "
+                    f"reads: {route_block_outline(path, block)}",
                 )
 
     def test_the_route_block_count_reads_a_marked_block_and_an_unmarked_one(
@@ -25961,56 +27523,112 @@ class OneShapeAndOneMarkForEveryChoiceTests(unittest.TestCase):
         single yes/no about continuing - so the route it argued hardest about
         is the one the customer cannot take. Read cold, it looked like no
         options had been offered at all, not even what to type to proceed.
+
+        Read through `document_states` rather than `assertIn`, which is
+        traigent-first-run#372's third finding: `assertIn` against a flattened
+        guidance document renders the whole document as its failure message,
+        91_078 characters here, and buries the one fact the author needs. The
+        rule is general - every `assertIn` against a flattened document has it -
+        and this is the site the issue names.
         """
         safety = self._flat(RUN_SAFETY)
-        self.assertIn(
-            "every offered connected preview ends on its routes, in the shape "
-            "skill.md states for every named-route choice",
-            safety,
+        skill = self._flat(SKILL)
+        for text, phrase in (
+            (
+                safety,
+                "every offered connected preview ends on its routes, in the "
+                "shape skill.md states for every named-route choice",
+            ),
+            (safety, "lettered from `a`, exactly one marked"),
+            (safety, "each one answerable by replying"),
+            (
+                safety,
+                "a route this guide names and prices is a route the customer "
+                "can take by replying",
+            ),
+            # Both routes carry a reply form, and the decline names its own.
+            (safety, "reply `continue` and i will <next safe step>"),
+            (safety, "**b. stop here and keep the baseline result.**"),
+            (safety, "reply `stop` and i will preserve the local result"),
+            # The mark is the same rule as the pre-spend card's, conditions
+            # and all.
+            (
+                safety,
+                "the mark on `a` follows the pre-spend card's rule above. "
+                "that rule is stated there once and is not restated here",
+            ),
+            (safety, "stopping is never the marked route"),
+            # Where the mark moves, every offered route still carries a
+            # letter. The template renders `A.` and `B. Stop`, so a bounded
+            # run described in prose and offered without one is the "second
+            # form for the same act" this guide refuses one section earlier.
+            (
+                safety,
+                "`a.` is the rows route and carries the mark, `b.` is the "
+                "bounded run, unmarked, and `c.` is stopping",
+            ),
+            (safety, "every one of them keeps a letter and a reply form"),
+            # And the route it does NOT move onto. The paragraph above says an
+            # invalid or non-discriminating pair "has already stopped before
+            # this preview and gets the evidenced repair instead", so naming
+            # that repair as this preview's route `A` was the same document
+            # contradicting itself two paragraphs apart.
+            (
+                safety,
+                "has already stopped before this preview and gets the "
+                "evidenced repair",
+            ),
+            (
+                safety,
+                "not onto the evidenced repair, which is not one of this "
+                "preview's routes at all",
+            ),
+            (skill, "the connected-stage preview"),
+        ):
+            with self.subTest(phrase=phrase):
+                diagnosis = document_states(text, phrase)
+                self.assertIsNone(diagnosis, diagnosis)
+
+    def test_a_missing_statement_is_reported_without_printing_the_document(
+        self,
+    ) -> None:
+        """The diagnosis above, probed on a document whose size is the point.
+
+        traigent-first-run#372: the failure this replaces printed 91_078
+        characters as its standard message. So the probe asserts the size of
+        what a failure says, not only its wording - a bounded message that
+        grew back into a dump would otherwise pass this unchanged.
+
+        Driven by an invented document rather than by `RUN_SAFETY`, so the
+        fixture cannot be the same text the assertion reads.
+        """
+        document = "the preview ends on lettered routes. " + ("filler words. " * 8000)
+        self.assertGreater(len(document), 90_000)
+        self.assertIsNone(document_states(document, "ends on lettered routes"))
+        # A rewording: the document agrees up to the point it diverges, and the
+        # message says where, rather than saying the phrase is absent.
+        reworded = document_states(document, "ends on lettered and marked routes")
+        self.assertIsNotNone(reworded)
+        self.assertIn("ends on lettered ", reworded)
+        self.assertIn("and marked", reworded)
+        self.assertLess(
+            len(reworded),
+            2 * DOCUMENT_EXCERPT + 400,
+            "the diagnosis has grown back towards printing the document it "
+            "searched, which is the defect it exists to remove",
         )
-        self.assertIn("lettered from `a`, exactly one marked", safety)
-        self.assertIn("each one answerable by replying", safety)
-        self.assertIn(
-            "a route this guide names and prices is a route the customer can "
-            "take by replying",
-            safety,
+        self.assertLess(
+            len(reworded),
+            len(document) // 100,
+            "the diagnosis is not small against the document it searched, "
+            "which is the only property that made the old failure unreadable",
         )
-        # Both routes carry a reply form, and the decline names its own.
-        self.assertIn("reply `continue` and i will <next safe step>", safety)
-        self.assertIn("**b. stop here and keep the baseline result.**", safety)
-        self.assertIn("reply `stop` and i will preserve the local result", safety)
-        # The mark is the same rule as the pre-spend card's, conditions and all.
-        self.assertIn(
-            "the mark on `a` follows the pre-spend card's rule above. that "
-            "rule is stated there once and is not restated here",
-            safety,
-        )
-        self.assertIn("stopping is never the marked route", safety)
-        # Where the mark moves, every offered route still carries a letter.
-        # The template renders `A.` and `B. Stop`, so a bounded run described
-        # in prose and offered without one is the "second form for the same
-        # act" this guide refuses one section earlier.
-        self.assertIn(
-            "`a.` is the rows route and carries the mark, `b.` is the bounded "
-            "run, unmarked, and `c.` is stopping",
-            safety,
-        )
-        self.assertIn("every one of them keeps a letter and a reply form", safety)
-        # And the route it does NOT move onto. The paragraph above says an
-        # invalid or non-discriminating pair "has already stopped before this
-        # preview and gets the evidenced repair instead", so naming that repair
-        # as this preview's route `A` was the same document contradicting
-        # itself two paragraphs apart.
-        self.assertIn(
-            "has already stopped before this preview and gets the evidenced " "repair",
-            safety,
-        )
-        self.assertIn(
-            "not onto the evidenced repair, which is not one of this preview's "
-            "routes at all",
-            safety,
-        )
-        self.assertIn("the connected-stage preview", self._flat(SKILL))
+        # And a phrase sharing nothing is reported as an absence, which is a
+        # different thing for an author to be told.
+        absent = document_states(document, "zzz nothing here says this")
+        self.assertIsNotNone(absent)
+        self.assertIn("shares no leading run", absent)
+        self.assertLess(len(absent), DOCUMENT_EXCERPT + 400)
 
     def test_the_answerable_block_is_separable_from_the_disclosure(self) -> None:
         """Present is not the same as findable.
@@ -26179,10 +27797,27 @@ class OneShapeAndOneMarkForEveryChoiceTests(unittest.TestCase):
         reason the shipped text passed, since the author had split the thought
         in two - and it had no polarity at all, so "a statistical tie is not
         headroom", the most natural correct statement of its own rule, went
-        red. A run-up reading does not fix that either: the sale it exists to
-        catch opens "8 of the 18 rows were solved by no configuration and the
-        top three are a statistical tie", where an unrelated `no` thirty words
-        earlier would read as a denial of the pairing.
+        red. A WHOLE-SENTENCE run-up reading does not fix that either: the sale
+        it exists to catch opens "8 of the 18 rows were solved by no
+        configuration and the top three are a statistical tie", where an
+        unrelated `no` thirty words earlier would read as a denial of the
+        pairing.
+
+        The run-up IS read, and the carve-out that stopped it reading is gone.
+        `read_polarity=False` was passed here for the sentence above, and it
+        stopped being needed when `adjacent_runup` gained its clause break:
+        that `no configuration` is cut off at the ` and `, leaving "the top
+        three are a " - unqualified - so the sale is still caught. What the
+        carve-out cost was the rule's own prohibition. "Do not offer within
+        noise as upside." has its governor immediately in front of the tie
+        phrase and in neither of the two windows this scan reads - the gap
+        between the halves and the tie's own sentence tail - so the sentence
+        forbidding the pairing was reported as an instance of it, which is the
+        shape that makes a rule unstatable (traigent-first-run#364, item 10).
+        Measured before and after on the sets in
+        `GuardExemptionsAreNarrowEnoughToCatchTheDefectTests`: 4 of 4 tie
+        defects still caught, 7 of 7 tie paraphrases still green, three
+        prohibitions of this rule no longer refused.
         """
         flat = " ".join(text.casefold().split())
         offending: set[str] = set()
@@ -26209,7 +27844,7 @@ class OneShapeAndOneMarkForEveryChoiceTests(unittest.TestCase):
                             continue
                         if any(token in f"{gap} {tail}" for token in cls.TIE_DENIALS):
                             continue
-                        if guard_issues_at(flat, at, end, read_polarity=False):
+                        if guard_issues_at(flat, at, end):
                             offending.add(span)
         return sorted(offending)
 
@@ -26248,6 +27883,14 @@ class OneShapeAndOneMarkForEveryChoiceTests(unittest.TestCase):
             # And the record of the run that inverted it.
             "The preview previously read a statistical tie as room to move "
             "and sold it.",
+            # The rule's own prohibition, which this scan refused while it
+            # passed `read_polarity=False`. Its governor sits immediately in
+            # front of the tie phrase and in neither window this scan reads,
+            # so nothing but the run-up could ever have seen it -
+            # traigent-first-run#364, item 10.
+            "Do not offer within noise as upside.",
+            "Never sell a statistical tie as headroom.",
+            "Do not name a statistical tie as a reason to spend.",
         ):
             with self.subTest(caution=caution[:44]):
                 self.assertEqual(self._sells_a_tie_as_headroom(caution), [])
@@ -26334,7 +27977,15 @@ class GuardExemptionsAreNarrowEnoughToCatchTheDefectTests(unittest.TestCase):
     phrasing is present", never "this document is clean". The one guard in
     this set that is structural rather than lexical - `route_blocks()`, which
     counts marks in the blocks the documents actually render - is the shape
-    these should move to, and traigent-first-run#364 tracks it.
+    these should move to.
+
+    That one is now a container parse rather than a line-local read
+    (`markdown_blocks` and `rendered_route_blocks`, with
+    `RouteBlocksAreParsedFromContainersNotFromArrangementTests` over it), which
+    closes the two blind spots traigent-first-run#364 recorded against it and
+    the swallowed prose line in #372. The four scanners in this class are
+    unchanged in kind: they are still word lists, and the counts above are
+    still counts of phrasings somebody wrote down.
     """
 
     #: 21 natural phrasings of real defects. Every one must be caught.
@@ -26538,6 +28189,14 @@ class GuardExemptionsAreNarrowEnoughToCatchTheDefectTests(unittest.TestCase):
             "separate the configurations already tried, so it is not "
             "headroom.",
         ),
+        # The rule's own prohibition, written the three ways an author reaches
+        # for. All three were refused while the tie scan skipped its run-up,
+        # which is traigent-first-run#364's item 10: the sale it was skipping
+        # the run-up for is still caught, because `adjacent_runup` cuts the
+        # unrelated `no configuration` off at its clause break.
+        ("tie", "Do not offer within noise as upside."),
+        ("tie", "Never sell a statistical tie as headroom."),
+        ("tie", "Do not name a statistical tie as a reason to spend."),
         (
             "practice",
             "**A.** Pull the metric and the date out of each alert your "
@@ -26625,6 +28284,401 @@ class GuardExemptionsAreNarrowEnoughToCatchTheDefectTests(unittest.TestCase):
             "KNOWN_FALSE_RED and move it into HONEST rather than leaving a "
             "docstring claiming a limitation the code no longer has",
         )
+
+
+class RouteBlocksAreParsedFromContainersNotFromArrangementTests(unittest.TestCase):
+    """The parser, pinned in both directions on markdown written here.
+
+    The corpus tests above are what stops the parser silently narrowing: they
+    read the four blocks the guidance actually renders, so a parser that stops
+    finding one goes red on the real documents. They cannot pin the cases the
+    corpus does not contain, and every defect in traigent-first-run#364 and
+    #372 was one of those - a block one blank line away from the shape the
+    corpus happens to use.
+
+    So each case is written out here as markdown and parsed. The strings are
+    invented rather than read from a document: a fixture built out of the same
+    text the assertion reads proves the two agree with each other and nothing
+    about the guidance.
+
+    Every case below was run against the parser this replaced, and each one is
+    labelled with what that parser answered.
+    """
+
+    def shape(self, markdown: str) -> list[tuple[str, int]]:
+        """One document's blocks as (letters, marks), which is what the guards read."""
+        return [
+            (
+                "".join(candidate.letter for candidate in block),
+                sum(
+                    1
+                    for candidate in block
+                    if "(recommended" in candidate.text.casefold()
+                ),
+            )
+            for block in rendered_route_blocks(markdown)
+        ]
+
+    def test_an_unquoted_block_that_does_not_open_a_paragraph_is_found(
+        self,
+    ) -> None:
+        """traigent-first-run#364, defect 1. The block was invisible.
+
+        Trunk required an unquoted route line to follow a blank line, so this
+        block was not found at all and was never checked for a mark. Appending
+        it verbatim to `references/run-safety.md` left
+        `test_every_written_route_block_marks_exactly_one_route` green;
+        inserting one blank line after the lead-in made the same block found
+        and correctly red. The question "is this a rendered route or a wrapped
+        sentence" is a markdown-block question, and it was being answered by
+        looking at the line above.
+        """
+        run_on = "Offer two routes:\n**A.** proceed\n**B.** fix\n"
+        spaced = "Offer two routes:\n\n**A.** proceed\n**B.** fix\n"
+        self.assertEqual(self.shape(run_on), [("AB", 0)])
+        self.assertEqual(
+            self.shape(run_on),
+            self.shape(spaced),
+            "a blank line after the lead-in is not a change to the choice, and "
+            "it decided whether the choice was checked at all",
+        )
+
+    def test_the_two_separators_between_quoted_routes_parse_identically(
+        self,
+    ) -> None:
+        """traigent-first-run#364, defect 3. A reflow reddened the suite.
+
+        A bare `>` between two routes is a blank line inside one blockquote; an
+        unquoted blank line closes that blockquote and opens another. They
+        render the same choice. Trunk read the second as two blocks of one, so
+        route `B` carried no mark and the suite went red on a change that
+        touched no wording - reproduced by replacing the bare `>` between the
+        two routes of the connected preview's final reply-ready block in
+        `references/run-safety.md`.
+        """
+        bare_caret = (
+            "> **A. proceed** *(recommended)*\n"
+            "> Reply `continue`.\n"
+            ">\n"
+            "> **B. fix**\n"
+            "> Reply `fix`.\n"
+        )
+        blank_line = (
+            "> **A. proceed** *(recommended)*\n"
+            "> Reply `continue`.\n"
+            "\n"
+            "> **B. fix**\n"
+            "> Reply `fix`.\n"
+        )
+        self.assertEqual(self.shape(bare_caret), [("AB", 1)])
+        self.assertEqual(
+            self.shape(bare_caret),
+            self.shape(blank_line),
+            "these are two renderings of one choice, and a guard over rendered "
+            "shape may not depend on which of them an author typed",
+        )
+
+    def test_the_two_list_renderings_of_one_choice_parse_identically(self) -> None:
+        """The same equivalence, one container kind over.
+
+        A tight list and a loose list are the same list; the blank line makes
+        the items' contents paragraphs rather than making them two lists. The
+        list is what routes are siblings of, which is why pooling has to happen
+        at the list and not at the item.
+        """
+        tight = "- **A. proceed** *(recommended)*\n- **B. fix**\n"
+        loose = "- **A. proceed** *(recommended)*\n\n- **B. fix**\n"
+        self.assertEqual(self.shape(tight), [("AB", 1)])
+        self.assertEqual(self.shape(tight), self.shape(loose))
+
+    def test_a_wrapped_prose_line_beside_a_route_block_is_not_swallowed(
+        self,
+    ) -> None:
+        """traigent-first-run#372, first instance.
+
+        A paragraph that hard-wraps onto `A. ` and is separated from a real
+        route block by only blank lines was read as part of that block, giving
+        `AABC` where the document renders `ABC`. The author who caused it
+        changed a paragraph, not a choice.
+
+        Here the two are different containers and the wrapped line has no
+        sibling route in its own, so it is the sentence it is - and the block
+        beside it is untouched. The second string removes even the blank line,
+        so the two are one paragraph: the wrapped `A. ` still has no sibling in
+        the letter run that starts at the real `A`, and is still dropped.
+        """
+        block = (
+            "A. **Repair and re-evaluate (recommended)** - make the smallest fix.\n"
+            "B. **Continue as a workflow demonstration** - keep it limited.\n"
+            "C. **Pause for a user-authored fix** - give the acceptance checks.\n"
+        )
+        wrapped = (
+            "the question was not after the standing line but inside route\n"
+            "A. One ask means one decision in the whole message.\n"
+        )
+        self.assertEqual(self.shape(block), [("ABC", 1)])
+        self.assertEqual(self.shape(f"{wrapped}\n{block}"), [("ABC", 1)])
+        self.assertEqual(self.shape(f"{wrapped}{block}"), [("ABC", 1)])
+
+    def test_a_lettered_prose_line_alone_in_a_paragraph_is_not_a_route(
+        self,
+    ) -> None:
+        """The corpus already holds this shape, and a reflow is enough to move it.
+
+        `references/component-creation.md` hard-wraps onto `A. One ask means
+        one decision in the whole message.` It was inert on trunk only because
+        content followed it; inserting one blank line above it - an ordinary
+        reflow of an ordinary paragraph - made trunk read it as a route block
+        of one with no mark and the suite went red.
+
+        Both positions are prose here, for the reason the guidance itself
+        gives: a single proposed action with no alternative route beside it is
+        not a route list.
+        """
+        mid_paragraph = (
+            "the ask-ends rule below did not reach it, because the question\n"
+            "was not after the standing line but inside route\n"
+            "A. One ask means one decision in the whole message.\n"
+        )
+        reflowed = (
+            "the ask-ends rule below did not reach it, because the question\n"
+            "was not after the standing line but inside route\n"
+            "\n"
+            "A. One ask means one decision in the whole message.\n"
+        )
+        self.assertEqual(self.shape(mid_paragraph), [])
+        self.assertEqual(self.shape(reflowed), [])
+
+    def test_three_blockquotes_are_three_containers_and_two_choices(self) -> None:
+        """traigent-first-run#372, second instance.
+
+        Two correct choices with a quoted note between them. Each is correctly
+        lettered and correctly marked, and a parser that ends a block only on a
+        change of arrangement reads all three quotes as one `ABAB` block with
+        two marks - a double false red, on contiguity and on the mark count.
+
+        Three blockquotes are three containers, and the letters restart at `A`,
+        so this is two choices by both halves of the rule at once.
+        """
+        markdown = (
+            "> **A. proceed** *(recommended)*\n"
+            "> **B. fix**\n"
+            "\n"
+            "> A note that is itself quoted.\n"
+            "\n"
+            "> **A. rows** *(recommended)*\n"
+            "> **B. bounded run**\n"
+        )
+        self.assertEqual(self.shape(markdown), [("AB", 1), ("AB", 1)])
+
+    def test_an_explanation_between_two_quoted_routes_leaves_one_choice(
+        self,
+    ) -> None:
+        """The other half of the same trade, and why it is not a trade here.
+
+        A blockquote holding two routes may hold a paragraph explaining them -
+        `references/component-creation.md` renders exactly that. Ending the
+        block at the explanation splits one choice into two blocks of one,
+        which is defect 3 reached through the quoted separator.
+
+        Nothing about what sits BETWEEN two routes is consulted, so this stays
+        one choice while the three quotes above stay two - the pair of answers
+        traigent-first-run#372 says no single-instance patch can give.
+        """
+        markdown = (
+            "> **A. proceed** *(recommended)*\n"
+            ">\n"
+            "> Either way this first run is a bounded one, priced before it starts.\n"
+            ">\n"
+            "> **B. fix**\n"
+        )
+        self.assertEqual(self.shape(markdown), [("AB", 1)])
+
+    def test_a_single_route_counts_only_where_an_author_marked_the_container(
+        self,
+    ) -> None:
+        """One quoted route is a rendered route; one lettered prose line is not.
+
+        `SKILL.md` offers exactly one lettered option inside a blockquote, and
+        it carries the mark on the line below the letter - so the body has to
+        travel with the route or that block reads as unmarked.
+
+        The `>` is the whole of the difference. It is a marker an author typed
+        on purpose, and this package quotes customer-facing wording; a
+        paragraph, a list and a fence get no such signal, so one lettered line
+        alone in any of them is prose.
+        """
+        quoted = (
+            "> **A.** Turn a plain-English question into a SQL query\n"
+            "> *(recommended - it is what your logs already show)*\n"
+        )
+        plain = (
+            "**A.** Turn a plain-English question into a SQL query\n"
+            "*(recommended - it is what your logs already show)*\n"
+        )
+        self.assertEqual(self.shape(quoted), [("A", 1)])
+        self.assertEqual(self.shape(plain), [])
+
+    def test_a_route_rendered_inside_a_fenced_sample_is_scanned(self) -> None:
+        """The fenced-code decision, stated as a test rather than only as a comment.
+
+        A fence is where a reply-ready block gets pasted verbatim, so a route
+        pair rendered in one IS a customer-facing choice and is checked. The
+        cost is bounded by giving a fence the same bar as prose: one lettered
+        line alone in a fence is code, which is what an ordinary Python sample
+        looks like.
+        """
+        sample = "```\nA. **proceed** *(recommended)*\nB. **fix**\n```\n"
+        code = "```python\nA.run(dataset)\nframe.head()\n```\n"
+        self.assertEqual(self.shape(sample), [("AB", 1)])
+        self.assertEqual(self.shape(code), [])
+
+    def test_the_mark_count_still_reds_on_the_defects_it_exists_for(self) -> None:
+        """The parser is upstream of the count, so the count is probed through it."""
+        unmarked = "> **A. proceed**\n> **B. fix**\n"
+        doubled = "> **A. proceed** *(recommended)*\n> **B. fix** *(recommended)*\n"
+        self.assertEqual(self.shape(unmarked), [("AB", 0)])
+        self.assertEqual(self.shape(doubled), [("AB", 2)])
+
+    def test_a_block_with_a_letter_missing_yields_no_block_to_pass(self) -> None:
+        """A run is contiguous by construction, so a gap has to fail elsewhere.
+
+        `A`, `C`, `D` is not a choice this parser will report as satisfying
+        anything: `C` is neither the letter that follows `A` nor an `A`, so it
+        starts no run and joins none. What is left is a quoted `A` on its own,
+        and the two lines the parser dropped are then owed an entry in
+        `NOT_A_ROUTE` by the floor - which is where a reader sees them.
+        """
+        markdown = "> **A. proceed** *(recommended)*\n> **C. fix**\n> **D. stop**\n"
+        self.assertEqual(self.shape(markdown), [("A", 1)])
+
+    def test_the_containers_the_parser_models_have_their_own_boundaries(
+        self,
+    ) -> None:
+        """The parse itself, not only what it is used for.
+
+        A guard read off a parse is worth what the parse is worth, and the
+        blocks are asserted here so a change that quietly stops seeing
+        blockquotes inside list items shows up as this test rather than as a
+        route silently unscanned.
+        """
+        markdown = (
+            "# A heading\n"
+            "\n"
+            "An ordinary paragraph.\n"
+            "\n"
+            "1. A numbered step, whose text\n"
+            "   wraps onto a second line.\n"
+            "\n"
+            "   > **A.** the quoted option inside that step\n"
+            "\n"
+            "```text\n"
+            "fenced content\n"
+            "```\n"
+            "\n"
+            "> a trailing quote\n"
+        )
+        blocks = markdown_blocks(markdown)
+        self.assertEqual(
+            [block.kind for block in blocks],
+            ["heading", "paragraph", "list", "fence", "quote"],
+        )
+        step = blocks[2].children[0]
+        self.assertEqual(step.kind, "item")
+        self.assertEqual(
+            [child.kind for child in step.children], ["paragraph", "quote"]
+        )
+        self.assertEqual(
+            [text for _, text in blocks[3].lines],
+            ["fenced content"],
+            "a fence owns its content lines and stops at its closing marker",
+        )
+
+    def test_every_route_shaped_line_in_the_corpus_is_parsed_or_named(
+        self,
+    ) -> None:
+        """The floor, as its own test as well as inside the register scan.
+
+        Stated twice on purpose: the register scan needs it as a floor under
+        its own coverage, and it is the thing to read first when the parser
+        changes, because it is the only check here whose failure means "a
+        customer-facing option is not being read by anything".
+        """
+        self.assertEqual(
+            unaccounted_route_lines(),
+            [],
+            "every line the corpus renders that looks like a route is either "
+            "in a parsed block or named in NOT_A_ROUTE with the reason it is "
+            "prose; these are in neither",
+        )
+
+    def test_every_named_prose_line_is_still_written_and_still_not_a_route(
+        self,
+    ) -> None:
+        """A stale exemption hides the next real one.
+
+        `NOT_A_ROUTE` is where the parser's "this is not a route" answer gets
+        written down. An entry that no longer describes any line in the corpus,
+        or that describes a line the parser now reads as a route, is an
+        exemption standing over nothing, and this file has been bitten before
+        by a control that had stopped controlling anything.
+
+        `parsed` is built from the SOURCE line each route was read off, not
+        from the route's text: a route carries the lines wrapped under it, so
+        comparing texts would say "not a route" about a line the parser had
+        started reading as one the moment anything was written below it.
+        """
+        self.assertTrue(NOT_A_ROUTE, "the registry is empty, so nothing is named")
+        lines: set[str] = set()
+        parsed: set[str] = set()
+        for path in conversation_contract_documents():
+            written = path.read_text(encoding="utf-8").splitlines()
+            lines.update(raw.strip() for raw in written)
+            for block in rendered_route_blocks("\n".join(written)):
+                for candidate in block:
+                    parsed.add(written[candidate.line - 1].strip())
+        for named, reason in NOT_A_ROUTE.items():
+            with self.subTest(line=named[:44]):
+                self.assertIn(
+                    named,
+                    lines,
+                    "no document writes this line any more, so this entry "
+                    "excuses nothing and hides the next line that needs it",
+                )
+                self.assertNotIn(
+                    named,
+                    parsed,
+                    "the parser now reads this line as a route, so delete the "
+                    "entry rather than leaving an exemption that suppresses a "
+                    "block from every shape guard here",
+                )
+                self.assertGreater(
+                    len(reason),
+                    80,
+                    "an entry states which document writes the line and why it "
+                    "is prose; a label is not a reason",
+                )
+
+    def test_the_failure_message_names_every_item_with_its_source_line(
+        self,
+    ) -> None:
+        """A red an author can act on in one read.
+
+        `'AABC' != 'ABCD'` says a block is wrong and not which line made it
+        wrong, and the line that made it wrong is usually one an author did not
+        think they were touching. The outline is asserted here rather than only
+        used, because a diagnostic nothing tests is a comment.
+        """
+        markdown = "> **A. proceed** *(recommended)*\n> **B. fix**\n"
+        block = rendered_route_blocks(markdown)[0]
+        outline = route_block_outline(Path("run-safety.md"), block)
+        self.assertIn("A@run-safety.md:1", outline)
+        self.assertIn("B@run-safety.md:2", outline)
+        self.assertIn("proceed", outline)
+        # And it is bounded. `assertIn` against a flattened guidance document
+        # renders the whole haystack on failure; an outline that grew into one
+        # would be the same defect wearing a different name.
+        self.assertLess(len(outline), 400)
 
 
 class TheReadHappensAndAFailedReadIsAQuestionTests(unittest.TestCase):
