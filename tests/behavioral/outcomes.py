@@ -182,6 +182,15 @@ def run_case(case_dir: Path, contract: dict[str, Any]) -> dict[str, Any]:
     config_space = contract.get("config_space")
     if config_space:
         score_argv.extend(("--config-space", str(project / config_space)))
+    # Declared where the project actually holds an agent, because SKILL.md says
+    # to declare it on every scoring call and to omit the flag only where the
+    # component does not exist. These cases were scoring projects with an
+    # `agent.py` in them as though nobody had mentioned an agent, which since
+    # #375 is a different card - `agent-absent` blocks where an unread agent
+    # only bounds - so the fixture was measuring a state it does not describe.
+    agent_origin = contract.get("agent_origin")
+    if agent_origin:
+        score_argv.extend(("--agent-origin", agent_origin))
     score_argv.append("--json")
     score = json.loads(
         harness.run_command(

@@ -1166,6 +1166,38 @@ ACTION_FOR_CONDITION: dict[str, str] = {
     "evaluator-calibration-refused": REVIEW_EVALUATOR_CONTAINMENT,
     "evaluator-timeout": "bound-evaluator-cost",
     "agent-no-varying-knobs": "vary-knobs",
+    # The third pillar's own absence, and the remedy it could not reach before.
+    #
+    # `vary-knobs` was the instruction a project with no agent got, because the
+    # only condition the agent pillar could raise was one about a search space.
+    # It asks for a change to a config space on an agent, so a run that has no
+    # agent was told to edit the settings of a thing it does not have - the
+    # wrong instruction, not merely a badly named condition.
+    #
+    # NOT `vary-knobs` and NOT `connect-real-agent`. The first is the defect.
+    # The second is #238's rung and means "there is one, and this run wrote it",
+    # which stops nothing; this means "there is nothing here, select or create
+    # one", which is the same pair `evaluator-absent` and `evaluator-generated`
+    # already are one pillar over. Reusing either slug would be #197 again - one
+    # instruction meaning "stop, there is nothing here" on one card and "carry
+    # on, this is ours" on the next.
+    "agent-absent": "connect-agent",
+    # The other half of #359's repetition finding, which counted the repeats and
+    # asked about them on the card while `recommended_action` still said
+    # `proceed`. A question the card puts to the customer and the payload does
+    # not carry is a question a consumer cannot route.
+    #
+    # `review-repeats` and not `repair-dataset`: the parallel is `review-split`
+    # one axis over, where the remedy is a question about material that may be
+    # perfectly good rather than a verdict that the file is broken. Repeated
+    # rows are usually an export that ran twice, and they are sometimes rows the
+    # customer meant to keep; only they know which, and the answer decides what
+    # the number means rather than whether anything needs mending.
+    #
+    # Not `add-examples` either. That remedy is the bounded top-up this run can
+    # carry out itself, and the repeat routes deliberately do not offer to write
+    # rows on their own authority - see `repeated_input_routes`.
+    "dataset-repeated-rows": "review-repeats",
 }
 ACTION_KINDS = frozenset({PROCEED, *ACTION_FOR_CONDITION.values()})
 
@@ -1348,6 +1380,29 @@ ROUTE_CATEGORY: dict[str, str] = {
     # advisory branch, and the two compose only under the category that admits
     # both.
     "agent-no-varying-knobs": CLAIM_SCOPING,
+    # Something must be connected before this can be measured, which is the
+    # first category exactly, and it is the category `dataset-absent` and
+    # `evaluator-absent` already carry for the same state one pillar over.
+    #
+    # NOT `DIAGNOSTIC`, and the near miss is worth recording. That category is
+    # for material that may be perfectly good and owes a look rather than a
+    # change - which describes a run whose read of an existing agent was
+    # defeated. That run is not this condition: it declares the agent's origin,
+    # so it keeps the advisory `agent-no-varying-knobs` ceiling it always had.
+    # This condition is reached only where nothing about an agent reached the
+    # score AND the run declared no agent, and there is then nothing to look at.
+    "agent-absent": CREATION_OR_REPAIR,
+    # A real comparison, on fewer examples than the file holds rows. The rows
+    # parse, they are labelled, and the questions that differ are compared
+    # exactly as they would be in a file with no repeats - so nothing is broken
+    # and nothing needs creating. What is bounded is what the result may be said
+    # to rest on, which is the whole of this category.
+    #
+    # It ASKS, on the same terms `dataset-split-by-task-family` does: the
+    # customer is the only party who knows whether a repeat is an export that
+    # ran twice or a case they meant to keep, and saying so changes what the
+    # number means. `repeated_input_routes` already prints the two answers.
+    "dataset-repeated-rows": CLAIM_SCOPING,
 }
 
 
@@ -1429,6 +1484,54 @@ DATASET_SHAPE_UNRECOGNISED_CEILING = 25
 # `dataset-no-expected-outputs` (30) and `dataset-integrity-fail` (35) because
 # each of those has at least one row that confirmed the shape, which is
 # positive evidence this state does not have.
+AGENT_ABSENT_CEILING = 25
+# The third pillar's absence, which had no ceiling of its own at all. Two of the
+# three name theirs and stop the paid run - `dataset-absent` at 20 and
+# `evaluator-absent` at 40 - and the agent pillar could only say that a search
+# space was not counted, at 45 and advisory. Measured on one 200-row collected,
+# difficulty-tagged, split corpus with a declared exact method: a project with
+# no agent and a project with a healthy four-knob agent both scored 45 PARTIAL
+# and both recommended `proceed`, differing in the payload by one non-blocking
+# cap. A pillar worth a quarter of the weight cannot move a card off a ceiling
+# another condition already set, so the absence of the thing being optimized
+# cost nothing. Both cards are re-runnable, before and after. Source:
+# tests/test_readiness_scoring.py#TheThirdPillarNamesItsOwnAbsenceTests.test_no_agent_and_a_healthy_agent_no_longer_score_alike.
+#
+# WHY 25, argued against the two precedents rather than picked.
+#
+# Not 20. That is the floor and its sentence is "nothing was measured at all",
+# which is false here: the dataset scored 98 on the corpus that fixture shares
+# with `TheAgentPillarReadsTheAgentTests.opening_project_dataset`, and the
+# evaluation pillar was fully read. Some of this project IS measured, so it may
+# not share the number reserved for a project where none of it is.
+#
+# Below `evaluator-absent` at 40, and this is the load-bearing half. That
+# ceiling sits high because "the dataset - the expensive half - is intact;
+# choosing an evaluation method is the cheapest of these gaps to close", and
+# both the subject and the evidence survive it - a run with no evaluator still
+# has a program and the rows to run it on, and cannot only grade the result. An
+# absent agent removes the SUBJECT the other two pillars exist to describe: the
+# dataset's 98 and a calibrated evaluator then grade a program that is not
+# there. The condition that removes what is being optimized may not be the less
+# capped of the two.
+#
+# 25 exactly, equal to `evaluator-invalid` and `dataset-shape-unrecognised`, on
+# `evaluator-invalid`'s own sentence read one pillar over: it "sits above 20
+# only because the dataset it would measure is still there". An absent agent
+# sits above 20 only because the dataset and the evaluation method that would
+# measure it are still there. NOT READY is the band that follows, and it is the
+# right one: a run with nothing to optimize is not partially ready to optimize.
+#
+# It BLOCKS, for the reason its two precedents do and for one of its own. A paid
+# search buys a comparison between configurations of an agent; with no agent
+# there is no configuration to compare, so every trial is spend against nothing.
+# The three other caps this pillar can raise already block for the weaker
+# version of that statement - a search that would compare ONE configuration -
+# and a search that would compare none may not be the one that proceeds.
+#
+# It may not exceed 45, and that is asserted rather than left to this comment:
+# an absent agent is also an agent with no varying knobs, so `CAP_IMPLICATIONS`
+# holds the stricter condition at or below the looser one's ceiling.
 DATASET_NO_EXPECTED_OUTPUTS_CEILING = 30
 # The bottom of PARTIAL. Rows exist and are readable - real material, and the
 # gap is one addition away - but nothing can be scored until it is made.
@@ -1657,6 +1760,34 @@ COARSE_RESOLUTION_CEILING = 89
 # thirty comparable examples a small difference may be chance, so the result
 # may not present as EXCELLENT. The highest ceiling here, because nothing is
 # wrong with this run at all. See `COARSE_RESOLUTION_EXAMPLES`.
+REPEATED_ROWS_CEILING = 89
+# Equal to the rung above and ranked after it, on the same band-edge claim: a
+# file that repeats itself may be workable and may not present as EXCELLENT.
+# 90 IS the EXCELLENT threshold, and a dataset a third of whose rows are copies
+# of another row is the one card this ceiling exists to keep out of that band.
+#
+# It is a CEILING and not a deduction, which is the distinction that keeps this
+# clear of the rule two tables down: `DIVERSITY_CHECKS` grants ONE deduction for
+# repetition, and this takes none. The points for repeated rows are already
+# spent in exactly two places and neither changes here - the diversity sub-score
+# (once, on the near-duplicate check that subsumes the exact one) and the
+# comparison count, which subtracts repeats before the size ladder reads it. So
+# no third population is counted: this reads `RepeatedInputs`, the finding #359
+# already built over the rows the card printed, and bounds a claim rather than
+# re-charging for one.
+#
+# It is the highest ceiling on the ladder because nothing here is broken. The
+# rows parse, they carry answers, and the questions that differ are compared
+# exactly as they would be in a file with no repeats. What is not true is the
+# size the file appears to have, and the customer is the party who can say
+# whether that was meant - so it ASKS and does not block, and the answer is one
+# of the two routes the card already prints.
+#
+# RANKED AFTER `dataset-coarse-resolution` at the shared 89, under the rule the
+# ties above it already follow: where two conditions bound the claim by the same
+# amount, the counted one ranks as the worse. Resolution is counted off the
+# comparison size; this is counted too, so the tie falls to the older rung,
+# which is the one a reader has already been taught to read at that number.
 
 CAP_SEVERITY_ORDER: tuple[tuple[str, tuple[tuple[str, int], ...]], ...] = (
     (
@@ -1665,6 +1796,13 @@ CAP_SEVERITY_ORDER: tuple[tuple[str, tuple[tuple[str, int], ...]], ...] = (
             ("dataset-absent", DATASET_ABSENT_CEILING),
             ("evaluator-invalid", EVALUATOR_INVALID_CEILING),
             ("dataset-shape-unrecognised", DATASET_SHAPE_UNRECOGNISED_CEILING),
+            # Third of the three at 25, and ranked last of them under the rule
+            # the ties below already follow: a severity you counted outranks
+            # one you did not. `evaluator-invalid` is proven by probes that
+            # ran, `dataset-shape-unrecognised` by a file that was read and
+            # matched nothing, and this one is established by omission - the
+            # weakest positive evidence of the three, so it ranks after both.
+            ("agent-absent", AGENT_ABSENT_CEILING),
             ("dataset-no-expected-outputs", DATASET_NO_EXPECTED_OUTPUTS_CEILING),
             ("dataset-integrity-fail", DATASET_INTEGRITY_CEILING),
             ("evaluator-absent", EVALUATOR_ABSENT_CEILING),
@@ -1718,6 +1856,7 @@ CAP_SEVERITY_ORDER: tuple[tuple[str, tuple[tuple[str, int], ...]], ...] = (
             # declared.
             ("evaluator-generated", EVALUATOR_GENERATED_CEILING),
             ("dataset-coarse-resolution", COARSE_RESOLUTION_CEILING),
+            ("dataset-repeated-rows", REPEATED_ROWS_CEILING),
         ),
     ),
 )
@@ -1805,6 +1944,14 @@ CAP_IMPLICATIONS: tuple[tuple[str, str], ...] = (
     ("dataset-no-expected-outputs", "dataset-tuning-split-empty"),
     ("dataset-tuning-split-empty", "dataset-below-measurable-size"),
     ("dataset-tuning-split-empty", "dataset-coarse-resolution"),
+    # No agent is also no setting an agent can vary, so the agent pillar gains
+    # the relation its one condition never had. It is declared here rather than
+    # in the table below because it is a real narrowing: the stricter statement
+    # may not carry the looser one's higher number, and 25 against 45 is that
+    # constraint asserted rather than remembered. Neither implies any DATASET
+    # condition in either direction - both are about the search space, and no
+    # fact about the rows establishes one.
+    ("agent-absent", "agent-no-varying-knobs"),
 )
 
 # The other half of that declaration, and the half that was doing nothing.
@@ -1860,7 +2007,24 @@ CAP_NO_IMPLICATION: dict[str, str] = {
         "came from or how large the search space is"
     ),
     "evaluator-timeout": "a run that did not finish says nothing about the material",
-    "agent-no-varying-knobs": "about the search space, which no dataset fact implies",
+    # Repetition against everything else, and both directions were checked
+    # rather than assumed.
+    #
+    # It narrows no size condition. Repeats are already subtracted before the
+    # comparison count reaches the size ladder, so a file with repeats can leave
+    # any number of different questions standing - three or three hundred - and
+    # a file with none can be tiny. Neither count follows from the other.
+    #
+    # And no split condition. `dataset-tune-holdout-overlap` is the same input
+    # on both sides of the line and is measured on the split rather than on the
+    # file: a file whose repeats all fall on one side raises this and not that,
+    # and a file with no repeats at all can still be split across itself by a
+    # declaration that names one row twice.
+    "dataset-repeated-rows": (
+        "a count of rows that repeat another row's input, which implies nothing "
+        "about how many different questions are left, where the split falls, or "
+        "where the rows came from"
+    ),
     "dataset-integrity-fail": (
         "fires only when at least one row DID parse, so it is the complement of "
         "dataset-absent rather than a narrowing of it"
@@ -2561,7 +2725,50 @@ class DatasetFacts:
     # settles whether two forms are one task is a person looking at them.
     tuning_forms: tuple[str, ...] = ()
     holdout_forms: tuple[str, ...] = ()
+    # Rows preflight could not read as data at all - a malformed line, or a row
+    # missing the input or expected-answer field. Structural, and ONLY that.
+    #
+    # It carried a second, unrelated finding until #378: a FAILing `dataset-ids`
+    # was folded in here, so a file whose 90 rows all parsed and all carried an
+    # answer was capped under a reason that said some of them could not be read.
+    # Measured on a 90-row file with 30 exact repeats sharing their ids:
+    # `dataset-shape` PASSed 90 valid rows, the card said "90/90 rows carry an
+    # expected output" two lines above, and the blocking cap beside it said
+    # "malformed lines, or missing the input or expected-answer field". Nothing
+    # was malformed and no field was missing. The two findings are counted
+    # separately now and the reason is built from whichever of them fired. That
+    # file, and the same file with its ids renumbered, are both scored. Source:
+    # tests/test_readiness_adapter.py#RepeatedRowsAreCappedOnTheirOwnAccountTests.
     integrity_failed: bool = False
+    # Id values used by more than one row, and rows carrying no stable id: the
+    # two ways `dataset-ids` FAILs, as counts rather than as one boolean.
+    #
+    # `None` means preflight published no such count, which for a FAILing check
+    # is a payload older than the metric. The adapter refuses that rather than
+    # scoring it, on the same terms as the `dataset-duplicates` and
+    # `dataset-integrity` guards beside it - reading a missing count as zero
+    # would restore the wrong reason for exactly the files that have the defect.
+    duplicate_ids: int | None = None
+    # The generated rows with no id, which is the half that decides the status:
+    # a collected row missing an id is a WARN and caps nothing, a generated one
+    # is what makes `dataset-ids` FAIL. The wider count of rows missing an id is
+    # deliberately not the one carried here - a reason built from it would name
+    # rows the check did not object to.
+    generated_rows_without_id: int | None = None
+    # THAT `dataset-ids` FAILED, carried apart from WHY it failed.
+    #
+    # The counts above explain the failure; this records it. Deriving the cap
+    # from the counts alone made the ceiling conditional on a count being
+    # non-zero, so a payload FAILing that check with every count at 0 - hand
+    # edited, older, or written by something other than this preflight - lost
+    # the blocking cap entirely and scored 45 OK where trunk scored 35 BLOCKED.
+    # No arm of the current `preflight.py` can emit that shape; both of its FAIL
+    # arms guarantee their own count, and a 340-shape sweep found no violation.
+    # A third FAIL arm added later would need no violation to reintroduce it,
+    # which is the whole reason this is a separate fact: the cap is raised from
+    # the failure, and a failure this score cannot explain fails loud instead of
+    # falling through to no cap.
+    id_check_failed: bool = False
     # True only when EVERY row is generated. Mixtures are read from the counts
     # below; asking "is this dataset synthetic" of a mixture has no true answer.
     synthetic: bool | None = False
@@ -3001,9 +3208,19 @@ class AgentFacts:
     # space answers, so there is nothing here for the document to be talked
     # over about.
     build: tuple[BuildSignal, ...] | None = None
-    # Whose agent this is (#238), read exactly as `EvaluationFacts.origin` is
-    # and declared for the same reason: a walkthrough agent this run writes is
+    # Whose agent this is (#238), declared for the reason
+    # `EvaluationFacts.origin` is: a walkthrough agent this run writes is
     # ordinary Python, and nothing about its source says who typed it.
+    #
+    # It is NO LONGER read exactly as that field is, and the difference is worth
+    # naming because this comment used to claim the two were the same. Silence
+    # about the evaluator's origin still fires nothing (`origin_cap`); silence
+    # about the agent's, with no document and no read beside it, is how a run
+    # says there is no agent at all, and `_unsupplied_space_cap` branches on it.
+    # SKILL.md is what makes that reading available - it requires the flag on
+    # every scoring call and permits omitting it only where the component does
+    # not exist yet - and nothing equivalent distinguishes an absent evaluator,
+    # which preflight reports directly.
     origin: str | None = None
 
 
@@ -3539,6 +3756,47 @@ def repeated_inputs(
     return RepeatedInputs(scoreable=scoreable, distinct=distinct, side=side)
 
 
+def repeated_rows_cap(finding: RepeatedInputs) -> Cap:
+    """The ceiling the repetition finding sets, read off the finding itself.
+
+    NO SECOND COUNT. Every number in this sentence comes out of `RepeatedInputs`
+    - the object #359 already built over the rows the card prints - and this
+    function computes nothing. A count taken over a third population is this
+    repository's most-repeated defect, and the way it happens is a new check
+    deciding for itself which rows it means.
+
+    WHY THERE IS A CEILING HERE AT ALL, when the repeats are already priced.
+    They are, twice, and neither changes: the diversity sub-score deducts once
+    for repetition, and the comparison count subtracts repeats before the size
+    ladder reads it. What neither of those does is bound what the card may
+    PRESENT as, and what the payload could not do was carry the question. On a
+    90-row file with 30 exact repeats the card asked the customer about them and
+    `recommended_action` said `proceed` in the same payload - so a consumer
+    routing on that field could not see a question the card had already put on
+    screen. This cap is the payload's half of that question.
+
+    IT IS INDEPENDENT OF THE IDS, which is the whole of the second half of #378.
+    Before it, the same file was stopped only when its 30 repeats happened to
+    copy their ids too: renumber them, change nothing else, and 90 rows spelling
+    60 questions were cleared to proceed. A duplicated export usually DOES
+    renumber, so the file that walked through was the commonest shape of the
+    defect. Nothing here reads an id.
+    """
+    return Cap(
+        "dataset-repeated-rows",
+        REPEATED_ROWS_CEILING,
+        f"{finding.repeats} of the {finding.scoreable} rows this run can score "
+        f"{finding.side} repeat an input already counted, so this comparison "
+        f"resolves {finding.distinct} different examples rather than "
+        f"{finding.scoreable}. Nothing here is broken and the run can carry on, "
+        "but every copy is a trial paid for that teaches what the first one "
+        "already did. Continue on the examples that differ, or replace the "
+        "repeats in your own file and this run reads it again.",
+        blocks=False,
+        asks=True,
+    )
+
+
 def tuning_distinct_for(facts: DatasetFacts, *, reference_free: bool) -> int | None:
     """Which distinct count describes the tuning rows this run can score.
 
@@ -3938,7 +4196,9 @@ def row_review_shape() -> str:
     )
 
 
-def _row_count(value: Any, name: str, *, required: bool = True) -> int:
+def _row_count(
+    value: Any, name: str, *, required: bool = True, check: str = "dataset-provenance"
+) -> int:
     """Read one provenance row count, refusing an absent or impossible one.
 
     An absent key used to fall back to 0, on the rationale that "the preflight
@@ -3969,14 +4229,14 @@ def _row_count(value: Any, name: str, *, required: bool = True) -> int:
         if not required:
             return 0
         raise PreflightInputError(
-            f"dataset-provenance carries no {name} count - every count this "
+            f"{check} carries no {name} count - every count this "
             "score reads is emitted together by preflight.py, so this JSON was "
             "edited or predates the current preflight.py; re-run preflight.py "
             "--json from the same version as this script"
         )
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
         raise PreflightInputError(
-            f"dataset-provenance carries no usable {name} count - row counts "
+            f"{check} carries no usable {name} count - row counts "
             "are whole and non-negative, so this preflight JSON was edited or "
             "predates the current preflight.py; re-run preflight.py --json "
             "from the same version as this script"
@@ -4592,8 +4852,16 @@ def origin_cap(pillar: str, origin: str | None) -> Cap | None:
     mandates both on every scoring call, because the run that created the
     substitute is the one party that knows - and the guided run is the only path
     this package ships. A caller scoring by hand and saying nothing gets the
-    behaviour it always got, with no cap invented about material nobody
-    described.
+    behaviour it always got FROM THIS FUNCTION, with no origin cap invented
+    about material nobody described.
+
+    That last sentence is scoped to this function since #375, and the scope is
+    the correction: silence about the agent is no longer free everywhere. With
+    no settings document and no source read beside it, an undeclared agent
+    raises `agent-absent` in `_unsupplied_space_cap` - not because silence is
+    evidence of a generated component, which is what this function refuses to
+    infer, but because three inputs asking about an agent all came back empty
+    and the other two pillars already read their own silence that way.
 
     Re-open this if a hand-built caller ever becomes a supported path: the
     argument above turns on the guide being the thing that passes these flags,
@@ -5489,16 +5757,96 @@ def score_dataset(
                 asks=True,
             )
         )
-    if facts.integrity_failed:
+    # Raised from the FINDINGS, never from whether a sentence could be built
+    # for them. The first draft of this branch tested the reason instead, and a
+    # reason that came back empty then read as "no finding" on the one path that
+    # stops a paid run - a check that answers a semantic question from a surface
+    # signal, with its "didn't find it" arm counting as a pass, which is the
+    # class this repository has shipped most often.
+    if facts.integrity_failed or facts.id_check_failed:
+        reason = dataset_integrity_reason(facts)
+        if reason is None:
+            # Fail loud rather than silently drop the ceiling. Unreachable from
+            # any payload `dataset_facts_from_preflight` admits, which refuses
+            # this shape at read time with a message naming the flag to re-run;
+            # this is the backstop for the arm nobody has written yet.
+            raise PreflightInputError(
+                "a dataset integrity check FAILed and none of the counts this "
+                "score reads explains it, so the ceiling it sets could not be "
+                "given a reason. Re-run preflight.py --json from the same "
+                "version as this script"
+            )
         caps.append(
             Cap(
                 "dataset-integrity-fail",
                 DATASET_INTEGRITY_CEILING,
-                "Some rows could not be read as data - malformed lines, or missing "
-                "the input or expected-answer field.",
+                reason,
             )
         )
     return combine("dataset", subs), caps
+
+
+def dataset_integrity_reason(facts: DatasetFacts) -> str | None:
+    """What this ceiling is actually standing on, in the words of what fired.
+
+    `None` when nothing did, so the caller has one condition to test rather than
+    a boolean beside a sentence that may describe something else.
+
+    THREE FINDINGS SHARE THIS CEILING and the reason used to name only the
+    first. Rows that could not be read as data is the structural one; ids that
+    collide and rows carrying no stable id are the two ways `dataset-ids` FAILs,
+    and both were folded into the same boolean. Measured on a 90-row file whose
+    30 exact repeats copied their ids: every row parsed, every row carried an
+    answer, `dataset-shape` PASSed "90 valid JSONL rows", the card printed
+    "90/90 rows carry an expected output" - and the blocking cap two lines below
+    said some rows could not be read as data. That sentence was false about the
+    file it was printed over, and a customer reading it was sent looking for
+    malformed lines that do not exist. Source:
+    tests/test_readiness_adapter.py#RepeatedRowsAreCappedOnTheirOwnAccountTests,
+    which scores that file beside a genuinely malformed one that still reads as
+    malformed.
+
+    So the reason is BUILT from the findings that fired rather than written once
+    for the commonest of them. Each clause names its own count, because a count
+    is what the reader checks against their own file - and because a sentence
+    that has to be true of three different states at once is a sentence that
+    ends up specific about none of them.
+
+    The ceiling does not move. All three say the same thing about what the run
+    may do: some of this material cannot be used as it stands, and the rest can,
+    which is exactly what 35 is for. What changes is only which of them the
+    customer is told about.
+    """
+    reasons: list[str] = []
+    if facts.integrity_failed:
+        reasons.append(
+            "some rows could not be read as data - malformed lines, or missing "
+            "the input or expected-answer field"
+        )
+    if facts.duplicate_ids:
+        # "Rows share an id", not "rows are duplicated". Two rows can carry one
+        # id and ask different questions, and this check has not looked at their
+        # inputs - repeated INPUTS are counted separately and reach their own
+        # ceiling. Saying "duplicate rows" here would answer a question about
+        # content from a signal that only read identity, which is the class of
+        # defect this sentence is being corrected for.
+        rows = "id is" if facts.duplicate_ids == 1 else "ids are"
+        reasons.append(
+            f"{facts.duplicate_ids} {rows} used by more than one row, so a row "
+            "cannot be named, excluded, or reviewed without ambiguity"
+        )
+    if facts.generated_rows_without_id:
+        one = facts.generated_rows_without_id == 1
+        rows = "row carries" if one else "rows carry"
+        them = "it" if one else "them"
+        reasons.append(
+            f"{facts.generated_rows_without_id} generated {rows} no stable id, "
+            f"so there is nothing to name {them} by"
+        )
+    if not reasons:
+        return None
+    joined = "; ".join(reasons)
+    return joined[0].upper() + joined[1:] + "."
 
 
 def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
@@ -6374,7 +6722,9 @@ NOTHING_IN_THE_AGENT_TO_VARY_CAP = Cap(
 # repository has now shipped in six places. Every other pillar in this module
 # already caps its own absence for the same reason: `dataset-absent` at 20 and
 # `evaluator-absent` at 40. The agent pillar was the only one where saying
-# nothing was free.
+# nothing was free, and #375 closes that with `agent-absent` - so what is left
+# here is the narrower state this cap was always about: an agent the run FOUND
+# and could not read. It keeps this ceiling and stays advisory.
 NO_SEARCH_SPACE_ESTABLISHED_CAP = Cap(
     "agent-no-varying-knobs",
     AGENT_NO_VARYING_KNOBS_CEILING,
@@ -6382,6 +6732,44 @@ NO_SEARCH_SPACE_ESTABLISHED_CAP = Cap(
     "the settings a search would vary cannot be counted. Reading the agent is "
     "what counts them.",
     blocks=False,
+)
+
+# The state the cap above could not separate itself from, and the whole of #375.
+#
+# "Nothing about the agent reached this score" is two customer situations. In
+# one, an agent exists and this run has not read it - the guide's own case,
+# where a source read was defeated and the flag was left off deliberately
+# (SKILL.md). In the other there is no agent at all. Both produce the identical
+# input to this scorer, which is why the cap above claims nothing about the
+# customer's project - and why, before this branch, a project with no agent was
+# told to vary the knobs of one.
+#
+# WHAT SEPARATES THEM IS ALREADY DECLARED, and it is not a new input. SKILL.md
+# requires `--agent-origin` on every scoring call and says exactly when it may
+# be left off: "Omit a flag only where that component does not exist yet;
+# nothing has an origin before it is there." So a run whose read was defeated
+# still declares `brought` - the agent was found, it has an origin - and keeps
+# the advisory ceiling above unchanged. Silence about the origin, with no
+# document and no read beside it, is a run that has said nothing about an agent
+# in any of the three places it is asked to.
+#
+# That is the same reading the other two pillars already give their own silence.
+# `dataset-absent` fires when no dataset reached this score and blocks;
+# `evaluator-absent` fires when no evaluation method reached it and blocks. The
+# agent pillar was the only one where saying nothing at all was free, and
+# `SubScore.withheld` exists in this module because omission outscoring
+# declaration is the defect it has shipped in six places.
+#
+# The reason names what is established rather than what is inferred: no
+# document, no read, no declaration. A customer who does have an agent reads
+# three specific things this run did not do, and every one of them is true.
+AGENT_ABSENT_CAP = Cap(
+    "agent-absent",
+    AGENT_ABSENT_CEILING,
+    "No agent reached this score - no settings document, no reading of its "
+    "source, and no declaration that one exists - so there is nothing for a "
+    "paid search to compare configurations of. Point this run at the agent to "
+    "optimize, or create one.",
 )
 
 UNATTESTED_WIRING_CAP = Cap(
@@ -6664,6 +7052,29 @@ def score_agent(facts: AgentFacts) -> tuple[Pillar, list[Cap], list[KnobScore]]:
     return pillar, caps, knobs
 
 
+def _unsupplied_space_cap(facts: AgentFacts) -> Cap:
+    """Which ceiling a pillar with no declared knobs carries, in three states.
+
+    One function rather than a conditional expression at the call site, because
+    the three states are decided by two independent facts and a nested
+    conditional is where the third one gets forgotten. Each state is named here
+    once, and the caps themselves carry the argument for their ceilings.
+
+    A supplied document that lists nothing is a finding about the project and
+    blocks. Nothing supplied, with the run declaring the agent's origin, is a
+    statement about this score's inputs and stays advisory - the read was
+    defeated or withheld, and the agent is still there. Nothing supplied and no
+    origin declared is the third state: this run has said nothing about an agent
+    in any of the three places it is asked to, which is how the other two
+    pillars already read their own silence.
+    """
+    if facts.config_space_supplied:
+        return NOTHING_WIRED_CAP
+    if facts.origin is None:
+        return AGENT_ABSENT_CAP
+    return NO_SEARCH_SPACE_ESTABLISHED_CAP
+
+
 def score_agent_evidence(
     facts: AgentFacts,
 ) -> tuple[Pillar, list[Cap], list[KnobScore]]:
@@ -6745,13 +7156,7 @@ def score_agent_evidence(
                 ),
                 facts,
             ),
-            [
-                (
-                    NOTHING_WIRED_CAP
-                    if facts.config_space_supplied
-                    else NO_SEARCH_SPACE_ESTABLISHED_CAP
-                )
-            ],
+            [_unsupplied_space_cap(facts)],
             [],
         )
 
@@ -7133,19 +7538,28 @@ def score_run(
     )
     evaluation_pillar, evaluation_caps = score_evaluation(evaluation_facts)
     agent_pillar, agent_caps, knobs = score_agent(agent_facts)
+    # Computed once here rather than at both use sites. The ceiling and the
+    # routes on the card have to describe the same rows, and the way they stop
+    # doing that is two calls with two `reference_free` answers between them.
+    repeated = repeated_inputs(
+        dataset_facts,
+        reference_free=scores_without_a_reference(evaluation_facts.method),
+    )
     return aggregate(
         [dataset_pillar, evaluation_pillar, agent_pillar],
-        [*dataset_caps, *evaluation_caps, *agent_caps],
+        [
+            *dataset_caps,
+            *([repeated_rows_cap(repeated)] if repeated is not None else []),
+            *evaluation_caps,
+            *agent_caps,
+        ],
         knobs,
         weights,
         # By keyword, both of them. This call gained a keyword-only marker and
         # a second optional argument in the same window; a positional argument
         # resolved against that marker raises rather than mis-binding, which is
         # why neither of these is passed by position.
-        repeated=repeated_inputs(
-            dataset_facts,
-            reference_free=scores_without_a_reference(evaluation_facts.method),
-        ),
+        repeated=repeated,
         agent_source_read=agent_facts.discovery_supplied,
         # The same pair of conditions `score_agent_evidence` branches on to
         # reach the discovery path at all. A config-space document wins
@@ -7758,9 +8172,16 @@ def render_card(
         # BELOW the pillars and below the caps, and this position is the rule
         # rather than the layout that happened. A customer reads the result and
         # then the question the result raises; a question printed above its own
-        # evidence asks them to answer before they have read it. Nothing
-        # summarising it goes higher up the card either, which is why this block
-        # is not also a cap - a cap line prints in the section above.
+        # evidence asks them to answer before they have read it.
+        #
+        # There IS a cap line above now (#378), and this comment said there was
+        # not: the routes carried the whole finding, so the payload beside them
+        # recommended `proceed` while the card asked a question, and the same
+        # file was stopped or cleared according to whether its repeats happened
+        # to copy their ids. What the position rule actually protects is that
+        # the ANSWER is not asked for above its evidence, and that still holds -
+        # `dataset-repeated-rows` states the ceiling and the finding, and the
+        # routes a customer replies to are only here.
         lines.extend(
             repeated_input_routes(
                 score.repeated_inputs,
@@ -8623,6 +9044,41 @@ def dataset_facts_from_preflight(records: Sequence[dict[str, Any]]) -> DatasetFa
             unreadable_detail=_dataset_absence_detail(records),
         )
     structurally_failed = integrity_status == "FAIL" and integrity["malformed_rows"] > 0
+    # The third guard of the same shape, and it is here for the reason the two
+    # above it are: preflight found something, this scorer needs the arithmetic
+    # of it, and a payload carrying the finding without the numbers is one
+    # written by an older preflight. `dataset-ids` FAILs for two unrelated
+    # reasons - ids that collide, and generated rows carrying none - and the cap
+    # it feeds has to say which. Reading a missing count as zero would print
+    # neither reason, which is the state this whole branch is being changed to
+    # remove.
+    #
+    # Only when the check FAILED. On a PASS or a WARN nothing is capped, so an
+    # older payload's silence costs nothing and refusing it would strand runs
+    # over a number that could not have changed an outcome.
+    ids_metrics = metrics.get("dataset-ids", {})
+    if _failed(statuses, "dataset-ids"):
+        if "duplicate_ids" not in ids_metrics:
+            raise PreflightInputError(
+                "dataset-ids FAILed but carries no duplicate_ids count - this "
+                "preflight JSON predates the current preflight.py; re-run "
+                "preflight.py --json from the same version as this script"
+            )
+        # And the version of that hole the key guard above cannot see: the keys
+        # are present and every one of them is zero, so the check reports a
+        # failure it does not account for. Refused here for the same reason the
+        # missing key is - the cap this feeds stops a paid run, and a ceiling
+        # nothing can explain is worse than no payload at all.
+        if not any(
+            ids_metrics.get(name)
+            for name in ("duplicate_ids", "generated_rows_without_id")
+        ):
+            raise PreflightInputError(
+                "dataset-ids FAILed with no duplicate id and no generated row "
+                "missing one, so nothing in this payload accounts for the "
+                "failure - re-run preflight.py --json from the same version as "
+                "this script"
+            )
     tuning_metrics = metrics.get("dataset-tuning-size", {})
     holdout_metrics = metrics.get("dataset-holdout-resolution", {})
     split_metrics = metrics.get("dataset-split", {})
@@ -8796,7 +9252,31 @@ def dataset_facts_from_preflight(records: Sequence[dict[str, Any]]) -> DatasetFa
         holdout_forms=_family_forms(
             metrics.get("dataset-split-family", {}).get("holdout_forms")
         ),
-        integrity_failed=structurally_failed or _failed(statuses, "dataset-ids"),
+        integrity_failed=structurally_failed,
+        # Carried whether or not a count explains it - see `id_check_failed`.
+        id_check_failed=_failed(statuses, "dataset-ids"),
+        # Read only where the check FAILED, so a WARN about missing ids on a
+        # collected corpus - which does not cap - cannot put a count into a
+        # reason nothing prints. `_row_count` refuses a value that is not a
+        # count rather than comparing it to zero and hoping.
+        duplicate_ids=(
+            _row_count(
+                ids_metrics.get("duplicate_ids"),
+                "duplicate_ids",
+                check="dataset-ids",
+            )
+            if _failed(statuses, "dataset-ids")
+            else None
+        ),
+        generated_rows_without_id=(
+            _row_count(
+                ids_metrics.get("generated_rows_without_id"),
+                "generated_rows_without_id",
+                check="dataset-ids",
+            )
+            if _failed(statuses, "dataset-ids")
+            else None
+        ),
         # Same three-answer read as everything else off this payload:
         # `{"synthetic": "false"}` flipped the cap from "no row of this dataset
         # was observed" to "the dataset is generated", on a string.

@@ -6547,11 +6547,17 @@ class SkillPackageTests(unittest.TestCase):
         to the branch shows up as a change to the modelled card instead of
         being masked by a fixture that restates the old behaviour.
 
-        `agent_facts` defaults to the state where nothing about the agent
-        reached the score. Since #201 that is no longer the ordinary opening
-        card - the assistant reads the agent instead - so callers pass
-        `OPENING_READ` for the conformant one and the default for the run that
-        supplied nothing.
+        `agent_facts` defaults to the state where an agent was found and no
+        evidence about it reached the score. Since #201 that is no longer the
+        ordinary opening card - the assistant reads the agent instead - so
+        callers pass `OPENING_READ` for the conformant one and the default for
+        the run whose read was defeated or withheld.
+
+        The default carries `origin` because #378 splits that state in two. An
+        agent nobody described at all is `agent-absent` and blocks; an agent the
+        run declared and could not read keeps the advisory ceiling this sweep is
+        about, and the declaration is the only thing separating them. Sweeping
+        the undeclared state here would measure the wrong one of the two.
 
         The other two pillars are what a real project varies, so they are the
         sweep.
@@ -6559,7 +6565,7 @@ class SkillPackageTests(unittest.TestCase):
         agent, caps, knobs = READINESS.score_agent(
             READINESS.agent_facts_from_discovery(agent_facts)
             if agent_facts is not None
-            else READINESS.AgentFacts()
+            else READINESS.AgentFacts(origin=READINESS.BROUGHT)
         )
         pillars = [
             READINESS.Pillar(
@@ -6640,11 +6646,26 @@ class SkillPackageTests(unittest.TestCase):
         # it is. It is advisory because it is a statement about absent evidence,
         # not a finding about this customer's agent.
         self.assertEqual(max(silent), READINESS.AGENT_NO_VARYING_KNOBS_CEILING)
-        _agent, silent_caps, _knobs = READINESS.score_agent(READINESS.AgentFacts())
+        _agent, silent_caps, _knobs = READINESS.score_agent(
+            READINESS.AgentFacts(origin=READINESS.BROUGHT)
+        )
         self.assertEqual(
             [cap.condition for cap in silent_caps], ["agent-no-varying-knobs"]
         )
         self.assertFalse(silent_caps[0].blocks)
+        # #378's other half of the same state, asserted beside it so the two
+        # cannot drift back together. An agent nobody described is not an agent
+        # somebody could not read: it is capped lower, it blocks, and its remedy
+        # names the agent rather than its settings. The two ceilings and the two
+        # `blocks` answers are read off the module, so a branch that merged them
+        # again fails here rather than quietly telling a project with no agent
+        # to vary the knobs of one.
+        _agent, absent_caps, _knobs = READINESS.score_agent(READINESS.AgentFacts())
+        self.assertEqual([cap.condition for cap in absent_caps], ["agent-absent"])
+        self.assertTrue(absent_caps[0].blocks)
+        self.assertLess(absent_caps[0].ceiling, silent_caps[0].ceiling)
+        self.assertEqual(absent_caps[0].action_kind, "connect-agent")
+        self.assertNotEqual(absent_caps[0].action_kind, silent_caps[0].action_kind)
 
         # Calibration still changes lower cards, but cannot lift this
         # unprobed request-space state above its ceiling.
@@ -6856,6 +6877,9 @@ class SkillPackageTests(unittest.TestCase):
             "a source read that finds no usable dimension blocks the paid run",
             "an empty settings document also blocks because it establishes no usable dimension",
             "unchecked source claims and no source read/settings document are advisory",
+            # And the state that reading does not cover, spelled out where a
+            # customer reads it: no agent named anywhere stops the paid run.
+            "where nothing names an agent at all - no settings document, no source read, and no declaration that one exists - the score reports that instead and stops the paid run",
             "a verified source read can establish opening credit",
             "the separate pre-approval request-difference proof decides whether a paid grid may run",
         ):
@@ -6866,7 +6890,12 @@ class SkillPackageTests(unittest.TestCase):
         # must retain the same blocks-versus-advisories partition.
         for route in (
             "a settings document or source read establishes no usable dimension",
-            "source evidence could not be checked, or where neither source nor a settings document reached the score",
+            # #378 scopes the advisory half to an agent this run named, and
+            # gives the state where nothing names one its own sentence. Both
+            # are pinned, because a glossary carrying only the first would tell
+            # a reader that every evidence-free card carries on.
+            "source evidence could not be checked, or where a named agent's source and settings document both failed to reach the score",
+            "`agent-absent` holds the card lower and stops the paid run where nothing names an agent at all",
             "the separate pre-approval request-difference proof decides whether any paid grid may proceed",
         ):
             with self.subTest(glossary_route=route):
@@ -7542,8 +7571,13 @@ class SkillPackageTests(unittest.TestCase):
         # source, and `45/100 PARTIAL` with `0 of 1 checks measured` where no
         # agent evidence was supplied at all. "Usually" sends a reader who
         # cannot find their document looking for a mistake they did not make.
+        #
+        # Scoped to a NAMED agent by #378, and the scoping is the point of
+        # keeping this assertion rather than deleting it: a reader who cannot
+        # find their document is still told nothing is wrong, and a reader who
+        # has no agent is told something different one sentence later.
         self.assertIn(
-            "source evidence could not be checked, or where neither source nor a settings document reached the score",
+            "source evidence could not be checked, or where a named agent's source and settings document both failed to reach the score",
             glossary,
         )
 
@@ -14665,7 +14699,13 @@ class SkillPackageTests(unittest.TestCase):
         # #238 adds the second: whose agent this is, which is a different
         # question from how much of it can vary, and needs a route of its own
         # for the same reason the first one did.
-        self.assertEqual(conditions, {"agent-no-varying-knobs", "agent-generated"})
+        # #375 adds the third: whether an agent reached this score at all, which
+        # is a different question from how much of one can vary and from whose
+        # it is. Before it, a project with no agent met the search-space cap and
+        # was told to vary the knobs of a thing it did not have.
+        self.assertEqual(
+            conditions, {"agent-no-varying-knobs", "agent-generated", "agent-absent"}
+        )
         normalized = " ".join(SKILL.read_text().casefold().split())
         # Split at the evaluator/agent sentence, not at the dataset one. This
         # branch also teaches the dataset intro the blocks-vs-advisory rule in
@@ -14682,6 +14722,10 @@ class SkillPackageTests(unittest.TestCase):
             # place this guide already decides what may be said about material
             # it wrote itself.
             ("agent-generated", "walkthrough labeling"),
+            # #375: the remedy names the agent, never its settings. A run that
+            # has no agent is sent to connect or create one, which is what the
+            # other two pillars already do for their own absence.
+            ("agent-absent", "connect the one they have"),
         ):
             with self.subTest(condition=condition):
                 self.assertIn(
@@ -14692,6 +14736,14 @@ class SkillPackageTests(unittest.TestCase):
                     "and no words to say - condition ids stay internal",
                 )
                 self.assertLess(routing.index(condition), routing.index(branch))
+        # Every agent condition the scorer can raise is routed here, not just
+        # the ones the table above spells out - the loop the dataset sibling
+        # has had all along, and the half missing here. Without it, deleting a
+        # bullet AND its row left the guard green over guidance that no longer
+        # routes the condition, so the table was checking itself.
+        for condition in conditions:
+            with self.subTest(condition=condition):
+                self.assertIn(condition, routing)
 
     def test_the_advisory_claim_matches_which_branches_actually_block(
         self,
@@ -14747,8 +14799,14 @@ class SkillPackageTests(unittest.TestCase):
         # The scoped claim, and it has to name the read as a blocking branch or
         # an assistant meeting that card routes it as advisory.
         self.assertIn("source read finds no usable dimension", routing)
+        # Scoped again by #378, and the added words are the whole of it. The
+        # advisory reading belongs to a run that NAMED the agent it could not
+        # read; a run that named none meets `agent-absent`, which blocks at a
+        # lower ceiling. "No evidence" alone now describes both cards and would
+        # route the second one as advisory.
         self.assertIn(
-            "advisory only with no evidence or source candidates whose references could not be verified",
+            "advisory only for a declared agent with no evidence, or source "
+            "candidates whose references could not be verified",
             routing,
         )
         self.assertIn("request-difference proof", routing)
@@ -15031,7 +15089,10 @@ class SkillPackageTests(unittest.TestCase):
         # that is disjoint and drawn in the wrong place, which is the third
         # reading of the same "the line is wrong" defect and the only one of
         # the three that scopes the claim rather than stopping the run.
-        self.assertEqual(len(conditions), 16)
+        # #378 added `dataset-repeated-rows` as the seventeenth: rows that
+        # repeat another row's input, which used to reach a ceiling only when
+        # their ids happened to collide and then under the integrity reason.
+        self.assertEqual(len(conditions), 17)
         normalized = " ".join(SKILL.read_text().casefold().split())
         routing = normalized.split("route every active dataset cap", 1)[1]
         for condition, branch in (
@@ -15093,6 +15154,13 @@ class SkillPackageTests(unittest.TestCase):
             (
                 "dataset-unsound-expected-outputs",
                 "approval-gated question",
+            ),
+            # #378: the routes are the customer's two answers and neither is a
+            # repair the assistant makes for them, so the branch has to carry
+            # both of them rather than the recommended one alone.
+            (
+                "dataset-repeated-rows",
+                "carry on over the examples that differ",
             ),
         ):
             with self.subTest(condition=condition):
@@ -15186,6 +15254,14 @@ class SkillPackageTests(unittest.TestCase):
             # `blocks=False`, `asks=True`, and SKILL.md routes it as "ask before
             # repairing".
             "dataset-split-by-task-family",
+            # #378's repetition rung, and it scopes for the plainest reason of
+            # the three: nothing is broken. Every row parses, every row carries
+            # an answer, and the questions that differ are compared exactly as
+            # they would be in a file with no repeats - what is smaller is the
+            # evidence, not the material. It carries `blocks=False`, `asks=True`
+            # because only the customer knows whether the repeats were meant,
+            # and SKILL.md routes it as "bounded, not stopped".
+            "dataset-repeated-rows",
         }
         # The third category, derived rather than listed, and empty since #197.
         #
@@ -26675,7 +26751,13 @@ class TheReadHappensAndAFailedReadIsAQuestionTests(unittest.TestCase):
 
         # The scorer half. The silent state still caps, still does not block,
         # and still sits at the shared ceiling.
-        silent = READINESS.AgentFacts()
+        #
+        # `origin` is what makes it that state since #378: this gate is reached
+        # by a run whose read of an EXISTING agent was defeated, and such a run
+        # declares the agent it found. A fixture without it would be the
+        # different state one condition over, and this assertion would then be
+        # pinning the wrong cap under the right name.
+        silent = READINESS.AgentFacts(origin=READINESS.BROUGHT)
         _pillar, caps, _knobs = READINESS.score_agent(silent)
         self.assertEqual(len(caps), 1)
         self.assertEqual(caps[0].condition, "agent-no-varying-knobs")

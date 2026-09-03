@@ -4633,14 +4633,29 @@ class CliTests(unittest.TestCase):
             space.write_text(
                 json.dumps({"knobs": {"model": ["gpt-4o-mini", "gpt-4o"]}})
             )
+            # `--agent-origin` on BOTH, and it is not decoration. The question
+            # here is what a settings document buys, so the two runs may differ
+            # in the document and in nothing else; a run that also stops naming
+            # the agent is the absent-agent condition at its own lower ceiling,
+            # and the comparison would then be between two different findings.
             without = json.loads(
-                self._run(["--preflight", str(preflight), "--json"])[1]
+                self._run(
+                    [
+                        "--preflight",
+                        str(preflight),
+                        "--agent-origin",
+                        "brought",
+                        "--json",
+                    ]
+                )[1]
             )
             with_document = json.loads(
                 self._run(
                     [
                         "--preflight",
                         str(preflight),
+                        "--agent-origin",
+                        "brought",
                         "--config-space",
                         str(space),
                         "--json",
@@ -5030,8 +5045,10 @@ class PowerBoundsTheBandTests(unittest.TestCase):
                 pillars, caps, knobs, dict(MODULE.DEFAULT_WEIGHTS)
             )
 
-        # No document reached the scorer - the ordinary opening state.
-        caps, score = scored(MODULE.AgentFacts())
+        # No document reached the scorer, on an agent this run found and named.
+        # The declaration is what makes this the unestablished-space state
+        # rather than the absent-agent one #378 split out beside it.
+        caps, score = scored(MODULE.AgentFacts(origin=MODULE.BROUGHT))
         self.assertEqual([cap.condition for cap in caps], ["agent-no-varying-knobs"])
         # The ceiling stands and the run proceeds. That pair is the whole
         # finding: nothing here is known to be broken, so nothing waits.
@@ -5264,7 +5281,10 @@ class PowerBoundsTheBandTests(unittest.TestCase):
                 },
             )
         )
-        silent = overall(MODULE.AgentFacts())
+        # Declared and unread, which is the state this comparison is about: a
+        # source read that credited nothing may not score below the run that
+        # never looked. An undeclared agent is a different finding.
+        silent = overall(MODULE.AgentFacts(origin=MODULE.BROUGHT))
         found_nothing = overall(
             self._knob(
                 model={
@@ -6053,7 +6073,17 @@ class LessEvidenceMayNotOutscoreMoreTests(unittest.TestCase):
             "chat.completions.create"
         )
         states: list[tuple[str, int, object]] = [
-            ("no document and no read", 1, MODULE.AgentFacts()),
+            # An agent this run FOUND and could not read, which is what the
+            # unestablished-space state is since #378. The declaration is what
+            # keeps it in this sweep: without it there is no agent at all, which
+            # is a different condition at a lower ceiling and belongs to the
+            # absence tests rather than to a sweep about how much of a search
+            # space each document establishes.
+            (
+                "no document and no read",
+                1,
+                MODULE.AgentFacts(origin=MODULE.BROUGHT),
+            ),
             ("read: nothing at all", 1, read()),
             (
                 "read: one pinned value",
@@ -6509,7 +6539,19 @@ class TheCapOrderingIsWrittenDownAndCheckedTests(unittest.TestCase):
                 # trustworthy; `evaluator-invalid` is ranked first because it
                 # produces believable numbers, where the unrecognised shape
                 # produces none.
-                25: ["evaluator-invalid", "dataset-shape-unrecognised"],
+                # #375 joins them: no agent reached the score at all. It clears
+                # 20 only because the dataset and the evaluation method that
+                # would measure the agent are still there, which is the same
+                # sentence `evaluator-invalid` carries one pillar over. Ranked
+                # last of the three under the counted-before-inferred rule the
+                # 40 and 70 ties already apply - the other two are read off a
+                # ruler that ran and a file that was parsed, and this one off
+                # three inputs that did not arrive.
+                25: [
+                    "evaluator-invalid",
+                    "dataset-shape-unrecognised",
+                    "agent-absent",
+                ],
                 40: ["evaluator-absent", "evaluator-unresolved"],
                 45: [
                     "evaluator-timeout",
@@ -6579,6 +6621,17 @@ class TheCapOrderingIsWrittenDownAndCheckedTests(unittest.TestCase):
                     # the same reason the 65 tie puts its own rung last: the
                     # three before it are counted, and this one is declared.
                     "evaluator-generated",
+                ],
+                # #378's rung, on the band edge below EXCELLENT that its
+                # neighbour already takes: a file whose rows repeat each other
+                # may be workable and may not present as the best a card can
+                # say. Ranked second because resolution is the older rung at
+                # this number and a reader has been taught to read 89 as it,
+                # and because both are counted - neither is inferred, so the
+                # rule the ties above use leaves the order to seniority.
+                89: [
+                    "dataset-coarse-resolution",
+                    "dataset-repeated-rows",
                 ],
             },
             "a tie in the ceiling order is a decision; record it here with its "
@@ -7764,7 +7817,20 @@ class ACheckThatCouldNotAnswerIsNotAPassTests(unittest.TestCase):
             }
         ]
         payload.extend(
-            {"check": check.replace("_", "-"), "status": status, "metrics": {}}
+            {
+                "check": check.replace("_", "-"),
+                "status": status,
+                # `dataset-ids` publishes its two counts on every arm since
+                # #378, and a FAILing record without them is refused as an
+                # older payload. The metrics travel with the fixture so this
+                # class keeps testing what it is about - a status nothing may
+                # read as a pass - rather than tripping that guard first.
+                "metrics": (
+                    {"duplicate_ids": 1, "generated_rows_without_id": 0}
+                    if check == "dataset_ids"
+                    else {}
+                ),
+            }
             for check, status in records.items()
         )
         return MODULE.dataset_facts_from_preflight(payload)
@@ -7795,7 +7861,41 @@ class ACheckThatCouldNotAnswerIsNotAPassTests(unittest.TestCase):
     def test_a_real_failure_still_reads_as_a_failure(self) -> None:
         facts = self._facts(dataset_split="FAIL", dataset_ids="FAIL")
         self.assertTrue(facts.split_overlap)
-        self.assertTrue(facts.integrity_failed)
+        # `integrity_failed` is the structural half only since #378 - rows that
+        # could not be read as data - and a FAILing id check reaches its own
+        # counts instead. Both still cap; what changed is which sentence the
+        # customer is shown.
+        self.assertFalse(facts.integrity_failed)
+        self.assertEqual(facts.duplicate_ids, 1)
+
+    def test_an_id_failure_with_no_counts_beside_it_is_refused(self) -> None:
+        """The older-payload guard, in the direction that actually caps.
+
+        A `dataset-ids` FAIL carrying no counts is a preflight JSON written
+        before they existed. Reading it as zero would print no reason at all
+        under a cap that stops the run, which is the state this whole branch
+        exists to remove - so it refuses and says which flag to re-run.
+        """
+        with self.assertRaises(MODULE.PreflightInputError) as caught:
+            MODULE.dataset_facts_from_preflight(
+                [
+                    {
+                        "check": "dataset-provenance",
+                        "status": "PASS",
+                        "metrics": {
+                            "rows": 40,
+                            "labelled_rows": 40,
+                            "collected_rows": 40,
+                            "synthesised_rows": 0,
+                            "undeclared_rows": 0,
+                            "generated_answer_rows": 0,
+                            "answerable_rows": 40,
+                        },
+                    },
+                    {"check": "dataset-ids", "status": "FAIL", "metrics": {}},
+                ]
+            )
+        self.assertIn("duplicate_ids", str(caught.exception))
 
 
 class TheRemedyIsMachineReadableTests(unittest.TestCase):
@@ -15718,37 +15818,59 @@ class TheAgentPillarReadsTheAgentTests(unittest.TestCase):
             ),
         )
 
+    OPENING_PROJECT_EVALUATION = MODULE.EvaluationFacts(
+        calibration_passed=True,
+        present=True,
+        method="normalized-exact",
+        task_kind="closed-label",
+        calibration_present=True,
+        calibration_supplied=True,
+        checks=(
+            {
+                "good_passes": True,
+                "bad_fails": True,
+                "non_constant": True,
+            },
+        ),
+        probe_scores=((1.0, 0.0),),
+    )
+
+    @staticmethod
+    def opening_project_dataset() -> MODULE.DatasetFacts:
+        """The strongest realistic opening corpus, in one place.
+
+        Shared with the absent-agent tests below rather than copied there: both
+        measurements are about what the AGENT half does to a card whose other
+        two pillars are as good as this package can score, and two hand-written
+        copies of that corpus are two chances for one of them to stop being the
+        project the other one's number was taken on.
+        """
+        return _clean_dataset(
+            rows=200,
+            labelled_rows=200,
+            tuning_rows=180,
+            holdout_rows=20,
+            tuning_labelled_rows=180,
+            holdout_labelled_rows=20,
+            difficulty_tagged_rows=200,
+            collected_rows=200,
+            answerable_rows=200,
+        )
+
     def test_the_opening_cap_measurement_has_an_executable_fixture(self) -> None:
-        """Keep the source comment's score and producer re-runnable."""
+        """Keep the source comment's score and producer re-runnable.
+
+        `origin` is what makes these facts the state the comment describes. It
+        is about an opening card whose config-space document the guide
+        deliberately withheld - a project that HAS an agent - and since #378
+        that is said by declaring the agent rather than by supplying nothing at
+        all. Without it the fixture would score the absent-agent condition and
+        pin a number this comment is not about.
+        """
         score = MODULE.score_run(
-            _clean_dataset(
-                rows=200,
-                labelled_rows=200,
-                tuning_rows=180,
-                holdout_rows=20,
-                tuning_labelled_rows=180,
-                holdout_labelled_rows=20,
-                difficulty_tagged_rows=200,
-                collected_rows=200,
-                answerable_rows=200,
-            ),
-            MODULE.EvaluationFacts(
-                calibration_passed=True,
-                present=True,
-                method="normalized-exact",
-                task_kind="closed-label",
-                calibration_present=True,
-                calibration_supplied=True,
-                checks=(
-                    {
-                        "good_passes": True,
-                        "bad_fails": True,
-                        "non_constant": True,
-                    },
-                ),
-                probe_scores=((1.0, 0.0),),
-            ),
-            MODULE.AgentFacts(),
+            self.opening_project_dataset(),
+            self.OPENING_PROJECT_EVALUATION,
+            MODULE.AgentFacts(origin=MODULE.BROUGHT),
             dict(MODULE.DEFAULT_WEIGHTS),
         )
         self.assertEqual(
@@ -16063,6 +16185,203 @@ class TheAgentPillarReadsTheAgentTests(unittest.TestCase):
             "the read moved the search space, which is the thing it may not do",
         )
         self.assertGreater(both.score, document_only.score)
+
+
+class TheThirdPillarNamesItsOwnAbsenceTests(unittest.TestCase):
+    """#375: two pillars name their own absence and block, and one did not.
+
+    `dataset-absent` at 20 and `evaluator-absent` at 40 each say their component
+    did not reach the score and each stops the paid run. The agent pillar had no
+    such condition. What a project with no agent met instead was
+    `agent-no-varying-knobs` - a statement about a SEARCH SPACE, advisory, at
+    45, with `vary-knobs` as its remedy - so the card told somebody to change
+    the settings of a program they do not have.
+
+    The number is what made it invisible. An agent pillar is worth a quarter of
+    the weight, so scoring it 0 against a dataset in the nineties cannot pull a
+    card below a ceiling something else has already set, and a card capped at 45
+    by an uncalibrated evaluator reads the same either way.
+
+    Every fixture here is built from the same corpus the sibling class above
+    pins its opening measurement on, so the two cannot describe different
+    projects while quoting each other's numbers.
+    """
+
+    HEALTHY_SPACE = {
+        "knobs": {
+            "model": ["fast-model", "strong-model"],
+            "temperature": [0.0, 0.4, 0.8],
+            "style": ["terse", "detailed"],
+            "examples": [0, 2, 4],
+        },
+        "wired": ["model", "temperature", "style", "examples"],
+    }
+
+    def _score(self, agent: MODULE.AgentFacts) -> MODULE.ReadinessScore:
+        return MODULE.score_run(
+            TheAgentPillarReadsTheAgentTests.opening_project_dataset(),
+            # The evaluator is DECLARED and not calibrated, which is what makes
+            # this the reported card rather than a card of this test's own
+            # invention: `evaluator-unvalidated` sets a 45 ceiling, and the
+            # complaint is that the agent half could not move a score off it.
+            MODULE.EvaluationFacts(
+                present=True,
+                method="normalized-exact",
+                task_kind="closed-label",
+            ),
+            agent,
+            dict(MODULE.DEFAULT_WEIGHTS),
+        )
+
+    def test_no_agent_and_a_healthy_agent_no_longer_score_alike(self) -> None:
+        """The reported measurement, both directions, on one project.
+
+        Before this branch both cards read 45 PARTIAL OK proceed and differed
+        by one non-blocking cap. The healthy card is asserted unchanged, because
+        a fix that moved it would be capping healthy projects rather than
+        separating two states.
+        """
+        absent = self._score(MODULE.AgentFacts())
+        healthy = self._score(MODULE.agent_facts_from_config_space(self.HEALTHY_SPACE))
+
+        # Same project, same evaluator, and the agent half is now the whole
+        # difference. Every field the customer reads moves.
+        self.assertNotEqual(absent.overall, healthy.overall)
+        self.assertNotEqual(absent.band, healthy.band)
+        self.assertNotEqual(absent.status, healthy.status)
+        self.assertNotEqual(absent.recommended_action, healthy.recommended_action)
+
+        self.assertEqual(absent.overall, MODULE.AGENT_ABSENT_CEILING)
+        self.assertEqual(absent.band, "NOT READY")
+        self.assertEqual(absent.status, "BLOCKED")
+        self.assertEqual(absent.recommended_action, "connect-agent")
+        self.assertEqual(
+            [cap.condition for cap in absent.caps],
+            ["agent-absent", "evaluator-unvalidated"],
+        )
+
+        self.assertEqual(healthy.overall, MODULE.EVALUATOR_UNVALIDATED_CEILING)
+        self.assertEqual(healthy.band, "PARTIAL")
+        self.assertEqual(healthy.status, "OK")
+        self.assertEqual(healthy.recommended_action, MODULE.PROCEED)
+        self.assertEqual(
+            [cap.condition for cap in healthy.caps], ["evaluator-unvalidated"]
+        )
+
+        # And the dataset half of the same measurement, because the argument for
+        # the ceiling rests on it: this is not "nothing was measured at all",
+        # which is what 20 is reserved for. Two thirds of this card is read.
+        self.assertEqual(
+            [(pillar.name, pillar.score) for pillar in absent.pillars],
+            [("agent", 0), ("dataset", 98), ("evaluation", 53)],
+        )
+
+    def test_an_agent_the_run_could_not_read_keeps_the_advisory_ceiling(
+        self,
+    ) -> None:
+        """The direction a wrong fix breaks, which is why it is pinned here.
+
+        SKILL.md tells a run whose read of an existing agent was defeated to
+        leave `--agent-knobs` off and still declare what it found. That run has
+        an agent. Capping it as absent would print "connect or create one" to
+        somebody looking at their own agent on screen, which is the complaint
+        `ReadinessScore.agent_source_read` was added to answer once already.
+        """
+        unread = self._score(MODULE.AgentFacts(origin=MODULE.BROUGHT))
+        self.assertEqual(unread.overall, MODULE.EVALUATOR_UNVALIDATED_CEILING)
+        self.assertEqual(unread.band, "PARTIAL")
+        self.assertEqual(unread.status, "OK")
+        self.assertEqual(unread.recommended_action, MODULE.PROCEED)
+        self.assertEqual(
+            [cap.condition for cap in unread.caps],
+            ["evaluator-unvalidated", "agent-no-varying-knobs"],
+        )
+        agent_cap = unread.caps[-1]
+        self.assertFalse(agent_cap.blocks)
+        self.assertEqual(agent_cap.ceiling, MODULE.AGENT_NO_VARYING_KNOBS_CEILING)
+
+    def test_a_generated_agent_is_present_and_is_never_read_as_absent(
+        self,
+    ) -> None:
+        """The other declaration, and the one a walkthrough run makes.
+
+        An agent this run wrote exists as surely as one the customer brought, so
+        the absence condition may not fire over it. It keeps the advisory
+        search-space ceiling and picks up the origin cap beside it.
+        """
+        generated = self._score(MODULE.AgentFacts(origin=MODULE.GENERATED))
+        conditions = [cap.condition for cap in generated.caps]
+        self.assertNotIn("agent-absent", conditions)
+        self.assertIn("agent-no-varying-knobs", conditions)
+        self.assertIn("agent-generated", conditions)
+
+    def test_the_absent_ceiling_sits_between_the_other_two_absences(self) -> None:
+        """The argument for 25, asserted rather than left in a comment.
+
+        Above `dataset-absent`, because this project's dataset and evaluation
+        method are both measured and 20 is reserved for a card where nothing is.
+        Below `evaluator-absent`, because an absent evaluator leaves the program
+        and the evidence intact and asks for a choice, while an absent agent
+        removes the subject the other two pillars describe.
+        """
+        self.assertLess(MODULE.DATASET_ABSENT_CEILING, MODULE.AGENT_ABSENT_CEILING)
+        self.assertLess(MODULE.AGENT_ABSENT_CEILING, MODULE.EVALUATOR_ABSENT_CEILING)
+        # And inside NOT READY, which is the band claim the number makes.
+        self.assertEqual(
+            MODULE.band_for(MODULE.AGENT_ABSENT_CEILING, 1.0)[0], "NOT READY"
+        )
+        # The remedy names the agent and never its settings, and it is a remedy
+        # of its own rather than one borrowed from the generated rung, which
+        # means "there is one and this run wrote it".
+        self.assertEqual(MODULE.ACTION_FOR_CONDITION["agent-absent"], "connect-agent")
+        self.assertNotEqual(
+            MODULE.ACTION_FOR_CONDITION["agent-absent"],
+            MODULE.ACTION_FOR_CONDITION["agent-no-varying-knobs"],
+        )
+        self.assertNotEqual(
+            MODULE.ACTION_FOR_CONDITION["agent-absent"],
+            MODULE.ACTION_FOR_CONDITION["agent-generated"],
+        )
+
+    def test_the_three_pillars_now_name_their_absence_in_one_vocabulary(
+        self,
+    ) -> None:
+        """The asymmetry the issue is about, read off the module.
+
+        Each of the three says its component did not reach this score, each
+        stops the paid run, and each names a remedy about that component. A
+        branch that makes any one of them advisory again fails here rather than
+        leaving one pillar free to say nothing.
+        """
+        for condition in ("dataset-absent", "evaluator-absent", "agent-absent"):
+            with self.subTest(condition=condition):
+                self.assertEqual(
+                    MODULE.ROUTE_CATEGORY[condition], MODULE.CREATION_OR_REPAIR
+                )
+                self.assertTrue(
+                    MODULE.Cap(condition, MODULE.CAP_CEILING[condition], "x").blocks
+                )
+
+    def test_the_absent_agent_card_says_no_agent_and_not_no_knobs(self) -> None:
+        """The words, because the remedy alone is not what the customer reads.
+
+        The rendered line is what a first-time reader acts on, and the sentence
+        it replaces described a search space. Asserting the absence of the old
+        vocabulary matters as much as the presence of the new: the reason may
+        not send anyone to vary settings.
+        """
+        card = MODULE.render_card(self._score(MODULE.AgentFacts()), unicode_ok=False)
+        # The CAP line, not the banner above it that names the same words. The
+        # banner is prose about there being a blocker; only this line carries
+        # the reason a reader acts on.
+        blocker = next(
+            line
+            for line in card.splitlines()
+            if line.strip().startswith("FIX BEFORE PAID RUN")
+        )
+        self.assertIn("No agent reached this score", blocker)
+        self.assertNotIn("settings a search would vary", blocker)
+        self.assertNotIn("vary", blocker)
 
 
 class RecordingAnUnsettledKnobHasOneShapeAndItWorksTests(unittest.TestCase):
