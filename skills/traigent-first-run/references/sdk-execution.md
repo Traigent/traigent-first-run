@@ -9,8 +9,10 @@ Use this reference after component creation and before writing the run wrapper.
 3. Walkthrough model ladder
 4. Decorator contract
 5. Small baseline sweep
-6. Broader optimization
-7. Result checks
+6. Reading the result for insight
+7. Carrying the local baseline into the portal
+8. Broader optimization
+9. Result checks
 
 ## Capability discovery
 
@@ -502,7 +504,14 @@ SELECTED_STRONG_MODEL = os.environ["TRAIGENT_FIRST_RUN_STRONG_MODEL"]
 STRONG_REASONING_EFFORT = (
     os.environ.get("TRAIGENT_FIRST_RUN_STRONG_REASONING_EFFORT", "").strip() or None
 )
-SELECTED_CURRENT_PROVIDER = os.environ["TRAIGENT_FIRST_RUN_CURRENT_PROVIDER"].casefold()
+# `.strip()` before `.casefold()`, because the branch below no longer refuses a
+# spelling it does not know: `"openai "` would take the unverified path and skip
+# the credential check for a route this table does carry. Whitespace is the one
+# way a mapped route reaches that branch, and it is not a route the guide cannot
+# check - it is the one it can.
+SELECTED_CURRENT_PROVIDER = os.environ[
+    "TRAIGENT_FIRST_RUN_CURRENT_PROVIDER"
+].strip().casefold()
 # Every name litellm will authenticate a route on, any one of which is enough.
 # The same inventory `preflight.py` opens the run with, name for name on every
 # route a variable settles - Bedrock is the one it does not, and its reason is
@@ -605,10 +614,57 @@ def require_current_route_credential() -> None:
     route = ROUTE_ALIASES.get(SELECTED_CURRENT_PROVIDER, SELECTED_CURRENT_PROVIDER)
     key_names = PROVIDER_KEY_NAMES.get(route)
     if key_names is None:
-        raise RuntimeError(
-            f"No first-run credential mapping is declared for the inspected "
-            f"provider route {SELECTED_CURRENT_PROVIDER!r}"
+        # Unknown here means unchecked, not missing, and only the second is a
+        # reason to stop in front of a credential the customer may well be
+        # holding. A route absent from this table is a fact about the table;
+        # refusing on it delivered that fact as a verdict on their key, and
+        # delivered it without the key being read at all - the branch below is
+        # what reads it, and this one used to raise before reaching it.
+        #
+        # Nothing downstream depends on the answer either: litellm resolves
+        # the route from the model string and never reads this literal, so an
+        # unrecognised spelling changes nothing about the call about to go
+        # out. That is the position `bedrock` above is in, and it takes the
+        # same disposition for the same reason.
+        #
+        # Adding a row to PROVIDER_KEY_NAMES does not close this. The literals
+        # the client dispatches to are not enumerable from any list this
+        # package can hold - two are produced by a hardcoded model-name
+        # equality, and one by a proxy flag that reads no model at all - so a
+        # table that refuses what it does not recognise refuses working keys
+        # for as long as the client keeps growing. An individual literal whose
+        # credential names the client reads identically to a route already
+        # here is a different question, and ROUTE_ALIASES is where it is
+        # answered; that is a decision per spelling, not a way to make this
+        # branch unnecessary.
+        #
+        # Both spellings of a checked route are named. A route with no names
+        # is not checkable and `bedrock` is declared with none on purpose, so
+        # naming it would be false; an alias IS checked, through the route it
+        # resolves to, so leaving it out would be false in the other
+        # direction.
+        checkable = ", ".join(
+            sorted(
+                {name for name, names in PROVIDER_KEY_NAMES.items() if names}
+                | {
+                    alias
+                    for alias, mapped in ROUTE_ALIASES.items()
+                    if PROVIDER_KEY_NAMES.get(mapped)
+                }
+            )
         )
+        print(
+            f"Unverified route: this guide holds no credential variable names "
+            f"for the provider route {SELECTED_CURRENT_PROVIDER!r}, so this "
+            f"check has read nothing about the credential for "
+            f"{SELECTED_CURRENT_MODEL!r} and is not reporting one missing. "
+            f"The route is left to fail, if it fails, on its own first call, "
+            f"where an absent or rejected key arrives as an authentication "
+            f"failure. The spellings this check knows are {checkable}; this "
+            f"one is not among them, which is a gap in the guide rather than "
+            f"in your setup, and worth reporting as one."
+        )
+        return
     # A placeholder is not a credential: `NAME=# paste your key here` survives
     # `.strip()`, and the gate that opened this run already refuses it.
     if key_names and not any(
@@ -1812,12 +1868,15 @@ time, cost, and plan quota; prefer a smaller representative tuning slice over co
 comparison back to one-versus-two rows. The assistant derives the current provider route from the
 existing vendor setup, the current agent call, and the route inventory, then populates the process
 variables used below; the user does not type route metadata into the run. Call
-`require_current_route_credential()` immediately before the approved live probe. If the discovered
-route cannot be populated from the existing vendor and there is no usable fallback ladder, stop and
-ask the user to add a vendor or choose a different one. Keep the real current model and parameter
-values in `BASELINE_CONFIG`, `BASELINE_SPACE`, and every corresponding enhanced dimension. Select
-the alternative and strong models from the same approved provider route when generating the
-walkthrough, following the walkthrough model ladder above; set
+`require_current_route_credential()` immediately before the approved live probe. A route literal it
+does not recognise prints as unverified and does not stop the run: it withholds this one check
+rather than refusing the credential, and the route's own first call settles what the table could
+not. Report it to the user in those terms, and do not present it as a missing or rejected key. If
+the discovered route cannot be populated from the existing vendor and there is no usable fallback
+ladder, stop and ask the user to add a vendor or choose a different one. Keep the real current
+model and parameter values in `BASELINE_CONFIG`, `BASELINE_SPACE`, and every corresponding
+enhanced dimension. Select the alternative and strong models from the same approved provider route
+when generating the walkthrough, following the walkthrough model ladder above; set
 `TRAIGENT_FIRST_RUN_STRONG_REASONING_EFFORT` only when the selected strong tier actually supports
 a reasoning-effort control, and pin the same value for both runs. A new route or recipient
 requires revised data-egress approval. In the generated default, every search
