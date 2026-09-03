@@ -217,7 +217,24 @@ def render_text(plan: ReadinessPlan) -> str:
 # script computed. That renormalization is gone (see `aggregate`), the average
 # is once again over every declared weight, and no key changed meaning - so
 # there is nothing for a consumer to find out and nothing to bump.
-SCHEMA_VERSION = 2
+#
+# 3: `evaluator-unvalidated` stops emitting `proceed`, and the band can be held
+# for an answer key nobody has read.
+#
+# Additive in keys - `band_limited_by_unread_answers` is new and nothing was
+# removed or renamed - and NOT additive in meaning, which is what decides it.
+# A schema-2 consumer read `recommended_action` as a slug from a closed set and
+# saw `proceed` for a run whose mandatory calibration was outstanding; it now
+# sees `complete-calibration`, a value that set did not contain. That is a
+# reader of 2 no longer working, in the one direction that matters: a consumer
+# routing `proceed` to "start the paid run" was starting it. The version is what
+# lets it tell "this scorer names the outstanding check" from "this run has no
+# outstanding check", exactly the distinction 2 was bumped for.
+#
+# The band key is the second half of the same answer. Held at WORKABLE, an 83
+# reads identically to a run that scored 83 and earned WORKABLE, and a consumer
+# on 2 has no key to ask which it is looking at.
+SCHEMA_VERSION = 3
 DEFAULT_WEIGHTS = {"dataset": 40.0, "evaluation": 35.0, "agent": 25.0}
 # Read each entry as "score BELOW this number is that band" - these are
 # exclusive upper bounds, not the score a band requires. The last entry is an
@@ -238,6 +255,38 @@ BAND_THRESHOLDS = (
 BAND_ORDER = ["NOT READY", "PARTIAL", "WORKABLE", "STRONG", "EXCELLENT"]
 CONFIDENCE_BAND_CEILING = "WORKABLE"
 MIN_CONFIDENCE_FOR_TOP_BANDS = 0.75
+# The second reason a band is held here, and it is the same ceiling on purpose.
+#
+# The two gates ask different questions and reach the same answer, so they
+# share the number rather than each picking one. The confidence gate asks how
+# much of the score was measured at all; this one asks whether the one thing no
+# measurement in this scorer can see - whether the expected answers answer their
+# own questions - was ever looked at. Both are the same claim about the top two
+# bands: STRONG and EXCELLENT are what this card says when it is willing to
+# stand behind the comparison, and it may not say that over material no
+# behavioural read has touched. WORKABLE is what it says instead, which is the
+# band the ladder already reserves for a real comparison with a bounded claim.
+#
+# A ceiling on the SCORE was the obvious alternative and it is wrong here, which
+# is worth recording because every other claim of this shape in this module IS a
+# ceiling. `GENERATED_ANSWER_KEY_CEILING` takes 74 precisely to keep a
+# model-written key out of STRONG, and copying that shape would put a flat 74
+# over every run that never reviewed its rows. Measured by re-running the
+# committed case in `tests/behavioral/outcomes/clean-proceed/case.json` through
+# `tests/behavioral/outcomes.py`, which declares the card that fixture produces:
+# a flat ceiling moves it from 81 to 74 and gives it a cap it does not deserve -
+# 48 collected rows, a brought evaluator that calibrates, and a band already
+# held at WORKABLE for thin evidence. Nothing about that run overclaims.
+#
+# And no ceiling can do both jobs, which is arithmetic rather than judgement.
+# STRONG begins at 75. Keeping the rotated corpus, which scores 83, out of it
+# needs a ceiling at or below 74; leaving the committed case, which scores 81,
+# where it is needs one at or above 81. No single number satisfies both, so a
+# flat ceiling either misses the corpus this was filed about or moves an
+# honest case - whatever else the two payloads differ in, and they differ in
+# plenty. A gate on the band is not a number on that scale at all: it reads
+# the verdict each run was about to reach, which is the thing being refused.
+ANSWER_KEY_BAND_CEILING = "WORKABLE"
 
 # Vendored from the installed SDK's canonical presets
 # (traigent/config_generator/presets/range_presets.py, read at 0.23.0). The
@@ -904,6 +953,31 @@ PROCEED = "proceed"
 # branch on it: the table below routes two size caps to it, and the repeated-row
 # routes offer to write replacements only while it is the live recommendation.
 ADD_EXAMPLES = "add-examples"
+# The obligation a deferred calibration leaves behind, and the reason it needed
+# a slug of its own rather than one of the ones already here.
+#
+# `repair-evaluator` is the wrong sentence: nothing has established that this
+# evaluator is defective, and telling a customer to mend a file no probe has
+# read is the accusation `evaluator-unvalidated` was separated from
+# `evaluator-invalid` to avoid. `PROCEED` is the wrong sentence in the other
+# direction, and it was the one being emitted - a payload saying there is
+# nothing to do about the one check able to tell a working scorer from a
+# mis-wired one. Nothing else in the vocabulary means "the mandatory check has
+# not run yet; run it", so this is a new instruction and not a second spelling
+# of an existing one.
+COMPLETE_CALIBRATION = "complete-calibration"
+# The other terminus of the same gate, and the reason it may not share the slug
+# above.
+#
+# SKILL.md runs opening calibration only where "the complete path does not
+# execute candidate-generated code or SQL", and routes an evaluator that fails
+# that scope gate to the separate containment review in
+# `references/run-safety.md`. A run that obeys that rule has not skipped a check
+# it could have made; it has been refused one. Telling it to `complete-calibration`
+# is telling it to do the thing the guide forbids, which is what one slug for
+# both states would say - and the score would then be the only party in the
+# package arguing for the unsafe route.
+REVIEW_EVALUATOR_CONTAINMENT = "review-evaluator-containment"
 ACTION_FOR_CONDITION: dict[str, str] = {
     "dataset-absent": "get-data",
     # A file was named and no row in it matched the shape preflight read it
@@ -1005,8 +1079,30 @@ ACTION_FOR_CONDITION: dict[str, str] = {
     "evaluator-unresolved": "repair-evaluator",
     "evaluator-invalid": "repair-evaluator",
     # Calibration is evidence collection, not a repair: no execution has
-    # established that the connected evaluator is defective.
-    "evaluator-unvalidated": PROCEED,
+    # established that the connected evaluator is defective. It is still
+    # something the run OWES, and `PROCEED` said the opposite.
+    #
+    # Measured, on two projects differing only in their evaluator: a correct
+    # scorer and one that never reads its `output` argument produce
+    # byte-identical readiness JSON while calibration is outstanding, because
+    # nothing static separates them - `evaluator-shape` is an `ast.parse` and
+    # says so. Calibration separates them on its first probe. So the deferred
+    # card is the one card that cannot answer the question, and it was
+    # answering `recommended_action: "proceed"` - the same slug the calibrated,
+    # passing run emits. A consumer routing on that field could not tell a run
+    # that asked the behavioural question and passed from one that never asked
+    # it (traigent-first-run#379).
+    #
+    # Deferral stays legitimate and this does not stop the run: the cap is
+    # advisory, `status` is unchanged, and SKILL.md's six named deferral
+    # reasons are untouched. What changes is that the outstanding obligation is
+    # named in the field a consumer reads instead of being visible only to
+    # someone who reads the cap list.
+    "evaluator-unvalidated": COMPLETE_CALIBRATION,
+    # The same absent evidence, reached by obeying a rule rather than by
+    # skipping a step, and it needs its own remedy for that reason alone. See
+    # `REVIEW_EVALUATOR_CONTAINMENT`.
+    "evaluator-calibration-refused": REVIEW_EVALUATOR_CONTAINMENT,
     "evaluator-timeout": "bound-evaluator-cost",
     "agent-no-varying-knobs": "vary-knobs",
 }
@@ -1166,6 +1262,11 @@ ROUTE_CATEGORY: dict[str, str] = {
     "evaluator-unresolved": DIAGNOSTIC,
     "evaluator-invalid": CREATION_OR_REPAIR,
     "evaluator-unvalidated": CLAIM_SCOPING,
+    # Scopes, exactly as the condition above it does and for the same reason:
+    # the run proceeds, the evaluator is not asserted to be defective, and what
+    # is bounded is the claim. A diagnostic route would stop the run, and
+    # SKILL.md permits this deferral rather than halting on it.
+    "evaluator-calibration-refused": CLAIM_SCOPING,
     "evaluator-timeout": CREATION_OR_REPAIR,
     # Conditional, and classified the same way `dataset-below-measurable-size`
     # above already is: by what the result IS, not by whether the run waits.
@@ -1290,6 +1391,27 @@ EVALUATOR_UNVALIDATED_CEILING = 45
 # A declared method describes intended semantics, but only a complete current-
 # run calibration establishes the connected evaluator's behavior. The ceiling
 # bounds that unverified claim without calling the evaluator defective.
+CALIBRATION_REFUSED_CEILING = 45
+# EQUAL to `evaluator-unvalidated`, and the equality is the decision rather
+# than an oversight.
+#
+# The two states differ in why the evidence is missing and not in how much of
+# it is missing: neither run has established that the connected evaluator
+# distinguishes answers, so neither may claim it. A ceiling grades the current
+# state, which is the rule recorded above `CAP_SEVERITY_ORDER`, and "we had a
+# good reason" is not a property of the state.
+#
+# It is worth saying what this deliberately does NOT fix. A project whose
+# scorer executes candidate-generated SQL is held here by obeying the scope
+# gate and scores far higher by running the calibration anyway, because the
+# calibration sub-score and the probe spread are only earned by a probe that
+# ran. That gap is an honest statement about evidence: the second run really
+# did establish something the first did not. What is wrong is that this
+# package offers no safe route to that evidence, so the only way to earn it is
+# to break the rule - and a route is a change to `calibrate_evaluator.py`, not
+# a number here. Raising this ceiling to close the gap would buy the incentive
+# back by having the card claim what no probe established, which is the defect
+# this whole branch exists to remove. Filed as traigent-first-run#392.
 AGENT_NO_VARYING_KNOBS_CEILING = 45
 # Equal to the timeout for the same reason: nothing is broken, and the run
 # compares nothing. An optimization with one configuration is a single
@@ -1493,6 +1615,12 @@ CAP_SEVERITY_ORDER: tuple[tuple[str, tuple[tuple[str, int], ...]], ...] = (
         (
             ("evaluator-timeout", EVALUATOR_TIMEOUT_CEILING),
             ("evaluator-unvalidated", EVALUATOR_UNVALIDATED_CEILING),
+            # Ranked directly after the condition it shares a ceiling with,
+            # and the rank decides nothing observable: the two are mutually
+            # exclusive by construction, so no card carries both. Declared
+            # anyway, because this table refuses an unranked condition and a
+            # tie left to declaration order is the failure it was written for.
+            ("evaluator-calibration-refused", CALIBRATION_REFUSED_CEILING),
             ("agent-no-varying-knobs", AGENT_NO_VARYING_KNOBS_CEILING),
             ("dataset-tune-holdout-overlap", SPLIT_OVERLAP_CEILING),
             ("dataset-tuning-split-empty", TUNING_SPLIT_EMPTY_CEILING),
@@ -1663,6 +1791,12 @@ CAP_NO_IMPLICATION: dict[str, str] = {
         "a declared method without completed calibration is mutually exclusive "
         "with the unnamed and timeout routes and says nothing about data or "
         "search-space conditions"
+    ),
+    "evaluator-calibration-refused": (
+        "mutually exclusive with the unvalidated route it shares a ceiling "
+        "with - one branch raises one or the other and never both - and a "
+        "refusal to execute this evaluator says nothing about where the rows "
+        "came from or how large the search space is"
     ),
     "evaluator-timeout": "a run that did not finish says nothing about the material",
     "agent-no-varying-knobs": "about the search space, which no dataset fact implies",
@@ -2202,6 +2336,30 @@ class ReadinessScore:
     # answering a semantic question from a surface signal, which is the class
     # this package keeps filing against itself.
     agent_route_unverified: bool = False
+    # Whether the top-band floor is what is holding this band - the answer to
+    # "was the behavioural question about the answer key ever asked", carried
+    # as its own key because no other field in this payload answers it.
+    #
+    # There are three states and this flag separates the one that matters:
+    #
+    #   asked and answered      a read entered; nothing is held here
+    #   never asked             no read entered and the band is held at
+    #                           WORKABLE for it
+    #   nothing to ask          no answer key exists to read, or every row is
+    #                           this run's own; nothing is held
+    #
+    # The first and the third both report False, and a consumer that needs them
+    # apart reads the rest of the payload: a dataset with no answer key scores
+    # no labels check, and one this run wrote carries the synthetic caps. What
+    # must never collapse is the middle state into the first, which is what a
+    # card with no such key did - a run that never asked the question presented
+    # exactly as a run that asked it and passed.
+    #
+    # Additive and defaulted on the same terms as the two fields above it: a
+    # consumer gains a key it can ignore, and every caller that builds a score
+    # without dataset facts keeps working and keeps saying the honest thing,
+    # which is that no floor was applied to it.
+    band_limited_by_unread_answers: bool = False
 
 
 @dataclass(frozen=True)
@@ -2371,6 +2529,16 @@ class RowReview:
     # provided row is a row the run uses, which is the case where this is worth
     # saying and the case where it is knowable.
     unsound_in_run: int | None = None
+    # How many rows the review read that the run actually reads, on the same
+    # `in_run` declaration `unsound_in_run` is read from and `None` in the same
+    # state - nothing has been drawn yet, so no membership can be claimed.
+    #
+    # A COVERAGE count where the field above is a FINDING count, and they are
+    # kept apart for the reason every other pair in this class is: "how many of
+    # the run's rows were read" and "how many of them were wrong" answer
+    # different questions, and one number answering both would make a review
+    # that found nothing look like a review that read nothing.
+    reviewed_in_run: int | None = None
 
 
 @dataclass(frozen=True)
@@ -2457,6 +2625,29 @@ class EvaluationFacts:
     comparison_shape: str | None = None
     # What was read, for the card: the transforms and the line they sit on.
     comparison_witness: str | None = None
+    # Whether the run declared that SKILL.md's evaluator-execution scope gate
+    # is what stopped calibration, rather than a step nobody took.
+    #
+    # DECLARED, never measured, and it moves no number for that reason. There
+    # is nothing here to measure: whether a scorer's complete path executes
+    # candidate-generated code or SQL is settled by the inspection SKILL.md
+    # already mandates, and no property of a scoring function this module can
+    # read answers it. A declaration that lowered a ceiling would be fine; one
+    # that RAISED a score would make claiming a refusal cheaper than doing the
+    # work, which is the rule this package applies to every other unverified
+    # input - a judgement may withhold a claim and may not manufacture one.
+    #
+    # So it changes the condition, the sentence and the remedy, and leaves the
+    # ceiling, the sub-scores and the pillar exactly where they were.
+    #
+    # Two things this does not reach, both filed rather than guessed at. A run
+    # that takes the forbidden path and declares nothing is indistinguishable
+    # from a compliant one, and whether this state should stop the run at all
+    # is a question `references/run-safety.md` answers differently from the cap
+    # it raises: traigent-first-run#393. And the `calibration` sub-score is
+    # still marked withheld for a run that was refused rather than asked:
+    # traigent-first-run#394.
+    calibration_scope_refused: bool = False
 
 
 @dataclass(frozen=True)
@@ -2749,6 +2940,30 @@ def band_for(
     if BAND_ORDER.index(band) <= ceiling_index:
         return band, False
     return CONFIDENCE_BAND_CEILING, True
+
+
+def hold_band_for_unread_answers(band: str, answers_read: bool) -> tuple[str, bool]:
+    """Hold the top two bands until a read of the expected answers has entered.
+
+    The top-band floor, applied after `band_for` because it is a statement
+    about the band and not about the score. Every measurement behind the number
+    stays exactly what it was measured to be; what this refuses is a VERDICT
+    the run has not established. A card reachable on structure alone, over an
+    answer key nobody has read, is the card claiming more than the run did.
+
+    Returns the band unchanged, and False, in every state below the floor -
+    including the state where `band_for` has already held the band for thin
+    evidence. Two reasons to hold one band compose by both being true, and the
+    payload reports each separately so a reader is told which one is theirs;
+    reporting the second as ALSO holding a band already at WORKABLE would put a
+    remedy on a card that has nothing left to lift.
+    """
+    if answers_read:
+        return band, False
+    ceiling_index = BAND_ORDER.index(ANSWER_KEY_BAND_CEILING)
+    if BAND_ORDER.index(band) <= ceiling_index:
+        return band, False
+    return ANSWER_KEY_BAND_CEILING, True
 
 
 def combine(name: str, subscores: Sequence[SubScore]) -> Pillar:
@@ -4057,6 +4272,112 @@ REFERENCE_FREE_METHODS = frozenset(
 )
 
 
+def provided_rows(facts: DatasetFacts) -> int:
+    """The rows a row review is allowed to have read: the ones the user brought.
+
+    Generated rows are excluded because `row_review_from_document` refuses
+    them outright - a model re-judging output it just wrote is not evidence -
+    and because the synthetic ceiling already prices them.
+
+    Extracted rather than inlined twice. The evidence line prints this as the
+    denominator of the coverage sentence a customer reads, and
+    `answer_key_read` below decides the top-band floor against the same
+    population; two spellings of one denominator is how a card comes to print
+    "read 28 of 28" beside a floor that is still holding.
+    """
+    counted = facts.collected_rows + facts.synthesised_rows + facts.undeclared_rows
+    if counted:
+        return facts.collected_rows + facts.undeclared_rows
+    return facts.rows or 0
+
+
+def graded_rows(facts: DatasetFacts) -> int | None:
+    """The labelled rows this run is graded on, when the split says which.
+
+    `run_rows` counts the tuning and held-out rows; this counts the ones among
+    them that carry an expected answer, which is the population an answer-key
+    read is about. They differ exactly when some row the run reads has no
+    answer to check, and a review cannot be asked for a verdict on an answer
+    that is not there.
+
+    `None` when no split has been declared, which is the ordinary opening
+    state on one undivided file.
+    """
+    if facts.tuning_labelled_rows is None or facts.holdout_labelled_rows is None:
+        return None
+    return facts.tuning_labelled_rows + facts.holdout_labelled_rows
+
+
+def answer_key_read(facts: DatasetFacts, review: RowReview) -> bool:
+    """Whether a read of the expected answers this run is graded against exists.
+
+    The one behavioural question about the DATASET, and the question no
+    structural check can answer. Rotating a corpus's expected answers within
+    each of its own domains leaves every structural property intact - the
+    answers stay valid, distinct, uniquely keyed, disjointly split and evenly
+    banded - and destroys the only property that decides whether the search can
+    rank anything (traigent-first-run#377). Nothing counted off the file
+    separates that corpus from a sound one; a person reading an input beside
+    its expected answer does, and `--row-review` is where that read enters.
+
+    Calibration does NOT answer it, which is why this is a second question and
+    not a second reading of the evaluator one. Calibration probes the scorer
+    against a hand-written case matrix; it establishes that the ruler separates
+    good answers from bad, and says nothing whatever about whether the dataset's
+    answers answer their own questions. On the rotated corpus calibration passes
+    honestly, `evaluator-unvalidated` lifts on that honest pass, and the card
+    then issues its strongest verdict over material where every configuration
+    scores near zero. A release bought by evidence about a different question
+    is the failure this predicate exists to refuse.
+
+    DECLARED, and not earned, which is the honest word for what this returns.
+    Entries are counted and never matched against rows: `preflight.py` emits no
+    row ids for them to be matched to, so a review of the right size whose ids
+    name nothing in the dataset releases the hold exactly as a real read does.
+    What is checked is everything counts can carry - `row_review_from_document`
+    refuses a repeated id, an origin the review may not claim, more collected
+    or undeclared rows than preflight counted, and more `in_run` rows than the
+    declared split holds - and identity is not among them.
+
+    So this is a bounded improvement on no gate at all, not a proof that anyone
+    read anything, and the guidance and the flag's own help say so in those
+    words. Closing it needs preflight to publish the ids it already reads,
+    which is a decision about writing customer row ids into a payload rather
+    than a small change: traigent-first-run#391.
+
+    True in the three states where there is no such question to ask, and each
+    is a real state rather than a convenience:
+
+    * No row carries an expected answer. Under a reference-free judge the rows
+      are inputs and there is no answer key; holding a band for an unread key
+      that does not exist would be unliftable by construction.
+    * Every provided row is one this run generated. The review input refuses
+      generated rows, so no read can be supplied - and those rows are already
+      bounded by the synthetic ceiling, well below the bands this floor holds.
+    * A payload written before `answerable_rows` existed, which reaches the
+      first branch at that field's zero default. This module does not punish a
+      caller for a field it could not have sent.
+    """
+    if facts.answerable_rows <= 0:
+        return True
+    provided = provided_rows(facts)
+    if provided <= 0:
+        return True
+    if not review.supplied:
+        return False
+    # Two honest coverage claims, and which one applies is decided by the
+    # review rather than chosen here. A review that declared `in_run` on every
+    # entry has named the rows the search is graded against, and covering those
+    # is the whole of what this floor asks - that is what makes the floor
+    # liftable on a corpus far larger than anyone will read end to end. A
+    # review that did not is a read of the file, and then the file is the
+    # population it has to cover.
+    graded = graded_rows(facts)
+    if review.reviewed_in_run is not None and graded is not None:
+        return review.reviewed_in_run >= graded
+    return review.reviewed >= provided
+
+
 def row_review_evidence(review: RowReview, facts: DatasetFacts) -> str:
     """Say what the read covered and what it found, in the line that costs nothing.
 
@@ -4070,11 +4391,20 @@ def row_review_evidence(review: RowReview, facts: DatasetFacts) -> str:
     """
     if not review.supplied:
         return ""
-    counted = facts.collected_rows + facts.synthesised_rows + facts.undeclared_rows
-    provided = (
-        facts.collected_rows + facts.undeclared_rows if counted else (facts.rows or 0)
-    )
+    provided = provided_rows(facts)
     line = f"the coding assistant read {review.reviewed} of {provided} provided rows"
+    # And what those rows COVER, where the review said which rows the run
+    # reads. Without this clause the card printed "read 60 of 4812 provided
+    # rows" beside a top band, because the sentence counts the file and the
+    # floor counts the rows the comparison is graded on - two denominators for
+    # one read, which is the class `provided_rows` was extracted to close and
+    # this is the same class in the other direction.
+    graded = graded_rows(facts)
+    if review.reviewed_in_run is not None and graded is not None:
+        line += (
+            f", covering {review.reviewed_in_run} of the {graded} rows this "
+            "run is graded on"
+        )
     if review.unsound == 1:
         line += "; 1 expected answer contradicts its input"
     elif review.unsound:
@@ -5578,6 +5908,11 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
         and not established
         and not disqualifying
         and facts.timed_out is not True
+        # The run said the scope gate refused this evaluator, so the sentence
+        # below - "complete calibration" - is an instruction to do what
+        # SKILL.md forbids. The condition after this one says the true thing
+        # instead, at the same ceiling.
+        and not facts.calibration_scope_refused
     ):
         caps.append(
             Cap(
@@ -5588,6 +5923,43 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
                 "evaluator, so this card cannot claim that it distinguishes "
                 "answers. Complete calibration to establish that evidence.",
                 blocks=False,
+                # And ASKS, on the same argument its `review-answer-key`
+                # siblings carry and for the reason recorded beside
+                # `COMPLETE_CALIBRATION`. `blocks` stays False, so a deferral
+                # permitted by SKILL.md still proceeds; what `asks` changes is
+                # that `recommended_action` names the outstanding check instead
+                # of returning `proceed` about a finding whose entire content
+                # is a check that has not run.
+                asks=True,
+            )
+        )
+    if (
+        facts.method is not None
+        and facts.calibration_scope_refused
+        and not established
+        and not disqualifying
+        and facts.timed_out is not True
+    ):
+        caps.append(
+            Cap(
+                "evaluator-calibration-refused",
+                CALIBRATION_REFUSED_CEILING,
+                f"An evaluator method ({facts.method}) was declared, and this "
+                "run did not calibrate it because running it here is outside "
+                "the scope this guide permits. Nothing about the evaluator is "
+                "known to be wrong, and nothing about it has been established "
+                "either, so this card cannot claim that it distinguishes "
+                "answers. The ceiling is about the missing evidence and is not "
+                "a finding against your project. Settle it through the "
+                "separate containment review rather than by running this "
+                "check here.",
+                blocks=False,
+                # ASKS, on the same argument the condition above it carries:
+                # there is genuinely something for a person to settle, it
+                # changes the answer, and `recommended_action` returning
+                # `proceed` would say there is nothing to do about the one
+                # check that is outstanding.
+                asks=True,
             )
         )
     return combine("evaluation", subs), caps
@@ -6531,6 +6903,7 @@ def aggregate(
     repeated: RepeatedInputs | None = None,
     agent_source_read: bool = False,
     agent_route_unverified: bool = False,
+    answers_read: bool = True,
 ) -> ReadinessScore:
     # Every declared weight stays in the denominator, and #201 is the reason
     # that sentence is worth writing down rather than assuming.
@@ -6573,6 +6946,13 @@ def aggregate(
         confidence,
         min((pillar.confidence for pillar in pillars), default=None),
     )
+    # After the confidence gate, and after the ceiling, because it reads the
+    # band those two produce. `answers_read` defaults True so that the callers
+    # which build a score from pillars alone - every one of them scoring no
+    # dataset - are not held for an answer key they were never given. The one
+    # path a customer reaches is `score_run`, which computes it from the facts
+    # and the review.
+    band, held_for_answers = hold_band_for_unread_answers(band, answers_read)
     return ReadinessScore(
         schema_version=SCHEMA_VERSION,
         overall=overall,
@@ -6590,6 +6970,7 @@ def aggregate(
         repeated_inputs=repeated,
         agent_source_read=agent_source_read,
         agent_route_unverified=agent_route_unverified,
+        band_limited_by_unread_answers=held_for_answers,
     )
 
 
@@ -6643,6 +7024,11 @@ def score_run(
             and not agent_facts.config_space_supplied
             and any(knob.route_unverified for knob in agent_facts.discovered)
         ),
+        # Computed from the same two inputs the dataset pillar was scored from,
+        # so the floor and the evidence line beside it describe one review.
+        # `score_run` is where both are in scope, and it is the one entry point
+        # a customer's card is produced through.
+        answers_read=answer_key_read(dataset_facts, review or RowReview()),
     )
 
 
@@ -7278,6 +7664,72 @@ def render_card(
             f"so this score rests on less evidence than a full one and stays "
             f"at {score.band}.{palette.reset}"
         )
+    if score.band_limited_by_unread_answers:
+        # READ, never asserted. The clause about the rest of the card is true
+        # only when the rest of the card says nothing, and an unconditional
+        # version of it was false in an ordinary state: 10 tuning rows against
+        # 10 held out, calibrated, with a wired space, scores 89 and holds the
+        # band while `dataset-coarse-resolution` prints `LIMITED TO 89` four
+        # lines above and `recommended_action` reads `add-examples`. Two of
+        # three claims false on one card.
+        #
+        # That condition is not exotic: 89 is the only ceiling that can coexist
+        # with this hold, because every other cap pulls the band under WORKABLE
+        # before the hold can apply, and it asks whenever the top-up offer has
+        # room. The sweep that establishes it is the regression test itself,
+        # which walks the same space and re-derives the counts on every run:
+        # tests/test_readiness_scoring.py#TheTopBandsNeedAReadOfTheAnswersTests
+        # test_the_hold_sentence_claims_nothing_the_rest_of_the_card_denies.
+        #
+        # So the sentence asserts only what is true of THIS hold in every
+        # state - it is not a cap, it does not stop the run, it holds the
+        # verdict - and reads `caps` and `recommended_action` for the rest.
+        # Asserting the value of a field the payload already carries, four
+        # lines from where the card prints that field's consequence, is the
+        # defect class this branch exists to remove.
+        nothing_else_pending = not score.caps and score.recommended_action == PROCEED
+        # Beside the confidence sentence and never instead of it: two different
+        # gaps hold this band, only one of them is about the answer key, and a
+        # reader told about the wrong one goes and closes the wrong gap.
+        #
+        # It carries the remedy in words because no cap carries it. Nothing
+        # here is capped - every measurement stands - so `recommended_action`
+        # has nothing to route, and the one sentence that says what would lift
+        # this band has to say it here or nowhere.
+        #
+        # The `proceed` clause is words on purpose, and the alternatives were
+        # weighed rather than skipped (traigent-first-run#396). A cap would
+        # route a remedy and reopen the argument recorded above
+        # `ANSWER_KEY_BAND_CEILING` about why no ceiling can express this hold;
+        # a payload field for asks that are not caps is a schema decision that
+        # belongs with the contract nothing documents yet
+        # (traigent-first-run#401). Neither is needed to stop the card reading
+        # as a contradiction: the band and the next step answer different
+        # questions, exactly as the band and the block already do, and saying
+        # so costs one sentence.
+        #
+        # In words, and not by naming the flag that carries the read. No line
+        # this card renders names an argument today - the only customer-facing
+        # strings that do are `--help`, which is a different reader - and the
+        # person holding this card is not the one who types it. SKILL.md orders
+        # the read and the evaluation reference owns its shape; what belongs
+        # here is what is missing and what would supply it.
+        lines.append(
+            f"  {palette.dim}No read covering the expected answers this run is "
+            f"graded against has reached this score, so the comparison is not "
+            f"graded above {score.band} whatever it scores. This hold is not a "
+            f"cap and does not stop the run: what it holds is the verdict, not "
+            f"the work."
+            + (
+                " Nothing else here is capped and nothing is being asked of "
+                "you before the run."
+                if nothing_else_pending
+                else ""
+            )
+            + f" A row-by-row read of each input beside its expected answer, "
+            f"covering the rows the run is graded on, is what lifts it."
+            f"{palette.reset}"
+        )
     lines.append(
         f"  {palette.dim}Local pre-run planning estimate, not a probability or "
         f"measured optimization result.{palette.reset}"
@@ -7326,6 +7778,32 @@ def render_markdown(score: ReadinessScore, timestamp: str | None = None) -> str:
             f"Weighted average before caps: {score.weighted_average}/100. "
             f"Evidence coverage: {score.confidence:.0%}.",
             "",
+            # The card says this and the durable report has to as well, for the
+            # reason the agent pillar's "not covered" list is repeated here: a
+            # reader who keeps the report and not the session would otherwise
+            # see a band with no account of what is holding it, and this is the
+            # one hold that no cap row below explains.
+            *(
+                [
+                    "**The band is held here.** No read covering the expected "
+                    "answers this run is graded against has reached this "
+                    "score, so no score carries this comparison above "
+                    f"{score.band}. This hold is not a cap and does not stop "
+                    "the run: what it holds is the verdict, not the work."
+                    + (
+                        " Nothing else is capped and nothing is being asked of "
+                        "you before the run."
+                        if not score.caps and score.recommended_action == PROCEED
+                        else ""
+                    )
+                    + " A row-by-row read of each input beside its expected "
+                    "answer, covering the rows the run is graded on, is what "
+                    "lifts it.",
+                    "",
+                ]
+                if score.band_limited_by_unread_answers
+                else []
+            ),
             *(
                 [assumption_sentence(score.provenance_assumption), ""]
                 if score.provenance_assumption is not None
@@ -7913,6 +8391,11 @@ def row_review_from_document(document: Any, facts: DatasetFacts) -> RowReview:
         reviewed_collected=origins["collected"],
         reviewed_undeclared=origins["undeclared"],
         unsound_in_run=unsound_in_run if in_run_declared == {True} else None,
+        # `marked_in_run` is already checked against the declared split above,
+        # so this count is the verified one rather than the claimed one. It is
+        # set on the same all-or-nothing `in_run` condition its sibling uses:
+        # a half-answered file cannot support either count.
+        reviewed_in_run=marked_in_run if in_run_declared == {True} else None,
     )
 
 
@@ -8224,6 +8707,7 @@ def evaluation_facts_from_calibration(
     execution_witness: str | None = None,
     comparison_shape: str | None = None,
     comparison_witness: str | None = None,
+    calibration_scope_refused: bool = False,
 ) -> EvaluationFacts:
     """Normalize both shapes `calibrate_evaluator` emits into one fact set.
 
@@ -8255,6 +8739,7 @@ def evaluation_facts_from_calibration(
             execution_witness=execution_witness,
             comparison_shape=comparison_shape,
             comparison_witness=comparison_witness,
+            calibration_scope_refused=calibration_scope_refused,
         )
     cases = payload.get("cases")
     if not isinstance(cases, list):
@@ -8341,6 +8826,11 @@ def evaluation_facts_from_calibration(
         execution_witness=execution_witness,
         comparison_shape=comparison_shape,
         comparison_witness=comparison_witness,
+        # Carried on this branch too, though the CLI refuses the pair that
+        # reaches it: a direct caller can construct both, and the condition
+        # that reads it fires only where no complete calibration was
+        # established, so a payload that carries one raises nothing here.
+        calibration_scope_refused=calibration_scope_refused,
     )
 
 
@@ -14688,13 +15178,31 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help=(
             "the coding assistant's own read of each provided row (path or -): "
             "does this expected output answer this input? Lowers the ceiling "
-            "when a material share do not, and never raises the score"
+            "when a material share do not, and adds no points. It is not "
+            "scoreless, and this sentence used to say so: a read covering the "
+            "rows the run is graded on releases the hold that keeps an "
+            "unreviewed answer key out of the top two bands. Entries are "
+            "counted, never matched against the dataset - preflight emits no "
+            "row ids to match them to - so the release is on this document's "
+            "word"
         ),
     )
     parser.add_argument(
         "--evaluator-method",
         choices=tuple(sorted(METHOD_PROFILES)),
         help="declared evaluation method (recorded as declared, not measured)",
+    )
+    parser.add_argument(
+        "--calibration-scope-refused",
+        action="store_true",
+        help=(
+            "declare that this run did not calibrate because the evaluator-"
+            "execution scope gate refused it, rather than because the step was "
+            "skipped. Changes the condition, the sentence and the remedy on the "
+            "card, and no number: it is a declaration nothing here can check, "
+            "so it may bound a claim and may not earn credit. Refused beside "
+            "--calibration, which says the opposite"
+        ),
     )
     parser.add_argument(
         "--evaluator-origin",
@@ -14817,6 +15325,36 @@ def run(argv: Sequence[str] | None = None) -> int:
     # this is the one input allowed to move the score on nothing but its own
     # word. The planner half takes no evidence at all, so a review reaching it
     # is the same mistake spelled differently.
+    # A run cannot both have calibrated this evaluator and have been refused
+    # permission to. Accepting the pair would let a card carry the safety
+    # sentence over evidence produced by the very path that sentence says was
+    # not taken - which is the one way this declaration could be used to
+    # describe a run that did the opposite of what it claims.
+    if args.calibration and args.calibration_scope_refused:
+        print(
+            "cannot read scoring input: --calibration-scope-refused says this "
+            "run was not permitted to execute the evaluator, and --calibration "
+            "is the result of executing it. Pass one.",
+            file=sys.stderr,
+        )
+        return 2
+
+    # Refused rather than ignored, for the reason `--row-review` is refused
+    # below: `scoring_requested` does not count this flag, so a run passing it
+    # with no evidence took the planner branch and the declaration vanished -
+    # accepted at the boundary, honoured nowhere. An option that means one
+    # thing in one mode and nothing in another is a defect in any case, and a
+    # safety declaration is the worst one to lose quietly.
+    if args.calibration_scope_refused and not scoring_requested(args):
+        print(
+            "cannot read scoring input: --calibration-scope-refused describes "
+            "a scoring call. The planner half takes no evidence, so there is "
+            "no calibration for it to describe and nothing would record it. "
+            "Pass it beside --preflight.",
+            file=sys.stderr,
+        )
+        return 2
+
     if args.row_review and not args.preflight:
         print(
             "cannot read scoring input: --row-review needs --preflight - its "
@@ -14981,6 +15519,7 @@ def run(argv: Sequence[str] | None = None) -> int:
             execution_witness=execution_witness,
             comparison_shape=comparison_shape,
             comparison_witness=comparison_witness,
+            calibration_scope_refused=args.calibration_scope_refused,
         )
         # `--config-space` first, and the `elif` is the safety property, not a
         # style choice: a brought document decides the agent pillar outright,
