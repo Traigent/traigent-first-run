@@ -1,9 +1,9 @@
-# 0084 - a query answer gets a ruler that reads queries
+# 0086 - a query answer gets a ruler that reads queries
 
-follows: 0083
-follows-total-measured: 481_003
-total-ceiling: 482_800
-total-measured: 482_680
+follows: 0085
+follows-total-measured: 487_639
+total-ceiling: 490_000
+total-measured: 489_541
 
 Measured on an external bank: an obedient text-to-SQL project, calibrated and in scope, reads 88
 and stops there. Its output kind fitted two rulers. One was the executing scorer that ends this

@@ -16218,18 +16218,27 @@ class TheThirdPillarNamesItsOwnAbsenceTests(unittest.TestCase):
         "wired": ["model", "temperature", "style", "examples"],
     }
 
-    def _score(self, agent: MODULE.AgentFacts) -> MODULE.ReadinessScore:
+    def _score(
+        self,
+        agent: MODULE.AgentFacts,
+        evaluation: MODULE.EvaluationFacts | None = None,
+    ) -> MODULE.ReadinessScore:
+        eval_facts = (
+            MODULE.EvaluationFacts(
+                present=True,
+                method="normalized-exact",
+                task_kind="closed-label",
+            )
+            if evaluation is None
+            else evaluation
+        )
         return MODULE.score_run(
             TheAgentPillarReadsTheAgentTests.opening_project_dataset(),
             # The evaluator is DECLARED and not calibrated, which is what makes
             # this the reported card rather than a card of this test's own
             # invention: `evaluator-unvalidated` sets a 45 ceiling, and the
             # complaint is that the agent half could not move a score off it.
-            MODULE.EvaluationFacts(
-                present=True,
-                method="normalized-exact",
-                task_kind="closed-label",
-            ),
+            eval_facts,
             agent,
             dict(MODULE.DEFAULT_WEIGHTS),
         )
@@ -16264,7 +16273,7 @@ class TheThirdPillarNamesItsOwnAbsenceTests(unittest.TestCase):
         self.assertEqual(healthy.overall, MODULE.EVALUATOR_UNVALIDATED_CEILING)
         self.assertEqual(healthy.band, "PARTIAL")
         self.assertEqual(healthy.status, "OK")
-        self.assertEqual(healthy.recommended_action, MODULE.PROCEED)
+        self.assertEqual(healthy.recommended_action, MODULE.COMPLETE_CALIBRATION)
         self.assertEqual(
             [cap.condition for cap in healthy.caps], ["evaluator-unvalidated"]
         )
@@ -16292,7 +16301,7 @@ class TheThirdPillarNamesItsOwnAbsenceTests(unittest.TestCase):
         self.assertEqual(unread.overall, MODULE.EVALUATOR_UNVALIDATED_CEILING)
         self.assertEqual(unread.band, "PARTIAL")
         self.assertEqual(unread.status, "OK")
-        self.assertEqual(unread.recommended_action, MODULE.PROCEED)
+        self.assertEqual(unread.recommended_action, MODULE.COMPLETE_CALIBRATION)
         self.assertEqual(
             [cap.condition for cap in unread.caps],
             ["evaluator-unvalidated", "agent-no-varying-knobs"],

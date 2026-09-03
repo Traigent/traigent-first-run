@@ -1,9 +1,9 @@
-# 0084 - the route a reader follows is written down
+# 0088 - the route a reader follows is written down
 
-follows: 0083
-follows-total-measured: 481_003
-total-ceiling: 485_000
-total-measured: 484_728
+follows: 0087
+follows-total-measured: 489_890
+total-ceiling: 494_000
+total-measured: 493_524
 
 An external team instrumented a four-setting agent, proved every one of its settings alters the
 outgoing request, and then watched the opening score follow one of them to the call. Recovering the
