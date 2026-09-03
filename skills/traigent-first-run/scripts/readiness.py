@@ -6517,7 +6517,9 @@ def configuration_budget(max_trials: int | None, repeats: int) -> int | None:
     return max_trials // max(repeats, 1)
 
 
-def search_space_points(configurations: int, budget: int | None) -> float:
+def search_space_points(
+    configurations: int, budget: int | None, *, budget_declarable: bool = True
+) -> float:
     """Score the space by how much of it this run will actually compare.
 
     Size RELATIVE TO THE TRIAL BUDGET, not size alone, and the two shapes that
@@ -6553,6 +6555,17 @@ def search_space_points(configurations: int, budget: int | None) -> float:
     declared `max_trials: 1` scores 0 - and that is not the same defect. "This
     run compares one configuration" is a real and bad measurement; silence is
     not a measurement of anything, and is scored as neither.
+
+    `budget_declarable=False` says the reader's document HAS NO SUCH FIELD, and
+    it is the distinction that argument turns on. A `None` from a config space
+    is a document that declined to say, which is evidence about the run. A
+    `None` from the source read is no document at all: `--agent-knobs` refuses
+    `max_trials` by name, so there is no silence there to score, and damping it
+    scored the absence of a file this gate is built not to read. It held every
+    space of four or more configurations at exactly one rung below complete, so
+    a four-option agent and a ten-thousand-option agent were indistinguishable
+    and the top rung was unreachable at any size. The damping STAYS wherever
+    the field exists, which is the half of this that was right.
     """
     # One branch, not two. A space of one configuration and a budget of one
     # trial are the same finding - the run compares nothing - so an early
@@ -6570,7 +6583,8 @@ def search_space_points(configurations: int, budget: int | None) -> float:
     # small". Written as one `if/elif` on the same `share` so a future edit
     # cannot restore the top rung down one path and not the other.
     if budget is None:
-        share = min(share, SEARCH_SPACE_PARTIAL)
+        if budget_declarable:
+            share = min(share, SEARCH_SPACE_PARTIAL)
     # Compared as integers rather than through `configurations / budget`: both
     # sides are unbounded Python integers, and true division of two large ones
     # raises OverflowError instead of answering the question.
@@ -6579,7 +6593,9 @@ def search_space_points(configurations: int, budget: int | None) -> float:
     return round(SEARCH_SPACE_WEIGHT * share, 2)
 
 
-def search_space_shortfall(configurations: int, budget: int | None) -> str:
+def search_space_shortfall(
+    configurations: int, budget: int | None, *, budget_declarable: bool = True
+) -> str:
     """Name the step this run sits under, because the ladder is a step function.
 
     `search_space_points` takes four values and no others - measured across
@@ -6601,6 +6617,16 @@ def search_space_shortfall(configurations: int, budget: int | None) -> str:
 
     Returns a clause to append, or an empty string at the top rung, where there
     is no next step to name.
+
+    A REMEDY IS ONLY WORTH PRINTING WHERE THE READER CAN APPLY IT. The
+    `max_trials` clause below names a field of the config-space document, and
+    `budget_declarable=False` says the reader is holding a document that has no
+    such field: `--agent-knobs` reads 'knobs', 'source' and 'build' and refuses
+    `max_trials` by name. Printed there it asks an author to write a line into
+    a file with nowhere to put it, which is the shape #375 and #383 both filed
+    - true about the score, unactionable for the person reading it. Nothing is
+    held one step below on that path either, because `search_space_points`
+    stopped damping it for the same reason.
     """
     reachable = min(configurations, budget) if budget is not None else configurations
     if reachable < 2:
@@ -6623,6 +6649,8 @@ def search_space_shortfall(configurations: int, budget: int | None) -> str:
     # from the budget rather than from the space - say which, because the two
     # have different repairs and the score alone distinguishes neither.
     if budget is None:
+        if not budget_declarable:
+            return ""
         return (
             "; declaring `max_trials` is what lets this reach full credit - "
             "undeclared, it is held one step below"
@@ -6639,6 +6667,8 @@ def unfollowed_space_clause(
     configurations: int,
     unfollowed: Sequence[tuple[str, int]],
     budget: int | None,
+    *,
+    budget_declarable: bool = True,
 ) -> str:
     """What the count leaves out, and the other way to reach the number.
 
@@ -6676,7 +6706,9 @@ def unfollowed_space_clause(
                 f"does spell out, so {configurations} is a floor rather than the "
                 "space"
             )
-            + search_space_shortfall(configurations, budget)
+            + search_space_shortfall(
+                configurations, budget, budget_declarable=budget_declarable
+            )
             + _settling_clause()
         )
     ceiling = configurations * math.prod(count for _, count in counted)
@@ -6692,7 +6724,13 @@ def unfollowed_space_clause(
             f"under a binding named for them, so {uncounted} is named here "
             "without a factor and the figure is a lower bound"
         )
-    return clause + search_space_shortfall(configurations, budget) + _settling_clause()
+    return (
+        clause
+        + search_space_shortfall(
+            configurations, budget, budget_declarable=budget_declarable
+        )
+        + _settling_clause()
+    )
 
 
 def _settling_clause() -> str:
@@ -6712,6 +6750,8 @@ def search_space_evidence(
     budget: int | None,
     uncredited: Sequence[str] = (),
     unfollowed: Sequence[tuple[str, int]] = (),
+    *,
+    budget_declarable: bool = True,
 ) -> str:
     """One sentence a person can act on, which a bare number is not.
 
@@ -6725,6 +6765,11 @@ def search_space_evidence(
     cited source and whose route to the request it could not follow. Where
     there are any, the opening claim is a floor rather than the space, and
     `unfollowed_space_clause` says so instead of the shortfall.
+
+    `budget_declarable=False` says this reader's document has no trial-budget
+    field, so the missing budget is not a thing the author left out. Both
+    sentences about it change with that: nothing asks for `max_trials`, and the
+    absence is described rather than reported as undeclared.
     """
     unit = "configuration" if configurations == 1 else "configurations"
     if unfollowed:
@@ -6741,12 +6786,20 @@ def search_space_evidence(
         line += "; every trial would be identical"
     elif budget is not None:
         line += f"; this run will try up to {min(configurations, budget)} of them"
-    else:
+    elif budget_declarable:
         # Not "the run may try all of them". Nothing here establishes that, and
         # it was the sentence that made the old top-rung score sound earned.
         line += (
             "; no trial budget was declared, so nothing here says how much of "
             "it this run compares"
+        )
+    else:
+        # "Undeclared" is a reproach, and there is nothing here to reproach:
+        # this document has no field for a trial budget. The fact stays,
+        # because how much of the space a run compares is still unknown.
+        line += (
+            "; this read carries no trial budget, so nothing here says how "
+            "much of it a run would compare"
         )
     if repeats > 1:
         # The knob is NAMED rather than assumed to be `seed`. #189 wrote
@@ -6760,8 +6813,12 @@ def search_space_evidence(
         verb = "repeated" if multiplied else "multiplied"
         line += f", each {verb} {repeats} times over {named}"
     if unfollowed:
-        return line + unfollowed_space_clause(configurations, unfollowed, budget)
-    return line + search_space_shortfall(configurations, budget)
+        return line + unfollowed_space_clause(
+            configurations, unfollowed, budget, budget_declarable=budget_declarable
+        )
+    return line + search_space_shortfall(
+        configurations, budget, budget_declarable=budget_declarable
+    )
 
 
 NOTHING_WIRED_CAP = Cap(
@@ -7115,6 +7172,7 @@ def score_discovered_agent(
             1,
             None,
             unfollowed=unfollowed_settings(facts),
+            budget_declarable=False,
         )
     )
     # Named, because the credit is for the route and not for the interval. A
@@ -7144,7 +7202,7 @@ def score_discovered_agent(
         [
             SubScore(
                 "search-space",
-                search_space_points(configurations, None),
+                search_space_points(configurations, None, budget_declarable=False),
                 SEARCH_SPACE_WEIGHT,
                 True,
                 detail,
@@ -10471,23 +10529,111 @@ def checked_source_lines(
     return tuple(sorted(cited))
 
 
-def _name_matches_knob(binding: str, knob: str) -> bool:
+_INVENTORY_SUFFIXES: frozenset[str] = frozenset(
+    {"choice", "option", "value", "bound", "range", "list", "table"}
+)
+
+
+def _name_tokens(name: str) -> tuple[str, ...]:
+    """One identifier's words, in order, each reduced to its singular.
+
+    Both sides of a name comparison go through this. Stripping the plural on
+    one side only made `MODELS` a table for `model` and not for `models`, and
+    the asymmetry was invisible because every setting named in this guide is
+    named in the singular.
+    """
+    return tuple(
+        token[:-1] if token.endswith("s") and len(token) > 1 else token
+        for token in re.findall(r"[a-z0-9]+", name.casefold())
+    )
+
+
+def _name_distance_to_knob(binding: str, knob: str) -> int | None:
+    """How far this binding's name is from the setting's, or None for unrelated.
+
+    Zero is the same name written two ways. A positive distance counts the
+    words one name carries and the other does not, so a smaller number is a
+    closer fit and the number is what settles a contest between two settings
+    that the same binding could be read as naming.
+    """
+    wanted = _name_tokens(knob)
+    available = _name_tokens(binding)
+    if not wanted or not available:
+        return None
+    # Strip a trailing generic collection or extent descriptor (e.g. BOUNDS,
+    # CHOICES, OPTIONS, VALUES) when the identifier carries a specific prefix
+    # and the knob does not itself name that descriptor.
+    if (
+        len(available) > 1
+        and available[-1] in _INVENTORY_SUFFIXES
+        and wanted[-1] != available[-1]
+    ):
+        available = available[:-1]
+    # The HEAD NOUN, which is the last word of a compound identifier and the
+    # one it is about. `output_format` is a kind of format and `FORMATS` is a
+    # table of formats, so they share a head and the table is its table;
+    # `prompt_style` is a kind of style, so `PROMPTS` is not.
+    #
+    # BOTH heads, not just the key's. Asking only whether the key's head
+    # appears ANYWHERE in the binding made `MODEL_TEMPERATURES` a table for
+    # `model`, because "model" is in it - and that table is about
+    # temperatures, so the card offered a factor for a dimension the agent
+    # does not have. A qualifier is not what a name is about.
+    #
+    # This also declines `MODEL_CONFIG` for `model`, which the older rule
+    # accepted. That is a real loss and it is the safe half of this trade: a
+    # config mapping is not an inventory of models, the cost is one refusal
+    # the customer can see and correct by citing the table itself, and the
+    # cost of the other direction is a number nobody can audit.
+    if wanted[-1] != available[-1]:
+        return None
+    held, offered = set(wanted), set(available)
+    # And the remaining words have to AGREE rather than merely coexist: one
+    # name's words contain the other's. `MODEL_CONFIG` says more about `model`
+    # and `FORMATS` says less about `output_format`, and both are ordinary.
+    # `OUTPUT_FORMATS` and `input_format` each carry a qualifier the other
+    # contradicts, which is what keeps two settings declared side by side from
+    # reading each other's tables.
+    if not (held <= offered or offered <= held):
+        return None
+    return len(held ^ offered)
+
+
+def _name_matches_knob(binding: str, knob: str, siblings: Sequence[str] = ()) -> bool:
     """Whether a static binding is named for this declared configuration key.
 
-    `MODELS`, `model_choices`, and `MODEL_CONFIG` are ordinary ways to hold a
-    `model` dimension.  A generic note containing the same values is not.
+    A binding names a setting when it is unambiguously ABOUT that setting.
+    `MODELS` and `model_choices` are ordinary ways to hold a `model`
+    dimension, and so is `FORMATS` for `output_format`. A generic note
+    containing the same values is not, and neither is a table about something
+    else that merely mentions the setting: `MODEL_TEMPERATURES` is a table of
+    temperatures.
+
+    Requiring EVERY word of the key was the older rule, and it refused the
+    ordinary table for any two-word setting: `FORMATS` for `output_format` and
+    `STYLES` for `prompt_style` both read as unrelated, though they are exactly
+    what an author writes. `_name_distance_to_knob` states what replaced it.
+
+    `siblings` are the OTHER settings declared in the same document, and a
+    binding that fits two of them equally well names neither. `MODELS` beside
+    `model` and `fallback_model` is `model`'s table, because it is that name
+    written in the plural and nothing more; `FORMATS` beside `output_format`
+    and `input_format` is nobody's, and refusing is the only answer that
+    cannot credit one setting with another setting's options.
+
     This is deliberately a narrow, syntax-only association: request wiring is
     proven later by the wrapper probe, never guessed here.
     """
-    wanted = re.findall(r"[a-z0-9]+", knob.casefold())
-    available = re.findall(r"[a-z0-9]+", binding.casefold())
-    if not wanted or not available:
+    distance = _name_distance_to_knob(binding, knob)
+    if distance is None:
         return False
-    normalized = {
-        token[:-1] if token.endswith("s") and len(token) > 1 else token
-        for token in available
-    }
-    return all(token in normalized for token in wanted)
+    for sibling in siblings:
+        if sibling == knob:
+            continue
+        rival = _name_distance_to_knob(binding, sibling)
+        if rival is not None and rival <= distance:
+            return False
+    return True
 
 
 def _literal_scalar_options(node: ast.AST) -> tuple[Any, ...] | None:
@@ -11845,15 +11991,245 @@ def _selected_callable_binds(name: str, source: StaticSourceEvidence) -> bool:
     return False
 
 
+# Builtins whose documented contract is to READ what they are handed. None of
+# them writes to its argument or to anything its argument holds, so handing a
+# choice table to one cannot change the options the reader saw declared. The
+# set is small on purpose: a builtin nobody has checked against the language
+# reference costs a false refusal, which is the direction credit has to fail.
+_TABLE_READING_BUILTINS = frozenset(
+    {
+        "all",
+        "any",
+        "ascii",
+        "bool",
+        "dict",
+        "enumerate",
+        "format",
+        "frozenset",
+        "iter",
+        "len",
+        "list",
+        "max",
+        "min",
+        "print",
+        "repr",
+        "reversed",
+        "set",
+        "sorted",
+        "str",
+        "sum",
+        "tuple",
+    }
+)
+
+# `", ".join(TABLE)` is the same argument one receiver over, and the receiver
+# is a string literal so the method really is `str.join` rather than a `join`
+# on something opaque. `str.format` is already allowlisted by name below.
+_TABLE_READING_STRING_METHODS = frozenset({"format", "join"})
+
+_UNSHADOWED_TABLE_READERS: "weakref.WeakKeyDictionary[ast.AST, frozenset[str]]" = (
+    weakref.WeakKeyDictionary()
+)
+
+
+def _unshadowed_table_readers(source: StaticSourceEvidence) -> frozenset[str]:
+    """Which reading builtins still MEAN the builtin everywhere in this module.
+
+    The allowlist above is a set of spellings, and a spelling is not a callee.
+    `def len(values): values.sort(); return 0` and `len = shuffle` are both
+    legal, and a check that matched the string would credit a table that gets
+    sorted in place - a semantic question answered from a surface signal, with
+    the "did not find a shadow" branch counting as a pass, which is the defect
+    class this module keeps paying for.
+
+    So the question is asked as a REFUTATION and answered fail closed, the way
+    `_node_binds` is: any binding of the spelling anywhere in the file, in any
+    scope, takes it back out of the allowlist. That is stricter than Python -
+    a `len` parameter in one helper does not shadow the builtin in another -
+    and stricter is the safe direction here, because the cost is one false
+    refusal on a file that has already redefined a builtin.
+
+    `_node_binds` reads statement kinds and defaults to "binds", so it covers
+    imports, `def`, `class`, `except ... as`, `match` captures and the rest.
+    Two binders it cannot see, because neither is a statement, are added here:
+    a parameter name, and a comprehension target.
+    """
+    cached = _UNSHADOWED_TABLE_READERS.get(source.tree)
+    if cached is not None:
+        return cached
+    taken: set[str] = set()
+    for node in ast.walk(source.tree):
+        if isinstance(node, _BINDING_CAPABLE_NODES):
+            taken.update(
+                name for name in _TABLE_READING_BUILTINS if _node_binds(name, node)
+            )
+        elif isinstance(node, ast.comprehension):
+            taken.update(
+                name
+                for name in _TABLE_READING_BUILTINS
+                if _target_binds(name, (node.target,))
+            )
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            taken.update(
+                _TABLE_READING_BUILTINS.intersection(_callable_parameter_names(node))
+            )
+    unshadowed = _TABLE_READING_BUILTINS - taken
+    _UNSHADOWED_TABLE_READERS[source.tree] = unshadowed
+    return unshadowed
+
+
+def _callee_only_reads_its_argument(
+    func: ast.expr, source: StaticSourceEvidence
+) -> bool:
+    """Whether the thing being called is known not to write to what it is given.
+
+    A bare `Call` parent is refused without this, and rightly: `shuffle(TABLE)`
+    and `tuple(TABLE)` are the same AST shape and opposite facts. What tells
+    them apart is the callee, so the callee is what gets resolved. Anything
+    this cannot resolve to a checked name - the author's own helper, an
+    imported function, a method on an opaque receiver - is refused, because
+    this read does not enter it.
+    """
+    if isinstance(func, ast.Name):
+        return func.id in _unshadowed_table_readers(source)
+    return (
+        isinstance(func, ast.Attribute)
+        and func.attr in _TABLE_READING_STRING_METHODS
+        and isinstance(func.value, ast.Constant)
+        and isinstance(func.value.value, str)
+    )
+
+
+def _consumed_without_writing(node: ast.AST, source: StaticSourceEvidence) -> bool:
+    """Whether nothing downstream of this expression writes back through it.
+
+    Walk out through Load subscripts, then refuse a method call on what is
+    left, because a method this read cannot resolve may mutate whatever it is
+    called on. `str.format` is the one transform allowed through: a choice
+    table only counts options when its entries are `ast.Constant`, so the
+    thing being formatted here is an immutable scalar literal and formatting
+    it cannot reach the table.
+    """
+    current = node
+    parent = source.parents.get(id(current))
+    while isinstance(parent, ast.Subscript) and parent.value is current:
+        if not isinstance(parent.ctx, ast.Load):
+            return False
+        current = parent
+        parent = source.parents.get(id(current))
+    return not (
+        isinstance(parent, ast.Attribute)
+        and parent.value is current
+        and parent.attr != "format"
+    )
+
+
+def _table_alias_is_only_read(
+    node: ast.Name, parent: ast.AST | None, source: StaticSourceEvidence
+) -> bool:
+    """Whether `allowed = TABLE` puts the table somewhere nothing writes to it.
+
+    A plain alias is a pure read of the table and a live second handle on it,
+    so it is safe exactly when that handle is. The handle is followed rather
+    than guessed at, and everything not established refuses.
+
+    Reuses the two alias primitives this file already has rather than adding a
+    third analysis. `_sole_binding_node` supplies "this assignment is the only
+    thing that binds the spelling in its scope", which is what makes a later
+    `allowed = something_else` disqualifying. `_nested_scope_leaves_alone`
+    supplies "no nested `def`, `lambda` or `class` can reach it", refusing a
+    `nonlocal` and anything that merely mentions the spelling without binding
+    one of its own.
+
+    What is left is the reads in the alias's own scope, and each one is put
+    back through this same rule with aliasing switched off. One hop,
+    deliberately, the same bound `_local_alias_initializer` documents: `other =
+    allowed` then earns nothing, so a chain cannot walk the table out of view
+    one assignment at a time.
+    """
+    if not isinstance(parent, (ast.Assign, ast.AnnAssign)) or parent.value is not node:
+        return False
+    targets = parent.targets if isinstance(parent, ast.Assign) else (parent.target,)
+    if len(targets) != 1 or not isinstance(targets[0], ast.Name):
+        return False
+    alias = targets[0].id
+    owner = _lexical_owner(parent, source)
+    # A binding nested in a branch, loop or `try` is one whose value at a read
+    # is not decidable from syntax alone, so it is not followed - the same
+    # condition `_local_alias_initializer` puts on the assignment it reads.
+    if source.parents.get(id(parent)) is not owner:
+        return False
+    if _sole_binding_node(alias, owner) is not parent:
+        return False
+    own_scope = _callable_body_nodes(owner)
+    scopes = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
+    for inner in own_scope:
+        if isinstance(inner, scopes) and not _nested_scope_leaves_alone(alias, inner):
+            return False
+    return all(
+        _module_binding_reference_is_safe(reference, source, follow_alias=False)
+        for reference in own_scope
+        if isinstance(reference, ast.Name)
+        and reference.id == alias
+        and isinstance(reference.ctx, ast.Load)
+    )
+
+
 def _module_binding_reference_is_safe(
-    node: ast.Name, source: StaticSourceEvidence
+    node: ast.Name, source: StaticSourceEvidence, *, follow_alias: bool = True
 ) -> bool:
     """A module choice table may only be read through a non-mutating path.
+
+    THE PROPERTY, and every branch below is an instance of it: this access
+    cannot write to the table or to anything the table holds, and it cannot
+    put the table anywhere this read stops being able to say that. It is not
+    a list of the shapes that have been seen. `_module_binding_is_current`
+    refuses the binding when ANY Load of the name fails here, so a shape that
+    is a pure read and is not recognised costs an honest agent its whole
+    table, wherever in the file that read sits, including inside an error
+    message that never fires. That is a real cost and it was reported as one:
+    the sharp end was that not mentioning your own table at all scored better
+    than mentioning it.
 
     Inspect the whole access chain. Looking only at the first ``TABLE[...]``
     misses writes such as ``TABLE[0]["model"] = ...`` and mutators such as
     ``TABLE[0].clear()`` because the inner subscript itself still has Load
     context.
+
+    Three things the property admits that a shape list did not:
+
+    * an argument to a callee that is KNOWN not to write to what it is given.
+      A bare `Call` has to be refused - `shuffle(TABLE)` and `tuple(TABLE)`
+      are the same AST - but that is an argument for resolving the callee, not
+      for refusing every call. `_callee_only_reads_its_argument` resolves it,
+      and `_unshadowed_table_readers` confirms the spelling has not been taken
+      over anywhere in the module, so a file with its own `len` gets nothing
+      from the name `len`. The precedent is already here: `str.format` is
+      allowlisted BY NAME on exactly this argument.
+    * iteration. `for option in TABLE:` and the `for` clause of a
+      comprehension read the container and write nothing to it.
+    * a plain alias, `allowed = TABLE`, when the alias is followed and every
+      read of it is safe too. See `_table_alias_is_only_read`.
+
+    On the RESULT of an allowlisted call, which needs saying because the
+    answer is not "nothing". `sorted(TABLE)` and `list(TABLE)` build a NEW
+    container, so writing to that container cannot reach the table - but its
+    ELEMENTS are the table's elements, and `list(TABLE)[0].clear()` would
+    reach one. `min(TABLE)`, `iter(TABLE)` and `reversed(TABLE)` hand back an
+    element or a view over the original rather than a copy. So the result is
+    consumed under the same rule the selected value is: subscripts walked out,
+    and then any method call on what is left refuses. That is
+    `_consumed_without_writing`, shared by both.
+
+    Where that stops is a name. `for option in TABLE:` binds an element to
+    `option` and this does not chase `option`, exactly as the already accepted
+    `first = TABLE[0]` does not chase `first`. Both are bounded by the same
+    fact rather than by inattention: a table only counts options when
+    `_literal_scalar_options` or `_literal_mapping_keys` accepts it, and both
+    refuse any entry that is not an `ast.Constant`, so an element that escapes
+    into a name is an immutable scalar with no mutator to call. The alias
+    branch is not bounded that way and is not left unchased, because
+    `allowed = TABLE` binds the CONTAINER, which is mutable whatever it holds.
     """
     parent = source.parents.get(id(node))
     current: ast.AST = node
@@ -11865,16 +12241,11 @@ def _module_binding_reference_is_safe(
         current = parent
         parent = source.parents.get(id(current))
     if selected:
-        # A method call on the selected object may mutate nested state. Narrow
-        # static credit to ordinary value consumption. ``str.format`` is the
-        # one supported transform: choice mappings only accept immutable
-        # scalar literals, and formatting a selected string cannot mutate the
-        # table or its value.
-        return not (
-            isinstance(parent, ast.Attribute)
-            and parent.value is current
-            and parent.attr != "format"
-        )
+        # A method call on the selected object may mutate nested state, so
+        # credit stops at ordinary value consumption. The rule and its one
+        # exemption live in `_consumed_without_writing`, which the call branch
+        # below applies to a builtin's result on the same terms.
+        return _consumed_without_writing(current, source)
     if (
         isinstance(parent, ast.Attribute)
         and parent.value is node
@@ -11888,13 +12259,28 @@ def _module_binding_reference_is_safe(
         )
     if isinstance(parent, ast.FormattedValue) and parent.value is node:
         return True
-    return isinstance(parent, ast.Compare) and any(
+    if isinstance(parent, ast.Compare) and any(
         comparator is node and isinstance(operation, (ast.In, ast.NotIn))
         for operation, comparator in zip(
             parent.ops,
             parent.comparators,
         )
-    )
+    ):
+        return True
+    if (
+        isinstance(parent, (ast.For, ast.AsyncFor, ast.comprehension))
+        and parent.iter is node
+    ):
+        return True
+    # Only a positional argument reaches here, and only `parent.func is not
+    # node` separates it from `TABLE(...)`. A `*TABLE` spread sits under
+    # `ast.Starred` and any keyword form under `ast.keyword`, so neither is a
+    # direct child of the call: both fall through and are refused.
+    if isinstance(parent, ast.Call) and parent.func is not node:
+        return _callee_only_reads_its_argument(
+            parent.func, source
+        ) and _consumed_without_writing(parent, source)
+    return follow_alias and _table_alias_is_only_read(node, parent, source)
 
 
 def _module_binding_is_current(
@@ -14736,12 +15122,15 @@ def _unsafely_read_tables(
     """Cited choice tables this file reads in a form that disqualifies them.
 
     `_module_binding_reference_is_safe` is an allowlist over the ACCESS, not
-    over the binding: a table may be indexed, `.get()`, interpolated bare into
-    an f-string, or used as an `in` comparand, and nothing else. One
-    `tuple(TABLE)` or `", ".join(TABLE)` anywhere in the file - most often
-    inside an error message the author never expects to fire - takes the whole
-    table out of credit, and the sharp end is that not mentioning the table at
-    all is safer than mentioning it. Nothing said so.
+    over the binding, and it asks one question of each read: can this change
+    the table, or put it somewhere this check can no longer say that. An
+    index, a `.get()`, an `in` comparand, iteration, a bare interpolation, an
+    alias nothing later writes to, and an argument to a builtin that only
+    reads what it is given all answer no. Handing the table to the author's
+    own function answers yes, because this read does not enter it, and so
+    does any write through the name. One of those anywhere in the file - most
+    often inside an error message the author never expects to fire - takes
+    the whole table out of credit, wherever it sits. Nothing said which one.
     """
     found: list[tuple[str, int]] = []
     for node in source.tree.body:
@@ -14762,7 +15151,10 @@ def _unsafely_read_tables(
 
 
 def route_refusal_diagnosis(
-    knob: str, lines: Sequence[int], source: StaticSourceEvidence
+    knob: str,
+    lines: Sequence[int],
+    source: StaticSourceEvidence,
+    siblings: Sequence[str] = (),
 ) -> str:
     """Which condition of the accepted route this read could not confirm.
 
@@ -14821,7 +15213,7 @@ def route_refusal_diagnosis(
         )
     unsafe = _unsafely_read_tables(
         knob,
-        {name for name in declared if _name_matches_knob(name, knob)}
+        {name for name in declared if _name_matches_knob(name, knob, siblings)}
         | {selection.value.id for selection in loose},
         set(lines),
         source,
@@ -14833,10 +15225,13 @@ def route_refusal_diagnosis(
         return (
             "the options table is read in a form that disqualifies it ("
             + named_at
-            + "): every read of it anywhere in the file has to be an index, a "
-            "`.get()`, a bare f-string interpolation, or an `in` comparand. "
-            "`tuple(TABLE)` in an error message, `for x in TABLE`, and even "
-            "`allowed = TABLE` all take it out of credit, wherever they sit"
+            + "): a read of it anywhere in the file has to be one this check "
+            "can see cannot change it - an index, a `.get()`, an `in` "
+            "comparand, iteration, a bare f-string interpolation, an alias "
+            "nothing later writes to, or an argument to a builtin that only "
+            "reads what it is given. Handing the table to your own function, "
+            "to a builtin spelling this file rebinds, or to anything that "
+            "writes through it, takes it out of credit wherever that sits"
         )
     if not loose:
         if past_the_first:
@@ -15016,13 +15411,16 @@ def _values_from_cited_binding(
     node: ast.Assign | ast.AnnAssign,
     knob: str,
     source: StaticSourceEvidence,
+    siblings: Sequence[str] = (),
 ) -> list[Any]:
     value = node.value
     if value is None:
         return []
     names = _assignment_names(node)
     found: list[Any] = []
-    matching_names = [name for name in names if _name_matches_knob(name, knob)]
+    matching_names = [
+        name for name in names if _name_matches_knob(name, knob, siblings)
+    ]
     # Every route out of this branch is a subscript - `_expression_varies_binding`
     # accepts nothing else - so an inventory that cannot be indexed has no route
     # here whatever else is true of it.
@@ -15066,7 +15464,10 @@ def _selected_collection_values(
 
 
 def _binding_values_for_knob(
-    knob: str, lines: Sequence[int], source: StaticSourceEvidence
+    knob: str,
+    lines: Sequence[int],
+    source: StaticSourceEvidence,
+    siblings: Sequence[str] = (),
 ) -> tuple[Any, ...]:
     """Read literal alternatives from a cited executable config binding.
 
@@ -15086,7 +15487,7 @@ def _binding_values_for_knob(
             continue
         if not _is_statically_reachable(node, source):
             continue
-        found.extend(_values_from_cited_binding(node, knob, source))
+        found.extend(_values_from_cited_binding(node, knob, source, siblings))
 
     # And the collections this setting is actually used to choose from, learned
     # from the expression rather than from a name resemblance. This is the
@@ -15096,21 +15497,42 @@ def _binding_values_for_knob(
 
 
 def values_are_in_checked_source(
-    knob: str, values: Sequence[Any], lines: Sequence[int], source: StaticSourceEvidence
+    knob: str,
+    values: Sequence[Any],
+    lines: Sequence[int],
+    source: StaticSourceEvidence,
+    siblings: Sequence[str] = (),
 ) -> list[str]:
     bound_values = {
-        repr(value) for value in _binding_values_for_knob(knob, lines, source)
+        repr(value) for value in _binding_values_for_knob(knob, lines, source, siblings)
     }
     return [str(value) for value in values if repr(value) not in bound_values]
 
 
 def _cited_source_declares_values(
-    values: Sequence[Any], lines: Sequence[int], source: StaticSourceEvidence
+    values: Sequence[Any],
+    lines: Sequence[int],
+    source: StaticSourceEvidence,
+    *,
+    module_level: bool = True,
 ) -> bool:
-    """Whether cited executable syntax contains the options, apart from wiring."""
+    """Whether cited executable syntax contains the options, apart from wiring.
+
+    Over the MODULE-LEVEL bindings, which is the node set every credit route in
+    this reader can use. It answered over `ast.walk` and so accepted a table
+    written inside a function or class, which produced the sentence "the cited
+    executable source shows the declared options" beside a number computed from
+    a binding no route could have read: one card, one question, two node sets.
+    `_declared_module_names` states the settled answer.
+
+    `module_level=False` asks the OTHER question - is this anywhere in the
+    cited source at all - and it exists for one purpose, which is to keep a
+    refusal from denying a value the customer's own file plainly holds. It
+    decides wording and never credit.
+    """
     cited = set(lines)
     found: set[str] = set()
-    for node in ast.walk(source.tree):
+    for node in source.tree.body if module_level else ast.walk(source.tree):
         if not (
             isinstance(node, (ast.Assign, ast.AnnAssign))
             and node.value is not None
@@ -15133,6 +15555,7 @@ def _knob_named_binding_holds(
     values: Sequence[Any],
     lines: Sequence[int],
     source: StaticSourceEvidence,
+    siblings: Sequence[str] = (),
 ) -> bool:
     """One cited binding NAMED for this setting holds all of these options.
 
@@ -15147,17 +15570,24 @@ def _knob_named_binding_holds(
 
     So the ceiling is drawn only from a binding this reader would have been
     willing to read the options out of anyway - `_name_matches_knob` is the
-    same association `_values_from_cited_binding` uses for credit.
+    same association `_values_from_cited_binding` uses for credit, and the
+    MODULE-LEVEL node set is the same one, for the reason `_declared_module_names`
+    gives. This predicate inherited the wider `ast.walk` reading from the
+    function it was modelled on, which let a table written inside a function
+    raise a ceiling no credit route could ever have reached.
     """
     wanted = {repr(value) for value in values}
     cited = set(lines)
-    for node in ast.walk(source.tree):
+    for node in source.tree.body:
         if not (
             isinstance(node, (ast.Assign, ast.AnnAssign))
             and node.value is not None
             and _node_lines(node) & cited
             and _is_statically_reachable(node, source)
-            and any(_name_matches_knob(name, knob) for name in _assignment_names(node))
+            and any(
+                _name_matches_knob(name, knob, siblings)
+                for name in _assignment_names(node)
+            )
         ):
             continue
         literal = (
@@ -15176,8 +15606,14 @@ def discovered_knob_from_entry(
     source: StaticSourceEvidence | None = None,
     *,
     source_unavailable_reason: str | None = None,
+    siblings: Sequence[str] = (),
 ) -> DiscoveredKnob:
     """Read one discovered parameter, saying plainly why it earns nothing.
+
+    `siblings` are the other settings the same document declares, and they are
+    carried because a binding is only this setting's table if it is not equally
+    the table of the setting written beside it. `_name_matches_knob` states
+    that rule; this is the one place that knows what else was declared.
 
     Every refusal below is the owner's rule, which is a rule about EVIDENCE
     rather than about plausibility: "according to what his agent can see - if
@@ -15257,7 +15693,9 @@ def discovered_knob_from_entry(
                 ),
                 unverified=True,
             )
-        unevidenced = values_are_in_checked_source(name, values, checked_lines, source)
+        unevidenced = values_are_in_checked_source(
+            name, values, checked_lines, source, siblings
+        )
         if unevidenced:
             # A finding, not a refusal, per this error class's own rule: a
             # parameter that does not qualify is reported with its reason,
@@ -15286,16 +15724,36 @@ def discovered_knob_from_entry(
                 # The options are provably in the cited source and only the
                 # route is unfollowed, so how many there are is a fact this
                 # read established rather than one it is taking on trust.
-                if _knob_named_binding_holds(name, values, checked_lines, source):
+                if _knob_named_binding_holds(
+                    name, values, checked_lines, source, siblings
+                ):
                     confirmed_options = len({repr(value) for value in values})
                 reason = (
                     "the cited executable source shows the declared options, but "
                     "this deliberately narrow static read could not follow them "
                     "to the request on the selected agent path: "
-                    + route_refusal_diagnosis(name, checked_lines, source)
+                    + route_refusal_diagnosis(name, checked_lines, source, siblings)
                     + "; no source defect is inferred - the setting may well "
                     "change the request - and the enhanced run can settle this "
                     "dimension"
+                )
+            elif _cited_source_declares_values(
+                values, checked_lines, source, module_level=False
+            ):
+                # The options really are in the file, so the refusal below
+                # would be false about the customer's own source. What is
+                # wrong is WHERE they are written: a table inside a function
+                # or class is not a module inventory the selected call path
+                # can index, which is why no route reads one.
+                reason = (
+                    "the cited executable source spells these options out, but "
+                    "not as a plain top-level statement of the module - it is "
+                    "nested inside something, which for this read means a "
+                    "function, a class, or any block such as a `try` or an "
+                    "`if`, including a module-level one that always runs. The "
+                    "only options table this read follows to the request is an "
+                    "unconditional module-level binding; move the table to one "
+                    "and cite the line it lands on"
                 )
             else:
                 reason = (
@@ -15382,7 +15840,9 @@ def discovered_knob_from_entry(
                 f"{name}, so two values drawn from it would not be told apart"
             ),
         )
-    unevidenced = values_are_in_checked_source(name, (low, high), checked_lines, source)
+    unevidenced = values_are_in_checked_source(
+        name, (low, high), checked_lines, source, siblings
+    )
     if unevidenced:
         if _knob_reaches_its_named_request_argument(name, source):
             # The route, which is what this pillar claims to read, without the
@@ -15411,7 +15871,7 @@ def discovered_knob_from_entry(
                 "the cited executable source shows the declared bounds, but "
                 "this deliberately narrow static read could not follow the "
                 "setting to the request on the selected agent path: "
-                + route_refusal_diagnosis(name, checked_lines, source)
+                + route_refusal_diagnosis(name, checked_lines, source, siblings)
                 + "; no source defect is inferred - the setting may well "
                 "change the request - and the enhanced run can settle this "
                 "dimension",
@@ -15419,11 +15879,29 @@ def discovered_knob_from_entry(
                 unfollowed_options=(
                     2
                     if _knob_named_binding_holds(
-                        name, (low, high), checked_lines, source
+                        name, (low, high), checked_lines, source, siblings
                     )
                     else 0
                 ),
                 options_shown=True,
+            )
+        if _cited_source_declares_values(
+            (low, high), checked_lines, source, module_level=False
+        ):
+            # Same correction as the categorical branch one screen up: the
+            # bounds are in the file, so denying them would be false, and what
+            # is wrong is that they sit inside a function or class where no
+            # route this read can follow starts.
+            return DiscoveredKnob(
+                name,
+                "numeric",
+                evidence,
+                (),
+                "the cited executable source spells these bounds out inside a "
+                "function or class rather than at module level, and the only "
+                "binding this read can follow to the request is a module-level "
+                "one; move it out to module level and cite the line it lands on",
+                unverified=True,
             )
         return DiscoveredKnob(
             name,
@@ -16182,6 +16660,7 @@ def agent_facts_from_discovery(
                 spec,
                 source,
                 source_unavailable_reason=source_unavailable_reason,
+                siblings=tuple(knobs),
             )
             for name, spec in sorted(knobs.items())
         ),

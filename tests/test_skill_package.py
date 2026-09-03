@@ -29531,9 +29531,13 @@ class TheAcceptedRouteIsReadableBeforeItIsRefusedTests(unittest.TestCase):
         )
         self.assertIn("stop passing the mapping around bare", reference)
         self.assertIn(
-            "every read of a choice table, anywhere in the file, has to be an "
-            "index, a `.get()`, a bare f-string interpolation, or an `in` "
-            "comparand",
+            "a read of a choice table, anywhere in the file, has to be one "
+            "this reader can see cannot change the table",
+            reference,
+        )
+        self.assertIn(
+            "writing through the name loses it, and so does handing the table "
+            "to your own function",
             reference,
         )
         self.assertIn("a range has no options to index", reference)
