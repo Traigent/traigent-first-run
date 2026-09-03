@@ -5270,7 +5270,18 @@ class TheRepeatedRowsTieDecidesWhichRouteIsOfferedTests(unittest.TestCase):
         return MODULE.score_run(
             MODULE.dataset_facts_from_preflight(records),
             MODULE.evaluation_facts_from_calibration(
-                {"passed": True, "cases": [{"checks": {"good_passes": True, "bad_fails": True, "non_constant": True}}]},
+                {
+                    "passed": True,
+                    "cases": [
+                        {
+                            "checks": {
+                                "good_passes": True,
+                                "bad_fails": True,
+                                "non_constant": True,
+                            }
+                        }
+                    ],
+                },
                 method="normalized-exact",
                 task_kind="closed-label",
                 evaluator_present=present,
