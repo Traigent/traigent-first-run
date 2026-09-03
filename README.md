@@ -75,6 +75,18 @@ changing out of your project.
 
 ## What the run does
 
+```mermaid
+flowchart TD
+    A[Stage 1: Discovery & Inspection] --> B[Stage 2: Static Readiness Gate]
+    B --> C{Component Gap?}
+    C -- Real Components --> D[Preserve & Calibrate]
+    C -- Missing/Broken --> E[Dependency Matrix: Coherent Substitutes]
+    E --> D
+    D --> F[Stage 3: Offline Baseline Run]
+    F --> G[Stage 4: Connect Traigent Account & Enhanced Optimization]
+    G --> H[Stage 5: Results Summary & traigent-skills Handover]
+```
+
 1. Inspects the project and scores real-world readiness out of 100, before anything is created or
    repaired.
 2. Diagnoses material dataset/evaluator limitations and offers repair, demonstration, or pause.
