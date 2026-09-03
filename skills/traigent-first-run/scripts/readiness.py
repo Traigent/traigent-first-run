@@ -6158,6 +6158,44 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
             evidence = "calibration reported a case this score could not read"
         elif facts.calibration_supplied:
             evidence = "calibration ran but reported no checks"
+        elif facts.calibration_scope_refused:
+            # The arm below says "no calibration result was PROVIDED", which is
+            # this module's own sentence for a run that was asked and did not
+            # answer - `SubScore.withheld` in prose. A run the evaluator-
+            # execution scope gate refused was never asked; it was forbidden,
+            # and printing the asked-and-refused sentence over it made the card
+            # charge that run with a silence it did not choose. It sat directly
+            # above the cap that says this check must not be run here, so the
+            # two lines of one card disagreed about what had happened.
+            #
+            # ONLY THE SENTENCE MOVES. `value`, `maximum`, `measured` and
+            # `withheld` are all identical to the arm below, so the pillar
+            # stays exactly where it was and the declaration still buys
+            # nothing - which is the rule this whole seam is held to, and the
+            # reason clearing `withheld` here was rejected: it would renormalize
+            # the check out of the denominator and lift the pillar on the
+            # strength of a flag nothing verifies, making a claimed refusal
+            # cheaper than doing the work. What the run needs is not a higher
+            # number for evidence it lacks; it is a way to get the evidence, and
+            # this package does not have one. `references/run-safety.md` records
+            # why an in-process route is not it, and sends that work to the
+            # containment review instead. So the sentence names what happened
+            # and the cap names the review; neither pretends there is a step
+            # here that would produce the missing probe.
+            # The whole sentence is built in the one arm that owns this state,
+            # rather than as a tail appended after the chain. An earlier draft
+            # keyed that tail on `facts.calibration_scope_refused` outside the
+            # branch, so it also attached to the arms above and could print
+            # "calibration ran but reported no checks" and "was never asked" in
+            # one sentence. The CLI refuses that pair today, so it was latent
+            # rather than live - but the guard sits thousands of lines away in
+            # another function, and a sentence that stays true only because a
+            # distant refusal stays in place is one flag away from being wrong.
+            evidence = (
+                "this run was never asked for a calibration - the evaluator-"
+                "execution scope gate refused it, and the weight stays because "
+                "the evidence is absent either way"
+            )
         else:
             evidence = "no calibration result was provided to this score"
         subs.append(

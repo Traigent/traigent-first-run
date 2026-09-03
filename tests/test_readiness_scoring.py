@@ -10567,6 +10567,94 @@ class ADeferredCalibrationSaysSoInTheFieldConsumersReadTests(unittest.TestCase):
             MODULE.CAP_CEILING["evaluator-unvalidated"],
         )
 
+    def _calibration_subscore(self, score: "MODULE.ReadinessScore"):
+        pillar = next(p for p in score.pillars if p.name == "evaluation")
+        return next(s for s in pillar.subscores if s.name == "calibration")
+
+    def test_a_refused_run_is_not_charged_with_a_silence_it_chose(self) -> None:
+        """`withheld` means asked and not answered. This run was not asked.
+
+        `SubScore.withheld` is this module's marker for evidence that was THIS
+        RUN'S to supply and was not supplied, and the sentence printed beside
+        it said "no calibration result was provided to this score". A run the
+        evaluator-execution scope gate refused did not withhold anything; it
+        was forbidden, and that sentence sat directly above the cap saying the
+        check must not be run here - two lines of one card disagreeing about
+        what had happened.
+
+        What is NOT done about it: the flag is not cleared. Clearing it would
+        renormalize the check out of the denominator and lift the evaluation
+        pillar from 51 to about 97 on the strength of a declaration nothing
+        verifies, which would make claiming a refusal cheaper than doing the
+        work. The next test pins that nothing moved.
+        """
+        refused = self._outstanding(scope_refused=True)
+        plain = self._outstanding(scope_refused=False)
+        refused_calibration = self._calibration_subscore(refused)
+        plain_calibration = self._calibration_subscore(plain)
+
+        self.assertTrue(refused_calibration.withheld)
+        self.assertFalse(refused_calibration.measured)
+        self.assertIn("never asked", refused_calibration.evidence)
+        self.assertIn("scope gate refused it", refused_calibration.evidence)
+        # The whole sentence is built inside the arm that owns this state. An
+        # earlier draft appended its tail after the branch, keyed on the flag
+        # rather than on which arm fired, so it also attached to the
+        # "calibration ran but reported no checks" arms above and could print
+        # both halves in one sentence.
+        self.assertNotIn("never asked", self._calibration_subscore(plain).evidence)
+        # The sentence for a run that simply postponed the step is untouched:
+        # that run WAS asked, and the old words are true of it.
+        self.assertIn("no calibration result was provided", plain_calibration.evidence)
+        self.assertEqual(
+            plain_calibration.evidence,
+            "no calibration result was provided to this score; it costs points "
+            "until a complete calibration is measured",
+        )
+
+    def test_only_the_sentence_moves_and_the_arithmetic_does_not(self) -> None:
+        """The legibility fix must be provably free.
+
+        One base, one field varied, compared sub-score by sub-score rather than
+        pillar by pillar - a pillar total can stay put while two checks trade
+        weight, and the claim here is stronger than that.
+        """
+        refused = self._outstanding(scope_refused=True)
+        plain = self._outstanding(scope_refused=False)
+
+        def arithmetic(score):
+            return [
+                (
+                    pillar.name,
+                    pillar.score,
+                    pillar.confidence,
+                    [
+                        (
+                            s.name,
+                            s.value,
+                            s.maximum,
+                            s.measured,
+                            s.withheld,
+                            s.applicable,
+                        )
+                        for s in pillar.subscores
+                    ],
+                )
+                for pillar in score.pillars
+            ]
+
+        self.assertEqual(arithmetic(refused), arithmetic(plain))
+        self.assertEqual(refused.overall, plain.overall)
+        self.assertEqual(refused.weighted_average, plain.weighted_average)
+        self.assertEqual(refused.band, plain.band)
+        self.assertEqual(refused.confidence, plain.confidence)
+        # And the two evidence strings really are different, so the comparison
+        # above is not passing because nothing changed at all.
+        self.assertNotEqual(
+            self._calibration_subscore(refused).evidence,
+            self._calibration_subscore(plain).evidence,
+        )
+
     def test_the_two_calibration_states_are_mutually_exclusive(self) -> None:
         """One branch raises one or the other, and no card carries both."""
         for refused in (False, True):
@@ -16218,18 +16306,27 @@ class TheThirdPillarNamesItsOwnAbsenceTests(unittest.TestCase):
         "wired": ["model", "temperature", "style", "examples"],
     }
 
-    def _score(self, agent: MODULE.AgentFacts) -> MODULE.ReadinessScore:
+    def _score(
+        self,
+        agent: MODULE.AgentFacts,
+        evaluation: MODULE.EvaluationFacts | None = None,
+    ) -> MODULE.ReadinessScore:
+        eval_facts = (
+            MODULE.EvaluationFacts(
+                present=True,
+                method="normalized-exact",
+                task_kind="closed-label",
+            )
+            if evaluation is None
+            else evaluation
+        )
         return MODULE.score_run(
             TheAgentPillarReadsTheAgentTests.opening_project_dataset(),
             # The evaluator is DECLARED and not calibrated, which is what makes
             # this the reported card rather than a card of this test's own
             # invention: `evaluator-unvalidated` sets a 45 ceiling, and the
             # complaint is that the agent half could not move a score off it.
-            MODULE.EvaluationFacts(
-                present=True,
-                method="normalized-exact",
-                task_kind="closed-label",
-            ),
+            eval_facts,
             agent,
             dict(MODULE.DEFAULT_WEIGHTS),
         )
@@ -16264,7 +16361,7 @@ class TheThirdPillarNamesItsOwnAbsenceTests(unittest.TestCase):
         self.assertEqual(healthy.overall, MODULE.EVALUATOR_UNVALIDATED_CEILING)
         self.assertEqual(healthy.band, "PARTIAL")
         self.assertEqual(healthy.status, "OK")
-        self.assertEqual(healthy.recommended_action, MODULE.PROCEED)
+        self.assertEqual(healthy.recommended_action, MODULE.COMPLETE_CALIBRATION)
         self.assertEqual(
             [cap.condition for cap in healthy.caps], ["evaluator-unvalidated"]
         )
@@ -16292,7 +16389,7 @@ class TheThirdPillarNamesItsOwnAbsenceTests(unittest.TestCase):
         self.assertEqual(unread.overall, MODULE.EVALUATOR_UNVALIDATED_CEILING)
         self.assertEqual(unread.band, "PARTIAL")
         self.assertEqual(unread.status, "OK")
-        self.assertEqual(unread.recommended_action, MODULE.PROCEED)
+        self.assertEqual(unread.recommended_action, MODULE.COMPLETE_CALIBRATION)
         self.assertEqual(
             [cap.condition for cap in unread.caps],
             ["evaluator-unvalidated", "agent-no-varying-knobs"],
@@ -16765,7 +16862,7 @@ class AFoundAgentDoesNotLookLikeAMissingOneTests(unittest.TestCase):
 
 
 class TheBuildHalfCitesTheAgentItReadTests(unittest.TestCase):
-    """A build read is a claim about the customer's code, and nothing checked it.
+    """A build read is a claim about the customer'sr code, and nothing checked it.
 
     The knobs half refuses a document whose `source_lines` fall outside the
     selected agent. The build half carried no coordinate at all - `evidence` is
@@ -17787,13 +17884,13 @@ class TheBuildHalfCitesTheAgentItReadTests(unittest.TestCase):
         """
         cases = {
             "bare pipe": "MODEL: list | None = None",
-            "escaped pipe in a regex": 'ANSWER = re.compile(r"^(yes\\|no)$")',
+            "escaped pipe in a regex": r'ANSWER = re.compile(r"^(yes\|no)$")',
             "trailing backslash": 'MODEL = "a\\\\"',
             "doubled backslash then pipe": 'MODEL = "a\\\\" + "|b"',
             "many pipes": 'MODEL = "a|b|c|d|e"',
             # Long enough to be truncated, and carrying escapes at the cut, so
             # the property is asserted on the truncated form too.
-            "pipes past the width bound": 'MODEL = "' + "x|y\\|z" * 40 + '"',
+            "pipes past the width bound": 'MODEL = r"' + "x|y\\|z" * 40 + '"',
         }
         for label, first_line in cases.items():
             with self.subTest(source=label):

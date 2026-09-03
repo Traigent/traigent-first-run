@@ -1,12 +1,12 @@
-# 0084 - two caps that had no branch
+# 0087 - two caps that had no branch
 
-follows: 0083
-follows-resident-measured: 105_335
-follows-total-measured: 481_003
-resident-ceiling: 106_050
-resident-measured: 105_684
-total-ceiling: 481_950
-total-measured: 481_486
+follows: 0086
+follows-resident-measured: 106_624
+follows-total-measured: 489_541
+resident-ceiling: 107_500
+resident-measured: 106_973
+total-ceiling: 490_350
+total-measured: 489_890
 
 The scorer gained two conditions, and each one had to gain a bullet, because an
 assistant meeting a condition id with nothing beside it has no next step to take

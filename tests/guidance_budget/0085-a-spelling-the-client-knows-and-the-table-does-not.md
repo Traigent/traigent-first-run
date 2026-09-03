@@ -1,10 +1,10 @@
-# 0084 - a spelling the client knows and the table does not
+# 0085 - a spelling the client knows and the table does not
 
-follows: 0083
-follows-total-measured: 481_003
+follows: 0084
+follows-total-measured: 484_141
 follows-document-measured: 128_943
-total-ceiling: 484_900
-total-measured: 484_501
+total-ceiling: 488_100
+total-measured: 487_639
 document-ceiling: 132_850
 document-measured: 132_441
 

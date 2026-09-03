@@ -3,13 +3,18 @@
 
 Every scorer must return a finite, normalized, higher-is-better score in ``[0,1]``.
 For deterministic calibration the child is credential-stripped, but process separation is not a
-sandbox. This first-run guide does not calibrate a scorer that executes candidate code or SQL;
-``references/run-safety.md`` routes that work to a separate manual containment review.
+sandbox. This first-run guide does not calibrate a scorer that executes candidate code or SQL
+at all - not because the probes are the model's, they are authored here, but because calling such a
+scorer opens an engine against a database this step cannot bound. ``references/run-safety.md``
+routes that work to a separate containment review and records why no in-process route replaces it.
+The gate below asks ``preflight.py``'s one-directional walk of every file this run would import,
+including the module behind ``--reply-transform``, and refuses on a witness.
 """
 
 from __future__ import annotations
 
 import argparse
+import ast
 import asyncio
 import contextlib
 import importlib.util
@@ -564,6 +569,157 @@ def literal_or_file(value: str) -> Any:
         return value
 
 
+# WHERE THE ENGINE QUESTION IS ANSWERED, and it is not answered here.
+#
+# `preflight.py`'s `candidate_execution_witnesses` walks a parsed file for the
+# constructs that reach a code or SQL engine, and `evaluator-shape` reports what
+# it found. One decision, one home. This file asks that function and owns no
+# engine table of its own: a second table would drift from the first, and the
+# tool that refuses would end up disagreeing with the card that warns.
+#
+# WHAT THIS GATE CLAIMS, AND WHAT IT REFUSES TO CLAIM. That walk is
+# one-directional and says so in its own comment: a witness establishes that the
+# file reaches an engine, and finding none establishes nothing whatever. An
+# engine behind a helper module, a connection handed in through `input_data`, or
+# a name bound at runtime all escape it (traigent-first-run#416). So this gate
+# only ever REFUSES. It never clears: a run with no witness is a run this tool
+# had no grounds to stop, not a run it checked, and nothing here reports it as
+# an all-clear. The read of the complete call path that `SKILL.md` mandates is
+# still what covers the rest, and it is still a person's job.
+#
+# That asymmetry is load-bearing, and it is what an earlier draft of this change
+# got wrong. It tried to close the gap with a second, deeper reader of its own
+# whose clearing branch was meant to fail closed. Adversarial review found seven
+# classes of scorer that really execute their input and cleared it anyway, three
+# of them recording nothing at all about what the read had skipped. A clearing
+# branch that is unsound is worse than the prose rule it replaces, because it
+# tells the reader it checked. So there is no clearing branch here to be wrong.
+#
+# BOTH FILES THE CHILD IMPORTS ARE READ, and the second one is the reason this
+# gate is worth having. The scorer is the obvious file. The module behind
+# `--reply-transform` is imported and called in the same child on every probe,
+# and `--allow-execution`'s own help text has always said so - "and the module
+# behind --reply-transform, whose top level runs on the same import". It was
+# simply never looked at. A transform whose module opens a connection at import
+# is the same hazard as a scorer that does, reached one flag earlier.
+
+
+# How many witnesses a refusal prints before it says how many more there are.
+MAX_REPORTED_EXECUTION_WITNESSES = 5
+
+
+PREFLIGHT_MODULE_NAME = "traigent_first_run_preflight"
+
+
+def preflight_walk() -> Any:
+    """The one function that answers whether a file reaches an engine.
+
+    Loaded by path rather than by `import preflight`, because these scripts are
+    run directly and copied into a bundle rather than installed as a package, so
+    the sibling is not reliably importable by name. Registered in `sys.modules`
+    before it is executed: `preflight.py` builds dataclasses at its top level,
+    and `dataclasses` resolves a class's own module out of `sys.modules` while
+    doing it.
+    """
+    existing = sys.modules.get(PREFLIGHT_MODULE_NAME)
+    if existing is not None:
+        return existing.candidate_execution_witnesses
+    path = Path(__file__).resolve().parent / "preflight.py"
+    spec = importlib.util.spec_from_file_location(PREFLIGHT_MODULE_NAME, path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot load {path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[PREFLIGHT_MODULE_NAME] = module
+    try:
+        spec.loader.exec_module(module)
+    except BaseException:
+        del sys.modules[PREFLIGHT_MODULE_NAME]
+        raise
+    return module.candidate_execution_witnesses
+
+
+def execution_scope_scan(files: dict[str, Path]) -> dict[str, Any]:
+    """Ask preflight's walk of every file this run is about to import.
+
+    A file that will not parse contributes no witnesses and is recorded as
+    unread rather than as clean. That distinction costs nothing here - the gate
+    has no clearing branch for it to weaken - and it keeps the card honest about
+    which files the walk actually ran on. Importing an unparsable file is about
+    to fail loudly on its own, one step later.
+    """
+    witnesses_of = preflight_walk()
+    witnesses: list[dict[str, str]] = []
+    unread: list[str] = []
+    for role, path in files.items():
+        try:
+            source = Path(path).read_text(encoding="utf-8")
+            tree = ast.parse(source, filename=str(path))
+        except (
+            OSError,
+            UnicodeDecodeError,
+            SyntaxError,
+            ValueError,
+            MemoryError,
+            RecursionError,
+        ):
+            unread.append(role)
+            continue
+        for witness in witnesses_of(tree):
+            witnesses.append({"role": role, "file": str(path), "witness": witness})
+    return {
+        "walk": "preflight.candidate_execution_witnesses",
+        "files": {role: str(path) for role, path in files.items()},
+        "unread": unread,
+        "witnesses": witnesses,
+        # Said in the payload, not only in the prose, because a consumer that
+        # reads an empty `witnesses` list has to know what it is allowed to
+        # conclude from it, which is nothing.
+        "witnesses_are_one_directional": True,
+    }
+
+
+def scope_refusal_message(scan: dict[str, Any]) -> str:
+    """What to print when a file this run would import reaches an engine."""
+    roles = sorted({site["role"] for site in scan["witnesses"]})
+    subject = " and ".join(roles)
+    lines = [
+        f"Refusing to calibrate: the {subject} this run would import reaches a "
+        "code or SQL engine, and calling it runs statements against whatever "
+        "that engine is pointed at. The probes are this guide's own authored "
+        "pairs, so nothing the model wrote runs at this step - what is "
+        "unbounded is the target, and a first run does not grade against a "
+        "database it cannot bound.",
+        "",
+    ]
+    for site in scan["witnesses"][:MAX_REPORTED_EXECUTION_WITNESSES]:
+        lines.append(f"  {site['role']}: {site['file']}: {site['witness']}")
+    remaining = len(scan["witnesses"]) - MAX_REPORTED_EXECUTION_WITNESSES
+    if remaining > 0:
+        lines.append(f"  ... and {remaining} more")
+    lines.extend(
+        [
+            "",
+            "There is no route here that makes running it safe. This guide "
+            "does not own an execution boundary, and an in-process one is not "
+            "a boundary at all: see the containment section of "
+            "references/run-safety.md, which now records why. Design "
+            "containment separately, and tell readiness.py what happened with "
+            "--calibration-scope-refused so the card asks for that review "
+            "instead of for this check.",
+            "",
+            "This refusal is about calibration only. A trial, where the model "
+            "writes the query and this scorer runs it, is the other moment and "
+            "nothing here opens it.",
+            "",
+            "A run this check does not stop is one it had no grounds to stop. "
+            "The walk behind it establishes execution and never establishes "
+            "its absence, so it is not an all-clear and the call-path read "
+            "SKILL.md asks for still applies.",
+        ]
+    )
+    return "\n".join(lines)
+
+
 def subprocess_environment(allow_provider_access: bool) -> dict[str, str]:
     if allow_provider_access:
         environment = dict(os.environ)
@@ -662,6 +818,22 @@ def run_worker() -> int:
     try:
         request = json.load(sys.stdin)
         operation = request.get("operation", "authored")
+        # The acknowledgement, enforced HERE and not only in the parent.
+        #
+        # `run()` dispatches on `--_worker` before `parse_args()`, so this
+        # process - the only one that ever imports the scorer - never evaluated
+        # `--allow-execution` at all. The parent checked it once and every
+        # child was trusted because only this file spawns them, which makes the
+        # enforcement surface narrower than the flag's own help implies. The
+        # request now carries the acknowledgement, and a request without it is
+        # refused before anything is imported. It does not make the child unforgeable by whoever writes
+        # its stdin; what it does is stop the executing process from taking its
+        # authorization on trust from its own command line.
+        if not request.get("allow_execution"):
+            raise ValueError(
+                "this worker imports and executes the scorer, and the request "
+                "does not carry the --allow-execution acknowledgement"
+            )
         import_root = Path(request["import_root"])
         scorer_file = Path(request["scorer"].partition(":")[0]).resolve()
         import_paths = [str(import_root), str(scorer_file.parent)]
@@ -1535,6 +1707,23 @@ def run() -> int:
         print("--scorer must use FILE.py:FUNCTION.", file=sys.stderr)
         return 2
     absolute_scorer = f"{Path(scorer_file).resolve()}:{scorer_name}"
+    # The gate, executed rather than described. Run BEFORE the first child, so
+    # a scorer this read will not clear is never imported: the read itself
+    # parses source and imports nothing, which is what lets it precede the
+    # acknowledgement's consequences rather than follow them.
+    # Both files this run would import, read before either of them is. The
+    # transform is resolved from the raw argument rather than from
+    # `absolute_transform`, which is built further down: the point of the gate
+    # is to precede every import, including the one the load probe makes.
+    scanned = {"scorer": Path(scorer_file).resolve()}
+    if args.reply_transform:
+        scanned["reply transform"] = Path(
+            args.reply_transform.partition(":")[0]
+        ).resolve()
+    scope = execution_scope_scan(scanned)
+    if scope["witnesses"]:
+        print(scope_refusal_message(scope), file=sys.stderr)
+        return 2
     # Attached once, here, rather than inside each of the two case-building
     # paths: one expected answer must not be able to acquire two permutations.
     #
@@ -1552,6 +1741,7 @@ def run() -> int:
         "scorer": absolute_scorer,
         "cases": cases,
         "import_root": str(args.import_root),
+        "allow_execution": True,
     }
     worker_environment = subprocess_environment(
         allow_provider_access=args.kind == "llm-judge"
@@ -1593,6 +1783,7 @@ def run() -> int:
                         "scorer": absolute_scorer,
                         "reply_transform": absolute_transform,
                         "import_root": str(args.import_root),
+                        "allow_execution": True,
                     }
                 ),
                 text=True,
@@ -1746,6 +1937,7 @@ def run() -> int:
                 "scorer": absolute_scorer,
                 "case": worker_case,
                 "import_root": str(args.import_root),
+                "allow_execution": True,
             }
             permutation = case.get("permutation")
             if permutation is not None:
@@ -1806,6 +1998,7 @@ def run() -> int:
                 # credential-stripped worker, never here.
                 "reply_transform": absolute_transform,
                 "probes": seam_queue,
+                "allow_execution": True,
             },
             deadline=calibration_deadline,
             total_budget_seconds=args.timeout,
@@ -1945,6 +2138,13 @@ def run() -> int:
             result["exception_probes"] = case_results[0]["exception_probes"]
         if "seam_probes" in case_results[0]:
             result["seam_probes"] = case_results[0]["seam_probes"]
+
+    # Which files the engine walk ran on, on both card shapes. It carries no
+    # verdict, because the walk reaches one in a single direction: a card exists
+    # only where no witness was found, and no witness found is not a finding.
+    # What the key is for is the opposite of reassurance - it names the files
+    # that were read, so a reader can see which ones were not.
+    result["execution_scope"] = scope
 
     # One list, both shapes, so neither can answer this differently.
     #

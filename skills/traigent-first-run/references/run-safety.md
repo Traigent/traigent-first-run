@@ -304,6 +304,58 @@ the execution boundary, mounted inputs, credentials, network, limits, cleanup, a
 Do not describe that manual work as available through this guide or imply that a local subprocess
 fulfils it.
 
+Two moments sit behind that stop and only one of them is about the model's output, so each is
+refused on its own reason rather than both on the stronger-sounding one. Calibration runs the four
+probes this guide's own matrix authors; there is no model-written statement at that step, and the
+question "why can I check a SQL scorer on five known pairs when I can check any other scorer that
+way?" has no good answer in terms of candidate output, because there is none. What calibration does
+do is import the scorer and let it open its engine against whatever database it is configured for,
+and that database is the project's. That is the reason calibration is refused outside the contained
+route: the target is unbounded, which is a containment question this guide declines to own rather
+than a claim about where the statements came from. A trial is the other moment - there the model
+writes the query and the scorer runs it - and nothing in this guide opens it, at any stage, under
+any flag.
+
+`scripts/calibrate_evaluator.py` now enforces this rule instead of relying on it being read. Before
+it imports anything, it asks the same walk `preflight.py` reports through `evaluator-shape` of every
+file the run would import - the scorer, and the module behind `--reply-transform`, which is loaded
+and called in the same child on every probe and had never been looked at. A witness names its file
+and line and exits 2.
+
+Read the direction of that check carefully, because it only goes one way. A witness establishes
+that a file reaches an engine; finding none establishes nothing at all, since a walk of one file
+cannot see an engine behind a helper module, a connection handed in with the row, or a name bound
+while the process runs. A run this check does not stop is therefore a run it had no grounds to
+stop, never a run it cleared, and nothing in the output offers it as an all-clear. Reading the
+complete call path is still the instruction above, and it is still yours.
+
+An in-process envelope is not a route to that evidence, and this is now measured rather than
+assumed. One was built and attacked: the network closed at the socket layer, subprocesses refused,
+sqlite reopened read-only under a step budget with attach denied, and processor time and file
+growth bounded. A single adversarial pass escaped it seven times, in classes rather than in
+one-off tricks - a C extension module reached under the pure-Python one that was patched, a module
+reloaded to restore the original functions, a send path the patch set had not enumerated, a native
+call through a foreign-function handle, a public engine constructor that skips the wrapped opener
+entirely, and a soft resource limit raised straight back because the hard limit still permitted it.
+Each of those is a class with more members, and the eighth is a matter of who looks next: bounding
+Python from inside the same interpreter means bounding it against every extension module, every
+constructor and every native handle it can reach, and that surface has no edge.
+
+The worse half was not the escapes. The card kept reporting the bounds as enforced while the
+process had already stepped outside them, because the report was written beside the patches rather
+than measured after them - a claim verified against nothing, inside a safety statement. That is the
+one thing this package refuses everywhere else, so the envelope was not repaired and shipped; it
+was removed, and this paragraph is what it produced. The sentence at the top of this section - that
+a virtual environment, stripped credentials, an ordinary subprocess, a timeout or mock flags do not
+make that execution safe - now has evidence behind it, and it extends to anything else built the
+same way. A boundary the operating system enforces is a different proposition, and it is one this
+guide deliberately does not own.
+
+So the manual containment design and review above is still the whole of the route, and a project
+whose evaluator runs the candidate's answer stops here with its calibration evidence uncollected.
+That costs it real points on the readiness card, and the card now says why rather than asking it to
+run the check anyway.
+
 ### Deterministic calibration and mock plumbing
 
 Deterministic calibration is a separate execution gate and always requires a recorded `sufficient`

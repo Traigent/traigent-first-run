@@ -7963,6 +7963,47 @@ class SkillPackageTests(unittest.TestCase):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, normalized)
         self.assertNotIn("static preflight identifies", normalized)
+        # What the section now records about an in-process envelope, and why.
+        # Pinned because it is a finding rather than a preference: one was
+        # built, escaped seven times in a single adversarial pass, and reported
+        # its bounds as enforced while the process was already outside them.
+        # The conclusion that survives is that this guide does not own an
+        # execution boundary, so the sentence at the top of the section has
+        # evidence behind it instead of only good instincts.
+        for envelope_phrase in (
+            "an in-process envelope is not a route to that evidence",
+            "escaped it seven times",
+            "that surface has no edge",
+            "a claim verified against nothing",
+            "was not repaired and shipped",
+            "a boundary the operating system enforces",
+            "the manual containment design and review above is still the whole "
+            "of the route",
+        ):
+            with self.subTest(envelope_phrase=envelope_phrase):
+                self.assertIn(envelope_phrase, normalized)
+        # And the gate itself: enforced, over both files, in one direction.
+        for gate_phrase in (
+            "now enforces this rule instead of relying on it being read",
+            "the module behind `--reply-transform`",
+            "it only goes one way",
+            "finding none establishes nothing at all",
+            "never a run it cleared",
+        ):
+            with self.subTest(gate_phrase=gate_phrase):
+                self.assertIn(gate_phrase, normalized)
+        self.assertNotIn("--contained", normalized)
+        # The refusal states the reason that is true of the step it refuses.
+        # Calibration runs authored probes, so blaming the model's output for
+        # the calibration stop was false of it.
+        for reason_phrase in (
+            "there is no model-written statement at that step",
+            "that database is the project's",
+            "the target is unbounded",
+            "a trial is the other moment",
+        ):
+            with self.subTest(reason_phrase=reason_phrase):
+                self.assertIn(reason_phrase, normalized)
 
         calibration = " ".join(
             text.split("### Deterministic calibration and mock plumbing", 1)[1]
@@ -20539,6 +20580,24 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
                 "code or sql | out of scope",
                 "| code | parser/compile gate plus unit or execution tests |",
                 "execution match (run the sql/code and compare results), unit tests,",
+            ),
+        ),
+        (
+            # The stop covered two moments and justified both with a reason
+            # that holds for only the second. Calibration runs the four probes
+            # this guide's own matrix authors, so no model-written statement
+            # runs there; a trial is where the model writes the query and the
+            # scorer runs it. Naming candidate output as the reason calibration
+            # is refused was false of calibration, and it was the sentence a
+            # customer had to accept to be told they could not check a SQL
+            # scorer on five known pairs. Settled: the reason at that step is
+            # the database the scorer opens.
+            "why calibrating an execution scorer is refused",
+            ("there is no model-written statement at that step",),
+            (
+                "because it executes candidate-generated sql",
+                "does not run candidate-generated code or sql outside containment",
+                "the probes are candidate-generated",
             ),
         ),
         (

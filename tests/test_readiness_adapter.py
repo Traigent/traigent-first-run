@@ -4945,6 +4945,23 @@ class RepeatedRowsAreCappedOnTheirOwnAccountTests(unittest.TestCase):
                 row["id"] = f"support-{60 + offset:03d}"
         with tempfile.TemporaryDirectory() as raw:
             dataset = _write_jsonl(Path(raw), "duplicated.jsonl", distinct + repeats)
+            cal_file = Path(raw) / "calibration.json"
+            cal_file.write_text(
+                json.dumps(
+                    {
+                        "passed": True,
+                        "cases": [
+                            {
+                                "checks": {
+                                    "good_passes": True,
+                                    "bad_fails": True,
+                                    "non_constant": True,
+                                }
+                            }
+                        ],
+                    }
+                )
+            )
             return _score(
                 dataset,
                 # The agent and the evaluation method are declared so the card
@@ -4957,6 +4974,8 @@ class RepeatedRowsAreCappedOnTheirOwnAccountTests(unittest.TestCase):
                     "brought",
                     "--evaluator-origin",
                     "brought",
+                    "--calibration",
+                    str(cal_file),
                 ),
                 preflight_extra=("--evaluator-method", "normalized-exact"),
             )
@@ -5251,7 +5270,18 @@ class TheRepeatedRowsTieDecidesWhichRouteIsOfferedTests(unittest.TestCase):
         return MODULE.score_run(
             MODULE.dataset_facts_from_preflight(records),
             MODULE.evaluation_facts_from_calibration(
-                None,
+                {
+                    "passed": True,
+                    "cases": [
+                        {
+                            "checks": {
+                                "good_passes": True,
+                                "bad_fails": True,
+                                "non_constant": True,
+                            }
+                        }
+                    ],
+                },
                 method="normalized-exact",
                 task_kind="closed-label",
                 evaluator_present=present,

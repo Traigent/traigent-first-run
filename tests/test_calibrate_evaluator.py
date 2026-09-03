@@ -3976,5 +3976,365 @@ class TheSeamBetweenTheProbesAndTheAgentTests(unittest.TestCase):
         )
 
 
+class ExecutionScopeGateTests(unittest.TestCase):
+    """The scope gate, enforced by the tool instead of carried by a sentence.
+
+    `SKILL.md` has always refused to calibrate a scorer that reaches a code or
+    SQL engine, and the only refusal in `calibrate_evaluator.py` was
+    `--allow-execution`, which acknowledges that importing the scorer is
+    intended and says nothing about what the scorer does next.
+
+    The engine question is not answered here. `preflight.py`'s
+    `candidate_execution_witnesses` owns it, and these tests pin that this file
+    asks that walk rather than keeping a second table of its own - including
+    that it asks it of the reply transform, which the same child imports and
+    calls on every probe and which nothing had ever read.
+    """
+
+    @staticmethod
+    def _module():
+        spec = importlib.util.spec_from_file_location("first_run_scope", SCRIPT)
+        module = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        sys.modules[spec.name] = module
+        spec.loader.exec_module(module)
+        return module
+
+    def write(self, directory: str, name: str, source: str) -> Path:
+        path = Path(directory) / name
+        path.write_text(source)
+        return path
+
+    def calibrate(self, scorer: Path, name: str, *extra: str):
+        return subprocess.run(
+            [
+                sys.executable,
+                str(SCRIPT),
+                "--scorer",
+                f"{scorer}:{name}",
+                "--import-root",
+                str(scorer.parent),
+                "--allow-execution",
+                "--score-mode",
+                "binary",
+                "--expected",
+                "a",
+                "--good",
+                "a",
+                "--equivalent-good",
+                " a ",
+                "--partial",
+                "b",
+                "--bad",
+                "c",
+                "--json",
+                *extra,
+            ],
+            capture_output=True,
+            text=True,
+        )
+
+    PLAIN = (
+        "def score(*, output, expected, input_data, metadata):\n"
+        "    del input_data, metadata\n"
+        "    return float(str(output).strip() == str(expected).strip())\n"
+    )
+    ENGINE = (
+        "import sqlite3\n\n\n"
+        "def score(*, output, expected, input_data, metadata):\n"
+        "    del input_data, metadata\n"
+        "    connection = sqlite3.connect(':memory:')\n"
+        "    try:\n"
+        "        connection.execute(str(output))\n"
+        "    except Exception:\n"
+        "        return 0.0\n"
+        "    finally:\n"
+        "        connection.close()\n"
+        "    return 1.0\n"
+    )
+
+    # -- the gate refuses, before the import ------------------------------
+    def test_a_scorer_that_reaches_an_engine_is_refused_and_never_imported(
+        self,
+    ) -> None:
+        """The refusal has to precede the import it exists to prevent.
+
+        Once the scorer's module top level has run, the connection this gate is
+        about may already be open. The marker file is how that is checked
+        rather than assumed: it is written at import, so its absence is
+        evidence the module never ran.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            marker = Path(directory) / "imported.marker"
+            scorer = self.write(
+                directory,
+                "engine_scorer.py",
+                "import pathlib\n"
+                f"pathlib.Path({str(marker)!r}).write_text('ran')\n" + self.ENGINE,
+            )
+            process = self.calibrate(scorer, "score")
+            self.assertEqual(process.returncode, 2, process.stdout)
+            self.assertFalse(
+                marker.exists(),
+                "the scorer's module top level ran, so the refusal came after "
+                "the import it exists to prevent",
+            )
+        self.assertIn("engine_scorer.py", process.stderr)
+        self.assertIn("sqlite3", process.stderr)
+
+    def test_the_reply_transform_is_read_too(self) -> None:
+        """The file nothing had ever looked at, and the reason it matters.
+
+        `--allow-execution`'s own help text names it - "and the module behind
+        --reply-transform, whose top level runs on the same import" - and
+        `references/run-safety.md` says that module's top level is commonly a
+        provider client. It is loaded by `load_function` in the same child as
+        the scorer and handed every probe. Before this, a clean scorer beside a
+        transform whose module opened a connection at import passed with exit 0.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            scorer = self.write(directory, "plain.py", self.PLAIN)
+            transform = self.write(
+                directory,
+                "engine_transform.py",
+                "import sqlite3\n\n"
+                "CONNECTION = sqlite3.connect(':memory:')\n\n\n"
+                "def extract(reply):\n"
+                "    return str(reply).strip()\n",
+            )
+            refused = self.calibrate(
+                scorer,
+                "score",
+                "--reply-transform",
+                f"{transform}:extract",
+                "--task-kind",
+                "code-sql",
+            )
+        self.assertEqual(refused.returncode, 2, refused.stdout)
+        self.assertIn("reply transform", refused.stderr)
+        self.assertIn("engine_transform.py", refused.stderr)
+
+    # -- the gate clears nothing --------------------------------------------
+    def test_the_refusal_says_it_is_one_directional(self) -> None:
+        """A run this check does not stop is not a run it checked.
+
+        The walk behind the gate establishes execution and never establishes
+        its absence: an engine behind a helper module, a connection handed in
+        with the row, or a name bound at runtime all escape a walk of one file.
+        An earlier draft of this change tried to close that with a deeper
+        reader of its own whose clearing branch was meant to fail closed;
+        adversarial review found seven classes of scorer that really execute
+        their input and cleared it anyway. So there is no clearing branch here,
+        and the output has to say so rather than implying a check it did not
+        make.
+        """
+        module = self._module()
+        message = module.scope_refusal_message(
+            {
+                "witnesses": [
+                    {"role": "scorer", "file": "s.py", "witness": "imports sqlite3"}
+                ]
+            }
+        )
+        flat = " ".join(message.casefold().split())
+        self.assertIn("had no grounds to stop", flat)
+        self.assertIn("never establishes its absence", flat)
+        self.assertIn("not an all-clear", flat)
+
+    def test_the_card_records_which_files_the_walk_ran_on(self) -> None:
+        """The key is a list of what was read, not a verdict about it."""
+        with tempfile.TemporaryDirectory() as directory:
+            scorer = self.write(directory, "plain.py", self.PLAIN)
+            process = self.calibrate(scorer, "score")
+        self.assertEqual(process.returncode, 0, process.stderr)
+        scope = json.loads(process.stdout)["execution_scope"]
+        self.assertEqual(scope["witnesses"], [])
+        self.assertTrue(scope["witnesses_are_one_directional"])
+        self.assertIn("scorer", scope["files"])
+        self.assertNotIn("verdict", scope)
+
+    # -- one decision, one home ---------------------------------------------
+    def test_this_file_keeps_no_engine_table_of_its_own(self) -> None:
+        """Two tables for one question drift, and then they disagree.
+
+        The tool that refuses and the card that warns have to answer this the
+        same way, which they can only do by asking the same function. So the
+        gate reaches into `preflight.py` and this file defines no engine,
+        module or method table at all.
+        """
+        module = self._module()
+        for absent in (
+            "EXECUTION_SINK_MODULES",
+            "EXECUTION_SINK_METHODS",
+            "EXECUTION_SINK_BUILTINS",
+            "ENGINE_CALL_NAMES",
+        ):
+            with self.subTest(absent=absent):
+                self.assertFalse(hasattr(module, absent))
+        self.assertIn("candidate_execution_witnesses", SCRIPT.read_text())
+
+    def test_the_walk_is_the_one_preflight_reports_through(self) -> None:
+        """Identity, not resemblance: the same function object, by path."""
+        module = self._module()
+        preflight = SCRIPT.parent / "preflight.py"
+        spec = importlib.util.spec_from_file_location("gate_preflight_probe", preflight)
+        loaded = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        sys.modules[spec.name] = loaded
+        spec.loader.exec_module(loaded)
+        self.assertEqual(
+            module.preflight_walk().__name__,
+            loaded.candidate_execution_witnesses.__name__,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            scorer = self.write(directory, "engine.py", self.ENGINE)
+            tree = ast.parse(scorer.read_text())
+            self.assertEqual(
+                module.preflight_walk()(tree),
+                loaded.candidate_execution_witnesses(tree),
+            )
+
+    def test_the_committed_outcome_evaluators_are_not_refused(self) -> None:
+        """The corpus this repository ships must not be stopped by its own gate."""
+        module = self._module()
+        outcomes = ROOT / "tests" / "behavioral" / "outcomes"
+        checked = 0
+        for evaluator in sorted(outcomes.glob("*/project/evaluator.py")):
+            with self.subTest(evaluator=evaluator.relative_to(ROOT)):
+                scan = module.execution_scope_scan({"scorer": evaluator})
+                self.assertEqual(scan["witnesses"], [], scan)
+                self.assertEqual(scan["unread"], [])
+                checked += 1
+        self.assertTrue(checked, "no committed evaluator was checked")
+
+    def test_a_file_that_will_not_parse_is_unread_rather_than_clean(self) -> None:
+        """The walk did not run on it, and the card says so.
+
+        It costs nothing here, because the gate has no clearing branch this
+        could weaken - but a file recorded as read when it was not is how a
+        card starts overstating what it checked.
+        """
+        module = self._module()
+        with tempfile.TemporaryDirectory() as directory:
+            broken = self.write(directory, "broken.py", "def :\n")
+            scan = module.execution_scope_scan({"scorer": broken})
+        self.assertEqual(scan["unread"], ["scorer"])
+        self.assertEqual(scan["witnesses"], [])
+
+    # -- the refusal says something true ------------------------------------
+    def test_the_refusal_does_not_blame_output_the_model_never_wrote(self) -> None:
+        """Calibration runs authored probes, so the old reason was false of it.
+
+        The gate covered two moments under one sentence and justified both with
+        a reason that holds for only the second. At CALIBRATION the four probes
+        come from the matrix this guide has the assistant author, so no
+        model-written statement runs; what is unbounded is the database the
+        scorer opens. At a TRIAL the model writes the query and the scorer runs
+        it, and that stays closed.
+        """
+        module = self._module()
+        message = module.scope_refusal_message(
+            {
+                "witnesses": [
+                    {"role": "scorer", "file": "s.py", "witness": "imports sqlite3"}
+                ]
+            }
+        )
+        flat = " ".join(message.casefold().split())
+        self.assertIn("authored", flat)
+        self.assertNotIn("candidate-generated", flat)
+        self.assertIn("nothing the model wrote runs at this step", flat)
+        self.assertIn("trial", flat)
+
+    def test_the_refusal_offers_no_in_process_route(self) -> None:
+        """An envelope was built, attacked, and removed; nothing offers one now.
+
+        A single adversarial pass escaped an in-process envelope seven times,
+        in classes rather than one-off tricks, while its own card reported the
+        bounds as enforced. Pointing a customer at a route like that inside a
+        safety refusal would be the worst instance of the defect this package
+        exists to remove, so the refusal names the containment review and the
+        declaration instead.
+        """
+        module = self._module()
+        message = module.scope_refusal_message(
+            {
+                "witnesses": [
+                    {"role": "scorer", "file": "s.py", "witness": "imports sqlite3"}
+                ]
+            }
+        )
+        flat = " ".join(message.casefold().split())
+        self.assertIn("no route here that makes running it safe", flat)
+        self.assertIn("--calibration-scope-refused", flat)
+        self.assertNotIn("--contained", flat)
+        self.assertFalse(hasattr(module, "apply_containment"))
+
+    # -- the acknowledgement reaches the process that executes -------------
+    def test_the_worker_refuses_a_request_that_carries_no_acknowledgement(
+        self,
+    ) -> None:
+        """`--allow-execution` was enforced in the parent only.
+
+        `run()` dispatches on `--_worker` before `parse_args()`, so the child -
+        the only process that ever imports the scorer - never evaluated the
+        flag. The acknowledgement now travels in the request, and a request
+        without it is refused before anything is imported. It does not make the
+        child unforgeable by whoever writes its stdin; it stops the executing
+        process taking its authorization on trust from its own command line.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            marker = Path(directory) / "imported.marker"
+            scorer = self.write(
+                directory,
+                "marking.py",
+                "import pathlib\n"
+                f"pathlib.Path({str(marker)!r}).write_text('ran')\n\n\n"
+                "def score(*, output, expected, input_data, metadata):\n"
+                "    del input_data, metadata\n"
+                "    return 1.0\n",
+            )
+            request = {
+                "operation": "authored",
+                "scorer": f"{scorer}:score",
+                "import_root": directory,
+                "cases": [
+                    {
+                        "name": "one",
+                        "expected": "a",
+                        "probes": {
+                            "good": "a",
+                            "equivalent_good": "a",
+                            "partial": "b",
+                            "bad": "c",
+                        },
+                    }
+                ],
+            }
+            refused = subprocess.run(
+                [sys.executable, str(SCRIPT), "--_worker"],
+                input=json.dumps(request),
+                capture_output=True,
+                text=True,
+            )
+            self.assertNotEqual(refused.returncode, 0, refused.stdout)
+            self.assertIn("--allow-execution", refused.stderr)
+            self.assertFalse(
+                marker.exists(),
+                "the worker imported the scorer before checking whether it was "
+                "allowed to",
+            )
+            allowed = subprocess.run(
+                [sys.executable, str(SCRIPT), "--_worker"],
+                input=json.dumps({**request, "allow_execution": True}),
+                capture_output=True,
+                text=True,
+            )
+            # Asserted inside the temporary directory, because the marker lives
+            # in it: asserting after it is removed asserts nothing.
+            self.assertEqual(allowed.returncode, 0, allowed.stderr)
+            self.assertTrue(marker.exists())
+
+
 if __name__ == "__main__":
     unittest.main()
