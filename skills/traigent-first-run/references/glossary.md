@@ -134,12 +134,10 @@ Tuning set vs held-out set
   be trusted (this is "leakage"). Call a held-out set a sealed holdout only if its
   split and labels were hidden until the candidate was locked; an assistant-inspected
   or assistant-authored one is held-back and non-blind. When the assistant
-  prepares walkthrough data, the default is 28 rows split 18 tuning / 10 held-out,
-  reserved at creation; `references/evaluation-and-dataset.md` owns the bands and
-  the rest. The held-out score is disclosed once, beside the
-  tuning score, in the closing report after the enhanced run - not at the earlier
-  baseline checkpoint.
-  Say what ten kept-back rows can and cannot do: they can catch a configuration
+  prepares walkthrough data, `references/evaluation-and-dataset.md` owns the sizes,
+  the bands and when the split is reserved; `SKILL.md` owns when the held-out
+  score is disclosed.
+  Say what the kept-back rows can and cannot do: they can catch a configuration
   that only worked on the rows it was picked on; they cannot measure how much
   better one configuration is than another.
 
@@ -249,15 +247,15 @@ The lines under each pillar on the card
                                  yet rather than that your agent has none - and
                                  grades the space from your agent's code
                                  instead, which needs no such file to exist.
-    tuning set / held-out set  - two parts of your examples, not equal halves:
-                                 18 to tune on and 10 kept back, by default. The
-                                 search is allowed to see the first part while it
+    tuning set / held-out set  - two parts of your examples, not equal halves: a
+                                 larger one to tune on and a smaller one kept back.
+                                 The search is allowed to see the first part while it
                                  looks for a better configuration; the second is
                                  kept back so the final number is measured on
                                  examples the search never optimized against.
                                  Without it, a good score may only mean the
                                  search fitted the examples it could see. With
-                                 ten of them, it can show a winner still works
+                                 a small one, it can show a winner still works
                                  outside the rows it was chosen on and cannot
                                  measure by how much. Say "tuning set" and
                                  "held-out set" to the user, and only that pair.
@@ -312,14 +310,10 @@ Readiness score (the card, the three pillars, bands, caps, blocked)
   to be optimized, broken into three parts: your dataset, your evaluator, and
   your agent - which is what there is to search in it, and what a read of its
   own code can establish about how it is built.
-  It is computed at the start of every run - before anything is created or
-  repaired - and again after each repair or creation, to check that what failed
-  a gate now passes it before anything is paid for. Only the opening number is
-  your project's score: a re-score after a repair mostly grades the substitutes
-  this run wrote, so it is read for which caps cleared instead. The opening
-  number is also what the closing recommendation is ranked from, for the same
-  reason: a gap the run filled with a substitute of its own looks cleared
-  afterwards whether or not your project changed.
+  `SKILL.md` owns when it is taken and how a re-score is read. Only the opening
+  number is your project's score: a re-score after a repair mostly grades the
+  substitutes this run wrote, and a gap the run filled with a substitute of its
+  own looks cleared afterwards whether or not your project changed.
   It decides what the run does next: repair, create, or continue as a clearly
   labeled walkthrough. A low number alone does not stop a safe walkthrough, but
   a blocking cap does stop paid optimization when the current components or
@@ -373,8 +367,8 @@ Readiness score (the card, the three pillars, bands, caps, blocked)
 
   Present it as progress: `Stage 2/5 · Readiness - <score>/100 (<band>)`. Explain what the score
   measures, the strongest evidence, the one limitation that most affects the next action, and that
-  action. A re-score is a gate result: lead with the caps that cleared, never with a new score
-  beside the opening one. Do not animate with invented progress or narrate every card line.
+  action. A re-score is a gate result; `SKILL.md` stage 4 owns how it is presented. Do not
+  animate with invented progress or narrate every card line.
 
 .env file
   Plain: a small text file in your project that holds settings and secrets -

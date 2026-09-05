@@ -5904,6 +5904,28 @@ class SkillPackageTests(unittest.TestCase):
             dataset_text,
         )
 
+    def test_the_provenance_arithmetic_matches_the_scorer_weights(self) -> None:
+        """The swing is derived from the scorer; the old worked figure was not."""
+        swing = (
+            (READINESS.COLLECTED_ROW_POINTS - READINESS.SYNTHESISED_ROW_POINTS)
+            * READINESS.DEFAULT_WEIGHTS["dataset"]
+            / 100
+        )
+        self.assertLess(swing, 3)
+        dataset_text = " ".join(
+            (SKILL_ROOT / "references" / "evaluation-and-dataset.md")
+            .read_text()
+            .casefold()
+            .split()
+        )
+        self.assertIn(
+            f"provenance is {READINESS.COLLECTED_ROW_POINTS:g} points inside a "
+            f"pillar weighted {READINESS.DEFAULT_WEIGHTS['dataset']:g} of 100",
+            dataset_text,
+        )
+        self.assertIn("moves the overall score by under 3", dataset_text)
+        self.assertNotIn("still reported 93", dataset_text)
+
     def test_the_provenance_vocabulary_is_read_from_preflight_not_retyped(
         self,
     ) -> None:
@@ -7588,8 +7610,11 @@ class SkillPackageTests(unittest.TestCase):
             # arrow was the whole claim: it read as the project improving when
             # what had changed was that this run wrote the missing pieces. What
             # a re-score is allowed to present now is the gate result.
-            "a re-score is a gate result: lead with the caps that cleared, never with a "
-            "new score beside the opening one",
+            "a re-score is a gate result",
+            # The mandate has one home, SKILL.md stage 4; the glossary keeps
+            # the term and points there.
+            "lead with the caps that cleared, never with a new score beside the "
+            "opening one",
             "do not animate with invented progress",
         ):
             self.assertIn(phrase, presentation)
@@ -9881,7 +9906,7 @@ class SkillPackageTests(unittest.TestCase):
                 self.assertIn(default, block)
 
         for phrase in (
-            "twelve baseline rows and a 12-trial enhanced cap",
+            "twelve baseline configurations and a 12-trial enhanced cap",
             "adds one more real one-call control: reflect",
             # The count is disclosed in the words the customer reads, and as a
             # COUNT rather than as a change from an earlier release of this
@@ -9893,7 +9918,7 @@ class SkillPackageTests(unittest.TestCase):
             # The 10 floor stays here and only here on the reference side: it
             # is the assistant's honesty check on a short run, so it must
             # survive the move of the user-facing copy to a bare ceiling.
-            "fewer than 10 rows requires a concrete backend stop, timeout, "
+            "fewer than 10 trials requires a concrete backend stop, timeout, "
             "cost-limit, or failure explanation",
             "not a count promised to the user",
         ):
@@ -10363,8 +10388,15 @@ class SkillPackageTests(unittest.TestCase):
         self.assertIn("preserve the user's existing baseline", skill)
         self.assertIn("including its original row count", skill)
         self.assertIn("preserve a user-owned baseline space unchanged", safety)
-        self.assertIn("its row count exactly; do not expand it to twelve", sdk)
-        self.assertIn("real one-row fixed configuration remains one row", sdk)
+        self.assertIn(
+            "its configuration count exactly; do not expand it to twelve", sdk
+        )
+        self.assertIn("real single fixed configuration remains one configuration", sdk)
+        # "row" is a dataset word here; a baseline's size is counted in
+        # configurations, so an agent told to keep "one row" cannot reach for
+        # the dataset.
+        self.assertNotIn("baseline with one row", sdk)
+        self.assertNotIn("remains one row", sdk)
         self.assertIn("preserve its exact model set", sdk)
         self.assertIn("add only direct request parameters the probe establishes", sdk)
         self.assertNotIn("add non-model controls by default", sdk)
@@ -10518,6 +10550,26 @@ class SkillPackageTests(unittest.TestCase):
         # distinction the rule turns on: a time limit stops the work, a token
         # limit corrupts the answer and then scores the corruption.
         self.assertEqual(ordinary_call["timeout"], 120.0)
+
+    def test_the_baseline_timeout_is_named_in_prose_with_its_formula(self) -> None:
+        """A required variable nobody names is a baseline that stops at import."""
+        text = SDK_EXECUTION.read_text()
+        self.assertIn(
+            "BASELINE_TIMEOUT_SECONDS = positive_number(\n"
+            '    "TRAIGENT_FIRST_RUN_BASELINE_TIMEOUT_SECONDS"\n)',
+            text,
+        )
+        normalized = " ".join(text.casefold().split())
+        for phrase in (
+            "`traigent_first_run_baseline_timeout_seconds`, the fourth process "
+            "variable beside the three cost figures, and it has no default",
+            "a baseline process launched without it stops at import",
+            "times the completion margin, never below the floor",
+            "`traigent_first_run_baseline_timeout_seconds` sized under "
+            '"automatic run bounds"',
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, normalized)
 
     def test_sdk_template_uses_internal_bounds_without_added_retries(self) -> None:
         text = SDK_EXECUTION.read_text()
@@ -13371,7 +13423,7 @@ class SkillPackageTests(unittest.TestCase):
         skill = " ".join(SKILL.read_text().casefold().split())
         sdk = " ".join(SDK_EXECUTION.read_text().casefold().split())
         self.assertIn("produced at least 10 of its 12 permitted trials", skill)
-        self.assertIn("fewer than 10 rows requires a concrete backend stop", sdk)
+        self.assertIn("fewer than 10 trials requires a concrete backend stop", sdk)
 
         # The public surfaces state a ceiling. A count spoken as a range, or
         # as a raw trial count, is the framing this change removed.
@@ -13390,6 +13442,22 @@ class SkillPackageTests(unittest.TestCase):
                     f"{name} states the ceiling in trials; the user-facing "
                     "noun is `configurations`",
                 )
+
+    def test_the_baseline_section_points_at_the_no_rerun_rule(self) -> None:
+        """A finished paid phase is not a draft; the rule has one home."""
+        text = SDK_EXECUTION.read_text()
+        normalized = " ".join(text.casefold().split())
+        self.assertIn(
+            "a completed baseline is never re-run for a better number, and nothing "
+            "is widened, topped up or raised on the way to the search: skill.md's "
+            "operating contract owns that rule",
+            normalized,
+        )
+        self.assertIn(
+            "raising it to move a number is\n# what SKILL.md's operating contract "
+            "forbids without a newly scoped approval.\nENHANCED_MAX_TRIALS = ",
+            text,
+        )
 
     def test_final_report_layers_facts_limits_and_the_earned_next_action(
         self,
@@ -13467,7 +13535,21 @@ class SkillPackageTests(unittest.TestCase):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, dataset)
 
-        self.assertIn("28 rows split 18 tuning / 10 held-out", documents["glossary"])
+        # The glossary defines the pair and points at the owners of the sizes
+        # and the disclosure moment; it restates neither, so the numbers can
+        # be changed in one document.
+        self.assertIn(
+            "owns the sizes, the bands and when the split is reserved",
+            documents["glossary"],
+        )
+        for restated in (
+            "28 rows split",
+            "18 tuning / 10",
+            "18 to tune on",
+            "ten of them",
+        ):
+            with self.subTest(restated=restated):
+                self.assertNotIn(restated, documents["glossary"])
         # The glossary promised a check ten rows cannot perform, with no caveat
         # - while the entry two lines below it carried one. It also called an
         # 18/10 split "two halves" and offered the user three competing name
@@ -13483,7 +13565,11 @@ class SkillPackageTests(unittest.TestCase):
             with self.subTest(glossary_phrase=phrase):
                 self.assertIn(phrase, glossary)
         self.assertNotIn("two halves of your examples", glossary)
-        self.assertIn("disclosed once, beside the", documents["glossary"])
+        self.assertIn(
+            "`skill.md` owns when the held-out score is disclosed",
+            documents["glossary"],
+        )
+        self.assertNotIn("disclosed once, beside the", documents["glossary"])
 
         skill = documents["skill"]
         checkpoint_index = skill.find(
@@ -13526,6 +13612,46 @@ class SkillPackageTests(unittest.TestCase):
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, run_plan)
+
+    def test_the_held_out_draw_has_one_timing_per_source(self) -> None:
+        """Three passages gave the timing three ways; one sentence owns it now."""
+        dataset = " ".join(
+            (SKILL_ROOT / "references" / "evaluation-and-dataset.md")
+            .read_text()
+            .casefold()
+            .split()
+        )
+        owner = dataset.split("## held-out set and claims", 1)[1]
+        for phrase in (
+            "when they are drawn follows the source, in two cases",
+            "a dataset this run generates or tops up reserves them at creation time",
+            "draws them with the tuning subset, immediately before the paid comparison",
+            "a hold on the band, not a third timing of the draw",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, owner)
+        subset = dataset.split("## first-run subset for a large dataset", 1)[1]
+        self.assertIn(
+            '"held-out set and claims" below owns when each source draws', subset
+        )
+
+    def test_the_tuning_size_only_shrinks(self) -> None:
+        """Downward only: the total and the ten are stated once, and pointed at."""
+        dataset = " ".join(
+            (SKILL_ROOT / "references" / "evaluation-and-dataset.md")
+            .read_text()
+            .casefold()
+            .split()
+        )
+        self.assertIn(
+            "reduce the tuning size when cost or task shape requires it - downward "
+            'only, never past the total "topping a real dataset up to that size" caps',
+            dataset,
+        )
+        self.assertIn(
+            'the held-out ten do not move; "held-out set and claims" owns why', dataset
+        )
+        self.assertNotIn("adjust the tuning size", dataset)
 
     def test_ten_held_out_rows_are_the_design_not_a_placeholder(self) -> None:
         """The owner's rule: ten rows, composed 2/3/3/2, topped up if needed.
@@ -14920,6 +15046,32 @@ class SkillPackageTests(unittest.TestCase):
         self.assertNotIn('algorithm="grid"', enhanced)
         self.assertNotIn('algorithm="random"', enhanced)
 
+    def test_the_local_registry_claim_matches_the_installed_sdk(self) -> None:
+        """The prose said two local searches; the pinned registry lists six."""
+        if importlib.util.find_spec("traigent") is None:
+            self.skipTest("traigent is not installed; the pinned stack supplies it")
+        from traigent.optimizers.registry import list_optimizers
+
+        names = set(list_optimizers())
+        self.assertEqual(
+            names,
+            {
+                "grid",
+                "random",
+                "parallel_batch",
+                "multi_objective_batch",
+                "adaptive_batch",
+                "remote",
+            },
+        )
+        normalized = " ".join(SDK_EXECUTION.read_text().casefold().split())
+        self.assertIn(
+            "locally the sdk's registry lists six names, and only `grid` and "
+            "`random` sample on their own",
+            normalized,
+        )
+        self.assertNotIn("registers exactly two searches", normalized)
+
     def test_absent_cost_is_never_reported_as_zero(self) -> None:
         """A stated $0.00 reads as "this was free", which is a false claim."""
         normalized = " ".join(SDK_EXECUTION.read_text().casefold().split())
@@ -14938,6 +15090,79 @@ class SkillPackageTests(unittest.TestCase):
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, normalized)
+
+    def test_the_fence_marks_every_site_the_agent_adapts(self) -> None:
+        """Verbatim and adapt are told apart on the line, not by guesswork.
+
+        The list above the fence names every site; each carries an `# ADAPT:`
+        tag where it sits; nothing else in the fence carries one. A listed name
+        with no tag, or a tag on a site the list does not name, reopens the
+        1,600-line guessing game the list exists to end.
+        """
+        text = SDK_EXECUTION.read_text()
+        prose, rest = text.split("```python\n", 1)
+        fence = rest.split("\n```", 1)[0]
+        adapt_list = " ".join(prose[prose.rindex("## Decorator contract") :].split())
+        self.assertIn("every other line is verbatim", adapt_list)
+        self.assertIn("arrive through the process variables it reads", adapt_list)
+        # Identifiers only: `True` in the list is a value, not a site.
+        for name in re.findall(r"`([A-Z_]+|[a-z_]+)`", adapt_list):
+            with self.subTest(listed=name):
+                self.assertRegex(fence, rf"(?m)^(?:def )?{name}\b")
+        lines = fence.splitlines()
+        anchors = []
+        for index, line in enumerate(lines):
+            if not line.lstrip().startswith("# ADAPT:"):
+                continue
+            following = index + 1
+            while lines[following].lstrip().startswith("#"):
+                following += 1
+            anchors.append(lines[following].strip())
+        self.assertEqual(
+            anchors,
+            [
+                'ROUTE_ALIASES = {"cohere_chat": "cohere"}',
+                "WALKTHROUGH_TEMPERATURE = 0.0",
+                "BASELINE_CONFIG = {",
+                "BASELINE_IS_USER_OWNED = False",
+                "WIRED_KNOBS = [",
+                "def holdout_agent_input(input_data):",
+                "def build_prompt(",
+                "def build_request(message: str, config: dict) -> dict:",
+                "SCORER_CALLS_PER_ROW: int = 0",
+                "JUDGE_MODEL: str | None = None",
+                '"temperature": 0.0,',
+                'raise NotImplementedError("generate this body from the preserved evaluator")',
+                "@traigent.optimize(",
+            ],
+        )
+        self.assertEqual(fence.count("# ADAPT:"), len(anchors))
+        self.assertNotIn("# ADAPT:", rest.split("\n```", 1)[1])
+
+    def test_the_unwritten_scorer_raises_instead_of_returning_ellipsis(self) -> None:
+        """`score = ...` parsed, returned `Ellipsis`, and failed later at `sum`."""
+        text = SDK_EXECUTION.read_text()
+        self.assertNotIn("score = ...", text)
+        task_score = next(
+            node
+            for source in re.findall(r"```python\n(.*?)\n```", text, re.DOTALL)
+            for node in ast.parse(source).body
+            if isinstance(node, ast.FunctionDef) and node.name == "task_score"
+        )
+        raised = [node for node in task_score.body if isinstance(node, ast.Raise)]
+        self.assertEqual(len(raised), 1)
+        self.assertEqual(raised[0].exc.func.id, "NotImplementedError")
+
+    def test_the_scorer_call_count_is_set_at_its_definition(self) -> None:
+        """`CALLS_PER_SCORED_ROW` derives at import; a later assignment leaves it stale."""
+        text = SDK_EXECUTION.read_text()
+        self.assertIn("CALLS_PER_SCORED_ROW: int = 1 + SCORER_CALLS_PER_ROW", text)
+        normalized = " ".join(text.casefold().split())
+        self.assertIn(
+            "`scorer_calls_per_row`, set where the fence defines it and nowhere after",
+            normalized,
+        )
+        self.assertNotIn("then set `scorer_calls_per_row`", normalized)
 
     def test_first_python_fence_is_the_decorator_contract(self) -> None:
         """Guard the positional dependency in the exec'd-fence tests.
@@ -16708,6 +16933,24 @@ class SkillPackageTests(unittest.TestCase):
         self.assertIn("never real-world readiness", norm("component-creation.md"))
         self.assertNotIn("by default it never stops the run", glossary)
         self.assertIn("it decides what the run does next", glossary)
+
+    def test_an_evaluator_repair_re_runs_the_degenerate_gold_check(self) -> None:
+        """A clean pass under the old evaluator says nothing about the new one."""
+        evaluation = " ".join(
+            (SKILL_ROOT / "references" / "evaluation-and-dataset.md")
+            .read_text()
+            .casefold()
+            .split()
+        )
+        self.assertIn(
+            "an evaluator repair re-runs the degenerate-gold check below even when "
+            "the opening pass was clean: that check grades the gold through the "
+            "evaluator, so a pass under the old one says nothing about the new one",
+            evaluation,
+        )
+        self.assertNotIn(
+            "re-run the same checks that produced the advisory", evaluation
+        )
 
     def test_every_site_that_mandates_the_repair_gate_is_pinned(self) -> None:
         """The half of the re-score that stayed, held down where it is stated.
@@ -21387,6 +21630,28 @@ class TrackingLossStopsFurtherSpendingTests(unittest.TestCase):
         exec(compile(module, "<tracking-loss>", "exec"), namespace)  # noqa: S102
         return namespace, placed
 
+    def test_the_config_space_document_waits_for_the_portal(self) -> None:
+        """A run that lost the portal emits no document, as the prose says."""
+        text = SDK_EXECUTION.read_text()
+        fence = next(
+            block
+            for block in re.findall(r"```python\n(.*?)\n```", text, re.DOTALL)
+            if "except BaseException as exc:" in block
+        )
+        trials = fence.index("assert optimized_results.trials")
+        portal = fence.index("if tracking_loss:")
+        written = fence.index(
+            "Path(CONFIG_SPACE_DOCUMENT).write_text(config_space_evidence)"
+        )
+        self.assertLess(trials, portal)
+        self.assertLess(portal, written)
+        normalized = " ".join(text.casefold().split())
+        self.assertIn("write after trials and the portal are confirmed", normalized)
+        self.assertIn(
+            "completes no trial, or loses the portal therefore emits no document",
+            normalized,
+        )
+
     @staticmethod
     def stamped(**fields):
         """A decorated function as the SDK leaves it, stamped or not.
@@ -22627,7 +22892,7 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         # "all twelve distinct points executed", "all twelve intended rows".
         r"\ball (\w+) (?:distinct|intended)\b",
         r"\ball (\w+) configurations of a local\b",
-        r"\b(\w+) baseline rows\b",
+        r"\b(\w+) baseline (?:rows|configurations)\b",
         r"baseline[^.]{0,90}?= (\d+) configurations",
         r"\brun as (\d+) trials\b",
         r"\bexpand it to (\w+)\b",
@@ -23696,6 +23961,22 @@ class TheGapIsPutToTheUserOnceTests(unittest.TestCase):
             "the record waits for this answer in any gap run",
             " ".join(SKILL.read_text().casefold().split()),
         )
+
+    def test_a_late_path_re_derives_the_calibration_cases(self) -> None:
+        """Cases cut from other rows say nothing about the rows a path names."""
+        creation = " ".join(
+            (SKILL_ROOT / "references" / "component-creation.md")
+            .read_text()
+            .casefold()
+            .split()
+        )
+        hatch = creation.split("when a path arrives", 1)[1]
+        self.assertIn(
+            "a dataset that arrives after the opening-gate calibration ran also "
+            "re-derives the calibration cases",
+            hatch,
+        )
+        self.assertIn("skill stage 4 owns the post-repair rule this serves", hatch)
 
 
 class GuidanceBudgetLedgerRulesTests(unittest.TestCase):
@@ -29341,7 +29622,7 @@ class TheShortfallRidesOnTheOneAskTests(unittest.TestCase):
         for clause in (
             "can come down to one lucky row",
             "lowers the ceiling on what the result may claim",
-            "three answers, not two",
+            "two answers plus the standing path line",
             "rather than a must-have",
             "with continuing as is named first",
             "the total goes in the sentence either way",
@@ -29351,6 +29632,9 @@ class TheShortfallRidesOnTheOneAskTests(unittest.TestCase):
         ):
             with self.subTest(clause=clause):
                 self.assertIn(clause, creation)
+        # `I have it` is the standing line, never counted: a document that
+        # counts it teaches a reader to number it.
+        self.assertNotIn("three answers", creation)
         # The urgency split is stated once. It was in the flow as well while
         # this was drafted, which is a rule with two homes and about four
         # hundred resident bytes.

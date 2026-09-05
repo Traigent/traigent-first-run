@@ -292,9 +292,7 @@ rerun it before relying on that supplemental evidence.
 The two sets above are still one half of the wiring. The authored four measure this evaluator
 against strings their author wrote; the generated ones are built from the expected answer, which the
 author also wrote. Neither has been through the step that stands between the model and the
-evaluator - the agent's own extraction or clean-up. Two paid runs were lost in that gap, and in one
-of them the probe set already held the shape that broke it: a `NOT IN` subquery was covered on one
-side of the wiring and never on the other.
+evaluator - the agent's own extraction or clean-up.
 
 So the answers that already exist are put through the step that already exists, in the one shape
 there is evidence a model sends. `--reply-transform FILE.py:FUNCTION` names that step - one
@@ -326,8 +324,7 @@ lower-case variant the same model emits.
 The fenced shape is constructed in every case, and the evidence for it is a class fact rather than
 an observation of this route: chat models fence code by default, and one did so on a paid run
 against a prompt forbidding it. That is why it is worth sending and why no report built on it may
-say the model sends one. It is also the whole of the difference from the bare answer this check used
-to send - for which there is no such record at all.
+say the model sends one.
 
 Four things this reports, and each says only what it can. `seam_probe_advisory` is the finding, and
 it never changes the authored PASS. Where a reply step ran, it names what was sent and what came
@@ -439,10 +436,9 @@ A. **Repair and re-evaluate (recommended)** - create a working copy under `traig
 B. **Continue as a workflow demonstration** - only when the component executes safely. Keep it
    `limited` and `❗`; state before and after the run that the result is not a credible performance
    estimate. Say what this route *does* - continue now, on material this run writes or keeps.
-   Never word it as a "replacement" or as continuing "once a valid one is available": a blinded
-   worker offered exactly that phrasing read it as a second way to pause, so all three routes it
-   presented were ways of stopping and the user was given no way to go on. This is the one route
-   whose whole purpose is that the run does not stall.
+   Never word it as a "replacement" or as continuing "once a valid one is available": read that
+   way it is a second way to pause, and every route offered is a way of stopping. This is the one
+   route whose whole purpose is that the run does not stall.
 C. **Pause for a user-authored fix** - provide the exact acceptance checks that the revision must
    pass.
 
@@ -451,9 +447,11 @@ stable IDs, or a disjoint split. Do not silently delete real rows, change expect
 product policy, or broaden a rubric. For those judgment-dependent changes, propose the exact diff
 and ask first.
 
-After any repair, re-run the same checks that produced the advisory, the applicable calibration,
-and the readiness score. Do not clear `❗` because a file changed or because the score rose; clear
-it only when new evidence resolves the limitation.
+After any repair, re-run every check whose input changed, the applicable calibration, and the
+readiness score - SKILL.md stage 4 owns that rule. An evaluator repair re-runs the degenerate-gold
+check below even when the opening pass was clean: that check grades the gold through the evaluator,
+so a pass under the old one says nothing about the new one. Do not clear `❗` because a file
+changed or because the score rose; clear it only when new evidence resolves the limitation.
 
 Name what changed by row id. Whenever this run repairs rows into a working copy or generates rows
 to fill a gap, record both lists in `traigent-runs/run-plan.md` and say them to the user: these ids
@@ -476,8 +474,9 @@ medium, 5 hard, 5 very hard) plus the held-out ten. "Held-out set and claims" be
 split wherever its rows come from - its composition, when it is reserved, where it is written,
 what it is for, when it is scored and disclosed, and why the count stays at ten.
 
-Adjust the tuning size when cost or task shape requires it, but keep all four bands represented in
-it. The held-out ten do not move.
+Reduce the tuning size when cost or task shape requires it - downward only, never past the total
+"Topping a real dataset up to that size" caps - and keep all four bands represented in it. The
+held-out ten do not move; "Held-out set and claims" owns why.
 
 ### Topping a real dataset up to that size
 
@@ -543,10 +542,9 @@ generated, scoring 3 rather than 6 and moving it under the synthetic ceilings.
 
 ### Provenance ceilings
 
-Points alone cannot keep a score honest here: provenance is 10 points inside a pillar worth 40% of
-the total, so the whole 10-to-3 range moves the overall score by under 3 - a fully generated dataset
-perfect on every other dimension still reported 93. So how much of the data was invented also sets a
-ceiling on the entire run:
+Points alone cannot keep a score honest here: provenance is 10 points inside a pillar weighted 40
+of 100 (`DEFAULT_WEIGHTS` in `scripts/readiness.py`), so the whole 10-to-3 range moves the overall
+score by under 3. So how much of the data was invented also sets a ceiling on the entire run:
 
 | The dataset | Ceiling |
 |---|---|
@@ -749,9 +747,9 @@ this input?** Answer `yes`, `no`, or `unsure`, with the row id and one sentence.
 
 When the rows carry no stable id - which `preflight.py`'s `dataset-ids` check reports as a warning
 on exactly this dataset - use the 1-based source line as `line-<n>`, and say in the conversation
-that the ids are positional. Any scheme satisfies the scorer, and that is the problem: four runs
-over one dataset each invented their own, and two review documents written for the same file cannot
-be compared unless the ids mean the same thing. The line number is chosen because it is the one
+that the ids are positional. Any scheme satisfies the scorer, and that is the problem: two review
+documents written for the same file cannot be compared unless the ids mean the same thing. The line
+number is chosen because it is the one
 identifier the file already has, and because preflight's own warning quotes source lines, so a user
 told `line-7` can find row 7 without a mapping. It is not an id the customer owns - if they later
 add stable ids, the next run uses theirs.
@@ -932,20 +930,18 @@ every trial pays for every row, so a large set turns the walkthrough into a long
 that demonstrates nothing the smaller one would not. Select a bounded subset instead: **18 tuning
 questions by default**, at least four from each of the four difficulty bands (`easy`, `medium`,
 `hard`, `very-hard`), so the subset keeps the spread that makes a result informative rather than landing on
-one cluster - plus the held-out ten below, drawn to their own composition.
+one cluster - plus the held-out ten, drawn with it to their own composition; "Held-out set and
+claims" below owns when each source draws.
 
 Six rules make the subset honest:
 
 1. **Score the dataset, not the subset.** All readiness scores - the opening gate, each repair or
    validation gate, and the post-run read - run on the **whole** dataset. The subset is chosen
    afterwards, as run scoping, immediately before the paid comparison. Getting this backwards makes
-   the user's data wear the run's limitation: measured through `scripts/readiness.py` on 500
-   labelled, difficulty-tagged production rows, the dataset pillar sees 249 comparable examples;
-   the same dataset scored as an 18-row subset sees only 8 and calls it `a wiring check, not a
-   score`. That sentence is true of the run and false of the dataset, and the gate re-score would
-   read 18 points below the opening one on nothing but our own sampling. Difficulty and diversity
-   survive a compliant sample; evidence volume collapses, so that limitation must be attributed
-   correctly.
+   the user's data wear the run's limitation: 500 labelled production rows scored as an 18-row
+   subset read as `a wiring check, not a score` - true of the run and false of the dataset.
+   Difficulty and diversity survive a compliant sample; evidence volume collapses, so that
+   limitation must be attributed correctly.
 2. **Report the run's sample-size limitation separately.** It belongs in the run report, not the
    dataset score: "this run compares configurations on 18 questions drawn from your 4,812 rows;
    treat a small difference as directional unless paired uncertainty from the completed outputs
@@ -1030,14 +1026,17 @@ run finishes.
 
 ## Held-out set and claims
 
-Reserve 10 held-out rows (2 easy, 3 medium, 3 hard, 2 very hard) at creation time, before any
-component design, calibration, or optimization touches the dataset, and keep the same rows aside
-for the rest of the run. That composition holds wherever the rows come from - a fully generated
-walkthrough or a bounded subset drawn from a large real dataset alike - because the rule governs
-the split this run reserves, not where the data originated. A project that already maintains its
-own independent held-out split is the exception: use it as it stands rather than re-cutting it
-to ten, and follow every claim rule below. When the rows carry no usable difficulty tags, work down
-the same ladder the bounded subset uses, and record the rung the split was cut on.
+Reserve 10 held-out rows (2 easy, 3 medium, 3 hard, 2 very hard) and keep the same rows aside for
+the rest of the run. When they are drawn follows the source, in two cases: a dataset this run
+generates or tops up reserves them at creation time, before any component design, calibration, or
+optimization touches it; a dataset above the first-run subset size draws them with the tuning
+subset, immediately before the paid comparison. The row-review hold on such a corpus lifts at the
+stage-4 re-score of the drawn rows; that is a hold on the band, not a third timing of the draw.
+That composition holds wherever the rows come from, because the rule governs the split this run
+reserves, not where the data originated. A project that already
+maintains its own independent held-out split is the exception: use it as it stands rather than
+re-cutting it to ten, and follow every claim rule below. When the rows carry no usable difficulty
+tags, work down the same ladder the bounded subset uses, and record the rung the split was cut on.
 
 **Real rows reach both sets before either is topped up.** Take the customer's own rows first
 and generate only the shortfall - and when there are too few to fill both sets, divide the real
