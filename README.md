@@ -24,27 +24,27 @@ Clone https://github.com/Traigent/traigent-first-run and follow GUIDE.md.
 
 The assistant performs the technical work and asks only when it needs:
 
-- A choice that materially changes the task - which agent to optimize is the first of them, and
-  the only one asked before the walkthrough starts.
+- A choice that materially changes the task - which agent to optimize is the first of them.
 - A key pasted into an owner-only local `.env` file, ignored when your project uses Git.
 - Approval before paid model calls or private-data egress.
 - Approval before judgment-dependent changes to real examples, expected answers, or grading policy,
   and before destructive or production-affecting actions.
 
-The run uses a dedicated `.venv-traigent` environment and preserves existing project, shared, and
-dependent environments. If that path already exists or its setup fails, the assistant stops with
-its path and recommends inspection; it removes and recreates that dedicated environment only on
-your explicit request.
+One thing it does without asking, announcing it first: it installs `traigent==0.26.0`,
+`litellm==1.93.0` and `python-dotenv==1.2.2` into a dedicated `.venv-traigent` environment - a
+package fetch only, with no provider or Traigent calls and none of your code executed. That
+environment preserves existing project, shared, and dependent environments. If that path already
+exists or its setup fails, the assistant stops with its path and recommends inspection; it removes
+and recreates that dedicated environment only on your explicit request.
 
-No existing agent, dataset, or evaluator is required to see the walkthrough. If several credible
-agents are present, the assistant asks which one to optimize; if there is exactly one, it names it
-and asks whether to run on it. Once you have chosen - a dummy or walkthrough agent counts as
-chosen - it keeps using that one and never asks again. When something is missing you are told
-before anything is written, in one question however many pieces are absent: what it did not find,
-that material it writes is weaker evidence than examples out of your product and what that costs
-the result, and two ways to answer - go ahead, or point it at yours. Only then does it prepare a
-coherent substitute around everything that already exists, and Traigent runs the managed
-optimization.
+No existing agent, dataset, or evaluator is required to see the walkthrough. When something is
+missing you are told before anything is written, in one question however many pieces are absent:
+what it did not find, that material it writes is weaker evidence than examples out of your product
+and what that costs the result, and two ways to answer - go ahead, or point it at yours. If several
+credible agents are present, the assistant asks which one to optimize; if there is exactly one, it
+names it inside that same question. Once you have chosen - a dummy or walkthrough agent counts as
+chosen - it keeps using that one and never asks again. Only then does it prepare a coherent
+substitute around everything that already exists, and Traigent runs the managed optimization.
 
 What it will not do is guess what your agent is *for*. If nothing in the project says what the task
 is - no agent that performs an identifiable one, no dataset, no evaluator, no tests, fixtures or
@@ -82,7 +82,7 @@ flowchart TD
     C -- Real Components --> D[Preserve & Calibrate]
     C -- Missing/Broken --> E[Dependency Matrix: Coherent Substitutes]
     E --> D
-    D --> F[Stage 3: Offline Baseline Run]
+    D --> F[Stage 3: Local paid baseline]
     F --> G[Stage 4: Connect Traigent Account & Enhanced Optimization]
     G --> H[Stage 5: Results Summary & traigent-skills Handover]
 ```
@@ -110,10 +110,10 @@ request. Only then does the guide explain and separately approve the managed opt
 verify portal tracking with a zero-LLM probe before its paid calls.
 
 At boundaries, the assistant shows `Stage n/5` and measured numbers. After baseline it recommends
-continuing, and names which continuing route: the managed search, or addressing the strongest
-observed limitation first where the measured results show no useful headroom. Stopping stays
-available and answerable either way. It gives reason and scope—never a generic menu or guaranteed
-gain.
+continuing with the bounded managed search; where the measured results show no useful headroom, it
+names that beside the recommendation as a limitation for the dataset work after the run. It never
+enlarges the dataset or the search to chase a better number. Stopping stays available and
+answerable either way. It gives reason and scope - never a generic menu or guaranteed gain.
 
 The default generated comparison has two planned measurements: all twelve configurations of a local
 fixed grid first, followed by a connected managed search over a materially broader space with added
@@ -122,7 +122,7 @@ through a fixed list. The approval card names that space's total combination cou
 ceiling, so the 12 reads against the space it is drawn from. A disclosed runtime, cost, or plan limit
 can make the approved comparison smaller; the report gives the number of configurations actually
 tested and any concrete shortfall reason. If you already have a baseline, the first measurement
-preserves its exact rows and models instead of padding it.
+preserves its exact configurations and models instead of padding it.
 The assistant attempts an exact upload without rerunning that baseline only when the installed
 public SDK exposes its sync id; otherwise it remains local. Both measurements use the same data,
 evaluator, and objectives, followed by the held-out set. A held-out set is called sealed only when
@@ -136,9 +136,8 @@ your full row count, and states the resulting sample-size limitation separately.
 
 Your readiness score is never taken on that subset. Every readiness run reads the whole dataset,
 because the score is a statement about your data and the subset is a limit on this one comparison -
-scoring the sample would report our sampling as though it were a property of your dataset, and tell
-someone with 500 good rows that they have "a wiring check, not a score". A first run shows the
-capability in one sitting; the full dataset is what a real optimization uses.
+scoring the sample would report our sampling as though it were a property of your dataset. A first
+run shows the capability in one sitting; the full dataset is what a real optimization uses.
 
 ## The readiness score
 
@@ -162,18 +161,18 @@ evaluator's complete path is proven safe, local, and fast, the assistant also ru
 before showing the opening card. A check this tool could not compute is marked unmeasured and
 excluded rather than scored zero; a check the run was asked for and did not supply is marked
 unmeasured too, but keeps its weight and earns nothing, so withholding it can never pay. The card
-says how much of each pillar it actually observed. A deferred calibration leaves
+says how much of each pillar it actually observed. A deferred calibration leaves, for example,
 `EVALUATION 53/100 (2 of 4 checks measured)` and limits the readiness claim to 45 until the
 evaluation method is validated; a fresh passing calibration can measure all four checks before that first card. A low
 score never stops the run; it decides which gaps are worth explaining and which are worth fixing
 first.
 
 That is also why the band can sit below the number. A pillar measured thinly cannot carry a strong
-verdict, so `89/100 WORKABLE` is not a contradiction even though 89 falls inside the Strong range -
-it is the card declining to call a project Strong on evidence it has not seen. The card names which
-pillar is thin - `EVALUATION 69/100 (2 of 4 checks measured)` - and declaring `--evaluator-method`
-is what fills that one in: without it neither the reproducibility check nor the task-fit check can
-run, and the pillar's confidence of 0.55 is what holds 89 at Workable.
+verdict, so, for example, `89/100 WORKABLE` is not a contradiction even though 89 falls inside the
+Strong range - it is the card declining to call a project Strong on evidence it has not seen. The
+card names which pillar is thin - `EVALUATION 69/100 (2 of 4 checks measured)` - and declaring
+`--evaluator-method` is what fills that one in: without it neither the reproducibility check nor
+the task-fit check can run, and there the pillar's confidence of 0.55 is what holds 89 at Workable.
 
 No settings document exists before the search, so the agent pillar is read from the selected
 agent's own code instead - which parameters it may already vary, each against a checked relative
@@ -231,10 +230,7 @@ answer does not appear to match their own input, or a dataset that never says wh
 from, which is read as generated precisely because nothing here can check it. Each of those is put
 to you once, with the material to judge it on and a straight pair of exits - at the point the
 finding is made where that is still free to act on, otherwise inside the approval before the first
-paid call - and the approval shows you what you answered either way. Once, not twice: being asked
-the same thing again in different words at the till is the thing this is built to avoid. Stopping a
-paid run over the assistant's reading of your data would be wrong; showing you a
-ceiling with no way to act on it was the older mistake, and this is the fix for it.
+paid call - and the approval shows you what you answered either way, and never asks it twice.
 
 Generated data and a small comparison set land on neither of those. A walkthrough dataset is what
 this guide writes for a user who has none, and a handful of rows is a wiring check - both are runs
@@ -302,7 +298,8 @@ this repository do not relicense the SDK; evaluate the SDK under the terms below
 
 ## SDK licensing
 
-The pinned requirements install `traigent==0.26.0`. The Traigent SDK is offered under the
+The pinned requirements install `traigent==0.26.0` beside `litellm==1.93.0` and
+`python-dotenv==1.2.2`. The Traigent SDK is offered under the
 [GNU Affero General Public License v3.0 only](https://github.com/Traigent/Traigent/blob/v0.26.0/LICENSE)
 (`AGPL-3.0-only`) or, under a separate written agreement, a
 [Traigent commercial license](https://github.com/Traigent/Traigent/blob/v0.26.0/COMMERCIAL-LICENSE.md).

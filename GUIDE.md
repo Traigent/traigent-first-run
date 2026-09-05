@@ -17,13 +17,12 @@ Read and follow the self-contained
 The skill routes its bundled references at the stage where each is needed; do not front-load them
 before starting inspection.
 
-The same directory is what the Agent Skill installer copies, so the clone and installed-skill
-paths follow one canonical workflow. Resolve the **absolute directory containing the loaded
-`SKILL.md`** from the path the coding assistant actually loaded. Keep every tool's working
-directory at the user's project root and interpolate that literal absolute skill directory into
-each invocation; do not depend on an exported variable surviving a later tool call. In a clone the
-resolved directory ends in `skills/traigent-first-run`; after Agent Skill installation it may live
-elsewhere.
+The same directory is what the Agent Skill installer copies. Resolve the **absolute directory
+containing the loaded `SKILL.md`** from the path the coding assistant actually loaded. Keep every
+tool's working directory at the user's project root and interpolate that literal absolute skill
+directory into each invocation; do not depend on an exported variable surviving a later tool call.
+In a clone the resolved directory ends in `skills/traigent-first-run`; after Agent Skill
+installation it may live elsewhere.
 
 ## Keep the guide source separate from the project being optimized
 
@@ -75,20 +74,12 @@ discovery. Stop only for:
 - Judgment-dependent changes to real expected answers or grading policy.
 - Destructive or production-affecting changes.
 
-Create the isolated first-run environment and minimal `.env` separately. The run preserves
-existing environments and uses dedicated `.venv-traigent`; never install into a shared or
-dependent environment.
-A dependency install may proceed without another approval only when it is confined to that
-first-run environment, uses the exact packages and versions declared at the top level plus their
-package-declared dependencies, fetches package artifacts only, and permits no
-project/provider/Traigent code execution or private-data transfer. If it cannot be prepared, stop
-with its path and recommend inspection or user-requested removal and recreation. Do not fall back.
-The run installs the skill's pinned first-run requirements into that environment whatever your
-project declares for itself, and never edits your own dependency files; never run an unversioned
-`pip install traigent`.
-A user or environment install policy still takes precedence and may require approval. Provider,
-connected Traigent, private-data, and all other external calls remain behind their stated
-approval gates.
+Create the isolated first-run environment and minimal `.env` as separate actions. SKILL.md's
+"Action authorization" table states what a dependency install may do without another approval;
+`references/run-safety.md` owns the environment, failure, and pinned-requirements rules beneath it,
+and the run never edits your own dependency files. This document states neither rule a second
+time. Provider, connected Traigent, private-data, and all other external calls remain behind their
+stated approval gates.
 
 ## Default run
 
@@ -96,10 +87,11 @@ The default paid path uses two measurements with the same tuning data, evaluator
 agent call path:
 
 1. A provider-paid **local fixed baseline**, preserving the user's configuration exactly. Only
-   when no baseline exists does the assistant prepare a credible twelve-configuration sweep. Stage 5
-   of `SKILL.md` owns how the provider route is resolved and when the user is asked about it. The
-   user sees its best configuration, primary tuning metric, cost, latency, trial/failure count, and
-   a short note for each knob before any Traigent account/key request.
+   when no baseline exists does the assistant prepare a credible twelve-configuration sweep.
+   SKILL.md's "Prepare the environment and finish free checks" section owns how the provider route
+   is resolved and when the user is asked about it. The user sees its best configuration, primary
+   tuning metric, cost, latency, trial/failure count, and a short note for each knob before any
+   Traigent account/key request.
 2. After that checkpoint, a zero-LLM portal probe and one **connected managed optimization** that
    contains every baseline value, adds meaningful non-model settings by default, and tests up to 12
    configurations from a materially larger search space.
@@ -115,11 +107,11 @@ optimization separately. The assistant chooses how many configurations it tests 
 varies.
 
 Do not add an offline baseline rerun or a mandatory third optimization pass. Do not expand,
-shrink, or weaken a user-owned baseline to reach a row count; one row is correct when that is what
-the user actually defined. When the assistant prepares the walkthrough agent and its missing
-baseline,
-generate enough real controls for the twelve-row baseline and add further controls to the enhanced
-run. Another iteration is optional only after the result identifies a specific hypothesis.
+shrink, or weaken a user-owned baseline to reach a configuration count; one configuration is
+correct when that is what the user actually defined. When the assistant prepares the walkthrough
+agent and its missing baseline, generate enough real controls for the twelve-configuration baseline
+and add further controls to the enhanced run. Another iteration is optional only after the result
+identifies a specific hypothesis.
 
 ## Result interpretation
 
@@ -135,8 +127,7 @@ If anything is a substitute, say before the numbers that the result demonstrates
 evidence of expected production performance. Any walkthrough-only substitute is still walkthrough
 evidence.
 
-Keep every experiment actually persisted in the portal and finish with its verified direct link.
-Label an unsynced baseline local-only. Do not delete portal experiments as walkthrough cleanup;
-deletion requires an explicit later request from the user.
+Portal experiments - retention, links, the local-only label, and deletion - follow SKILL.md's
+"Verify and report" stage; this document states none of it a second time.
 
 Only provide advanced learning links and lifecycle suggestions after the user has seen the result.

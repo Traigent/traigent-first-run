@@ -130,13 +130,12 @@ Ask before any private content leaves the machine, even when the provider key al
 
 Before a Traigent key request, link current [pricing](https://portal.traigent.ai/pricing),
 [terms](https://portal.traigent.ai/terms), and [privacy](https://portal.traigent.ai/privacy). Do
-not copy their prices or claims. State what the pinned SDK's telemetry contract says a connected
-run sends - tuned configuration keys and values, numeric scores, run state - and what it says is
-excluded: prompts, dataset rows, expected answers, model responses. That is the documented
-contract, not a packet audit, and it is what the user is entitled to before deciding. Report it
-and stop there. They do not establish training use of submitted material: make no
-claim. Stop before key handoff; ask Traigent for its canonical training-use policy. Nothing local
-clears this: it holds until Traigent provides one.
+not copy their prices or claims. State what the documented telemetry contract above says a
+connected run sends and what it excludes - the documented contract, not a packet audit, which is
+what the user is entitled to before deciding. Report it and stop there. This guide does not carry
+Traigent's training-use policy and makes no claim about it either way. Point the user to the
+linked terms and privacy pages instead; they decide with those in front of them before pasting
+the key.
 
 At the secret-entry gate, show only the URL needed for the selected service:
 
@@ -159,9 +158,8 @@ clicked through. When the user completes portal registration the code is spent, 
 portal access period starts, and they land in the portal. Their address is already confirmed by
 then, so registration does not ask for a second confirmation.
 
-The key is then created, not handed over — which is why the write-scope rule below is the main path
-here and not an edge case. Two places create one: the key control in the portal's top bar, which
-issues a key in a click or two and is highlighted on a first visit, and
+The key is then created, not handed over. Two places create one: the key control in the portal's
+top bar, which issues a key in a click or two and is highlighted on a first visit, and
 `https://portal.traigent.ai/management/api-keys`, which offers more options. Name the top-bar
 control first; it is the shorter path. Either way the key is shown once and cannot be read back, so
 say "save it now" while it is on screen rather than afterwards.
@@ -187,7 +185,8 @@ destination:
 
 Those four are exclusive on what the user holds, not on how long ago: a run later refused for
 account or plan reasons is the spent access period below, not a wrong branch here. Ask which one
-applies; do not infer it from how far along they sound.
+applies, alone and first; do not infer it from how far along they sound. At this gate, open the
+handoff file and print its path only after the user says they hold a key.
 
 Registration has to be authorized by that access code, so it is the code, not the URL, that gets a
 user in. Never hand the registration address to someone who does not have one yet; the fix is to
@@ -219,15 +218,11 @@ active and your 10-day portal access period has started. Next, create your API k
 control in the top bar. Grant it full access — a read-only key is refused, so no experiment
 reaches your portal — and save it when it appears, because it is shown only once."
 
-The Traigent key must be able to write experiments, not only read them. The connected optimization,
-and an exact baseline sync when the installed public API supports one, need that scope. A read-only
-key can be rejected at submit time while the optimization drops to local-only tracking - the run
-stops there and the trials it already paid for appear nowhere. This governs
-the user's very first key, not just a later one, because registration hands over no key at all.
-A manually created key defaults to read-only, so grant it full access rather than accepting
-the default. Say this at the moment the user creates the key, not afterwards: the failure is cheap
-to prevent and expensive to discover, and a key accepted at the start but rejected mid-run
-leaves spend that already happened.
+The Traigent key must be able to write experiments, not only read them: the connected optimization,
+and an exact baseline sync when the installed public API supports one, need that scope, and
+"Connected-run readiness" below says what a key without it does to a run. A manually created key
+defaults to read-only, so grant it full access rather than accepting the default. Say this at the
+moment the user creates the key, not afterwards.
 
 Preserve existing owner-owned `.env` values. Add only a genuinely missing selected-provider key for
 this run; do not add a backend or API URL. An existing override does not affect the local baseline,
@@ -260,12 +255,6 @@ Binding is first because a token comparison cannot see a correct value paired to
 The deterministic permutation probe asks about that one class mechanically; the rest still needs
 the recorded semantic review.
 
-Identify execution evaluators from their complete call path. A scorer enters that path when it
-executes or imports candidate/model output as code, shells out with it, or submits it to a code or
-SQL engine. That is a scope stop for this first-run guide, not a sandbox request: do not run that
-evaluator in calibration, mock, baseline, optimization, or validation. The manual-containment route
-below is the only next step it has.
-
 ## Static and mock validation
 
 The bundled `scripts/preflight.py` is a static/free gate. Run its component checks before
@@ -289,11 +278,13 @@ local quality view; they are not aliases, rewrites, or proof of SDK acceptance.
 ### Execution evaluators are out of scope
 
 This first-run guide supports non-executing comparison evaluators. It does not ship, select, or
-validate a sandbox for candidate/model output that is executed as code or SQL. What ends here is
-the evaluator that runs the answer, never the task that produced it: an agent whose answer is code
-or SQL stays in scope, graded by the comparison `references/evaluation-and-dataset.md` selects
-for it. A virtual environment, stripped credentials, an ordinary subprocess, a timeout, or mock
-flags do not make that execution safe.
+validate a sandbox for candidate/model output that is executed as code or SQL. Identify an execution
+evaluator from its complete call path: a scorer enters that path when it executes or imports
+candidate/model output as code, shells out with it, or submits it to a code or SQL engine. What ends
+here is the evaluator that runs the answer, never the task that produced it: an agent whose answer
+is code or SQL stays in scope, graded by the comparison `references/evaluation-and-dataset.md`
+selects for it. A virtual environment, stripped credentials, an ordinary subprocess, a timeout, or
+mock flags do not make that execution safe.
 
 When the resolved evaluator call path is an executing one, preserve the project, run only
 read-only static inspection that does not import or execute it, record a `stopped` `containment`
@@ -329,32 +320,13 @@ while the process runs. A run this check does not stop is therefore a run it had
 stop, never a run it cleared, and nothing in the output offers it as an all-clear. Reading the
 complete call path is still the instruction above, and it is still yours.
 
-An in-process envelope is not a route to that evidence, and this is now measured rather than
-assumed. One was built and attacked: the network closed at the socket layer, subprocesses refused,
-sqlite reopened read-only under a step budget with attach denied, and processor time and file
-growth bounded. A single adversarial pass escaped it seven times, in classes rather than in
-one-off tricks - a C extension module reached under the pure-Python one that was patched, a module
-reloaded to restore the original functions, a send path the patch set had not enumerated, a native
-call through a foreign-function handle, a public engine constructor that skips the wrapped opener
-entirely, and a soft resource limit raised straight back because the hard limit still permitted it.
-Each of those is a class with more members, and the eighth is a matter of who looks next: bounding
-Python from inside the same interpreter means bounding it against every extension module, every
-constructor and every native handle it can reach, and that surface has no edge.
-
-The worse half was not the escapes. The card kept reporting the bounds as enforced while the
-process had already stepped outside them, because the report was written beside the patches rather
-than measured after them - a claim verified against nothing, inside a safety statement. That is the
-one thing this package refuses everywhere else, so the envelope was not repaired and shipped; it
-was removed, and this paragraph is what it produced. The sentence at the top of this section - that
-a virtual environment, stripped credentials, an ordinary subprocess, a timeout or mock flags do not
-make that execution safe - now has evidence behind it, and it extends to anything else built the
-same way. A boundary the operating system enforces is a different proposition, and it is one this
-guide deliberately does not own.
-
-So the manual containment design and review above is still the whole of the route, and a project
-whose evaluator runs the candidate's answer stops here with its calibration evidence uncollected.
-That costs it real points on the readiness card, and the card now says why rather than asking it to
-run the check anyway.
+An in-process envelope is not a route to that evidence: bounding Python from inside the same
+interpreter means bounding it against every extension module, every constructor and every native
+handle it can reach, and that surface has no edge. A boundary the operating system enforces is a
+different proposition, and it is one this guide deliberately does not own. So the manual
+containment design and review above is still the whole of the route, and a project whose evaluator
+runs the candidate's answer stops here with its calibration evidence uncollected; the readiness
+card says why.
 
 ### Deterministic calibration and mock plumbing
 
@@ -591,9 +563,9 @@ Use two short, contextual approvals; do not ask the user to design budgets, retr
 Before the provider-paid baseline, show only its immediate scope:
 
 - Scope and bounds: the smallest live provider/key check, any pre-baseline LLM-judge calibration,
-  preserved baseline or generated twelve-row sweep, tuning rows and limitations, configurations,
-  calls, metric, runtime, estimated spend, and one total walkthrough ceiling, defaulting to
-  `$5.00`. Call it an execution stop target, not a billing guarantee.
+  preserved baseline or generated twelve-configuration sweep, tuning rows and limitations,
+  configurations, calls, metric, runtime, estimated spend, and one total walkthrough ceiling,
+  defaulting to `$5.00`. Call it an execution stop target, not a billing guarantee.
 - Recipients: baseline-data services; for OpenRouter, the gateway and allowed upstream/fallback routes.
 - Execution evaluators end this guide before an approval card; do not price, approve, or run one
   here.
@@ -662,10 +634,9 @@ exist and points at a file that was never created.
   card carries a `FIX BEFORE PAID RUN`, where any cap blocks, or where the run as scoped cannot
   answer the question it is being paid to answer, fixing is the route that can produce that result:
   `B.` carries the mark, `A.` proceed stays offered unmarked, and the sentence beside it names the
-  finding that moved it. The mark is never withheld from the pair. An unmarked pair with no
-  recommendation on either route is the same silence this bullet already refuses, and these three
-  states are where it costs most - a run that meets one supplies the default itself, and it has no
-  reason to supply the right one.
+  finding that moved it. The mark is never withheld from the pair.
+
+  The final reply-ready block below places this pair too.
 
 An asking cap is what this card exists to discharge, and discharging it means the customer meets its
 remedy at the moment they are asked to pay - not that its question is put here a second time.
@@ -688,8 +659,7 @@ After showing the baseline result, give the connected stage a preview and approv
   a judge's are among them, on every scored row of the search as well as these.
 - Bounds and value: runtime, enhanced/spent cost and remaining ceiling; provider/Traigent recipients,
   zero-LLM probe, portal history/direct links, and exclusions. Dataset/configuration insights remain
-  conditional on verified run-scoped SDK artifacts. Repeat applicable execution-evaluator
-  scope/call-path checks.
+  conditional on verified run-scoped SDK artifacts.
 
 The enhanced run card's trial line is a ceiling paired with the size of the space it is drawn from, because
 at approval time the user is asking what the worst case is, and a range answers a question they did
@@ -723,29 +693,28 @@ them, never what it will improve, and the no-lift wording below is unchanged by 
 What may fill `<observed reason>` is a finding a wider search has room to move. Rows that no
 configuration solved is one, because more configurations is the thing that could solve them. A
 statistical tie among the top configurations is not, and the frontier section below already says
-why in the opposite direction: it names one as a bound on what this run may claim. A run read that
-bound as an opportunity and sold it. At this sample size a tie says the rows cannot separate the
-configurations already tried, and adding candidates adds nothing to separate them with - resolution
-comes from rows, never from more things to rank. Name it as a limit on what the result may claim,
-and where it is the binding one recommend more or harder rows first. It is never a reason to spend.
-When the dataset and evaluator are sound but the baseline showed no measured quality or cost headroom,
-recommend harder realistic cases first. If the customer explicitly wants a verified portal/enhanced
-comparison anyway, offer it as an optional no-lift-possible verification run: say that it is not expected
-to find a gain and that declining leaves the honest baseline-only result intact. An invalid or
-non-discriminating dataset/evaluator has already stopped before this preview and gets the evidenced repair
-instead. Never promise improvement.
+why in the opposite direction: it names one as a bound on what this run may claim. At this sample
+size a tie says the rows cannot separate the configurations already tried, and adding candidates
+adds nothing to separate them with - resolution comes from rows, never from more things to rank.
+Name it as a limit on what the result may claim, and where it is the binding one name it as the
+limitation the `traigent-dataset-curate` handoff below addresses after the run. It is never a
+reason to spend. When the dataset and evaluator are sound but the baseline showed no measured
+quality or cost headroom, the bounded managed run stays the marked route, on the two standing
+reasons above, and is offered as an optional no-lift-possible verification run. On that preview,
+say that it is not expected to find a gain, that stopping is route `B`, and that
+declining leaves the honest baseline-only result intact, and name the no-headroom finding beside
+it as a limit on the claim and that same handoff's limitation, never as a route. More or harder
+rows are never a route of this run. An invalid or non-discriminating dataset/evaluator has
+already stopped before this preview and gets the evidenced repair instead. Never promise
+improvement.
 
 Every offered connected preview ends on its routes, in the shape SKILL.md states for every
-named-route choice: lettered from `A`, exactly one marked, and each one answerable by replying.
-This preview used to close on a single yes/no question about continuing, which left it with one
-route the customer could take and one they could only read about - the card names stopping and
-prices it four ways, and then never says how to take it. That is worse than the unmarked pair the
-pre-spend card had, where both answers were at least available. A route this guide names and prices
-is a route the customer can take by replying.
+named-route choice: lettered from `A`, exactly one marked, and each one answerable by replying. A
+route this guide names and prices is a route the customer can take by replying.
 
-Final reply-ready block. Render it as its own block, after the disclosure prose, with nothing
-following it: a reply form sitting in the tail of a long paragraph is not an instruction, and a run
-that put one there was read as having offered no options at all - not even what to type to proceed.
+Final reply-ready block, on both approval cards. Render it as its own block, after the disclosure
+prose, with nothing following it: a reply form sitting in the tail of a long paragraph is not an
+instruction.
 
 > **A. <action>** *(recommended - <measured reason>)*
 > Reply `continue` and I will <next safe step>.
@@ -764,13 +733,10 @@ opens no paid work without the explicit approval below. For controlled work, `co
 preview; it approves nothing unless that preview disclosed recipients, effects, bounds, and cost.
 
 The mark on `A` follows the pre-spend card's rule above. That rule is stated there once and is not
-restated here. Where it moves the mark here, it moves it onto more or harder rows before the search
-- not onto the evidenced repair, which is not one of this preview's routes at all: a dataset or
-evaluator that fails the distinguishing check stopped before this card, as the paragraph above says.
-So in that state `A.` is the rows route and carries the mark, `B.` is the bounded run, unmarked, and
-`C.` is stopping; every one of them keeps a letter and a reply form, because an offered route
-without a letter is the second form for the same act this guide already refuses. The sentence beside
-`A` names the finding that moved it. Stopping is never the marked route.
+restated here, and its moving conditions cannot hold at this preview: a dataset or evaluator that
+fails the distinguishing check stopped before this card, as the paragraph above says. So the mark
+stays on `A.`, the bounded managed run - never on the evidenced repair, which is not one of this
+preview's routes at all. Stopping is never the marked route.
 
 Keep the default `$5.00` ceiling across both approvals. If a stage exceeds the remaining ceiling or
 is materially long, recommend a smaller slice or fewer trials; expand only if the user prefers.
@@ -786,7 +752,10 @@ from the observed per-call cost once the probe has one and from the estimate the
 priced with until then. None of the three has a default, so a paid phase launched
 without them stops before its first call instead of running on a per-optimization limit that knows
 nothing about this walkthrough. State the three on the approval that sets them, in the same numbers
-the card shows. `references/sdk-execution.md` owns what the wrapper does with them.
+the card shows. `references/sdk-execution.md` owns what the wrapper does with them. A fourth
+variable, `TRAIGENT_FIRST_RUN_BASELINE_TIMEOUT_SECONDS`, the baseline phase's wall-clock bound, has
+no default either and is placed in the process the same way; `references/sdk-execution.md` owns
+its sizing under "Automatic run bounds".
 
 Do not persist `TRAIGENT_COST_APPROVED=true`; set approval only in the current paid process, which
 is what keeps the SDK's own prompt from offering to raise the approved total. The SDK enforces its
@@ -833,9 +802,7 @@ After the approved live probe, calculate internal request and SDK optimization b
 observed latency, rows, trials, calls per example, and concurrency, with a reasonable completion
 margin. These are implementation details, not user choices. If observation makes the run
 materially longer than the approved estimate, offer a smaller run or quote the additional
-time/cost. If the SDK returns a timeout with completed trials, show the best partial result and
-offer another bounded pass only when additional search is justified. A timeout with zero trials
-requires diagnosis, not more time.
+time/cost. A timeout, with or without completed trials, follows the Recovery rules below.
 
 Verify selected model IDs are live and cost-tracked before scaling. If a model chosen by the
 assistant is unavailable or unpriced, replace it only with a working model from the same chosen
@@ -892,10 +859,11 @@ what proves the key is scoped and the session reaches the portal at all.
 
 That setting turns one class of silent degradation into a stop, so decide the stop with the user
 before it costs anything. If the inventory finds a no-egress setting in the environment or `.env`,
-the connected phase cannot honestly run: ask once, at the point the second run is explained, which
-they want - keep no egress and finish on the local baseline, which is a complete and reportable
-result, or lift it deliberately for this run. Never clear it for them, and never carry the question
-past the approval card into the middle of a paid phase.
+the connected phase cannot honestly run. Ask once, in a message of its own before the connected
+preview and never inside it, ending on two lettered routes: `A.` keep no egress and finish on the
+local baseline, marked recommended because the setting is theirs and that result is complete and
+reportable, or `B.` lift it deliberately for this run. Never clear it for them, and never carry
+the question past the approval card into the middle of a paid phase.
 
 ## Baseline and optimization
 
@@ -903,11 +871,11 @@ Follow SKILL stage 7 for the comparison order, evidence held constant, checkpoin
 decision. This section owns configuration-selection depth and execution/reporting safeguards.
 
 Keep both spaces tied to the real agent and observed failure modes. Preserve a user-owned baseline
-space unchanged, even when it contains one row. The generated walkthrough's two exact sizes and
-their derivation live in `references/sdk-execution.md`; use those values rather than restating the
-arithmetic here. The baseline trials are one per configuration, and the approval card names that
-count - as a count, never as a change from whatever this guide did before, which the customer has
-never run.
+space unchanged, even when it contains one configuration. The generated walkthrough's two exact
+sizes and their derivation live in `references/sdk-execution.md`; use those values rather than
+restating the arithmetic here. The baseline trials are one per configuration, and the approval card
+names that count - as a count, never as a change from whatever this guide did before, which the
+customer has never run.
 
 The three default behaviour knobs are prompt style, thinking shape (direct or chain-of-thought),
 and reflect; temperature stays fixed at the task-selected value owned by `sdk-execution.md`, so
@@ -988,11 +956,11 @@ Managed `auto` is a guided search, not an exhaustive grid: `max_trials` is a cap
 so the service can stop with fewer trials. `auto` already runs Traigent's smart cloud search, so do
 not hand-pick a named optimizer such as `bayesian`, `tpe`, or `optuna`; use `auto`, `grid`, or
 `random` unless a named selector is confirmed to run consistently on the installed SDK. For an
-assistant-prepared baseline, use local `grid` so all twelve distinct rows are predictable. For a
-user-owned baseline, preserve its space and selection behavior exactly in the local phase. Use
-connected `auto` with a default cap of 12 for the enhanced space, then report the actual count and
-stop reason; `references/sdk-execution.md` owns the shortfall obligation beneath that cap, so never
-silently present a two-row generated run as the intended comparison.
+assistant-prepared baseline, use local `grid` so all twelve distinct configurations are
+predictable. For a user-owned baseline, preserve its space and selection behavior exactly in the
+local phase. Use connected `auto` with a default cap of 12 for the enhanced space, then report the
+actual count and stop reason; `references/sdk-execution.md` owns the shortfall obligation beneath
+that cap, so never silently present a two-configuration generated run as the intended comparison.
 
 Composite patterns are a later workflow, not a first-run paid dimension.
 
@@ -1197,18 +1165,18 @@ not in that repository, and no `npx skills add` flag beyond `--list` and `--skil
 - Tracking degraded to local-only during a connected run: stop paid work at once - the wrapper has
   already refused every later provider call. Report a sanitized backend reason and the spend it
   cost, rather than restarting the phase to recover the link or re-deciding whether to continue.
-- Cost limit reached with zero trials: no result exists. Reduce scope or obtain new approval.
-- Cost limit reached with completed trials: show the best partial result and name the cost cap as
-  the stop reason; do not report it as a failure or silently drop the paid trials.
+- Cost ceiling reached, with or without completed trials: show the best partial result where
+  trials completed - never a failure, never with the paid trials dropped - and report the phase as
+  "Approval and budgets" above states.
 - SDK or optimizer exception mid-run, including a Rust/pyo3 panic during result serialization (a
   known class): surface the error in plain language with one recommended recovery, never a raw
   traceback. Completed trials were already paid and written to the selected
   `TRAIGENT_RESULTS_FOLDER` - beneath `traigent-runs/` for the generated wrapper, or at the named
   preserved project path. Recover them and, for a connected run, upload the partial session with
   `traigent sync <session_id>` before reporting - never present already-paid work as a total loss.
-  A foreground command timeout (harnesses often kill at about five minutes) can kill
-  `optimize_sync` mid-run without rolling back its spend, so run a long paid optimization detached
-  and poll its log rather than letting the tool timeout abandon paid trials.
+  A foreground command timeout can kill `optimize_sync` mid-run without rolling back its spend, so
+  run a long paid optimization detached and poll its log rather than letting the tool timeout
+  abandon paid trials.
 - Rate limit or temporary provider outage: preserve partial results and use the SDK/provider
   classification.
 - Invalid credentials, quota exhaustion, or insufficient funds: stop with the specific category;
@@ -1216,8 +1184,10 @@ not in that repository, and no `npx skills add` flag beyond `--list` and `--skil
   silently fails trials - verify funding before paid work; a free-tier optimization-sample quota
   rejection means shrink the run, not retry blindly. For an uncategorized provider error, surface a
   sanitized provider message rather than guessing a category.
-- Timeout with completed trials: show the best partial result before offering one additional
-  bounded pass with its extra approximate time and cost.
+- Timeout with completed trials: show the best partial result. Another bounded pass is offered
+  only when a specific hypothesis justifies it, under a newly scoped approval with its extra
+  approximate time and cost, and never as the second attempt at the same phase that `Approval and
+  budgets` above refuses.
 - Timeout with zero trials: diagnose provider latency, a hung call, or setup failure before
   considering another run.
 - Evaluator exceptions or all-zero/all-one measures: repair evaluator/data and rerun only after

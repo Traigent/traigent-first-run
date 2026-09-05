@@ -837,13 +837,11 @@ class OnlyAReportedMeasurementIsAskedTests(unittest.TestCase):
             with self.subTest(old=old):
                 self.assertNotIn(old, shipped)
 
-        # These are the issue's honest classes: uncertainty at ten rows, an
-        # environment-dependent timeout estimate, and an effect that may
-        # reverse. Removing them would make the guide sound more certain than
-        # its evidence permits.
+        # These are the issue's honest classes: uncertainty at ten rows and an
+        # effect that may reverse. Removing them would make the guide sound
+        # more certain than its evidence permits.
         for honest in (
             "roughly twice that, about +/-31 and +/-19 points",
-            "harnesses often kill at about five minutes",
             "silently and often *raise* the score",
         ):
             with self.subTest(honest=honest):
