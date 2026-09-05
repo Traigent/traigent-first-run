@@ -4159,7 +4159,7 @@ class SkillPackageTests(unittest.TestCase):
         safety_text = " ".join(RUN_SAFETY.read_text().casefold().split())
         combined = f"{skill_text} {safety_text}"
         for phrase in (
-            "do not repeat a provider choice already resolved in stage 5",
+            "do not repeat a provider choice already resolved in section 5",
             "stop once",
             "do not ask the user to choose cost, retries, or timeout settings",
             "one concise baseline preview and approval",
@@ -5173,11 +5173,36 @@ class SkillPackageTests(unittest.TestCase):
             "provider credentials: <vendors and sources>",
             "traigent key: <present/absent> (not a provider credential)",
             "preserve this route by adding <key>",
-            "or change to <available vendor>?",
+            "change to <available vendor>",
             "a route change requires recipient disclosure and approval",
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, skill_text)
+        # The route question used to sit mid-procedure as a yes/no with no
+        # stop, followed by the unattended install and then a second stop for
+        # the secret. It is now lettered, closes its message, and is the same
+        # stop as the secret entry, so one reply pastes the key or changes the
+        # route and the user is never asked twice in a row.
+        stage_five = skill_text.split(
+            "### 5. prepare the environment and finish free checks", 1
+        )[1].split("### 6. approve and run the baseline", 1)[0]
+        self.assertNotIn("or change to <available vendor>?", stage_five)
+        self.assertIn(
+            "ask nothing here: a route whose credential is absent is decided at "
+            "step 6, on this section's one stop",
+            stage_five,
+        )
+        self.assertLess(
+            stage_five.index("stop once for only that secret locally"),
+            stage_five.index("`a.` preserve this route by adding <key>"),
+            "the lettered route ask has to ride the secret-entry stop, not "
+            "precede the install as a stop of its own",
+        )
+        self.assertIn(
+            "`b.` change to <available vendor> - and nothing follows it: one "
+            "reply pastes the key or changes the route",
+            stage_five,
+        )
         self.assertNotIn("safe key-shape prefixes", safety_text)
         self.assertNotIn("convenient default", env_example)
         self.assertIn("another vendor's key does not change its route", env_example)
@@ -5372,7 +5397,7 @@ class SkillPackageTests(unittest.TestCase):
             "traigent was set up in this project before this run started",
             "so this may not be a first run",
             "never read that as a blocker or a reason to stop",
-            "the decision is theirs at the stage 6 approval",
+            "the decision is theirs at the section 6 approval",
             "that approval carries it too",
             "charges for its own baseline and search",
         ):
@@ -5436,6 +5461,56 @@ class SkillPackageTests(unittest.TestCase):
             "before the SDK checks it gates; anywhere else it verifies "
             "nothing.",
         )
+
+    def test_the_install_is_announced_with_its_pins_and_never_asked(self) -> None:
+        """Owner decision: the pinned SDK install is a notice, not a question.
+
+        The install is free, pinned and isolated, and the authorization table
+        already permits it; what the user was missing was being told. The
+        notice names the packages and exact versions, the absolute environment
+        path, and that nothing is called and nothing of theirs runs - and then
+        the run proceeds. A consent question here would be a stop the owner
+        declined to add, so its absence is pinned as firmly as the notice.
+        """
+        skill = " ".join(SKILL.read_text().casefold().split())
+        stage_five = skill.split(
+            "### 5. prepare the environment and finish free checks", 1
+        )[1].split("### 6. approve and run the baseline", 1)[0]
+        pinned = [
+            line.strip()
+            for line in REQUIREMENTS.read_text().splitlines()
+            if "==" in line
+        ]
+        self.assertEqual(len(pinned), 3, "the notice below names three pins")
+        notice = (
+            f"say first: `installing {pinned[0]}, {pinned[1]} and {pinned[2]} "
+            "into <absolute path>/.venv-traigent - a package fetch only: no "
+            "provider or traigent calls, and none of your project's code runs.`"
+        )
+        self.assertIn(notice, stage_five)
+        self.assertIn(
+            "then proceed: the notice is not a question, and the "
+            "install-approval policy clause in the authorization table still "
+            "governs",
+            stage_five,
+        )
+        # Every release SKILL.md names is one the requirements file installs.
+        stated = set(re.findall(r"\b[a-z-]+==\d+\.\d+\.\d+\b", skill))
+        self.assertEqual(stated, set(pinned))
+        # The notice precedes the install it announces, and the policy clause
+        # it defers to is still in the table.
+        self.assertLess(
+            stage_five.index("say first: `installing"),
+            stage_five.index("then re-run `scripts/preflight.py`"),
+        )
+        self.assertIn(
+            "a user or environment policy that requires install approval still "
+            "takes precedence",
+            skill,
+        )
+        for question in ("may i install", "approve the install", "install it?"):
+            with self.subTest(question=question):
+                self.assertNotIn(question, stage_five)
 
     def test_run_safety_owns_depth_without_repeating_the_skill_flow(self) -> None:
         text = RUN_SAFETY.read_text()
@@ -7653,18 +7728,38 @@ class SkillPackageTests(unittest.TestCase):
             "now check whether the dataset and evaluator distinguish configurations"
         )
         connected_preview = stage_seven.index(
-            "that finding does not itself block a healthy customer"
+            "the routes in that state are `a.` the bounded connected run"
         )
         connected_approval = stage_seven.index("stage 4/5 · optimize")
         self.assertLess(baseline_checkpoint, evidence_gate)
         self.assertLess(evidence_gate, connected_preview)
         self.assertLess(connected_preview, connected_approval)
         self.assertIn("stop before the search", stage_seven)
-        self.assertIn("optional, no-lift-possible verification run", stage_seven)
-        self.assertIn(
+        # The no-headroom state. The finding is a limit on the claim plus the
+        # named post-run handoff, never a route: the routes are the bounded
+        # run, marked on the standing reasons that rest on no number, and
+        # stopping. Rows are never a route inside this run (the operating
+        # contract), so the old "recommend harder realistic cases" is refused.
+        for phrase in (
+            "report little or no measured quality or cost headroom as a limit "
+            "on the claim",
+            "name harder realistic cases as the `traigent-dataset-curate` "
+            "handoff after the run, never as a route",
+            "`a.` the bounded connected run, offered as an optional "
+            "no-lift-possible verification and never as an expected gain, "
+            "carrying the mark on the two standing reasons below that rest on "
+            "no number",
+            "`b.` stop with the baseline-only result, preserved and reported",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, stage_seven)
+        for retired in (
+            "recommend harder realistic cases",
+            "that finding does not itself block a healthy customer",
             "if they decline it, preserve and report the baseline-only result",
-            stage_seven,
-        )
+        ):
+            with self.subTest(retired=retired):
+                self.assertNotIn(retired, stage_seven)
         self.assertIn(
             "explicit approval remains required before its key, probe, sync, or calls",
             stage_seven,
@@ -12257,7 +12352,7 @@ class SkillPackageTests(unittest.TestCase):
         for phrase in (
             "the agent pillar, scored from the space the enhanced search "
             "actually received",
-            "the opening and stage-4 scores withhold every config-space "
+            "the opening and section-4 scores withhold every config-space "
             "document by construction",
             "its dataset and evaluation caps rank nothing and settle nothing "
             "about what is still open",
@@ -13573,7 +13668,7 @@ class SkillPackageTests(unittest.TestCase):
 
         skill = documents["skill"]
         checkpoint_index = skill.find(
-            "do not disclose the held-out score before stage 8"
+            "do not disclose the held-out score before section 8"
         )
         report_index = skill.find(
             "the recommended configuration's held-out score and small-sample note, "
@@ -15433,7 +15528,7 @@ class SkillPackageTests(unittest.TestCase):
         ),
         "declare-data-provenance": (
             "say the assumption and both card scores",
-            "offer declaring the real source",
+            "a real source the user names is recorded",
         ),
         "review-answer-key": (
             "a person reviews a sample of the answers",
@@ -15454,7 +15549,7 @@ class SkillPackageTests(unittest.TestCase):
             "take the card's two routes",
             "carry on over the examples that differ",
         ),
-        "complete-calibration": ("opening/stage-4 calibration gate",),
+        "complete-calibration": ("opening/section-4 calibration gate",),
         "review-evaluator-containment": ("manual-containment route",),
         "bound-evaluator-cost": ("five-option question",),
         "vary-knobs": (
@@ -16296,7 +16391,7 @@ class SkillPackageTests(unittest.TestCase):
         self.assertIn(
             "where the scope leaves a person something to settle, put it once "
             "in the home that owns that question and carry the answer to the "
-            "pre-spend approval in stage 6; where it leaves nothing to do, the "
+            "pre-spend approval in section 6; where it leaves nothing to do, the "
             "ceiling is advisory and there is no repair to route",
             normalized,
         )
@@ -16875,7 +16970,7 @@ class SkillPackageTests(unittest.TestCase):
             "run-plan-historical-<yyyymmddthhmmssz>.md` (never overwrite)",
             "keep its spend and results historical or baseline-only",
             "copy a fresh template to canonical `traigent-runs/run-plan.md`",
-            "start at stage 1 with a new opening score",
+            "start at section 1 with a new opening score",
             "never rerun paid work without newly scoped approval",
         ):
             with self.subTest(phrase=phrase):
@@ -16973,10 +17068,26 @@ class SkillPackageTests(unittest.TestCase):
         """
         skill = " ".join(SKILL.read_text().casefold().split())
         for phrase in (
-            # after any repair or substitute creation, at any stage
-            "after any repair or substitute creation, re-run the affected "
-            "checks, the applicable calibration, and the score, then record "
-            "that gate result without overwriting the opening one",
+            # after a repair or a creation, at any stage - the one paragraph
+            # that owns the post-repair rule: what to re-run, the two passes a
+            # repair silently invalidates, the re-score, and the one line shown
+            "after a repair or a creation, re-run only the checks whose input "
+            "the repair changed",
+            "two repairs invalidate an earlier pass and must redo it: an "
+            "evaluator repair re-runs the degenerate-gold check",
+            "a dataset supplied via `i have it` after the opening-gate "
+            "calibration re-derives the calibration cases",
+            "then recompute the score over all three pillars",
+            "record that gate result without overwriting the opening one",
+            "then print exactly one line, `fixed: <component> - cleared: "
+            "<caps> - continuing`",
+            "on the board, refresh only changed evidence, retain unresolved "
+            "`❗` lines and add the new substitutes under walkthrough setup; "
+            "show no second card",
+            # the three sites that used to restate the rule now point at it
+            "then revalidate as section 4's post-repair rule states",
+            "the board changes only as section 4's post-repair rule states",
+            "later re-score of this record, as section 4's post-repair rule " "states",
             # stage 4, step 5 - required even when the answer is unwelcome
             "re-run `scripts/readiness.py` on the fresh preflight json plus "
             "any applicable calibration result",
@@ -17003,6 +17114,21 @@ class SkillPackageTests(unittest.TestCase):
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, skill)
+        # One home. The rule used to be stated four ways in this file and its
+        # display rule twice more; a rule stated in two places is a rule that
+        # can be changed in one. The line is printed once, and the earlier
+        # restatements are refused by their own wording.
+        self.assertEqual(
+            skill.count("fixed: <component> - cleared: <caps> - continuing"), 1
+        )
+        for restatement in (
+            "revalidate from the failed gate",
+            "re-run the affected checks, the applicable calibration, and the score",
+            "refresh only changed evidence after creation",
+            "lead with the caps that cleared",
+        ):
+            with self.subTest(restatement=restatement):
+                self.assertNotIn(restatement, skill)
 
     def test_unusable_rows_are_diagnosed_from_the_file_not_from_the_summary(
         self,
@@ -18594,7 +18720,14 @@ class SkillPackageTests(unittest.TestCase):
         ):
             with self.subTest(document=name):
                 self.assertNotIn("second enhanced run", document)
-        self.assertIn("do not require a third optimization pass", skill)
+        self.assertIn(
+            "the baseline and the enhanced search are this run's only paid "
+            "passes; the operating contract owns that bound",
+            skill,
+        )
+        # "Do not require a third" read as permitting a second; the contract
+        # is the one home of the bound and this sentence only points at it.
+        self.assertNotIn("do not require a third optimization pass", skill)
         self.assertIn("this is the last run", skill)
 
         # The baseline reports one too, over the six trials it just paid for.
@@ -18640,6 +18773,88 @@ class SkillPackageTests(unittest.TestCase):
             "under the rule the continuation handoff below already states", safety
         )
         self.assertIn("it does not earn another paid round here", safety)
+
+    def test_the_operating_contract_keeps_the_run_small_on_purpose(self) -> None:
+        """The run is small so it finishes; it is not a search for the best number.
+
+        Nothing in the package forbade re-running the baseline, topping the
+        drawn set up from the original data, widening the space or raising
+        the trial cap to move a number, and two passages recommended harder
+        rows before the search. The contract states the purpose and the four
+        prohibitions once, under "Operating contract"; the comparison section
+        points at it rather than restating a bound of its own.
+        """
+        skill = " ".join(SKILL.read_text().casefold().split())
+        contract = skill.split("## operating contract", 1)[1].split(
+            "## action authorization", 1
+        )[0]
+        for phrase in (
+            "the walkthrough runs on a deliberately small set so it finishes in "
+            "one sitting under the approved ceiling, proves the cloud "
+            "connection, and shows the workflow; it is not a search for the "
+            "best number",
+            "without a newly scoped approval, never re-run a paid phase - "
+            "baseline or search - to improve a number, never add rows from the "
+            "original data or elsewhere, never widen the space, and never raise "
+            "the trial cap",
+            "more or harder rows is the post-run handoff to "
+            "`traigent-dataset-curate`, never a route inside this run",
+            # The timeout continuation is Recovery's rule, pointed at, not
+            # restated - so the contract cannot be read as overriding it.
+            "a search that timed out follows recovery in " "`references/run-safety.md`",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, contract)
+        self.assertIn("the operating contract owns that bound", skill)
+        # The timeout rule has one home too: the baseline section points at
+        # Recovery instead of carrying its own stop-or-continue wording.
+        self.assertIn("a timeout follows recovery in `references/run-safety.md`", skill)
+        self.assertNotIn("stop-or-bounded-continuation choice", skill)
+
+    def test_sections_are_named_section_n_and_stages_stage_n_of_5(self) -> None:
+        """Two numberings, two words, and a map between them.
+
+        "Stage 5" named the environment section in some sentences and the
+        Results stage in others, in a document that says section numbers are
+        never shown. Internally a document section is `section N` and a
+        guided-flow stage is `Stage N/5`; the map under "Guided flow" says
+        which sections each stage spans, so a `Next` line can be written from
+        it without guessing.
+        """
+        raw = SKILL.read_text()
+        skill = " ".join(raw.casefold().split())
+        self.assertIn(
+            "this guide's own prose says `section n` for a section below and "
+            "`stage n/5` for a stage; the map between them:",
+            skill,
+        )
+        for line in (
+            "- `stage 1/5 · inspect` - section 1.",
+            "- `stage 2/5 · readiness` - sections 2 to 4: the board, the one "
+            "ask, creation, local validation.",
+            "- `stage 3/5 · baseline` - sections 5 and 6, and section 7 until "
+            "the baseline returns.",
+            "- `stage 4/5 · optimize` - section 7 from the local baseline "
+            "checkpoint.",
+            "- `stage 5/5 · results` - section 8.",
+        ):
+            with self.subTest(line=line):
+                self.assertIn(line, skill)
+        # No internal sentence calls a section a stage any more: a lowercase
+        # "stage <digit>" not followed by "/5" was the ambiguous form.
+        self.assertEqual(
+            re.findall(r"\bstage[ -]\d\b(?!/)", raw),
+            [],
+            "a document section is `section N`; only the five customer-facing "
+            "stages are `Stage N/5`",
+        )
+        # The sentence that was wrong under both numberings: the enhanced run
+        # is where a second option gets added, and that is section 7.
+        self.assertIn(
+            "at the wrong stage - section 7's enhanced run is where settings "
+            "get added",
+            skill,
+        )
 
     def test_the_null_outcome_is_a_reported_finding(self) -> None:
         """The copy for "nothing beat what you already run" is the customer's.
@@ -22126,8 +22341,13 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
             # search - and a cheaper configuration is one more point in the
             # second one's space, not one more space. Everything the extra
             # round existed to gate, approve, and offer disappears with it.
+            # The operating contract owns the bound; the comparison
+            # section states the count and points at it.
             "how many paid runs the walkthrough performs",
-            ("do not require a third optimization pass",),
+            (
+                "the baseline and the enhanced search are this run's only "
+                "paid passes",
+            ),
             (
                 "optional second enhanced run",
                 "the second run's winner",
@@ -22403,6 +22623,28 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
                 "never a document to be reused",
                 "carry the opening reading across the restart",
                 "reuse the retired run's reading",
+            ),
+        ),
+        (
+            # The run is deliberately small and is not a search for the best
+            # number, yet after a baseline with no headroom the recommended
+            # route was more or harder rows before the search, and the README
+            # sanctioned "addressing the strongest observed limitation first".
+            # Settled: more or harder rows is the post-run handoff to
+            # `traigent-dataset-curate`, never a route inside this run; a
+            # no-headroom finding is a limit on the claim named beside the
+            # marked bounded run, and the mark never moves onto rows.
+            "whether more or harder rows is a route inside this run",
+            (
+                "never a route inside this run",
+                "never a route of this run",
+            ),
+            (
+                "recommend harder realistic cases first",
+                "moves it onto more or harder rows before the search",
+                "is the rows route and carries the mark",
+                "addressing the strongest observed limitation first",
+                "or harder rows, before the search rather than instead of it",
             ),
         ),
     )
@@ -22887,8 +23129,9 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         # nouns: a PRESERVED baseline has whatever size the user defined, so a
         # row count beside that word is not a claim about the generated sweep.
         r"\b(\w+)-(?:row|point|configuration) (?:fixed )?(?:sweep|grid|default|space)\b",
-        # The generated sweep is also called "the <N>-row baseline target".
-        r"\b(\w+)-row baseline\b",
+        # The generated sweep is also called "the <N>-configuration baseline
+        # target"; GUIDE.md still writes "<N>-row baseline".
+        r"\b(\w+)-(?:row|configuration) baseline\b",
         # "all twelve distinct points executed", "all twelve intended rows".
         r"\ball (\w+) (?:distinct|intended)\b",
         r"\ball (\w+) configurations of a local\b",
@@ -23904,7 +24147,7 @@ class TheGapIsPutToTheUserOnceTests(unittest.TestCase):
         """
         ask = " ".join(self._ask().casefold().split())
         self.assertIn("ask nothing else here", ask)
-        self.assertIn("pre-spend approval in stage 6", ask)
+        self.assertIn("pre-spend approval in section 6", ask)
         # The trigger covers material the inventory found and could not read
         # out of, not only material it failed to find. The opening gate defers
         # an unreadable agent to this question; while the trigger read "did not
@@ -23921,20 +24164,42 @@ class TheGapIsPutToTheUserOnceTests(unittest.TestCase):
         self.assertIn(
             "### the pre-spend approval card", RUN_SAFETY.read_text().casefold()
         )
-        # And the routing bullet for the conditions #211 moved sends its
-        # question to that same approval, paired with the scorer rather than
-        # only quoted: guidance saying "advisory" over a scorer that blocks is
-        # the contradiction, and so is a cap that asks over a bullet with
-        # nowhere to ask it. Probed by reverting the bullet alone - nothing
-        # else in the suite noticed.
+        # And the routing bullet for the conditions #211 moved states its
+        # assumption on that same approval rather than asking there, paired
+        # with the scorer rather than only quoted: guidance saying "advisory"
+        # over a scorer that blocks is the contradiction, and so would be a
+        # third decision riding the one reply the pre-spend card takes.
+        # Probed by reverting the bullet alone - nothing else in the suite
+        # noticed.
         routing = " ".join(SKILL.read_text().casefold().split()).split(
             "route every active dataset cap", 1
         )[1]
         bullet = routing.split("`dataset-undeclared-provenance`", 1)[1].split("- `", 1)[
             0
         ]
-        self.assertIn("put that offer at the pre-spend approval", bullet)
+        self.assertIn(
+            "state it again on the pre-spend approval as a limit on the claim, "
+            "never as a question",
+            bullet,
+        )
+        self.assertNotIn("offer declaring", bullet)
         self.assertIn("holds nothing up", bullet)
+        # The card itself: one lettered ask, the proceed-or-fix pair, and the
+        # provenance declaration stated by the assistant rather than asked.
+        approval = (
+            " ".join(SKILL.read_text().casefold().split())
+            .split("### 6. approve and run the baseline", 1)[1]
+            .split("### 7. run the honest comparison", 1)[0]
+        )
+        self.assertIn(
+            "the provenance this run assumed, stated rather than asked", approval
+        )
+        self.assertIn(
+            "the card ends on exactly one lettered ask: the proceed-or-fix pair, "
+            "whose proceed route is the spend approval",
+            approval,
+        )
+        self.assertNotIn("approving the spend is not approving the material", approval)
         for condition in ("dataset-undeclared-provenance", "dataset-mostly-undeclared"):
             with self.subTest(condition=condition):
                 self.assertEqual(
@@ -27861,8 +28126,8 @@ class OneShapeAndOneMarkForEveryChoiceTests(unittest.TestCase):
         """
         checkpoint = self._checkpoint()
         self.assertIn(
-            "lead with that, and put the mark on it: the order this paragraph "
-            "is written in is the order a run reproduces",
+            "its recommended answer is to continue: lead with that, and put "
+            "the mark on it",
             checkpoint,
         )
         self.assertLess(
@@ -27890,15 +28155,13 @@ class OneShapeAndOneMarkForEveryChoiceTests(unittest.TestCase):
             "it, which is the order a run reproduces",
         )
         self.assertIn(
-            "the checks above are the only thing that moves the mark, and not "
-            "one of them moves it onto stopping",
+            "the checks above decide which continuing route carries the mark",
             checkpoint,
         )
-        self.assertIn("they decide which continuing route carries it", checkpoint)
+        self.assertIn("and none of them moves it onto stopping", checkpoint)
         # This checkpoint is after the paid baseline, so declining is not the
         # free exit the earlier approval was.
-        self.assertIn("this is also not the free exit", checkpoint)
-        self.assertIn("the last moment stopping is free", self._flat(SKILL))
+        self.assertIn("the baseline is already bought", checkpoint)
 
     def test_the_case_for_continuing_does_not_rest_on_measured_headroom(
         self,
@@ -27912,19 +28175,18 @@ class OneShapeAndOneMarkForEveryChoiceTests(unittest.TestCase):
         checkpoint = self._checkpoint()
         self.assertNotIn("when the baseline leaves headroom, and recommend", checkpoint)
         self.assertIn(
-            "two of them are reasons that hold on every sound baseline and rest "
-            "on no number",
+            "two of them hold on every sound baseline and rest on no number",
             checkpoint,
         )
         self.assertIn(
             "measured headroom strengthens that case where the baseline leaves "
-            "some; it never creates it",
+            "some and never creates it",
             checkpoint,
         )
         # And the gain frame, which is the accurate one and the one that
         # invites a decision rather than pushing it.
         self.assertIn(
-            "state the case as what continuing produces rather than as what "
+            "state the case as what continuing produces, never as what "
             "stopping costs",
             checkpoint,
         )
@@ -27938,12 +28200,9 @@ class OneShapeAndOneMarkForEveryChoiceTests(unittest.TestCase):
         continuing would never see it.
         """
         checkpoint = self._checkpoint()
+        self.assertIn("declining stays available and plainly answerable", checkpoint)
         self.assertIn(
-            "declining stays available and stays plainly answerable", checkpoint
-        )
-        self.assertIn(
-            "a checkpoint that does not let a customer decline is a consent "
-            "defect and not a stronger recommendation",
+            "the run says so positively: stopping here leaves a real result",
             checkpoint,
         )
         self.assertIn(
@@ -27986,8 +28245,8 @@ class OneShapeAndOneMarkForEveryChoiceTests(unittest.TestCase):
         # that follows it.
         skill = self._flat(SKILL)
         self.assertIn(
-            "offer the connected step as an optional, no-lift-possible "
-            "verification run, never as an expected gain",
+            "offered as an optional no-lift-possible verification and never as "
+            "an expected gain",
             skill,
         )
         self.assertIn(
@@ -29293,10 +29552,10 @@ class TheReadHappensAndAFailedReadIsAQuestionTests(unittest.TestCase):
         self.assertIn("changes the opening score", gate)
         # And it never becomes a second question or a wait. The carrier is
         # named rather than left as "whatever question this run already puts in
-        # the same turn": the offer sits in stage 1 and the ask it rides on is
-        # in stage 2, so an unnamed carrier let an unreadable agent reach the
-        # ceiling with nobody asked at all.
-        self.assertIn("the one ask in stage 2 below rather than adding one", gate)
+        # the same turn": the offer sits in section 1 and the ask it rides on
+        # is in section 2, so an unnamed carrier let an unreadable agent reach
+        # the ceiling with nobody asked at all.
+        self.assertIn("the one ask in section 2 below rather than adding one", gate)
         self.assertIn("proceed with what can be varied if nothing comes back", gate)
         # The flag is withheld while the read is unfinished. Passing an empty
         # one makes `discovery_supplied` true with nothing credited, which is
@@ -29334,9 +29593,17 @@ class TheReadHappensAndAFailedReadIsAQuestionTests(unittest.TestCase):
         would lift the 45 ceiling on exactly the runs it exists for.
         """
         gate = self._gate()
-        self.assertIn("pass this same reading to every later re-score", gate)
         self.assertIn(
-            "re-reading the agent only where this run created or repaired it", gate
+            "pass this same reading to every later re-score of this record, as "
+            "section 4's post-repair rule states",
+            gate,
+        )
+        # The re-read bound lives in section 4's post-repair paragraph, the
+        # one home of that rule; the gate points at it rather than restating
+        # it, so the clause is pinned where it now lives.
+        skill = " ".join(SKILL.read_text().casefold().split())
+        self.assertIn(
+            "re-reading the agent only where this run created or repaired it", skill
         )
         safety = " ".join(RUN_SAFETY.read_text().casefold().split())
         # The exception is the KNOBS half, and #184 is why that word is now
@@ -29401,7 +29668,7 @@ class TheReadHappensAndAFailedReadIsAQuestionTests(unittest.TestCase):
         permission.
         """
         gate = self._gate()
-        self.assertIn("stage 4's cap routing below", gate)
+        self.assertIn("section 4's cap routing below", gate)
         # The home it points at names both advisory states and denies a grid.
         skill = " ".join(SKILL.read_text().casefold().split())
         routing = skill.split(
@@ -30727,7 +30994,7 @@ class TheNameStampNamesOneMomentTests(unittest.TestCase):
         # The three uses it is written to cover, named so a reader of any one
         # of them knows this sentence governs it.
         self.assertIn(
-            "that rename, stage 1's readiness directory, the run log's `ts`", skill
+            "that rename, section 1's readiness directory, the run log's `ts`", skill
         )
 
     def test_one_spelling_reaches_every_document_and_every_script(self) -> None:
