@@ -2512,13 +2512,19 @@ class AgentScoringTests(unittest.TestCase):
             aliased.bounds, {"retrieval_depth": {"low": 1.0, "high": 10.0}}
         )
 
-        both = MODULE.agent_facts_from_config_space(
-            {
-                "knobs": {"temperature": [0.0, 1.0]},
-                "configuration_space": {"ignored": [1, 2]},
-            }
-        )
-        self.assertEqual(both.knobs, {"temperature": [0.0, 1.0]})
+        # Two populated spellings used to resolve by preference and drop the
+        # other silently, so four knobs under `configuration_space` beside one
+        # under `knobs` scored as a space of one with no line saying so. It is
+        # refused as an input error that names both keys.
+        with self.assertRaises(MODULE.ConfigSpaceInputError) as refused:
+            MODULE.agent_facts_from_config_space(
+                {
+                    "knobs": {"temperature": [0.0, 1.0]},
+                    "configuration_space": {"ignored": [1, 2]},
+                }
+            )
+        self.assertIn("'knobs' and 'configuration_space'", str(refused.exception))
+        self.assertIn("declares the search space twice", str(refused.exception))
 
         empty_preferred = MODULE.agent_facts_from_config_space(
             {"knobs": {}, "configuration_space": {"temperature": [0.0, 1.0]}}
@@ -3690,7 +3696,9 @@ class ConfigSpaceSchemaTests(unittest.TestCase):
         """
         sample = {
             "knobs": {"temperature": [0.0, 1.0]},
-            "configuration_space": {"temperature": [0.0, 1.0]},
+            # Explicitly empty: the two spellings name one field, and a
+            # document populating both is refused rather than read.
+            "configuration_space": {},
             "max_trials": 3,
             "wired": ["temperature"],
             "bounds": {"temperature": {"low": 0.0, "high": 1.0}},
@@ -4193,7 +4201,14 @@ class ColorAndRenderingTests(unittest.TestCase):
             MODULE.resolve_color(FakeStream(tty=True), "auto", {"TERM": "dumb"})
         )
 
-    def test_hosted_ide_consoles_get_color_without_a_tty(self) -> None:
+    def test_no_host_marker_grants_color_without_a_tty(self) -> None:
+        """A pipe or redirect never gets escape bytes it did not ask for.
+
+        These markers used to grant colour on a non-tty stream, and a redirect
+        opened from such a host - `readiness.py ... > card.txt` in VS Code's
+        terminal - carried the marker without the console, so the file held
+        escapes. Colour now needs a tty or an explicit ask.
+        """
         for env in (
             {"PYCHARM_HOSTED": "1"},
             {"TERM_PROGRAM": "vscode"},
@@ -4201,9 +4216,17 @@ class ColorAndRenderingTests(unittest.TestCase):
             {"SPY_INTERACTIVE": "1"},
         ):
             with self.subTest(env=env):
-                self.assertTrue(
+                self.assertFalse(
                     MODULE.resolve_color(FakeStream(tty=False), "auto", environ=env)
                 )
+        self.assertTrue(MODULE.resolve_color(FakeStream(tty=True), "auto", {}))
+        self.assertTrue(
+            MODULE.resolve_color(
+                FakeStream(tty=False),
+                "auto",
+                {"TERM_PROGRAM": "vscode", "FORCE_COLOR": "1"},
+            )
+        )
 
     def test_explicit_flag_overrides_everything(self) -> None:
         env = {"NO_COLOR": "1"}
@@ -10833,7 +10856,13 @@ class CodeAndSqlIsScoredLikeAnyOtherTaskKindTests(unittest.TestCase):
         pillar, _ = MODULE.score_evaluation(facts)
         fit = next(sub for sub in pillar.subscores if sub.name == "task-fit")
         self.assertGreater(pillar.score, 0)
-        self.assertEqual(fit.evidence, "composite suits code-sql output")
+        # Nothing here read an evaluator file, and the sentence says so: the
+        # fit is a property of the declared pair, not of a file this run saw.
+        self.assertEqual(
+            fit.evidence,
+            "composite suits code-sql output (declared, not established from "
+            "the evaluator file)",
+        )
 
 
 def _brought(rows: int, **extra) -> "MODULE.DatasetFacts":
@@ -16805,24 +16834,26 @@ class TheRefusedRouteIsShownAnAcceptedOneTests(unittest.TestCase):
         self.assertFalse(any(cap.condition == "agent-no-varying-knobs" for cap in caps))
 
     def test_the_accepted_route_prints_beside_a_refused_route(self) -> None:
+        """The parts, on the card; the worked file, in the report only.
+
+        The card used to print the whole fourteen-line agent, written against
+        one provider and two named models, and a reader whose route was
+        refused read it as the shape to rebuild theirs into - the harm the
+        hedge under the label warns against. The parts are what the check
+        wants; the worked example stays in the durable report and the
+        reference, which fence it as code and carry the hedge beside it.
+        """
         card = self._card(self.REFUSED_AGENT, self.REFUSED_KNOB)
         self.assertIn(MODULE.ACCEPTED_ROUTE_LABEL, card)
-        # The card indents the block rather than fencing it, so it is read back
-        # by removing that indent and parsing what is left.
-        printed = "\n".join(
-            line[6:] if line.startswith("      ") else line
-            for line in card.splitlines()
-        )
-        ast.parse(self._fenced_from_card(printed))
+        self.assertIn("references/component-creation.md", card)
         for part in MODULE.ACCEPTED_ROUTE_PARTS:
             with self.subTest(part=part):
                 self.assertIn(part, card)
-
-    @staticmethod
-    def _fenced_from_card(printed: str) -> str:
-        start = printed.index("from openai import OpenAI")
-        end = printed.index("and the entry that cites it")
-        return printed[start:end]
+        for line in MODULE.ACCEPTED_ROUTE_AGENT.splitlines():
+            if line.strip():
+                with self.subTest(line=line):
+                    self.assertNotIn(line, card)
+        self.assertNotIn("gpt-4o", card)
 
     def test_the_durable_report_carries_it_too(self) -> None:
         """The report is the copy a reader keeps, so the remedy is in it.
@@ -19966,9 +19997,15 @@ class TaskFitIsEarnedFromTheEvaluatorFileTests(unittest.TestCase):
                     with self.subTest(method=method, kind=kind, state=sorted(extra)):
                         subscore = self.fit(method, kind, **extra)
                         self.assertEqual(subscore.value, MODULE.TASK_FIT_WEIGHT)
+                        # The points are untouched; the sentence names the
+                        # unread file, so the credit is not read as a
+                        # finding about it.
                         self.assertEqual(
-                            subscore.evidence, f"{method} suits {kind} output"
+                            subscore.evidence,
+                            f"{method} suits {kind} output (declared, not "
+                            "established from the evaluator file)",
                         )
+                        self.assertTrue(subscore.measured)
         self.assertEqual(
             excused,
             len(
@@ -20706,6 +20743,46 @@ class AnUnfollowedRouteIsNotAnAbsentSettingTests(unittest.TestCase):
             [name for name, _count in MODULE.unfollowed_settings(facts)],
             ["prompt_style", "schema_context", "temperature"],
         )
+
+    def test_an_integer_spelling_of_a_float_option_is_that_option(self) -> None:
+        """Finding 30: `[0, 0.7]` in the JSON space, `(0.0, 0.7)` on line 19.
+
+        Compared by `repr`, `0` and `0.0` were two values, and the card told
+        the author their document "declares '0', '0.7' which the cited
+        executable selected-agent call path does not show" - about a line
+        that showed exactly those options. The float spelling reads "the
+        cited executable source shows the declared options"; the integer
+        spelling now reads the same, and the number it earns is the same.
+        Numbers compare as numbers everywhere the reader compares them; `True`
+        stays apart from `1`, because a list of flags is not a list of counts.
+        """
+        spelled = {}
+        for label, values in (("float", [0.0, 0.7]), ("int", [0, 0.7])):
+            facts = self._facts(
+                {
+                    "temperature": {
+                        "values": values,
+                        "source_lines": [19, 39, 50],
+                        "evidence": "agent.py:39 refuses a temperature outside TEMPERATURES.",
+                    }
+                }
+            )
+            spelled[label] = self._space(facts)
+            self.assertNotIn("temperature: declares", spelled[label].evidence)
+            self.assertIn(
+                "temperature: the cited executable source shows the declared "
+                "options",
+                spelled[label].evidence,
+            )
+        self.assertEqual(spelled["int"].value, spelled["float"].value)
+        comparable = MODULE._comparable_value
+        self.assertEqual(comparable(0), comparable(0.0))
+        self.assertEqual(comparable(1e-1), comparable(0.1))
+        self.assertEqual(comparable([0, 0.7]), comparable((0.0, 0.7)))
+        self.assertNotEqual(comparable(True), comparable(1))
+        self.assertNotEqual(comparable("0"), comparable(0))
+        self.assertNotEqual(comparable(0.7), comparable(0.71))
+        self.assertEqual(comparable("terse"), comparable("terse"))
 
     def test_the_payload_carries_the_settings_and_not_only_a_bit(self) -> None:
         """A consumer could see THAT a route was unfollowed and never which one."""
@@ -21716,3 +21793,279 @@ def run(cfg, question):
                 self._assert_refused_for_the_table_read(
                     module_line=module_line, body_line=body_line
                 )
+
+
+class TheWalkthroughSizeNamesItselfTests(unittest.TestCase):
+    """Finding 28: the size this guide builds reads as the size, not a shortfall.
+
+    The points are untouched on both sides of the line. What changes is the
+    sentence: a file already holding the 28 rows the walkthrough builds used
+    to end its size ceiling on the finding alone, which read as the size being
+    wrong, and the size band called the guide's own 18 tuning rows a "small
+    comparison set" about the dataset it had just built to that size.
+    """
+
+    def test_the_ceiling_at_the_walkthrough_size_says_so_and_routes_nowhere(
+        self,
+    ) -> None:
+        cap = MODULE.power_ceiling(
+            MODULE.WALKTHROUGH_TUNING_ROWS, MODULE.WALKTHROUGH_DATASET_ROWS
+        )
+        self.assertEqual(cap.condition, "dataset-coarse-resolution")
+        self.assertIn(MODULE.walkthrough_size_sentence().strip(), cap.reason)
+        self.assertIn(
+            "The file already holds the 28 rows this guide builds for a first "
+            "run, so no top-up is offered: this ceiling bounds what the result "
+            "may claim, not the size of the run.",
+            cap.reason,
+        )
+        self.assertNotIn("This run can write", cap.reason)
+        self.assertFalse(cap.asks)
+        self.assertEqual(MODULE.recommended_action([cap]), MODULE.PROCEED)
+        # The same 28 rows with no split declared: same sentence, same route.
+        whole = MODULE.power_ceiling(
+            MODULE.WALKTHROUGH_DATASET_ROWS, MODULE.WALKTHROUGH_DATASET_ROWS
+        )
+        self.assertIn("no top-up is offered", whole.reason)
+        self.assertEqual(MODULE.recommended_action([whole]), MODULE.PROCEED)
+        # Below the walkthrough's size the bounded offer still fires and still
+        # routes to the top-up: that is the size this guide builds towards.
+        below = MODULE.power_ceiling(20, 20)
+        self.assertIn("This run can write", below.reason)
+        self.assertNotIn("no top-up is offered", below.reason)
+        self.assertTrue(below.asks)
+        self.assertEqual(MODULE.recommended_action([below]), MODULE.ADD_EXAMPLES)
+
+    def test_the_size_band_names_the_walkthrough_and_keeps_its_points(self) -> None:
+        at_size, at_evidence = MODULE.size_points(MODULE.WALKTHROUGH_TUNING_ROWS)
+        below, below_evidence = MODULE.size_points(MODULE.WALKTHROUGH_TUNING_ROWS - 1)
+        self.assertEqual(at_size, 12.0)
+        self.assertEqual(below, 12.0)
+        self.assertEqual(
+            at_evidence, "18 examples - at or above the 18 this walkthrough tunes on"
+        )
+        self.assertEqual(below_evidence, "17 examples - small comparison set")
+        self.assertEqual(
+            MODULE.size_points(29)[1],
+            "29 examples - at or above the 18 this walkthrough tunes on",
+        )
+        self.assertEqual(
+            MODULE.size_points(30)[1], "30 examples - limited comparison set"
+        )
+
+
+class ThePreviousScoreAndTheActionLineTests(unittest.TestCase):
+    """Finding 29, the two halves the owner took: what moved, and what to do.
+
+    The default exit code on BLOCKED is deliberately not among them - it stays
+    behind `--strict`, and the first test here scores a BLOCKED payload and
+    expects 0.
+    """
+
+    def setUp(self) -> None:
+        self._directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self._directory.cleanup)
+        self.root = Path(self._directory.name)
+        self.preflight = self.root / "preflight.json"
+        self.preflight.write_text(json.dumps(PREFLIGHT_RECORDS))
+
+    @staticmethod
+    def _run(argv: list[str]) -> tuple[int, str, str]:
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = MODULE.main(argv)
+        return code, out.getvalue(), err.getvalue()
+
+    def _lines(self, text: str) -> list[str]:
+        return text.rstrip("\n").splitlines()
+
+    def test_the_card_ends_on_the_recommended_action_slug(self) -> None:
+        argv = ["--preflight", str(self.preflight)]
+        code, card, _ = self._run([*argv, "--color", "never", "--ascii"])
+        self.assertEqual(code, 0)
+        _code, payload, _ = self._run([*argv, "--json"])
+        score = json.loads(payload)
+        self.assertEqual(score["status"], "BLOCKED")
+        self.assertEqual(
+            self._lines(card)[-1], f"Action: {score['recommended_action']}"
+        )
+        self.assertIn(score["recommended_action"], MODULE.ACTION_KINDS)
+
+    def test_previous_prints_what_changed_and_what_did_not(self) -> None:
+        _code, before, _ = self._run(["--preflight", str(self.preflight), "--json"])
+        previous = self.root / "previous.json"
+        previous.write_text(before)
+        argv = [
+            "--preflight",
+            str(self.preflight),
+            "--evaluator-method",
+            "exact",
+            "--task-kind",
+            "closed-label",
+        ]
+        code, card, err = self._run(
+            [*argv, "--previous", str(previous), "--color", "never", "--ascii"]
+        )
+        self.assertEqual(code, 0, err)
+        _code, after, _ = self._run([*argv, "--json", "--previous", str(previous)])
+        payload = json.loads(after)
+        old = {
+            pillar["name"]: pillar["score"] for pillar in json.loads(before)["pillars"]
+        }
+        new = {pillar["name"]: pillar["score"] for pillar in payload["pillars"]}
+        self.assertGreater(new["evaluation"], old["evaluation"])
+        self.assertEqual(new["dataset"], old["dataset"])
+        self.assertEqual(new["agent"], old["agent"])
+        line = (
+            f"changed: evaluation {old['evaluation']} to {new['evaluation']}; "
+            "unchanged: dataset, agent"
+        )
+        lines = self._lines(card)
+        self.assertEqual(lines[-1], line)
+        self.assertTrue(lines[-2].startswith("Action: "), lines[-2])
+        self.assertEqual(payload["delta"]["line"], line)
+        self.assertEqual(payload["delta"]["changed"], ["evaluation"])
+        self.assertEqual(payload["delta"]["unchanged"], ["dataset", "agent"])
+        self.assertEqual(
+            payload["delta"]["overall"],
+            {"previous": json.loads(before)["overall"], "current": payload["overall"]},
+        )
+        self.assertIn("evaluator-absent", payload["delta"]["cleared"])
+        # Nothing moved: both halves are still printed, so a reader scanning
+        # for the word finds it either way.
+        previous.write_text(after)
+        _code, same, _ = self._run(
+            [*argv, "--previous", str(previous), "--color", "never", "--ascii"]
+        )
+        self.assertEqual(
+            self._lines(same)[-1],
+            "changed: none; unchanged: dataset, evaluation, agent",
+        )
+        # And a run that never asked sees no delta key at all.
+        self.assertNotIn("delta", json.loads(before))
+
+    def test_previous_is_refused_where_it_cannot_be_compared(self) -> None:
+        code, _out, err = self._run(
+            [
+                "--agent",
+                "real",
+                "--dataset",
+                "real",
+                "--evaluation",
+                "real",
+                "--previous",
+                str(self.preflight),
+            ]
+        )
+        self.assertEqual(code, 2)
+        self.assertIn("--previous", err)
+        code, _out, err = self._run(
+            ["--preflight", str(self.preflight), "--previous", str(self.preflight)]
+        )
+        self.assertEqual(code, 2)
+        self.assertIn("--previous", err)
+        self.assertIn("expected the JSON object this script prints", err)
+        self.assertIn("received list", err)
+        _code, before, _ = self._run(["--preflight", str(self.preflight), "--json"])
+        stale = json.loads(before)
+        stale["schema_version"] = MODULE.SCHEMA_VERSION + 1
+        path = self.root / "stale.json"
+        path.write_text(json.dumps(stale))
+        code, _out, err = self._run(
+            ["--preflight", str(self.preflight), "--previous", str(path)]
+        )
+        self.assertEqual(code, 2)
+        self.assertIn("schema_version", err)
+        self.assertIn("re-score", err)
+
+
+class UnguardedInputShapesAreInputErrorsTests(unittest.TestCase):
+    """Finding 31: a supplied document of the wrong shape is the input's defect."""
+
+    def test_a_row_count_that_is_not_a_count_names_its_key(self) -> None:
+        records = [dict(record) for record in PREFLIGHT_RECORDS]
+        records[1] = {
+            "check": "dataset-integrity",
+            "status": "PASS",
+            "metrics": {"malformed_rows": "3"},
+        }
+        with self.assertRaises(MODULE.PreflightInputError) as refused:
+            MODULE.dataset_facts_from_preflight(records)
+        self.assertIn("malformed_rows", str(refused.exception))
+        self.assertIn("'3'", str(refused.exception))
+
+    def test_a_calibration_document_that_is_not_an_object_is_refused(self) -> None:
+        with self.assertRaises(MODULE.CalibrationInputError) as refused:
+            MODULE.evaluation_facts_from_calibration(
+                [{"passed": True}], method="exact", task_kind="closed-label"
+            )
+        self.assertIn("--calibration", str(refused.exception))
+        self.assertIn("list", str(refused.exception))
+        with tempfile.TemporaryDirectory() as directory:
+            calibration = Path(directory) / "calibration.json"
+            calibration.write_text("[]")
+            preflight = Path(directory) / "preflight.json"
+            preflight.write_text(json.dumps(PREFLIGHT_RECORDS))
+            err = io.StringIO()
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(
+                err
+            ):
+                code = MODULE.main(
+                    [
+                        "--preflight",
+                        str(preflight),
+                        "--calibration",
+                        str(calibration),
+                    ]
+                )
+        self.assertEqual(code, 2)
+        self.assertIn("cannot read scoring input", err.getvalue())
+        self.assertIn("--calibration", err.getvalue())
+
+    def test_a_repeated_check_keeps_its_worst_status_and_every_metric(self) -> None:
+        records = [
+            {"check": "dataset-ids", "status": "FAIL", "metrics": {"duplicate_ids": 2}},
+            {
+                "check": "dataset-ids",
+                "status": "WARN",
+                "metrics": {"rows_without_id": 1},
+            },
+        ]
+        for ordered in (records, list(reversed(records))):
+            with self.subTest(first=ordered[0]["status"]):
+                self.assertEqual(
+                    MODULE._status_by_check(ordered)["dataset-ids"], "FAIL"
+                )
+                self.assertEqual(
+                    MODULE._metrics_by_check(ordered)["dataset-ids"],
+                    {"duplicate_ids": 2, "rows_without_id": 1},
+                )
+
+
+class TheCommandLineDocumentsItsExitCodesTests(unittest.TestCase):
+    """Finding 33: every code this script returns, printed by --help."""
+
+    def test_weights_reject_nan_and_inf_as_input_errors(self) -> None:
+        for raw in ("nan,1,1", "1,inf,1", "1,1,-inf", "NaN,1,1"):
+            with self.subTest(raw=raw):
+                with self.assertRaises(MODULE.argparse.ArgumentTypeError) as refused:
+                    MODULE.parse_weights(raw)
+                self.assertIn("finite", str(refused.exception))
+        with contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit) as stop:
+                MODULE.parse_args(["--preflight", "-", "--weights", "nan,1,1"])
+        self.assertEqual(stop.exception.code, 2)
+
+    def test_help_lists_every_exit_code_the_script_returns(self) -> None:
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            with self.assertRaises(SystemExit) as stop:
+                MODULE.parse_args(["--help"])
+        self.assertEqual(stop.exception.code, 0)
+        text = out.getvalue()
+        self.assertIn("exit codes:", text)
+        for code in ("0", "1", "2", str(MODULE.INTERNAL_ERROR_EXIT)):
+            with self.subTest(code=code):
+                self.assertIn(f"\n  {code}  ", text)
+        self.assertIn("BLOCKED score still exits 0", text)
+        self.assertIn("--strict", text)

@@ -357,7 +357,12 @@ class ReadinessAdapterReplayTests(unittest.TestCase):
             if subscore["name"] == "task-fit"
         )
         self.assertEqual(task_fit["value"], 25.0)
-        self.assertEqual(task_fit["evidence"], "composite suits code output")
+        # No evaluator reached preflight here, and the sentence says so.
+        self.assertEqual(
+            task_fit["evidence"],
+            "composite suits code output (declared, not established from the "
+            "evaluator file)",
+        )
 
     def _healthy_context(
         self, directory: Path, method: str = "exact"
@@ -5496,9 +5501,14 @@ class TaskFitReplayFollowsTheFileNotTheDeclarationTests(unittest.TestCase):
         """No file, no refutation. The check refutes only from proof."""
         subscore = _task_fit(self.score(None, "normalized-exact", "closed-label"))
         self.assertEqual(subscore["value"], MODULE.TASK_FIT_WEIGHT)
+        # The points stay; the sentence stops reading as a finding about a
+        # file nobody handed over.
         self.assertEqual(
-            subscore["evidence"], "normalized-exact suits closed-label output"
+            subscore["evidence"],
+            "normalized-exact suits closed-label output (declared, not "
+            "established from the evaluator file)",
         )
+        self.assertTrue(subscore["measured"])
 
     def test_preflight_warns_on_the_route_and_names_the_line(self) -> None:
         """The finding is visible in preflight's own output, not only in a score."""
@@ -5858,3 +5868,82 @@ class TheRouteTheReferencePrintsIsTheRouteTheScoreCreditsTests(unittest.TestCase
         )
         self.assertEqual(named, ["assets/sql_structure.py"])
         self.assertTrue((SCRIPTS.parent / named[0]).is_file())
+
+
+class TheWalkthroughSizeReachesTheCardTests(unittest.TestCase):
+    """Finding 28, through the real two scripts, on the dataset the guide builds.
+
+    28 rows cut 18 to tune on and 10 held back, beside a healthy evaluator
+    and search space so that nothing else on the card asks or blocks. The
+    ceiling is still there - 18 comparable rows is a small comparison - and it
+    now says the size is the intended one, offers no top-up, and routes to
+    `proceed` rather than to `add-examples`.
+    """
+
+    @staticmethod
+    def _walkthrough_rows() -> list[dict]:
+        rows = [
+            {
+                "id": f"tune-{index}",
+                "input": f"tuning question {index} token{index}",
+                "output": f"answer {index % 4}",
+                "split": "tune",
+                "metadata": {"provenance": "production"},
+            }
+            for index in range(MODULE.WALKTHROUGH_TUNING_ROWS)
+        ]
+        # The same leading form on both sides, so preflight reads one task
+        # family split at random rather than two families split by kind - the
+        # latter is its own asking cap, and would route this card elsewhere.
+        rows.extend(
+            {
+                "id": f"holdout-{index}",
+                "input": f"tuning question {index} token{index}",
+                "output": f"answer {index % 4}",
+                "split": "holdout",
+                "metadata": {"provenance": "production"},
+            }
+            for index in range(
+                MODULE.WALKTHROUGH_TUNING_ROWS,
+                MODULE.WALKTHROUGH_TUNING_ROWS + MODULE.WALKTHROUGH_HOLDOUT_ROWS,
+            )
+        )
+        return rows
+
+    def test_the_card_names_the_size_and_routes_to_proceed(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            dataset = _write_jsonl(root, "eval.jsonl", self._walkthrough_rows())
+            records = _preflight_records(dataset)
+            calibration = root / "calibration.json"
+            space = root / "space.json"
+            calibration.write_text(json.dumps(HEALTHY_CALIBRATION))
+            space.write_text(json.dumps(HEALTHY_SPACE))
+            extra = (
+                "--calibration",
+                str(calibration),
+                "--config-space",
+                str(space),
+                "--evaluator-method",
+                "exact",
+                "--task-kind",
+                "closed-label",
+            )
+            score = _score_records(records, extra)
+            card = _card_records(records, extra)
+        cap = _cap(score, "dataset-coarse-resolution")
+        self.assertFalse(cap["asks"])
+        self.assertFalse(cap["blocks"])
+        self.assertIn(
+            "The file already holds the 28 rows this guide builds for a first run, "
+            "so no top-up is offered: this ceiling bounds what the result may "
+            "claim, not the size of the run.",
+            cap["reason"],
+        )
+        self.assertNotIn("This run can write", cap["reason"])
+        self.assertEqual(score["recommended_action"], "proceed")
+        self.assertIn("no top-up is offered", card)
+        self.assertIn(
+            "18 examples - at or above the 18 this walkthrough tunes on", card
+        )
+        self.assertEqual(card.rstrip("\n").splitlines()[-1], "Action: proceed")

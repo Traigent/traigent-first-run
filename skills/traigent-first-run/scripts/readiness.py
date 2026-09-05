@@ -46,6 +46,7 @@ import tokenize
 import traceback
 import weakref
 from dataclasses import asdict, dataclass, field, replace
+from fractions import Fraction
 from pathlib import Path
 from typing import Any, Iterable, Iterator, Literal, Sequence
 
@@ -2359,6 +2360,25 @@ def task_fit_evidence(method: str, task_kind: str, fits: Sequence[str]) -> str:
     )
 
 
+def task_fit_declared_evidence(
+    method: str, task_kind: str, comparison_shape: str | None
+) -> str:
+    """The sentence for a method that suits this output, said as what it is.
+
+    Both halves of the pair are declarations - `--evaluator-method` and
+    `--task-kind` - and the check earns its points from them. Where preflight
+    resolved the file's comparison and it agrees, the sentence stands as it
+    always did. Where nothing in the file was resolved, the sentence used to
+    read the same, and a reader took "suits" for a thing the file had been read
+    to show. It says now that the fit is declared; `measured` stays as it was,
+    because flipping it renormalizes the pillar and moves the number.
+    """
+    sentence = f"{method} suits {task_kind} output"
+    if comparison_shape is not None:
+        return sentence
+    return f"{sentence} (declared, not established from the evaluator file)"
+
+
 def task_fit_execution_scope_evidence(method: str, witness: str | None) -> str:
     """The card's sentence for a file whose own tree reaches an engine.
 
@@ -3663,6 +3683,20 @@ def top_up_offer(
     )
 
 
+def walkthrough_size_sentence() -> str:
+    """The sentence a size ceiling ends on when there is nothing to offer.
+
+    Written once, because the doc workers quote it: it replaces the top-up
+    offer exactly where `top_up_offer` returns nothing, which is a file
+    holding at least the rows this guide builds for a first run.
+    """
+    return (
+        f" The file already holds the {WALKTHROUGH_DATASET_ROWS} rows this guide "
+        "builds for a first run, so no top-up is offered: this ceiling bounds "
+        "what the result may claim, not the size of the run."
+    )
+
+
 def resolved_by_distinct(effective: int, distinct: int | None) -> tuple[int, str]:
     """Bound a comparison count by the number of DIFFERENT things it compares.
 
@@ -3945,7 +3979,14 @@ def power_ceiling(
             # assistant reads - a card is glanced at, not studied.
             f"{effective_n} comparable examples is a small comparison set, so "
             "a small difference between configurations may be chance rather "
-            "than a real improvement." + offer,
+            "than a real improvement."
+            # With nothing to offer - the file already holds the size this
+            # walkthrough builds - the ceiling used to end on the finding
+            # alone, and read as the size being wrong. It is not: the ceiling
+            # is what a set this size can honestly claim, and this run is not
+            # asking for rows. The sentence is the one SKILL.md's size rule
+            # points at, so the size is named as intended on the card itself.
+            + (offer or walkthrough_size_sentence()),
             # The run is worth making - it just cannot claim a small win.
             blocks=False,
             # The same expression as its sibling above, deliberately: one
@@ -3981,6 +4022,16 @@ def size_points(effective_n: int | None) -> tuple[float, str]:
     if effective_n < 10:
         return 5.0, f"{effective_n} comparable examples - a wiring check, not a score"
     if effective_n < 30:
+        # Same band and same points either side of this line: the guide's own
+        # walkthrough tunes on 18 rows, and the card read "18 examples - small
+        # comparison set" about the dataset the guide had just built to that
+        # size. The sentence now says what the size is rather than only what
+        # it is not; the number it earns is unchanged.
+        if effective_n >= WALKTHROUGH_TUNING_ROWS:
+            return 12.0, (
+                f"{effective_n} examples - at or above the "
+                f"{WALKTHROUGH_TUNING_ROWS} this walkthrough tunes on"
+            )
         return 12.0, f"{effective_n} examples - small comparison set"
     if effective_n < 50:
         return 18.0, f"{effective_n} examples - limited comparison set"
@@ -6317,7 +6368,9 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
         else:
             value = TASK_FIT_WEIGHT if fits else TASK_FIT_UNFIT_CREDIT
             evidence = (
-                f"{facts.method} suits {facts.task_kind} output"
+                task_fit_declared_evidence(
+                    facts.method, facts.task_kind, facts.comparison_shape
+                )
                 if fits
                 else task_fit_evidence(facts.method, facts.task_kind, profile["fits"])
             )
@@ -7972,7 +8025,6 @@ def assumption_sentence(assumption: ProvenanceAssumption) -> str:
 # Rendering
 # ---------------------------------------------------------------------------
 
-IDE_COLOR_MARKERS = ("PYCHARM_HOSTED", "JPY_PARENT_PID", "SPY_INTERACTIVE")
 WINDOWS_VT_MARKERS = ("WT_SESSION", "ANSICON", "ConEmuANSI", "TERM")
 
 
@@ -7981,14 +8033,21 @@ def resolve_color(
 ) -> bool:
     """Decide whether ANSI is safe for this host.
 
-    A bare isatty() check is wrong in both directions: PyCharm, VS Code, Spyder
-    and Jupyter render ANSI while reporting isatty() False, and a legacy Windows
-    console is a tty that mangles escapes without virtual-terminal processing.
+    Colour needs a tty, or an explicit ask (`--color always`, `FORCE_COLOR`).
+    A non-tty stream never gets escapes on its own: this used to grant them
+    under host markers - `TERM_PROGRAM=vscode`, then PyCharm, Spyder and
+    Jupyter - and a pipe or redirect opened from such a host
+    (`readiness.py ... > card.txt` in VS Code's terminal) carried the marker
+    without the console, so the file held escape bytes. Those consoles lose
+    colour by default and keep `--color always`; a file never gets escapes it
+    did not ask for. A legacy Windows console is the other direction: a tty
+    that mangles escapes without virtual-terminal processing, so on Windows
+    the tty branch still asks for one of the markers below.
 
     The order matters for CI. The offline harness runs these scripts with a
-    fixed eleven-key environment that contains none of the markers below, and
-    pipes stdout - so every branch falls through to False and no escape byte can
-    reach `clean_capture`, which rejects them.
+    fixed eleven-key environment and pipes stdout - so every branch falls
+    through to False and no escape byte can reach `clean_capture`, which
+    rejects them.
     """
     env = os.environ if environ is None else environ
     if override == "always":
@@ -8002,13 +8061,11 @@ def resolve_color(
     if env.get("TERM") == "dumb":
         return False
     is_tty = bool(getattr(stream, "isatty", lambda: False)())
-    if is_tty:
-        if sys.platform.startswith("win"):
-            return any(env.get(marker) for marker in WINDOWS_VT_MARKERS)
-        return True
-    if env.get("TERM_PROGRAM") == "vscode":
-        return True
-    return any(env.get(marker) for marker in IDE_COLOR_MARKERS)
+    if not is_tty:
+        return False
+    if sys.platform.startswith("win"):
+        return any(env.get(marker) for marker in WINDOWS_VT_MARKERS)
+    return True
 
 
 def supports_unicode(stream: Any) -> bool:
@@ -8576,6 +8633,13 @@ def render_card(
         f"  {palette.dim}Local pre-run planning estimate, not a probability or "
         f"measured optimization result.{palette.reset}"
     )
+    # Last, and in the same shape the declared-mode board ends on. Everything
+    # above is a finding; this is the one thing to do about them first, which
+    # `recommended_action` already decided for the payload and the card left
+    # the reader to re-derive from the ceilings. The slug and not a sentence:
+    # SKILL.md routes on `recommended_action`, and a second wording of each
+    # remedy here would be a rule stated in two places.
+    lines.append(f"Action: {score.recommended_action}")
     return "\n".join(lines)
 
 
@@ -8840,20 +8904,36 @@ def render_markdown(score: ReadinessScore, timestamp: str | None = None) -> str:
 # ---------------------------------------------------------------------------
 
 
+# Worst first. Preflight can emit one check name twice - `dataset-ids` reports
+# rows without an id and colliding ids as two records, `provider-credentials`
+# a partial Bedrock triple beside the vendor inventory - and both readers below
+# used to keep whichever record came last. On a payload ordered FAIL then WARN
+# the FAIL vanished, and the cap it feeds with it. Preflight now merges its own
+# repeats, and this side keeps the worst status anyway, because the order of
+# another script's output is not a contract this one gets to rely on.
+_STATUS_SEVERITY = {"FAIL": 3, "WARN": 2, "SKIP": 1, "PASS": 0}
+
+
 def _metrics_by_check(records: Sequence[dict[str, Any]]) -> dict[str, dict[str, Any]]:
-    return {
-        record["check"]: record.get("metrics") or {}
-        for record in records
-        if isinstance(record, dict) and "check" in record
-    }
+    merged: dict[str, dict[str, Any]] = {}
+    for record in records:
+        if isinstance(record, dict) and "check" in record:
+            merged.setdefault(record["check"], {}).update(record.get("metrics") or {})
+    return merged
 
 
 def _status_by_check(records: Sequence[dict[str, Any]]) -> dict[str, str]:
-    return {
-        record["check"]: record.get("status", "")
-        for record in records
-        if isinstance(record, dict) and "check" in record
-    }
+    statuses: dict[str, str] = {}
+    for record in records:
+        if not isinstance(record, dict) or "check" not in record:
+            continue
+        status = record.get("status", "")
+        held = statuses.get(record["check"])
+        if held is None or _STATUS_SEVERITY.get(status, -1) > _STATUS_SEVERITY.get(
+            held, -1
+        ):
+            statuses[record["check"]] = status
+    return statuses
 
 
 def _answer_dominance_status(statuses: dict[str, str]) -> str | None:
@@ -9000,6 +9080,22 @@ class PreflightInputError(ValueError):
     """
 
 
+class CalibrationInputError(ValueError):
+    """A --calibration document that is not calibrate_evaluator.py's JSON.
+
+    The sibling of `PreflightInputError` for the other machine-written input.
+    A list handed to this flag - a preflight record list, most likely - used to
+    reach `payload.get` and fail as `'list' object has no attribute 'get'`,
+    reported as this script's defect. It is a supplied document of the wrong
+    shape, and is refused as one.
+    """
+
+
+def _is_count(value: Any) -> bool:
+    """A whole number of rows: an int that is not a bool and not negative."""
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+
+
 class ConfigSpaceInputError(ValueError):
     """A config-space document the scorer cannot read.
 
@@ -9068,6 +9164,134 @@ def _failed(statuses: dict[str, str], check: str) -> bool:
             "dataset, say so rather than emitting a status nothing consumes"
         )
     return status == "FAIL"
+
+
+class PreviousScoreInputError(ValueError):
+    """A --previous document this run cannot compare itself against.
+
+    The flag takes this script's own --json output from an earlier run, so
+    most refusals here are the wrong document on the flag. The one that is
+    not - a score written under another schema version - is refused rather
+    than compared, because a version bump is by definition a change in what
+    the numbers mean, and a delta across one would report as movement what was
+    a change of rules.
+    """
+
+
+@dataclass(frozen=True)
+class PreviousScore:
+    overall: int
+    pillars: dict[str, int]
+    caps: tuple[str, ...]
+
+
+def previous_score_from_document(document: Any, reference: str) -> PreviousScore:
+    """Read the fields the delta needs out of an earlier --json payload."""
+    where = f"--previous {reference}"
+    if not isinstance(document, dict):
+        raise PreviousScoreInputError(
+            f"{where}: expected the JSON object this script prints under --json "
+            f"when scoring, and received {type(document).__name__}"
+        )
+    version = document.get("schema_version")
+    if version is None:
+        raise PreviousScoreInputError(
+            f"{where}: carries no schema_version, so it is not a score - a plan "
+            "payload has none, and a preflight or calibration document belongs "
+            "on its own flag"
+        )
+    if version != SCHEMA_VERSION:
+        raise PreviousScoreInputError(
+            f"{where}: written under schema_version {version!r}, and this script "
+            f"writes {SCHEMA_VERSION}; its numbers were computed under different "
+            "rules, so re-score the earlier state with this version rather than "
+            "comparing across the two"
+        )
+    overall = document.get("overall")
+    if not _is_count(overall):
+        raise PreviousScoreInputError(
+            f"{where}: 'overall' is {overall!r}, not a score out of 100"
+        )
+    pillars = document.get("pillars")
+    if not isinstance(pillars, list) or not all(
+        isinstance(pillar, dict)
+        and isinstance(pillar.get("name"), str)
+        and _is_count(pillar.get("score"))
+        for pillar in pillars
+    ):
+        raise PreviousScoreInputError(
+            f"{where}: 'pillars' must be the list of name/score objects this "
+            "script prints"
+        )
+    read = {pillar["name"]: pillar["score"] for pillar in pillars}
+    if sorted(read) != sorted(PILLAR_ORDER):
+        raise PreviousScoreInputError(
+            f"{where}: 'pillars' names {sorted(read)}, and a score names "
+            f"{sorted(PILLAR_ORDER)}"
+        )
+    caps = document.get("caps")
+    if not isinstance(caps, list) or not all(
+        isinstance(cap, dict) and isinstance(cap.get("condition"), str) for cap in caps
+    ):
+        raise PreviousScoreInputError(
+            f"{where}: 'caps' must be the list of condition objects this script "
+            "prints"
+        )
+    return PreviousScore(
+        overall=overall, pillars=read, caps=tuple(cap["condition"] for cap in caps)
+    )
+
+
+# The order the delta line names the pillars in: the order they weigh, which is
+# also the order the flags and the weights are written in.
+PILLAR_ORDER = ("dataset", "evaluation", "agent")
+
+
+def score_delta(previous: PreviousScore, score: ReadinessScore) -> dict[str, Any]:
+    """What moved between an earlier score and this one, as data and as a line.
+
+    The line is the mechanism behind "fixed, continuing": after a repair the
+    reader is told which pillar moved, and by how much, rather than reading
+    two cards side by side. The payload beside it also carries the ceilings
+    that cleared, in the order the earlier card listed them, and the new ones
+    in the order this card does.
+    Nothing here re-scores anything - both inputs are scores already computed
+    under the same schema, which `previous_score_from_document` guarantees.
+    """
+    current = {pillar.name: pillar.score for pillar in score.pillars}
+    current_caps = tuple(cap.condition for cap in score.caps)
+    cleared = [
+        condition for condition in previous.caps if condition not in current_caps
+    ]
+    new = [condition for condition in current_caps if condition not in previous.caps]
+    changed = [name for name in PILLAR_ORDER if previous.pillars[name] != current[name]]
+    unchanged = [name for name in PILLAR_ORDER if name not in changed]
+    # One line, two halves, both always present: a reader scanning for the
+    # word "changed" finds it whether or not anything did.
+    line = (
+        "changed: "
+        + (
+            ", ".join(
+                f"{name} {previous.pillars[name]} to {current[name]}"
+                for name in changed
+            )
+            or "none"
+        )
+        + "; unchanged: "
+        + (", ".join(unchanged) or "none")
+    )
+    return {
+        "overall": {"previous": previous.overall, "current": score.overall},
+        "pillars": {
+            name: {"previous": previous.pillars[name], "current": current[name]}
+            for name in PILLAR_ORDER
+        },
+        "changed": changed,
+        "unchanged": unchanged,
+        "cleared": cleared,
+        "new": new,
+        "line": line,
+    }
 
 
 class RowReviewInputError(ValueError):
@@ -9305,6 +9529,16 @@ def dataset_facts_from_preflight(records: Sequence[dict[str, Any]]) -> DatasetFa
         raise PreflightInputError(
             "dataset-integrity FAILed but carries no malformed_rows count - "
             "this preflight JSON predates the current preflight.py; re-run "
+            "preflight.py --json from the same version as this script"
+        )
+    # Present and not a count is refused the same way, and before either read
+    # of it below: `"3" > 0` is a `TypeError`, which reached the boundary in
+    # `main` and was reported as this script's defect. It is the input's.
+    if "malformed_rows" in integrity and not _is_count(integrity["malformed_rows"]):
+        raise PreflightInputError(
+            "dataset-integrity carries malformed_rows="
+            f"{integrity['malformed_rows']!r}, which is not a whole number of "
+            "rows - this is not the JSON preflight.py --json prints; re-run "
             "preflight.py --json from the same version as this script"
         )
     # No provenance metric at all means preflight found no rows to describe - a
@@ -9641,6 +9875,11 @@ def evaluation_facts_from_calibration(
             comparison_shape=comparison_shape,
             comparison_witness=comparison_witness,
             calibration_scope_refused=calibration_scope_refused,
+        )
+    if not isinstance(payload, dict):
+        raise CalibrationInputError(
+            "--calibration expects the JSON object that `calibrate_evaluator.py "
+            f"--json` prints, and received {type(payload).__name__}"
         )
     cases = payload.get("cases")
     if not isinstance(cases, list):
@@ -10254,10 +10493,19 @@ def agent_facts_from_config_space(document: dict[str, Any]) -> AgentFacts:
     # the alias. Name whichever key was actually read, or the message points at
     # a key the author did not write. An explicitly empty space is a statement
     # the scorer can read ("no knobs declared"), unlike an absent one.
-    knobs_key = next(
-        (key for key in CONFIG_SPACE_SPACE_KEYS if declared.get(key)),
-        next(iter(declared)),
-    )
+    populated = [key for key in CONFIG_SPACE_SPACE_KEYS if declared.get(key)]
+    if len(populated) > 1:
+        # Two spellings of one field, both filled in. Picking the preferred one
+        # silently dropped the other, so a document declaring four knobs under
+        # 'configuration_space' and one under 'knobs' was scored as a space of
+        # one - with no line on the card saying so.
+        raise ConfigSpaceInputError(
+            "config-space document declares the search space twice, under "
+            + " and ".join(repr(key) for key in populated)
+            + "; they are two spellings of one field, so keep one - this "
+            "scorer does not choose between them"
+        )
+    knobs_key = populated[0] if populated else next(iter(declared))
     knobs = declared[knobs_key]
     # Absent and explicit-empty are DIFFERENT claims: absent says nothing
     # about wiring, `[]` says "none of them". Collapsing them here would
@@ -15534,6 +15782,33 @@ def _binding_values_for_knob(
     return tuple(found or _selected_collection_values(knob, lines, source))
 
 
+def _comparable_value(value: Any) -> Any:
+    """The key two spellings of one option share.
+
+    The document is JSON and the source is Python, and the same number is
+    routinely written differently in the two: `[0, 0.7]` in the space against
+    `[0.0, 0.7]` in a module binding, or `1e-1` against `0.1`. Compared by
+    `repr`, `0` and `0.0` were two values, and the card told the author their
+    document "declares '0'" where the cited line showed exactly that option.
+
+    Numbers compare as exact rationals - `Fraction(0.1) == Fraction(1e-1)`
+    because they are the same float, and `Fraction(0) == Fraction(0.0)` - so
+    equal numbers agree and unequal ones do not, at any magnitude. `bool` is
+    kept apart on purpose: `True == 1` in Python, and an option list of flags
+    is not an option list of counts. Sequences recurse; everything else keeps
+    the `repr` it always had.
+    """
+    if isinstance(value, bool):
+        return ("bool", value)
+    if isinstance(value, (int, float)):
+        if isinstance(value, float) and not math.isfinite(value):
+            return ("float", repr(value))
+        return ("number", Fraction(value))
+    if isinstance(value, (list, tuple)):
+        return ("sequence", tuple(_comparable_value(item) for item in value))
+    return (type(value).__name__, repr(value))
+
+
 def values_are_in_checked_source(
     knob: str,
     values: Sequence[Any],
@@ -15542,9 +15817,12 @@ def values_are_in_checked_source(
     siblings: Sequence[str] = (),
 ) -> list[str]:
     bound_values = {
-        repr(value) for value in _binding_values_for_knob(knob, lines, source, siblings)
+        _comparable_value(value)
+        for value in _binding_values_for_knob(knob, lines, source, siblings)
     }
-    return [str(value) for value in values if repr(value) not in bound_values]
+    return [
+        str(value) for value in values if _comparable_value(value) not in bound_values
+    ]
 
 
 def _cited_source_declares_values(
@@ -15584,8 +15862,12 @@ def _cited_source_declares_values(
             else _literal_scalar_options(node.value)
         )
         if literal is not None:
-            found.update(map(repr, literal))
-    return {repr(value) for value in values} <= found
+            found.update(map(_comparable_value, literal))
+    # The same key `values_are_in_checked_source` compares by: this predicate
+    # decides the sentence, and `0` against `0.0` on the cited line produced
+    # "declares '0' which the cited call path does not show" about a line
+    # that showed exactly that option.
+    return {_comparable_value(value) for value in values} <= found
 
 
 def _knob_named_binding_holds(
@@ -15614,7 +15896,7 @@ def _knob_named_binding_holds(
     function it was modelled on, which let a table written inside a function
     raise a ceiling no credit route could ever have reached.
     """
-    wanted = {repr(value) for value in values}
+    wanted = {_comparable_value(value) for value in values}
     cited = set(lines)
     for node in source.tree.body:
         if not (
@@ -15633,7 +15915,7 @@ def _knob_named_binding_holds(
             if isinstance(node.value, ast.Dict)
             else _literal_scalar_options(node.value)
         )
-        if literal is not None and wanted <= set(map(repr, literal)):
+        if literal is not None and wanted <= set(map(_comparable_value, literal)):
             return True
     return False
 
@@ -16214,23 +16496,23 @@ def accepted_route_shape() -> list[str]:
     `agent_knobs_shape` is: a skeleton that drifts from the checker teaches a
     wrong shape with more authority than no skeleton at all.
     """
-    entry = json.dumps(ACCEPTED_ROUTE_KNOB, indent=2)
+    # The parts, and not the worked file. The card is read by the person whose
+    # agent was refused, and a fourteen-line agent written against one provider
+    # and two named models read to them as the shape to rebuild theirs into -
+    # which is the harm the sentence under the label warns against, printed
+    # under the label. The example stays where a reader who wants it looks:
+    # the durable report and the reference, both of which fence it as code.
     lines = [
-        f"  {ACCEPTED_ROUTE_LABEL} One agent whose settings route this check "
-        "does follow, printed because",
-        "  naming what failed does not say what would pass. It is one accepted "
-        "shape and not the",
-        "  only one, so read it for its parts rather than for its names.",
+        f"  {ACCEPTED_ROUTE_LABEL} What a settings route this check follows "
+        "looks like, in parts, because",
+        "  naming what failed does not say what would pass. Many shapes carry "
+        "these parts; the",
+        "  worked agent and the entry that cites it are in the written report "
+        "and in",
+        "  references/component-creation.md, and are one accepted shape rather "
+        "than the only one.",
         "",
     ]
-    lines.extend(
-        f"      {line}" if line else "" for line in ACCEPTED_ROUTE_AGENT.splitlines()
-    )
-    lines.append("")
-    lines.append('  and the entry that cites it, inside the document\'s "knobs" map:')
-    lines.append("")
-    lines.extend(f"      {line}" if line else "" for line in entry.splitlines())
-    lines.append("")
     lines.append(
         f"  {len(ACCEPTED_ROUTE_PARTS)} parts make a route readable, and this "
         "check wants them all:"
@@ -16895,6 +17177,15 @@ def parse_weights(raw: str) -> dict[str, float]:
         raise argparse.ArgumentTypeError(
             f"--weights must be numeric: {error}"
         ) from error
+    # `float()` reads "nan" and "inf", and neither passed the two checks below:
+    # nan compares False against everything and inf is not negative, so both
+    # reached the weighted average - as a nan overall, or an infinite weight
+    # that made the other two pillars weigh nothing.
+    for part, value in zip(parts, values):
+        if not math.isfinite(value):
+            raise argparse.ArgumentTypeError(
+                f"--weights must be finite numbers: {part!r} is not a weight"
+            )
     if any(value < 0 for value in values) or sum(values) <= 0:
         raise argparse.ArgumentTypeError("--weights must be non-negative and non-zero")
     return {"dataset": values[0], "evaluation": values[1], "agent": values[2]}
@@ -16905,7 +17196,9 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         description=(
             "Plan a first run from declared provenance, or score optimization "
             "readiness from measured evidence."
-        )
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=EXIT_CODES_HELP,
     )
     choices = ("real", "limited", "demo", "missing", "invalid")
     parser.add_argument("--agent", choices=choices)
@@ -17043,6 +17336,17 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="exit 1 when the score is BLOCKED (never the default)",
     )
     parser.add_argument(
+        "--previous",
+        help=(
+            "an earlier --json output of this script's scoring half (path or -). "
+            "Prints one line after the card saying what moved since it - each "
+            "pillar's score, the ceilings that cleared and the ones that "
+            "appeared - and carries the same under 'delta' in --json. Refused "
+            "when the earlier output was written by a different schema version, "
+            "because its numbers were computed under different rules"
+        ),
+    )
+    parser.add_argument(
         "--json", action="store_true", help="emit machine-readable output"
     )
     return parser.parse_args(argv)
@@ -17078,6 +17382,18 @@ def scoring_requested(args: argparse.Namespace) -> bool:
 # share this boundary and none of them should grow an option for it.
 INTERNAL_ERROR_EXIT = 3
 TRACEBACK_ENV = "TRAIGENT_FIRST_RUN_TRACEBACK"
+
+# Printed by --help. The card is the result and the exit code is not: a BLOCKED
+# score exits 0 unless --strict asks otherwise, and a consumer routing on the
+# code alone has to be told that here rather than discover it.
+EXIT_CODES_HELP = f"""exit codes:
+  0  a plan or a score was printed; a BLOCKED score still exits 0 unless
+     --strict is passed, because the card carries the verdict
+  1  the score is BLOCKED and --strict was passed
+  2  an input was refused or the command line was wrong; the message on
+     stderr names the flag and what it expected
+  {INTERNAL_ERROR_EXIT}  this script failed on its own - a defect here, not in your project -
+     and nothing was scored; re-run with {TRACEBACK_ENV}=1 to see where"""
 
 
 def report_internal_error(
@@ -17158,6 +17474,18 @@ def run(argv: Sequence[str] | None = None) -> int:
         )
         return 2
 
+    # Same reason as the declaration above it: the planner computes no score,
+    # so there is nothing for an earlier one to be compared with, and a flag
+    # accepted there would be accepted and then dropped.
+    if args.previous and not scoring_requested(args):
+        print(
+            "cannot read scoring input: --previous compares two scores, and the "
+            "planner half computes none. Pass it beside --preflight, "
+            "--calibration, --config-space or --agent-knobs.",
+            file=sys.stderr,
+        )
+        return 2
+
     # Every document flag accepts `-`, and there is one stdin: the first read
     # consumes it and the next sees an empty stream. The documents then land in
     # the wrong variables and fail far from here, describing a shape the caller
@@ -17171,6 +17499,7 @@ def run(argv: Sequence[str] | None = None) -> int:
             ("--config-space", args.config_space),
             ("--agent-knobs", args.agent_knobs),
             ("--row-review", args.row_review),
+            ("--previous", args.previous),
         )
         if value == "-"
     ]
@@ -17374,13 +17703,20 @@ def run(argv: Sequence[str] | None = None) -> int:
             if args.row_review
             else RowReview()
         )
+        previous = (
+            previous_score_from_document(load_json(args.previous), args.previous)
+            if args.previous
+            else None
+        )
     except (
         OSError,
         json.JSONDecodeError,
         PreflightInputError,
+        CalibrationInputError,
         ConfigSpaceInputError,
         AgentDiscoveryInputError,
         RowReviewInputError,
+        PreviousScoreInputError,
     ) as error:
         detail = f"cannot read scoring input: {error}"
         if isinstance(error, RowReviewInputError):
@@ -17414,8 +17750,16 @@ def run(argv: Sequence[str] | None = None) -> int:
     if args.report:
         Path(args.report).write_text(render_markdown(score, args.report_timestamp))
 
+    delta = score_delta(previous, score) if previous is not None else None
     if args.json:
-        print(json.dumps(asdict(score), indent=2, sort_keys=True))
+        payload = asdict(score)
+        if delta is not None:
+            # Beside the score and not inside it: `ReadinessScore` is what
+            # every run computes, and this key exists only when a run was
+            # asked to compare. A consumer that never passes --previous never
+            # sees it.
+            payload["delta"] = delta
+        print(json.dumps(payload, indent=2, sort_keys=True))
     else:
         use_color = resolve_color(sys.stdout, args.color)
         unicode_ok = not args.ascii and supports_unicode(sys.stdout)
@@ -17426,6 +17770,8 @@ def run(argv: Sequence[str] | None = None) -> int:
                 unicode_ok=unicode_ok,
             )
         )
+        if delta is not None:
+            print(delta["line"])
 
     if args.strict and score.status == "BLOCKED":
         return 1

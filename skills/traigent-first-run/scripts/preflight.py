@@ -396,15 +396,33 @@ class Result:
 RESULTS: list[Result] = []
 
 
+class DuplicateCheckName(RuntimeError):
+    """One check name recorded twice in a run - a defect here, never a finding.
+
+    Two checks used to emit twice under one name (`dataset-ids` for rows
+    without an id and for colliding ids, `provider-credentials` for a partial
+    Bedrock triple beside the vendor inventory), and every reader keyed by
+    check name kept whichever record came last: on a payload ordered FAIL then
+    WARN the FAIL vanished, and the ceiling it feeds with it. Each check now
+    folds its findings into one record, and the registry refuses a second one
+    so the next such pair fails here, loudly, rather than in a reader.
+    """
+
+
 def emit(
     check: str, status: str, detail: str, metrics: dict[str, Any] | None = None
 ) -> None:
-    """Record one check.
+    """Record one check, once.
 
     `detail` is prose for a human. `metrics` carries the same facts as data so a
     downstream reader (the readiness scorer) can consume them without parsing
     the sentence - a wording change should never alter a score.
     """
+    if any(result.check == check for result in RESULTS):
+        raise DuplicateCheckName(
+            f"check {check!r} was recorded twice in one run; a check with two "
+            "findings folds them into one record"
+        )
     RESULTS.append(Result(check, status, detail, metrics))
 
 
@@ -762,14 +780,18 @@ def check_keys(env: dict[str, str | None]) -> None:
         if any(key_present(env.get(name)) for name in names)
     ]
     bedrock_present = [name for name in BEDROCK_KEYS if key_present(env.get(name))]
+    # One record for this check. The partial-triple finding used to be a
+    # second `provider-credentials` record in front of the inventory, and a
+    # reader keyed by check name kept only one of the two; it is a sentence on
+    # the inventory now, and it keeps the WARN it always carried.
+    bedrock_note = ""
     if len(bedrock_present) == len(BEDROCK_KEYS):
         available.append("Bedrock")
     elif bedrock_present:
-        emit(
-            "provider-credentials",
-            WARN,
-            "Bedrock is reported here only when access key, secret, and region are all present; "
-            "the AWS credential chain may still authenticate that route without them",
+        bedrock_note = (
+            f". Bedrock is not counted: only {len(bedrock_present)} of its "
+            f"{len(BEDROCK_KEYS)} names (access key, secret, region) are present; "
+            "the AWS credential chain may still authenticate that route without them"
         )
 
     if not available:
@@ -780,14 +802,15 @@ def check_keys(env: dict[str, str | None]) -> None:
             "Bedrock signs through the AWS credential chain, so a shared profile, an SSO session "
             "or an instance role authenticates it with nothing set here. On a route whose "
             "credential is an environment variable, do not begin paid work until that route's "
-            "credential is present",
+            "credential is present" + bedrock_note,
         )
     else:
         emit(
             "provider-credentials",
-            PASS,
+            WARN if bedrock_note else PASS,
             f"credential names are available for {', '.join(available)}; "
-            "this inventory does not select or change the agent's provider route",
+            "this inventory does not select or change the agent's provider route"
+            + bedrock_note,
         )
 
     traigent_key = env.get("TRAIGENT_API_KEY")
@@ -860,6 +883,7 @@ def check_cost_settings(
         )
 
     approved_in_file = file_values.get("TRAIGENT_COST_APPROVED")
+    approved_effective = env.get("TRAIGENT_COST_APPROVED")
     if key_present(approved_in_file) and approved_in_file.strip().lower() in {
         "1",
         "true",
@@ -871,12 +895,30 @@ def check_cost_settings(
             "TRAIGENT_COST_APPROVED is preserved in .env; it does not authorize a "
             "first-run paid process",
         )
-    elif key_present(env.get("TRAIGENT_COST_APPROVED")):
-        emit(
-            "cost-approved",
-            WARN,
-            "TRAIGENT_COST_APPROVED is active in the process; confirm this is the approved paid process",
-        )
+    elif key_present(approved_effective):
+        # `env` is the file with the process laid over it, so a value here
+        # came from one of the two, and the sentence has to say which: the
+        # warning used to read "active in the process" for a value that was
+        # only ever in .env, and the reader was sent to unset a variable that
+        # no shell had set. A value equal to the file's is the file's - the
+        # process may repeat it, but unsetting the process leaves it in place.
+        if key_present(approved_in_file) and approved_effective == approved_in_file:
+            emit(
+                "cost-approved",
+                SKIP,
+                f"TRAIGENT_COST_APPROVED={approved_in_file.strip()!r} is preserved "
+                "in .env and is not an approval value; it does not authorize a "
+                "first-run paid process, and nothing in the process environment "
+                "sets it",
+            )
+        else:
+            emit(
+                "cost-approved",
+                WARN,
+                "TRAIGENT_COST_APPROVED is set in the process environment, not by "
+                ".env; confirm this is the approved paid process before any paid "
+                "call, and unset it in the shell that launched this check otherwise",
+            )
 
     # Both names, because the SDK resolves its backend origin from either and
     # prefers them over the stored/default route. Naming one left the other as
@@ -2255,6 +2297,27 @@ def emit_dataset_id_findings(
         # it, and the wider one would name rows the check did not object to.
         "generated_rows_without_id": generated_missing,
     }
+    # One record, both findings. These were two emits under one check name,
+    # and the reader keyed by name kept the later one: with a WARN for rows
+    # without an id emitted after the FAIL for colliding ids, the FAIL was
+    # gone from the score. The worse finding leads the sentence and decides
+    # the status.
+    findings: list[str] = []
+    status = PASS
+    if duplicate_ids:
+        # The count leads and the truncation says so, exactly as the missing-id
+        # sentence below already does. This list stopped at ten with no ellipsis
+        # and no total, so a file with thirty collisions and a file with ten
+        # printed the same line and a reader had no way to tell the list was
+        # partial.
+        shown_ids = duplicate_ids[:MAX_REPORTED_DATASET_IDS]
+        id_suffix = (
+            ""
+            if len(duplicate_ids) <= len(shown_ids)
+            else f" (first {MAX_REPORTED_DATASET_IDS} shown)"
+        )
+        findings.append(f"{len(duplicate_ids)} duplicate ids: {shown_ids}{id_suffix}")
+        status = FAIL
     if missing_records:
         missing_lines = [line_number for line_number, _row in missing_records]
         shown_lines = missing_lines[:MAX_REPORTED_DATASET_IDS]
@@ -2278,33 +2341,18 @@ def emit_dataset_id_findings(
             if generated_missing
             else ""
         )
-        emit(
-            "dataset-ids",
-            FAIL if generated_missing else WARN,
+        findings.append(
             f"{len(missing_lines)} {noun} at {location}{suffix} {verb} "
             "no stable id; add stable ids in a working copy before excluding rows "
-            f"or selecting a bounded subset, then re-run validation{generated_detail}",
-            id_metrics,
+            f"or selecting a bounded subset, then re-run validation{generated_detail}"
         )
-    if duplicate_ids:
-        # The count leads and the truncation says so, exactly as the missing-id
-        # sentence above already does. This list stopped at ten with no ellipsis
-        # and no total, so a file with thirty collisions and a file with ten
-        # printed the same line and a reader had no way to tell the list was
-        # partial.
-        shown_ids = duplicate_ids[:MAX_REPORTED_DATASET_IDS]
-        id_suffix = (
-            ""
-            if len(duplicate_ids) <= len(shown_ids)
-            else f" (first {MAX_REPORTED_DATASET_IDS} shown)"
-        )
-        emit(
-            "dataset-ids",
-            FAIL,
-            f"{len(duplicate_ids)} duplicate ids: {shown_ids}{id_suffix}",
-            id_metrics,
-        )
-    elif not missing_records:
+        if generated_missing:
+            status = FAIL
+        elif status != FAIL:
+            status = WARN
+    if findings:
+        emit("dataset-ids", status, "; ".join(findings), id_metrics)
+    else:
         emit("dataset-ids", PASS, "stable ids are unique", id_metrics)
 
 
@@ -2948,6 +2996,43 @@ def derived_structural_sql_shape(tree: ast.Module, evaluator: Path) -> int | Non
     return line
 
 
+def stale_comparator_copy_note(tree: ast.Module, evaluator: Path) -> str | None:
+    """Why a file that delegates to the bundled comparator did not settle.
+
+    The identity half of `derived_structural_sql_shape` compares the copy
+    beside the evaluator with the file this package ships, and says nothing
+    when they differ. Both an edit by the customer and an upgrade of this guide
+    look exactly like that from here, and only the first is a change of theirs
+    - so the sentence names the second first, names both paths, and says what
+    to do, which is the same either way. Nothing here changes what is
+    credited: the route stays unestablished until the two trees match.
+
+    None when the evaluator does not delegate to the comparator at all, when no
+    copy sits beside it, when a copy does not parse, or when it is the shipped
+    one - each of those is either not this finding or already its own.
+    """
+    scorer = _single_scorer(tree)
+    binding = _binds_bundled_comparator(tree)
+    if scorer is None or binding is None:
+        return None
+    if _structural_delegation_line(scorer, binding) is None:
+        return None
+    local_path = evaluator.parent / f"{_STRUCTURAL_SQL_MODULE}.py"
+    if not local_path.exists():
+        return None
+    shipped = _tree_of(STRUCTURAL_SQL_ASSET)
+    local = _tree_of(local_path)
+    if shipped is None or local is None or local == shipped:
+        return None
+    return (
+        f"{local_path} is not the {_STRUCTURAL_SQL_MODULE}.py this guide ships "
+        f"at {STRUCTURAL_SQL_ASSET}. The shipped file changes when the guide is "
+        "upgraded, so this is not read as an edit of yours: copy "
+        f"{STRUCTURAL_SQL_ASSET} over {local_path} and re-run this check. Until "
+        "the two match, the structural comparison is not credited"
+    )
+
+
 def structural_comparison_witness(line: int) -> str:
     """What was read, in terms the reader can check against their own files."""
     return (
@@ -3047,6 +3132,14 @@ def check_evaluator(path: Path) -> None:
         if structural is not None:
             derived["comparison_shape"] = STRUCTURAL_SQL_SHAPE
             derived["comparison_witness"] = structural_comparison_witness(structural)
+    comparator_note = ""
+    if "comparison_shape" not in derived:
+        stale = stale_comparator_copy_note(tree, path)
+        if stale is not None:
+            # Data beside the prose, as every metric here is: a reader that
+            # branches on the copy being stale must not parse the sentence.
+            derived["comparator_copy"] = "differs-from-shipped"
+            comparator_note = f". {stale}"
     if witnesses:
         emit(
             "evaluator-shape",
@@ -3055,7 +3148,7 @@ def check_evaluator(path: Path) -> None:
             f"or SQL engine: {'; '.join(witnesses[:MAX_REPORTED_EXECUTION_WITNESSES])}"
             ". This guide grades with non-executing comparison evaluators, so "
             "read the call path and, if candidate output reaches it, stop here "
-            "and design containment separately",
+            "and design containment separately" + comparator_note,
             {
                 "exists": True,
                 "parses": True,
@@ -3071,7 +3164,7 @@ def check_evaluator(path: Path) -> None:
         "evaluator-shape",
         PASS,
         f"{path} parses as valid Python; this proves nothing about its "
-        "scoring behavior, which is not executed here",
+        "scoring behavior, which is not executed here" + comparator_note,
         # `executes: false` is "this walk found no engine or process
         # construct", never "this file does not execute the candidate". The
         # walk cannot see through a helper module or a connection handed in at
@@ -3866,9 +3959,24 @@ def check_dataset(
     return rows
 
 
+# Printed by --help. Every code this script can exit with, read off `run` and
+# `main`: nothing else returns to the shell.
+EXIT_CODES_HELP = """exit codes:
+  0  every check ran and none FAILed (WARN and SKIP records still exit 0
+     unless --strict is passed)
+  1  a check FAILed, or a check WARNed and --strict was passed; the records
+     above say which
+  2  the command line was wrong; argparse's message names the flag
+  3  this script failed on its own - a defect here, not in your project -
+     and no record was produced; re-run with TRAIGENT_FIRST_RUN_TRACEBACK=1
+     to see where"""
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Traigent first-run static preflight (zero provider/backend calls)."
+        description="Traigent first-run static preflight (zero provider/backend calls).",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=EXIT_CODES_HELP,
     )
     parser.add_argument("--env", default=".env", help="path to the local .env")
     parser.add_argument(
@@ -3981,6 +4089,10 @@ def main() -> int:
 
 
 def run() -> int:
+    # One run, one registry. `emit` refuses a check name recorded twice, so a
+    # second run in the same interpreter (the test suite's, never a shell's)
+    # starts from an empty list rather than from the previous run's records.
+    RESULTS.clear()
     args = parse_args()
     env_path = Path(args.env)
     env, file_values = read_env(env_path)
