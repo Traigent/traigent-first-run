@@ -1566,14 +1566,16 @@ SPEND_GATE_FUNCTIONS = frozenset(
         # fixture without it meets a NameError in the gate rather than the
         # assertion it was written for.
         "tracking_stopped",
-        # The door is these four plus the install below: `worst_case_requests`
+        # The door is these five plus the install below: `worst_case_requests`
         # sizes one invocation, `reserve_call_spend` refuses or commits it
         # before the call, `settle_call_spend` replaces that reservation with
-        # what came back, and `ledgered` is what puts them on
-        # `litellm.completion`.
+        # what came back, `release_call_spend` returns the one-request
+        # reservation of a call the provider refused before billing, and
+        # `ledgered` is what puts them on `litellm.completion`.
         "worst_case_requests",
         "reserve_call_spend",
         "settle_call_spend",
+        "release_call_spend",
         "ledgered",
         "ledgered_async",
         # Still collected, though it no longer holds the gate: `call_agent` and
@@ -1676,11 +1678,12 @@ def fake_litellm(
     """A `litellm` whose `completion` records the request and answers.
 
     `raises` makes it record the request and then fail, which is the other
-    thing a real provider call does: litellm surfaces a timeout, a rate limit,
-    a dropped connection and a mid-stream failure as an exception rather than
-    as a degraded response. The request is billable either way, so the
+    thing a real provider call does: litellm surfaces a timeout, a dropped
+    connection and a mid-stream failure as an exception rather than as a
+    degraded response. The request reached the provider either way, so the
     recording happens first - "did this reach the provider" is then the same
-    question whichever way the stand-in was built.
+    question whichever way the stand-in was built. Whether it is BILLED is
+    the door's question, decided by the exception's class name.
     """
 
     def completion(**kwargs):
@@ -19101,12 +19104,13 @@ class TheApprovedTotalReachesTheCodeTests(unittest.TestCase):
 
         Every other fixture in this class hands the door a response, so every
         assertion about the ledger is an assertion about the path where the
-        call succeeded. litellm does not only take that path: a timeout, a rate
-        limit, a dropped connection and a mid-stream failure all arrive as
-        exceptions, and the call reached the provider and is billable before
-        any of them is raised. Debiting only what returns leaves
-        `run_remaining_usd()` overstating the remaining by one call per
-        failure, on exactly the routes that fail more than once.
+        call succeeded. litellm does not only take that path: a timeout, a
+        dropped connection and a mid-stream failure all arrive as exceptions,
+        and the call reached the provider and is billable before any of them
+        is raised. Debiting only what returns leaves `run_remaining_usd()`
+        overstating the remaining by one call per failure, on exactly the
+        routes that fail more than once. The refusals the provider makes
+        BEFORE billing are the other half, two tests down.
 
         So the answer is the one the design already gives an unreadable cost -
         a call was placed, its price is unknown, deduct conservatively - and
@@ -19187,6 +19191,206 @@ class TheApprovedTotalReachesTheCodeTests(unittest.TestCase):
         self.assertEqual(
             namespace["RUN_SPEND_USD"], [0.02], "an `except Exception` would miss this"
         )
+
+    @staticmethod
+    def provider_error(name: str, message: str = "refused") -> BaseException:
+        """An exception carrying a litellm class NAME, which is what the door reads.
+
+        Built rather than imported: the door matches on `type(error).__name__`
+        so that a renamed or moved litellm symbol falls to the safe side, and a
+        stand-in named like the class is therefore the case under test, not a
+        stand-in for it.
+        """
+        return type(name, (Exception,), {})(message)
+
+    def test_a_call_the_provider_refused_before_billing_is_refunded(self) -> None:
+        """The failure the ledger over-held by 128x, measured on a real first run.
+
+        99 of 153 calls were 404s for two model ids absent from the account's
+        catalogue. Each held the conservative reservation, the exit line
+        reported $1.9890 of an approved $2.00 gone against a provider-side
+        $0.0155, and the run halted at the ceiling with 9 of 12 trials lost. A
+        request the gateway refuses before any model sees it bills nothing, so
+        the door returns it - in place, so one invocation stays one entry and
+        `check_scorer_calls` still counts what it counted.
+        """
+        for name in (
+            "NotFoundError",
+            "AuthenticationError",
+            "PermissionDeniedError",
+            "RateLimitError",
+        ):
+            with self.subTest(refused=name):
+                error = self.provider_error(name, "No endpoints found")
+                namespace, placed = self.compiled_scorer_path(
+                    ceiling=1.00, remaining=0.09, per_call=0.02, raises=error
+                )
+                namespace["JUDGE_MODEL"] = "provider/judge"
+                with self.assertRaises(Exception) as failed:
+                    namespace["call_judge"]("grade this")
+                self.assertIs(
+                    failed.exception,
+                    error,
+                    "the door changed what the caller sees fail",
+                )
+                self.assertEqual(
+                    len(placed), 1, "the refused call never reached the door"
+                )
+                self.assertEqual(
+                    namespace["RUN_SPEND_USD"],
+                    [0.0],
+                    "a call the provider refused to bill was held at the unpriced rate",
+                )
+                # A known zero, not an absent price: nothing was generated.
+                self.assertEqual(namespace["RUN_CALL_COSTS"], [0.0])
+                self.assertEqual(
+                    namespace["REJECTED_CALLS"], [f"{name}: No endpoints found"]
+                )
+                self.assertAlmostEqual(namespace["run_remaining_usd"](), 0.09, places=6)
+
+        # And through the door nothing generated awaits, for the same reason
+        # the failing-await test above exists: it is the one edited wrong first.
+        error = self.provider_error("NotFoundError")
+        namespace, placed = self.compiled_scorer_path(
+            ceiling=1.00, remaining=0.09, per_call=0.02, raises=error
+        )
+        with self.assertRaises(Exception) as failed:
+            asyncio.run(
+                namespace["litellm"].acompletion(model="provider/m", messages=[])
+            )
+        self.assertIs(failed.exception, error)
+        self.assertEqual(namespace["RUN_SPEND_USD"], [0.0], "the async door held it")
+        self.assertEqual(len(namespace["REJECTED_CALLS"]), 1)
+
+    def test_a_billable_failure_keeps_its_reservation_whatever_its_name(self) -> None:
+        """The false-red side of the list, one class per row.
+
+        `BadRequestError` and `ContentPolicyViolationError` are the two that
+        look refundable and are not: a content filter can run AFTER generation,
+        so a 400 may follow tokens that were billed. `APIError` is where the
+        pinned litellm lands an OpenRouter 402, a depleted balance - held, and
+        the comment beside the list says so. The last two are why the door
+        catches `BaseException`: neither is an `Exception`, and both interrupt
+        a call that had already reached the provider.
+        """
+        for name in (
+            "Timeout",
+            "APIConnectionError",
+            "BadRequestError",
+            "ContentPolicyViolationError",
+            "InternalServerError",
+            "APIError",
+        ):
+            with self.subTest(held=name):
+                error = self.provider_error(name)
+                namespace, placed = self.compiled_scorer_path(
+                    ceiling=1.00, remaining=0.09, per_call=0.02, raises=error
+                )
+                namespace["JUDGE_MODEL"] = "provider/judge"
+                with self.assertRaises(Exception):
+                    namespace["call_judge"]("grade this")
+                self.assertEqual(
+                    namespace["RUN_SPEND_USD"], [0.02], f"{name} was refunded"
+                )
+                self.assertEqual(namespace["RUN_CALL_COSTS"], [None])
+                self.assertEqual(namespace["REJECTED_CALLS"], [])
+        for error in (KeyboardInterrupt(), asyncio.CancelledError()):
+            with self.subTest(held=type(error).__name__):
+                namespace, placed = self.compiled_scorer_path(
+                    ceiling=1.00, remaining=0.09, per_call=0.02, raises=error
+                )
+                with self.assertRaises(BaseException) as stopped:
+                    namespace["litellm"].completion(model="provider/m", messages=[])
+                self.assertIs(stopped.exception, error)
+                self.assertEqual(namespace["RUN_SPEND_USD"], [0.02])
+                self.assertEqual(namespace["REJECTED_CALLS"], [])
+
+    def test_a_refusal_after_retries_the_door_cannot_see_is_held_whole(self) -> None:
+        """The refund is for one request, and a retried invocation is several.
+
+        The exception that surfaces names only the LAST attempt: litellm's
+        retry loop re-raises the final one, and so does the provider client
+        underneath. Measured on the pinned release against a local server, with
+        a caller's `num_retries=1`: the first attempt timed out after the
+        server had started answering - billable - the second was a 429, and
+        the door saw `RateLimitError`. Refunding the whole reservation on that
+        name releases the billed attempt, the one direction this ledger must
+        never fail in. So the refund reads the reservation itself: one
+        request's worth is released, anything above it is held, whatever the
+        name - and `fallbacks` is held by the same rule before litellm's own
+        bare `Exception` ever matters.
+        """
+        error = self.provider_error("RateLimitError", "429, after a timeout")
+        for knobs, requests in (
+            ({"num_retries": 1}, 3),
+            ({"max_retries": 2}, 3),
+            ({"fallbacks": ["provider/backup"]}, 2),
+        ):
+            with self.subTest(knobs=knobs, requests=requests):
+                namespace, placed = self.compiled_scorer_path(
+                    ceiling=1.00, remaining=0.50, per_call=0.02, raises=error
+                )
+                self.assertEqual(
+                    namespace["worst_case_requests"]({"max_retries": 0, **knobs}),
+                    requests,
+                    "the case is sized on a reservation this door does not make",
+                )
+                with self.assertRaises(Exception) as failed:
+                    namespace["litellm"].completion(
+                        model="provider/m", messages=[], **knobs
+                    )
+                self.assertIs(failed.exception, error)
+                self.assertEqual(len(namespace["RUN_SPEND_USD"]), 1)
+                self.assertAlmostEqual(
+                    namespace["RUN_SPEND_USD"][0],
+                    requests * 0.02,
+                    places=9,
+                    msg="a multi-attempt reservation was refunded on the last attempt's name",
+                )
+                self.assertEqual(namespace["RUN_CALL_COSTS"], [None])
+                self.assertEqual(namespace["REJECTED_CALLS"], [])
+                self.assertAlmostEqual(
+                    namespace["run_remaining_usd"](), 0.50 - requests * 0.02, places=9
+                )
+
+    def test_the_exit_line_names_the_calls_it_refunded(self) -> None:
+        """A run that lost most of its calls to a dead model id is a diagnosis.
+
+        Refunded, such a run reports almost nothing spent - which, on its own,
+        reads as a cheap success. The second line turns the figure into the
+        reason: how many calls were refused, and the first message. And a run
+        with nothing refunded prints the one line it always did, so nothing
+        that parses the ledger line meets a second one it was not shown.
+        """
+        error = self.provider_error(
+            "NotFoundError", "No endpoints found for provider/gone"
+        )
+        namespace, placed = self.compiled_scorer_path(
+            ceiling=1.00, remaining=0.09, per_call=0.02, raises=error
+        )
+        for _ in range(3):
+            with self.assertRaises(Exception):
+                namespace["litellm"].completion(model="provider/gone", messages=[])
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            namespace["report_run_spend"]()
+        lines = out.getvalue().splitlines()
+        self.assertEqual(len(lines), 2, out.getvalue())
+        self.assertIn("placed 3 provider call(s) and spent $0.0000", lines[0])
+        self.assertIn("$0.0900 remains", lines[0])
+        self.assertIn(
+            "3 of those call(s) were refused by the provider before billing", lines[1]
+        )
+        self.assertIn("NotFoundError: No endpoints found for provider/gone", lines[1])
+
+        namespace, placed = self.compiled_scorer_path(
+            ceiling=1.00, remaining=0.09, per_call=0.02
+        )
+        namespace["litellm"].completion(model="provider/m", messages=[])
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            namespace["report_run_spend"]()
+        self.assertEqual(len(out.getvalue().splitlines()), 1, out.getvalue())
 
     def test_no_provider_call_reaches_litellm_by_a_name_the_door_is_not_on(
         self,

@@ -1280,7 +1280,8 @@ def reserve_call_spend(args: tuple, kwargs: dict) -> int:
     What it does not buy is stated with it. On the failure path the reservation
     stands for every BILLABLE failure, which is exact against every
     configuration measured above; the narrow set the provider refuses before
-    billing is returned by `release_call_spend` below. On the
+    billing is returned by `release_call_spend` below, for an invocation that
+    reserved one request. On the
     success path it settles down to the price litellm reported, and litellm
     reports one price however many attempts it billed for - measured: a
     response returned after four billable requests carries the same
@@ -1335,22 +1336,25 @@ def settle_call_spend(slot: int, cost: float | None) -> None:
 
 # The narrow class of failures the provider decides BEFORE the request reaches
 # a model, so no tokens are generated and nothing is billed. Everything else -
-# a timeout, a rate limit, a dropped connection, a mid-stream failure - reached
-# a model, is billable, and keeps its reservation under `release_call_spend`
-# below. Keep this list short and certain: the cost of holding a reservation
-# that was never billed is a run that halts early, and the cost of releasing
-# one that WAS billed is spending past the approved total. Only add a class
-# here when the provider cannot have charged for it.
+# a timeout, a dropped connection, a mid-stream failure, a 5xx - reached a
+# model or may have, is billable, and keeps its reservation under
+# `release_call_spend` below. Keep this list short and certain: the cost of
+# holding a reservation that was never billed is a run that halts early, and
+# the cost of releasing one that WAS billed is spending past the approved
+# total. Only add a class here when the provider cannot have charged for it.
 REJECTED_BEFORE_BILLING: tuple[str, ...] = (
     "NotFoundError",
     "AuthenticationError",
     "PermissionDeniedError",
-    # A 429 is an admission decision taken before generation, and litellm maps
-    # an exhausted credit balance onto it too - neither bills. It earns its
-    # place rather than riding along: the door pins `max_retries=0`, so a rate
-    # limit is surfaced to this wrapper instead of being absorbed underneath,
-    # once per occurrence, and a throttled free-tier key is the single most
-    # likely way a run meets this code at all.
+    # A 429 is an admission decision taken before generation, so it bills
+    # nothing. It earns its place rather than riding along: the door pins
+    # `max_retries=0`, so a rate limit is surfaced to this wrapper instead of
+    # being absorbed underneath, once per occurrence, and a throttled free-tier
+    # key is the single most likely way a run meets this code at all. A
+    # depleted balance is here only where the route reports it as a 429, as
+    # OpenAI does; OpenRouter answers 402, which the pinned litellm maps to
+    # `APIError` rather than to any class named here - measured - so that one
+    # is held, and a run refused on every call should check the balance first.
     "RateLimitError",
 )
 # Deliberately absent, and not oversights. `BadRequestError` is a wide bucket,
@@ -1370,13 +1374,25 @@ def release_call_spend(slot: int, error: BaseException) -> bool:
     subclass with a single test, and adds no import that could fail at module
     load and take out an otherwise working run script.
 
-    One case it knowingly does NOT reach: `fallbacks`. litellm's
-    `completion_with_fallbacks` catches each leg, keeps only `str(e)`, and
-    raises a bare `Exception` once the chain is exhausted, so the class this
-    reads is `Exception` and every leg's reservation stands - at
-    `per_leg * legs` for the invocation, since that is what was reserved. That
-    is the old behaviour, held in the fail-safe direction, and it is the reason
-    to check model ids are live before scaling rather than to rely on this.
+    It releases an invocation that reserved for ONE request, and no other.
+    The reservation covers every attempt the request's knobs allow, and the
+    exception that surfaces describes only the last of them: litellm's retry
+    loop re-raises the final attempt, and the provider client's retries
+    underneath surface the same way. Measured on the pinned release against a
+    local server, with a caller's `num_retries=1`: a first attempt that timed
+    out after the server had started answering - billable - then a 429,
+    arrived here as `RateLimitError`, and refunding on that name would have
+    released the billed attempt. So a reservation above one request's worth
+    is held whole whatever surfaced, which is also what holds a `fallbacks`
+    invocation: it reserved `per_leg * legs`, and litellm's
+    `completion_with_fallbacks` raises a bare `Exception` once the chain is
+    exhausted in any case. Generated code sets no retry and no fallback, so
+    every call it places is one request and is released; a preserved caller's
+    own retries are held at the old, safe figure, and `run-safety.md` already
+    says not to add any for a first run. The reservation is read as "one
+    request's worth" rather than kept as a count beside it, because
+    `reserve_call_spend` wrote exactly `requests * UNTRACKED_CALL_COST_USD`
+    and nothing touches the slot between the two.
 
     The slot is zeroed in place rather than removed, so one invocation stays
     one ledger entry and `check_scorer_calls`, which counts the length, still
@@ -1385,6 +1401,8 @@ def release_call_spend(slot: int, error: BaseException) -> bool:
     was billed, which is a measurement rather than a missing price.
     """
     if type(error).__name__ not in REJECTED_BEFORE_BILLING:
+        return False
+    if RUN_SPEND_USD[slot] > UNTRACKED_CALL_COST_USD:
         return False
     RUN_SPEND_USD[slot] = 0.0
     RUN_CALL_COSTS[slot] = 0.0
@@ -1427,16 +1445,16 @@ def ledgered(place):
             return place(*args, **kwargs)
         slot = reserve_call_spend(args, kwargs)
         outside = INSIDE_THE_DOOR.set(True)
-        # Only one narrow class is caught below, and it re-raises. A call that
-        # fails after REACHING the provider is billable and brings back no
-        # price - litellm surfaces a timeout, a rate limit, a dropped
-        # connection and a mid-stream failure as an exception rather than as a
-        # degraded response, and an awaited call cancelled in flight raises
-        # `CancelledError`, which is not even an `Exception`. The reservation
-        # already stands for all of them and for the attempts retried
-        # underneath. Cost metadata that raises out of `provider_reported_cost`
-        # lands the same way, with the conservative figure left in place rather
-        # than a call spending nothing.
+        # Everything is caught below and everything re-raises; one narrow class
+        # is released on the way past. A call that fails after REACHING the
+        # provider is billable and brings back no price - litellm surfaces a
+        # timeout, a dropped connection and a mid-stream failure as an
+        # exception rather than as a degraded response, and an awaited call
+        # cancelled in flight raises `CancelledError`, which is not even an
+        # `Exception`. The reservation already stands for all of them and for
+        # the attempts retried underneath. Cost metadata that raises out of
+        # `provider_reported_cost` lands the same way, with the conservative
+        # figure left in place rather than a call spending nothing.
         #
         # What that reasoning does NOT cover is a request the gateway refuses
         # before any model sees it: a model id absent from the account's
@@ -1446,7 +1464,8 @@ def ledgered(place):
         # calls that cost zero - and, worse, REPORT that spend to the user as
         # money gone. `release_call_spend` returns those it can identify and
         # leaves every billable failure holding its reservation; read its
-        # docstring for the one shape it cannot see through.
+        # docstring for what it holds regardless of the name - any invocation
+        # that reserved for more than one request.
         try:
             response = place(*args, **kwargs)
             settle_call_spend(slot, provider_reported_cost(response))
