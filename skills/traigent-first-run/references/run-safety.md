@@ -741,7 +741,7 @@ stays on `A.`, the bounded managed run - never on the evidenced repair, which is
 preview's routes at all. Stopping is never the marked route.
 
 Keep the default `$5.00` ceiling across both approvals. If a stage exceeds the remaining ceiling or
-is materially long, recommend a smaller slice or fewer trials; expand only if the user prefers.
+is materially long, recommend a smaller slice or, for the search, a lower trial cap; expand only if the user prefers.
 
 The approved total is not a number the assistant carries in its head between phases. Launch every
 paid process with three figures in its environment, supplied by the process and never by `.env`,
