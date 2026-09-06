@@ -5,9 +5,9 @@ follows-resident-measured: 107_369
 follows-total-measured: 504_689
 follows-document-measured: 138_879
 resident-ceiling: 106_500
-resident-measured: 106_182
+resident-measured: 106_221
 total-ceiling: 498_500
-total-measured: 497_627
+total-measured: 497_699
 document-ceiling: 137_750
 document-measured: 136_159
 
