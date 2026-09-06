@@ -2119,9 +2119,26 @@ def run_safe_opening_calibration_once(
         Path(command["argv"][1]).name == CALIBRATE.name for command in unsafe_commands
     ):
         raise ContractError("candidate-executing evaluator must not run at opening")
-    if "evaluator-unvalidated" not in cap_conditions(unsafe_opening["parsed"]):
+    # `evaluator-calibration-refused`, and the swap is the contract rather than
+    # a relabelling. This project's evaluator was PROVED to reach an engine -
+    # preflight read `exec(output)` out of the file above - so the card that
+    # used to raise `evaluator-unvalidated` was recommending
+    # `complete-calibration`, which is the step this guide ends the run before,
+    # to the one project it is forbidden for (traigent-first-run#393). The
+    # ceiling is unchanged at 45; what changes is which remedy a customer is
+    # handed. The absence of `evaluator-unvalidated` is asserted beside it
+    # because the two conditions are mutually exclusive by construction and a
+    # card carrying both would mean the derivation had stopped being one
+    # decision.
+    unsafe_conditions = cap_conditions(unsafe_opening["parsed"])
+    if "evaluator-calibration-refused" not in unsafe_conditions:
         raise ContractError(
-            "deferred execution evaluator must remain unvalidated on its opening card"
+            "deferred execution evaluator must be refused, not merely "
+            "unvalidated, on its opening card"
+        )
+    if "evaluator-unvalidated" in unsafe_conditions:
+        raise ContractError(
+            "a refused execution evaluator must not also be told to calibrate"
         )
     commands.extend(unsafe_commands)
     append_event(
