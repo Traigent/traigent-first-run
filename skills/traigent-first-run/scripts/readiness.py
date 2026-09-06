@@ -989,7 +989,39 @@ class SubScore:
     # marks it - what changes is only that it stops being free.
     withheld: bool = False
     # False means the question does not apply to this agent, rather than that
-    # the read failed. It belongs in neither confidence nor remediation.
+    # the read failed. It belongs in neither the score nor remediation: there
+    # is nothing here to be right or wrong about, so it earns nothing and is
+    # charged nothing, and a card that listed it as a gap would be asking for
+    # work no project has to do.
+    #
+    # IT IS STILL COUNTED AS UNCHECKED. `applicable=False` is reached from one
+    # place only - a build document answering `tools: used=false` - and that
+    # answer is a self-report nothing here refutes: the `used: true` arm raises
+    # on a declared name the selected file never mentions, and the negative arm
+    # has no counterpart, because deciding that a call is a TOOL call needs a
+    # notion of tool-hood this module does not have and does not invent
+    # (traigent-first-run#451). So the run has not established that the
+    # question does not apply; it has been told so. Leaving the check out of
+    # the confidence denominator as well let that telling raise the pillar's
+    # evidence coverage - a declaration nothing can check improving the card -
+    # which is the flattering direction this module refuses everywhere else
+    # (`SubScore.withheld`). Being unable to check a claim and the claim being
+    # inapplicable are different states, and only the second may shrink a
+    # denominator; the first is unchecked, and confidence is where unchecked is
+    # said. `combine` therefore counts every sub-score in `total_weight` and
+    # only the applicable ones in the score.
+    #
+    # THE POINTS DENOMINATOR IS DELIBERATELY LEFT ALONE, and the reason is
+    # arithmetic rather than taste. Charging this check - full weight, no
+    # credit, the `withheld` treatment - would make declaring tools pay: a
+    # `used: true` naming one identifier that appears anywhere in the file is
+    # just as unrefuted as `used: false`, and it earns the full weight, so the
+    # honest tool-less agent would be the only one charged. Crediting it pays
+    # for being simpler than the question. Excluding it assigns the pillar's
+    # own mean, which is the same treatment `determined: false` already gets on
+    # every other check: out of the score, into the coverage. That is the
+    # settled answer for a claim this read cannot settle, and this arm now
+    # matches it.
     applicable: bool = True
 
 
@@ -3358,7 +3390,15 @@ def combine(name: str, subscores: Sequence[SubScore]) -> Pillar:
     """Renormalize over measured sub-scores and report the observed fraction."""
     applicable = [item for item in subscores if item.applicable]
     measured = [item for item in applicable if item.measured]
-    total_weight = sum(item.maximum for item in applicable)
+    # EVERY sub-score, including the ones that do not apply. Confidence is the
+    # share of this pillar that was actually observed, and a check excused by a
+    # declaration nothing here can refute was not observed - it was taken on
+    # the document's word. Dividing by the applicable weight alone let
+    # `tools: used=false` report a better-evidenced pillar than any answer this
+    # read can check, which is a declaration improving the card. See
+    # `SubScore.applicable` for why the score's denominator below stays as it
+    # is (traigent-first-run#451).
+    total_weight = sum(item.maximum for item in subscores)
     measured_weight = sum(item.maximum for item in measured)
     if not measured or measured_weight <= 0:
         return Pillar(
@@ -8487,13 +8527,22 @@ def render_card(
         # names what would lift it is unaffected. Only the sentence changes,
         # which is where this module already says the epistemic caveat belongs.
         #
-        # Counted over APPLICABLE checks only, both halves. A question that
-        # does not apply to this agent - tool wiring where it declares no
-        # tools - is `measured=False` too, so counting it would fire this on a
-        # fully measured pillar and report "4 of 5" about nothing missing.
-        # `combine` already renormalizes over the applicable ones; this is the
-        # same set, said out loud.
-        applicable_checks = [sub for sub in pillar.subscores if sub.applicable]
+        # Counted over EVERY check, both halves, which this line used to do
+        # over the applicable ones. The reasoning it carried was that tool
+        # wiring on an agent declaring no tools is nothing missing, so counting
+        # it would report "4 of 5" about a fully measured pillar. That reads
+        # the declaration as a fact. `used: false` is a self-report this module
+        # cannot refute (`SubScore.applicable`, traigent-first-run#451), so the
+        # tool wiring of that agent is precisely the check nobody here looked
+        # at, and "4 of 5" is what happened. Left as "5 of 5" it was the
+        # unrefuted declaration, and not the read, telling the customer their
+        # card was fully checked.
+        #
+        # This is the same set `combine` divides confidence by, still said out
+        # loud - the two moved together, because a count on the card that
+        # disagreed with the confidence behind it is one number contradicting
+        # the other on the same row.
+        coverage_checks = list(pillar.subscores)
         # Collected, then printed as one parenthesis. Two adjacent groups -
         # "(agent read)  (1 of 4 checks measured)" - read as two separate
         # remarks about the pillar when they are one description of it.
@@ -8526,17 +8575,15 @@ def render_card(
                 if score.agent_source_read
                 else "no agent source read"
             )
-        if any(not sub.measured for sub in applicable_checks):
+        if any(not sub.measured for sub in coverage_checks):
             # A renormalized score over half the checks is not the same claim as
             # a full one, and "(partly checked)" proved too quiet to carry that
             # next to a full bar and a round number: an uncalibrated evaluator
             # read as 100/100 with two of four checks observed. The count is
             # named instead, because "2 of 4 checks" is a fact the reader can
             # act on where an internal weight ratio is not.
-            measured = sum(1 for sub in applicable_checks if sub.measured)
-            suffix_parts.append(
-                f"{measured} of {len(applicable_checks)} checks measured"
-            )
+            measured = sum(1 for sub in coverage_checks if sub.measured)
+            suffix_parts.append(f"{measured} of {len(coverage_checks)} checks measured")
         if suffix_parts:
             headline_suffix += (
                 f"  {palette.dim}({'; '.join(suffix_parts)}){palette.reset}"
