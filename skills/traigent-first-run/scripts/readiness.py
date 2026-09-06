@@ -938,13 +938,31 @@ METHOD_COMPARISON_SUPPORT: dict[str, frozenset[str]] = {
     # structures does not support `exact` or any other word above, and a file
     # proven to be a text comparison does not support this one.
     "sql-structure": frozenset({"sql-structure"}),
-    # Neither, and for the reason `set-f1` and `schema` support neither: a
-    # file proven to compare two answers as whole values is not reading a
-    # tool trace, whichever word was typed over it. This is what keeps the
-    # new word from being one step further out than the arms already reach -
-    # an established comparison refutes `final-state` exactly as it refutes
-    # every other non-comparison method.
-    "final-state": frozenset(),
+    # Both whole-value shapes, for the reason `routing` takes both: this
+    # method's claim is about WHAT is being compared and not about the
+    # comparison discipline, and a final state compared with the expected
+    # final state is a whole-value equality whether or not it is normalised
+    # first.
+    #
+    # This entry read `frozenset()` when the method was added, on the premise
+    # that a file proven to compare two answers as whole values is not
+    # reading a tool trace. That premise is false for the plainest evaluator
+    # the guide's own row describes. `return output == expected` over a final
+    # state is settled by the static walk as `exact` - measured, with the
+    # witness "the answers are compared as written" - so the empty set
+    # refuted the true declaration and left `exact` + `structured` paying 17
+    # task-fit points more over the same file. That is #449 again, one word
+    # further out, which is exactly what the empty set was reasoned to
+    # prevent, and the card sentence it produced told a customer their
+    # final-state check was an exact check.
+    #
+    # What still refutes it is `sql-structure`, and that is the whole of what
+    # this read can honestly say: a file resolved to compare two parsed
+    # queries is a query comparator whatever was typed over it, while nothing
+    # here can separate a final state compared as written from any other
+    # whole value compared as written. So this row stops one wrong
+    # declaration and does not pretend to stop the other.
+    "final-state": frozenset({"exact", "normalized-exact"}),
 }
 
 # The methods whose credit requires the file to have ESTABLISHED the

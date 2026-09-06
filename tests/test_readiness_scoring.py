@@ -20728,13 +20728,26 @@ class TaskFitIsMeasuredOnThePairNotOnEitherFieldTests(unittest.TestCase):
                 self.assertLessEqual(
                     shapes, {"exact", "normalized-exact", "sql-structure"}
                 )
-        # The three methods a whole-value equality can be, and no others.
+        # The four methods a whole-value equality can be, and no others.
+        #
+        # `routing` was the first entry here whose claim is about WHAT is
+        # compared rather than about the comparison discipline: a chosen route
+        # against the expected one is a whole-value equality however the
+        # labels are folded. `final-state` is the second, on the identical
+        # argument about a final state, and it was added to this set after a
+        # run showed that the plainest evaluator the guide's tool-workflow row
+        # describes - `return output == expected` over a final state - is
+        # settled by the walk as `exact`. Left out, the table refuted the true
+        # declaration and paid `exact` + `structured` 17 task-fit points more
+        # over the same file (traigent-first-run#449).
         supported = {
             method
             for method, shapes in MODULE.METHOD_COMPARISON_SUPPORT.items()
             if shapes & {"exact", "normalized-exact"}
         }
-        self.assertEqual(supported, {"exact", "normalized-exact", "routing"})
+        self.assertEqual(
+            supported, {"exact", "normalized-exact", "routing", "final-state"}
+        )
         # And the one a proven structural SQL comparison supports, which is
         # deliberately not one of those three: a file that reads both answers
         # as queries is not comparing them as whole values, so crediting
@@ -23600,31 +23613,54 @@ class TheHonestDeclarationIsNeverOutscoredTests(unittest.TestCase):
         profile added later can climb PAST it; every way this goes red is the
         honest side falling - `final-state` joining
         `METHOD_REQUIRES_PROVEN_COMPARISON`, its execution claim turning
-        `True`, its dials being trimmed, or the kind losing its only fitting
-        method. Those are the four edits that would reopen #449, and each of
-        them is a one-line change somebody would otherwise make against a
-        table rather than against the property.
+        `True`, its dials being trimmed, its `METHOD_COMPARISON_SUPPORT` entry
+        narrowing, or the kind losing its only fitting method. Those are the
+        five edits that would reopen #449, and each of them is a one-line
+        change somebody would otherwise make against a table rather than
+        against the property. The fourth is on that list because it was made:
+        this method shipped for review with an empty support set.
 
-        Both evidence states a tool-workflow evaluator actually reaches are
-        swept. `comparison_shape` stays None throughout, and that is the
-        point rather than a gap: a file settled as a whole-value comparison is
-        not the evaluator this property is about, and the arms that refuse the
-        new word over one are asserted separately below.
+        Every comparison shape a tool-workflow evaluator can be settled as is
+        swept, and that is the dimension this test shipped without. It fixed
+        `comparison_shape` at None and said so as a fact - "a file settled as
+        a whole-value comparison is not the evaluator this property is about"
+        - which is false of the plainest evaluator the guide's row describes,
+        so the sweep was green over exactly the state where the property was
+        broken. A test that excludes a state by assertion cannot be the thing
+        that catches the assertion being wrong.
+
+        `sql-structure` is the one settled shape left out, and it is left out
+        by an assertion about it rather than by silence: a file resolved to
+        compare two parsed queries is a query comparator, so `final-state` is
+        not the true declaration over it and the property does not apply.
+        `test_the_new_word_is_still_refused_from_proof` covers that state.
         """
+        witnesses = {
+            None: None,
+            "exact": "the answers are compared as written (line 6)",
+            "normalized-exact": "casefold, strip applied before it (line 6)",
+        }
         for read in (None, False):
-            honest = self.pillar(
-                "final-state", "tool-workflow", executes_candidate=read
-            )
-            for method in sorted(MODULE.METHOD_PROFILES):
-                for kind in MODULE.TASK_KINDS:
-                    with self.subTest(method=method, kind=kind, executes=read):
-                        self.assertLessEqual(
-                            self.pillar(method, kind, executes_candidate=read),
-                            honest,
-                            f"{method} + {kind} pays more than the truth about "
-                            "a tool-workflow evaluator, so this score is again "
-                            "buying a mislabel",
-                        )
+            for shape, witness in sorted(witnesses.items(), key=lambda x: str(x[0])):
+                state = {
+                    "executes_candidate": read,
+                    "comparison_shape": shape,
+                    "comparison_witness": witness,
+                }
+                honest = self.pillar("final-state", "tool-workflow", **state)
+                for method in sorted(MODULE.METHOD_PROFILES):
+                    for kind in MODULE.TASK_KINDS:
+                        with self.subTest(
+                            method=method, kind=kind, executes=read, shape=shape
+                        ):
+                            self.assertLessEqual(
+                                self.pillar(method, kind, **state),
+                                honest,
+                                f"{method} + {kind} pays more than the truth "
+                                "about a tool-workflow evaluator whose file "
+                                f"settled as {shape}, so this score is again "
+                                "buying a mislabel",
+                            )
 
     def test_the_untrue_declaration_that_used_to_pay_no_longer_does(self) -> None:
         """The two readings from the report, held against the honest one.
@@ -23667,41 +23703,59 @@ class TheHonestDeclarationIsNeverOutscoredTests(unittest.TestCase):
         ]
         self.assertEqual([sub.name for sub in withheld], ["task-fit"])
 
-    def test_the_new_word_is_refused_exactly_where_the_old_ones_are(self) -> None:
-        """The mislabel does not move one step out with the vocabulary.
+    def test_a_settled_whole_value_comparison_is_the_honest_declaration(
+        self,
+    ) -> None:
+        """The premise this class shipped with, corrected against a run.
 
-        Nothing can verify a tool-workflow claim, which is true of `set-f1`,
-        `schema` and `embedding` too. What keeps that from being a free pass
-        is that the arms which refuse a declaration from PROOF read this
-        method exactly as they read those: a file established as a whole-value
-        comparison is not reading a trace, and a file witnessed reaching an
-        engine ends the guide whichever word was typed over it.
+        The method arrived with an empty `METHOD_COMPARISON_SUPPORT`, argued
+        from "a file proven to compare two answers as whole values is not
+        reading a tool trace". The plainest evaluator the guide's own row
+        describes refutes that: `return output == expected` over a final state
+        is a whole-value comparison OF THE STATE, the walk settles it as
+        `exact`, and the empty set therefore refused the true declaration and
+        printed a card sentence calling a final-state check an exact one -
+        while `exact` + `structured` over the same file kept every point.
+
+        So the two whole-value shapes credit this method, for the reason they
+        credit `routing`: its claim is about what is compared, not about the
+        comparison discipline.
         """
-        witness = "casefold, strip applied before the comparison (line 6)"
-        for shape in sorted(MODULE.COMPARISON_SHAPE_DESCRIPTIONS):
+        for shape, witness in (
+            ("exact", "the answers are compared as written (line 6)"),
+            ("normalized-exact", "casefold, strip applied before it (line 6)"),
+        ):
             with self.subTest(shape=shape):
-                # The task-fit sub-score, not the pillar total. Two profiles
-                # that happen to share their dials would make a pillar
-                # comparison pass for a reason this test is not about, and
-                # would fail it the day either one moved.
-                refused = self.fit(
+                credited = self.fit(
                     "final-state",
                     "tool-workflow",
                     comparison_shape=shape,
                     comparison_witness=witness,
                     executes_candidate=False,
                 )
-                self.assertEqual(refused.value, MODULE.TASK_FIT_UNFIT_CREDIT)
+                self.assertEqual(credited.value, MODULE.TASK_FIT_WEIGHT)
                 self.assertEqual(
-                    refused.value,
-                    self.fit(
-                        "set-f1",
-                        "structured",
-                        comparison_shape=shape,
-                        comparison_witness=witness,
-                        executes_candidate=False,
-                    ).value,
+                    credited.evidence, "final-state suits tool-workflow output"
                 )
+
+    def test_the_new_word_is_still_refused_from_proof(self) -> None:
+        """Widening the support set did not make the word unrefusable.
+
+        Two arms still reach it, and they are the two that refuse from
+        something the file established rather than from something the walk
+        failed to find. A parse of two queries is a query comparator whatever
+        was typed over it, and a file witnessed reaching an engine ends this
+        guide under any word.
+        """
+        structural = self.fit(
+            "final-state",
+            "tool-workflow",
+            comparison_shape="sql-structure",
+            comparison_witness="both answers parsed as SQL (line 6)",
+            executes_candidate=False,
+        )
+        self.assertEqual(structural.value, MODULE.TASK_FIT_UNFIT_CREDIT)
+        self.assertIn("rather than final-state", structural.evidence)
         engine = "cursor.execute(candidate) (line 12)"
         refused = MODULE.score_evaluation(
             MODULE.EvaluationFacts(
@@ -23715,6 +23769,25 @@ class TheHonestDeclarationIsNeverOutscoredTests(unittest.TestCase):
         fit = next(sub for sub in refused.subscores if sub.name == "task-fit")
         self.assertEqual(fit.value, MODULE.TASK_FIT_UNFIT_CREDIT)
         self.assertIn(engine, fit.evidence)
+
+    def test_the_reproducibility_sentence_says_what_this_method_is(self) -> None:
+        """`DETERMINISTIC_METHODS` decides a sentence, and nothing was reading it.
+
+        Membership there changes no number - the dials do that - so dropping
+        `final-state` from it leaves the whole package green while the card
+        starts telling a customer their local state comparison "can vary
+        between runs and may require paid calls". A sentence a customer reads
+        off their own evaluator is worth one assertion, and this is the only
+        one of the five tables whose entry a test was not already forcing.
+        """
+        pillar, _caps = MODULE.score_evaluation(
+            MODULE.EvaluationFacts(
+                present=True, method="final-state", task_kind="tool-workflow"
+            )
+        )
+        line = next(sub for sub in pillar.subscores if sub.name == "reproducibility")
+        self.assertEqual(line.evidence, "deterministic scoring rule")
+        self.assertIn("final-state", MODULE.DETERMINISTIC_METHODS)
 
     def test_the_new_method_is_not_held_to_a_proof_it_can_never_have(
         self,

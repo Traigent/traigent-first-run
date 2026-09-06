@@ -19,5 +19,5 @@ eleven points overall for being honest. Giving the scorer the word closes half o
 half is this row, because an assistant picks its ruler here and a described ruler with no value
 beside it ends at the description. Two neighbouring rows already carry theirs and the argument was
 settled when they got it. Nothing else moves. Every ceiling 0094 put in force is restated
-untouched, resident and document are byte-for-byte what it weighed, and the twenty-one bytes still
-spare under the total are what remain for whoever edits next.
+untouched, resident and document are byte-for-byte what it weighed, and the twenty-two bytes
+between this measurement and the total ceiling are what remain for whoever edits next.
