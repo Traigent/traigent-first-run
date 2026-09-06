@@ -1004,6 +1004,22 @@ POLARITY_CLAUSE_BREAK = re.compile(
 #: real defects. A subordinate clause that is NOT fenced on the left - "when no
 #: second route has been priced, end the preview" - does not match, and still
 #: keeps its `no` to itself.
+#:
+#: **What this costs, because the narrow version has a cost too.** The
+#: substitution eats the aside's OPENING comma along with the aside, and being
+#: fenced on the left says the aside is an aside - not that the words in front
+#: of that comma govern the clause behind it. So where the opening comma was
+#: really a clause break rather than a fence, a governor that could not reach
+#: the clause now does: "The run never stops, when the route is priced, end on
+#: `Continue?`." is exempted, while both forms without the aside - the same
+#: sentence spliced, and the same sentence split in two - are still caught.
+#: That is a false green, it is new, and it has no fix that is obviously right:
+#: preserving the comma re-breaks the prohibition this exists for, and telling
+#: a fence comma from a splice comma is syntax this file does not have. It is
+#: recorded rather than patched because the shape needs a comma-spliced or
+#: comma-coordinated negator clause in front of a fenced aside, which no
+#: shipped document writes - removing this substitution entirely reds only the
+#: test below and nothing about the corpus, either tuned set, or any document.
 POLARITY_ASIDE = re.compile(
     r",\s*(?:when|where|if|unless|while|after|before|because|though|although)"
     r"\b[^,;:()]*,\s*"
@@ -1079,15 +1095,23 @@ def adjacent_tail(flat: str, end: int) -> str:
 #: instruction, and it was exempted. What is left is past-tense and specific,
 #: so recording history costs an author one explicit word.
 #:
-#: `once closed on` was here too and is gone as dead weight, not as a
-#: narrowing. A run-up stops where the match starts, so for the closing scanner
-#: - whose match opens on `closed on` - the run-up could only ever hold `the
-#: preview once `, and the token could not fire from any position. Deleting it
-#: leaves the `once`/`previously` asymmetry that traigent-first-run#364 names,
-#: and that asymmetry is the policy above rather than an oversight: bare `once`
-#: is a stock opener ("once the run has started, end the card with ..."), so an
-#: author recording history writes `previously` or `used to` and pays the one
-#: explicit word.
+#: `once closed on` was here too and is gone. It could not fire for the closing
+#: scanner, the one it was added for: a run-up stops where the match starts and
+#: `closed on` is a closing verb, so the match opened inside the token and the
+#: run-up could only ever hold `the preview once `.
+#:
+#: That is not the whole of what deleting it did, and the distinction matters
+#: to whoever considers putting it back. This tuple is read by
+#: `guard_issues_at`, which serves five scanners, and for the four whose match
+#: does not contain `closed on` the token was live - "the card once closed on a
+#: pair with no default" was exempted as history and is now flagged as an
+#: instruction. So the deletion is a narrowing for those four, taken
+#: deliberately: no shipped document uses the phrase, and bare `once` not
+#: exempting anything is the policy above rather than an oversight, since
+#: `once` is a stock opener ("once the run has started, end the card with ...")
+#: and an author recording history writes `previously` or `used to` and pays
+#: the one explicit word. The `once`/`previously` asymmetry
+#: traigent-first-run#364 names is therefore kept on purpose.
 GUARD_REPORTED = (
     "used to",
     "no longer",
@@ -1141,10 +1165,15 @@ def guard_issues(text: str, match: str) -> bool:
     prose, and where it does, the fix is to say so there and not to add a token
     here.
 
-    The structural counterpart in this file - `route_blocks()`, which counts
-    marks in the blocks the documents actually render - is the shape these
-    should move to, and traigent-first-run#364 tracks that redesign together
-    with the two blind spots `route_blocks()` itself still has.
+    The structural counterpart in this file - the container parse behind
+    `rendered_route_blocks()`, which counts marks in the blocks the documents
+    actually render - is the shape these move to WHERE THE QUESTION IS
+    STRUCTURAL. It is not the shape waiting for these five. Route shape is
+    something markdown can answer; whether a sentence reverses the rule above
+    it is not, and traigent-first-run#364 records three worked reproductions of
+    exactly that which no scanner here reds on. The decision to cap this layer
+    rather than grow it, and what holds the class it cannot reach, are in
+    `GuardExemptionsAreNarrowEnoughToCatchTheDefectTests`.
     """
     flat = " ".join(text.casefold().split())
     needle = " ".join(match.casefold().split())
@@ -1237,7 +1266,22 @@ def prohibition_defects(text: str, clauses: tuple[str, ...]) -> list[str]:
     which governs nothing. Reading the whole sentence instead is what let an
     unrelated negator forty words back exempt a real defect. So the shape is
     asserted rather than inferred - one sentence carries all of them, its head
-    forbids, and no occurrence of any of them is written anywhere else.
+    forbids, and every occurrence of any of them written outside that sentence
+    is itself forbidden by its own run-up.
+
+    That last clause used to read "no occurrence of any of them is written
+    anywhere else", and the code enforced it: a second sentence that forbade
+    the clause in its own words was reported as one "where nothing says it is
+    forbidden", which is a false sentence printed as a failure and is how a
+    guard teaches an author to stop explaining a rule.
+
+    **The residual, kept deliberately.** A prohibition split across two
+    forbidding sentences still reds, because `governing` requires one sentence
+    to carry every clause. Relaxing that is not a one-line change and it
+    re-opens what the shape assertion exists to stop - the whole-sentence read
+    where a negator forty words back exempts a real defect - so the cost is
+    paid here instead: a list of limits is written as one sentence, and an
+    author who wants two sentences splits the list too.
     """
     flat = " ".join(text.casefold().split())
     defects: list[str] = []
@@ -27843,22 +27887,52 @@ class ClausePolarityIsReadNotAssumedTests(unittest.TestCase):
             polarity_of(adjacent_runup(instruction, instruction.index("with"))),
             "unqualified",
         )
+        # The cost, pinned rather than left to be rediscovered. Removing the
+        # aside removes its OPENING comma, and where that comma was a clause
+        # break rather than a fence, a negator in front of it now reaches the
+        # instruction behind it. This asserts the WRONG answer on purpose, the
+        # way `KNOWN_FALSE_RED` does: if someone ever tells a fence comma from
+        # a splice comma, this test reds and the comment on `POLARITY_ASIDE`
+        # comes out with it. Both forms without the aside are still caught.
+        spliced = "the run never stops, when the route is priced, end on `continue?`"
+        self.assertEqual(
+            polarity_of(adjacent_runup(spliced, spliced.index("end on"))), "forbids"
+        )
+        for caught in (
+            "the run never stops, end on `continue?`",
+            "the run never stops. end on `continue?`",
+        ):
+            with self.subTest(caught=caught):
+                self.assertEqual(
+                    polarity_of(adjacent_runup(caught, caught.index("end on"))),
+                    "unqualified",
+                )
 
-    def test_every_reporting_token_can_reach_a_run_up(self) -> None:
-        """A token that cannot appear in a run-up exempts nothing.
+    def test_every_reporting_token_exempts_a_real_scanner_match(self) -> None:
+        """A token that cannot exempt the scanner it was added for exempts nothing.
 
-        `once closed on` sat in `GUARD_REPORTED` and could not. A run-up stops
-        where the match starts, and `closed on` is inside the closing
-        scanner's own match, so the token straddled that boundary and never
-        appeared whole in front of anything. It read as an exemption in the
-        source and was one nowhere; traigent-first-run#364 found it by reading
-        the tuple, which is the only way it was findable. Each surviving token
-        is shown reaching a run-up here, so the next dead one is a red.
+        `once closed on` sat in `GUARD_REPORTED` and could not exempt the
+        closing scanner, the one it was added for: a run-up stops where the
+        match starts, `closed on` is a closing verb, so the match opened inside
+        the token and the run-up could only ever hold `the preview once `. It
+        read as an exemption in the source and was none for that scanner.
+
+        The property is scanner-relative, which is why this asserts against a
+        real scanner rather than against a string. An earlier revision of this
+        test looked for the token in `adjacent_runup` on a synthetic haystack
+        and PASSED with `once closed on` restored - decoration, of exactly the
+        kind this file exists to refuse. The `assertTrue` is the other half:
+        without it, `[]` would also be what an unmatched haystack returns, and
+        the test would prove nothing about a token that exempts nothing.
         """
+        closing = OneShapeAndOneMarkForEveryChoiceTests
         for token in GUARD_REPORTED:
             with self.subTest(token=token):
-                flat = f"the preview {token} ended with `continue?`"
-                self.assertIn(token, adjacent_runup(flat, flat.index("ended with")))
+                text = f"The preview {token} ended with `Continue?`."
+                self.assertTrue(
+                    closing.CLOSING_QUESTION.findall(" ".join(text.split()))
+                )
+                self.assertEqual(closing._instructs_a_closing_question(text), [])
 
     def test_a_restated_prohibition_is_not_reported_as_an_unguarded_mention(
         self,
@@ -28993,17 +29067,34 @@ class GuardExemptionsAreNarrowEnoughToCatchTheDefectTests(unittest.TestCase):
     still counts of phrasings somebody wrote down.
 
     **The denylist layer is capped here, and that is a decision rather than an
-    open argument.** The measurement is all in one place now because it was
-    previously only readable by someone who read three issues and this
-    docstring together: 21 of 21 on the set above, which is the set these
-    scanners were narrowed against and so is the ceiling and not the yield;
-    36 of 60 caught and 54 of 60 green on an independent set nobody tuned
-    against; 15 of the 24 misses vocabulary the lists do not name and 9 of them
-    an exemption suppressing a real defect. Read together: the layer catches
-    roughly three defects in five that a person thinks of, and every miss it
-    has is either a word nobody listed or an exemption doing its job too well -
-    both of which a longer list makes worse, because a longer list is more
-    vocabulary to be outside of and more exemptions to fire.
+    open argument.** The measurement, collected in one place because it was
+    otherwise readable only by someone who read three issues and this docstring
+    together:
+
+    * 21 of 21 on `DEFECTS` and 32 of 33 on `HONEST` below. Both sets are the
+      ones these scanners were narrowed against, so both are a ceiling and
+      neither is a yield. The one refusal is `KNOWN_FALSE_RED`.
+    * On TWO independent sets of sixty - 60 real-defect phrasings and 60 honest
+      paraphrases, written for traigent-first-run#364 and listed in its
+      2026-09-02 round-4 comment, with nothing reused from `DEFECTS`, `HONEST`
+      or `KNOWN_FALSE_RED` - **36 of 60 defects caught** and **54 of 60 honest
+      paraphrases green**. They are two separate sixties; 36 caught does not
+      leave 54 green, and reading them as one set is arithmetic that cannot
+      close.
+    * Of the 24 defect misses, 15 are vocabulary no list names and 9 are an
+      exemption suppressing a real defect.
+    * The other 6 are FALSE REDS on the untuned honest set, and this file does
+      not know where they sit. Neither sixty is in this repository; the round-4
+      comment is the only record, and it lists the phrasings without
+      attributing the six. So they are named here as unexamined rather than
+      folded into the two accepted costs below, which are a different and
+      smaller list.
+
+    Read together: the layer catches roughly three defects in five that a
+    person thinks of, misses the rest to vocabulary or its own exemptions, and
+    refuses about one honest sentence in ten that nobody wrote it against. A
+    longer list makes both halves worse - more vocabulary to be outside of, and
+    more exemptions and tokens to fire on correct prose.
 
     So growing this layer is refused, and the residue is named instead of
     tracked. Two known costs stay: the practice-word escape excuses an option

@@ -8,15 +8,20 @@ not in the test. They are in this directory, one file per raise.
 
 ## Probing a guard, not raising a ceiling
 
-Any uncommitted edit to an assistant-facing document reds exactly two tests -
-`test_the_guidance_budget_is_not_silently_exceeded` and
-`test_the_newest_ledger_entry_measured_the_tree_it_ships_with` - regardless of
-what the edit says. That is correct behaviour for an unrecorded edit and it
-carries no information about whether any content guard caught anything. So when
-you are planting a defect into a document to find out what the suite notices,
-discount those two and read the rest; a run whose only failures are those two
-is a run in which no guard fired. Re-measure and add an entry below only when
-the edit is one you are actually shipping.
+Two tests react to an uncommitted edit to an assistant-facing document, and
+neither reads what the edit says.
+`test_the_newest_ledger_entry_measured_the_tree_it_ships_with` reds always,
+because the newest entry no longer measures the tree.
+`test_the_guidance_budget_is_not_silently_exceeded` reds whenever the edit
+grows the corpus past the headroom left under a ceiling - 57 bytes of TOTAL on
+trunk `6e18086e`, which most planted sentences exceed and a deletion or a very
+short insertion does not. Count on neither of them noticing anything about the
+content.
+
+So when you are planting a defect into a document to find out what the suite
+notices, discount those two and read the rest; a run whose only failures are
+those two is a run in which no guard fired. Re-measure and add an entry below
+only when the edit is one you are actually shipping.
 
 ## Raising a ceiling
 
