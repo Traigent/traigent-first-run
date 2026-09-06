@@ -11893,6 +11893,37 @@ def _sole_binding_node(
     return binders[0] if len(binders) == 1 else None
 
 
+def _binding_block(
+    node: ast.AST, source: StaticSourceEvidence
+) -> tuple[ast.AST, ...] | None:
+    """The statement LIST this binding is written directly in.
+
+    The list, not the statement around it, and the difference is a defect this
+    home shipped with for one review cycle: `if ...: needed = TABLE[model];
+    raise ...` has a parent `ast.If` that also owns an `orelse`, and the `else`
+    arm is a place the binding provably never reaches. A region taken from the
+    parent statement therefore covered an arm whose every read is a runtime
+    `NameError`, which is the exact outcome `_settled_binding_is_read_after`
+    exists to refuse.
+
+    Found by review rather than by the test written beside it, because that
+    test picked the read AFTER the whole `if` - outside either arm - and the
+    two placements look the same from the parent statement and differ from the
+    block. So both are rows now.
+    """
+    parent = source.parents.get(id(node))
+    if parent is None:
+        return None
+    return next(
+        (
+            tuple(field)
+            for _name, field in ast.iter_fields(parent)
+            if isinstance(field, list) and any(item is node for item in field)
+        ),
+        None,
+    )
+
+
 def _binding_block_cannot_continue(
     node: ast.AST, owner: ast.AST, source: StaticSourceEvidence
 ) -> bool:
@@ -11938,14 +11969,7 @@ def _binding_block_cannot_continue(
     parent = source.parents.get(id(node))
     if parent is None or parent is owner:
         return False
-    block = next(
-        (
-            field
-            for _name, field in ast.iter_fields(parent)
-            if isinstance(field, list) and any(item is node for item in field)
-        ),
-        None,
-    )
+    block = _binding_block(node, source)
     if block is None:
         return False
     following = block[next(i for i, item in enumerate(block) if item is node) + 1 :]
@@ -11977,20 +12001,23 @@ def _binding_block_cannot_continue(
 
 def _settled_binding_region(
     node: ast.AST, owner: ast.AST, source: StaticSourceEvidence
-) -> ast.AST:
-    """The subtree outside which a settled binding has no live read.
+) -> tuple[ast.AST, ...] | None:
+    """The statements outside which a settled binding has no live read.
 
-    Asked only of a binding `_settled_local_binding` has already settled, so
-    there are two answers. A direct statement's region is the owner, and the
-    question a caller asks with it is then trivially yes. A binding
-    `_binding_block_cannot_continue` admits has the statement its raising block
-    belongs to, because a read anywhere else finds the name unbound. Here
-    rather than at the caller for the reason the rest of this home is: a reader
-    that works the placement out for itself is one statement away from
+    Asked only of a binding `_settled_local_binding` has already settled, and
+    it is `_binding_block` for both answers rather than two rules. A direct
+    statement's block is the owner's own body, so every read in the callable is
+    inside it and the question a caller asks with this is trivially yes. A
+    binding `_binding_block_cannot_continue` admits has the raising block, and
+    that is the block and NOT the statement holding it: the `else` arm of the
+    same `if` is a sibling list the binding never reaches.
+
+    Here rather than at the caller for the reason the rest of this home is: a
+    reader that works the placement out for itself is one statement away from
     re-deriving the conditions around it.
     """
-    parent = source.parents.get(id(node))
-    return owner if parent is None else parent
+    del owner
+    return _binding_block(node, source)
 
 
 def _settled_binding_is_read_after(
@@ -12002,21 +12029,23 @@ def _settled_binding_is_read_after(
     """Whether this read follows a settled binding on a path that can run.
 
     Two halves of the same question. It must follow in the file, which is what
-    a reader checks by looking; and it must sit inside
-    `_settled_binding_region`, which for a binding in a raising block is that
-    block's own statement. Without the second, a read written after the guard
-    would be credited the value the guard bound - and that read can never
-    execute with the name bound, so crediting it credits a setting no run of
-    the agent ever varies.
+    a reader checks by looking; and it must sit inside one of the statements
+    `_settled_binding_region` returns, which for a binding in a raising block
+    is that block and not the statement around it. Without the second, a read
+    written after the guard - or in the `else` arm of the guard's own `if` -
+    would be credited the value the guard bound, and neither read can ever
+    execute with the name bound. Crediting one credits a setting no run of the
+    agent ever varies, which is this check's own worse error arrived at from
+    the other side.
     """
     if reference.lineno <= (node.end_lineno or node.lineno):
         return False
     region = _settled_binding_region(node, owner, source)
-    if region is owner:
-        return True
+    if region is None:
+        return False
     current: ast.AST | None = reference
     while current is not None:
-        if current is region:
+        if any(statement is current for statement in region):
             return True
         current = source.parents.get(id(current))
     return False
@@ -12100,6 +12129,30 @@ def _settled_local_assignment(
     if not isinstance(node, (ast.Assign, ast.AnnAssign)):
         return None
     return node if _settled_local_binding(node, owner, source) == name else None
+
+
+def _settled_binding_cannot_reach_a_request(
+    name: str, owner: ast.AST, source: StaticSourceEvidence
+) -> bool:
+    """Whether every read of this settled local is on a path that raises.
+
+    The third entry point of this home, beside `_settled_local_binding` and
+    `_settled_local_assignment`, and it is here for the reason they are. The
+    reads half of the alias rule genuinely needs the placement fact - a binding
+    in a block that cannot continue has no read that reaches a request, which
+    is a stronger statement than its enumeration of control expressions makes -
+    and the first revision of this pass got it by calling
+    `_binding_block_cannot_continue` from the reader itself. That is a fourth
+    home for the placement question wearing a different name, which review
+    caught and the structural guard did not, because the guard listed the two
+    primitives that had leaked before rather than the primitives this home has.
+
+    So the fact is served from inside the home, the guard now forbids every
+    primitive here rather than the two it had met, and
+    `_alias_reads_only_route_a_request` joins the readers it checks.
+    """
+    node = _settled_local_assignment(name, owner, source)
+    return node is not None and _binding_block_cannot_continue(node, owner, source)
 
 
 def _plain_assignment_of(name: str, node: ast.AST) -> ast.Assign | ast.AnnAssign | None:
@@ -14562,26 +14615,33 @@ def _alias_reads_only_route_a_request(
     never using `needed` leaves the payload exactly where it was. Written down
     because the next reader would otherwise have to derive it from `all`.
 
-    One placement answers yes without the enumeration being consulted, and it
-    is not a shortcut - it is a STRONGER argument than the enumeration makes.
-    When `_binding_block_cannot_continue` admits the binding, every read of the
-    alias that can execute is inside a block that ends in a `raise`, so the
-    call returns no request and no read of the alias can send, replace or
-    mutate a payload. The enumeration below asks the weaker question of a read
-    on a path that DOES reach the request, and asking it here would refuse
-    `raise ValueError(f"missing {needed}")` - a read inside an error message,
-    which is the reads residual this function records - for a value that
-    provably never reaches one. That is the same argument
+    One placement answers yes without the enumeration being consulted, asked of
+    `_settled_binding_cannot_reach_a_request` rather than worked out here, and
+    it is not a shortcut - it is a STRONGER argument than the enumeration
+    makes. When that placement holds, every read of the alias that can execute
+    is inside a block that ends in a `raise`, so this call returns no request
+    and no read of the alias can send, replace or mutate THE PAYLOAD OF A
+    REQUEST THIS CALL RETURNS. The enumeration below asks the weaker question
+    of a read on a path that DOES reach that request, and asking it here would
+    refuse `raise ValueError(f"missing {needed}")` - a read inside an error
+    message, which is the reads residual this function records - for a value
+    that provably never reaches one. That is the same argument
     `_request_parameter_is_intact` already makes one input over for the
     parameter itself, and this is the placement where it holds for an alias.
 
-    Its bound is the bound that exemption already has: an expression evaluated
-    while raising can still make a call of its own, and neither reader follows
-    one into a request.
+    The property is stated over the request this call returns because that is
+    what it establishes, and the wider claim would be false. An expression
+    evaluated while raising can still make a call of ITS OWN - `raise
+    ValueError(client.create(model=needed))` really does send - and neither
+    reader follows one, so such a file scores as though the guard were honest.
+    Measured, and it is a false credit rather than a perverse incentive: it
+    scores what the honest guard scores, never more, so the inequality this
+    pass exists to establish is untouched. The bound is inherited from
+    `_request_parameter_is_intact`'s raise exemption rather than opened here,
+    and closing it is a decision about that exemption, not about this
+    placement.
     """
-    if (
-        binding := _settled_local_assignment(alias, callable_node, source)
-    ) is not None and _binding_block_cannot_continue(binding, callable_node, source):
+    if _settled_binding_cannot_reach_a_request(alias, callable_node, source):
         return True
     return all(
         _reference_only_routes_a_request(

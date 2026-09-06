@@ -23038,7 +23038,29 @@ def run(style, question):
                     mentioned.add(node.value)
         return mentioned
 
-    def test_the_three_alias_readers_ask_the_one_helper(self) -> None:
+    # Every entry point of the home, and every primitive that lives inside it.
+    # Kept as two names rather than as literals in the test body because the
+    # gap this guard had was a LIST that had not grown with the home: it
+    # forbade the two primitives that had leaked before, so a third could leak
+    # past a test written to stop exactly that.  Read from the module so a
+    # primitive added here without a decision shows up as an unlisted name.
+    HOME_ENTRY_POINTS = frozenset(
+        {
+            "_settled_local_binding",
+            "_settled_local_assignment",
+            "_settled_binding_cannot_reach_a_request",
+            "_settled_binding_is_read_after",
+        }
+    )
+    HOME_PRIMITIVES = (
+        "_sole_binding_node",
+        "_nested_scope_leaves_alone",
+        "_binding_block",
+        "_binding_block_cannot_continue",
+        "_settled_binding_region",
+    )
+
+    def test_the_alias_readers_ask_the_one_helper(self) -> None:
         """One decision, one home - read from the parse, not from the text.
 
         Behaviour alone cannot catch the readers drifting apart again: a change
@@ -23052,26 +23074,68 @@ def run(style, question):
 
         `_local_alias_initializer` is in the list because it was the third home
         the review found, and the one whose copy of the conditions had already
-        drifted.
+        drifted. `_alias_reads_only_route_a_request` is the fourth, and it is
+        here because traigent-first-run#444's first revision reached past the
+        home for the placement fact its reads half needs, and this guard let it
+        through: the forbidden tuple named the two primitives that had leaked
+        BEFORE rather than the primitives the home has. A list of what went
+        wrong last time is not a rule, so both lists are now the home's, and
+        the fact is served by an entry point.
         """
         for reader in (
             MODULE._table_alias_is_only_read,
             MODULE._reference_only_routes_a_request,
             MODULE._local_alias_initializer,
+            MODULE._alias_reads_only_route_a_request,
         ):
             with self.subTest(reader=reader.__name__):
                 mentioned = self._names_mentioned(reader)
-                # Two entry points, one home: `_settled_local_binding` judges a
-                # node, `_settled_local_assignment` finds one by name for a
-                # caller that starts from a read. The lookup primitive lives
-                # inside the home with them, which is what keeps it off this
-                # list for the third reader.
+                # Three entry points, one home: `_settled_local_binding` judges
+                # a node, `_settled_local_assignment` finds one by name for a
+                # caller that starts from a read, and
+                # `_settled_binding_cannot_reach_a_request` answers the
+                # placement question the reads half needs. The lookup and
+                # placement primitives live inside the home with them, which is
+                # what keeps them off this list for every reader.
                 self.assertTrue(
-                    mentioned & {"_settled_local_binding", "_settled_local_assignment"},
+                    mentioned & self.HOME_ENTRY_POINTS,
                     f"{reader.__name__} does not ask the shared helper",
                 )
-                for primitive in ("_sole_binding_node", "_nested_scope_leaves_alone"):
+                for primitive in self.HOME_PRIMITIVES:
                     self.assertNotIn(primitive, mentioned)
+
+    def test_the_guard_lists_every_primitive_the_home_has(self) -> None:
+        """The half the last revision of this guard was missing.
+
+        A forbidden tuple written from the primitives that had leaked is a
+        record, not a rule, and it is one name short the moment the home gains
+        a primitive - which is exactly how #444's first revision called
+        `_binding_block_cannot_continue` from a reader with this test green.
+        So the tuple is checked against the module rather than trusted: every
+        module-level name defined between the home's first primitive and its
+        last entry point is either an entry point readers may ask or a
+        primitive they may not, and a new one is neither until somebody says
+        which.
+        """
+        tree = ast.parse(SCRIPT.read_text(encoding="utf-8"))
+        defined = [
+            node.name
+            for node in tree.body
+            if isinstance(node, ast.FunctionDef)
+            and node.name.startswith(("_settled_", "_binding_block", "_sole_binding"))
+        ]
+        self.assertIn("_settled_local_binding", defined)
+        unclassified = [
+            name
+            for name in defined
+            if name not in self.HOME_ENTRY_POINTS and name not in self.HOME_PRIMITIVES
+        ]
+        self.assertEqual(
+            unclassified,
+            [],
+            "a name in the settled-binding home is neither an entry point "
+            "readers may ask nor a primitive they may not",
+        )
 
     def test_the_readers_agree_on_a_binding_they_all_see(self) -> None:
         """The half a name scan cannot reach: one-sided extra conditions.
@@ -23295,37 +23359,75 @@ class ABranchThatRaisesSettlesTheBindingItMakesTests(unittest.TestCase):
     def test_a_read_outside_the_raising_block_is_not_credited_its_value(self) -> None:
         """The region half, which is `_local_alias_initializer`'s own.
 
-        A read written after the guard is textually after the binding and can
-        never execute with the name bound - the block raised. Crediting it
-        would hand a setting to a call that only ever raises `NameError`, which
-        is the "knob the run cannot vary" error this check refuses in the first
-        place, arrived at from the other side.
+        A read the raising block does not contain can never execute with the
+        name bound. Crediting it would hand a setting to a call that only ever
+        raises `NameError`, which is the "knob the run cannot vary" error this
+        check refuses in the first place, arrived at from the other side.
+
+        THREE placements, not one, and the difference is the defect the first
+        revision of this pass shipped. It took the region from the binding's
+        PARENT STATEMENT, and an `ast.If` owns an `orelse` as well as a `body`,
+        so the `else` and `elif` arms - which the raising arm provably never
+        reaches - were inside the region and credited. The row written beside
+        that code picked the read after the whole `if`, which is outside the
+        parent statement too, so it passed against both the defect and its fix
+        and proved nothing about the arm. The region is the binding's own
+        BLOCK now, and all three placements are rows.
         """
-        body = (
-            "    if model not in supplied:\n"
-            "        needed = model\n"
-            '        raise ValueError(f"missing {needed}")\n'
-            "    return needed\n"
-        )
-        _binding, owner, evidence = self._binding(body)
-        inside, outside = sorted(
+        for label, body, credited_reads in (
             (
-                node
-                for node in ast.walk(owner)
-                if isinstance(node, ast.Name)
-                and node.id == "needed"
-                and isinstance(node.ctx, ast.Load)
+                "a read after the whole if",
+                "    if model not in supplied:\n"
+                "        needed = model\n"
+                '        raise ValueError(f"missing {needed}")\n'
+                "    return needed\n",
+                1,
             ),
-            key=lambda node: node.lineno,
-        )
-        self.assertIsNotNone(
-            MODULE._local_alias_initializer(inside, owner, evidence),
-            "the read inside the raising block lost its value",
-        )
-        self.assertIsNone(
-            MODULE._local_alias_initializer(outside, owner, evidence),
-            "a read that can only be a NameError was credited a value",
-        )
+            (
+                "a read in the else arm of the guard's own if",
+                "    if model not in supplied:\n"
+                "        needed = model\n"
+                '        raise ValueError(f"missing {needed}")\n'
+                "    else:\n"
+                "        return needed\n",
+                1,
+            ),
+            (
+                "a read in an elif arm beside the raising one",
+                "    if model not in supplied:\n"
+                "        needed = model\n"
+                '        raise ValueError(f"missing {needed}")\n'
+                "    elif supplied:\n"
+                "        return needed\n",
+                1,
+            ),
+        ):
+            with self.subTest(placement=label):
+                _binding, owner, evidence = self._binding(body)
+                reads = sorted(
+                    (
+                        node
+                        for node in ast.walk(owner)
+                        if isinstance(node, ast.Name)
+                        and node.id == "needed"
+                        and isinstance(node.ctx, ast.Load)
+                    ),
+                    key=lambda node: node.lineno,
+                )
+                followed = [
+                    read
+                    for read in reads
+                    if MODULE._local_alias_initializer(read, owner, evidence)
+                    is not None
+                ]
+                self.assertEqual(
+                    len(followed),
+                    credited_reads,
+                    f"{label}: a read that can only be a NameError was "
+                    f"credited a value, or the read inside the raising block "
+                    f"lost its own",
+                )
+                self.assertIs(followed[0], reads[0], label)
 
 
 class TheWalkthroughSizeNamesItselfTests(unittest.TestCase):
