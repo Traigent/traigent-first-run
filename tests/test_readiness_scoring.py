@@ -12,6 +12,7 @@ import re
 import symtable
 import sys
 import tempfile
+import textwrap
 import typing
 import unittest
 from dataclasses import asdict, replace
@@ -22098,24 +22099,299 @@ def run(style, question):
         self.assertIn(self.WRONG_RULE, space.evidence)
         self.assertNotIn(self.LOCAL_RULE, space.evidence)
 
-    def test_both_alias_readers_ask_the_one_helper(self) -> None:
-        """One decision, one home - asserted structurally, not just by behaviour.
+    def test_a_dead_local_does_not_take_the_blame_from_a_concatenation(self) -> None:
+        """The mixed agent, where both refusal conditions are true at once.
 
-        Behaviour alone cannot catch the two drifting apart again: a later
-        change could re-derive the conditions inside one reader and every
-        behavioural row here would still pass on the day it was written. So
-        this reads the two functions and requires that neither of them handles
-        `_sole_binding_node` or `_nested_scope_leaves_alone` itself.
+        `unfollowed` and the surviving-value test are accumulated over the wide
+        selection list across every route site, so an agent can have one read
+        bound to a local and a DIFFERENT read concatenated into the request.
+        The local clause is the more specific sentence and is still the wrong
+        one here: `label` is dead to the request, and an author who deletes or
+        settles it scores exactly the same 0. The concatenation is the cause.
+
+        This is the case the first revision of this class could not see. Its
+        two guards used an agent with a local and no concatenation, and one
+        with a concatenation and no local, so neither could ever exercise the
+        order between them - and the branch shipped blaming the local. Trunk
+        was right here and the change was wrong, which makes it a regression
+        rather than an inherited defect, and it is the same harm #387 filed:
+        the card naming a rule other than the one that fired.
+        """
+        source = """\
+from openai import OpenAI
+
+STYLES = {"terse": "Be brief.", "warm": "Be friendly."}
+
+client = OpenAI()
+
+
+def run(style, question):
+    label = STYLES[style]
+    label = label or "Be brief."
+    return client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{"role": "user", "content": STYLES[style] + question}],
+    )
+"""
+        compile(source, "agent.py", "exec", dont_inherit=True)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "agent.py").write_text(source, encoding="utf-8")
+            facts = MODULE.agent_facts_from_discovery(
+                {
+                    "source": "agent.py",
+                    "knobs": {
+                        "style": {
+                            "values": ["terse", "warm"],
+                            "source_lines": [3],
+                            "evidence": "agent.py:3 spells the styles out.",
+                        }
+                    },
+                },
+                source_root=root,
+                selected_agent=root / "agent.py",
+                selected_agent_callable="run",
+            )
+        pillar, _caps, _rows = MODULE.score_agent(facts)
+        space = next(sub for sub in pillar.subscores if sub.name == "search-space")
+        self.assertIn(self.WRONG_RULE, space.evidence)
+        self.assertNotIn(self.LOCAL_RULE, space.evidence)
+        self.assertNotIn("label", space.evidence)
+
+    def test_a_guard_is_not_the_keyword_the_author_reached_for(self) -> None:
+        """`assert` and `while` guard exactly as an `if` does, and now score so.
+
+        The credit rule is a property - the value is consumed as a truth value
+        and cannot be sent, replaced or mutated - and the first revision
+        implemented it as one node type. `assert needed in supplied` is the
+        shortest honest spelling of the credential guard #387 is about, and it
+        cost the whole agent pillar while the `if` spelling kept it, which is
+        the same "which keyword did you reach for" rule the widening exists to
+        remove one input over.
+
+        The card was worse than the score: it told the author their binding had
+        to be "read only in guards", which this code already was. A rule the
+        source in front of the reader satisfies leaves them nowhere to go.
+        """
+        for label, guard in (
+            (
+                "assert",
+                "    needed = MODEL_CREDENTIALS[model]\n"
+                "    assert needed in supplied\n",
+            ),
+            (
+                "a conditional expression's test",
+                "    needed = MODEL_CREDENTIALS[model]\n"
+                '    checked = "y" if needed in supplied else "n"\n'
+                "    del checked\n",
+            ),
+        ):
+            with self.subTest(guard=label):
+                credited, value, evidence = self._verdict(guard)
+                self.assertTrue(credited, evidence)
+                self.assertEqual(value, self._verdict("")[1], evidence)
+
+    def test_a_while_is_refused_by_the_path_shape_and_not_by_this_rule(self) -> None:
+        """The row this widening does NOT move, pinned so nobody re-files it.
+
+        A `while` test is the same property as an `if` test and the predicate
+        now accepts it, but the score does not move, because a `while` - like a
+        `for`, a `try`, a `with` or a `match` - anywhere in the callable makes
+        `_request_path_outcomes` yield "other", and `_request_parameters`
+        refuses a callable whose paths are not all request-or-raise. That is a
+        different rule with its own safety argument and it is unchanged here.
+
+        Measured both ways so the attribution is not a guess: the `while`
+        spelling written directly on the parameter, with no local anywhere, is
+        refused identically, so the alias rule cannot be what refused it. And
+        the card does not print the local-binding sentence for it, which is the
+        thing that would actually mislead an author.
+        """
+        for label, guard in (
+            (
+                "through a local",
+                "    needed = MODEL_CREDENTIALS[model]\n"
+                "    while needed not in supplied:\n"
+                "        break\n",
+            ),
+            (
+                "written directly on the parameter",
+                "    while MODEL_CREDENTIALS[model] not in supplied:\n"
+                "        break\n",
+            ),
+        ):
+            with self.subTest(spelling=label):
+                credited, _value, evidence = self._verdict(guard)
+                self.assertFalse(credited, evidence)
+                self.assertNotIn(self.LOCAL_RULE, evidence)
+
+    def test_an_arm_is_not_a_test(self) -> None:
+        """The boundary the widening must not cross, asserted beside it.
+
+        An `assert`'s message and a conditional expression's arms are ordinary
+        expressions that carry the value away, so they stay escapes. Without
+        this the previous test would pass just as well against a change that
+        credited the whole statement.
+        """
+        for label, guard in (
+            (
+                "the assert message",
+                "    needed = MODEL_CREDENTIALS[model]\n"
+                "    assert supplied, needed\n",
+            ),
+            (
+                "an arm of the conditional",
+                "    needed = MODEL_CREDENTIALS[model]\n"
+                '    checked = needed if supplied else "n"\n'
+                "    del checked\n",
+            ),
+        ):
+            with self.subTest(escape=label):
+                credited, _value, evidence = self._verdict(guard)
+                self.assertFalse(credited, evidence)
+                self.assertIn(self.LOCAL_RULE, evidence)
+
+    def test_the_card_states_the_rule_the_code_is_actually_judged_by(self) -> None:
+        """The refusal sentence has to be falsifiable against the source.
+
+        It said "read only in guards" while the check accepted one shape of
+        guard, so on a refused `assert` the author could verify every condition
+        the card listed and still be refused. The sentence now names the four
+        tests, and the f-string in an error message that is the commonest way
+        to fail it.
+        """
+        _credited, _value, evidence = self._verdict(
+            "    needed = MODEL_CREDENTIALS[model]\n"
+            '    raise ValueError(f"missing {needed}")\n'
+        )
+        self.assertIn(self.LOCAL_RULE, evidence)
+        self.assertIn(
+            "every read of it has to be the test of an `if`, `assert`, "
+            "`while` or conditional expression",
+            evidence,
+        )
+        self.assertIn("f-string in an error message", evidence)
+        self.assertNotIn("read only in guards", evidence)
+
+    def _names_mentioned(self, reader: object) -> set[str]:
+        """Every identifier a function's own body mentions, however spelt.
+
+        Parsed rather than substring-matched, and the string constants are in
+        the set on purpose: a re-derivation reached through
+        `globals()["_sole_binding_node"]` is the same defect as calling it, and
+        a text search for the call spelling does not see it. The docstring is
+        dropped by reading the parsed body, so a mention inside prose - which
+        every one of these functions has, deliberately - is not a hit.
+        """
+        function = ast.parse(textwrap.dedent(inspect.getsource(reader))).body[0]
+        assert isinstance(function, ast.FunctionDef)
+        body = function.body[1:] if ast.get_docstring(function) else function.body
+        mentioned: set[str] = set()
+        for statement in body:
+            for node in ast.walk(statement):
+                if isinstance(node, ast.Name):
+                    mentioned.add(node.id)
+                elif isinstance(node, ast.Attribute):
+                    mentioned.add(node.attr)
+                elif isinstance(node, ast.Constant) and isinstance(node.value, str):
+                    mentioned.add(node.value)
+        return mentioned
+
+    def test_the_three_alias_readers_ask_the_one_helper(self) -> None:
+        """One decision, one home - read from the parse, not from the text.
+
+        Behaviour alone cannot catch the readers drifting apart again: a change
+        could re-derive the conditions inside one of them and every behavioural
+        row here would still pass on the day it was written. The first revision
+        of this test read the source as a string, which a review defeated two
+        ways - by re-deriving through a `globals()` lookup, and by adding
+        conditions to one reader that the others lack. This half closes the
+        first; `test_the_readers_agree_on_a_binding_they_all_see` closes the
+        second, and neither is sufficient alone.
+
+        `_local_alias_initializer` is in the list because it was the third home
+        the review found, and the one whose copy of the conditions had already
+        drifted.
         """
         for reader in (
             MODULE._table_alias_is_only_read,
             MODULE._reference_only_routes_a_request,
+            MODULE._local_alias_initializer,
         ):
             with self.subTest(reader=reader.__name__):
-                body = inspect.getsource(reader).split('"""')[-1]
-                self.assertIn("_settled_local_binding(", body)
-                for primitive in ("_sole_binding_node(", "_nested_scope_leaves_alone("):
-                    self.assertNotIn(primitive, body)
+                mentioned = self._names_mentioned(reader)
+                # Two entry points, one home: `_settled_local_binding` judges a
+                # node, `_settled_local_assignment` finds one by name for a
+                # caller that starts from a read. The lookup primitive lives
+                # inside the home with them, which is what keeps it off this
+                # list for the third reader.
+                self.assertTrue(
+                    mentioned & {"_settled_local_binding", "_settled_local_assignment"},
+                    f"{reader.__name__} does not ask the shared helper",
+                )
+                for primitive in ("_sole_binding_node", "_nested_scope_leaves_alone"):
+                    self.assertNotIn(primitive, mentioned)
+
+    def test_the_readers_agree_on_a_binding_they_all_see(self) -> None:
+        """The half a name scan cannot reach: one-sided extra conditions.
+
+        A reader that keeps calling the shared helper and then adds a condition
+        of its own is the exact shape the original divergence had, and it is
+        invisible to any check on which names appear. So this varies the one
+        thing a spurious condition is most likely to key on - how the alias is
+        spelt - and requires the same verdict on every route.
+
+        The table route and the request route are asked about the same file, so
+        a condition added to one and not the other shows up as a disagreement
+        rather than as a silent narrowing.
+        """
+        for alias in ("needed", "_needed", "Needed", "needed2", "NEEDED"):
+            with self.subTest(alias=alias):
+                request = self._verdict(
+                    f"    {alias} = MODEL_CREDENTIALS[model]\n"
+                    f"    if {alias} not in supplied:\n"
+                    '        raise ValueError("missing credential")\n'
+                )[0]
+                self.assertTrue(request, f"the request route refused {alias!r}")
+                table = self._table_alias_verdict(alias)
+                self.assertTrue(table, f"the table route refused {alias!r}")
+
+    def _table_alias_verdict(self, alias: str) -> bool:
+        """Whether the table survives being aliased under this spelling.
+
+        The agent is `TableReadWideningTests`'s, because that class already
+        establishes this shape credits and says why the indexed route is the
+        one an extra statement does not disturb.
+        """
+        source = f"""\
+from openai import OpenAI
+
+MODELS = {{"fast": "gpt-4o-mini", "slow": "gpt-4o"}}
+
+client = OpenAI()
+
+
+def run(cfg, question):
+    model = MODELS[cfg["model"]]
+    {alias} = MODELS
+    reply = client.chat.completions.create(
+        model=model, messages=[{{"role": "user", "content": question}}]
+    )
+    return reply.choices[0].message.content
+"""
+        compile(source, "agent.py", "exec", dont_inherit=True)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "agent.py").write_text(source, encoding="utf-8")
+            facts = MODULE.agent_facts_from_discovery(
+                {"source": "agent.py", "knobs": self.KNOB},
+                source_root=root,
+                selected_agent=root / "agent.py",
+                selected_agent_callable="run",
+            )
+        pillar, _caps, _rows = MODULE.score_agent(facts)
+        space = next(sub for sub in pillar.subscores if sub.name == "search-space")
+        return "possible settings model" in space.evidence
 
 
 class TheWalkthroughSizeNamesItselfTests(unittest.TestCase):
