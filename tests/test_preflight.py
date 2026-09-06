@@ -71,7 +71,7 @@ class StaticPreflightTests(unittest.TestCase):
             with mock.patch.dict(
                 os.environ, {"TRAIGENT_RUN_COST_LIMIT": "7.00"}, clear=False
             ):
-                effective, file_values = MODULE.read_env(env_path)
+                effective, file_values, process_values = MODULE.read_env(env_path)
             self.assertEqual(effective["TRAIGENT_RUN_COST_LIMIT"], "7.00")
             self.assertEqual(file_values["TRAIGENT_RUN_COST_LIMIT"], "2.00")
 
@@ -85,7 +85,7 @@ class StaticPreflightTests(unittest.TestCase):
         the approved figures it is launched with, so a reader told the SDK
         default governs is being told the walkthrough's ceiling does not.
         """
-        MODULE.check_cost_settings({}, {})
+        MODULE.check_cost_settings({}, {}, {})
         cost_cap = next(
             result for result in MODULE.RESULTS if result.check == "cost-cap"
         )
@@ -105,7 +105,7 @@ class StaticPreflightTests(unittest.TestCase):
         ):
             with self.subTest(name=name):
                 MODULE.RESULTS.clear()
-                MODULE.check_cost_settings({}, {name: "500.00"})
+                MODULE.check_cost_settings({}, {name: "500.00"}, {})
                 result = next(
                     item
                     for item in MODULE.RESULTS
@@ -116,13 +116,16 @@ class StaticPreflightTests(unittest.TestCase):
                 self.assertIn("do not authorize", result.detail)
 
         # Exercise the actual dotenv merge: a stale, malformed value must be
-        # inventory only, not a preflight failure or an active-run claim.
+        # inventory only, not a preflight failure or an active-run claim. A
+        # fresh registry, because `emit` refuses a check recorded twice and the
+        # loop above already recorded `cost-cap`.
+        MODULE.RESULTS.clear()
         with tempfile.TemporaryDirectory() as directory:
             env_path = Path(directory) / ".env"
             env_path.write_text("TRAIGENT_RUN_COST_LIMIT=not-a-number\n")
             with mock.patch.dict(os.environ, {}, clear=True):
-                effective, file_values = MODULE.read_env(env_path)
-                MODULE.check_cost_settings(effective, file_values)
+                effective, file_values, process_values = MODULE.read_env(env_path)
+                MODULE.check_cost_settings(effective, file_values, process_values)
         self.assertFalse(
             any(
                 item.check == "cost-cap" and item.status == MODULE.FAIL
@@ -143,15 +146,15 @@ class StaticPreflightTests(unittest.TestCase):
             with mock.patch.dict(
                 os.environ, {"TRAIGENT_RUN_COST_LIMIT": "3.75"}, clear=True
             ):
-                effective, file_values = MODULE.read_env(env_path)
-                MODULE.check_cost_settings(effective, file_values)
+                effective, file_values, process_values = MODULE.read_env(env_path)
+                MODULE.check_cost_settings(effective, file_values, process_values)
         active_cap = next(item for item in MODULE.RESULTS if item.check == "cost-cap")
         self.assertEqual(active_cap.status, MODULE.SKIP)
         self.assertIn("inventory only", active_cap.detail)
         self.assertNotIn("$3.75", active_cap.detail)
 
         MODULE.RESULTS.clear()
-        MODULE.check_cost_settings({}, {})
+        MODULE.check_cost_settings({}, {}, {})
         self.assertEqual(
             [item for item in MODULE.RESULTS if item.check == "cost-figures-in-file"],
             [],
@@ -666,7 +669,7 @@ class StaticPreflightTests(unittest.TestCase):
         ):
             with self.subTest(present=sorted(present)):
                 MODULE.RESULTS.clear()
-                MODULE.check_cost_settings(dict(present), {})
+                MODULE.check_cost_settings(dict(present), {}, dict(present))
                 result = next(
                     item for item in MODULE.RESULTS if item.check == "backend-url"
                 )
@@ -676,7 +679,7 @@ class StaticPreflightTests(unittest.TestCase):
                 self.assertIn("connected destination at its approval", result.detail)
 
         MODULE.RESULTS.clear()
-        MODULE.check_cost_settings({}, {})
+        MODULE.check_cost_settings({}, {}, {})
         self.assertEqual(
             [item for item in MODULE.RESULTS if item.check == "backend-url"],
             [],
@@ -5399,3 +5402,241 @@ class TheStructuralSqlComparisonAFileDelegatesToTests(unittest.TestCase):
             "and the copy beside this evaluator is unchanged (line 8)",
         )
         self.assertIs(result.metrics["executes"], False)
+
+
+class OneRecordPerCheckTests(unittest.TestCase):
+    """Finding 31: a check name is recorded once, and the registry says so.
+
+    Two checks emitted twice under one name, and every reader keyed by check
+    name kept whichever record came last - on a payload ordered FAIL then
+    WARN, the FAIL was gone from the score. Each folds its findings into one
+    record now, and `emit` refuses a second one so the next pair fails here.
+    """
+
+    def setUp(self) -> None:
+        MODULE.RESULTS.clear()
+
+    def test_the_registry_refuses_a_check_recorded_twice(self) -> None:
+        MODULE.emit("dataset-ids", MODULE.FAIL, "first")
+        with self.assertRaises(MODULE.DuplicateCheckName) as refused:
+            MODULE.emit("dataset-ids", MODULE.WARN, "second")
+        self.assertIn("'dataset-ids'", str(refused.exception))
+        self.assertEqual(len(MODULE.RESULTS), 1)
+        self.assertEqual(MODULE.RESULTS[0].status, MODULE.FAIL)
+
+    def test_a_partial_bedrock_triple_is_one_warning_on_the_inventory(self) -> None:
+        MODULE.check_keys(
+            {"OPENAI_API_KEY": "placeholder-openai", "AWS_ACCESS_KEY_ID": "placeholder"}
+        )
+        records = [r for r in MODULE.RESULTS if r.check == "provider-credentials"]
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0].status, MODULE.WARN)
+        self.assertIn("credential names are available for OpenAI", records[0].detail)
+        self.assertIn("Bedrock is not counted", records[0].detail)
+        self.assertIn("only 1 of its 3 names", records[0].detail)
+        self.assertIn("AWS credential chain", records[0].detail)
+        # And with nothing else present, the absent-names warning carries it.
+        MODULE.RESULTS.clear()
+        MODULE.check_keys({"AWS_REGION": "eu-west-1"})
+        records = [r for r in MODULE.RESULTS if r.check == "provider-credentials"]
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0].status, MODULE.WARN)
+        self.assertIn("no LLM provider credential names are present", records[0].detail)
+        self.assertIn("Bedrock is not counted", records[0].detail)
+
+    def test_missing_and_colliding_ids_are_one_record_that_fails(self) -> None:
+        rows = [
+            {
+                "id": "dup",
+                "input": "first question",
+                "output": "a",
+                "source": "production",
+            },
+            {
+                "id": "dup",
+                "input": "second question",
+                "output": "b",
+                "source": "production",
+            },
+            {"input": "third question", "output": "c", "source": "production"},
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            dataset = Path(directory) / "eval.jsonl"
+            dataset.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+            MODULE.check_dataset(dataset)
+        ids = [r for r in MODULE.RESULTS if r.check == "dataset-ids"]
+        self.assertEqual(len(ids), 1)
+        self.assertEqual(ids[0].status, MODULE.FAIL)
+        self.assertTrue(
+            ids[0].detail.startswith("1 duplicate ids: ['dup']"), ids[0].detail
+        )
+        self.assertIn("1 row at source line 3 has no stable id", ids[0].detail)
+        self.assertEqual(ids[0].metrics["duplicate_ids"], 1)
+        self.assertEqual(ids[0].metrics["rows_without_id"], 1)
+        # Every check a full run records is recorded once.
+        self.assertEqual(
+            len({r.check for r in MODULE.RESULTS}),
+            len(MODULE.RESULTS),
+            [r.check for r in MODULE.RESULTS],
+        )
+
+
+class TheCostApprovedWarningNamesItsSourceTests(unittest.TestCase):
+    """Finding 32: the process view and the file view, read apart.
+
+    `read_env` overlays the process on the file, so the merged view cannot say
+    where a value came from: file=1 with process=1 read as the file's and
+    never warned, and file=0 with process=1 warned "not by .env" although
+    .env set it. The process value is passed on its own, and any value there
+    is the warning, before the file is looked at.
+    """
+
+    def setUp(self) -> None:
+        MODULE.RESULTS.clear()
+
+    def _record(self) -> "MODULE.Result":
+        return next(r for r in MODULE.RESULTS if r.check == "cost-approved")
+
+    def test_a_value_only_in_the_file_is_inventory_and_says_so(self) -> None:
+        MODULE.check_cost_settings(
+            {"TRAIGENT_COST_APPROVED": "0"}, {"TRAIGENT_COST_APPROVED": "0"}, {}
+        )
+        record = self._record()
+        self.assertEqual(record.status, MODULE.SKIP)
+        self.assertIn("preserved in .env", record.detail)
+        self.assertIn("nothing in the process environment sets it", record.detail)
+        self.assertNotIn("confirm this is the approved paid process", record.detail)
+
+    def test_any_value_in_the_process_is_the_warning_whatever_the_file_says(
+        self,
+    ) -> None:
+        for file_values in (
+            {},
+            {"TRAIGENT_COST_APPROVED": "0"},
+            {"TRAIGENT_COST_APPROVED": "1"},
+        ):
+            with self.subTest(file_values=file_values):
+                MODULE.RESULTS.clear()
+                MODULE.check_cost_settings(
+                    {"TRAIGENT_COST_APPROVED": "1"},
+                    file_values,
+                    {"TRAIGENT_COST_APPROVED": "1"},
+                )
+                record = self._record()
+                self.assertEqual(record.status, MODULE.WARN)
+                self.assertIn("set in the process environment", record.detail)
+                self.assertIn("unset it in the shell", record.detail)
+                self.assertNotIn("not by .env", record.detail)
+                if file_values:
+                    self.assertIn(".env copy of it is inventory only", record.detail)
+                else:
+                    self.assertNotIn(".env copy", record.detail)
+
+    def test_an_approval_value_in_the_file_is_still_inventory(self) -> None:
+        MODULE.check_cost_settings(
+            {"TRAIGENT_COST_APPROVED": "true"}, {"TRAIGENT_COST_APPROVED": "true"}, {}
+        )
+        record = self._record()
+        self.assertEqual(record.status, MODULE.SKIP)
+        self.assertIn("does not authorize", record.detail)
+        self.assertIn("nothing in the process environment sets it", record.detail)
+
+    def test_through_the_real_merge_the_source_decides(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            env_path = Path(directory) / ".env"
+            env_path.write_text("TRAIGENT_COST_APPROVED=1\n")
+            with mock.patch.dict(os.environ, {}, clear=True):
+                effective, file_values, process_values = MODULE.read_env(env_path)
+                self.assertNotIn("TRAIGENT_COST_APPROVED", process_values)
+                MODULE.check_cost_settings(effective, file_values, process_values)
+            self.assertEqual(self._record().status, MODULE.SKIP)
+            MODULE.RESULTS.clear()
+            with mock.patch.dict(
+                os.environ, {"TRAIGENT_COST_APPROVED": "1"}, clear=True
+            ):
+                effective, file_values, process_values = MODULE.read_env(env_path)
+                MODULE.check_cost_settings(effective, file_values, process_values)
+            record = self._record()
+        self.assertEqual(record.status, MODULE.WARN)
+        self.assertIn("set in the process environment", record.detail)
+        self.assertIn(".env copy of it is inventory only", record.detail)
+
+
+class AStaleComparatorCopyIsNamedAndReCopiedTests(unittest.TestCase):
+    """Finding 27's re-copy note: an upgraded guide is not a customer edit.
+
+    The identity half of the structural route says nothing when the copy
+    beside the evaluator differs from the shipped file, and an upgrade of the
+    shipped file looks exactly like an edit of the copy from here. The note
+    names the second first, names both paths, and says what to do.
+    """
+
+    FORGED = (
+        '"""Compare two queries as parsed structures."""\n'
+        "\n"
+        "\n"
+        "def structural_match(candidate, expected):\n"
+        "    return float(str(candidate).casefold() == str(expected).casefold())\n"
+    )
+
+    def _beside(self, source: str, module: str | None):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            evaluator = root / "evaluator.py"
+            evaluator.write_text(source)
+            if module is not None:
+                (root / "sql_structure.py").write_text(module)
+            note = MODULE.stale_comparator_copy_note(ast.parse(source), evaluator)
+            MODULE.RESULTS.clear()
+            MODULE.check_evaluator(evaluator)
+            record = next(r for r in MODULE.RESULTS if r.check == "evaluator-shape")
+            return note, record, root / "sql_structure.py"
+
+    def test_a_copy_that_differs_says_to_re_copy_and_names_both_paths(self) -> None:
+        note, record, local = self._beside(DELEGATES_TO_BUNDLED_COMPARATOR, self.FORGED)
+        self.assertIsNotNone(note)
+        self.assertIn(str(local), note)
+        self.assertIn(str(MODULE.STRUCTURAL_SQL_ASSET), note)
+        self.assertIn("The shipped file changes when the guide is upgraded", note)
+        self.assertIn("not read as an edit of yours", note)
+        self.assertIn(f"copy {MODULE.STRUCTURAL_SQL_ASSET} over {local}", note)
+        self.assertIn("not credited", note)
+        self.assertEqual(record.status, MODULE.PASS)
+        self.assertIn(note, record.detail)
+        self.assertEqual(record.metrics["comparator_copy"], "differs-from-shipped")
+        self.assertNotIn("comparison_shape", record.metrics)
+
+    def test_the_shipped_copy_and_no_copy_draw_no_note(self) -> None:
+        for module in (MODULE.STRUCTURAL_SQL_ASSET.read_text(), None):
+            with self.subTest(copy="shipped" if module else "absent"):
+                note, record, _local = self._beside(
+                    DELEGATES_TO_BUNDLED_COMPARATOR, module
+                )
+                self.assertIsNone(note)
+                self.assertNotIn("comparator_copy", record.metrics)
+                self.assertNotIn("guide is upgraded", record.detail)
+        shipped_record = self._beside(
+            DELEGATES_TO_BUNDLED_COMPARATOR, MODULE.STRUCTURAL_SQL_ASSET.read_text()
+        )[1]
+        self.assertEqual(shipped_record.metrics["comparison_shape"], "sql-structure")
+
+    def test_a_file_that_does_not_delegate_draws_no_note(self) -> None:
+        note, record, _local = self._beside(CASEFOLD_COMPARISON, self.FORGED)
+        self.assertIsNone(note)
+        self.assertNotIn("comparator_copy", record.metrics)
+
+
+class TheCommandLineDocumentsItsExitCodesTests(unittest.TestCase):
+    """Finding 33: the four codes `run` and `main` return, printed by --help."""
+
+    def test_help_lists_every_exit_code(self) -> None:
+        process = subprocess.run(
+            [sys.executable, str(SCRIPT), "--help"], capture_output=True, text=True
+        )
+        self.assertEqual(process.returncode, 0, process.stderr)
+        self.assertIn("exit codes:", process.stdout)
+        for code in ("0", "1", "2", str(MODULE.INTERNAL_ERROR_EXIT)):
+            with self.subTest(code=code):
+                self.assertIn(f"\n  {code}  ", process.stdout)
+        self.assertIn("--strict", process.stdout)
+        self.assertIn(MODULE.TRACEBACK_ENV, process.stdout)

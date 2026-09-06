@@ -73,8 +73,7 @@ the script.
 The offer is one where material is missing - write it - and two where it is only short: keep what
 they brought, or add. `I have it` is never among them. It rides on every ask, unnumbered and last,
 because it answers where the material is rather than what to do about the material here - and a
-document that counts it teaches a reader to number it. Two blinded runs put it in the middle of the
-list, and both had read a count that included it.
+document that counts it teaches a reader to number it.
 
 What varies beyond that is the first sentence, and it is not a further route: whether the run
 derives from something or from nothing is a fact this run already established, so offering both
@@ -111,9 +110,9 @@ accepting it costs:
 > model-written, which lowers the ceiling on what the result may claim. Continue on the nine, add the
 > rest, or reply `I have it` with a path if there are rows I did not find.
 
-Three answers, not two, and the cost sits between the offer and them: a customer who is not told that
-a mostly-generated set claims less is being asked to agree to something they cannot weigh. Say it
-plainly and once - the dataset reference owns the arithmetic behind it.
+Two answers plus the standing path line, and the cost sits between the offer and them: a customer
+who is not told that a mostly-generated set claims less is being asked to agree to something they
+cannot weigh. Say it plainly and once - the dataset reference owns the arithmetic behind it.
 
 Match the sentence to which ceiling the card actually raised rather than to a row count of your own.
 The wiring-check ceiling is the harder finding, and its sentence is the one above; the
@@ -256,7 +255,7 @@ last on screen, and last read.
 
 One narrowing on what may be OFFERED lives outside this document, and is named here so this one is
 not read as the whole rule. Where the run has diagnosed a fault it can repair for nothing and the
-customer has already paid for the measurement that fault spoiled, SKILL stage 7 withholds routes
+customer has already paid for the measurement that fault spoiled, SKILL section 7 withholds routes
 this document would otherwise word. That menu only; everywhere else a route this document offers
 stays offered, and how any route is worded and ordered stays here.
 
@@ -264,7 +263,10 @@ stays offered, and how any route is worded and ordered stays here.
 
 Read it before anything is built. Material the user points at is material this run did not create,
 so it is scored rather than trusted, and it enters the matrix below as `real`, `limited`, or
-`invalid` on that evidence like any other candidate.
+`invalid` on that evidence like any other candidate. A dataset that arrives after the opening-gate
+calibration ran also re-derives the calibration cases: they were cut from the rows the run had
+then, and cases cut from other rows say nothing about these. SKILL section 4 owns the post-repair
+rule this serves.
 
 Three ways it does not resolve. Each lands somewhere, and none of them is a retry loop:
 
@@ -346,7 +348,7 @@ evidence without `values` or `low`/`high`; verify the real build path before add
 to the enhanced space. A stub whose comment lists the settings a real call *would* take is describing
 an agent that does not exist yet, and recording those names reports a search space this project does
 not have - the same false readiness a historical config-space file produces. Pass it as
-`scripts/readiness.py --agent-knobs`; SKILL.md stage 1 states where it is written, how far one
+`scripts/readiness.py --agent-knobs`; SKILL.md section 1 states where it is written, how far one
 reading travels, and where it stops. Each scoring gets its own directory there because a read is
 evidence about the source at the moment it was taken.
 
@@ -389,9 +391,7 @@ selected callable's own body proves it loops, so `"loop": false` beside one is r
 of those proves nothing, and `"loop"` is not a question about node types - it is whether the agent
 ends, and on what. An agent that never ends need hold no loop of its own: it can call a helper that
 spins, recurse, or hand the work to a comprehension, a generator, `map` or `itertools`. Record
-`"loop": true` for any of those. It is accepted without a matching node, and it is the honest answer;
-an earlier version of this checker compared the two for equality and refused it, which left an agent
-that never ends with no true document to write.
+`"loop": true` for any of those. It is accepted without a matching node, and it is the honest answer.
 
 **`bounded` is read the same way, and refused only where the tree proves it.** Two conditions
 together: the loop test is one the tree settles as true (`while True:`, `while 1:`, `while 2 > 1:`)
@@ -423,11 +423,6 @@ is refused - this is the "loop with a bound can be recorded" case that the contr
 below already names. A `while True` carrying an exit that the rule above counts is accepted for the
 same reason, because whether that exit is reached is not a question this read can answer. A `for` is
 never refused on this ground at all: it is bounded by its iterable.
-
-An earlier version of this checker refused on the body alone, without the constant test. That is a
-true premise with a false conclusion - it refused the textbook counter loop, printed "one input can
-cost an unbounded number of calls" over code that plainly terminates, and left the author no true
-document to write.
 
 **`tools` is refuted, never confirmed.** A name in `declared` that appears nowhere in the selected
 agent's file - not as an identifier, an attribute, or a string - is not a tool that agent declares,
@@ -597,7 +592,7 @@ the agent.
 
 Two of the criteria this pillar is asked about are not here, and the card says so rather than
 letting four checks imply that six were looked at: whether the dataset and the evaluation method are
-wired into the agent. That integration is what the matrix above builds and stage 5 verifies against
+wired into the agent. That integration is what the matrix above builds and section 5 verifies against
 the installed SDK, so at the opening gate there is nothing in the agent's source to read, and a
 score for it would be grading this run's own later work.
 

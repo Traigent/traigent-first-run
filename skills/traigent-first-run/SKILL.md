@@ -36,8 +36,8 @@ Use [`scripts/preflight.py`](scripts/preflight.py) for the free static preflight
 [`scripts/readiness.py`](scripts/readiness.py) as a mandatory gate, never only when it seems
 useful: score all three pillars at the start of every guided run before any Agent, Dataset, or
 Evaluation component creation or repair,
-again as a required step of local validation, again after each repair or creation, and once more
-after the run, to measure the space it searched. Use
+again as a required step of local validation, after each repair or creation as section 4 states, and
+once more after the run, to measure the space it searched. Use
 [`scripts/calibrate_evaluator.py`](scripts/calibrate_evaluator.py) for the separate,
 explicit evaluator-execution gate. Supply lifecycle-permitted evidence from the current run;
 an absent or deferred input scores its pillar from absent evidence and is never a reason to skip
@@ -79,10 +79,10 @@ exactly match the freshly rendered and approved enhanced card. If the invariants
 differ, do not resume this run: rename the old record to the next unused
 `traigent-runs/run-plan-historical-<YYYYMMDDTHHMMSSZ>.md` (never overwrite), keep its spend and results
 historical or baseline-only, copy a fresh template to canonical `traigent-runs/run-plan.md`, start
-at stage 1 with a new opening score, and never rerun paid work without newly scoped approval. That
+at section 1 with a new opening score; the operating contract owns re-running paid work. That
 opening score re-reads the agent, because the old record's readiness directories are historical
 with it: an opening score over an old reading is not one. Every `<YYYYMMDDTHHMMSSZ>` this guide
-writes into a name - that rename, stage 1's readiness directory, the run log's `ts` - is UTC when
+writes into a name - that rename, section 1's readiness directory, the run log's `ts` - is UTC when
 that file or directory is written, never one id minted per run and reused; the run supplies it,
 because no bundled script reads a clock.
 Observe a live process, but never restart or expand it from the record alone. A record with every
@@ -92,6 +92,13 @@ rule.
 ## Operating contract
 
 - Treat this as the user's **first Traigent run**, not as evidence about their expertise.
+- The walkthrough runs on a deliberately small set so it finishes in one sitting under the
+  approved ceiling, proves the cloud connection, and shows the workflow; it is not a search for
+  the best number. Without a newly scoped approval, never re-run a paid phase - baseline or
+  search - to improve a number, never add rows from the original data or elsewhere, never widen
+  the space, and never raise the trial cap. More or harder rows is the post-run handoff to
+  `traigent-dataset-curate`, never a route inside this run; a search that timed out follows
+  Recovery in `references/run-safety.md`.
 - Never classify or announce the user's expertise level.
 - Name the actor truthfully: "I will prepare the walkthrough dataset" for assistant-created
   artifacts, and "Traigent will run the managed search" only for work the service performs.
@@ -134,7 +141,7 @@ approval.
 | Create an isolated environment | Proceed only after task intent is anchored and the available standard-library-only component checks have run; do not fetch or install packages as part of environment creation. |
 | Install dependencies in the isolated environment | Proceed only after task intent is anchored and the available standard-library-only component checks have run, and only in the dedicated first-run environment this run created, for the exact packages and versions declared for the run, as a package-artifact fetch/install with no provider or Traigent calls, private-data transfer, or user/project code execution. Name its absolute path before touching it. Preserve every existing, shared, or dependent environment; do not install into or fall back to one. A user or environment policy that requires install approval still takes precedence. |
 | Create or update a minimal `.env` | Proceed only after free checks, and only through `references/run-safety.md`'s ordered handoff, which selects the file. Preserve existing values and comments, append only its missing provider key, and require mode `0600` before opening. Before writing, run that reference's git-tracked-file safety check and its ignore verification; it owns the exact commands and exit-code handling, and stop before secret entry if either check fails. Outside Git, do not create `.gitignore`. Never copy or request a duplicate key. Add or request the Traigent key only after the baseline checkpoint. |
-| Repair a working copy after the user chooses repair | Proceed only within the agreed repair scope, then revalidate from the failed gate. |
+| Repair a working copy after the user chooses repair | Proceed only within the agreed repair scope, then revalidate as section 4's post-repair rule states. |
 | Change real labels, expected answers, examples, or rubric policy | Show the exact judgment-dependent change and obtain explicit approval. |
 | Execute an evaluator or mock check | Proceed without provider approval only after inspection proves a non-executing evaluator path is local-only or every mock model call is intercepted, with no external side effects. A path that executes or imports candidate output as code, shells out with it, or submits it to a code/SQL engine is outside this first-run guide; what is outside is that path, never the task whose answer is code or SQL: stop before execution and follow `run-safety.md`'s manual-containment route. |
 | Make provider, private-data, connected Traigent, or external calls other than the narrow dependency fetch | Obtain stage-specific approval for recipients/data, scope, runtime, and ceiling: baseline first; connected optimization after its checkpoint. |
@@ -205,7 +212,14 @@ heading.
 Announce only the five stages above, as `Stage N/5`. The numbered sections below are
 this guide's structure, not those stages: never show their numbers or their titles.
 `Done / Now / Next` names those five stages - a `Next` reading "isolated SDK
-environment" names a section the customer was never given.
+environment" names a section the customer was never given. This guide's own prose says
+`section N` for a section below and `Stage N/5` for a stage; the map between them:
+
+- `Stage 1/5 · Inspect` - section 1.
+- `Stage 2/5 · Readiness` - sections 2 to 4: the board, the one ask, creation, local validation.
+- `Stage 3/5 · Baseline` - sections 5 and 6, and section 7 until the baseline returns.
+- `Stage 4/5 · Optimize` - section 7 from the local baseline checkpoint.
+- `Stage 5/5 · Results` - section 8.
 
 ### 1. Inspect quietly
 
@@ -215,7 +229,7 @@ read-only discovery without asking for approval:
 
 - Identify the project language, Python version, dependency system, and every existing virtual
   environment - not the first one found. A tree can hold several, under names no convention
-  covers (`env`, `.direnv`, `.tox`, a tool-managed path outside the project), and stage 5 cannot
+  covers (`env`, `.direnv`, `.tox`, a tool-managed path outside the project), and section 5 cannot
   choose between candidates it was never told about.
 - Record the chosen target project's absolute root and the selected agent's absolute path plus
   callable or command. When an old artifact names another target or agent, preserve it as
@@ -249,20 +263,11 @@ Ground readiness task kind per the evaluation reference.
 
 Declare who wrote the evaluator and the agent on every readiness call, as run-scoped state beside
 the method above: `--evaluator-origin` and `--agent-origin`, `brought` for the customer's own and
-`generated` for one this run created. Nothing in a scoring function or an agent's source says who
-typed it, so this is the only way the score can carry what the card's walkthrough section says,
-and it is you rather than the customer who knows - never ask. A customer who says a pre-existing
-agent or evaluator is not something they wrote or vetted has already put it outside `brought`,
-whatever its source reads like or however cleanly it calibrates: a clean read is not consent, and
-silence in the source does not outrank the customer's own words. If this run relies on that file
-anyway, repaired or not, declare it `generated` - the word covers anything standing in for what the
-customer did not bring, not only a file typed from nothing. Omit a flag only where that component
-does not exist yet; nothing has an origin before it is there. Update each the moment this run
-creates that component, so the re-score after a creation stops claiming the customer's own. Omitting
-one is not a neutral choice: it scores a generated component as if it were the customer's, which is
-the one thing the real-world/walkthrough separation exists to prevent. The dataset takes no such flag - its
-origin is counted per row from declared provenance, and a second declaration beside a count is two
-answers to one question.
+`generated` for one this run created or relies on in their place - a customer's disclaimer of a
+pre-existing file makes it `generated`, however cleanly it reads or calibrates. Decide it yourself,
+never ask. Omit a flag only while that component does not exist, and update it the moment this run
+creates the component. The dataset takes no such flag: its origin is counted per row from declared
+provenance.
 
 #### Opening readiness gate
 
@@ -271,8 +276,8 @@ one compatible Python 3.11-3.13 isolated-environment candidate overall and its r
 inside the user's project root, use its resolved interpreter and report `python-version` as
 measured. Otherwise use the host
 `python3` as a provisional, no-install bootstrap. Multiple compatible candidates and environments
-outside the project wait for stage 5; if the sole candidate fails, record why and fall back to the
-host. Stage 5 remains authoritative for the connected run.
+outside the project wait for section 5, which remains authoritative for the connected run; if the
+sole candidate fails, record why and fall back to the host.
 
 Run the bundled static preflight with `--defer-missing-sdk` over whatever dataset was discovered,
 omitting `--dataset` when none exists. Then include every safe measurement that can finish now in
@@ -284,10 +289,10 @@ answers its own question, and that reference states what the read is worth once 
 already configured, say so in the readiness turn: Traigent was set up in this project before this
 run started, so this may not be a first run, and this run still charges for its own baseline and
 search. Never read that as a blocker or a reason to stop - the evidence cannot tell an install apart
-from a finished optimization, and the decision is theirs at the stage 6 approval, which already
+from a finished optimization, and the decision is theirs at the section 6 approval, which already
 stops. When task intent is anchored and inspection finds a resolved deterministic
 evaluator, construct or revalidate its current-run case matrix and semantic-coverage review, then
-apply the evaluator-execution scope gate from stage 4. If the verdict is `sufficient` and the
+apply the evaluator-execution scope gate from section 4. If the verdict is `sufficient` and the
 complete path does not execute candidate-generated code or SQL, is local-only, side-effect-free,
 standard-library-only, and expected to return in seconds, run fresh credential-stripped calibration now and pass its result to
 `scripts/readiness.py --calibration`. This validates an existing component; it does not create or
@@ -311,7 +316,7 @@ evaluator itself, naming the file and line, and `references/run-safety.md` recor
 in-process route replaces the containment review. Apply the run-scoped evaluator-method rule above to both
 scripts, and apply the run-scoped task-kind rule to readiness only here - narrower than its
 destination rule in `references/evaluation-and-dataset.md`, because this gate's calibration takes no
-seam flags and so establishes nothing about delivery for stage 4 to reuse - and the origin rule with
+seam flags and so establishes nothing about delivery for section 4 to reuse - and the origin rule with
 it.
 **Opening dataset sequencing.** The opening preflight reads a discovered dataset with its default
 `input`/`output` fields, before any explicit field mapping; do not pass `--input-field` or
@@ -359,7 +364,7 @@ Answer a check you cannot settle as undetermined with the reason, never as a no 
 agent lacks the thing. Build declarations stay visible but unmeasured; an undetermined check
 still needs its reason. Never write a range or an
 option you did not read: an omitted parameter costs a few points, an invented one makes the card
-wrong. Wanting a second option here is the right instinct at the wrong stage - stage 5's enhanced
+wrong. Wanting a second option here is the right instinct at the wrong stage - section 7's enhanced
 run is where settings get added, from a materially larger space than the agent has today, so the
 honest one-option read costs the user nothing they do not get back. It attests nothing about wiring,
 clears no wiring cap, and writes nothing into the user's project.
@@ -368,18 +373,14 @@ agent's language or on how the card would look without it - and the flag is left
 inventory found no agent at all. Where an agent was found and its settings cannot be read out of it,
 name it and say what stopped the read, then offer to be pointed at source that can be read: that
 offer changes the opening score, which is what makes it worth asking, and it rides on the one ask in
-stage 2 below rather than adding one. Leave `--agent-knobs` off in that case: the flag says what a
+section 2 below rather than adding one. Leave `--agent-knobs` off in that case: the flag says what a
 read found, and no read completed, so passing an empty one reports a finding about the customer's
-agent that nothing established. That case is the source defeating the read, never this document
-being refused: a rejected document is yours to correct and send again, and dropping the flag instead
-tells the user something about their agent that is true only of your own paperwork.
-Proceed with what can be varied if nothing comes back. Never ask
+agent that nothing established. A document `readiness.py` rejects is yours to correct and send
+again, never a reason to drop the flag. Proceed with what can be varied if nothing comes back. Never ask
 for a config-space file here - the paragraph above omits
 every one of those found before this run's search, so it cannot answer this. The ceiling left
-standing is read by stage 4's cap routing below, which is unchanged. Pass this same reading to every
-later re-score of this record, re-reading the agent only where this run created or repaired it: a
-re-score that quietly drops the flag reports the agent pillar falling from what the opening read
-established to nothing, and that fall reaches the customer as an honest change in their project.
+standing is read by section 4's cap routing below, which is unchanged. Pass this same reading to every
+later re-score of this record, as section 4's post-repair rule states.
 `references/component-creation.md` owns the shape.
 The opening score is not skippable, always reports all three pillars, and is the score this run
 reports for the project. Show it before any Agent, Dataset, or Evaluation component is created or
@@ -401,7 +402,7 @@ use its readiness-score presentation.
 The score grades measured evidence, not declared existence. Report an uncalibrated real evaluator
 and an agent without current-run wiring evidence as not yet measured, never as absent. Do not infer
 `wired` from declared `knobs`, copy it from a historical document, or write it merely to clear a
-cap. Re-establish wiring on the current agent before the enhanced search as stage 7 requires; the
+cap. Re-establish wiring on the current agent before the enhanced search as section 7 requires; the
 zero-anchor opening may proceed through the same absent-evidence cap while local setup continues.
 Read-only preflight and readiness runs are static local validation; they authorize no project
 write.
@@ -484,9 +485,8 @@ render it again before the user answers. For every other starting state, render 
 real-world readiness board after inspection. Show the rendered card beside that board, as printed.
 State what the coding assistant will create for the walkthrough.
 Do not show external links. Do not ask the user to solve missing setup pieces - the ask below fills
-them and offers to use theirs, which is the opposite of delegating them. Refresh only
-changed evidence after creation; retain unresolved `❗` lines and add the new substitutes
-instead of replacing the initial board with a green one.
+them and offers to use theirs, which is the opposite of delegating them. After a creation or
+repair, the board changes only as section 4's post-repair rule states.
 
 If real material exists but appears too weak to support a meaningful comparison, show a short
 **Quality advisory** immediately below the board:
@@ -525,19 +525,19 @@ weakness are one decision about what this run will measure. That question carrie
    brought is a second. `I have it` with a path is never counted among them.
 
 Then stop and wait, and ask nothing else here; what this run writes is shown at the pre-spend
-approval in stage 6, which is the other checkpoint and the last moment changing it is free. It
-closes the message: the board and the cost sit above it, and no summary of it sits above them.
+approval in section 6, the other checkpoint. The question closes the message: the board and the
+cost sit above it, and no summary of it sits above them.
 A path given here names material that was in the project all along, so re-run the opening gate over it and
 read that as the opening score; the record waits for this answer in any gap run, for the reason the
 zero-anchor gate above already gives for its own.
 When nothing anchors task intent at all this is not a second question - the zero-anchor gate above
 asks one and carries these four things on it. The answer covers absence and shortfall, never a
 defect; broken
-material keeps every gate stage 4 already puts on it. `references/component-creation.md` owns the
+material keeps every gate section 4 already puts on it. `references/component-creation.md` owns the
 wording, what a supplied path is checked for, and where each way of not getting one lands.
 
 When a dataset below this run's **28** has an asking cap, its top-up rides on that same question
-and never as a second one: a gap and a shortfall are one decision about what this run will measure.
+and never as a second one.
 The offer is bounded and its bound is spoken - an offer to add examples with no number on it reads
 as an offer to generate without end. Agreeing changes what the dataset is, never what it earns:
 rows this run writes score as the generated rows they are, which on a short dataset is most of it,
@@ -560,7 +560,7 @@ Follow the dependency matrix in `references/component-creation.md`:
   single task-intent question.
 - Design compatibility in both directions: dataset inputs fit the agent contract, and agent
   outputs are meaningfully scoreable by the evaluator. Treat this as a design check here; exact
-  runtime binding is owned by the installed SDK and is verified in stage 5.
+  runtime binding is owned by the installed SDK and is verified in section 5.
 
 **Read next.** Required: [`references/component-creation.md` § Dependency matrix](references/component-creation.md#dependency-matrix).
 If the matrix row directs creating an agent: [`references/component-creation.md` § Agent creation](references/component-creation.md#agent-creation).
@@ -648,8 +648,9 @@ Follow this order:
 
 A missing Traigent SDK is `SKIP` in this deferred pre-install pass; an installed package that is not
 the SDK is a failure, while a release other than the tested one is reported and never stops the run;
-an optional provider package may defer only its own check. The rendered readiness
-card is the summary. Do not separately explain passed calibration/mock wiring unless action is
+an optional provider package may defer only its own check. The recorded gate result is
+the summary; the post-repair rule below owns what is shown after a repair or creation. Do not
+separately explain passed calibration/mock wiring unless action is
 needed or the user asks; neither is agent accuracy or an optimization result.
 
 Do not execute an LLM judge or an evaluator with an uncertain or external call path here. Keep it
@@ -659,16 +660,15 @@ not prove an external evaluator is safe.
 Classify a structurally usable but evidence-limited real component as `limited`; keep it `❗`.
 Classify a component that cannot execute or measure the task as `invalid`.
 
-For a limited component, recommend repairing a copy under `traigent-runs/` and revalidating from
-the failed gate. Continuing unchanged is permitted only as an explicitly labelled workflow
-demonstration; `references/evaluation-and-dataset.md` owns when that limitation is stated.
+For a limited component, recommend repairing a copy under `traigent-runs/`. Continuing unchanged
+is permitted only as an explicitly labelled workflow demonstration;
+`references/evaluation-and-dataset.md` owns when that limitation is stated.
 
 For an invalid evaluator, incompatible schema, corrupted required rows, or unverified call path,
 do not run paid optimization against it. Offer two routes: build and revalidate a reversible copy
 under `traigent-runs/` - mending what survives and writing what does not, which is one action and
 not two - or pause for a user-authored fix. Say in that same sentence how much of their material
-survives, because that is what decides whether the result reads `✅` or reads as a substitute, and it is a fact this
-run already established rather than a choice to hand over. Never treat "continue as is" as
+survives: it decides whether the result reads `✅` or as a substitute. Never treat "continue as is" as
 permission to optimize against a broken grading signal. Letter the routes from `A` and mark the
 build one recommended; close with the unnumbered `I have it` line, which is never a route and always
 last. Nothing follows it, and no route carries a decision of its own.
@@ -678,11 +678,20 @@ That shape is the shape of every choice this run puts to the customer, not only 
 they are offered named routes - the task-intent question, a creation or repair route, the baseline
 spend approval, the connected-stage preview - the routes are lettered from `A`, exactly one is
 marked recommended, each is answerable by replying, and a set of named routes is never compressed
-into a yes/no. Bold words with no letter and no mark are a second form for the same act, and a
-customer who meets two forms in one run reads the difference as meaning something it does not. The
+into a yes/no. Bold words with no letter and no mark are a second form for the same act. The
 unnumbered `I have it` line is the part that does not travel: it answers where material is, so it
 rides on the asks about material and never on an approval to spend. A single proposed action with no alternative route beside it is not a route list and is not
 what this rule is about.
+
+After a repair or a creation, re-run only the checks whose input the repair changed. Two repairs
+invalidate an earlier pass and must redo it: an evaluator repair re-runs the degenerate-gold check
+in `references/evaluation-and-dataset.md`, and a dataset supplied via `I have it` after the
+opening-gate calibration re-derives the calibration cases for the opening-gate re-run that
+section 2 owns, whose card is the opening score - that re-run is section 2's, not this rule's.
+Then recompute the score over all three pillars, re-reading the agent only where this run created or repaired it, and record that gate
+result without overwriting the opening one. Then print exactly one line, `Fixed: <component> -
+cleared: <caps> - continuing`; on the board, refresh only changed evidence, retain unresolved `❗`
+lines and add the new substitutes under walkthrough setup; show no second card.
 
 `readiness.py` emits these decisions as closed `action_kind` values and one
 `recommended_action`: the lowest-ceiling blocking remedy when a cap blocks, otherwise the
@@ -694,7 +703,7 @@ internal. Three kinds, not two. A route asking for a creation or repair blocks t
 one asking for a first look at material nothing has read - under either, nothing was measured. A
 route that only scopes what the result may claim lets the run proceed wherever there is a result to
 scope, and divides again: where the scope leaves a person something to settle, put it once in the
-home that owns that question and carry the answer to the pre-spend approval in stage 6; where it
+home that owns that question and carry the answer to the pre-spend approval in section 6; where it
 leaves nothing to do, the ceiling is advisory and there is no repair to route. Route by the reason,
 never by the kind - the agent's own no-varying-knobs condition still reads both ways, and its
 paragraph below carries both halves:
@@ -720,9 +729,10 @@ paragraph below carries both halves:
 - `dataset-fully-synthetic` - apply the walkthrough labeling rules; never claim production readiness.
 - `dataset-mostly-synthetic` - apply those rules, name the split out loud, and scope the claim.
 - `dataset-undeclared-provenance`, `dataset-mostly-undeclared` - say the assumption and both card
-  scores when shown, offer declaring the real source rather than new data, and put that offer at the
-  pre-spend approval; meanwhile apply the rules above. The rows may be real and only this run cannot
-  tell, so it bounds the claim exactly as a declared-generated corpus does and holds nothing up.
+  scores when shown, and state it again on the pre-spend approval as a limit on the claim, never as
+  a question; a real source the user names is recorded, and new data is never the remedy. Meanwhile
+  apply the rules above. The rows may be real and only this run cannot tell, so it bounds the claim
+  exactly as a declared-generated corpus does and holds nothing up.
 - `dataset-generated-answer-key` - require that a person reviews a sample of the answers before a
   correctness claim; until then the score measures model agreement.
 - `dataset-mostly-generated-answer-key` - the same review, on the model-written answers only, and
@@ -750,7 +760,7 @@ create or select. `evaluator-generated` and `agent-generated` route through the 
 rules and nothing else - carry the substitute's provenance into the words as well as the card, and say the
 result measures the substitute rather than their product. Neither is a repair: this run created the
 component on purpose, the run continues, and what the ceiling refuses is the claim, not the work.
-`evaluator-unvalidated` routes through the opening/stage-4 calibration gate above: measure it once
+`evaluator-unvalidated` routes through the opening/section-4 calibration gate above: measure it once
 when that gate establishes eligibility, or keep the ceiling and name the concrete deferral. It is
 an evidence boundary, not a repair finding.
 `evaluator-calibration-refused` is that same evidence boundary reached by the scope gate rather than
@@ -766,9 +776,7 @@ how long it may take, and on a timeout ask the one five-option question in
 `references/evaluation-and-dataset.md` rather than declaring the evaluator broken or carrying the
 wait into a paid run. Bounding what one scoring call costs is one option inside that question, not
 the route. Name any avoidable cause of the slowness in the readiness summary and again at the
-close if it was not fixed. After any repair or substitute creation, re-run the affected checks, the
-applicable calibration, and the score, then record that gate result without overwriting the opening
-one.
+close if it was not fixed.
 
 `agent-absent` blocks where no document, read, or declared origin names an agent at all: connect the
 one they have, or create it.
@@ -788,20 +796,24 @@ Only after the standard-library-only component checks:
    manager exposes without external calls. Never enumerate stores or copy values; mark declared-only
    sources unverified. Reuse a matching credential in place when inheritable; on mismatch, do not call the
    file unsaved. Say: `Agent route: <vendor/model>. Provider credentials: <vendors and sources>.
-   Traigent key: <present/absent> (not a provider credential). Preserve this route by adding <key>,
-   or change to <available vendor>?` Recommend preserving unless the user chose the other vendor.
-   A route change requires recipient disclosure and approval; never rewrite a route merely to match
-   a key. With no route, use the sole available vendor or ask once. Generated baselines need their
-   model ladder; a user-owned baseline requires only its existing route and credential.
+   Traigent key: <present/absent> (not a provider credential).` Ask nothing here: a route whose
+   credential is absent is decided at step 6, on this section's one stop. A route change requires
+   recipient disclosure and approval; never rewrite a route merely to match a key. With no route,
+   use the sole available vendor, or carry that choice to the same stop. Generated baselines need
+   their model ladder; a user-owned baseline requires only its existing route and credential.
 2. Resolve and prepare the dedicated first-run environment `.venv-traigent` through
    `references/run-safety.md`, naming its absolute path before touching it. Preserve every existing
    environment. The reference owns creation, recovery, and activation mechanics; never fall back
    to a shared or dependent environment.
 3. Install the exact declared dependencies under the narrow authorization above: the exact pins in
-   `assets/requirements-first-run.txt`, never the project's own declarations. Never use an
-   unversioned `pip install traigent`.
-   Keep this unattended step foregrounded, explain the wait, and do not delegate it; the safety
-   reference owns the rationale. Then re-run `scripts/preflight.py` in that environment without
+   `assets/requirements-first-run.txt`, never the project's own declarations, which the run never
+   edits. Never use an unversioned `pip install traigent`.
+   Say first: `Installing traigent==0.26.0, litellm==1.93.0 and python-dotenv==1.2.2 into
+   <absolute path>/.venv-traigent - a package fetch only: no provider or Traigent calls, and none
+   of your project's code runs.` Then proceed: the notice is not a question, and the
+   install-approval policy clause in the authorization table still governs. Keep this unattended
+   step foregrounded, explain the wait, and do not delegate it; the safety reference owns the
+   rationale. Then re-run `scripts/preflight.py` in that environment without
    `--defer-missing-sdk`; `sdk-version: PASS` is required before continuing. On `FAIL`, preserve
    that environment, report its path and the concrete failure, and stop. Recreate it only on the
    user's explicit request; nothing else catches a silent or partial install.
@@ -815,8 +827,12 @@ Only after the standard-library-only component checks:
    exit it and never reuse that process for a real run.
 6. After all applicable free checks, create or minimally update `.env` through
    `references/run-safety.md`'s ordered credential handoff, which selects the file: add only a
-   genuinely missing selected-provider key, and stop once for only that secret locally. Do not
-   request or route the Traigent key before the stage-7 baseline checkpoint.
+   genuinely missing selected-provider key, and stop once for only that secret locally. Where the
+   route's credential is absent and another vendor's is present, that stop closes its message with
+   the lettered ask - `A.` preserve this route by adding <key>, marked recommended unless the user
+   already chose the other vendor; `B.` change to <available vendor> - and nothing follows it: one
+   reply pastes the key or changes the route. Do not request or route the Traigent key before the
+   section-7 baseline checkpoint.
 
 Before baseline approval, locally prove request differences. For an inspected customer baseline, set
 `BASELINE_IS_USER_OWNED = True` and make `WIRED_KNOBS` exactly match its paid enhanced dimensions;
@@ -842,11 +858,11 @@ Select only after scoring the full dataset and before pricing the run. Record th
 report subset and full sizes, and state that the small first-run sample limits the claim.
 
 Do not ask the user to choose cost, retries, or timeout settings during discovery or setup, and do
-not repeat a provider choice already resolved in stage 5.
+not repeat a provider choice already resolved in section 5.
 
 Use the baseline checklist in `references/run-safety.md` for one concise baseline preview and
 approval covering the live provider check, any pre-baseline LLM-judge calibration, and the
-preserved baseline or generated twelve-row sweep. Say only that a separately previewed managed run may
+preserved baseline or generated twelve-configuration sweep. Say only that a separately previewed managed run may
 follow; do not front-load its algorithm, search space, trial arithmetic, portal features, or insights.
 
 **Read next.** Required: [`references/run-safety.md` § Approval and budgets](references/run-safety.md#approval-and-budgets).
@@ -857,17 +873,16 @@ If this walkthrough supplies the baseline's models: [`references/sdk-execution.m
 When this run filled a gap for the walkthrough, or an active cap asks rather than blocks, that same
 approval also carries the pre-spend card in `references/run-safety.md`: what the gap was and how it
 was filled, absolute paths to what was written, the easiest and hardest rows, what the evaluation
-method counts as correct, and one proceed-or-fix answer. It is content on the approval that already
-stops, never a second pause, and approving the spend is not approving the material. A standing
+method counts as correct, and the provenance this run assumed, stated rather than asked. It is
+content on the approval that already stops, never a second pause, and the card ends on exactly one
+lettered ask: the proceed-or-fix pair, whose proceed route is the spend approval. A standing
 `seam_probe_advisory` rides that same approval whether or not the card does: what the evaluator
 scored the answer as the author wrote it and in the shape the probe sent, and every string the
-advisory recorded - which is one string, not two, where no reply step ran. This is the last moment
-the delivery costs nothing to fix.
+advisory recorded - which is one string, not two, where no reply step ran.
 
 When the opening gate found Traigent already set up here, that approval carries it too, beside the
 figure: what was found, and that this run charges for its own baseline and search whether or not
-they have optimized here already. One line on the approval that already stops, which is the last
-moment stopping is free.
+they have optimized here already. One line on the approval that already stops.
 
 Immediately before the paid baseline, show a short run card with model ids, each varying knob and
 its explicit values, one plain-language note per knob, and the total combination count. The
@@ -878,13 +893,12 @@ money approval. Preflight's first-run count is only a proposal; it cannot know t
 This is an estimate, not a hard wall-clock guarantee. Size the baseline before it starts.
 
 When the SDK exposes trustworthy live progress, report only those values; otherwise report only
-observable phase milestones. Never invent progress or quietly drop validation. A timeout with
-completed trials yields an honest partial result and a stop-or-bounded-continuation choice; zero
-trials requires diagnosis.
+observable phase milestones. Never invent progress or quietly drop validation. A timeout follows
+Recovery in `references/run-safety.md`.
 
 If the estimate exceeds `$5.00` or 30 minutes, first recommend a smaller representative slice or
 trial target while preserving meaningful difficulty coverage; disclose any
-reduction from the twelve-row baseline target. Proceed after one explicit
+reduction from the twelve-configuration baseline target. Proceed after one explicit
 approval and keep it process-only. Follow `references/run-safety.md` for SDK limits and retries.
 Maintain its single
 running total across every paid phase, stop before the next estimate exceeds the remainder, and
@@ -900,7 +914,7 @@ time/cost; do not ask the user to select implementation timeouts.
 
 Use the same tuning slice, evaluator, objectives, and agent call path for both measurements:
 
-1. **Baseline** - preserve the user's existing baseline exactly, including its original row count;
+1. **Baseline** - preserve the user's existing baseline exactly, including its original configuration count;
    never pad it. Only when it is missing, prepare the credible twelve-configuration fixed sweep in
    `references/run-safety.md`, including the initial configuration.
 2. **Enhanced Traigent optimization** - keep every baseline value and model, add only meaningful
@@ -953,64 +967,48 @@ account request:
 - Explain each baseline knob in one plain-language note.
 - State that no generalization or production-improvement claim exists yet and that this phase
   created no portal experiment.
-- Do not disclose the held-out score before stage 8.
+- Do not disclose the held-out score before section 8.
 
 Now check whether the dataset and evaluator distinguish configurations. If not, stop before the search
-and recommend the evidenced repair before any connected preview. If the baseline is nearly perfect with no
-informative failures, report little or no measured quality or cost headroom and recommend harder realistic
-cases; a ceiling effect remains a hypothesis. That finding does not itself block a healthy customer who
-explicitly wants one verified portal/enhanced comparison: offer the connected step as an optional,
-no-lift-possible verification run, never as an expected gain. If they decline it, preserve and report the
-baseline-only result. An accuracy-only search with walkthrough material requires a workflow-demonstration
-label. A cost objective may proceed at equal accuracy only when materially lower cost remains
-possible; report any gain as cost and still flag weak evidence.
+and recommend the evidenced repair before any connected preview. If the baseline is nearly perfect
+with no informative failures, report little or no measured quality or cost headroom as a
+limit on the claim - a ceiling effect remains a hypothesis - and name harder realistic cases as the
+`traigent-dataset-curate` handoff after the run, never as a route. The routes in that state are
+`A.` the bounded connected run, offered as an optional no-lift-possible verification and never as
+an expected gain, carrying the mark on the two standing reasons below that rest on no number, and
+`B.` stop with the baseline-only result, preserved and reported. An accuracy-only search with
+walkthrough material requires a workflow-demonstration label. A cost objective may proceed at equal
+accuracy only when materially lower cost remains possible; report any gain as cost and still flag
+weak evidence.
 
 Where that repair is one this run can make for nothing - a fault in code this run wrote, or one
 mended in a working copy that leaves their files untouched - the routes offered are ways to a sound
-measurement, and `references/component-creation.md` owns how they are worded and ordered. What
-follows governs which routes may be OFFERED here, and only here. A route whose own description
-carries the diagnosed fault into a later paid stage is not offered at all: lettering it makes a
-known-bad outcome look considered. Abandoning the run is not a co-equal letter beside the free
-repair either, because the customer paid for a measurement this run has just shown measured
-nothing, so keeping it is not keeping a result. Both sentences are bounded to this menu, for this
-fault, at this moment; no other stage's offer is changed by them. Declining stays plainly
-answerable and is answered without reproach: preserve what was measured, report the run as
-baseline-only, and never suggest they were wrong to stop.
+measurement, and `references/component-creation.md` owns how they are worded and ordered. Here,
+and only here: a route whose own description carries the diagnosed fault into a later paid stage is
+not offered at all, and abandoning the run is not a co-equal letter beside the free repair.
 
-This checkpoint asks for the next spend, and its recommended answer is to continue. Lead with that,
-and put the mark on it: the order this paragraph is written in is the order a run reproduces, and
-written stop-first it produced a bold headline saying stopping was fine above a plain closing
-clause saying to carry on. The checks above are the only thing that moves the mark, and not one of
-them moves it onto stopping: they decide which continuing route carries it - the evidenced repair,
-or harder rows, before the search rather than instead of it, by the rule
-`references/component-creation.md` states for routes that continue. This is also not the free exit
-- that was the pre-baseline approval, which this guide calls the last moment stopping is free - so
-the baseline is already bought, and continuing is what turns it into the result stages 4 and 5
-exist to show.
+This checkpoint asks for the next spend, and its recommended answer is to continue: lead with
+that, and put the mark on it. The checks above decide which continuing route carries the mark -
+the evidenced repair before the search rather than instead of it, by the rule
+`references/component-creation.md` states for routes that continue - and none of them moves it
+onto stopping. The baseline is already bought; continuing is what turns it into the result
+`Stage 4/5` and `Stage 5/5` exist to show.
 
-State the case as what continuing produces rather than as what stopping costs. The same four facts
-carry either frame, and the gain frame is the accurate one: a run that continues sees Traigent
-choose the trials rather than a fixed grid, gets a portal experiment and its link, a recommendation
-read across both runs, and a held-out score - the four things stages 4 and 5 exist to show, and the
-four a baseline-only run does not have. Two of them are reasons that hold on every sound baseline
-and rest on no number; `references/run-safety.md` writes both out where the connected preview is
-offered on them, and this flow does not restate them. Measured headroom strengthens that case where
-the baseline leaves some; it never creates it, and where there is none the ceiling-effect check
-above governs what the connected step is offered as, with those standing reasons as what it is
-offered on - so the customer is never left an unmarked pair with nothing said beside it.
+State the case as what continuing produces, never as what stopping costs. Four facts carry it: a
+run that continues sees Traigent choose the trials rather than a fixed grid, gets a portal
+experiment and its link, a recommendation read across both runs, and a held-out score - the four a
+baseline-only run does not have. Two of them hold on every sound baseline and rest on no number;
+`references/run-safety.md` writes both out where the connected preview is offered on them, and
+this flow does not restate them. Measured headroom strengthens that case where the baseline
+leaves some and never creates it; where there is none, the check above governs.
 
-Declining stays available and stays plainly answerable, and the run says so positively: stopping
-here is a legitimate choice that leaves a real result - a measured baseline on their own material.
-The next phase spends more and requires an explicit approval, so a checkpoint that does not let a
-customer decline is a consent defect and not a stronger recommendation. State its consequence once
-and briefly: if the user stops, preserve the local result and report the run as baseline-only, not
-as a completed Traigent optimization.
-
-Nothing written here may claim the search will improve anything, promise what the held-out score
-will be, or suggest that a customer who stops has made a mistake. The honest claim is capability
-and information - how the product selects, and what a generalisation check says about their own
-rows - and the workflow-demonstration label and the no-expected-gain rule above both stand
-unchanged over it.
+Declining stays available and plainly answerable, and the run says so positively: stopping here
+leaves a real result, a measured baseline on their own material. State its consequence once: if
+the user stops, preserve the local result and report the run as baseline-only, not as a completed
+Traigent optimization. Nothing written here may claim the search will improve anything, promise
+what the held-out score will be, or suggest that a customer who stops has made a mistake. The
+honest claim is capability and information; the workflow-demonstration label and the
+no-expected-gain rule above stand over it.
 
 Preview the connected step with the final reply-ready block and approval rules in
 `references/run-safety.md`. Its lettered routes are the last thing in that message, below the
@@ -1027,8 +1025,8 @@ that wording, both numbers' source, and what to say when the count cannot be com
 reduction from that ceiling here rather than at the baseline approval. Never promise a pause at
 minute 30; size the synchronous run first.
 
-Now explain Traigent's documented synchronization, exclusions, and exceptions from that reference;
-call it a service contract rather than a packet audit and stop if runtime behavior contradicts it.
+Inside that preview, above its routes, explain Traigent's documented synchronization, exclusions,
+and exceptions from that reference; call it a service contract rather than a packet audit and stop if runtime behavior contradicts it.
 
 Only after that checkpoint, ask for the Traigent key. The order is the point: the user has already
 seen a provider-backed result before being asked to create an account. Tell them the key needs full
@@ -1078,18 +1076,20 @@ failure and one recommended recovery. Never fall back automatically to mock or s
 and never present offline checks as a completed optimization. Resume the connected path after the
 failure is resolved.
 
-Do not fabricate configurations to hit a row count. A preserved one-row user baseline is an honest
-one-row before and stays unchanged. An assistant-prepared walkthrough must not proceed with a one-
-row baseline; generate enough real controls for the twelve-configuration default.
+Do not fabricate configurations to hit a count. A preserved one-configuration user baseline is an
+honest one-configuration before and stays unchanged. An assistant-prepared walkthrough must not
+proceed with a baseline of one configuration; generate enough real controls for the
+twelve-configuration default.
 
-Do not require a third optimization pass. Recommend another iteration only after the first result
+The baseline and the enhanced search are this run's only paid passes; the operating contract owns
+that bound. Recommend another iteration only as the user's own next step, after this result
 reveals a specific, worthwhile hypothesis.
 
 ### 8. Verify and report
 
 Before saying the run succeeded, apply every post-run verification in
 `references/run-safety.md`. Also verify that the baseline was preserved exactly or the generated
-twelve-row default (including its initial configuration) ran, subject only to an approved disclosed
+twelve-configuration default (including its initial configuration) ran, subject only to an approved disclosed
 reduction; the enhanced run used real controls and either produced at least 10 of its 12 permitted
 trials, matched an explicitly approved and disclosed reduced target, or reports a concrete
 stop/failure reason; and a
@@ -1159,16 +1159,14 @@ assistant-authored or assistant-inspected evidence and do not present it as inde
 production-promotion evidence.
 
 Name every row the comparison did not score, with its id: rows excluded as degenerate references,
-and the ids of the bounded subset when one was drawn. A result quoted on 25 of 30 rows is a
-different claim from one quoted on 30, and the reader cannot reproduce either without knowing
-which rows they were. State it even when nothing was excluded, so silence never has to be
-interpreted.
+and the ids of the bounded subset when one was drawn. State it even when nothing was excluded, so
+silence never has to be interpreted.
 
 Do not close on a second number. Re-run `scripts/readiness.py` on the post-run evidence for the one
 reading nothing earlier could take - the agent pillar, scored from the space the enhanced search
 actually received - passing the current run's `--config-space traigent-runs/config-space.json` only
 when that search emitted it, and the same row-level read, so this score is not held for a gap an
-earlier card already closed; otherwise score the agent from absent evidence. The opening and stage-4
+earlier card already closed; otherwise score the agent from absent evidence. The opening and section-4
 scores withhold every config-space document by construction, so this is the run's only measurement
 of the space the customer paid to search. Its dataset and evaluation caps rank nothing and settle
 nothing about what is still open: a gap this run filled with a substitute reads exactly like one the

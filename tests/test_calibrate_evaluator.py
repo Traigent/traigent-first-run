@@ -4336,5 +4336,151 @@ class ExecutionScopeGateTests(unittest.TestCase):
             self.assertTrue(marker.exists())
 
 
+class AChildThatWritesPastTheCaptureIsTheEvaluatorsDefectTests(unittest.TestCase):
+    """Finding 31: the worker's reply is parsed as JSON only after it is checked.
+
+    The worker captures what the scorer prints through `sys.stdout`; a write
+    to file descriptor 1 lands in front of its JSON, and `json.loads` on that
+    used to escape to the boundary as this script's defect, exit 3. It is the
+    evaluator's, exit 1, and the message shows what arrived.
+    """
+
+    def test_bytes_on_the_workers_stdout_are_reported_with_what_arrived(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            scorer = Path(directory) / "noisy_scorer.py"
+            scorer.write_text(
+                "import os\n"
+                "\n"
+                'os.write(1, b"stray bytes from a child\\n")\n'
+                "\n"
+                "\n"
+                "def score(output, expected, input_data=None, metadata=None):\n"
+                "    return float(set(output) == set(expected))\n"
+            )
+            process = subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPT),
+                    "--scorer",
+                    f"{scorer}:score",
+                    "--good",
+                    '["a", "b"]',
+                    "--equivalent-good",
+                    '["b", "a"]',
+                    "--partial",
+                    '["a"]',
+                    "--bad",
+                    '["z"]',
+                    "--expected",
+                    '["a", "b"]',
+                    "--json",
+                    "--allow-execution",
+                ],
+                capture_output=True,
+                text=True,
+            )
+        self.assertEqual(process.returncode, 1, process.stderr)
+        self.assertEqual(process.stdout, "")
+        self.assertIn("is not JSON", process.stderr)
+        self.assertIn("file descriptor 1", process.stderr)
+        self.assertIn("stray bytes from a child", process.stderr)
+        self.assertNotIn("internal error", process.stderr)
+        self.assertNotIn("Traceback", process.stderr)
+
+    def test_bytes_no_codec_reads_are_still_the_evaluators_defect(self) -> None:
+        """P2-3: a non-UTF-8 write used to raise in the decode, before the guard."""
+        with tempfile.TemporaryDirectory() as directory:
+            scorer = Path(directory) / "binary_scorer.py"
+            scorer.write_text(
+                "import os\n"
+                "\n"
+                'os.write(1, b"\\xff\\xfe stray\\n")\n'
+                "\n"
+                "\n"
+                "def score(output, expected, input_data=None, metadata=None):\n"
+                "    return float(set(output) == set(expected))\n"
+            )
+            process = subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPT),
+                    "--scorer",
+                    f"{scorer}:score",
+                    "--good",
+                    '["a", "b"]',
+                    "--equivalent-good",
+                    '["b", "a"]',
+                    "--partial",
+                    '["a"]',
+                    "--bad",
+                    '["z"]',
+                    "--expected",
+                    '["a", "b"]',
+                    "--json",
+                    "--allow-execution",
+                ],
+                capture_output=True,
+                text=True,
+                errors="backslashreplace",
+            )
+        self.assertEqual(process.returncode, 1, process.stderr)
+        self.assertIn("is not JSON", process.stderr)
+        self.assertIn("stray", process.stderr)
+        self.assertIn("\\\\xff", process.stderr)
+        self.assertNotIn("internal error", process.stderr)
+        self.assertNotIn("UnicodeDecodeError", process.stderr)
+
+    def test_an_empty_reply_is_named_as_a_closed_stdout(self) -> None:
+        """P3-5: nothing arriving is not a stray write in front of the reply."""
+        module = importlib.util.module_from_spec(
+            importlib.util.spec_from_file_location("calibrate_for_empty", SCRIPT)
+        )
+        module.__spec__.loader.exec_module(module)
+        for stdout in ("", "   \n"):
+            with self.subTest(stdout=repr(stdout)):
+                try:
+                    json.loads(stdout)
+                except json.JSONDecodeError as error:
+                    message = module.invalid_worker_stdout_message(
+                        "evaluator calibration", stdout, error
+                    )
+                self.assertIn("printed nothing", message)
+                self.assertIn("closed or redirected", message)
+                self.assertNotIn("What arrived", message)
+                self.assertNotIn("file descriptor 1", message)
+
+    def test_a_long_reply_is_excerpted_and_measured(self) -> None:
+        module = importlib.util.module_from_spec(
+            importlib.util.spec_from_file_location("calibrate_for_excerpt", SCRIPT)
+        )
+        module.__spec__.loader.exec_module(module)
+        stdout = "x" * (module.WORKER_STDOUT_EXCERPT_CHARS + 50)
+        try:
+            json.loads(stdout)
+        except json.JSONDecodeError as error:
+            message = module.invalid_worker_stdout_message("test", stdout, error)
+        self.assertIn(
+            f"first {module.WORKER_STDOUT_EXCERPT_CHARS} of {len(stdout)} characters",
+            message,
+        )
+        self.assertNotIn(stdout, message)
+
+
+class TheCommandLineDocumentsItsExitCodesTests(unittest.TestCase):
+    """Finding 33: the four codes `run` and `main` return, printed by --help."""
+
+    def test_help_lists_every_exit_code(self) -> None:
+        process = subprocess.run(
+            [sys.executable, str(SCRIPT), "--help"], capture_output=True, text=True
+        )
+        self.assertEqual(process.returncode, 0, process.stderr)
+        self.assertIn("exit codes:", process.stdout)
+        for code in ("0", "1", "2", "3"):
+            with self.subTest(code=code):
+                self.assertIn(f"\n  {code}  ", process.stdout)
+        self.assertIn("--reply-transform could not be loaded", process.stdout)
+        self.assertIn("TRAIGENT_FIRST_RUN_TRACEBACK", process.stdout)
+
+
 if __name__ == "__main__":
     unittest.main()

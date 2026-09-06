@@ -106,9 +106,14 @@ front, not by cutting it: if the runtime estimate is too high, reduce the run be
 smaller representative tuning slice, fewer trials, or a smaller model set - and disclose the
 revised estimate; a large *preserved* baseline (never shrink a user-owned one) then runs to
 completion under the cost ceiling rather than being truncated. The estimate above still drives the
-up-front time/cost disclosure and the baseline phase timeout (`timeout=BASELINE_TIMEOUT_SECONDS`, a
-small fixed grid). Set `TRAIGENT_FIRST_RUN_OPTIMIZATION_TIMEOUT_SECONDS` only for the rare case that
-genuinely needs a hard wall-clock stop.
+up-front time/cost disclosure and the baseline phase timeout. That timeout is
+`TRAIGENT_FIRST_RUN_BASELINE_TIMEOUT_SECONDS`, the fourth process variable beside the three cost
+figures, and it has no default: the contract below reads it through `positive_number(...)`, and a
+baseline process launched without it stops at import. Size it from the formula above with the
+baseline's own figures - its trial count, the tuning rows, calls per example and the observed upper
+latency give the expected seconds, times the completion margin, never below the floor. Set
+`TRAIGENT_FIRST_RUN_OPTIMIZATION_TIMEOUT_SECONDS` only for the rare case that genuinely needs a hard
+wall-clock stop.
 
 Keep an individual model-request timeout so one stuck provider call cannot hang the walkthrough.
 Reuse the real agent's existing value when present. Generated LiteLLM walkthrough code may use a
@@ -136,7 +141,7 @@ never as "roughly" or "about"; the asserts beside the spaces below enforce both:
 - baseline: **3 models × 2 prompt styles × 2 thinking shapes = 12 configurations**, run as 12
   trials so `grid` enumerates every one of them and nothing is left to trial order.
 - enhanced: **3 models × 3 binary behaviour knobs = 24 configurations**, half of it reachable
-  within the 12-trial cap and, with `model`, at the four varying knobs the readiness scorer pays
+  within the 12-trial cap, which is the 12 reachable configurations the readiness scorer pays
   full marks for.
 
 Say on the approval card, plainly: **the baseline runs 12 paid trials, one for every configuration
@@ -162,14 +167,9 @@ a different moment - how the task is framed, during the answer, and after it - s
 spelling of its neighbour. Three knobs are enough to make the managed run choose among more
 configurations than it can execute without turning a first taste into the full-power workflow.
 
-**`self_check` is gone, and `reflect` is the one that stayed.** They were one knob under two names:
-both appended "look at your answer again and fix it", differing only in what the model was told to
-look at, and no customer-facing sentence tells those apart without becoming two sentences that mean
-the same thing. `reflect` is the usual name for the technique.
-
-The synthesized walkthrough dataset contains 18 tuning rows: 3 easy, 5 medium, 5 hard, and 5 very
-hard, plus the ten held-out rows reserved at creation time in their own file, which no search
-ever evaluates. The baseline's two non-model axes are `prompt_style` and `thinking_shape` because the enhanced
+The synthesized walkthrough dataset contains the tuning rows and, in their own file, the held-out
+rows no search ever evaluates; `references/evaluation-and-dataset.md` owns both counts, the band
+composition, and when they are reserved. The baseline's two non-model axes are `prompt_style` and `thinking_shape` because the enhanced
 space carries both: a baseline that ranks a lever the enhanced run will not use has measured nothing
 usable, which is what temperature became once it was pinned. Every baseline value is kept, so the
 baseline is a strict subset and the enhanced run never gets a model the baseline did not measure, so
@@ -267,11 +267,12 @@ and the three paid behaviour knobs are real for a reasoning model and a sampling
 both branches run the same 12 and 24.
 
 When the user already owns a baseline, do not apply this ladder. Preserve its exact model set and
-row count in the enhanced space and add only direct request parameters the probe establishes for
-every selected model and tuning input. Indirect, retrieval, tool, repair, and multi-call controls
-stay outside this paid space. Adding a cheaper or stronger model changes the experiment
-and attribution, so do it only as a separately disclosed and approved model comparison. Preserve an
-existing flagship and its calling convention exactly; never replace or augment it silently.
+configuration count in the enhanced space and add only direct request parameters the probe
+establishes for every selected model and tuning input. Indirect, retrieval, tool, repair, and
+multi-call controls stay outside this paid space. Adding a cheaper or stronger model changes the
+experiment and attribution, so do it only as a separately disclosed and approved model comparison.
+Preserve an existing flagship and its calling convention exactly; never replace or augment it
+silently.
 
 For the generated ladder, use one model family when the selected route can supply all three model
 choices. One family keeps the result readable - "the mid tier held the strong tier's accuracy at a
@@ -288,7 +289,22 @@ selected route lists at run time, then verify each id is live and cost-tracked b
 
 ## Decorator contract
 
-Use one production-compatible function for baseline and optimization:
+Use one production-compatible function for baseline and optimization. Adapt only these sites in
+the fence below, each tagged `# ADAPT:` where it sits; every other line is verbatim. Model ids, the
+provider route and the run bounds are not edits to the fence at all: they arrive through the
+process variables it reads.
+
+- `WALKTHROUGH_TEMPERATURE` - the one task-selected value.
+- `ROUTE_ALIASES` - only for a route spelling litellm reads as one already in the table.
+- `BASELINE_IS_USER_OWNED` - `True` only for an inspected customer baseline.
+- `BASELINE_CONFIG`, `BASELINE_SPACE`, `ENHANCED_SPACE` and `WIRED_KNOBS`, always together.
+- `build_prompt` and `build_request` - how the customer's agent turns a configuration into one
+  request.
+- `SCORER_CALLS_PER_ROW`, `JUDGE_MODEL` and the judge's sampling key - what the wired evaluator
+  places.
+- The `task_score` body - the preserved evaluator's grade of one row.
+- The decorated function's signature and `holdout_agent_input` - the agent's own input contract,
+  and how a dataset row reaches it.
 
 ```python
 import atexit
@@ -439,44 +455,10 @@ if RUN_COST_REMAINING_USD < UNTRACKED_CALL_COST_USD:
 # format: a remaining that rounds to zero is refused above, not written out as
 # a limit no trial can fit under.
 os.environ["TRAIGENT_RUN_COST_LIMIT"] = repr(RUN_COST_REMAINING_USD)
-# Process-only, and set because the alternative is worse than it looks: without
-# it the SDK opens its own handshake whenever its pre-run estimate exceeds the
-# limit, and that handshake's third option RAISES the limit to the estimate
-# times 1.5 - past the approved total, on one keystroke, in the middle of a run
-# the user already approved. It also short-circuits a stored approval token,
-# which raises the limit to whatever the token names. Neither can move this
-# number now, and the SDK's per-trial admission check is untouched.
-#
-# It costs two things, and both are named here rather than left to be found,
-# because a flag governing spend cannot have an effect nobody wrote down.
-#
-# The SDK's pre-run check on models it holds no price for downgrades from a
-# refusal to a warning. That gap has an owner - `run-safety.md` requires every
-# selected model be verified live and cost-tracked before scaling - and a route
-# the SDK cannot price still debits the ledger below at the conservative rate.
-#
-# And the handshake is one branch of a gate that otherwise refuses, so stopping
-# the branch stops the gate. `is_cost_preapproved` returns true on this variable
-# alone, so `check_and_approve` approves before comparing anything: a phase
-# whose whole-phase estimate exceeds the limit is no longer refused cleanly
-# before its first trial. Nothing here replaces that with a second estimate -
-# one obliged to agree with the SDK's own is the two-caps defect rejected below,
-# and a flat conservative rate over a whole phase would refuse runs that fit.
-# What bounds the phase instead is the per-trial admission check against the
-# remaining, which stops it and reports `stop_reason`; the refusal above, for a
-# remaining too small for one call; and the ledger below, for the calls no
-# permit sees. So the loss is specific: a phase that does not fit spends up to
-# the approved total and stops partway, where it would have refused having spent
-# nothing.
-#
-# Both of those stop AGAINST the total rather than capping it, and the
-# difference is money. Admission and the ledger each decide before a call, on a
-# flat conservative per-call figure, while nothing here sets `max_tokens` - so a
-# strong-tier or judge call can legitimately cost more than the figure it was
-# admitted under, and the last call of a phase can carry the running total past
-# the approved one. The approved ceiling halts further spending; it is not a
-# bound on what the provider bills for a call that has left, and
-# `run-safety.md` owns that rule.
+# Process-only. Without it the SDK opens its own handshake whenever its pre-run
+# estimate exceeds the limit, and that handshake can raise the limit past the
+# approved total on one keystroke. Its cost: the SDK's pre-run refusals of an
+# unpriced model or an oversize phase become warnings; admission per trial holds.
 os.environ["TRAIGENT_COST_APPROVED"] = "true"
 SDK_RESULTS_DIR = RUN_DIR / "sdk-results"
 if not os.environ.get("TRAIGENT_RESULTS_FOLDER", "").strip():
@@ -536,16 +518,18 @@ PROVIDER_KEY_NAMES = {
     # route is declared and left to fail, if it fails, on its own first call.
     "bedrock": (),
 }
+# ADAPT: only for a spelling litellm reads as a route already in the table.
 # One route, two literals. litellm sends `command-r` to `cohere_chat` and
 # `command` to `cohere`, through one branch written `== "cohere_chat" or ==
 # "cohere"` that reads the same two names for both - so which spelling an
 # assistant derives depends on the model it read, not on the credential.
 ROUTE_ALIASES = {"cohere_chat": "cohere"}
 
-# Select this literal from the inspected task and evaluator before either paid
-# run. Zero belongs only to deterministic/exact work; otherwise use one
-# supported nonzero value that permits the expected variation. Keep it fixed across both phases so
-# it does not become a fourth paid knob or confound their comparison.
+# ADAPT: select this literal from the inspected task and evaluator before
+# either paid run. Zero belongs only to deterministic/exact work; otherwise use
+# one supported nonzero value that permits the expected variation. Keep it
+# fixed across both phases so it does not become a fourth paid knob or confound
+# their comparison.
 WALKTHROUGH_TEMPERATURE = 0.0
 
 
@@ -604,6 +588,8 @@ BASELINE_TRIALS = positive_int(
     "TRAIGENT_FIRST_RUN_BASELINE_TRIALS",
     default=12,
 )
+# A higher cap loads as readily as the default; raising it to move a number is
+# what SKILL.md's operating contract forbids without a newly scoped approval.
 ENHANCED_MAX_TRIALS = positive_int(
     "TRAIGENT_FIRST_RUN_ENHANCED_MAX_TRIALS",
     default=12,
@@ -614,35 +600,15 @@ def require_current_route_credential() -> None:
     route = ROUTE_ALIASES.get(SELECTED_CURRENT_PROVIDER, SELECTED_CURRENT_PROVIDER)
     key_names = PROVIDER_KEY_NAMES.get(route)
     if key_names is None:
-        # Unknown here means unchecked, not missing, and only the second is a
-        # reason to stop in front of a credential the customer may well be
-        # holding. A route absent from this table is a fact about the table;
-        # refusing on it delivered that fact as a verdict on their key, and
-        # delivered it without the key being read at all - the branch below is
-        # what reads it, and this one used to raise before reaching it.
-        #
-        # Nothing downstream depends on the answer either: litellm resolves
-        # the route from the model string and never reads this literal, so an
-        # unrecognised spelling changes nothing about the call about to go
-        # out. That is the position `bedrock` above is in, and it takes the
-        # same disposition for the same reason.
-        #
-        # Adding a row to PROVIDER_KEY_NAMES does not close this. The literals
-        # the client dispatches to are not enumerable from any list this
-        # package can hold - two are produced by a hardcoded model-name
-        # equality, and one by a proxy flag that reads no model at all - so a
-        # table that refuses what it does not recognise refuses working keys
-        # for as long as the client keeps growing. An individual literal whose
-        # credential names the client reads identically to a route already
-        # here is a different question, and ROUTE_ALIASES is where it is
-        # answered; that is a decision per spelling, not a way to make this
-        # branch unnecessary.
-        #
-        # Both spellings of a checked route are named. A route with no names
-        # is not checkable and `bedrock` is declared with none on purpose, so
-        # naming it would be false; an alias IS checked, through the route it
-        # resolves to, so leaving it out would be false in the other
-        # direction.
+        # Unknown here means unchecked, not missing. litellm resolves the route
+        # from the model string and never reads this literal, so the call goes
+        # out unchanged and settles its own credential on its first call - the
+        # position `bedrock` above is in, for the same reason. A spelling the
+        # client reads identically to a route already here belongs in
+        # ROUTE_ALIASES; the literals it dispatches to are not enumerable, so
+        # a table that refuses what it does not recognise refuses working keys.
+        # Named below: routes with credential names, and aliases through the
+        # route they resolve to; `bedrock` has none on purpose.
         checkable = ", ".join(
             sorted(
                 {name for name, names in PROVIDER_KEY_NAMES.items() if names}
@@ -684,13 +650,13 @@ def require_current_route_credential() -> None:
             "automatically."
         )
 
+# ADAPT: the three spaces and WIRED_KNOBS below change together, for a
+# preserved baseline or a knob swapped in from the catalog.
 BASELINE_CONFIG = {
     "model": SELECTED_CURRENT_MODEL,
     # One task-selected value in both phases. This worked exact-output example
     # uses zero; replace WALKTHROUGH_TEMPERATURE before a non-deterministic run.
     "temperature": WALKTHROUGH_TEMPERATURE,
-    # `prompt_style`'s first value was "direct" until `thinking_shape` arrived
-    # and took that word for the thing it actually describes.
     "prompt_style": "plain",
     "thinking_shape": "direct",
     "reflect": "off",
@@ -722,14 +688,14 @@ ENHANCED_SPACE = {
     "thinking_shape": BASELINE_SPACE["thinking_shape"],
     "reflect": ["off", "on"],
 }
-# Set True only for an inspected customer baseline. It preserves that space and
-# stops before approval for separately approved per-model validation.
+# ADAPT: True only for an inspected customer baseline. It preserves that space
+# and stops before approval for separately approved per-model validation.
 BASELINE_IS_USER_OWNED = False
-# Readiness evidence for `scripts/readiness.py --config-space`. WIRED_KNOBS
-# names only the dimensions call_agent below actually consumes - a knob listed
-# here that the agent ignores is a false claim about the search space. The
-# scorer cannot check that claim, so the assert under `demonstrably_wired`
-# below checks it here at load time.
+# ADAPT: with the spaces above. Readiness evidence for `scripts/readiness.py
+# --config-space`: WIRED_KNOBS names only the dimensions call_agent below
+# actually consumes - a knob listed here that the agent ignores is a false
+# claim about the search space. The scorer cannot check that claim, so the
+# assert under `demonstrably_wired` below checks it here at load time.
 WIRED_KNOBS = [
     "model",
     "temperature",
@@ -737,6 +703,10 @@ WIRED_KNOBS = [
     "thinking_shape",
     "reflect",
 ]
+
+
+# ADAPT: with the decorated signature below - how one dataset row reaches the
+# agent's own input contract.
 def holdout_agent_input(input_data):
     if isinstance(input_data, str):
         return input_data
@@ -774,22 +744,23 @@ BEHAVIOUR_KNOBS = ["prompt_style", "thinking_shape", "reflect"]
 assert set(BASELINE_CONFIG) == set(BASELINE_SPACE), (
     "every baseline config key must be a grid dimension, or exact trial lookup fails"
 )
-assert len(set(BASELINE_SPACE["model"])) == 3
+# These four pin the generated walkthrough's counts; a preserved customer
+# baseline (BASELINE_IS_USER_OWNED above) skips them.
+if not BASELINE_IS_USER_OWNED:
+    assert len(set(BASELINE_SPACE["model"])) == 3
 assert ENHANCED_SPACE["model"] == BASELINE_SPACE["model"]
 assert all(
     set(BASELINE_SPACE[knob]) <= set(ENHANCED_SPACE[knob]) for knob in BASELINE_SPACE
 ), "the baseline must be a subset, or it ranks levers the enhanced run will not use"
-# Unconditional, where it used to fire only under a reasoning strong tier: the
-# rule got simpler, not stricter, and the branch that gave the enhanced space a
-# second size is gone with it.
 assert (
     len(BASELINE_SPACE["temperature"]) == 1 and len(ENHANCED_SPACE["temperature"]) == 1
 ), "temperature is fixed once, never swept - behaviour knobs carry the search"
-assert all(len(ENHANCED_SPACE[knob]) == 2 for knob in BEHAVIOUR_KNOBS)
-# 3 models × 2 prompt styles × 2 thinking shapes, and 3 models × 3 binary
-# behaviour knobs - both holding whether or not the strong tier reasons.
-assert configuration_count(BASELINE_SPACE) == 12
-assert configuration_count(ENHANCED_SPACE) == 24
+if not BASELINE_IS_USER_OWNED:
+    assert all(len(ENHANCED_SPACE[knob]) == 2 for knob in BEHAVIOUR_KNOBS)
+    # 3 models × 2 prompt styles × 2 thinking shapes, and 3 models × 3 binary
+    # behaviour knobs - both holding whether or not the strong tier reasons.
+    assert configuration_count(BASELINE_SPACE) == 12
+    assert configuration_count(ENHANCED_SPACE) == 24
 # EQUAL, not "at most". The baseline runs `algorithm="grid"`, which enumerates
 # the space in order and stops at the trial cap - so a cap below the size is
 # not a smaller sweep, it is a sweep that silently drops whichever
@@ -814,6 +785,8 @@ OBJECTIVES = ObjectiveSchema.from_objectives(
 )
 
 
+# ADAPT: with build_request below - how the customer's agent turns one
+# configuration into one request.
 def build_prompt(
     message: str,
     *,
@@ -823,15 +796,11 @@ def build_prompt(
 ) -> str:
     """The three supported prompt controls act at different moments.
 
-    Two knobs with one effect are one
-    dimension counted twice, which is why `self_check` is not here: it and
-    `reflect` were both "look at your answer again", differing only in what the
-    model was told to look at, and that is one dimension under two names.
-
     `style` frames the task. `thinking_shape` acts DURING the answer - derive
     it step by step instead of emitting it. `reflect` acts AFTER - reconsider
     the finished answer and revise it. A replacement knob from the catalog has
-    to survive the same distinct-effect test."""
+    to survive the same distinct-effect test: two knobs with one effect are one
+    dimension counted twice."""
     if style == "plain":
         prompt = message
     elif style == "structured":
@@ -961,6 +930,7 @@ def require_untruncated_completion(response) -> None:
         )
 
 
+# ADAPT: with build_prompt above; keep it pure and keep the timeout.
 def build_request(message: str, config: dict) -> dict:
     """Build the provider request from one configuration. Pure: makes no call.
 
@@ -1034,18 +1004,19 @@ RUN_CALL_COSTS: list[float | None] = []
 # absent from the spend above and would otherwise leave a run reporting fewer
 # calls' worth of money than it placed calls, with nothing saying why.
 REJECTED_CALLS: list[str] = []
-# Provider calls `task_score` places while scoring ONE row: `0` for a
+# ADAPT: provider calls `task_score` places while scoring ONE row: `0` for a
 # deterministic evaluator, `1` for an LLM judge that grades every row, higher
-# when one row is graded more than once. Select it from the evaluation method
-# this run actually wired, before the connected phase starts; the walkthrough's
-# own grades deterministically and so declares nothing.
+# when one row is graded more than once. Set it here, at its definition, from
+# the evaluation method this run actually wired: CALLS_PER_SCORED_ROW below is
+# derived from it at import, so an assignment after the fence leaves that
+# count stale. The walkthrough's own grades deterministically and declares `0`.
 SCORER_CALLS_PER_ROW: int = 0
 # Derived, never kept beside it. One agent call per row plus whatever the
 # scorer places; two hand-maintained numbers drift, and this is the one that
 # would, because nothing reads it until the last paid pass of the run.
 CALLS_PER_SCORED_ROW: int = 1 + SCORER_CALLS_PER_ROW
-# The judge's own model, fixed for the whole run and never the trial's. `None`
-# while the wired evaluator is deterministic, as this walkthrough's is.
+# ADAPT: the judge's own model, fixed for the whole run and never the trial's.
+# `None` while the wired evaluator is deterministic, as this walkthrough's is.
 JUDGE_MODEL: str | None = None
 # The decorated function the paid phases run. `optimize_sync` binds this run's
 # own config object to it, and the SDK's session manager stamps THAT object the
@@ -1608,7 +1579,7 @@ def call_judge(prompt: str) -> tuple[str, float | None]:
         {
             "model": JUDGE_MODEL,
             "timeout": MODEL_REQUEST_TIMEOUT_SECONDS,
-            # Drop this key for a judging route that rejects sampling.
+            # ADAPT: drop this key for a judging route that rejects sampling.
             "temperature": 0.0,
             "messages": [{"role": "user", "content": prompt}],
         }
@@ -1651,7 +1622,9 @@ def task_score(prediction, expected, input_data) -> float:
     this fence owns how, and where an LLM judge inside it places its call.
     """
     placed_before = len(RUN_SPEND_USD)
-    score = ...
+    # ADAPT: replace this raise with the preserved evaluator's grade of one
+    # row, assigned to `score`; the line above and the two below stay.
+    raise NotImplementedError("generate this body from the preserved evaluator")
     check_scorer_calls(placed_before)
     return score
 
@@ -1894,6 +1867,8 @@ def assert_wiring_still_proven() -> None:
         )
 
 
+# ADAPT: the signature only - the agent's own input contract, which
+# holdout_agent_input above must produce.
 @traigent.optimize(
     objectives=OBJECTIVES,
     configuration_space=ENHANCED_SPACE,
@@ -1922,30 +1897,21 @@ arithmetic the assistant performs between phases: the first is the SDK's per-tri
 and the second reads a ledger that same wrapper reserves against before each call and settles after
 it.
 
-**The second gate is a place, not a rule, and that is the whole of this design.** Two earlier
-versions asked callers to come to a function - first because a judge had bypassed the ledger
-outright, then because a judge had routed the call it declared and made another one directly, which
-a count of *routed* calls could not tell from compliance. Each asked the caller again and added a
-way to notice when it did not comply, and each left the next caller a way out. Putting the debit on
-the module attribute removes the outside instead: a hand-written judge that calls
-`litellm.completion`, which is what a judge naturally does, is ledgered without being asked to be.
-
-State its edge exactly, because an overstated safeguard is worse than a named gap. It reaches every
-caller that RESOLVES `litellm.completion` or `litellm.acompletion` at call time, and no others -
-and that clause is the whole test, so apply it rather than carrying a list of names that moves with
-the library. Anything built on the wrapped attributes is covered even though nothing here mentions
-it: `litellm.batch_completion` submits `litellm.completion` to a thread pool of its own, and a
-configured `Router` calls `litellm.completion(...)`, so both go through the door. Anything that
-reaches the provider by its own path is outside it: `litellm.text_completion` and
-`litellm.completion_with_retries` do, as do the spend-capable names that are not chat completions at
-all - `embedding`, `responses`, `image_generation` and their kin. So does a module that bound the
-function with `from litellm import completion` before setup, and so does a client that is not
-litellm at all - a raw provider SDK, an HTTP call, a subprocess. Settle a name by patching a
-sentinel over `litellm.completion` and calling it, not by trusting a list. So import a preserved
-agent or evaluator module after the wrapper installs the door, keep generated calls on the two
-wrapped names, and where neither can be arranged, declare what the scorer spends:
-`check_scorer_calls` compares that declaration against
-the ledger on every row, which is what still notices a call the door cannot see.
+**The second gate is a place, not a rule.** The install comment above owns its reach - every caller
+that resolves the wrapped attribute when it calls - and that clause is the whole test, so apply it
+rather than carrying a list of names that moves with the library. Anything built on the wrapped
+attributes is covered even though nothing here mentions it: `litellm.batch_completion` submits
+`litellm.completion` to a thread pool of its own, and a configured `Router` calls
+`litellm.completion(...)`, so both go through the door. Anything that reaches the provider by its
+own path is outside it: `litellm.text_completion` and `litellm.completion_with_retries` do, as do
+the spend-capable names that are not chat completions at all - `embedding`, `responses`,
+`image_generation` and their kin. So does a module that bound the function with
+`from litellm import completion` before setup, and so does a client that is not litellm at all - a
+raw provider SDK, an HTTP call, a subprocess. Settle a name by patching a sentinel over
+`litellm.completion` and calling it, not by trusting a list. Keep generated calls on the two wrapped
+names, and where a preserved caller cannot be brought through the door, declare what the scorer
+spends: `check_scorer_calls` compares that declaration against the ledger on every row, which is
+what still notices a call the door cannot see.
 
 Resolving the attribute is what brings a call to the door; it is not on its own what makes the
 money right, and treating the two as one sentence cost a run. litellm's own `fallbacks` handling
@@ -1973,9 +1939,9 @@ cap that has to agree with `TRAIGENT_RUN_COST_LIMIT` is one more place for them 
 
 The process-only values above are selected by the coding assistant from the inspected project and
 live-probe observation; they are not questions for the user. The generated walkthrough defaults
-to twelve baseline rows and a 12-trial enhanced cap. Preserve those counts when they fit the approved
-time, cost, and plan quota; prefer a smaller representative tuning slice over collapsing the
-comparison back to one-versus-two rows. The assistant derives the current provider route from the
+to twelve baseline configurations and a 12-trial enhanced cap. Preserve those counts when they fit
+the approved time, cost, and plan quota; prefer a smaller representative tuning slice over collapsing
+the comparison back to one-versus-two configurations. The assistant derives the current provider route from the
 existing vendor setup, the current agent call, and the route inventory, then populates the process
 variables used below; the user does not type route metadata into the run. Call
 `require_current_route_credential()` immediately before the approved live probe. A route literal it
@@ -2004,11 +1970,12 @@ and adds one more real one-call control: reflect. That is exactly 24 configurati
 managed run has meaningful choices to make while keeping the first taste deliberately small.
 
 When the user already has a baseline or fixed current configuration, preserve that baseline space
-and its row count exactly; do not expand it to twelve. Replace this example's spaces and `WIRED_KNOBS`
-together: the list names every paid enhanced key, including pinned keys. Add direct request parameters
-such as context format or few-shot count for observed failures. Retrieval, tools, repair, and multi-call
-controls require separately contained tracing outside this first-run paid space. Do not add no-op fields,
-recode a customer boolean, or add multi-call composite behavior merely to increase the portal row count.
+and its configuration count exactly; do not expand it to twelve. Replace this example's spaces and
+`WIRED_KNOBS` together: the list names every paid enhanced key, including pinned keys. Add direct
+request parameters such as context format or few-shot count for observed failures. Retrieval, tools,
+repair, and multi-call controls require separately contained tracing outside this first-run paid
+space. Do not add no-op fields, recode a customer boolean, or add multi-call composite behavior
+merely to raise the trial count the portal shows.
 
 Require nonzero token usage for every provider call; cost metadata alone does not prove the model
 ran. Use public response cost when present. Reported `0` is valid with nonzero usage. The
@@ -2042,8 +2009,9 @@ summary, explanation, writing, and story tasks - it grades with `call_judge`, an
 longer a way to spend unseen money, but it still grades on whatever model that request names, and
 the two response checks do not run - so route it for those reasons rather than for the ledger's.
 
-Then set `SCORER_CALLS_PER_ROW` to the number of provider calls grading one row places. That number
-is the run's claim about its own evaluator, and the one thing here nothing else can derive: it sizes
+`SCORER_CALLS_PER_ROW`, set where the fence defines it and nowhere after, is the number of provider
+calls grading one row places. That number is the run's claim about its own evaluator, and the one
+thing here nothing else can derive: it sizes
 the held-out refusal, which is settled before the pass it is sizing places a call, and
 `check_scorer_calls` tests it against the ledger on every row scored, in the search as well as the
 held-out pass. A deterministic evaluator declares `0` and is held to placing none.
@@ -2067,8 +2035,9 @@ once**, and which one applies is decided by reading the evaluator's own call pat
 
 For the generated walkthrough, run the credible small space as one local fixed grid containing its
 initial configuration. Start a fresh process with `TRAIGENT_FIRST_RUN_PHASE=baseline` (the
-fail-safe default) and the three approved cost figures `references/run-safety.md` names, all
-supplied by the process and never by `.env`. The contract forces backend-offline
+fail-safe default), the three approved cost figures `references/run-safety.md` names, and
+`TRAIGENT_FIRST_RUN_BASELINE_TIMEOUT_SECONDS` sized under "Automatic run bounds", all supplied by
+the process and never by `.env`. The contract forces backend-offline
 before import: removing `TRAIGENT_API_KEY` does not suppress a stored CLI login. Provider calls stay
 real. The setting dies with the baseline process; never export it, because the connected
 process requires it absent and refuses it if inherited.
@@ -2094,8 +2063,10 @@ deliberately different, and that difference is the comparison the first run exis
 The reason to pin the baseline is that `auto` means different things depending on whether a key is
 present. With no Traigent key it does not fail and does not run managed search: it falls back to a
 local `random` sweep and reports `fallback_reason=no_api_key`, so a run that looks like Traigent's
-managed search is really random sampling. Locally the SDK registers exactly two searches, `grid` and
-`random`; the managed family is cloud side and is not registered locally. At baseline size the
+managed search is really random sampling. Locally the SDK's registry lists six names, and only
+`grid` and `random` sample on their own: the three batch runners wrap a sampling search, `random`
+unless another is injected, and `remote` will not construct without an injected client. The managed
+family is cloud side and is not registered locally. At baseline size the
 difference is visible - the same twelve-point space returns the first grid cell every time under
 `grid`, and a different winner between runs under the fallback. A first result the user can
 reproduce in front of someone else is worth more than one they cannot, so state which algorithm
@@ -2112,20 +2083,19 @@ appears in the returned trials. If the baseline approval explicitly reduced that
 the returned count matches the disclosed plan and still contains `BASELINE_CONFIG`. For an
 existing user-owned baseline, replace the generated example's configuration, spaces, wired list,
 trial count, and algorithm with the preserved values and behavior exactly. A
-real one-row fixed configuration remains one row; never manufacture variants around it.
+real single fixed configuration remains one configuration; never manufacture variants around it.
 
-The baseline process prints its ledger on the way out, whether it finished or died on any ending
-`atexit` reaches, because `report_run_spend` is registered with it rather than written after the
-last call; an ending that reaches no handler prints nothing - SIGTERM, SIGKILL, SIGHUP, SIGQUIT,
-`os._exit` and `os.abort`, measured - and `references/run-safety.md` owns what to carry forward
-when the line is missing. The figure
-to carry forward is the one that line names as gone - what this process spent plus what it was
-launched having spent - already carrying the conservative deduction for any call its route did not
-price. That total is what the connected process is launched with as
+The baseline process prints its ledger on the way out; `report_run_spend` above owns which endings
+reach it, and `references/run-safety.md` owns what to carry forward when the line is missing. The
+figure to carry forward is the one that line names as gone - what this process spent plus what it
+was launched having spent - already carrying the conservative deduction for any call its route did
+not price. That total is what the connected process is launched with as
 `TRAIGENT_FIRST_RUN_COST_SPENT_USD`, so the number the baseline actually produced is the number the
 next phase is bounded by. Do not assemble it by hand from the SDK's tracked cost: that is a smaller,
 different quantity, and the gap is exactly the spend the ledger exists to catch. Do not start the
-search if it cannot fit the remaining total ceiling.
+search if it cannot fit the remaining total ceiling. A completed baseline is never re-run for a
+better number, and nothing is widened, topped up or raised on the way to the search: SKILL.md's
+operating contract owns that rule and the newly scoped approval it takes.
 
 Read cost as a number only when the SDK reports one. An absent cost is `not measured`, while an
 explicit provider-reported zero with nonzero token usage is a genuine free-route result. Never turn
@@ -2146,7 +2116,7 @@ treat an absent name as unavailable rather than assumed.
   spend effort next time.
 
 Comparison reads need two completed configurations. The generated grid qualifies; a preserved
-baseline with one row must wait for the enhanced result or report insight unavailable.
+baseline with one configuration must wait for the enhanced result or report insight unavailable.
 Neither read is meaningful under mock mode: identical canned responses describe the mock, not the
 dataset.
 
@@ -2210,12 +2180,14 @@ completed received*:
   already on disk, and if this search raises, that stale file survives as evidence for a search that
   is no longer the one being reported. Removing it makes the file's existence conditional on *this*
   search, not on any search ever having run.
-- **Write after trials are confirmed.** A search that returns having executed nothing did not search
-  the space either, so the document is persisted after `optimized_results.trials` is checked rather
-  than merely after the call returns.
+- **Write after trials and the portal are confirmed.** A search that returns having executed
+  nothing did not search the space, and one that lost the portal is not the managed search being
+  reported, so the document is persisted after `optimized_results.trials` and the tracking check
+  pass rather than merely after the call returns.
 
-A run that legitimately stops earlier, raises, or completes no trial therefore emits no document at
-all, and the closing score honestly reports the agent pillar as not yet measured. Re-write the
+A run that legitimately stops earlier, raises, completes no trial, or loses the portal therefore
+emits no document at all, and the closing score honestly reports the agent pillar as not yet
+measured. Re-write the
 document whenever the space changes. Its shape is documented in `references/run-safety.md`, and the
 finished file is passed to the closing readiness score with `--config-space`.
 
@@ -2230,7 +2202,7 @@ assert FIRST_RUN_PHASE == "connected", "optimization must run in the connected p
 assert os.environ.get("TRAIGENT_API_KEY", "").strip(), "Traigent key is not active"
 os.environ["TRAIGENT_EXPERIMENT_NAME"] = "first-run Traigent optimization"
 # Frozen from the space this call receives; persisted only once this search has
-# returned trials of its own.
+# returned trials of its own and reached the portal.
 config_space_evidence = (
     json.dumps(config_space_document(ENHANCED_SPACE), indent=2, sort_keys=True) + "\n"
 )
@@ -2285,9 +2257,9 @@ except BaseException as exc:
         f"Managed optimization stopped ({type(exc).__name__}); see {error_path}"
     ) from None
 assert optimized_results.trials, "optimization did not execute"
-Path(CONFIG_SPACE_DOCUMENT).write_text(config_space_evidence)
 # Here rather than beside the closing checks: held-out scoring is the next
-# paid pass, and a run that reached no portal must not buy it.
+# paid pass, and a run that reached no portal must not buy it - nor is such a
+# run the managed search a config-space document would stand as evidence for.
 tracking_loss = tracking_stopped() or (
     None if optimized_results.cloud_url is not None else "no portal link came back"
 )
@@ -2297,6 +2269,7 @@ if tracking_loss:
         f"further paid work runs. Report the trials in {OPTIMIZED_RESULTS}, the "
         "spend this process printed, and the baseline still standing."
     )
+Path(CONFIG_SPACE_DOCUMENT).write_text(config_space_evidence)
 ```
 
 Keep `algorithm="auto"` here, and never pin `grid` or `random` for the connected search. `auto` is
@@ -2310,23 +2283,14 @@ the enhanced run on `auto` so it is actually optimized. If a connected search re
 fallback reason, treat that as a failure to investigate rather than a result to present - the run
 did not do what the report will claim it did.
 
-`TRAIGENT_REQUIRE_CLOUD=1`, set for this phase in the wrapper above, is why that check is a
-backstop rather than the only defence. Without it `auto` does not fail when the managed brain is
-unreachable: it falls back to a local sweep, returns a result, and leaves the fallback reason for
-someone to notice afterwards - after twelve paid trials the user approved as a managed search. With
-it, session-creation failure raises before any trial. The flag is set only here: it fails any run
-that creates no backend session, which is what the baseline phase is. An inherited true value
-therefore stops the baseline before spending instead of being silently removed. Disclose the
-conflict on the approval card; only after approval may a fresh baseline process be launched with
-`TRAIGENT_REQUIRE_CLOUD=0` in its process environment. Do not merely unset it: because dotenv loads
-with `override=False`, a true value in `.env` would be restored and stop the baseline again.
-
-Setting it is necessary and not sufficient, and it has to be both spellings. `TRAIGENT_OFFLINE` and
-`TRAIGENT_OFFLINE_MODE` each resolve the run to local-only before a session is ever attempted, so
-the enforcement site never runs, and either one produces exactly the run this guards against while
-the guard reads as on - worse than not setting it. The wrapper refuses to start the connected phase
-under either instead of clearing it: no-egress is a deliberate choice about where the user's data
-may go, and unsetting it to satisfy this run would send data out on their behalf.
+`TRAIGENT_REQUIRE_CLOUD=1`, set for this phase in the contract above, is why that check is a
+backstop rather than the only defence: with it, session-creation failure raises before any trial.
+It is set only here, because it fails any run that creates no backend session, which is what the
+baseline is - so an inherited true value stops the baseline before spending instead of being
+silently removed, and the guard's own message says how to relaunch after approval. It is necessary
+and not sufficient: `TRAIGENT_OFFLINE` and `TRAIGENT_OFFLINE_MODE` each resolve the run to
+local-only before a session is ever attempted, so the contract refuses the connected phase under
+either instead of clearing it - where the user's data may go is their choice, not this run's.
 
 Because the phase now fails instead of degrading, own the failure. The canonical call above catches
 ordinary SDK/provider exceptions and pyo3 panic exceptions, while preserving deliberate
@@ -2355,17 +2319,14 @@ configuration and every baseline value, plus meaningful added knobs that the fun
 twelve-point space, where "all twelve" already names the whole result. `12` is therefore the ceiling and
 not a floor beneath a higher count, which is why everything the user reads states it as a ceiling -
 "up to 12 configurations" - rather than as a range. Report the actual count and stop reason. Fewer
-than 10 rows requires a concrete backend stop, timeout, cost-limit, or failure explanation rather
+than 10 trials requires a concrete backend stop, timeout, cost-limit, or failure explanation rather
 than being presented as the intended first-run comparison; that floor is this assistant's own
 honesty check on a short run, not a count promised to the user, so it stays out of the user-facing
 copy while continuing to govern what may be called the intended comparison.
 
-If an optional optimization timeout was set and `stop_reason == "timeout"` with trials completed,
-retain and report the best partial result (the enhanced run is uncapped by default, so this is
-defensive handling rather than the normal path).
-Offer another bounded pass only when the search was still improving or left a specific worthwhile
-hypothesis, and state its additional approximate time and cost. If zero trials completed,
-diagnose provider latency, a hung call, or setup failure rather than asking for more time. Do not
+If an optional optimization timeout was set and `stop_reason == "timeout"`, with or without
+completed trials, follow the Recovery rules in `references/run-safety.md`; the enhanced run is
+uncapped by default, so this is defensive handling rather than the normal path. Do not
 describe another invocation as "resume" unless the installed SDK exposes a public resume API.
 
 ## Result checks
@@ -2439,7 +2400,7 @@ exact-match accuracy rather than the wired scorer - so the floor silently become
 returns the cheapest configuration rather than the cheapest acceptable one. Both move the winner
 without moving anything the report shows.
 
-Score the reserved rows with the run's recommended configuration, when SKILL stage 7 says to,
+Score the reserved rows with the run's recommended configuration, when SKILL section 7 says to,
 against `HOLDOUT_DATASET` through the same loader and the same `task_score` the search used.
 `references/evaluation-and-dataset.md` owns which configuration that is - one call of
 `evaluate_holdout`, never one per candidate, whatever the rounds returned. The returned
@@ -2498,7 +2459,7 @@ assert optimized_results.best_config is not None, "no best configuration selecte
 ```
 
 Also verify that a user-owned baseline was preserved exactly, or that the generated baseline
-returned all twelve intended distinct rows including its initial configuration. For an explicitly
+returned all twelve intended distinct configurations, its initial one among them. For an explicitly
 approved reduced plan, verify the disclosed lower count and initial configuration instead. Inspect
 failed trials, cost tracking, truncation, declared measures, stop reason, and persistence status
 as defined in `run-safety.md`. The baseline portal URL, when exact sync was supported, comes from

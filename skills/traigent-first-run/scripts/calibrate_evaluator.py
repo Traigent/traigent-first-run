@@ -988,6 +988,42 @@ def run_worker() -> int:
         return 1
 
 
+# How much of a child's standard output the refusal shows. Enough to locate a
+# stray print; bounded so a scorer that streams megabytes cannot make the
+# message the thing that floods the terminal.
+WORKER_STDOUT_EXCERPT_CHARS = 400
+
+
+def invalid_worker_stdout_message(
+    phase: str, stdout: str, error: json.JSONDecodeError
+) -> str:
+    """Say that a worker's reply was not JSON, and show what it was."""
+    if not stdout.strip():
+        # Nothing arrived at all, which is not a stray write: the worker's
+        # stdout was closed or redirected before its reply, by the scorer or
+        # by something it imports.
+        return (
+            f"Evaluator calibration failed: the {phase} process printed "
+            "nothing, so no result was read. Its standard output was closed or "
+            "redirected before the worker could reply - by the scorer, or by "
+            "something it imports. Remove that redirection and re-run."
+        )
+    excerpt = stdout[:WORKER_STDOUT_EXCERPT_CHARS]
+    suffix = (
+        f" (first {WORKER_STDOUT_EXCERPT_CHARS} of {len(stdout)} characters shown)"
+        if len(stdout) > WORKER_STDOUT_EXCERPT_CHARS
+        else ""
+    )
+    return (
+        f"Evaluator calibration failed: the {phase} process returned output "
+        f"that is not JSON ({error.msg} at line {error.lineno} column "
+        f"{error.colno}). The scorer, or something it imports or spawns, wrote "
+        "to its standard output outside the capture this worker keeps - a "
+        "direct write to file descriptor 1, or a child process. Remove that "
+        f"write and re-run. What arrived{suffix}: {excerpt!r}"
+    )
+
+
 def positive_int(value: str) -> int:
     parsed = int(value)
     if parsed <= 0:
@@ -1016,7 +1052,9 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
             "Calibrate a first-run grading adapter with one or more four-probe cases."
-        )
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=EXIT_CODES_HELP,
     )
     parser.add_argument(
         "--scorer",
@@ -1433,6 +1471,10 @@ def run_supplemental_attempt(
             [sys.executable, str(Path(__file__).resolve()), "--_worker"],
             input=json.dumps(request),
             text=True,
+            # A child that writes bytes no codec reads is the evaluator's
+            # defect, and the guard on its reply has to see them: without this
+            # the decode raised before that guard and the run exited 3.
+            errors="backslashreplace",
             capture_output=True,
             timeout=remaining_seconds,
             env=environment,
@@ -1529,6 +1571,10 @@ def run_seam_batch(
             [sys.executable, str(Path(__file__).resolve()), "--_worker"],
             input=json.dumps(request),
             text=True,
+            # A child that writes bytes no codec reads is the evaluator's
+            # defect, and the guard on its reply has to see them: without this
+            # the decode raised before that guard and the run exited 3.
+            errors="backslashreplace",
             capture_output=True,
             timeout=remaining_seconds,
             env=environment,
@@ -1610,6 +1656,20 @@ def run_seam_batch(
 # environment variable prints the stack for whoever is fixing it.
 INTERNAL_ERROR_EXIT = 3
 TRACEBACK_ENV = "TRAIGENT_FIRST_RUN_TRACEBACK"
+
+# Printed by --help. Codes 1 and 2 answer different questions - "the evaluator
+# was run and the answer is no" against "the evaluator was not run" - and a
+# caller that folds them together retries a refusal as if it were a failure.
+EXIT_CODES_HELP = f"""exit codes:
+  0  calibration ran and every check passed
+  1  calibration ran and a check failed, timed out, or the evaluator process
+     could not produce a result; the payload or stderr says which
+  2  the evaluator was not run: the run was refused (no --allow-execution, an
+     evaluator that reaches an engine, an unapproved LLM judge), the
+     --reply-transform could not be loaded, or the command line was wrong;
+     the message on stderr names the reason
+  {INTERNAL_ERROR_EXIT}  this script failed on its own - a defect here, not in your project -
+     and no result was produced; re-run with {TRACEBACK_ENV}=1 to see where"""
 
 
 def report_internal_error(
@@ -1787,6 +1847,7 @@ def run() -> int:
                     }
                 ),
                 text=True,
+                errors="backslashreplace",
                 capture_output=True,
                 timeout=max(
                     0.0,
@@ -1840,6 +1901,10 @@ def run() -> int:
             [sys.executable, str(Path(__file__).resolve()), "--_worker"],
             input=json.dumps(authored_request),
             text=True,
+            # A child that writes bytes no codec reads is the evaluator's
+            # defect, and the guard on its reply has to see them: without this
+            # the decode raised before that guard and the run exited 3.
+            errors="backslashreplace",
             capture_output=True,
             timeout=max(0.0, calibration_deadline - time.monotonic()),
             env=worker_environment,
@@ -1907,7 +1972,31 @@ def run() -> int:
         )
         return 1
 
-    payload = json.loads(process.stdout)
+    # Guarded the way the supplemental and seam readers below already are. The
+    # worker captures what the scorer prints through `sys.stdout`, but a
+    # scorer that writes to file descriptor 1 directly - a C extension, a
+    # child process it spawns, `os.write(1, ...)` - lands its bytes in front
+    # of the worker's JSON, and `json.loads` on that used to escape to the
+    # boundary in `main` as this script's defect. It is the evaluator's, and
+    # the message shows what arrived so the author can find the print.
+    try:
+        payload = json.loads(process.stdout)
+    except json.JSONDecodeError as error:
+        print(
+            invalid_worker_stdout_message(
+                "evaluator calibration", process.stdout, error
+            ),
+            file=sys.stderr,
+        )
+        return 1
+    if not isinstance(payload, dict):
+        print(
+            "Evaluator calibration failed: the evaluator process returned JSON "
+            f"that is not an object ({type(payload).__name__}); this is not the "
+            "worker's reply, so something else wrote to its standard output.",
+            file=sys.stderr,
+        )
+        return 1
 
     # Every deterministic supplemental attempt gets a new interpreter. A
     # module reload in one interpreter does not isolate imported dependency

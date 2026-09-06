@@ -6,9 +6,11 @@ statements are broken into their clauses, each clause is put into a canonical
 form, and the two canonical forms are compared for equality.
 
 Nothing is run and nothing is opened. There is no database connection, no
-catalog, no file access and no network access. The module has no dependencies
-at all: it does not pull in a single name from the standard library, so a copy
-of this one file is the whole install.
+catalog, no file access and no network access. Importing the module pulls in
+nothing at all, not a single name from the standard library, so a copy of this
+one file is the whole install. The only imports are inside the command-line
+self-check at the bottom, which runs when the file is invoked as a script and
+reads ``argparse``, ``json`` and ``sys`` there.
 
 Typical use, next to a scoring function::
 
@@ -68,6 +70,26 @@ What is normalised
 * Select list aliases are stripped from the comparison, but recorded, so that
   a later reference to the alias in ``GROUP BY`` / ``HAVING`` / ``ORDER BY``
   is compared against the expression it names.
+* A positional ``ORDER BY 2`` or ``GROUP BY 2`` is resolved to the second
+  select item and compared as that expression, so ``ORDER BY 1`` over
+  ``SELECT a, b`` and ``ORDER BY a`` agree, and ``SELECT a, b ... ORDER BY 1``
+  and ``SELECT b, a ... ORDER BY 1`` differ. The resolution happens before the
+  select list is sorted, which is what lets a sorted list keep the position
+  information. It is done only inside a single ``SELECT`` block whose list
+  holds no ``*``: after a star the positions depend on the catalog, and over a
+  set operation the two sides may put different expressions at one position,
+  so in both cases the ordinal is kept literal. An ordinal that names no item
+  (``ORDER BY 3`` over two items, or ``ORDER BY 0``) is rejected by every
+  engine and is read as unreadable input here, never compared as a number.
+* Typed literals ``DATE '...'``, ``TIME '...'`` and ``TIMESTAMP '...'`` are
+  read as one literal carrying its type, and ``INTERVAL '...' [unit]`` (or
+  ``INTERVAL n unit``) as one literal carrying its unit, with a plural unit
+  folded to the singular. A typed literal never equals the bare string.
+* A window clause ``OVER (PARTITION BY ... ORDER BY ... frame)`` is read with
+  the call it follows. The ``PARTITION BY`` keys are a set, the window's
+  ``ORDER BY`` stays ordered, and a one-sided frame (``ROWS 3 PRECEDING``) is
+  written out as the ``BETWEEN ... AND CURRENT ROW`` the standard defines it
+  as. An absent frame stays absent rather than being filled with a default.
 
 What it deliberately does NOT claim
 -----------------------------------
@@ -82,8 +104,8 @@ than guessing. These are real, known divergences from a schema-aware metric:
 * ``JOIN b USING (id)`` is not expanded to ``ON a.id = b.id``, and
   ``NATURAL JOIN`` is not expanded at all. Both are held as opaque join
   conditions, and a join carrying one is never folded into a table set.
-* ``ORDER BY 1`` is kept as the literal ``1``. Since the select list is
-  compared as a set, an ordinal cannot be resolved back to an item.
+* ``SELECT * ... ORDER BY 1`` keeps the literal ``1``: with a star in the
+  list the first column is whatever the catalog says it is.
 * Type names are compared as written, so ``CAST(x AS INT)`` and
   ``CAST(x AS INTEGER)`` differ.
 * Numeric literals are compared as written, so ``1.5`` and ``1.50`` differ.
@@ -95,14 +117,32 @@ Coverage limits
 ---------------
 The grammar covers ``SELECT`` statements, including ``WITH`` clauses, set
 operators, subqueries in ``SELECT`` / ``FROM`` / ``WHERE``, ``CASE``,
-``CAST``, ``IN``, ``EXISTS``, ``BETWEEN``, ``LIKE`` and ``IS``. Window
-functions (``OVER (...)``), ``VALUES`` lists, and statements other than
+``CAST``, ``IN``, ``EXISTS``, ``BETWEEN``, ``LIKE``, ``IS``, the typed
+literals above, and window functions written as ``call OVER (...)`` with
+``PARTITION BY``, ``ORDER BY`` and a ``ROWS`` / ``RANGE`` / ``GROUPS`` frame.
+Named windows (``OVER w`` with a ``WINDOW`` clause), ``FILTER (WHERE ...)``,
+``EXCLUDE`` in a frame, ``VALUES`` lists, and statements other than
 ``SELECT`` are not covered. Words in the reserved list below are always read
 as keywords, so a column literally named ``order`` or ``end`` has to be
-quoted. Anything the grammar cannot read is a non-match, never a crash and
-never a silent agreement: the signature comes back tagged ``"unparsed"`` and
-``structural_match`` returns ``0.0`` even when both sides are the same
-unreadable string.
+quoted; the window and literal words (``over``, ``partition``, ``rows``,
+``date``, ``interval`` and so on) are read by position instead and stay
+usable as names. Anything the grammar cannot read is a non-match, never a
+crash and never a silent agreement: the signature comes back tagged
+``"unparsed"`` and ``structural_match`` returns ``0.0`` even when both sides
+are the same unreadable string.
+
+Command line
+------------
+``python sql_structure.py gold.jsonl`` scores every row's expected SQL
+against itself with ``structural_match`` and lists each row that does not
+score ``1.0``, as ``line N: problem`` over ``fix: remedy``, naming the row's
+id and what stopped the reader. A gold answer that fails its own self-match
+scores ``0.0`` against every candidate, including a perfect one, so the check
+belongs before any paid run. Exit ``0`` when every row matches itself, ``1``
+when a row is listed, ``2`` when the file, or a line of it, is not JSONL or
+the file holds no rows.
+``--expected-field`` and ``--id-field`` name the fields, with the defaults
+``preflight.py`` uses.
 
 The one exception to never raising is deliberate. A non-string argument is
 passed through ``str()``, and if that object's ``__str__`` raises, the error
@@ -213,6 +253,38 @@ _AGGREGATES = frozenset({"AVG", "COUNT", "MAX", "MIN", "SUM"})
 # one-line code fence is the fence info string (its language tag) and is
 # dropped rather than lexed.
 _STATEMENT_STARTERS = frozenset({"select", "with"})
+
+# Words read by position rather than reserved. Each is a common column name
+# (``date``, ``rows``, ``current``), so putting it in ``_KEYWORDS`` would make
+# a query naming such a column unreadable. The parser looks for these only
+# where the grammar allows nothing else: ``date`` before a string literal,
+# ``over`` between a call and an open parenthesis, ``rows`` at the head of a
+# window frame.
+_TYPED_LITERAL_TYPES = frozenset({"date", "time", "timestamp"})
+_INTERVAL_UNITS = {
+    "microsecond": "MICROSECOND",
+    "microseconds": "MICROSECOND",
+    "millisecond": "MILLISECOND",
+    "milliseconds": "MILLISECOND",
+    "second": "SECOND",
+    "seconds": "SECOND",
+    "minute": "MINUTE",
+    "minutes": "MINUTE",
+    "hour": "HOUR",
+    "hours": "HOUR",
+    "day": "DAY",
+    "days": "DAY",
+    "week": "WEEK",
+    "weeks": "WEEK",
+    "month": "MONTH",
+    "months": "MONTH",
+    "quarter": "QUARTER",
+    "quarters": "QUARTER",
+    "year": "YEAR",
+    "years": "YEAR",
+}
+_FRAME_UNITS = frozenset({"rows", "range", "groups"})
+_FRAME_SIDES = frozenset({"preceding", "following"})
 
 _SYMMETRIC = frozenset({"=", "<>"})
 _COMMUTATIVE = frozenset({"+", "*"})
@@ -471,6 +543,23 @@ class _Parser:
         token = self._peek()
         return token is not None and token[0] == "op" and token[1] in symbols
 
+    def _at_word(self, *words: str) -> bool:
+        """True when the next token is an identifier spelled as one of ``words``.
+
+        The positional keywords in ``_TYPED_LITERAL_TYPES``, ``_FRAME_UNITS``
+        and the window words are looked for this way, so they stay usable as
+        ordinary names everywhere else.
+        """
+        token = self._peek()
+        return token is not None and token[0] == "id" and token[1] in words
+
+    def _where(self) -> str:
+        """The current position, for the reason a statement could not be read."""
+        token = self._peek()
+        if token is None:
+            return "at the end of the statement"
+        return f"at token {self._pos + 1} ({token[1]!r})"
+
     def _accept_kw(self, *words: str) -> str | None:
         if self._at_kw(*words):
             return self._next()[1]
@@ -697,6 +786,10 @@ class _Parser:
         if self._accept_kw("ORDER") is None:
             return ()
         self._expect_kw("BY")
+        return self._parse_order_terms()
+
+    def _parse_order_terms(self) -> tuple:
+        """The terms after ``ORDER BY``, for a query and for a window alike."""
         terms = []
         while True:
             expression = self._parse_expression()
@@ -966,7 +1059,33 @@ class _Parser:
         self._expect_kw("END")
         return ("case", operand, tuple(branches), fallback)
 
+    def _parse_typed_literal(self) -> _Node | None:
+        """``DATE '...'``, ``TIME '...'``, ``TIMESTAMP '...'`` or ``INTERVAL ...``.
+
+        Read only when the type word is directly followed by the literal it
+        types. ``SELECT date FROM t`` therefore still reads ``date`` as a
+        column, and so does ``WHERE interval > 3``.
+        """
+        token = self._peek()
+        following = self._peek(1)
+        if token is None or following is None:
+            return None
+        word = token[1]
+        if word in _TYPED_LITERAL_TYPES and following[0] == "str":
+            self._pos += 2
+            return ("typed", word.upper(), following[1])
+        if word == "interval" and following[0] in ("str", "num"):
+            self._pos += 2
+            unit = None
+            if self._at_word(*_INTERVAL_UNITS):
+                unit = _INTERVAL_UNITS[self._next()[1]]
+            return ("interval", following[0], following[1], unit)
+        return None
+
     def _parse_name_primary(self) -> _Node:
+        literal = self._parse_typed_literal()
+        if literal is not None:
+            return literal
         parts = [self._next()[1]]
         while self._at_punc("."):
             following = self._peek(1)
@@ -997,7 +1116,65 @@ class _Parser:
                 if not self._accept_punc(","):
                     break
         self._expect_punc(")")
-        return ("call", name, distinct, tuple(arguments))
+        call: _Node = ("call", name, distinct, tuple(arguments))
+        # ``over`` is looked for by position: a call followed by ``over (``
+        # carries a window, while ``SELECT COUNT(*) over FROM t`` still reads
+        # ``over`` as the call's alias.
+        if self._at_word("over") and self._peek(1) == ("punc", "("):
+            self._pos += 1
+            return self._parse_window(call)
+        return call
+
+    def _parse_window(self, call: _Node) -> _Node:
+        self._expect_punc("(")
+        partition: list[_Node] = []
+        if self._at_word("partition"):
+            self._pos += 1
+            self._expect_kw("BY")
+            partition.append(self._parse_expression())
+            while self._accept_punc(","):
+                partition.append(self._parse_expression())
+        order: tuple = ()
+        if self._accept_kw("ORDER") is not None:
+            self._expect_kw("BY")
+            order = self._parse_order_terms()
+        frame = None
+        if self._at_word(*_FRAME_UNITS):
+            frame = self._parse_frame()
+        self._expect_punc(")")
+        return ("win", call, tuple(partition), order, frame)
+
+    def _parse_frame(self) -> _Node:
+        unit = self._next()[1].upper()
+        if self._accept_kw("BETWEEN") is not None:
+            start = self._parse_frame_bound()
+            self._expect_kw("AND")
+            end = self._parse_frame_bound()
+        else:
+            # ``ROWS n PRECEDING`` is defined by the standard as
+            # ``ROWS BETWEEN n PRECEDING AND CURRENT ROW``, so the two spellings
+            # are given one shape here.
+            start = self._parse_frame_bound()
+            end = ("current",)
+        return ("frame", unit, start, end)
+
+    def _parse_frame_bound(self) -> _Node:
+        if self._at_word("unbounded"):
+            self._pos += 1
+            return ("unbounded", self._parse_frame_side())
+        if self._at_word("current"):
+            self._pos += 1
+            if not self._at_word("row"):
+                raise _SqlSyntaxError("expected ROW after CURRENT")
+            self._pos += 1
+            return ("current",)
+        offset = self._parse_additive()
+        return ("offset", offset, self._parse_frame_side())
+
+    def _parse_frame_side(self) -> str:
+        if self._at_word(*_FRAME_SIDES):
+            return self._next()[1].upper()
+        raise _SqlSyntaxError("expected PRECEDING or FOLLOWING")
 
 
 def _unwrap_query(node: _Node) -> _Node:
@@ -1053,17 +1230,62 @@ def _alias_map(from_clause: _Node | None, outer: dict) -> dict:
     return scope
 
 
+def _select_item_for_ordinal(
+    term: _Node, items: tuple | None, clause: str
+) -> _Node | None:
+    """The select item a positional ``ORDER BY n`` / ``GROUP BY n`` names.
+
+    ``None`` when ``term`` is not a bare positive integer, when there is no
+    single select list to count into (``items`` is ``None`` over a set
+    operation), or when that list holds a ``*`` and so has a column count no
+    catalog-free reader knows. In each of those cases the caller keeps the
+    literal. An ordinal outside the list is rejected by every engine, so it is
+    unreadable input here rather than a number to compare.
+    """
+    if term[0] != "num" or not term[1].isdigit() or items is None:
+        return None
+    if any(item[0] == "star" for item, _alias in items):
+        return None
+    position = int(term[1])
+    if not 1 <= position <= len(items):
+        raise _SqlSyntaxError(
+            f"{clause} {term[1]} names no select item (the list has {len(items)})"
+        )
+    return items[position - 1][0]
+
+
+def _norm_positional(
+    term: _Node, scope: dict, item_aliases: dict, items: tuple | None, clause: str
+) -> _Node:
+    """Normalise a GROUP BY / ORDER BY term, resolving an ordinal first.
+
+    A resolved item is normalised the way the select list normalises it, with
+    no alias map, so ``SELECT a AS b, b AS a ... ORDER BY 1`` reads ``a`` and
+    not the item aliased ``a``.
+    """
+    item = _select_item_for_ordinal(term, items, clause)
+    if item is None:
+        return _norm_expr(term, scope, item_aliases)
+    return _norm_expr(item, scope, {})
+
+
 def _norm_query(raw: _Node, outer: dict) -> _Node:
     _, ctes, body, order, limit, offset = raw
     if body[0] == "rawselect":
         scope = _alias_map(body[3], outer)
         item_aliases = {alias: item for item, alias in body[2] if alias is not None}
+        items: tuple | None = body[2]
     else:
         scope = dict(outer)
         item_aliases = {}
+        items = None
     body_sig = _norm_body(body, outer)
     order_sig = tuple(
-        (_norm_expr(term, scope, item_aliases), direction, nulls)
+        (
+            _norm_positional(term, scope, item_aliases, items, "ORDER BY"),
+            direction,
+            nulls,
+        )
         for term, direction, nulls in order
     )
     limit_sig = None if limit is None else _norm_expr(limit, scope, {})
@@ -1117,7 +1339,9 @@ def _norm_select(raw: _Node, scope: dict) -> _Node:
     predicates = list(merged)
     if where is not None:
         predicates.extend(_conjuncts(_norm_expr(where, scope, {})))
-    group_sig = _sorted_set(_norm_expr(term, scope, item_aliases) for term in group)
+    group_sig = _sorted_set(
+        _norm_positional(term, scope, item_aliases, items, "GROUP BY") for term in group
+    )
     having_sig = None
     if having is not None:
         having_sig = _and_of(_conjuncts(_norm_expr(having, scope, item_aliases)))
@@ -1224,8 +1448,20 @@ def _norm_expr(node: _Node, scope: dict, item_aliases: dict) -> _Node:
         if len(parts) == 1 and parts[0] in scope:
             return ("star", tuple(scope[parts[0]]))
         return ("star", parts)
-    if kind in ("num", "str", "lit"):
+    if kind in ("num", "str", "lit", "typed", "interval"):
         return node
+    if kind == "win":
+        _, call, partition, order, frame = node
+        return (
+            "win",
+            _norm_expr(call, scope, item_aliases),
+            _sorted_set(_norm_expr(key, scope, item_aliases) for key in partition),
+            tuple(
+                (_norm_expr(term, scope, item_aliases), direction, nulls)
+                for term, direction, nulls in order
+            ),
+            None if frame is None else _norm_frame(frame, scope, item_aliases),
+        )
     if kind == "call":
         _, name, distinct, arguments = node
         return (
@@ -1318,6 +1554,22 @@ def _norm_expr(node: _Node, scope: dict, item_aliases: dict) -> _Node:
     raise _SqlSyntaxError(f"unsupported expression node {kind!r}")
 
 
+def _norm_frame(frame: _Node, scope: dict, item_aliases: dict) -> _Node:
+    _, unit, start, end = frame
+    return (
+        "frame",
+        unit,
+        *(
+            (
+                (bound[0], _norm_expr(bound[1], scope, item_aliases), bound[2])
+                if bound[0] == "offset"
+                else bound
+            )
+            for bound in (start, end)
+        ),
+    )
+
+
 def _norm_binary(node: _Node, scope: dict, item_aliases: dict) -> _Node:
     _, symbol, left, right = node
     left_sig = _norm_expr(left, scope, item_aliases)
@@ -1339,6 +1591,37 @@ def _flat_text(text: str) -> str:
     return " ".join(text.split())
 
 
+def _read(text: str) -> _Node:
+    """The signature of ``text``, or ``_SqlSyntaxError`` saying what stopped it.
+
+    A parser refusal is extended with where the reader stood, so the reason
+    that reaches the command-line self-check names a token and not only a
+    rule. ``structural_signature`` discards the reason; ``_unreadable_reason``
+    keeps it.
+    """
+    tokens = _tokens(_strip_fence(text))
+    if not tokens:
+        raise _SqlSyntaxError("no statement")
+    parser = _Parser(tokens)
+    try:
+        raw = parser.parse()
+    except _SqlSyntaxError as error:
+        raise _SqlSyntaxError(f"{error} {parser._where()}") from None
+    return _norm_query(raw, {})
+
+
+def _unreadable_reason(sql: object) -> str | None:
+    """Why ``sql`` would be tagged unparsed, or ``None`` when it reads."""
+    text = sql if isinstance(sql, str) else str(sql)
+    try:
+        _read(text)
+    except _SqlSyntaxError as error:
+        return str(error)
+    except RecursionError:
+        return "statement nests too deeply"
+    return None
+
+
 def structural_signature(sql: object) -> tuple:
     """Return the canonical structure of ``sql`` as a nested tuple.
 
@@ -1358,13 +1641,8 @@ def structural_signature(sql: object) -> tuple:
     """
     text = sql if isinstance(sql, str) else str(sql)
     try:
-        tokens = _tokens(_strip_fence(text))
-        if not tokens:
-            raise _SqlSyntaxError("no statement")
-        return _norm_query(_Parser(tokens).parse(), {})
-    except _SqlSyntaxError:
-        return (_UNPARSED, _flat_text(text))
-    except RecursionError:
+        return _read(text)
+    except (_SqlSyntaxError, RecursionError):
         return (_UNPARSED, _flat_text(text))
 
 
@@ -1382,3 +1660,166 @@ def structural_match(candidate: object, expected: object) -> float:
     if left[0] == _UNPARSED or right[0] == _UNPARSED:
         return 0.0
     return 1.0 if left == right else 0.0
+
+
+# ---------------------------------------------------------------------------
+# Command line: list the gold rows this grammar cannot read
+# ---------------------------------------------------------------------------
+
+
+def _row_value(row: dict, field_path: str) -> tuple[bool, object]:
+    """Follow a dot path into ``row``, the way ``preflight.py`` reads fields."""
+    value: object = row
+    for part in field_path.split("."):
+        if not part or not isinstance(value, dict) or part not in value:
+            return False, None
+        value = value[part]
+    return True, value
+
+
+def _row_id(row: dict, key: str) -> object:
+    """The row's id, read from the row itself or from its ``metadata`` object."""
+    if key in row:
+        return row[key]
+    metadata = row.get("metadata")
+    return metadata.get(key) if isinstance(metadata, dict) else None
+
+
+def _main(argv: list[str] | None = None) -> int:
+    """List every row whose expected SQL this module cannot read.
+
+    The imports live here rather than at module level so that importing the
+    module beside a scoring function still binds nothing from the standard
+    library; they are needed only when the file is run as a script.
+    """
+    import argparse
+    import json
+    import sys
+
+    parser = argparse.ArgumentParser(
+        prog="sql_structure.py",
+        description=(
+            "Score every expected SQL answer in a JSONL dataset against itself "
+            "with structural_match, and list the rows that do not score 1.0. "
+            "A row listed here scores 0.0 against every candidate, including "
+            "a perfect one, so fix or replace it before any paid run."
+        ),
+        epilog=(
+            "exit codes:\n"
+            "  0  every row's expected SQL scores 1.0 against itself\n"
+            "  1  at least one row does not; each is listed above with a fix\n"
+            "  2  the file, or a line in it, could not be read as JSONL, or it\n"
+            "     holds no rows"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument("dataset", help="JSONL file, one row per line")
+    parser.add_argument(
+        "--expected-field",
+        default="output",
+        help=(
+            "dot path to the expected SQL in each row (default: output, the "
+            "field preflight.py reads)"
+        ),
+    )
+    parser.add_argument(
+        "--id-field",
+        default="id",
+        help=(
+            "the row id, read from the row or from its 'metadata' object "
+            "(default: id); a row without one is named by its line number"
+        ),
+    )
+    args = parser.parse_args(argv)
+
+    try:
+        with open(args.dataset, encoding="utf-8") as handle:
+            lines = handle.read().splitlines()
+    except (OSError, UnicodeDecodeError) as error:
+        print(f"{args.dataset}: cannot read the file ({error})", file=sys.stderr)
+        return 2
+
+    rows = 0
+    unreadable = 0
+    malformed = 0
+    findings: list[tuple[str, str, str]] = []
+    for number, raw_line in enumerate(lines, 1):
+        if not raw_line.strip():
+            continue
+        try:
+            row = json.loads(raw_line)
+        except json.JSONDecodeError as error:
+            print(f"line {number}: not JSON ({error.msg})", file=sys.stderr)
+            malformed += 1
+            continue
+        if not isinstance(row, dict):
+            print(f"line {number}: row is not an object", file=sys.stderr)
+            malformed += 1
+            continue
+        rows += 1
+        label = f"line {number}"
+        row_id = _row_id(row, args.id_field)
+        if row_id is not None:
+            label += f", id {row_id!r}"
+        found, expected = _row_value(row, args.expected_field)
+        if not found:
+            findings.append(
+                (
+                    label,
+                    f"no {args.expected_field!r} field",
+                    "add the expected SQL under that field, or pass "
+                    "--expected-field with the field this dataset uses",
+                )
+            )
+            unreadable += 1
+            continue
+        if not isinstance(expected, str):
+            # `structural_match` would read `str()` of it and score the
+            # spelling of a dict or a null, which is not the row's defect.
+            findings.append(
+                (
+                    label,
+                    f"expected SQL is {type(expected).__name__}, not a string",
+                    "store the SQL as a string under that field",
+                )
+            )
+            unreadable += 1
+            continue
+        # The self-match is the check, stated as what a paid run would see:
+        # a gold answer that does not score 1.0 against itself scores 0.0
+        # against every candidate. The reason is read separately, because
+        # `structural_match` deliberately discards it.
+        if structural_match(expected, expected) == 1.0:
+            continue
+        unreadable += 1
+        reason = _unreadable_reason(expected) or "does not match itself"
+        findings.append(
+            (
+                label,
+                f"scores 0.0 against itself: {reason}",
+                "rewrite the expected SQL as one SELECT statement this "
+                "comparator reads (see the module docstring for its coverage), "
+                "or replace the row; until then no candidate can score on it",
+            )
+        )
+
+    if rows == 0 and not malformed:
+        # An empty file is not a file every row of which matches itself.
+        print(f"{args.dataset}: no JSON rows", file=sys.stderr)
+        return 2
+    if findings:
+        print(
+            f"{len(findings)} of {rows} rows would score 0.0 against every "
+            f"candidate in {args.dataset}:"
+        )
+        for label, problem, remedy in findings:
+            print(f"  {label}: {problem}\n    fix: {remedy}")
+    else:
+        print(f"{args.dataset}: every one of {rows} rows matches itself")
+    if malformed:
+        return 2
+    return 1 if unreadable else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(_main())

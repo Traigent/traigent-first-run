@@ -155,7 +155,7 @@ those paths and this concise summary in `traigent-runs/run-plan.md`:
 Script/schema validation proves only that the matrix is well formed. The assistant's review must
 connect the selected probes to the product's meaning of correctness. If the evidence supports a
 `sufficient` verdict, proceed without asking or pausing. Run static preflight immediately, then
-follow SKILL's opening/stage-4 calibration sequencing.
+follow SKILL's opening/section-4 calibration sequencing.
 
 If the evidence leaves unresolved product-grading ambiguity that would materially change which
 output is correct or how candidate configurations rank, record an `ambiguous` verdict, ask
@@ -292,15 +292,13 @@ rerun it before relying on that supplemental evidence.
 The two sets above are still one half of the wiring. The authored four measure this evaluator
 against strings their author wrote; the generated ones are built from the expected answer, which the
 author also wrote. Neither has been through the step that stands between the model and the
-evaluator - the agent's own extraction or clean-up. Two paid runs were lost in that gap, and in one
-of them the probe set already held the shape that broke it: a `NOT IN` subquery was covered on one
-side of the wiring and never on the other.
+evaluator - the agent's own extraction or clean-up.
 
 So the answers that already exist are put through the step that already exists, in the one shape
 there is evidence a model sends. `--reply-transform FILE.py:FUNCTION` names that step - one
 positional argument, the model's reply, returning what the evaluator is handed - and `--task-kind`
 arms the probes, which send the case's own `good` and `equivalent_good` answers wrapped in a
-markdown code fence. SKILL stage 4 owns when each is passed. Neither buys a provider call, and
+markdown code fence. SKILL section 4 owns when each is passed. Neither buys a provider call, and
 neither probe is an invented fixture: the content is the author's own answer, already scored, so the
 only thing that changed is the wrapper. Reaching the function imports its whole module, which is why
 that module falls under the same inspection the scorer does, and why a module needing an uninstalled
@@ -326,8 +324,7 @@ lower-case variant the same model emits.
 The fenced shape is constructed in every case, and the evidence for it is a class fact rather than
 an observation of this route: chat models fence code by default, and one did so on a paid run
 against a prompt forbidding it. That is why it is worth sending and why no report built on it may
-say the model sends one. It is also the whole of the difference from the bare answer this check used
-to send - for which there is no such record at all.
+say the model sends one.
 
 Four things this reports, and each says only what it can. `seam_probe_advisory` is the finding, and
 it never changes the authored PASS. Where a reply step ran, it names what was sent and what came
@@ -343,14 +340,14 @@ check that passed. Unavailable probes reach the same `supplemental_probe_advisor
 generated probe.
 
 None of the four is scored. `readiness.py` reads no seam key and no ceiling moves on one: their
-destination is the run record and, for a standing advisory, the pre-spend approval SKILL stage 6
+destination is the run record and, for a standing advisory, the pre-spend approval SKILL section 6
 names. That is deliberate for the two that cannot tell - an off-domain or skipped check has
 established nothing, and a score is the one place a reader would take it for something.
 
 Read what was sent beside what came back - both are printed on stderr, so a redirected payload
 cannot hide them - and settle it before the paid run. Every trial passes through this same step, and
 configurations that all score a damaged form cannot be told apart. Where the damaged step is code
-this run wrote, the repair is free and SKILL stage 7 owns what may be offered around it.
+this run wrote, the repair is free and SKILL section 7 owns what may be offered around it.
 
 For LLM judges:
 
@@ -439,10 +436,9 @@ A. **Repair and re-evaluate (recommended)** - create a working copy under `traig
 B. **Continue as a workflow demonstration** - only when the component executes safely. Keep it
    `limited` and `❗`; state before and after the run that the result is not a credible performance
    estimate. Say what this route *does* - continue now, on material this run writes or keeps.
-   Never word it as a "replacement" or as continuing "once a valid one is available": a blinded
-   worker offered exactly that phrasing read it as a second way to pause, so all three routes it
-   presented were ways of stopping and the user was given no way to go on. This is the one route
-   whose whole purpose is that the run does not stall.
+   Never word it as a "replacement" or as continuing "once a valid one is available": read that
+   way it is a second way to pause, and then every route on offer is a way of stopping. This is the one
+   route whose whole purpose is that the run does not stall.
 C. **Pause for a user-authored fix** - provide the exact acceptance checks that the revision must
    pass.
 
@@ -451,9 +447,11 @@ stable IDs, or a disjoint split. Do not silently delete real rows, change expect
 product policy, or broaden a rubric. For those judgment-dependent changes, propose the exact diff
 and ask first.
 
-After any repair, re-run the same checks that produced the advisory, the applicable calibration,
-and the readiness score. Do not clear `❗` because a file changed or because the score rose; clear
-it only when new evidence resolves the limitation.
+After any repair, re-run every check whose input changed, the applicable calibration, and the
+readiness score - SKILL.md section 4 owns that rule. An evaluator repair re-runs the degenerate-gold
+check below even when the opening pass was clean: that check grades the gold through the evaluator,
+so a pass under the old one says nothing about the new one. Do not clear `❗` because a file
+changed or because the score rose; clear it only when new evidence resolves the limitation.
 
 Name what changed by row id. Whenever this run repairs rows into a working copy or generates rows
 to fill a gap, record both lists in `traigent-runs/run-plan.md` and say them to the user: these ids
@@ -476,8 +474,10 @@ medium, 5 hard, 5 very hard) plus the held-out ten. "Held-out set and claims" be
 split wherever its rows come from - its composition, when it is reserved, where it is written,
 what it is for, when it is scored and disclosed, and why the count stays at ten.
 
-Adjust the tuning size when cost or task shape requires it, but keep all four bands represented in
-it. The held-out ten do not move.
+Reduce the tuning size when cost or task shape requires it - downward only, with the
+"Topping a real dataset up to that size" total as a ceiling rather than a target - and keep all four
+bands represented in it. The
+held-out ten do not move; "Held-out set and claims" owns why.
 
 ### Topping a real dataset up to that size
 
@@ -497,8 +497,8 @@ be free to disagree. Never draw past 28 in total, and never draw to replace a re
 **Agreeing can lower the ceiling, so the offer says so before it is accepted.** The rows this adds
 are generated and are declared as such, so the provenance ladder below prices them exactly as it
 prices any other generated row - and on a small real dataset the generated share after a top-up is
-most of the set. Measured on nine real rows topped to twenty-eight: the card moves from a
-small-comparison-set ceiling to a mostly-generated one, four points lower. That is the trade the
+most of the set. Measured on nine real rows topped to twenty-eight: the card moves from the
+wiring-check ceiling to a mostly-generated one, four points lower. That is the trade the
 customer is being asked to make, and it is the reason the offer is a question rather than a service:
 more to compare on, against a claim bounded by who wrote the rows. A topped-up dataset is a dataset
 this run can compare on, not a dataset that has been improved.
@@ -543,10 +543,9 @@ generated, scoring 3 rather than 6 and moving it under the synthetic ceilings.
 
 ### Provenance ceilings
 
-Points alone cannot keep a score honest here: provenance is 10 points inside a pillar worth 40% of
-the total, so the whole 10-to-3 range moves the overall score by under 3 - a fully generated dataset
-perfect on every other dimension still reported 93. So how much of the data was invented also sets a
-ceiling on the entire run:
+Points alone cannot keep a score honest here: provenance is 10 points inside a pillar weighted 40
+of 100 (`DEFAULT_WEIGHTS` in `scripts/readiness.py`), so the whole 10-to-3 range moves the overall
+score by under 3. So how much of the data was invented also sets a ceiling on the entire run:
 
 | The dataset | Ceiling |
 |---|---|
@@ -749,9 +748,9 @@ this input?** Answer `yes`, `no`, or `unsure`, with the row id and one sentence.
 
 When the rows carry no stable id - which `preflight.py`'s `dataset-ids` check reports as a warning
 on exactly this dataset - use the 1-based source line as `line-<n>`, and say in the conversation
-that the ids are positional. Any scheme satisfies the scorer, and that is the problem: four runs
-over one dataset each invented their own, and two review documents written for the same file cannot
-be compared unless the ids mean the same thing. The line number is chosen because it is the one
+that the ids are positional. Any scheme satisfies the scorer, and that is the problem: two review
+documents written for the same file cannot be compared unless the ids mean the same thing. The line
+number is chosen because it is the one
 identifier the file already has, and because preflight's own warning quotes source lines, so a user
 told `line-7` can find row 7 without a mapping. It is not an id the customer owns - if they later
 add stable ids, the next run uses theirs.
@@ -822,7 +821,7 @@ looked and found nothing. Covering the rows the run reads is what releases that 
 marked `in_run` where the split is drawn, or every provided row where it is not. A partial read
 names its count and releases nothing, and on a corpus above the first-run subset size that is the
 ordinary state of the opening pass rather than a failure of it: nothing has been drawn yet, so no
-read can cover the rows the comparison will run on. The hold comes off at the stage-4 re-score of
+read can cover the rows the comparison will run on. The hold comes off at the section-4 re-score of
 the drawn rows, which "Say how much you read" below already asks for. Readiness counts your entries
 and never matches them to rows - preflight publishes no ids for it to match against - so this
 release is taken on your word, and a review naming rows you did not read is a false statement to the
@@ -885,7 +884,7 @@ counting as an answer anyone observed.
 Say how much you read. Readiness scores the whole dataset and never a subset, so the evidence line
 reports the rows read against the rows the user brought. At or under the size where "First-run
 subset for a large dataset" applies, that is all of them. Above it, read what one pass can cover at
-the opening gate and let the line name the count - then read the drawn rows again at the stage-4
+the opening gate and let the line name the count - then read the drawn rows again at the section-4
 re-score, because those are the rows the comparison actually runs on.
 
 
@@ -932,20 +931,18 @@ every trial pays for every row, so a large set turns the walkthrough into a long
 that demonstrates nothing the smaller one would not. Select a bounded subset instead: **18 tuning
 questions by default**, at least four from each of the four difficulty bands (`easy`, `medium`,
 `hard`, `very-hard`), so the subset keeps the spread that makes a result informative rather than landing on
-one cluster - plus the held-out ten below, drawn to their own composition.
+one cluster - plus the held-out ten, drawn with it to their own composition; "Held-out set and
+claims" below owns when each source draws.
 
 Six rules make the subset honest:
 
 1. **Score the dataset, not the subset.** All readiness scores - the opening gate, each repair or
    validation gate, and the post-run read - run on the **whole** dataset. The subset is chosen
    afterwards, as run scoping, immediately before the paid comparison. Getting this backwards makes
-   the user's data wear the run's limitation: measured through `scripts/readiness.py` on 500
-   labelled, difficulty-tagged production rows, the dataset pillar sees 249 comparable examples;
-   the same dataset scored as an 18-row subset sees only 8 and calls it `a wiring check, not a
-   score`. That sentence is true of the run and false of the dataset, and the gate re-score would
-   read 18 points below the opening one on nothing but our own sampling. Difficulty and diversity
-   survive a compliant sample; evidence volume collapses, so that limitation must be attributed
-   correctly.
+   the user's data wear the run's limitation: 500 labelled production rows scored as an 18-row
+   subset read as `a wiring check, not a score` - true of the run and false of the dataset.
+   Difficulty and diversity survive a compliant sample; evidence volume collapses, so that
+   limitation must be attributed correctly.
 2. **Report the run's sample-size limitation separately.** It belongs in the run report, not the
    dataset score: "this run compares configurations on 18 questions drawn from your 4,812 rows;
    treat a small difference as directional unless paired uncertainty from the completed outputs
@@ -1030,14 +1027,17 @@ run finishes.
 
 ## Held-out set and claims
 
-Reserve 10 held-out rows (2 easy, 3 medium, 3 hard, 2 very hard) at creation time, before any
-component design, calibration, or optimization touches the dataset, and keep the same rows aside
-for the rest of the run. That composition holds wherever the rows come from - a fully generated
-walkthrough or a bounded subset drawn from a large real dataset alike - because the rule governs
-the split this run reserves, not where the data originated. A project that already maintains its
-own independent held-out split is the exception: use it as it stands rather than re-cutting it
-to ten, and follow every claim rule below. When the rows carry no usable difficulty tags, work down
-the same ladder the bounded subset uses, and record the rung the split was cut on.
+Reserve 10 held-out rows (2 easy, 3 medium, 3 hard, 2 very hard) and keep the same rows aside for
+the rest of the run. When they are drawn follows the source, in two cases: a dataset this run
+generates, tops up, or splits itself reserves the held-out split when its working copy is written,
+before any component design, calibration, or optimization touches it; a dataset above the first-run subset size draws the ten from that split with the
+tuning subset, immediately before the paid comparison. The row-review hold on such a corpus lifts at the
+section-4 re-score of the drawn rows; that is a hold on the band, not a third timing of the draw.
+That composition holds wherever the rows come from, because the rule governs the split this run
+reserves, not where the data originated. A project that already
+maintains its own independent held-out split is the exception: use it as it stands rather than
+re-cutting it to ten, and follow every claim rule below. When the rows carry no usable difficulty
+tags, work down the same ladder the bounded subset uses, and record the rung the split was cut on.
 
 **Real rows reach both sets before either is topped up.** Take the customer's own rows first
 and generate only the shortfall - and when there are too few to fill both sets, divide the real
@@ -1135,7 +1135,7 @@ tuning rows, prefer the cheaper one; at equal cost prefer the stronger model, wh
 wider search after this walkthrough is likelier to use. That is a decision taken on the rows
 selection is allowed to use, so it costs the held-out set nothing.
 
-SKILL stages 7 and 8 own when that score is disclosed. The split itself does not change between
+SKILL sections 7 and 8 own when that score is disclosed. The split itself does not change between
 the two checkpoints; only its disclosure moves, so the walkthrough shows one comparison, once,
 when the winner it is scoring actually exists. Report it as one line each, not as a statistics
 lesson:
