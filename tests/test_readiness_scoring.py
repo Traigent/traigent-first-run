@@ -23060,6 +23060,82 @@ def run(style, question):
         "_settled_binding_region",
     )
 
+    # The readers, written down so that BOTH directions of drift fail. The
+    # list is checked against one derived from the module by
+    # `test_the_reader_list_is_every_caller_of_the_home`, so adding a fifth
+    # reader without listing it and deleting an existing one are each a red -
+    # which the previous revision of this guard was not. It listed four names
+    # by hand beside a property maintained by execution, and it was already one
+    # short: `_selection_bound_to_an_unfollowed_local` has asked the home since
+    # the diagnosis was made to use the credit path's own predicates, and no
+    # test noticed.
+    HOME_READERS = (
+        "_table_alias_is_only_read",
+        "_reference_only_routes_a_request",
+        "_local_alias_initializer",
+        "_alias_reads_only_route_a_request",
+        "_selection_bound_to_an_unfollowed_local",
+    )
+
+    @staticmethod
+    def _module_level_functions() -> dict[str, ast.FunctionDef]:
+        """Every function defined at this module's top level, from its source."""
+        tree = ast.parse(SCRIPT.read_text(encoding="utf-8"))
+        return {
+            node.name: node for node in tree.body if isinstance(node, ast.FunctionDef)
+        }
+
+    @classmethod
+    def _derived_home_readers(cls) -> set[str]:
+        """Every function outside the home that reaches into it.
+
+        Derived, because a hand-kept list of readers is the same defect as a
+        hand-kept list of primitives one line up: it is a record of who asked
+        when somebody last looked. A caller is a reader if its body mentions
+        ANY name of the home - an entry point it may ask, or a primitive it may
+        not - so a reader that skips the entry points and re-derives from a
+        primitive is derived here too, and then fails the rule below rather
+        than escaping the scan that exists to catch it.
+        """
+        home = set(cls.HOME_ENTRY_POINTS) | set(cls.HOME_PRIMITIVES)
+        return {
+            name
+            for name, function in cls._module_level_functions().items()
+            if name not in home and cls._mentions_of(function) & home
+        }
+
+    @staticmethod
+    def _mentions_of(function: ast.FunctionDef) -> set[str]:
+        """`_names_mentioned` over a parsed definition rather than a live one."""
+        body = function.body[1:] if ast.get_docstring(function) else function.body
+        mentioned: set[str] = set()
+        for statement in body:
+            for node in ast.walk(statement):
+                if isinstance(node, ast.Name):
+                    mentioned.add(node.id)
+                elif isinstance(node, ast.Attribute):
+                    mentioned.add(node.attr)
+                elif isinstance(node, ast.Constant) and isinstance(node.value, str):
+                    mentioned.add(node.value)
+        return mentioned
+
+    def test_the_reader_list_is_every_caller_of_the_home(self) -> None:
+        """The guard's own coverage, which was maintained by hand.
+
+        Deleting a name from `HOME_READERS` used to leave the whole suite
+        green, so the check that stops the primitives leaking into a fourth
+        reader could be silently narrowed by editing its own list - a guard
+        whose coverage is kept by hand beside a property kept by execution,
+        which is the shape this pull request refused everywhere else. Equality
+        rather than containment, so a fifth reader that asks the home without
+        being listed fails too, and neither direction can be made invisible.
+        """
+        self.assertEqual(
+            set(self.HOME_READERS),
+            self._derived_home_readers(),
+            "the reader list and the module disagree about who asks the home",
+        )
+
     def test_the_alias_readers_ask_the_one_helper(self) -> None:
         """One decision, one home - read from the parse, not from the text.
 
@@ -23079,27 +23155,25 @@ def run(style, question):
         home for the placement fact its reads half needs, and this guard let it
         through: the forbidden tuple named the two primitives that had leaked
         BEFORE rather than the primitives the home has. A list of what went
-        wrong last time is not a rule, so both lists are now the home's, and
-        the fact is served by an entry point.
+        wrong last time is not a rule, so both lists are now the home's, the
+        readers are checked against the module, and the fact is served by an
+        entry point.
         """
-        for reader in (
-            MODULE._table_alias_is_only_read,
-            MODULE._reference_only_routes_a_request,
-            MODULE._local_alias_initializer,
-            MODULE._alias_reads_only_route_a_request,
-        ):
-            with self.subTest(reader=reader.__name__):
-                mentioned = self._names_mentioned(reader)
-                # Three entry points, one home: `_settled_local_binding` judges
+        for name in self.HOME_READERS:
+            with self.subTest(reader=name):
+                mentioned = self._names_mentioned(getattr(MODULE, name))
+                # Four entry points, one home: `_settled_local_binding` judges
                 # a node, `_settled_local_assignment` finds one by name for a
-                # caller that starts from a read, and
+                # caller that starts from a read,
                 # `_settled_binding_cannot_reach_a_request` answers the
-                # placement question the reads half needs. The lookup and
-                # placement primitives live inside the home with them, which is
-                # what keeps them off this list for every reader.
+                # placement question the reads half needs, and
+                # `_settled_binding_is_read_after` answers whether a read
+                # follows on a path that can run. The lookup and placement
+                # primitives live inside the home with them, which is what
+                # keeps them off this list for every reader.
                 self.assertTrue(
                     mentioned & self.HOME_ENTRY_POINTS,
-                    f"{reader.__name__} does not ask the shared helper",
+                    f"{name} does not ask the shared helper",
                 )
                 for primitive in self.HOME_PRIMITIVES:
                     self.assertNotIn(primitive, mentioned)
