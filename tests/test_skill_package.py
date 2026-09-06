@@ -5679,6 +5679,48 @@ class SkillPackageTests(unittest.TestCase):
         ):
             self.assertIn(phrase, normalized_safety)
 
+    def test_the_three_words_bind_every_calibration_not_only_the_first(
+        self,
+    ) -> None:
+        """A precondition checked once is not a rule, and this one is a rule.
+
+        The paragraph opened "Before environment setup", which reads as a gate
+        satisfied on the way in and never revisited. The state that exposes
+        it is a calibration that finished and did not pass: the evaluator has
+        by then been imported and executed, the run is routed to repair it,
+        and the repaired path is calibrated again with nothing re-establishing
+        local-only, side-effect-free and standard-library-only over it. A
+        repair that pulls in an installed dependency, or that reaches a
+        provider client at module import, satisfies none of the three and met
+        no gate on the way back in (traigent-first-run#397).
+
+        Fixed in the reference and only in the reference. `SKILL.md` section 4
+        already mandates the per-calibration read - "Before calibration, apply
+        `references/run-safety.md`'s execution-evaluator scope gate" - so the
+        reference was the half that disagreed, and restating the mandate in
+        `SKILL.md` would have given one rule a second home.
+        """
+        safety = " ".join(RUN_SAFETY.read_text().casefold().split())
+        paragraph = safety.split("### deterministic calibration and mock plumbing", 1)[
+            1
+        ]
+        self.assertIn(
+            "before every calibration this run performs, run only a "
+            "non-executing evaluator whose complete call path is local-only, "
+            "side-effect-free, and standard-library-only",
+            paragraph,
+        )
+        self.assertNotIn("before environment setup", paragraph)
+        # The mandate stays where SKILL.md already carries it, and the
+        # reference does not grow a second copy of it.
+        skill = " ".join(SKILL.read_text().casefold().split())
+        self.assertIn(
+            "before calibration, apply `references/run-safety.md`'s "
+            "execution-evaluator scope gate",
+            skill,
+        )
+        self.assertNotIn("before every calibration this run performs", skill)
+
     def test_local_baseline_checkpoint_precedes_every_traigent_key_request(
         self,
     ) -> None:
@@ -8658,7 +8700,11 @@ class SkillPackageTests(unittest.TestCase):
             .split()
         )
         for phrase in (
-            "before environment setup, run only a non-executing evaluator",
+            # "Before environment setup" until traigent-first-run#397: that
+            # read as a precondition met once on the way in, and a repaired
+            # evaluator was recalibrated with nothing re-establishing the
+            # three words over its new call path.
+            "before every calibration this run performs, run only a non-executing evaluator",
             "an execution evaluator has already ended this guide at the scope gate above",
         ):
             with self.subTest(calibration_phrase=phrase):
