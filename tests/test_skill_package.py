@@ -10774,7 +10774,7 @@ class SkillPackageTests(unittest.TestCase):
             "save_to=BASELINE_RESULTS",
             "save_to=OPTIMIZED_RESULTS",
             "ObjectiveSchema.from_objectives(",
-            'name="task_success", orientation="maximize"',
+            'name="accuracy", orientation="maximize"',
             'name="cost", orientation="minimize"',
             "def require_current_route_credential()",
             "def provider_reported_cost(response)",

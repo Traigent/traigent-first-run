@@ -316,7 +316,7 @@ import os
 import threading
 from pathlib import Path
 
-from dotenv import load_dotenv
+from dotenv import dotenv_values, load_dotenv
 
 RUN_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = RUN_DIR.parent
@@ -339,7 +339,28 @@ FIRST_RUN_PHASE = os.environ.get(
 # otherwise empty environment and a `.env` naming all three: the block ran to
 # completion on the file's ceiling and wrote it into TRAIGENT_RUN_COST_LIMIT.
 APPROVED_FIGURES = {name: os.environ.get(name) for name in APPROVED_FIGURE_NAMES}
+# `override=False` also means a key exported in the shell outranks the one in
+# `.env` without a word. Measured 2026-09-06: a shell carrying a revoked
+# TRAIGENT_API_KEY and a second, poorer-funded OPENROUTER_API_KEY ran on those
+# and never touched the file's good keys - a 401 for one, silent billing of
+# the wrong account for the other. A disagreement is refused, not resolved.
+DISAGREEING_KEYS = sorted(
+    name
+    for name, value in dotenv_values(PROJECT_ROOT / ".env").items()
+    if name.endswith("_API_KEY")
+    and (value or "").strip()
+    and os.environ.get(name, "").strip()
+    and os.environ[name].strip() != value.strip()
+)
 load_dotenv(PROJECT_ROOT / ".env", override=False)
+if DISAGREEING_KEYS:
+    raise SystemExit(
+        "Set in this process and set differently in .env: "
+        + ", ".join(DISAGREEING_KEYS)
+        + ". The process value would win and .env would be ignored. Unset the "
+        "process ones (env -u NAME) or remove them from .env; this run will "
+        "not choose for you."
+    )
 os.environ.pop("TRAIGENT_FIRST_RUN_PHASE", None)
 for _approved_name in APPROVED_FIGURE_NAMES:
     # Popped like the phase flag, so a child process inherits neither an
@@ -776,11 +797,14 @@ assert set(WIRED_KNOBS) == set(ENHANCED_SPACE), (
     "cannot skip a searched key"
 )
 
+# The quality objective is named `accuracy` because that is the one key the portal and
+# the experiment export read for it (TraigentBackend `_ACCURACY_KEYS`); an objective under
+# any other name is persisted there as 0.0 - measured 2026-09-06, twelve trials scoring
+# 5.6%-83.3% locally all shown as 0% - and the SDK moves its own built-in exact-match
+# metric aside to `exact_match_default` when a wired scorer claims the key.
 OBJECTIVES = ObjectiveSchema.from_objectives(
     [
-        ObjectiveDefinition(
-            name="task_success", orientation="maximize", weight=1.0
-        ),
+        ObjectiveDefinition(name="accuracy", orientation="maximize", weight=1.0),
         ObjectiveDefinition(name="cost", orientation="minimize", weight=1.0),
     ]
 )
@@ -1875,7 +1899,7 @@ def assert_wiring_still_proven() -> None:
     configuration_space=ENHANCED_SPACE,
     evaluation=EvaluationOptions(
         eval_dataset=TUNING_DATASET,
-        metric_functions={"task_success": task_score},
+        metric_functions={"accuracy": task_score},
     ),
 )
 def agent(message: str) -> str:
@@ -2222,6 +2246,8 @@ try:
         algorithm="auto",
         configuration_space=ENHANCED_SPACE,
         max_trials=ENHANCED_MAX_TRIALS,
+        # None, never a number: a 600 s value here cut a 12-trial search at
+        # 7 and 9 on 2026-09-06, twice ending on the baseline configuration.
         timeout=OPTIMIZATION_TIMEOUT_SECONDS,
         save_to=OPTIMIZED_RESULTS,
     )
@@ -2339,9 +2365,9 @@ def frontier_at_or_above(trials, metric_name, floor):
     """Non-dominated completed trials scoring at or above `floor`, cheapest first.
 
     `metric_name` is this run's own objective name - the key wired through
-    `metric_functions`, which is `"task_success"` in this reference's worked
-    example - and never `"accuracy"`, which can sit in the same metrics map
-    while being built-in exact match rather than the scorer this run wired.
+    `metric_functions`, which is `"accuracy"` in this reference's worked
+    example. Read that key and not `"exact_match_default"`, where the SDK
+    keeps its built-in exact match once a wired scorer has claimed `accuracy`.
 
     `floor` is the incumbent trial's value under this same `metric_name`, so
     both sides of the comparison are the same measurement. Never pass the
