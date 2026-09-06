@@ -14854,8 +14854,15 @@ def _knob_reaches_its_named_request_argument(
     cannot ask about is a condition the catch-all speaks for, and it spoke
     wrongly: a correct agent that forwards its setting into a helper was told
     to do what its author had already done. Relaxing one flag at a time is how
-    the diagnosis names the condition that really failed, and it is the same
-    predicate rather than a second copy of it beside the decision.
+    the diagnosis names the condition that really failed, relaxing both is how
+    it tells a shape that failed both, and either way it is the same predicate
+    rather than a second copy of it beside the decision.
+
+    A relaxed-true says which condition failed only where the UNRELAXED
+    predicate is known false, which is the caller's job to establish and not
+    something visible from here: a setting refused by the table route can
+    satisfy this one whole. `route_refusal_diagnosis` carries that
+    precondition as a parameter for exactly that reason.
     """
     for callable_node, dynamic_parameters in _callables_on_the_call_path(source):
         for call in _callable_body_nodes(callable_node):
