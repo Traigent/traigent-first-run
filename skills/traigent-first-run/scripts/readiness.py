@@ -11004,13 +11004,23 @@ def _module_names_a_subscript_can_reach(source: StaticSourceEvidence) -> frozens
     A spelling bound more than once qualifies only if EVERY binding of it can
     be indexed, so a name that is a list on one line and a set on another is
     not credited on the strength of the line that happens to be cited.
+
+    A bare constant qualifies only when it is a `str`. A string is the one
+    subscriptable constant; `SIZE = 5`, `N = None`, `B = True` and `F = 1.5`
+    all raise `TypeError` on `SIZE[choice]`, which is the exact runtime failure
+    this predicate exists to keep out of credit, and it reported all four as
+    reachable. Measured before the narrowing, no route turned that into a wrong
+    number - a scalar constant yields one option from `_literal_scalar_options`
+    and a one-option setting is refused upstream - so this closes a gate whose
+    docstring promised more than it enforced rather than a live false credit.
+    traigent-first-run#399, finding 3.
     """
     indexable: dict[str, bool] = {}
     for node in source.tree.body:
         if not isinstance(node, (ast.Assign, ast.AnnAssign)) or node.value is None:
             continue
-        reachable = isinstance(
-            node.value, (ast.List, ast.Tuple, ast.Dict, ast.Constant)
+        reachable = isinstance(node.value, (ast.List, ast.Tuple, ast.Dict)) or (
+            isinstance(node.value, ast.Constant) and isinstance(node.value.value, str)
         )
         for name in _assignment_names(node):
             indexable[name] = indexable.get(name, True) and reachable
@@ -11590,6 +11600,57 @@ def _sole_binding_node(
     """The single node binding this spelling in the callable's own scope."""
     binders = _callable_binding_nodes(name, callable_node)
     return binders[0] if len(binders) == 1 else None
+
+
+def _settled_local_binding(
+    node: ast.AST, owner: ast.AST, source: StaticSourceEvidence
+) -> str | None:
+    """The name this assignment settles in ``owner``, when nothing rewrites it.
+
+    ONE HOME for one decision, and it is here because it was in two homes with
+    two answers. Two readers in this file ask whether a plain local binding may
+    be followed: `_table_alias_is_only_read` about `allowed = TABLE`, and
+    `_reference_only_routes_a_request` about `needed = TABLE[model]`. The first
+    said yes under stated conditions, the second said no unconditionally - same
+    shape, same file, same primitives to hand, opposite verdicts. Nothing made
+    them disagree on purpose; they simply had no shared place to be consistent
+    in, so a pass that widened one left the other exactly as it was.
+
+    The conditions therefore live here, once, and each caller adds only the
+    half that genuinely differs: what the alias's own reads are then allowed to
+    do. A change to what "settled" means moves both readers or neither.
+
+    Settled means, and everything not established refuses:
+
+    * one plain assignment of one bare name, so tuple unpacking, `a = b = ...`,
+      a loop target and a walrus are out;
+    * a direct statement of the owner's own body, because a binding nested in a
+      branch, loop or `try` holds a value no syntactic read can pin - the same
+      condition `_local_alias_initializer` puts on the assignment it reads;
+    * the only binding of that spelling in the scope, decided by
+      `_sole_binding_node` over `_node_binds` rather than by counting `Name`
+      stores, so a later `alias = something_else` disqualifies it;
+    * no nested `def`, `lambda` or `class` that reaches the spelling without
+      binding one of its own, per `_nested_scope_leaves_alone`, which refuses a
+      `nonlocal` at any depth.
+    """
+    if not isinstance(node, (ast.Assign, ast.AnnAssign)) or node.value is None:
+        return None
+    targets = node.targets if isinstance(node, ast.Assign) else (node.target,)
+    if len(targets) != 1 or not isinstance(targets[0], ast.Name):
+        return None
+    alias = targets[0].id
+    if source.parents.get(id(node)) is not owner:
+        return None
+    if _sole_binding_node(alias, owner) is not node:
+        return None
+    scopes = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
+    if any(
+        isinstance(inner, scopes) and not _nested_scope_leaves_alone(alias, inner)
+        for inner in _callable_body_nodes(owner)
+    ):
+        return None
+    return alias
 
 
 def _plain_assignment_of(name: str, node: ast.AST) -> ast.Assign | ast.AnnAssign | None:
@@ -12464,39 +12525,27 @@ def _table_alias_is_only_read(
     so it is safe exactly when that handle is. The handle is followed rather
     than guessed at, and everything not established refuses.
 
-    Reuses the two alias primitives this file already has rather than adding a
-    third analysis. `_sole_binding_node` supplies "this assignment is the only
-    thing that binds the spelling in its scope", which is what makes a later
-    `allowed = something_else` disqualifying. `_nested_scope_leaves_alone`
-    supplies "no nested `def`, `lambda` or `class` can reach it", refusing a
-    `nonlocal` and anything that merely mentions the spelling without binding
-    one of its own.
+    Whether the binding itself is one this file will follow is NOT decided
+    here. `_settled_local_binding` is the one home for that question - one
+    plain assignment of one bare name, a direct statement of its scope, the
+    sole binding of the spelling, out of reach of every nested scope - and
+    `_reference_only_routes_a_request` asks it of `needed = TABLE[model]` one
+    input over. The two used to answer it separately and oppositely; see that
+    helper for what the divergence cost.
 
-    What is left is the reads in the alias's own scope, and each one is put
-    back through this same rule with aliasing switched off. One hop,
-    deliberately, the same bound `_local_alias_initializer` documents: `other =
-    allowed` then earns nothing, so a chain cannot walk the table out of view
-    one assignment at a time.
+    What this adds is the half that is its own: the reads in the alias's own
+    scope, each put back through the table rule with aliasing switched off. One
+    hop, deliberately, the same bound `_local_alias_initializer` documents:
+    `other = allowed` then earns nothing, so a chain cannot walk the table out
+    of view one assignment at a time.
     """
     if not isinstance(parent, (ast.Assign, ast.AnnAssign)) or parent.value is not node:
         return False
-    targets = parent.targets if isinstance(parent, ast.Assign) else (parent.target,)
-    if len(targets) != 1 or not isinstance(targets[0], ast.Name):
-        return False
-    alias = targets[0].id
     owner = _lexical_owner(parent, source)
-    # A binding nested in a branch, loop or `try` is one whose value at a read
-    # is not decidable from syntax alone, so it is not followed - the same
-    # condition `_local_alias_initializer` puts on the assignment it reads.
-    if source.parents.get(id(parent)) is not owner:
-        return False
-    if _sole_binding_node(alias, owner) is not parent:
+    alias = _settled_local_binding(parent, owner, source)
+    if alias is None:
         return False
     own_scope = _callable_body_nodes(owner)
-    scopes = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
-    for inner in own_scope:
-        if isinstance(inner, scopes) and not _nested_scope_leaves_alone(alias, inner):
-            return False
     return all(
         _module_binding_reference_is_safe(reference, source, follow_alias=False)
         for reference in own_scope
@@ -14059,18 +14108,74 @@ def _call_is_an_intermediate_argument(
     )
 
 
+def _alias_reads_only_route_a_request(
+    alias: str,
+    callable_node: ast.FunctionDef | ast.AsyncFunctionDef,
+    source: StaticSourceEvidence,
+) -> bool:
+    """Every read of a settled local is itself a control expression.
+
+    The second half of the alias rule, and it is a function because two callers
+    need it: `_reference_only_routes_a_request`, which credits the binding, and
+    `_selection_bound_to_an_unfollowed_local`, which explains the refusal. The
+    same decision written out twice is how the two alias readers came to
+    disagree in the first place; see `_settled_local_binding`.
+
+    Aliasing is switched off for each read, so this is one hop. A call is not a
+    control expression, which is what keeps an alias handed to a request
+    argument, to a helper, or to an attribute an escape.
+    """
+    return all(
+        _reference_only_routes_a_request(
+            load, callable_node, source, follow_alias=False
+        )
+        for load in _callable_body_nodes(callable_node)
+        if isinstance(load, ast.Name)
+        and load.id == alias
+        and isinstance(load.ctx, ast.Load)
+    )
+
+
 def _reference_only_routes_a_request(
     reference: ast.Name,
     callable_node: ast.FunctionDef | ast.AsyncFunctionDef,
     source: StaticSourceEvidence,
+    *,
+    follow_alias: bool = True,
 ) -> bool:
     """A read may choose a request branch without exposing the payload.
 
     This is intentionally a control-expression subset, not general expression
     flow.  It covers ordinary guards such as ``if PROVIDERS[model] == ...``;
-    calls, projections of the parameter itself, assignments, and returned
-    values remain escapes unless the exact reference is independently proved
-    inside an external request argument.
+    calls, projections of the parameter itself, and returned values remain
+    escapes unless the exact reference is independently proved inside an
+    external request argument.
+
+    An assignment is not an escape when it settles a plain local, and that
+    condition is NOT decided here: `_settled_local_binding` is its one home,
+    shared with `_table_alias_is_only_read`, which asks the same question of
+    `allowed = TABLE` one input over. Before they shared it the two answered it
+    oppositely - yes there under stated conditions, no unconditionally here -
+    and traigent-first-run#387 measured what the divergence cost. Writing the
+    same guard with a local, `needed = CREDENTIALS[model]` then `if needed not
+    in supplied`, took the agent pillar from 27 to 0, while deleting the
+    credential check outright kept the full 27. The scorer paid an author to
+    remove a security check, for a refactor that changes no request.
+
+    The alias is followed rather than waved through, and that is the safety
+    half: `_alias_reads_only_route_a_request` puts every Load of it back
+    through this rule with aliasing switched off, and lives beside this one
+    because the refusal diagnosis has to ask it too. A call is not a control
+    expression, so an alias
+    handed to a request argument, to a helper, or to an attribute still
+    refuses, and `other = alias` earns nothing - one hop, the bound both
+    `_local_alias_initializer` and `_table_alias_is_only_read` keep.
+
+    RESIDUAL, recorded here rather than in an issue: a binding this cannot
+    settle - one nested in a branch, loop or `try`, one the scope binds twice,
+    one a nested scope can reach - still refuses the whole setting. That is a
+    false refusal rather than a wrong number, and it is the direction this
+    check fails in on purpose.
     """
     child: ast.AST = reference
     while (parent := source.parents.get(id(child))) is not None:
@@ -14098,6 +14203,14 @@ def _reference_only_routes_a_request(
             continue
         if isinstance(parent, ast.If) and parent.test is child:
             return True
+        if (
+            follow_alias
+            and isinstance(parent, (ast.Assign, ast.AnnAssign))
+            and parent.value is child
+            and (alias := _settled_local_binding(parent, callable_node, source))
+            is not None
+        ):
+            return _alias_reads_only_route_a_request(alias, callable_node, source)
         if parent is callable_node or isinstance(
             parent,
             (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda),
@@ -15444,6 +15557,42 @@ def _knob_is_read_past_the_first(
     )
 
 
+def _selection_bound_to_an_unfollowed_local(
+    selection: ast.Subscript,
+    callable_node: ast.FunctionDef | ast.AsyncFunctionDef,
+    source: StaticSourceEvidence,
+) -> tuple[str, int] | None:
+    """The local this setting is read into, when this read cannot follow it.
+
+    Asked with the SAME two predicates the credit path applies -
+    `_settled_local_binding` for the binding and
+    `_alias_reads_only_route_a_request` for its reads - so this reports a
+    condition that was really tested rather than a guess assembled beside the
+    decision, which is the rule `route_refusal_diagnosis` states for every one
+    of its branches.
+
+    It exists because the card blamed the wrong line. traigent-first-run#387
+    measured `needed = CREDENTIALS[model]` in a guard printing "the selected
+    value does not survive whole to the request", with `model=model` written
+    literally into the request argument: the value does survive whole, and the
+    author was sent to inspect request wiring that was already correct. #388
+    shipped "say which rule refused a setting"; on this path the rule it named
+    was not the rule that fired.
+    """
+    parent = source.parents.get(id(selection))
+    if not isinstance(parent, (ast.Assign, ast.AnnAssign)):
+        return None
+    if parent.value is not selection:
+        return None
+    alias = _settled_local_binding(parent, callable_node, source)
+    if alias is None:
+        named = _assignment_names(parent)
+        return (named[0] if named else "a local", parent.lineno)
+    if _alias_reads_only_route_a_request(alias, callable_node, source):
+        return None
+    return (alias, parent.lineno)
+
+
 def _unsafely_read_tables(
     knob: str,
     tables: set[str],
@@ -15506,6 +15655,7 @@ def route_refusal_diagnosis(
     reachable = _module_names_a_subscript_can_reach(source)
     loose: list[ast.Subscript] = []
     rebound: set[str] = set()
+    unfollowed: set[tuple[str, int]] = set()
     survives = False
     past_the_first = False
     for callable_node, dynamic_parameters in _route_sites(source):
@@ -15530,6 +15680,16 @@ def route_refusal_diagnosis(
             for selection in here_loose
             if selection.value.id in reachable
             and _callable_binds(selection.value.id, callable_node)
+        }
+        unfollowed |= {
+            found
+            for selection in here_loose
+            if (
+                found := _selection_bound_to_an_unfollowed_local(
+                    selection, callable_node, source
+                )
+            )
+            is not None
         }
         # Asked of the WIDE list, because whether the value survives is a fact
         # about the expression rather than about the table, and a diagnosis
@@ -15599,8 +15759,9 @@ def route_refusal_diagnosis(
             "the table this setting indexes ("
             + ", ".join(unreachable)
             + ") is not a shape a subscript can reach at runtime; a set literal "
-            "is a real guard but raises on indexing, so the route is written as "
-            "a list, tuple or mapping"
+            "is a real guard but raises on indexing, and a bare number, `None` "
+            "or boolean is not a table at all, so the route is written as a "
+            "list, tuple or mapping"
         )
     if rebound:
         return (
@@ -15611,6 +15772,26 @@ def route_refusal_diagnosis(
             "can see the options in"
         )
     if not survives:
+        # Sibling of the clause below, and it goes FIRST because it is the
+        # more specific of the two. A setting read into a local has not been
+        # combined, formatted or passed through a call, so the sentence below
+        # is false about it - measured in #387, on an agent whose request
+        # argument was already written the way that sentence asks for.
+        if unfollowed:
+            return (
+                "this setting is read into a local binding this check does not "
+                "follow ("
+                + ", ".join(
+                    f"{alias} at {source.display_path}:{line}"
+                    for alias, line in sorted(unfollowed)
+                )
+                + "): a followed binding is one plain assignment of one bare "
+                "name, written as a direct statement of the function's body, "
+                "the only binding of that spelling in it, out of reach of any "
+                "nested def, lambda or class, and read only in guards - an "
+                "alias handed to a call, to an attribute, or on to a request "
+                "argument stays an escape"
+            )
         return (
             "the selected value does not survive whole to the request: it is "
             "combined, formatted, or passed through another call on the way, "

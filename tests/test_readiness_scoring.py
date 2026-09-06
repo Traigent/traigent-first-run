@@ -16252,6 +16252,7 @@ class ARouteThatCannotExecuteIsNotARouteTests(unittest.TestCase):
                 'A = ["x"]\nB = ("x",)\nC = {"x": 1}\nD = "x"\n'
                 'E = {"x"}\nF = set()\nG = [n for n in (1,)]\n'
                 'H = {"x"}\nH = ["x"]\nI = ["x"]\nI = {"x"}\n'
+                "J = 5\nK = None\nL = True\nM = 1.5\n"
                 "def answer(q):\n    return q\n",
                 encoding="utf-8",
             )
@@ -16263,7 +16264,16 @@ class ARouteThatCannotExecuteIsNotARouteTests(unittest.TestCase):
             )
         reachable = MODULE._module_names_a_subscript_can_reach(evidence)
         self.assertEqual(sorted(reachable), ["A", "B", "C", "D"])
-        for unreachable in ("E", "F", "G"):
+        # `D` is here and `J` to `M` are not, and that is the whole of the
+        # constant rule: a string is the one subscriptable constant, so
+        # `MODELS[choice]` over `MODELS = 5`, `None`, `True` or `1.5` raises
+        # `TypeError` before any request is made - the exact runtime failure
+        # this predicate exists to keep out of credit, and it answered yes for
+        # all four. traigent-first-run#399, finding 3. Asserted on the helper
+        # because no route turned it into a wrong number: a scalar constant
+        # yields one option and a one-option setting is refused upstream, so a
+        # behavioural case cannot tell the gate from the refusal above it.
+        for unreachable in ("E", "F", "G", "J", "K", "L", "M"):
             with self.subTest(name=unreachable):
                 self.assertNotIn(unreachable, reachable)
         # A name bound twice qualifies only if EVERY binding can be indexed,
@@ -21799,6 +21809,313 @@ def run(cfg, question):
                 self._assert_refused_for_the_table_read(
                     module_line=module_line, body_line=body_line
                 )
+
+
+class OneAliasDecisionServesBothReadersTests(unittest.TestCase):
+    """A plain local is followed by one rule, and both alias readers ask it.
+
+    The defect these pin is not a missing branch, it is one design decision
+    living in two functions with two answers. `_table_alias_is_only_read`
+    decided whether `allowed = TABLE` is a safe read and said yes under stated
+    conditions; `_reference_only_routes_a_request` decided whether `needed =
+    TABLE[model]` is a safe read and said no unconditionally. Same shape, same
+    file, same primitives available, opposite verdicts - which is why a pass
+    that widened the first left the second exactly as it was.
+
+    What that cost is the row this class exists for, and it is not a rounding
+    error. Writing a credential guard as `needed = CREDENTIALS[model]` then
+    `if needed not in supplied` took the agent pillar from 27 to 0, while
+    DELETING the credential check outright kept the full 27. The scorer paid an
+    author to remove a security check, for a refactor that changes no request.
+    So the incentive is pinned directly: every spelling of the guard, and its
+    absence, must score the same.
+
+    Both directions, because a widening that only added credit would be worse
+    than the refusal it replaces. An alias this read cannot settle - rebound,
+    bound inside a branch, reachable from a nested scope - and an alias that
+    escapes into a call, an attribute, a second hop, or a request argument all
+    still refuse.
+    """
+
+    AGENT = """\
+from openai import OpenAI
+
+MODELS = ["fast", "slow"]
+MODEL_CREDENTIALS = {{"fast": "K1", "slow": "K2"}}
+
+client = OpenAI()
+
+
+def call_model(model, question, supplied):
+{guard}    return client.chat.completions.create(
+        model=model,
+        messages=[{{"role": "user", "content": question}}],
+    )
+
+
+def run(config, question):
+    model = config["model"]
+    if model not in MODELS:
+        raise ValueError("bad model")
+    return call_model(model, question, ("K1", "K2"))
+"""
+
+    KNOB = {
+        "model": {
+            "values": ["fast", "slow"],
+            "source_lines": [3],
+            "evidence": "agent.py:3 lists the two models.",
+        }
+    }
+
+    LOCAL_RULE = "this setting is read into a local binding this check does not follow"
+    WRONG_RULE = "the selected value does not survive whole to the request"
+
+    def _verdict(self, guard: str) -> tuple[bool, float, str]:
+        source = self.AGENT.format(guard=guard)
+        compile(source, "agent.py", "exec", dont_inherit=True)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "agent.py").write_text(source, encoding="utf-8")
+            facts = MODULE.agent_facts_from_discovery(
+                {"source": "agent.py", "knobs": self.KNOB},
+                source_root=root,
+                selected_agent=root / "agent.py",
+                selected_agent_callable="run",
+            )
+        pillar, _caps, _rows = MODULE.score_agent(facts)
+        space = next(sub for sub in pillar.subscores if sub.name == "search-space")
+        return "possible settings model" in space.evidence, space.value, space.evidence
+
+    GUARD_SPELLINGS = {
+        "the subscript written into the test": (
+            "    if MODEL_CREDENTIALS[model] not in supplied:\n"
+            '        raise ValueError("missing credential")\n'
+        ),
+        "the subscript behind a short circuit": (
+            "    if supplied and MODEL_CREDENTIALS[model] not in supplied:\n"
+            '        raise ValueError("missing credential")\n'
+        ),
+        "a membership test over the table": (
+            "    if model not in MODEL_CREDENTIALS:\n"
+            '        raise ValueError("missing credential")\n'
+        ),
+        "the subscript bound to a local first": (
+            "    needed = MODEL_CREDENTIALS[model]\n"
+            "    if needed not in supplied:\n"
+            '        raise ValueError("missing credential")\n'
+        ),
+        "the same, annotated": (
+            "    needed: str = MODEL_CREDENTIALS[model]\n"
+            "    if needed not in supplied:\n"
+            '        raise ValueError("missing credential")\n'
+        ),
+        "the setting itself aliased before the lookup": (
+            "    chosen = model\n"
+            "    if MODEL_CREDENTIALS[chosen] not in supplied:\n"
+            '        raise ValueError("missing credential")\n'
+        ),
+    }
+
+    def test_writing_the_guard_with_a_local_costs_nothing(self) -> None:
+        """Every spelling of the same guard scores the same."""
+        for label, guard in self.GUARD_SPELLINGS.items():
+            with self.subTest(guard=label):
+                credited, value, evidence = self._verdict(guard)
+                self.assertTrue(credited, evidence)
+                self.assertEqual(value, self._verdict("")[1], evidence)
+
+    def test_deleting_the_credential_check_never_scores_better(self) -> None:
+        """The incentive, asserted as an inequality rather than as a story.
+
+        This is the whole point of the widening. If the guard can ever score
+        below its own absence, the scorer is telling a customer to delete it,
+        and no wording anywhere else in this package can undo that.
+        """
+        _credited, deleted, _evidence = self._verdict("")
+        for label, guard in self.GUARD_SPELLINGS.items():
+            with self.subTest(guard=label):
+                _kept, value, evidence = self._verdict(guard)
+                self.assertGreaterEqual(value, deleted, evidence)
+
+    def test_a_binding_this_read_cannot_settle_still_refuses(self) -> None:
+        """The unsafe half, one row per condition `_settled_local_binding` has."""
+        for label, guard in (
+            (
+                "rebound in the same scope",
+                "    needed = MODEL_CREDENTIALS[model]\n"
+                '    needed = needed or "K1"\n'
+                "    if needed not in supplied:\n"
+                '        raise ValueError("missing credential")\n',
+            ),
+            (
+                "bound inside a branch",
+                "    if supplied:\n"
+                "        needed = MODEL_CREDENTIALS[model]\n"
+                "        if needed not in supplied:\n"
+                '            raise ValueError("missing credential")\n',
+            ),
+            (
+                "reachable from a nested def",
+                "    needed = MODEL_CREDENTIALS[model]\n"
+                "    def label():\n"
+                "        return needed\n"
+                "    if needed not in supplied:\n"
+                "        raise ValueError(label())\n",
+            ),
+            (
+                "handed to a call",
+                "    needed = MODEL_CREDENTIALS[model]\n"
+                "    if str(needed) not in supplied:\n"
+                '        raise ValueError("missing credential")\n',
+            ),
+            (
+                "read through an attribute",
+                "    needed = MODEL_CREDENTIALS[model]\n"
+                "    needed.strip()\n"
+                "    if needed not in supplied:\n"
+                '        raise ValueError("missing credential")\n',
+            ),
+            (
+                "a second hop",
+                "    needed = MODEL_CREDENTIALS[model]\n"
+                "    other = needed\n"
+                "    if other not in supplied:\n"
+                '        raise ValueError("missing credential")\n',
+            ),
+        ):
+            with self.subTest(binding=label):
+                credited, _value, evidence = self._verdict(guard)
+                self.assertFalse(credited, evidence)
+                self.assertIn(self.LOCAL_RULE, evidence)
+
+    def test_an_alias_that_reaches_the_request_is_still_an_escape(self) -> None:
+        """The safety half the widening rests on, on its own agent.
+
+        A local read only in guards cannot replace the payload. One that
+        reaches a request argument can, and this read does not follow it there,
+        so it stays refused - the same one-hop bound the table alias keeps.
+        """
+        source = """\
+from openai import OpenAI
+
+MODELS = ["fast", "slow"]
+MODEL_CREDENTIALS = {"fast": "K1", "slow": "K2"}
+
+client = OpenAI()
+
+
+def call_model(model, question):
+    needed = MODEL_CREDENTIALS[model]
+    return client.chat.completions.create(
+        model=model,
+        user=needed,
+        messages=[{"role": "user", "content": question}],
+    )
+
+
+def run(config, question):
+    model = config["model"]
+    if model not in MODELS:
+        raise ValueError("bad model")
+    return call_model(model, question)
+"""
+        compile(source, "agent.py", "exec", dont_inherit=True)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "agent.py").write_text(source, encoding="utf-8")
+            facts = MODULE.agent_facts_from_discovery(
+                {"source": "agent.py", "knobs": self.KNOB},
+                source_root=root,
+                selected_agent=root / "agent.py",
+                selected_agent_callable="run",
+            )
+        pillar, _caps, _rows = MODULE.score_agent(facts)
+        space = next(sub for sub in pillar.subscores if sub.name == "search-space")
+        self.assertNotIn("possible settings model", space.evidence)
+
+    def test_the_card_names_the_local_binding_not_the_request_wiring(self) -> None:
+        """The diagnosis the widening leaves behind has to name its own rule.
+
+        Measured before this: with `model=model` written literally into the
+        request argument, the card said the value "does not survive whole to
+        the request: it is combined, formatted, or passed through another call
+        on the way". It does survive whole. The author was sent to inspect
+        request wiring that was already correct, and away from the two-line
+        local that actually refused.
+        """
+        _credited, _value, evidence = self._verdict(
+            "    needed = MODEL_CREDENTIALS[model]\n"
+            '    needed = needed or "K1"\n'
+            "    if needed not in supplied:\n"
+            '        raise ValueError("missing credential")\n'
+        )
+        self.assertIn(self.LOCAL_RULE, evidence)
+        self.assertIn("needed at agent.py:", evidence)
+        self.assertNotIn(self.WRONG_RULE, evidence)
+
+    def test_a_value_combined_on_the_way_still_gets_its_own_sentence(self) -> None:
+        """The sibling clause is a sibling, not a replacement.
+
+        A selected value concatenated into the request argument is a different
+        refusal from a local this read cannot follow, and it keeps its own
+        wording - otherwise the fix for one misdiagnosis is another one.
+        """
+        source = """\
+from openai import OpenAI
+
+STYLES = {"terse": "Be brief.", "warm": "Be friendly."}
+
+client = OpenAI()
+
+
+def run(style, question):
+    return client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{"role": "user", "content": STYLES[style] + question}],
+    )
+"""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "agent.py").write_text(source, encoding="utf-8")
+            facts = MODULE.agent_facts_from_discovery(
+                {
+                    "source": "agent.py",
+                    "knobs": {
+                        "style": {
+                            "values": ["terse", "warm"],
+                            "source_lines": [3],
+                            "evidence": "agent.py:3 spells the styles out.",
+                        }
+                    },
+                },
+                source_root=root,
+                selected_agent=root / "agent.py",
+                selected_agent_callable="run",
+            )
+        pillar, _caps, _rows = MODULE.score_agent(facts)
+        space = next(sub for sub in pillar.subscores if sub.name == "search-space")
+        self.assertIn(self.WRONG_RULE, space.evidence)
+        self.assertNotIn(self.LOCAL_RULE, space.evidence)
+
+    def test_both_alias_readers_ask_the_one_helper(self) -> None:
+        """One decision, one home - asserted structurally, not just by behaviour.
+
+        Behaviour alone cannot catch the two drifting apart again: a later
+        change could re-derive the conditions inside one reader and every
+        behavioural row here would still pass on the day it was written. So
+        this reads the two functions and requires that neither of them handles
+        `_sole_binding_node` or `_nested_scope_leaves_alone` itself.
+        """
+        for reader in (
+            MODULE._table_alias_is_only_read,
+            MODULE._reference_only_routes_a_request,
+        ):
+            with self.subTest(reader=reader.__name__):
+                body = inspect.getsource(reader).split('"""')[-1]
+                self.assertIn("_settled_local_binding(", body)
+                for primitive in ("_sole_binding_node(", "_nested_scope_leaves_alone("):
+                    self.assertNotIn(primitive, body)
 
 
 class TheWalkthroughSizeNamesItselfTests(unittest.TestCase):
