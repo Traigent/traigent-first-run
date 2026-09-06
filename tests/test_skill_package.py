@@ -8534,8 +8534,7 @@ class SkillPackageTests(unittest.TestCase):
             .split()
         )
         for phrase in (
-            "execution evaluators end this guide before an approval card",
-            "do not price, approve, or run one here",
+            "the stop in `static and mock validation` above ends this guide before this card",
         ):
             with self.subTest(approval_phrase=phrase):
                 self.assertIn(phrase, approval)

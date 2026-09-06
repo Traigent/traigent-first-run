@@ -567,8 +567,8 @@ Before the provider-paid baseline, show only its immediate scope:
   configurations, calls, metric, runtime, estimated spend, and one total walkthrough ceiling,
   defaulting to `$5.00`. Call it an execution stop target, not a billing guarantee.
 - Recipients: baseline-data services; for OpenRouter, the gateway and allowed upstream/fallback routes.
-- Execution evaluators end this guide before an approval card; do not price, approve, or run one
-  here.
+- Execution evaluators: the stop in `Static and mock validation` above ends this guide before
+  this card, so none is priced here.
 
 ### The pre-spend approval card
 
