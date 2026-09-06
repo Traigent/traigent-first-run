@@ -2349,6 +2349,24 @@ def emit_dataset_id_findings(
                 stable_json(value) if isinstance(value, (dict, list)) else str(value)
             )
             ids.append(rendered)
+            # Published stripped, and counted for collisions unstripped.
+            #
+            # `"  ticket-101  "` is an ordinary export artefact, and this check
+            # calls it a stable unique id - `stable_id_is_missing` strips only
+            # to decide emptiness. A reviewer reading that file writes
+            # `ticket-101`, because that is the row, so the published name has
+            # to be the one a reader would write or the identity match refuses
+            # a truthful review over invisible whitespace.
+            #
+            # The two questions are kept apart deliberately. Collisions are
+            # this check's own long-standing finding and its answer does not
+            # move: `ids` above stays verbatim, so a file carrying `a` and
+            # ` a ` still reports the ids it reports today rather than gaining
+            # a FAIL nobody asked this branch for. What that leaves is one
+            # digest standing for both rows - the same over-generosity the
+            # `line-<n>` namespace has, and the same size: a membership set one
+            # row wide, never a verdict.
+            rendered = rendered.strip() or rendered
         reviewable.append(rendered)
         split = row_metadata_value(row, "split")
         if split and str(split).casefold() in (

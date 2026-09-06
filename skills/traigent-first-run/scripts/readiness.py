@@ -4811,6 +4811,18 @@ def graded_rows(facts: DatasetFacts) -> int | None:
 
     `None` when no split has been declared, which is the ordinary opening
     state on one undivided file.
+
+    NOT the drawn subset, and `references/evaluation-and-dataset.md` promises
+    that it is: it says the hold "lifts at the section-4 re-score of the drawn
+    rows", while rule 1 of its own subset section says every readiness score
+    runs on the WHOLE dataset. Both cannot hold. On a 4,812-row corpus the
+    re-score reads 4,812 declared split rows and the review covers the 28 rows
+    drawn, so `answer_key_read`'s `reviewed_in_run >= graded` never clears and
+    the top two bands stay held whatever anyone reads. The predicate, this
+    function and that sentence all arrived together in traigent-first-run#382
+    and none of them has moved since; closing it means deciding which
+    population the floor is about, which is that issue's decision and not this
+    one's. Recorded here because this is the function the answer turns on.
     """
     if facts.tuning_labelled_rows is None or facts.holdout_labelled_rows is None:
         return None
@@ -9438,6 +9450,14 @@ def score_delta(previous: PreviousScore, score: ReadinessScore) -> dict[str, Any
 #: `preflight.row_id_digest`, which is the copy that reads the customer's file.
 ROW_ID_DIGEST_LENGTH = 16
 
+#: How many unmatched row ids one refusal prints. The refusal is a list a
+#: reader works through, so it names every one it can rather than the first -
+#: `preflight.py` reached the same conclusion about shadowed credentials, and
+#: for the same reason: whoever fixes what the message names must not meet the
+#: next instance as a fresh surprise. Bounded because a review of the wrong
+#: dataset entirely is every entry, and a wall of ids answers with the question.
+MAX_REPORTED_ROW_REVIEW_IDS = 10
+
 
 def row_id_digest(value: str) -> str:
     """The digest of one row id, computed the way `preflight.py` computed it."""
@@ -9552,6 +9572,8 @@ def row_review_from_document(document: Any, facts: DatasetFacts) -> RowReview:
         set(facts.run_row_id_digests) if facts.run_row_id_digests is not None else None
     )
     seen: set[str] = set()
+    #: Every id that names no row of this dataset, so one run names them all.
+    unmatched: list[str] = []
     counts = {verdict: 0 for verdict in ROW_REVIEW_VERDICTS}
     origins = {origin: 0 for origin in ROW_REVIEW_ORIGINS}
     # Three states, not two. Every entry says whether the run reads that row,
@@ -9566,10 +9588,27 @@ def row_review_from_document(document: Any, facts: DatasetFacts) -> RowReview:
             raise RowReviewInputError(f"{where} is not an object")
         row_id = entry.get("id")
         if not isinstance(row_id, str) or not row_id.strip():
+            # A number is the near miss worth naming separately. `{"id": 101}`
+            # in the dataset is published as `"101"`, and since every entry has
+            # to name a row preflight read, copying the file's own value
+            # verbatim is now the instruction - so a reviewer copies `101` and
+            # is told the entry "has no id" when it plainly has one.
+            if row_id is not None and not isinstance(row_id, (str, dict, list)):
+                raise RowReviewInputError(
+                    f"{where} has id {row_id!r}, which is not a string. Row ids "
+                    "travel as text here and preflight published this one as "
+                    f'"{row_id}" - quote it the same way'
+                )
             raise RowReviewInputError(
                 f"{where} has no 'id'; a verdict nobody can trace to a row "
                 "cannot be put to the user as a question about that row"
             )
+        # Compared with the surrounding whitespace taken off, on both sides.
+        # Preflight publishes the stripped name because that is the row a
+        # reader sees, and `"  ticket-101  "` is an ordinary export artefact
+        # that `dataset-ids` reports as a stable unique id. Two spellings of
+        # one row are also one repeat, so `seen` is keyed the same way.
+        row_id = row_id.strip()
         if row_id in seen:
             raise RowReviewInputError(
                 f"{where} repeats id {row_id!r}; one row carries one verdict, "
@@ -9578,12 +9617,15 @@ def row_review_from_document(document: Any, facts: DatasetFacts) -> RowReview:
         seen.add(row_id)
         digest = row_id_digest(row_id)
         if digest not in known:
-            raise RowReviewInputError(
-                f"{where} reviews id {row_id!r}, which is not a row preflight "
-                "read in this dataset. A verdict about a row that is not there "
-                "is not a read of this answer key, and the hold this review "
-                "lifts is about this dataset's answers"
-            )
+            # Collected, not raised. Three unmatched ids used to cost three
+            # runs, one refusal each, which is the convention `preflight.py`'s
+            # shadowed-credential report abandoned for the same reason: a
+            # reader who fixes what the message names should not meet the next
+            # instance as a fresh surprise. Everything else in this loop stays
+            # a first-failure refusal, because those are shape errors a reader
+            # fixes once and this is a list a reader works through.
+            unmatched.append(row_id)
+        matched = digest in known
         verdict = entry.get("verdict")
         if verdict not in ROW_REVIEW_VERDICTS:
             raise RowReviewInputError(
@@ -9617,16 +9659,25 @@ def row_review_from_document(document: Any, facts: DatasetFacts) -> RowReview:
                 "that row, so it is true or false or absent - and absent means "
                 "the rows have not been drawn yet, never 'no'"
             )
-        # The narrower claim, checked where a fact exists to check it against.
-        # `run_rows` is the witness that a split was declared at all, the same
-        # one the count check below uses; without it nothing here knows which
-        # rows the run reads and the entry's word is all there is.
-        if (
-            in_run
-            and in_run_known is not None
-            and run_rows(facts) is not None
-            and digest not in in_run_known
-        ):
+        # The narrower claim, checked where a fact exists to check it against -
+        # and that fact is the published list, not `run_rows`.
+        #
+        # It was `run_rows(facts) is not None`, which needs BOTH sides of the
+        # split, so a tuning-only dataset had every `in_run` claim on it go
+        # unchecked. The list itself is the better witness: preflight fills it
+        # from the tuning AND held-out split names, so it is non-empty exactly
+        # when some row of this file is one the run reads, which is the
+        # condition this check needs and the one `run_rows` only approximates.
+        #
+        # Empty still skips, and that is not a gap left open. An empty list
+        # means preflight recognised no split at all - no `split` field, or
+        # names outside its vocabulary - and in that state `graded_rows` is
+        # `None` too, so `answer_key_read` never reads `reviewed_in_run` and an
+        # unchecked `in_run` buys no release. What it can still do is raise
+        # `unsound_in_run`, which makes the card's finding worse rather than
+        # better. Refusing there would refuse a customer whose splits are named
+        # `dev`/`eval` on a claim nothing in the payload can contradict.
+        if matched and in_run and in_run_known and digest not in in_run_known:
             raise RowReviewInputError(
                 f"{where} marks id {row_id!r} as one this run reads, but that "
                 "row is on neither the tuning nor the held-out side of the "
@@ -9639,6 +9690,21 @@ def row_review_from_document(document: Any, facts: DatasetFacts) -> RowReview:
         origins[origin] += 1
         if verdict == "no" and in_run:
             unsound_in_run += 1
+
+    if unmatched:
+        shown = unmatched[:MAX_REPORTED_ROW_REVIEW_IDS]
+        suffix = (
+            ""
+            if len(unmatched) <= len(shown)
+            else f" (first {MAX_REPORTED_ROW_REVIEW_IDS} of {len(unmatched)} shown)"
+        )
+        noun = "id" if len(unmatched) == 1 else "ids"
+        raise RowReviewInputError(
+            f"row review names {len(unmatched)} {noun} preflight did not read in "
+            f"this dataset: {shown}{suffix}. A verdict about a row that is not "
+            "there is not a read of this answer key, and the hold this review "
+            "lifts is about this dataset's answers"
+        )
 
     if len(in_run_declared) > 1:
         raise RowReviewInputError(

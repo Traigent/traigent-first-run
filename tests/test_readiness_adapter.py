@@ -6048,7 +6048,10 @@ class ARowReviewIsMatchedToTheRowsPreflightReadTests(unittest.TestCase):
             rows, self._review([f"not-a-real-row-{index:03d}" for index in range(40)])
         )
         self.assertEqual(process.returncode, 2)
-        self.assertIn("not a row preflight read", process.stderr)
+        self.assertIn("names 40 ids preflight did not read", process.stderr)
+        # Bounded, and it says so: a review of the wrong dataset entirely is
+        # every entry, and a wall of ids answers with the question.
+        self.assertIn("(first 10 of 40 shown)", process.stderr)
         self.assertEqual(process.stdout, "")
 
     def test_a_review_of_this_dataset_is_read_rather_than_refused(self) -> None:
@@ -6176,6 +6179,79 @@ class ARowReviewIsMatchedToTheRowsPreflightReadTests(unittest.TestCase):
         self.assertEqual(scored.returncode, 2)
         self.assertIn("describes no dataset", scored.stderr)
         self.assertNotIn("Traceback", scored.stderr)
+
+    def test_an_id_padded_with_whitespace_still_matches_what_a_reader_writes(
+        self,
+    ) -> None:
+        """The regression an alignment audit over the merged branches found.
+
+        `"  ticket-101  "` is an ordinary export artefact, and `dataset-ids`
+        calls it a stable unique id - it strips only to decide emptiness. So
+        nothing warns anybody, and a reviewer who writes what the row plainly
+        is loses the whole opening card to invisible whitespace. Trunk scored
+        this project; the identity check must not be what breaks it.
+        """
+        rows = self._rows()
+        for row in rows:
+            row["id"] = f"  {row['id']}  "
+        review = self._review([row["id"].strip() for row in rows])
+        process = self._score_with_review(rows, review)
+        self.assertEqual(process.returncode, 0, process.stderr)
+        self.assertFalse(json.loads(process.stdout)["band_limited_by_unread_answers"])
+        # And the padded spelling is accepted too, since it names the same row.
+        padded = self._score_with_review(rows, self._review([r["id"] for r in rows]))
+        self.assertEqual(padded.returncode, 0, padded.stderr)
+
+    def test_every_unmatched_id_is_named_by_one_refusal(self) -> None:
+        """Three bad ids used to cost three runs, one refusal each.
+
+        `preflight.py`'s shadowed-credential report abandoned that convention
+        for the reason this one has to: a reader who fixes what the message
+        names should not meet the next instance as a fresh surprise.
+        """
+        rows = self._rows()
+        review = self._review([row["id"] for row in rows])
+        for index in (1, 3, 5):
+            review["rows"][index]["id"] = f"not-a-row-{index}"
+        process = self._score_with_review(rows, review)
+        self.assertEqual(process.returncode, 2)
+        self.assertIn("names 3 ids preflight did not read", process.stderr)
+        for index in (1, 3, 5):
+            self.assertIn(f"not-a-row-{index}", process.stderr)
+
+    def test_an_in_run_claim_is_checked_on_a_tuning_only_dataset(self) -> None:
+        """The shape the old `run_rows` gate let through entirely.
+
+        `run_rows` needs both sides of the split, so a dataset declaring only a
+        tuning side had every `in_run` claim on it go unchecked - the same
+        class this branch exists to close, left open on a shape the guide's own
+        tuning-only path produces. The published list is the better witness: it
+        is non-empty exactly when some row of this file is one the run reads.
+        """
+        rows = self._rows()
+        for index, row in enumerate(rows):
+            if index < 28:
+                row["split"] = "tuning"
+            else:
+                row.pop("split", None)
+        review = self._review([row["id"] for row in rows])
+        process = self._score_with_review(rows, review)
+        self.assertEqual(process.returncode, 2)
+        self.assertIn("neither the tuning nor the held-out side", process.stderr)
+        # The rows that ARE on the tuning side are accepted, so what was
+        # refused is the claim and not the shape.
+        honest = self._review([row["id"] for row in rows[:28]])
+        self.assertEqual(self._score_with_review(rows, honest).returncode, 0)
+
+    def test_an_id_written_as_a_number_says_how_to_write_it(self) -> None:
+        """`{"id": 101}` is published as `"101"`, and copying it is mandatory."""
+        rows = self._rows()
+        review = self._review([row["id"] for row in rows])
+        review["rows"][0]["id"] = 101
+        process = self._score_with_review(rows, review)
+        self.assertEqual(process.returncode, 2)
+        self.assertIn("which is not a string", process.stderr)
+        self.assertNotIn("has no 'id'", process.stderr)
 
     def test_a_digest_list_that_is_not_a_list_of_strings_is_refused(self) -> None:
         """A membership test against a malformed list passes or fails silently."""

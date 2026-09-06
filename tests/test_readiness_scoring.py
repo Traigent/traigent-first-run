@@ -11632,7 +11632,7 @@ class TheTopBandsNeedAReadOfTheAnswersTests(unittest.TestCase):
         }
         with self.assertRaises(MODULE.RowReviewInputError) as raised:
             MODULE.row_review_from_document(forged, facts)
-        self.assertIn("not a row preflight read", str(raised.exception))
+        self.assertIn("names 48 ids preflight did not read", str(raised.exception))
         # And the same document with this dataset's own ids is read, so what
         # was refused is the forgery rather than the shape.
         honest = json.loads(json.dumps(forged))
