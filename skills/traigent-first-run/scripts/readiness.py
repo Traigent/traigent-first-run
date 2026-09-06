@@ -1011,6 +1011,16 @@ class SubScore:
     # said. `combine` therefore counts every sub-score in `total_weight` and
     # only the applicable ones in the score.
     #
+    # SO "IT DROPS OUT OF THE DENOMINATOR" IS NO LONGER A WHOLE SENTENCE about
+    # this flag, and a note elsewhere that says it without saying which
+    # denominator is describing the behaviour this comment replaced. There are
+    # two, they now disagree, and the split is the point: the SCORE renormalises
+    # over the applicable checks, so an inapplicable one is neither charged nor
+    # paid; the CONFIDENCE divides by every check, so an inapplicable one is
+    # still reported as coverage nobody supplied. This is the home of that
+    # distinction - `combine` implements it, `render_card` prints it as the
+    # headline count, and any other statement of it is a copy that can drift.
+    #
     # THE POINTS DENOMINATOR IS DELIBERATELY LEFT ALONE, and the reason is
     # arithmetic rather than taste. Charging this check - full weight, no
     # credit, the `withheld` treatment - would make declaring tools pay: a
@@ -1022,6 +1032,29 @@ class SubScore:
     # every other check: out of the score, into the coverage. That is the
     # settled answer for a claim this read cannot settle, and this arm now
     # matches it.
+    #
+    # MATCHING IT INHERITS ITS RESIDUAL, and that is said here rather than left
+    # to be discovered. `determined: false` does not merely tie the honest
+    # negative, it beats it: one agent and one search space, varying a single
+    # build answer, `prompt: present=false` scores 44 at confidence 1.00 and
+    # `prompt: determined=false` scores 47 at 0.94, and the same 2-3 points
+    # appear on all four checks. The four are asked of every run that found an
+    # agent - `agent_build_from_document` refuses a document that answers three
+    # - so that is a check the run WAS asked for, which is the state
+    # `SubScore.withheld` above exists to charge. Charging it is a decision
+    # against #184's floor and not a patch, so it is filed rather than taken
+    # here (traigent-first-run#456). The two arms therefore share the treatment
+    # AND the residual; neither is settled by this comment.
+    #
+    # AND THE UNREFUTED ANSWER IS NOT THE ONLY ONE. The positive arm is refuted
+    # by name presence alone - `derived_source_names` collects identifiers,
+    # attributes, definitions and whole string constants - so a `used: true`
+    # declaring a name that occurs once as a key in an unrelated table is
+    # accepted, earns the full weight, stays measured, and keeps the pillar at
+    # 50/1.00 against 47/0.95 for the honest `used: false`. The gradient this
+    # module leaves therefore runs TOWARD claiming tools, which is the reason
+    # charging the negative arm would make it steeper rather than flatter, and
+    # the reason the arm above is left costing nothing but a coverage line.
     applicable: bool = True
 
 
