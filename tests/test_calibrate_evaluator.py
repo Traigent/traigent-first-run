@@ -4114,7 +4114,11 @@ class ExecutionScopeGateTests(unittest.TestCase):
             self.assertEqual(process.returncode, 2, process.stdout)
             self.assertFalse(marker.exists(), process.stderr)
         self.assertIn("pyspark_scorer.py", process.stderr)
-        self.assertIn("pyspark", process.stderr)
+        # The witness SENTENCE, not the bare module name. Every witness line
+        # prints the scorer's absolute path, and this fixture is called
+        # `pyspark_scorer.py` - so `assertIn("pyspark", ...)` passed with the
+        # module dropped from the table again, on the strength of the filename.
+        self.assertIn("imports pyspark.sql", process.stderr)
         self.assertIn("calls .sql()", process.stderr)
 
     def test_the_reply_transform_is_read_too(self) -> None:

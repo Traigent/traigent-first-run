@@ -162,6 +162,20 @@ class BehavioralContractUnitTests(unittest.TestCase):
             "would clear this.",
         )
 
+    @staticmethod
+    def uncommented(source: str, start: str, end: str) -> str:
+        """The code between two markers, with its comment lines removed.
+
+        A raw slice includes the paragraph explaining the code, and these
+        assertions look for flag names - which those paragraphs quote. Measured:
+        deleting the two lines that actually pass `--evaluator` left the
+        assertion below green, satisfied by the comment above the hole.
+        """
+        body = source.split(start, 1)[1].split(end, 1)[0]
+        return "\n".join(
+            line for line in body.splitlines() if not line.lstrip().startswith("#")
+        )
+
     # The sentences in the guide that say a flag rides on every scoring call.
     #
     # The FLAGS are not listed here, only the phrase each mandate is written
@@ -176,7 +190,15 @@ class BehavioralContractUnitTests(unittest.TestCase):
     )
 
     def mandated_scoring_flags(self) -> set[str]:
-        """Every flag the guide puts on every scoring call, read from the guide."""
+        """Every flag the guide puts on every scoring call, read from the guide.
+
+        Each mandate phrase has to still be findable AND still name a flag. A
+        reword that keeps both - which is most rewords - leaves this set
+        unchanged and this test green; one that moves the flag out of the
+        sentence, or drops the phrase, reds here with a message saying which
+        document moved, because a derivation that quietly returns less than it
+        should reads exactly like a rule that is satisfied.
+        """
         flags: set[str] = set()
         corpus = " ".join(
             " ".join(document.read_text(encoding="utf-8").split())
@@ -186,18 +208,27 @@ class BehavioralContractUnitTests(unittest.TestCase):
             )
         )
         for phrase in self.SCORING_MANDATE_PHRASES:
-            # Each mandate has to still be findable, or the set below is
-            # whatever is left rather than what the guide requires - which is
-            # the one way a derived test goes quietly wrong.
             self.assertIn(
                 phrase,
                 corpus,
                 f"the guide no longer says {phrase!r}, so this test can no "
-                "longer read the required flags out of it",
+                "longer read the required flags out of it. If a guidance "
+                "change reworded that mandate, re-derive here in the same "
+                "change - a per-branch green does not answer this, because "
+                "the two halves live in different files",
             )
-        for sentence in re.split(r"(?<=\.) ", corpus):
-            if any(phrase in sentence for phrase in self.SCORING_MANDATE_PHRASES):
-                flags.update(re.findall(r"--[a-z][a-z-]*[a-z]", sentence))
+            named = {
+                flag
+                for sentence in re.split(r"(?<=\.) ", corpus)
+                if phrase in sentence
+                for flag in re.findall(r"--[a-z][a-z-]*[a-z]", sentence)
+            }
+            self.assertTrue(
+                named,
+                f"the sentence saying {phrase!r} no longer names a flag, so "
+                "this derivation now requires less than the guide does",
+            )
+            flags.update(named)
         return flags
 
     def test_the_recorded_cards_come_from_the_argv_the_guide_mandates(
@@ -222,26 +253,15 @@ class BehavioralContractUnitTests(unittest.TestCase):
         going stale.
         """
         required = self.mandated_scoring_flags()
-        self.assertEqual(
-            required,
-            {
-                "--evaluator-method",
-                "--evaluator-origin",
-                "--agent-origin",
-                "--task-kind",
-            },
-            "the guide's scoring mandate names a different set of flags than "
-            "the harness was built against; carry the new one through "
-            "`run_case` and re-declare the cases it moves",
-        )
         source = Path(outcomes.__file__).read_text(encoding="utf-8")
-        marker = "score_argv = ["
-        self.assertIn(marker, source, "the outcome readiness argv moved")
-        argv_block = source.split(marker, 1)[1].split("score = json.loads", 1)[0]
+        argv_block = self.uncommented(source, "score_argv = [", "score = json.loads")
         for flag in sorted(required):
             with self.subTest(flag=flag):
+                # The quoted literal, not the bare token. `--evaluator` is a
+                # prefix of `--evaluator-method`, so a bare substring match is
+                # answered by a different flag.
                 self.assertIn(
-                    flag,
+                    f'"{flag}"',
                     argv_block,
                     f"`run_case` cannot pass {flag}, which the guide puts on "
                     "every scoring call, so these cards record a call the "
@@ -250,11 +270,21 @@ class BehavioralContractUnitTests(unittest.TestCase):
         # The method is the one that is not readiness-only: the guide pairs it
         # across both scripts, so passing it to the score alone would obey the
         # letter of the flag and break the pairing the rule is about.
-        preflight_block = source.split(
-            "argv = [sys.executable, str(harness.PREFLIGHT)", 1
-        )[1].split("preflight = harness.run_command", 1)[0]
-        self.assertIn("--evaluator-method", preflight_block)
-        self.assertIn("--evaluator", preflight_block)
+        #
+        # `--evaluator` rides with it. It is honest about a file these fixtures
+        # ship and it moves no card among them - the evaluation pillar is
+        # already at 100 once the method and kind are declared, so there is no
+        # withheld credit for the static shape read to release. It is passed
+        # because the guide says to pass it wherever an evaluator file was
+        # found, and a fixture whose card would move is what it would take to
+        # pin it from the outside; there is none here and one is not invented.
+        preflight_block = self.uncommented(
+            source,
+            "argv = [sys.executable, str(harness.PREFLIGHT)",
+            "preflight = harness.run_command",
+        )
+        self.assertIn('"--evaluator-method"', preflight_block)
+        self.assertIn('"--evaluator"', preflight_block)
 
     def test_the_clean_cases_band_names_the_gate_that_holds_it(self) -> None:
         """`clean-proceed` reads WORKABLE at 91, and 91 is an EXCELLENT number.

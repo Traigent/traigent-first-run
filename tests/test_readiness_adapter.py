@@ -314,8 +314,21 @@ class ReadinessAdapterReplayTests(unittest.TestCase):
         self.assertIn(
             f"'schema_version' (currently {MODULE.SCHEMA_VERSION})", help_text
         )
-        self.assertIn("a new key does not bump it", help_text)
-        self.assertIn("--previous refuses a payload from another version", help_text)
+        self.assertIn(
+            "a bump means a consumer of the older version can no longer read "
+            "this payload correctly",
+            help_text,
+        )
+        # NOT a rule about which keys moved. Schema 2 was purely additive and
+        # bumped anyway, so a sentence saying a new key does not bump the
+        # version is contradicted by this module's own history - and a consumer
+        # who believed it would skip the check on exactly the release that
+        # needed it.
+        self.assertNotIn("a new key does not bump", help_text)
+        # One home for the cross-version refusal, and it is `--previous`'s own
+        # help, which carried it before this paragraph existed.
+        self.assertIn("Refused when the earlier output was written by a", help_text)
+        self.assertEqual(help_text.count("refuses a payload from another version"), 0)
 
     def test_task_kind_cli_is_closed_and_distinguishes_code_from_sql(self) -> None:
         help_result = subprocess.run(

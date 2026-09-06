@@ -16733,7 +16733,11 @@ def build_signal_from_entry(
         return BuildSignal(
             check,
             0.0,
-            f"not established by this read - {reason.strip()}. "
+            # The reason's own full stop is dropped before this one is added.
+            # It is free prose and nothing normalises its punctuation, so the
+            # common case - an author who writes a sentence - rendered
+            # "fetched at runtime.. Assistant observation".
+            f"not established by this read - {reason.strip().rstrip('.')}. "
             f"{UNCHECKED_OBSERVATION}{evidence}",
             measured=False,
         )
@@ -17429,26 +17433,35 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     # THE PAYLOAD CONTRACT, SAID WHERE ITS READERS ARE.
     #
-    # `schema_version` decides how a consumer of this payload reads it, and
-    # `--previous` refuses across versions - and neither was written down
-    # anywhere a reader would look (traigent-first-run#401). It is not written
-    # into the guide either, and deliberately not: no instruction this package
-    # ships runs `readiness.py --json`, so a customer never holds one of these
-    # documents. Its readers are whoever automates this script, and what they
-    # read is `--help`.
+    # `schema_version` decides how a consumer of this payload reads it, and it
+    # was written down nowhere a reader would look (traigent-first-run#401). It
+    # is not written into the guide, and deliberately not: no instruction this
+    # package ships runs `readiness.py --json`, so nobody following the guide
+    # holds one of these documents. Its readers are whoever automates this
+    # script - and, because `GUIDE.md` tells the assistant to invoke
+    # `readiness.py --help` on every guided run, the assistant too. Both read
+    # this string, which is why it says what to DO with the number rather than
+    # recounting the history behind it.
     #
     # The number is interpolated rather than typed, so this sentence cannot
-    # name a version this script does not write. The RULE behind the number
-    # stays at `SCHEMA_VERSION` and is pointed at, not copied.
+    # name a version this script does not write.
+    #
+    # WHAT IT DOES NOT SAY is when a bump happens, and an earlier revision got
+    # that wrong in a way worth recording: it said a new key does not bump the
+    # version. Schema 2 was purely additive and bumped anyway (`SCHEMA_VERSION`
+    # above), because the ABSENCE of the new key had been unambiguous and no
+    # longer was. The rule is about what a consumer can still read correctly,
+    # not about which keys moved, and the reasoning stays at the constant.
+    # `--previous`'s own help already carries the cross-version refusal, so it
+    # is not restated here.
     parser.add_argument(
         "--json",
         action="store_true",
         help=(
             "emit machine-readable output. The scoring payload carries "
-            f"'schema_version' (currently {SCHEMA_VERSION}): a new key does not "
-            "bump it and a key or value that changes meaning does, so a "
-            "consumer that branches on a value has to check it. --previous "
-            "refuses a payload from another version for that reason"
+            f"'schema_version' (currently {SCHEMA_VERSION}), and a bump means a "
+            "consumer of the older version can no longer read this payload "
+            "correctly - so check the field before branching on any value in it"
         ),
     )
     return parser.parse_args(argv)

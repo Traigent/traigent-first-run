@@ -19185,6 +19185,34 @@ class TheBuildHalfCitesTheAgentItReadTests(unittest.TestCase):
                 self.assertNotIn("excluded from this score", rows[check])
                 self.assertNotIn("Read from", rows[check])
 
+    def test_the_reason_does_not_bring_its_own_full_stop_to_the_card(self) -> None:
+        """A separator this script adds, on prose it does not control.
+
+        `reason` is free text the assistant wrote and nothing normalises its
+        punctuation, so the common case - an author who ends a sentence -
+        rendered `fetched at runtime.. Assistant observation`, a stutter on the
+        customer's card in the middle of the clause that matters most.
+        """
+        rows = {
+            signal.name: signal.evidence
+            for signal in MODULE.build_declarations_are_unmeasured(
+                self._read(
+                    self._undetermined(
+                        reason="The prompt is fetched at runtime.",
+                        evidence="agent.py:2",
+                    )
+                ).build
+            )
+        }
+        for check in MODULE.BUILD_CHECK_ANSWER:
+            with self.subTest(check=check):
+                self.assertNotIn("..", rows[check])
+                self.assertIn(
+                    "not established by this read - The prompt is fetched at "
+                    "runtime. Assistant observation",
+                    rows[check],
+                )
+
     def test_the_marking_is_one_phrase_and_not_two_spellings(self) -> None:
         """Why the constant exists rather than a literal at each site.
 

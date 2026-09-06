@@ -4448,16 +4448,38 @@ def score(*, output, expected, input_data, metadata):
         case _:
             return float(str(output).strip() == str(expected).strip())
 '''
-SQLGLOT_RENDER_COMPARISON = '''"""Compare two queries by re-rendering both parse trees. Nothing connects."""
+SQLGLOT_RENDER_COMPARISON = '''"""Compare two queries by re-rendering both parse trees. Nothing connects.
+
+The dialect comes off the row rather than being typed, which is the shape that
+matters here: `Expression.sql(dialect=None, **opts)` takes the dialect FIRST and
+POSITIONALLY, so a rule that reads a non-literal positional argument as a
+submitted statement refuses this file.
+"""
 
 import sqlglot
 
 
 def score(*, output, expected, input_data, metadata):
-    del input_data, metadata
-    produced = sqlglot.parse_one(str(output)).sql(dialect="duckdb", pretty=False)
-    wanted = sqlglot.parse_one(str(expected)).sql()
+    del input_data
+    dialect = (metadata or {}).get("dialect", "duckdb")
+    produced = sqlglot.parse_one(str(output)).sql(dialect)
+    wanted = sqlglot.parse_one(str(expected)).sql(dialect, pretty=False)
     return float(produced.casefold() == wanted.casefold())
+'''
+SQLGLOT_RENDER_VIA_LOCAL = '''"""The same render, with the tree bound to a name first."""
+
+import sqlglot
+
+
+def canonical(text, dialect):
+    tree = sqlglot.parse_one(str(text))
+    return tree.sql(dialect, comments=False).casefold()
+
+
+def score(*, output, expected, input_data, metadata):
+    del input_data
+    dialect = (metadata or {}).get("dialect", "duckdb")
+    return float(canonical(output, dialect) == canonical(expected, dialect))
 '''
 POLARS_FRAME_COMPARISON = '''"""Read the reference rows with a data-frame library, then compare text."""
 
@@ -4486,6 +4508,7 @@ NON_EXECUTING_EVALUATORS = {
     "llm judge": LLM_JUDGE_SCORER,
     "dynamic import of a helper": DYNAMIC_IMPORT_OF_A_HELPER,
     "sqlglot render comparison": SQLGLOT_RENDER_COMPARISON,
+    "sqlglot render through a local": SQLGLOT_RENDER_VIA_LOCAL,
     "data-frame reference table": POLARS_FRAME_COMPARISON,
 }
 
@@ -4641,6 +4664,26 @@ def score(*, output, expected, input_data, metadata):
     connection = input_data["connection"]
     return float(connection.sql(output).fetchall() == connection.sql(expected).fetchall())
 '''
+POLARS_REMOTE_READ = '''"""Submit the candidate to a remote database, with no driver imported."""
+
+import polars as pl
+
+
+def score(*, output, expected, input_data, metadata):
+    del metadata
+    produced = pl.read_database_uri(str(output), input_data["uri"])
+    return float(produced.rows() == expected)
+'''
+POLARS_KEYWORD_SQL = '''"""The statement under a keyword rather than in the first position."""
+
+import polars as pl
+
+
+def score(*, output, expected, input_data, metadata):
+    del metadata
+    frame = pl.read_parquet(input_data["table"])
+    return float(frame.sql(query=str(output)).equals(frame.sql(query=str(expected))))
+'''
 EXECUTING_EVALUATORS = {
     "sqlite roundtrip": SQLITE_ROUNDTRIP,
     "duckdb roundtrip": DUCKDB_ROUNDTRIP,
@@ -4656,6 +4699,8 @@ EXECUTING_EVALUATORS = {
     "ibis backend": IBIS_BACKEND_SQL,
     "data-frame sql surface": POLARS_FRAME_SQL,
     "handed-in connection asked with .sql()": HANDED_IN_CONNECTION_SQL,
+    "remote read with no driver import": POLARS_REMOTE_READ,
+    "statement under a keyword": POLARS_KEYWORD_SQL,
 }
 
 
@@ -4787,32 +4832,75 @@ class TheEvaluatorCallPathIsReadOutOfItsOwnTreeTests(unittest.TestCase):
             ("calls .sql() (line 2)",),
         )
 
-    def test_sql_is_a_witness_when_it_is_handed_a_statement_and_not_when_it_renders_one(
+    def test_a_file_that_renders_sql_is_not_read_as_one_that_runs_it(
         self,
     ) -> None:
-        """The one engine call name no standard pins.
+        """The false-refusal direction on the one name no standard pins.
 
-        `parse_one(text).sql()` renders a parse tree back to a string and
-        connects to nothing, and it is the shape a canonicalising text-to-SQL
-        comparator uses - the honest evaluator this guide asks for, and the
-        expensive one to refuse. What separates it from `session.sql(text)` is
-        that an engine is handed the statement, so the rule is the argument
-        rather than the name.
+        `Expression.sql(dialect=None, **opts)` takes the DIALECT first and
+        positionally, so `parsed.sql(dialect)` - a canonicalising comparator
+        reading its dialect off the row instead of typing it - is
+        indistinguishable from `connection.sql(query)` by the argument alone.
+        An earlier revision of this rule tried exactly that and hard-refused
+        the file: the calibration gate exits 2 and tells a customer whose
+        program opens no connection to go and design containment.
+
+        So the file decides first. Both spellings stay clean here, including
+        the one that binds the tree to a local name and would defeat any rule
+        reading the receiver chain.
+        """
+        for name, source in (
+            ("inline", SQLGLOT_RENDER_COMPARISON),
+            ("through a local", SQLGLOT_RENDER_VIA_LOCAL),
+        ):
+            with self.subTest(shape=name):
+                self.assertEqual(self.witnesses(source), ())
+        # Every spelling of the import, because the suppression is keyed on the
+        # module and a customer writes it several ways.
+        for line in (
+            "import sqlglot",
+            "import sqlglot.expressions",
+            "import sqlglot as glot",
+            "from sqlglot import parse_one",
+            "from sqlglot.expressions import Select",
+            "import sqlfluff",
+            "import sqlparse",
+        ):
+            with self.subTest(imported=line):
+                self.assertEqual(self.witnesses(f"{line}\nparsed.sql(dialect)\n"), ())
+
+    def test_sql_is_a_witness_when_a_file_that_renders_nothing_submits_one(
+        self,
+    ) -> None:
+        """And the true-positive direction, which is what the rule is for.
+
+        With no renderer in the file there is no second reading of `.sql()` to
+        respect, so what remains is whether anything was handed over. The
+        keyword rows are not decoration: `read_database` and `.sql()` both
+        document a `query=` spelling, and a rule reading only `call.args` let
+        every one of them through.
         """
         for source in (
             "connection.sql(output)\n",
             "session.sql(f'select * from ({output})')\n",
             "connection.sql(*queries)\n",
+            "frame.sql(query=output)\n",
+            "session.sql(sqlQuery=output)\n",
+            "pl.read_database_uri(output, uri)\n",
+            "pl.read_database(query=output, connection=conn)\n",
+            "read_database_uri(output, uri)\n",
         ):
             with self.subTest(source=source):
                 self.assertTrue(self.witnesses(source), source)
-        for source in (
-            "parsed.sql()\n",
-            "parsed.sql(dialect='duckdb', pretty=False)\n",
-            "parsed.sql('duckdb')\n",
-        ):
-            with self.subTest(source=source):
-                self.assertEqual(self.witnesses(source), (), source)
+        # Handed nothing, so it submitted nothing - and a renderer beside
+        # `read_database` changes nothing about what `read_database` does,
+        # because that name has no rendering reading to be confused with.
+        self.assertEqual(self.witnesses("parsed.sql()\n"), ())
+        self.assertEqual(self.witnesses("parsed.sql(dialect='duckdb')\n"), ())
+        self.assertEqual(
+            self.witnesses("import sqlglot\npl.read_database_uri(output, uri)\n"),
+            ("calls .read_database_uri() (line 2)",),
+        )
 
     def test_the_process_family_is_matched_and_ordinary_os_members_are_not(
         self,
