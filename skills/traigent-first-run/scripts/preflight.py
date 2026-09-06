@@ -35,10 +35,6 @@ from typing import Any, Iterable, Sequence
 # priced there; refusing it twice, once by exit code and once by cap, gives the
 # two surfaces the standing to contradict each other over one file, which is
 # what #410 was.
-#
-# Two checks still price provenance at the gate - `dataset-outputs` and
-# `dataset-difficulty`, both `FAIL if synthetic else WARN`. They are declared
-# exceptions, not the rule, and they are tracked in #438; do not copy them.
 PASS, FAIL, WARN, SKIP = "PASS", "FAIL", "WARN", "SKIP"
 SUPPORTED_PYTHON_MIN = (3, 11)
 SUPPORTED_PYTHON_MAX = (3, 14)
@@ -4072,8 +4068,6 @@ def check_dataset(
         # `dataset-fully-synthetic` at a 65 cap; charging it again inside the
         # repetition finding is the double-count `DIVERSITY_CHECKS` exists to
         # prevent. The same repeats are the same defect whoever wrote the rows.
-        # The construct survives in `dataset-outputs` and `dataset-difficulty`
-        # below, tracked in #438.
         #
         # This check grades the CUSTOMER'S file. Whether this guide's own
         # generated walkthrough corpus needs a gate before it ships is a
@@ -4311,7 +4305,14 @@ def check_dataset(
         elif len(output_counts) == 1:
             emit(
                 "dataset-outputs",
-                FAIL if synthetic else WARN,
+                # WARN whoever wrote the rows, on the rule stated beside
+                # `PASS/FAIL/WARN/SKIP` at the top of this file. One answer
+                # repeated is measured exactly, published here and priced on
+                # the card; `FAIL if synthetic` made the exit code turn on
+                # PROVENANCE rather than on the spread, so it refused a
+                # generated corpus and waved through a collected one carrying
+                # the identical defect (#438).
+                WARN,
                 "every expected output is identical; evaluator discrimination is likely degenerate",
             )
             # And say it in the dominance vocabulary too, because this IS the
@@ -4620,12 +4621,29 @@ def check_dataset(
             "missing_bands": sorted(EXPECTED_DIFFICULTIES - difficulties),
         },
     )
+    # ONE `dataset-difficulty` record per run, which is what the arms below are
+    # arranged to guarantee. An all-easy SYNTHETIC corpus is both the ceiling
+    # finding and the missing-bands finding, and emitting both raised
+    # `DuplicateCheckName` - which `main` reports as exit 3 with no records at
+    # all, so a customer whose generated corpus was uniformly easy lost every
+    # finding this run had already made instead of reading one about difficulty
+    # (#440). A generated walkthrough corpus is synthetic by construction and a
+    # small first-run one is often uniformly easy, so that is an ordinary file
+    # here, not an exotic one. The all-easy arm owns the case and carries both
+    # observations in its single record.
+    missing_difficulties = EXPECTED_DIFFICULTIES - difficulties
     if difficulty_values and difficulties == {"easy"}:
         emit(
             "dataset-difficulty",
-            FAIL if synthetic else WARN,
-            f"all {len(difficulty_values)} difficulty-tagged rows are easy; "
-            "a ceiling effect may leave configurations indistinguishable",
+            # WARN whoever wrote the rows, on the rule stated beside
+            # `PASS/FAIL/WARN/SKIP` at the top of this file, and for the reason
+            # given in full beside `dataset-duplicates`: the bands are measured
+            # exactly and priced on the card, while `FAIL if synthetic` put the
+            # exit code on PROVENANCE rather than on the spread (#438).
+            WARN,
+            f"all {len(difficulty_values)} difficulty-tagged rows are easy "
+            f"(missing bands: {sorted(missing_difficulties)}); a ceiling effect "
+            "may leave configurations indistinguishable",
         )
     elif (
         not synthetic and difficulty_values and not difficulties & {"hard", "very-hard"}
@@ -4638,19 +4656,19 @@ def check_dataset(
         )
     elif not synthetic and EXPECTED_DIFFICULTIES <= difficulties:
         emit("dataset-difficulty", PASS, "all four difficulty bands are represented")
-
-    if synthetic:
-        missing_difficulties = EXPECTED_DIFFICULTIES - difficulties
+    elif synthetic:
         if missing_difficulties:
             emit(
                 "dataset-difficulty",
-                FAIL,
+                WARN,
                 f"synthetic data is missing difficulty bands: {sorted(missing_difficulties)}",
             )
         else:
             emit(
                 "dataset-difficulty", PASS, "all four difficulty bands are represented"
             )
+
+    if synthetic:
         scenario_count = len(
             {
                 str(row_metadata_value(row, "coverage"))

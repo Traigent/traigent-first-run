@@ -2075,6 +2075,68 @@ class StaticPreflightTests(unittest.TestCase):
             )
         )
 
+    def test_a_provenance_fact_is_not_priced_at_the_exit_code(self) -> None:
+        """#438: WARN whoever wrote the rows, on both remaining sites.
+
+        `dataset-outputs` and `dataset-difficulty` were the last two
+        `FAIL if synthetic else WARN` constructs in this file. Nothing
+        downstream can see the difference - `readiness.py` tests
+        `status in ("WARN", "FAIL")` at every consumer - so the only
+        observable effect was preflight's exit code, which refused a generated
+        corpus and waved through a collected one carrying the identical
+        defect. Both facts are still published; the card prices them.
+        """
+        rows = [
+            {
+                "id": f"walkthrough-{index}",
+                "input": f"scenario {index} unique_token_{index}",
+                "output": "same",
+                "difficulty": "easy",
+                "source": "synthetic",
+            }
+            for index in range(12)
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            dataset = Path(directory) / "eval.jsonl"
+            dataset.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+            MODULE.check_dataset(dataset)
+        checks = {result.check: result for result in MODULE.RESULTS}
+        self.assertEqual(checks["dataset-outputs"].status, MODULE.WARN)
+        self.assertIn(
+            "every expected output is identical", checks["dataset-outputs"].detail
+        )
+        self.assertEqual(checks["dataset-difficulty"].status, MODULE.WARN)
+        # And no FAIL anywhere in the run, so the exit code does not turn on
+        # who wrote these rows.
+        self.assertEqual(
+            [result.check for result in MODULE.RESULTS if result.status == MODULE.FAIL],
+            [],
+        )
+
+    def test_a_synthetic_corpus_missing_bands_warns_rather_than_fails(self) -> None:
+        """The other half of #438: the missing-bands arm fired only when
+        synthetic, so the same absent bands were a FAIL for generated rows and
+        a WARN - or nothing - for collected ones."""
+        rows = [
+            {
+                "id": f"walkthrough-{index}",
+                "input": f"scenario {index} unique_token_{index}",
+                "output": f"answer {index % 4}",
+                "difficulty": "easy" if index % 2 else "medium",
+                "source": "synthetic",
+            }
+            for index in range(12)
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            dataset = Path(directory) / "eval.jsonl"
+            dataset.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+            MODULE.check_dataset(dataset)
+        difficulty = next(
+            result for result in MODULE.RESULTS if result.check == "dataset-difficulty"
+        )
+        self.assertEqual(difficulty.status, MODULE.WARN)
+        self.assertIn("missing difficulty bands", difficulty.detail)
+
     def test_dominant_expected_output_warns_about_hidden_failures(self) -> None:
         rows = [
             {
@@ -6393,6 +6455,50 @@ class OneRecordPerCheckTests(unittest.TestCase):
         self.assertEqual(records[0].status, MODULE.WARN)
         self.assertIn("no LLM provider credential names are present", records[0].detail)
         self.assertIn("Bedrock is not counted", records[0].detail)
+
+    def test_an_all_easy_synthetic_corpus_is_one_difficulty_record(self) -> None:
+        """#440: the crash that discarded a whole run's records.
+
+        A `source: synthetic` corpus whose difficulty tags are all `easy`
+        emitted `dataset-difficulty` twice - once from the all-easy arm and
+        again from the synthetic missing-bands arm, since all-easy IS missing
+        three bands. The registry refused the second, `main` reported that as
+        exit 3 with no records at all, and the customer lost every finding the
+        run had already made - including the ones nothing to do with
+        difficulty. That corpus is an ordinary one here: a generated
+        walkthrough dataset is synthetic by construction and a small first-run
+        one is often uniformly easy.
+        """
+        rows = [
+            {
+                "id": f"walkthrough-{index}",
+                "input": f"scenario {index} unique_token_{index}",
+                "output": f"answer {index % 4}",
+                "difficulty": "easy",
+                "source": "synthetic",
+            }
+            for index in range(12)
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            dataset = Path(directory) / "eval.jsonl"
+            dataset.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+            returned = MODULE.check_dataset(dataset)
+        self.assertEqual(len(returned or []), 12)
+        difficulty = [
+            result for result in MODULE.RESULTS if result.check == "dataset-difficulty"
+        ]
+        self.assertEqual(len(difficulty), 1)
+        # One record carrying BOTH observations: the ceiling effect, and the
+        # bands that are not there.
+        self.assertIn("are easy", difficulty[0].detail)
+        self.assertIn("ceiling effect", difficulty[0].detail)
+        self.assertIn("missing bands", difficulty[0].detail)
+        self.assertIn("very-hard", difficulty[0].detail)
+        self.assertEqual(
+            len({result.check for result in MODULE.RESULTS}),
+            len(MODULE.RESULTS),
+            [result.check for result in MODULE.RESULTS],
+        )
 
     def test_missing_and_colliding_ids_are_one_record_that_fails(self) -> None:
         rows = [
