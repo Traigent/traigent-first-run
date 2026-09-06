@@ -367,7 +367,7 @@ Readiness score (the card, the three pillars, bands, caps, blocked)
 
   Present it as progress: `Stage 2/5 · Readiness - <score>/100 (<band>)`. Explain what the score
   measures, the strongest evidence, the one limitation that most affects the next action, and that
-  action. A re-score is a gate result; `SKILL.md` stage 4 owns how it is presented. Do not
+  action. A re-score is a gate result; `SKILL.md` section 4 owns how it is presented. Do not
   animate with invented progress or narrate every card line.
 
 .env file

@@ -128,6 +128,6 @@ evidence of expected production performance. Any walkthrough-only substitute is 
 evidence.
 
 Portal experiments - retention, links, the local-only label, and deletion - follow SKILL.md's
-"Verify and report" stage; this document states none of it a second time.
+"Verify and report" section; this document states none of it a second time.
 
 Only provide advanced learning links and lifecycle suggestions after the user has seen the result.

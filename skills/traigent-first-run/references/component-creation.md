@@ -255,7 +255,7 @@ last on screen, and last read.
 
 One narrowing on what may be OFFERED lives outside this document, and is named here so this one is
 not read as the whole rule. Where the run has diagnosed a fault it can repair for nothing and the
-customer has already paid for the measurement that fault spoiled, SKILL stage 7 withholds routes
+customer has already paid for the measurement that fault spoiled, SKILL section 7 withholds routes
 this document would otherwise word. That menu only; everywhere else a route this document offers
 stays offered, and how any route is worded and ordered stays here.
 
@@ -265,7 +265,7 @@ Read it before anything is built. Material the user points at is material this r
 so it is scored rather than trusted, and it enters the matrix below as `real`, `limited`, or
 `invalid` on that evidence like any other candidate. A dataset that arrives after the opening-gate
 calibration ran also re-derives the calibration cases: they were cut from the rows the run had
-then, and cases cut from other rows say nothing about these. SKILL stage 4 owns the post-repair
+then, and cases cut from other rows say nothing about these. SKILL section 4 owns the post-repair
 rule this serves.
 
 Three ways it does not resolve. Each lands somewhere, and none of them is a retry loop:
@@ -348,7 +348,7 @@ evidence without `values` or `low`/`high`; verify the real build path before add
 to the enhanced space. A stub whose comment lists the settings a real call *would* take is describing
 an agent that does not exist yet, and recording those names reports a search space this project does
 not have - the same false readiness a historical config-space file produces. Pass it as
-`scripts/readiness.py --agent-knobs`; SKILL.md stage 1 states where it is written, how far one
+`scripts/readiness.py --agent-knobs`; SKILL.md section 1 states where it is written, how far one
 reading travels, and where it stops. Each scoring gets its own directory there because a read is
 evidence about the source at the moment it was taken.
 
@@ -592,7 +592,7 @@ the agent.
 
 Two of the criteria this pillar is asked about are not here, and the card says so rather than
 letting four checks imply that six were looked at: whether the dataset and the evaluation method are
-wired into the agent. That integration is what the matrix above builds and stage 5 verifies against
+wired into the agent. That integration is what the matrix above builds and section 5 verifies against
 the installed SDK, so at the opening gate there is nothing in the agent's source to read, and a
 score for it would be grading this run's own later work.
 

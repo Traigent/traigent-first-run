@@ -141,7 +141,7 @@ never as "roughly" or "about"; the asserts beside the spaces below enforce both:
 - baseline: **3 models × 2 prompt styles × 2 thinking shapes = 12 configurations**, run as 12
   trials so `grid` enumerates every one of them and nothing is left to trial order.
 - enhanced: **3 models × 3 binary behaviour knobs = 24 configurations**, half of it reachable
-  within the 12-trial cap and, with `model`, at the four varying knobs the readiness scorer pays
+  within the 12-trial cap, which is the 12 reachable configurations the readiness scorer pays
   full marks for.
 
 Say on the approval card, plainly: **the baseline runs 12 paid trials, one for every configuration
@@ -167,9 +167,9 @@ a different moment - how the task is framed, during the answer, and after it - s
 spelling of its neighbour. Three knobs are enough to make the managed run choose among more
 configurations than it can execute without turning a first taste into the full-power workflow.
 
-The synthesized walkthrough dataset contains 18 tuning rows: 3 easy, 5 medium, 5 hard, and 5 very
-hard, plus the ten held-out rows reserved at creation time in their own file, which no search
-ever evaluates. The baseline's two non-model axes are `prompt_style` and `thinking_shape` because the enhanced
+The synthesized walkthrough dataset contains the tuning rows and, in their own file, the held-out
+rows no search ever evaluates; `references/evaluation-and-dataset.md` owns both counts, the band
+composition, and when they are reserved. The baseline's two non-model axes are `prompt_style` and `thinking_shape` because the enhanced
 space carries both: a baseline that ranks a lever the enhanced run will not use has measured nothing
 usable, which is what temperature became once it was pinned. Every baseline value is kept, so the
 baseline is a strict subset and the enhanced run never gets a model the baseline did not measure, so
@@ -744,7 +744,10 @@ BEHAVIOUR_KNOBS = ["prompt_style", "thinking_shape", "reflect"]
 assert set(BASELINE_CONFIG) == set(BASELINE_SPACE), (
     "every baseline config key must be a grid dimension, or exact trial lookup fails"
 )
-assert len(set(BASELINE_SPACE["model"])) == 3
+# These four pin the generated walkthrough's counts; a preserved customer
+# baseline (BASELINE_IS_USER_OWNED above) skips them.
+if not BASELINE_IS_USER_OWNED:
+    assert len(set(BASELINE_SPACE["model"])) == 3
 assert ENHANCED_SPACE["model"] == BASELINE_SPACE["model"]
 assert all(
     set(BASELINE_SPACE[knob]) <= set(ENHANCED_SPACE[knob]) for knob in BASELINE_SPACE
@@ -752,11 +755,12 @@ assert all(
 assert (
     len(BASELINE_SPACE["temperature"]) == 1 and len(ENHANCED_SPACE["temperature"]) == 1
 ), "temperature is fixed once, never swept - behaviour knobs carry the search"
-assert all(len(ENHANCED_SPACE[knob]) == 2 for knob in BEHAVIOUR_KNOBS)
-# 3 models × 2 prompt styles × 2 thinking shapes, and 3 models × 3 binary
-# behaviour knobs - both holding whether or not the strong tier reasons.
-assert configuration_count(BASELINE_SPACE) == 12
-assert configuration_count(ENHANCED_SPACE) == 24
+if not BASELINE_IS_USER_OWNED:
+    assert all(len(ENHANCED_SPACE[knob]) == 2 for knob in BEHAVIOUR_KNOBS)
+    # 3 models × 2 prompt styles × 2 thinking shapes, and 3 models × 3 binary
+    # behaviour knobs - both holding whether or not the strong tier reasons.
+    assert configuration_count(BASELINE_SPACE) == 12
+    assert configuration_count(ENHANCED_SPACE) == 24
 # EQUAL, not "at most". The baseline runs `algorithm="grid"`, which enumerates
 # the space in order and stops at the trial cap - so a cap below the size is
 # not a smaller sweep, it is a sweep that silently drops whichever
@@ -1971,7 +1975,7 @@ and its configuration count exactly; do not expand it to twelve. Replace this ex
 request parameters such as context format or few-shot count for observed failures. Retrieval, tools,
 repair, and multi-call controls require separately contained tracing outside this first-run paid
 space. Do not add no-op fields, recode a customer boolean, or add multi-call composite behavior
-merely to increase the portal row count.
+merely to raise the trial count the portal shows.
 
 Require nonzero token usage for every provider call; cost metadata alone does not prove the model
 ran. Use public response cost when present. Reported `0` is valid with nonzero usage. The
@@ -2320,12 +2324,9 @@ than being presented as the intended first-run comparison; that floor is this as
 honesty check on a short run, not a count promised to the user, so it stays out of the user-facing
 copy while continuing to govern what may be called the intended comparison.
 
-If an optional optimization timeout was set and `stop_reason == "timeout"` with trials completed,
-retain and report the best partial result (the enhanced run is uncapped by default, so this is
-defensive handling rather than the normal path).
-Offer another bounded pass only when the search was still improving or left a specific worthwhile
-hypothesis, and state its additional approximate time and cost. If zero trials completed,
-diagnose provider latency, a hung call, or setup failure rather than asking for more time. Do not
+If an optional optimization timeout was set and `stop_reason == "timeout"`, with or without
+completed trials, follow the Recovery rules in `references/run-safety.md`; the enhanced run is
+uncapped by default, so this is defensive handling rather than the normal path. Do not
 describe another invocation as "resume" unless the installed SDK exposes a public resume API.
 
 ## Result checks
@@ -2399,7 +2400,7 @@ exact-match accuracy rather than the wired scorer - so the floor silently become
 returns the cheapest configuration rather than the cheapest acceptable one. Both move the winner
 without moving anything the report shows.
 
-Score the reserved rows with the run's recommended configuration, when SKILL stage 7 says to,
+Score the reserved rows with the run's recommended configuration, when SKILL section 7 says to,
 against `HOLDOUT_DATASET` through the same loader and the same `task_score` the search used.
 `references/evaluation-and-dataset.md` owns which configuration that is - one call of
 `evaluate_holdout`, never one per candidate, whatever the rounds returned. The returned

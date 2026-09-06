@@ -16,8 +16,8 @@ Use this reference for setup, dry-run, paid execution, portal verification, reco
 
 ### Why the install sits where it does
 
-The opening gate establishes every scoreable fact available without installation, stage 4 finishes
-deferred local validation, and stage 5 creates the dedicated first-run environment. Installing
+The opening gate establishes every scoreable fact available without installation, SKILL section 4 finishes
+deferred local validation, and SKILL section 5 creates the dedicated first-run environment. Installing
 earlier can therefore modify the wrong environment or spend time on a walkthrough whose task is not
 yet anchored. After that point, the remaining capability and mock checks need the installed SDK, so
 no useful independent work overlaps the install. Keep this one foreground command with its complete
@@ -131,8 +131,8 @@ Ask before any private content leaves the machine, even when the provider key al
 Before a Traigent key request, link current [pricing](https://portal.traigent.ai/pricing),
 [terms](https://portal.traigent.ai/terms), and [privacy](https://portal.traigent.ai/privacy). Do
 not copy their prices or claims. State what the documented telemetry contract above says a
-connected run sends and what it excludes - the documented contract, not a packet audit, which is
-what the user is entitled to before deciding. Report it and stop there. This guide does not carry
+connected run sends and what it excludes - the documented contract, not a packet audit; the contract
+is what the user is entitled to before deciding. Say that and no more. This guide does not carry
 Traigent's training-use policy and makes no claim about it either way. Point the user to the
 linked terms and privacy pages instead; they decide with those in front of them before pasting
 the key.
@@ -231,11 +231,11 @@ approval, inspect that override and confirm the destination before a run can be 
 Existing cost figures and approval-looking values are likewise not approval for this run: its wrapper
 receives the approved figures in the paid process and does not take them from `.env`.
 
-SKILL's opening gate owns pre-stage-5 interpreter selection and the timing of the required opening
-readiness score. The dedicated environment created in stage 5 remains authoritative for the
+SKILL's opening gate owns pre-section-5 interpreter selection and the timing of the required opening
+readiness score. The dedicated environment created in SKILL section 5 remains authoritative for the
 connected run.
 
-Follow SKILL's opening gate and stages 4-7 for ordering; this reference does not define a second
+Follow SKILL's opening gate and sections 4-7 for ordering; this reference does not define a second
 flow.
 
 For SKILL's semantic-coverage review, use this outcome inventory rather than an unrecorded
@@ -356,7 +356,7 @@ A Traigent mock run is a separate plumbing check:
   proof that an invoked path is local-only.
 - If any path cannot be proven free, do not call it a free dry-run. Ask approval for the smallest
   real probe or use static validation only.
-- If mock validation says trial settings are not consumed, return to **SKILL.md stage 4**'s
+- If mock validation says trial settings are not consumed, return to **SKILL.md section 4**'s
   repair/continue/pause choice. Revalidate only after the user chooses that repair's scope; do not
   open a credential file while optimization remains phantom. A retrieval, tool, or multi-call
   control needs separately contained tracing that proves its own execution path before a later
@@ -381,11 +381,11 @@ built. A file found before the current enhanced search, including one left by an
 is historical context only and never enters config-space scoring. A customer-authored file may guide
 source inspection, but its values and `wired` list never enter `--agent-knobs`. Record provenance;
 its existence, timestamp, hash, or non-empty `wired` list cannot prove current wiring. Omit either
-file from opening and stage-4 readiness. Those scores use the read of the agent's own source passed
+file from opening and SKILL section-4 readiness. Those scores use the read of the agent's own source passed
 as `--agent-knobs`, never the file.
 
 The rule binds the run, not the invocation that reports. Omitting the document from the opening and
-stage-4 calls describes what those calls pass; a second call scoring the same file to see what the
+SKILL section-4 calls describes what those calls pass; a second call scoring the same file to see what the
 number would have been reads as costless, and it is not: its output is evidence the moment it is
 written down, and a figure sitting beside the real one gets quoted. So the document is not scored
 in this run in any invocation, and no number derived from scoring one appears in the report, the
@@ -610,7 +610,7 @@ exist and points at a file that was never created.
 - **What an asking cap asked, and what was answered** - where one is active. A cap that asks has one
   home for its question, and some of them own a quoted one already: `dataset-unsound-expected-outputs`
   is put through "A `no` is never a silent edit" in `references/evaluation-and-dataset.md`, which
-  SKILL stage 4 routes it to by name, and it is settled there while a repair is still free. Restate
+  SKILL section 4 routes it to by name, and it is settled there while a repair is still free. Restate
   the finding, the answer taken, and what proceeding on that answer means for the money about to be
   spent - do not put the question a second time in different words, with a different pair of exits.
   Where the cap's route owns no question of its own, this card is that one home and asks it here.
@@ -619,7 +619,7 @@ exist and points at a file that was never created.
 - **Proceed, or fix.** Two lettered routes with the recommendation on one of them, in the shape
   SKILL.md states for every named-route choice this run offers: `A.` proceed, marked recommended,
   and `B.` fix. Proceeding approves this material as the thing the run will be graded against;
-  fixing returns to the repair route SKILL stage 4 owns and re-runs its gate before anything is
+  fixing returns to the repair route SKILL section 4 owns and re-runs its gate before anything is
   spent. Approving the spend is not approving the material, and silence is neither.
 
   The mark goes on proceeding for the reason `references/component-creation.md` gives for marking a
@@ -703,8 +703,8 @@ quality or cost headroom, the bounded managed run stays the marked route, on the
 reasons above, and is offered as an optional no-lift-possible verification run. On that preview,
 say that it is not expected to find a gain, that stopping is route `B`, and that
 declining leaves the honest baseline-only result intact, and name the no-headroom finding beside
-it as a limit on the claim and that same handoff's limitation, never as a route. More or harder
-rows are never a route of this run. An invalid or non-discriminating dataset/evaluator has
+it as a limit on the claim and that same handoff's limitation, never as a route; the operating
+contract in `SKILL.md` owns that bound. An invalid or non-discriminating dataset/evaluator has
 already stopped before this preview and gets the evidenced repair instead. Never promise
 improvement.
 
@@ -712,11 +712,12 @@ Every offered connected preview ends on its routes, in the shape SKILL.md states
 named-route choice: lettered from `A`, exactly one marked, and each one answerable by replying. A
 route this guide names and prices is a route the customer can take by replying.
 
-Final reply-ready block, on both approval cards. Render it as its own block, after the disclosure
-prose, with nothing following it: a reply form sitting in the tail of a long paragraph is not an
-instruction.
+Final reply-ready block, on both approval cards as to its position. Render it as its own block,
+after the disclosure prose, with nothing following it: a reply form sitting in the tail of a long
+paragraph is not an instruction. The route texts below are the connected preview's; the pre-spend
+card renders its own `A.` proceed and `B.` fix in that same position.
 
-> **A. <action>** *(recommended - <measured reason>)*
+> **A. <action>** *(recommended - <reason>)*
 > Reply `continue` and I will <next safe step>.
 >
 > **B. Stop here and keep the baseline result.**
@@ -725,12 +726,13 @@ instruction.
 >
 > Or reply with a smaller trial cap or a lower ceiling and I will re-price this same step.
 
-Route `A` carries the reply-ready line `Recommended next: <action> - <measured reason>.`, which
+Route `A` carries the reply-ready `Recommended next:` line above, whose reason is the observed
+opportunity where the baseline measured one and otherwise one of the two standing reasons; it
 stays a direct evidence-based statement rather than a question. The last line is not a third route:
 it answers how big rather than what to do, so it rides last and unnumbered exactly as `I have it`
-does on the asks about material, and nothing follows it. Replying to any of these routes
-opens no paid work without the explicit approval below. For controlled work, `continue` opens a
-preview; it approves nothing unless that preview disclosed recipients, effects, bounds, and cost.
+does on the asks about material, and nothing follows it. Replying `continue` on an approval card
+approves exactly what that card disclosed and priced - recipients, effects, bounds, and cost - and
+nothing more.
 
 The mark on `A` follows the pre-spend card's rule above. That rule is stated there once and is not
 restated here, and its moving conditions cannot hold at this preview: a dataset or evaluator that
@@ -867,7 +869,7 @@ the question past the approval card into the middle of a paid phase.
 
 ## Baseline and optimization
 
-Follow SKILL stage 7 for the comparison order, evidence held constant, checkpoint, and exact-sync
+Follow SKILL section 7 for the comparison order, evidence held constant, checkpoint, and exact-sync
 decision. This section owns configuration-selection depth and execution/reporting safeguards.
 
 Keep both spaces tied to the real agent and observed failure modes. Preserve a user-owned baseline
@@ -966,7 +968,7 @@ Composite patterns are a later workflow, not a first-run paid dimension.
 
 ### The accuracy-cost frontier
 
-SKILL stage 7 owns when a frontier is reported and its score floor; `references/sdk-execution.md`
+SKILL section 7 owns when a frontier is reported and its score floor; `references/sdk-execution.md`
 owns the read. Owned here: what it may claim, and the wording of its two outcomes. It costs nothing
 and adds no stage - both runs priced every trial they completed, so this is arithmetic over trials
 already in hand. Report it whichever way it comes out.
@@ -1040,7 +1042,7 @@ user wanted to know whether a better trade-off was sitting there, and now they d
 chasing one. It is bounded as honestly as the other outcome - it establishes nothing about
 configurations the run did not test, and a bounded run tests few. That bound is the forward half,
 and it points at an action and never at a result: the handoff below names what a wider search would
-let the user *do*, never what it would find. Do not answer it with another paid run by default.
+let the user *do*, never what it would find. Do not answer it with another paid run.
 
 ## Post-run verification
 
@@ -1063,7 +1065,7 @@ Before claiming success, verify:
     local-only during the run; a degradation refused every provider call after it, and an absent
     `cloud_url` stopped the run before the next paid pass rather than at the end.
 11. Baseline and enhanced tuning results are shown side by side, with the tuning-data limitation
-    named before any generalization claim, and the held-out score SKILL stage 8 discloses appears
+    named before any generalization claim, and the held-out score SKILL section 8 discloses appears
     beside them.
 12. Every reported frontier carries measured costs, a score claim the paired counts support, and no
     point below the floor. Trials that came back without reported cost carry no cost claim: report
@@ -1081,16 +1083,16 @@ this run` unless evidence rules one in. A flat demonstration result says only th
 found no lift on its evidence; it does not predict production.
 
 Investigate in order: verify semantic equivalence and references, inspect truncation and whether
-every declared control varied, add one structural knob tied to a failure mode, then consider a
-separately disclosed stronger-model comparison. Distinguish a genuinely hard item from a
+every declared control varied; then, as the user's own next run rather than this one, add one
+structural knob tied to a failure mode or consider a separately disclosed stronger-model comparison. Distinguish a genuinely hard item from a
 demonstrably ambiguous, wrong, or degenerate reference. Attribute the latter to the reference, not
 model capability, and never change a validated metric merely to manufacture a win.
 
 Frame no-lift for a first run too, in the recorded numbers the run-scope statement below supplies
 rather than as a general remark: a bounded getting-familiar pass deliberately searches a few
 relevant knobs on a small budget, so a flat result can simply be a normal first look rather than a
-fault. The honest next step is one deliberate iteration adding a single structural knob where the
-evidence points, not piling on knobs or spend to force a win.
+fault. The honest next step, the user's own next run, is one deliberate iteration adding a single
+structural knob where the evidence points, not piling on knobs or spend to force a win.
 
 Read a flat result at a HIGH score the other way round, and only on collected data. The paragraphs
 above answer a flat result by looking harder - another structural knob, or a separately disclosed
@@ -1191,7 +1193,7 @@ not in that repository, and no `npx skills add` flag beyond `--list` and `--skil
 - Timeout with zero trials: diagnose provider latency, a hung call, or setup failure before
   considering another run.
 - Evaluator exceptions or all-zero/all-one measures: repair evaluator/data and rerun only after
-  calibration.
+  calibration, under a newly scoped approval that carries what was already spent.
 - Dataset examples that fail under every configuration: inspect gold/reference and evaluator
   policy before blaming the model.
 - Dedicated first-run environment creation, installation, or preflight failure: preserve every

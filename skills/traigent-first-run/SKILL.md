@@ -79,7 +79,7 @@ exactly match the freshly rendered and approved enhanced card. If the invariants
 differ, do not resume this run: rename the old record to the next unused
 `traigent-runs/run-plan-historical-<YYYYMMDDTHHMMSSZ>.md` (never overwrite), keep its spend and results
 historical or baseline-only, copy a fresh template to canonical `traigent-runs/run-plan.md`, start
-at section 1 with a new opening score, and never rerun paid work without newly scoped approval. That
+at section 1 with a new opening score; the operating contract owns re-running paid work. That
 opening score re-reads the agent, because the old record's readiness directories are historical
 with it: an opening score over an old reading is not one. Every `<YYYYMMDDTHHMMSSZ>` this guide
 writes into a name - that rename, section 1's readiness directory, the run log's `ts` - is UTC when
@@ -525,8 +525,8 @@ weakness are one decision about what this run will measure. That question carrie
    brought is a second. `I have it` with a path is never counted among them.
 
 Then stop and wait, and ask nothing else here; what this run writes is shown at the pre-spend
-approval in section 6, the other checkpoint. It closes the message: the board and the cost sit above
-it, and no summary of it sits above them.
+approval in section 6, the other checkpoint. The question closes the message: the board and the
+cost sit above it, and no summary of it sits above them.
 A path given here names material that was in the project all along, so re-run the opening gate over it and
 read that as the opening score; the record waits for this answer in any gap run, for the reason the
 zero-anchor gate above already gives for its own.
@@ -648,8 +648,9 @@ Follow this order:
 
 A missing Traigent SDK is `SKIP` in this deferred pre-install pass; an installed package that is not
 the SDK is a failure, while a release other than the tested one is reported and never stops the run;
-an optional provider package may defer only its own check. The rendered readiness
-card is the summary. Do not separately explain passed calibration/mock wiring unless action is
+an optional provider package may defer only its own check. The recorded gate result is
+the summary, shown as the `Fixed:` line when a repair cleared a cap and otherwise not at all. Do
+not separately explain passed calibration/mock wiring unless action is
 needed or the user asks; neither is agent accuracy or an optimization result.
 
 Do not execute an LLM judge or an evaluator with an uncertain or external call path here. Keep it
@@ -673,15 +674,6 @@ build one recommended; close with the unnumbered `I have it` line, which is neve
 last. Nothing follows it, and no route carries a decision of its own.
 `references/component-creation.md` owns the wording.
 
-After a repair or a creation, re-run only the checks whose input the repair changed. Two repairs
-invalidate an earlier pass and must redo it: an evaluator repair re-runs the degenerate-gold check
-in `references/evaluation-and-dataset.md`, and a dataset supplied via `I have it` after the
-opening-gate calibration re-derives the calibration cases. Then recompute the score over all three
-pillars, re-reading the agent only where this run created or repaired it, and record that gate
-result without overwriting the opening one. Then print exactly one line, `Fixed: <component> -
-cleared: <caps> - continuing`; on the board, refresh only changed evidence, retain unresolved `❗`
-lines and add the new substitutes under walkthrough setup; show no second card.
-
 That shape is the shape of every choice this run puts to the customer, not only this one. Wherever
 they are offered named routes - the task-intent question, a creation or repair route, the baseline
 spend approval, the connected-stage preview - the routes are lettered from `A`, exactly one is
@@ -690,6 +682,15 @@ into a yes/no. Bold words with no letter and no mark are a second form for the s
 unnumbered `I have it` line is the part that does not travel: it answers where material is, so it
 rides on the asks about material and never on an approval to spend. A single proposed action with no alternative route beside it is not a route list and is not
 what this rule is about.
+
+After a repair or a creation, re-run only the checks whose input the repair changed. Two repairs
+invalidate an earlier pass and must redo it: an evaluator repair re-runs the degenerate-gold check
+in `references/evaluation-and-dataset.md`, and a dataset supplied via `I have it` after the
+opening-gate calibration re-derives the calibration cases for the opening-gate re-run that
+section 2 owns, whose card is the opening score. Then recompute the score over all three pillars, re-reading the agent only where this run created or repaired it, and record that gate
+result without overwriting the opening one. Then print exactly one line, `Fixed: <component> -
+cleared: <caps> - continuing`; on the board, refresh only changed evidence, retain unresolved `❗`
+lines and add the new substitutes under walkthrough setup; show no second card.
 
 `readiness.py` emits these decisions as closed `action_kind` values and one
 `recommended_action`: the lowest-ceiling blocking remedy when a cap blocks, otherwise the
@@ -804,8 +805,8 @@ Only after the standard-library-only component checks:
    environment. The reference owns creation, recovery, and activation mechanics; never fall back
    to a shared or dependent environment.
 3. Install the exact declared dependencies under the narrow authorization above: the exact pins in
-   `assets/requirements-first-run.txt`, never the project's own declarations. Never use an
-   unversioned `pip install traigent`.
+   `assets/requirements-first-run.txt`, never the project's own declarations, which the run never
+   edits. Never use an unversioned `pip install traigent`.
    Say first: `Installing traigent==0.26.0, litellm==1.93.0 and python-dotenv==1.2.2 into
    <absolute path>/.venv-traigent - a package fetch only: no provider or Traigent calls, and none
    of your project's code runs.` Then proceed: the notice is not a question, and the
@@ -912,7 +913,7 @@ time/cost; do not ask the user to select implementation timeouts.
 
 Use the same tuning slice, evaluator, objectives, and agent call path for both measurements:
 
-1. **Baseline** - preserve the user's existing baseline exactly, including its original row count;
+1. **Baseline** - preserve the user's existing baseline exactly, including its original configuration count;
    never pad it. Only when it is missing, prepare the credible twelve-configuration fixed sweep in
    `references/run-safety.md`, including the initial configuration.
 2. **Enhanced Traigent optimization** - keep every baseline value and model, add only meaningful
@@ -1023,8 +1024,8 @@ that wording, both numbers' source, and what to say when the count cannot be com
 reduction from that ceiling here rather than at the baseline approval. Never promise a pause at
 minute 30; size the synchronous run first.
 
-Now explain Traigent's documented synchronization, exclusions, and exceptions from that reference;
-call it a service contract rather than a packet audit and stop if runtime behavior contradicts it.
+Inside that preview, above its routes, explain Traigent's documented synchronization, exclusions,
+and exceptions from that reference; call it a service contract rather than a packet audit and stop if runtime behavior contradicts it.
 
 Only after that checkpoint, ask for the Traigent key. The order is the point: the user has already
 seen a provider-backed result before being asked to create an account. Tell them the key needs full

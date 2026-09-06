@@ -226,9 +226,9 @@ same line.
 Between those two there is a third, and it is the only one that needs anything from you. Some
 conditions do not hold the run up and still leave a person something to agree with before the
 number means what it looks like - an answer key a model wrote end to end, rows whose expected
-answer does not appear to match their own input, or a dataset that never says where its rows came
-from, which is read as generated precisely because nothing here can check it. Each of those is put
-to you once, with the material to judge it on and a straight pair of exits - at the point the
+answer does not appear to match their own input. A dataset that never says where its rows came
+from is read as generated, because nothing here can check it, and that assumption is stated on the
+approval rather than asked. Each of the first two is put to you once, with the material to judge it on and a straight pair of exits - at the point the
 finding is made where that is still free to act on, otherwise inside the approval before the first
 paid call - and the approval shows you what you answered either way, and never asks it twice.
 
