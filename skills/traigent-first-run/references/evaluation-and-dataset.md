@@ -1029,9 +1029,9 @@ run finishes.
 
 Reserve 10 held-out rows (2 easy, 3 medium, 3 hard, 2 very hard) and keep the same rows aside for
 the rest of the run. When they are drawn follows the source, in two cases: a dataset this run
-generates, tops up, or splits itself reserves them when its working copy is written, before any
-component design, calibration, or optimization touches it; a dataset above the first-run subset size draws them with the tuning
-subset, immediately before the paid comparison. The row-review hold on such a corpus lifts at the
+generates, tops up, or splits itself reserves the held-out split when its working copy is written,
+before any component design, calibration, or optimization touches it; a dataset above the first-run subset size draws the ten from that split with the
+tuning subset, immediately before the paid comparison. The row-review hold on such a corpus lifts at the
 section-4 re-score of the drawn rows; that is a hold on the band, not a third timing of the draw.
 That composition holds wherever the rows come from, because the rule governs the split this run
 reserves, not where the data originated. A project that already

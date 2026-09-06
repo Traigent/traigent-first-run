@@ -649,8 +649,8 @@ Follow this order:
 A missing Traigent SDK is `SKIP` in this deferred pre-install pass; an installed package that is not
 the SDK is a failure, while a release other than the tested one is reported and never stops the run;
 an optional provider package may defer only its own check. The recorded gate result is
-the summary, shown as the `Fixed:` line when a repair cleared a cap and otherwise not at all. Do
-not separately explain passed calibration/mock wiring unless action is
+the summary; the post-repair rule below owns what is shown after a repair or creation. Do not
+separately explain passed calibration/mock wiring unless action is
 needed or the user asks; neither is agent accuracy or an optimization result.
 
 Do not execute an LLM judge or an evaluator with an uncertain or external call path here. Keep it
@@ -687,7 +687,8 @@ After a repair or a creation, re-run only the checks whose input the repair chan
 invalidate an earlier pass and must redo it: an evaluator repair re-runs the degenerate-gold check
 in `references/evaluation-and-dataset.md`, and a dataset supplied via `I have it` after the
 opening-gate calibration re-derives the calibration cases for the opening-gate re-run that
-section 2 owns, whose card is the opening score. Then recompute the score over all three pillars, re-reading the agent only where this run created or repaired it, and record that gate
+section 2 owns, whose card is the opening score - that re-run is section 2's, not this rule's.
+Then recompute the score over all three pillars, re-reading the agent only where this run created or repaired it, and record that gate
 result without overwriting the opening one. Then print exactly one line, `Fixed: <component> -
 cleared: <caps> - continuing`; on the board, refresh only changed evidence, retain unresolved `❗`
 lines and add the new substitutes under walkthrough setup; show no second card.

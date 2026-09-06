@@ -5348,6 +5348,7 @@ class SkillPackageTests(unittest.TestCase):
         guide = " ".join((ROOT / "GUIDE.md").read_text().casefold().split())
         for label, text, phrase in (
             ("skill", stage_five, "never the project's own declarations"),
+            ("skill", stage_five, "which the run never edits"),
             ("safety", safety, "whatever the project declares for itself"),
             ("safety", safety, "the project's own pin is left alone"),
             ("safety", safety, "rather than installed or edited"),
@@ -7691,7 +7692,7 @@ class SkillPackageTests(unittest.TestCase):
             # what had changed was that this run wrote the missing pieces. What
             # a re-score is allowed to present now is the gate result.
             "a re-score is a gate result",
-            # The mandate has one home, SKILL.md stage 4; the glossary keeps
+            # The mandate has one home, SKILL.md section 4; the glossary keeps
             # the term and points there.
             "record that gate result without overwriting the opening one",
             "do not animate with invented progress",
@@ -9885,6 +9886,57 @@ class SkillPackageTests(unittest.TestCase):
         measure = payload["metadata"]["measures"][0]
         self.assertEqual(measure["example_id"], "example-0")
         self.assertEqual(measure["metrics"]["task_success"], 1.0)
+
+    def test_the_walkthrough_count_asserts_skip_a_preserved_baseline(self) -> None:
+        """The fence's count asserts pin the generated sweep, not a customer's.
+
+        A preserved baseline of two models and one knob has to load, and the
+        generated walkthrough's three-model, twelve-and-twenty-four counts have
+        to keep failing loudly when the flag is off. The suite's other fence
+        loaders select assignments and functions only, so this is the one
+        place the module-level asserts run with the flag set either way.
+        """
+        code = re.findall(
+            r"```python\n(.*?)\n```", SDK_EXECUTION.read_text(), re.DOTALL
+        )[0]
+        start = code.index("BEHAVIOUR_KNOBS = [")
+        end = code.index("assert set(WIRED_KNOBS) == set(ENHANCED_SPACE)")
+        block = code[start:end]
+        self.assertIn("if not BASELINE_IS_USER_OWNED:", block)
+
+        def configuration_count(space: dict) -> int:
+            total = 1
+            for values in space.values():
+                total *= len(values)
+            return total
+
+        def load(flag: bool) -> None:
+            baseline = {
+                "model": ["a", "b"],
+                "temperature": [0.0],
+                "prompt_style": ["x"],
+            }
+            enhanced = {
+                "model": ["a", "b"],
+                "temperature": [0.0],
+                "prompt_style": ["x", "y"],
+            }
+            namespace = {
+                "BASELINE_IS_USER_OWNED": flag,
+                "BASELINE_CONFIG": {
+                    knob: values[0] for knob, values in baseline.items()
+                },
+                "BASELINE_SPACE": baseline,
+                "ENHANCED_SPACE": enhanced,
+                "BASELINE_TRIALS": configuration_count(baseline),
+                "ENHANCED_MAX_TRIALS": 1,
+                "configuration_count": configuration_count,
+            }
+            exec(block, namespace)
+
+        load(True)
+        with self.assertRaises(AssertionError):
+            load(False)
 
     def test_a_preserved_boolean_space_stops_before_baseline_approval(self) -> None:
         """Preservation never means paying for a later-known SDK rejection."""
@@ -13723,9 +13775,10 @@ class SkillPackageTests(unittest.TestCase):
         owner = dataset.split("## held-out set and claims", 1)[1]
         for phrase in (
             "when they are drawn follows the source, in two cases",
-            "a dataset this run generates, tops up, or splits itself reserves them "
-            "when its working copy is written",
-            "draws them with the tuning subset, immediately before the paid comparison",
+            "a dataset this run generates, tops up, or splits itself reserves the "
+            "held-out split when its working copy is written",
+            "draws the ten from that split with the tuning subset, immediately before "
+            "the paid comparison",
             "a hold on the band, not a third timing of the draw",
         ):
             with self.subTest(phrase=phrase):
@@ -18849,7 +18902,7 @@ class SkillPackageTests(unittest.TestCase):
         # No internal sentence calls a section a stage any more: a lowercase
         # "stage <digit>" not followed by "/5" was the ambiguous form.
         self.assertEqual(
-            re.findall(r"\bstage[ -]\d\b(?!/)", raw),
+            re.findall(r"\bstage[ -]\d\b(?!/)", raw, re.IGNORECASE),
             [],
             "a document section is `section N`; only the five customer-facing "
             "stages are `Stage N/5`",
@@ -22641,10 +22694,7 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
             # no-headroom finding is a limit on the claim named beside the
             # marked bounded run, and the mark never moves onto rows.
             "whether more or harder rows is a route inside this run",
-            (
-                "never a route inside this run",
-                "never a route of this run",
-            ),
+            ("never a route inside this run",),
             (
                 "recommend harder realistic cases first",
                 "moves it onto more or harder rows before the search",
@@ -23136,7 +23186,8 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         # row count beside that word is not a claim about the generated sweep.
         r"\b(\w+)-(?:row|point|configuration) (?:fixed )?(?:sweep|grid|default|space)\b",
         # The generated sweep is also called "the <N>-configuration baseline
-        # target"; GUIDE.md still writes "<N>-row baseline".
+        # target"; every current home writes "<N>-configuration", and the row
+        # spelling stays accepted so a reintroduction is still compared.
         r"\b(\w+)-(?:row|configuration) baseline\b",
         # "all twelve distinct points executed", "all twelve intended rows".
         r"\ball (\w+) (?:distinct|intended)\b",
@@ -28089,6 +28140,18 @@ class OneShapeAndOneMarkForEveryChoiceTests(unittest.TestCase):
             "customer, not only this one",
             skill,
         )
+        # The sentence names the routes paragraph before it; the post-repair
+        # rule sits after, so "that shape" keeps its referent across merges.
+        self.assertLess(
+            skill.index(
+                "close with the unnumbered `i have it` line, which is never a route"
+            ),
+            skill.index("that shape is the shape of every choice"),
+        )
+        self.assertLess(
+            skill.index("that shape is the shape of every choice"),
+            skill.index("after a repair or a creation, re-run only the checks"),
+        )
         self.assertIn(
             "the routes are lettered from `a`, exactly one is marked " "recommended",
             skill,
@@ -30460,6 +30523,14 @@ class TrackingRecoveryTests(unittest.TestCase):
         )
         self.assertNotIn("only when additional search is justified", safety)
         self.assertNotIn("before offering one additional bounded pass", safety)
+        execution = " ".join(SDK_EXECUTION.read_text().split())
+        self.assertIn(
+            "with or without completed trials, follow the Recovery rules in "
+            "`references/run-safety.md`",
+            execution,
+        )
+        self.assertNotIn("still improving", execution)
+        self.assertNotIn("Offer another bounded pass", execution)
 
 
 class TheBoundedDrawSpendsOnDifferentRowsTests(unittest.TestCase):
@@ -32520,3 +32591,62 @@ class TheAcceptedRouteIsReadableBeforeItIsRefusedTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TheIntegrationReadsArePinnedTests(unittest.TestCase):
+    """Sentences the post-merge whole-document reads added, pinned where each lives.
+
+    Each one is a rule or a placement rather than a rewording, and a rule that
+    only a diff introduced is a rule the next merge can drop without a test
+    saying so.
+    """
+
+    def test_each_sentence_the_reads_added_is_stated(self) -> None:
+        skill = " ".join(SKILL.read_text().casefold().split())
+        safety = " ".join(RUN_SAFETY.read_text().casefold().split())
+        readme = " ".join((ROOT / "README.md").read_text().casefold().split())
+        dataset = " ".join(
+            (SKILL_ROOT / "references" / "evaluation-and-dataset.md")
+            .read_text()
+            .casefold()
+            .split()
+        )
+        for document, text, phrase in (
+            (
+                "skill",
+                skill,
+                "inside that preview, above its routes, explain traigent's "
+                "documented synchronization",
+            ),
+            (
+                "skill",
+                skill,
+                "for the opening-gate re-run that section 2 owns, whose card is "
+                "the opening score",
+            ),
+            (
+                "safety",
+                safety,
+                "the pre-spend card renders its own `a.` proceed and `b.` fix in "
+                "that same position",
+            ),
+            (
+                "safety",
+                safety,
+                "whose reason is the observed opportunity where the baseline "
+                "measured one and otherwise one of the two standing reasons",
+            ),
+            (
+                "safety",
+                safety,
+                "under a newly scoped approval that carries what was already spent",
+            ),
+            ("readme", readme, "stated on the approval rather than asked"),
+            (
+                "dataset",
+                dataset,
+                "moves from the wiring-check ceiling to a mostly-generated one",
+            ),
+        ):
+            with self.subTest(document=document, phrase=phrase):
+                self.assertIn(phrase, text)
