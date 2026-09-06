@@ -6636,11 +6636,19 @@ ENV_LINE_SHAPES = (
 #: rewriting the same arms is a conflict, not a second fix.
 #:
 #: The pairs are excused for ONE check name and nothing else - see
-#: `DATASET_DUPLICATE_OWNED_ELSEWHERE`. A second, unrelated name recording
-#: twice on the same shape still reds, so this is a hole the width of a known
-#: defect rather than the width of a corpus. When #442 lands these shapes stop
-#: raising, the enumeration goes on asserting over them, and both names here
-#: should be deleted in the same commit.
+#: `DATASET_DUPLICATE_OWNED_ELSEWHERE`. A second name recording twice BEFORE
+#: `dataset-difficulty` on the same shape still reds; one recorded after it
+#: does not, because `emit` raises on the first collision and nothing past it
+#: runs. So this is a hole the width of a known defect and the tail behind it,
+#: not the width of a corpus.
+#:
+#: **It retires itself.** The walk asserts that every pair listed here STILL
+#: raises: when #442 lands and this shape stops recording twice, the
+#: enumeration fails and says to delete both names. That is deliberate, and
+#: the red is the point - an exemption whose reason has gone is a false green,
+#: and this repository has been bitten by correct-at-the-time notes that
+#: outlived their reason. Whichever branch lands second pays one two-line
+#: deletion, and the failure message says exactly which lines.
 DATASET_SHAPES_OWNED_ELSEWHERE = frozenset({("synthetic", "all-easy")})
 #: The one check name the shapes above may record twice, spelled out so the
 #: exemption cannot cover a defect nobody has seen.
@@ -6679,8 +6687,10 @@ class NoInputMakesOneCheckSpeakTwiceTests(unittest.TestCase):
     `.env` walk drives `read_env` only, not `check_keys`,
     `check_cost_settings`, or the shadowed-credential check, which read the
     same file. The dataset walk writes no `split` field and passes no
-    `evaluator_method` or field overrides, so the split, tuning-size, holdout
-    and outcome-field arms are never entered. It proves no property of
+    `evaluator_method` or field overrides, so the split-declared, tuning-size,
+    holdout and outcome-field arms are never entered - `dataset-split` itself
+    IS recorded, on the arm that says no split was found, and only the three
+    arms that need a declared split are unreached. It proves no property of
     `check_evaluator`, `check_sdk`, or `check_existing_traigent_use`, none of
     which take a customer-controlled list. And it is a test of the check
     surface, not of the registry: the registry keeps its own test above.
@@ -6754,6 +6764,7 @@ class NoInputMakesOneCheckSpeakTwiceTests(unittest.TestCase):
             "untagged": (None, None, None, None),
         }
         id_patterns = ("unique", "duplicate", "missing", "duplicate-and-missing")
+        still_owned_elsewhere: set[tuple[str, str]] = set()
         with tempfile.TemporaryDirectory() as directory:
             dataset = Path(directory) / "eval.jsonl"
             for source, bands, ids, identical in itertools.product(
@@ -6785,10 +6796,12 @@ class NoInputMakesOneCheckSpeakTwiceTests(unittest.TestCase):
                 if (source, bands) in DATASET_SHAPES_OWNED_ELSEWHERE:
                     # Still asserted over, and only the one known name
                     # excused: the shape may raise on
-                    # `DATASET_DUPLICATE_OWNED_ELSEWHERE` while another
-                    # branch owns that fix, and must otherwise obey the
-                    # property like every other shape. Written so it stays
-                    # green when that branch lands and the raise stops.
+                    # `DATASET_DUPLICATE_OWNED_ELSEWHERE` while another branch
+                    # owns that fix, and must otherwise obey the property like
+                    # every other shape. Whether it raised is RECORDED, and
+                    # checked against the exemption below - that is what makes
+                    # the exemption retire itself rather than sit here green
+                    # once its reason is gone.
                     try:
                         MODULE.check_dataset(dataset)
                     except MODULE.DuplicateCheckName as raised:
@@ -6797,11 +6810,26 @@ class NoInputMakesOneCheckSpeakTwiceTests(unittest.TestCase):
                             str(raised),
                             combination,
                         )
+                        still_owned_elsewhere.add((source, bands))
                         continue
                     self.assert_one_record_per_check(combination)
                     continue
                 MODULE.check_dataset(dataset)
                 self.assert_one_record_per_check(combination)
+        # The exemption's expiry date, executed. Every excused shape must still
+        # be a shape that raises: one that has stopped is a hole with no defect
+        # under it any more, and a hole nothing complains about is how a
+        # correct-at-the-time note becomes a false green. Failing here is the
+        # only notice anyone gets, so it says what to do.
+        self.assertEqual(
+            still_owned_elsewhere,
+            set(DATASET_SHAPES_OWNED_ELSEWHERE),
+            "this exemption is obsolete: the shapes named above no longer "
+            f"record {DATASET_DUPLICATE_OWNED_ELSEWHERE!r} twice, so delete "
+            "DATASET_SHAPES_OWNED_ELSEWHERE, DATASET_DUPLICATE_OWNED_ELSEWHERE "
+            "and the arm in this walk that reads them, leaving the plain "
+            "assertion for every shape",
+        )
 
     def test_two_unreadable_env_lines_are_one_record_that_names_both(self) -> None:
         """#447: folding must not cost the customer the second finding.
@@ -6909,6 +6937,11 @@ class NoInputMakesOneCheckSpeakTwiceTests(unittest.TestCase):
                     str(root),
                     "--models",
                     "gpt-4o,gpt-4o",
+                    # As every other subprocess run of the script in this file
+                    # does: without it, a checkout that has not installed the
+                    # pinned stack FAILs `sdk-version`, and this test would go
+                    # red on an exit code that has nothing to do with `.env`.
+                    "--defer-missing-sdk",
                     "--json",
                 ],
                 capture_output=True,
