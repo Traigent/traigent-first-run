@@ -8909,9 +8909,16 @@ class TheRemedyIsMachineReadableTests(unittest.TestCase):
         self.assertEqual(payload["caps"][0]["action_kind"], "repair-evaluator")
         self.assertEqual(
             payload["schema_version"],
-            3,
+            4,
             "a consumer must be able to tell 'emits no remedy' from 'has none'",
         )
+        # 4 rather than 3, and again the reason is a value rather than a key.
+        # Every remedy this payload emitted was some cap's, so a schema-3
+        # consumer could look the slug up in `caps` and read the ceiling behind
+        # it. A run may now owe something that limits no score
+        # (traigent-first-run#396), and a reader that goes looking finds
+        # nothing - which it cannot tell from a cap it does not recognise.
+        self.assertIn("open_asks", payload)
         # 3 rather than 2, and the reason is a value rather than a key.
         # `recommended_action` is a slug from a closed set, and a schema-2
         # consumer read `proceed` for a run whose mandatory calibration was
@@ -11837,9 +11844,10 @@ class TheTopBandsNeedAReadOfTheAnswersTests(unittest.TestCase):
         walkthrough default rather than being exotic. The sweep below is what
         makes that concrete rather than argued.
         """
-        reassurance = "is being asked of you before the run"
+        reassurance = "this read is the only thing being asked of you"
         always_true = "This hold is not a cap and does not stop the run"
         held = 0
+        quiet_cards = 0
         for tuning in range(6, 39):
             for holdout in (6, 10):
                 score = _healthy_score(
@@ -11870,12 +11878,32 @@ class TheTopBandsNeedAReadOfTheAnswersTests(unittest.TestCase):
                     # And the half that is true only when the rest of the card
                     # says nothing, on both surfaces, read off the payload the
                     # card was rendered from.
-                    quiet = (
-                        not score.caps and score.recommended_action == MODULE.PROCEED
+                    # NOT `recommended_action == PROCEED`, which is what this
+                    # read used to be. The hold now routes its own remedy
+                    # (traigent-first-run#396), so that test is False on every
+                    # card this block renders and the sentence would simply
+                    # stop being printed - with both sides of the assertion
+                    # False, silently. The question the sentence answers is
+                    # whether anything BESIDE this hold is outstanding, so that
+                    # is what is read, from the same helper the renderers use.
+                    quiet = MODULE.nothing_pending_beyond(
+                        score, MODULE.ANSWER_KEY_UNREAD
                     )
                     self.assertEqual(reassurance in card, quiet)
                     self.assertEqual(reassurance in report, quiet)
+                    quiet_cards += quiet
         self.assertGreater(held, 20, "the sweep stopped reaching the held state")
+        # Both sides of that equality have to be reachable or it asserts
+        # nothing. The predicate this test used to compute went permanently
+        # False when the hold started routing its own remedy, and an assertion
+        # comparing two always-False expressions passes over a sentence that
+        # has stopped being printed.
+        self.assertGreater(
+            quiet_cards, 0, "no held card was quiet, so the reassurance is unreachable"
+        )
+        self.assertLess(
+            quiet_cards, held, "every held card was quiet, so the suppression is unread"
+        )
 
     def test_removing_the_floor_returns_the_card_that_was_filed(self) -> None:
         """The mutation, executed - and what no table check can see.
@@ -11923,6 +11951,251 @@ class TheTopBandsNeedAReadOfTheAnswersTests(unittest.TestCase):
             unfloored.BAND_ORDER.index(reverted.band), self._strong()
         )
         self.assertLess(MODULE.BAND_ORDER.index(kept.band), self._strong())
+
+
+class AnAskThatIsNotACapIsStillRoutedTests(unittest.TestCase):
+    """traigent-first-run#396: the card said it and the payload did not.
+
+    The reported card is the one the class above pins - 83 WORKABLE, status OK,
+    `band_limited_by_unread_answers: true`, `caps: []` - and
+    `recommended_action: proceed`. Every remedy this payload could route came
+    from a ceiling, and this hold is not a ceiling: `overall ==
+    weighted_average` is asserted three classes up. So a consumer routing that
+    field was told there was nothing to do about the one thing standing between
+    the run and its strongest verdict, while the prose beside it named the read.
+
+    Giving the hold a cap was refused rather than left open: a `Cap` is a
+    ceiling on the SCORE, and an entry in `caps` that caps nothing is a false
+    row added to fix a silence somewhere else. `open_asks` is where an ask with
+    no ceiling behind it lives, and these tests pin the class rather than the
+    one member - the registry is fail-closed, the ids may not overlap the caps',
+    and the arm that reads it sorts last.
+    """
+
+    def _blocking(self) -> "MODULE.Cap":
+        return MODULE.Cap("dataset-absent", 20, "no dataset reached this run")
+
+    def _asking(self) -> "MODULE.Cap":
+        return MODULE.Cap(
+            "dataset-generated-answer-key",
+            MODULE.GENERATED_ANSWER_KEY_CEILING,
+            "every expected answer was written by a model",
+            blocks=False,
+            asks=True,
+        )
+
+    def _advisory(self) -> "MODULE.Cap":
+        return MODULE.Cap(
+            "dataset-fully-synthetic",
+            MODULE.FULLY_SYNTHETIC_CEILING,
+            "every row declares itself generated",
+            blocks=False,
+        )
+
+    def test_the_filed_card_no_longer_recommends_proceed(self) -> None:
+        """The reported payload, end to end through `score_run`."""
+        score = _healthy_score()
+        self.assertTrue(score.band_limited_by_unread_answers)
+        self.assertEqual(list(score.caps), [])
+        self.assertEqual(score.recommended_action, "review-answer-key")
+        self.assertNotEqual(score.recommended_action, MODULE.PROCEED)
+        # And nothing else moved. The ask routes a remedy; it is not a ceiling
+        # wearing another name, so the number, the status and the arithmetic
+        # behind them are the ones the run measured.
+        self.assertEqual(score.overall, score.weighted_average)
+        self.assertEqual(score.status, "OK")
+
+    def test_the_ask_is_carried_as_data_and_not_only_as_a_verdict(self) -> None:
+        """A slug alone sends every consumer back to this module's source.
+
+        `recommended_action` names ONE remedy, so a run owing two would publish
+        one of them and nothing about the other. The list is what makes the
+        second readable, and each entry carries its own account for the same
+        reason a cap does.
+        """
+        score = _healthy_score()
+        self.assertEqual(
+            [ask.condition for ask in score.open_asks], [MODULE.ANSWER_KEY_UNREAD]
+        )
+        ask = score.open_asks[0]
+        self.assertEqual(ask.action_kind, score.recommended_action)
+        self.assertTrue(ask.reason.strip())
+        # Through the serializer the CLI actually uses, because a payload that
+        # cannot be written is not a payload a consumer reads.
+        payload = json.loads(json.dumps(asdict(score), sort_keys=True))
+        self.assertEqual(
+            payload["open_asks"],
+            [
+                {
+                    "condition": MODULE.ANSWER_KEY_UNREAD,
+                    "action_kind": "review-answer-key",
+                    "reason": ask.reason,
+                }
+            ],
+        )
+
+    def test_a_read_of_the_answers_leaves_nothing_outstanding(self) -> None:
+        lifted = _healthy_score(_review(reviewed=48))
+        self.assertFalse(lifted.band_limited_by_unread_answers)
+        self.assertEqual(list(lifted.open_asks), [])
+        self.assertEqual(lifted.recommended_action, MODULE.PROCEED)
+
+    def test_a_band_below_the_ceiling_is_asked_nothing(self) -> None:
+        """Unread answers are not the ask; a HELD verdict is.
+
+        A run scoring under the floor has unread answers too and no verdict to
+        lift, so an ask there would hand a remedy to a card the read would not
+        move - the same over-claim in the other direction.
+        """
+        score = MODULE.score_run(
+            MODULE.DatasetFacts(),
+            _passing_calibration(),
+            _wired_space(),
+            dict(MODULE.DEFAULT_WEIGHTS),
+        )
+        self.assertLessEqual(
+            MODULE.BAND_ORDER.index(score.band),
+            MODULE.BAND_ORDER.index(MODULE.ANSWER_KEY_BAND_CEILING),
+        )
+        self.assertFalse(score.band_limited_by_unread_answers)
+        self.assertEqual(list(score.open_asks), [])
+        # And the remedy still comes from the ceilings, which is the arm above
+        # this one: a run with nothing to score is not told to read an answer
+        # key it does not have.
+        self.assertNotEqual(
+            score.recommended_action, MODULE.ACTION_FOR_ASK[MODULE.ANSWER_KEY_UNREAD]
+        )
+
+    def test_the_remedy_is_not_a_second_spelling_of_an_existing_one(self) -> None:
+        """The slug is the one the cap table already routes for this question.
+
+        Three cap conditions route `review-answer-key` - a generated answer key,
+        most of one, and an unsound one - and all three mean "somebody has to
+        read the expected answers before this number means anything". That is
+        this hold's instruction too, so a consumer already routing it needs
+        nothing new, and a fourth spelling would be the drift the remedy table
+        exists to remove.
+        """
+        remedy = MODULE.ACTION_FOR_ASK[MODULE.ANSWER_KEY_UNREAD]
+        self.assertEqual(
+            remedy, MODULE.ACTION_FOR_CONDITION["dataset-generated-answer-key"]
+        )
+        self.assertIn(remedy, MODULE.ACTION_KINDS)
+
+    def test_no_id_names_both_a_cap_and_an_ask(self) -> None:
+        """One id, one shape, so a reader of either table knows what it holds.
+
+        `ACTION_FOR_CONDITION`'s keys are exactly `CAP_CEILING`'s, asserted
+        elsewhere in this file, so an id in both tables would be a condition
+        with a ceiling AND no ceiling.
+        """
+        self.assertEqual(
+            set(MODULE.ACTION_FOR_ASK) & set(MODULE.ACTION_FOR_CONDITION), set()
+        )
+        for condition in MODULE.ACTION_FOR_ASK:
+            self.assertNotIn(condition, MODULE.CAP_CEILING)
+
+    def test_an_ask_nobody_mapped_cannot_be_constructed(self) -> None:
+        """Fail-closed, on the footing every cap registry is.
+
+        A new ask that shipped without a remedy would emit a question no
+        consumer can act on, which is the defect this whole field is about.
+        """
+        with self.assertRaises(ValueError) as caught:
+            MODULE.Ask(condition="an-ask-nobody-routed", reason="a reason")
+        self.assertIn("ACTION_FOR_ASK", str(caught.exception))
+
+    def test_an_ask_may_not_recommend_proceeding(self) -> None:
+        """An outstanding item asking for nothing is a contradiction in one field."""
+        MODULE.ACTION_FOR_ASK["an-ask-that-asks-nothing"] = MODULE.PROCEED
+        try:
+            with self.assertRaises(ValueError) as caught:
+                MODULE.Ask(condition="an-ask-that-asks-nothing", reason="a reason")
+        finally:
+            del MODULE.ACTION_FOR_ASK["an-ask-that-asks-nothing"]
+        self.assertIn(MODULE.PROCEED, str(caught.exception))
+
+    def test_an_ask_with_no_account_of_itself_is_refused(self) -> None:
+        """`None` renders as the word "None" beside a condition id."""
+        for empty in (None, "", "   "):
+            with self.subTest(reason=empty):
+                with self.assertRaises(ValueError) as caught:
+                    MODULE.Ask(condition=MODULE.ANSWER_KEY_UNREAD, reason=empty)
+                self.assertIn("reason", str(caught.exception))
+
+    def test_every_cap_that_speaks_first_still_speaks_first(self) -> None:
+        """The arms are ORDERED, not disjoint, and this is the order.
+
+        A blocking cap, an asking cap and an outstanding ask can all be true of
+        one run. What makes `recommended_action` single-valued is precedence,
+        so the addition is only safe if it changes the answer for exactly the
+        states where every arm above it was silent - which is what this walks.
+        """
+        ask = (MODULE.ANSWER_KEY_UNREAD_ASK,)
+        blocking, asking, advisory = self._blocking(), self._asking(), self._advisory()
+        cases = {
+            (): MODULE.PROCEED,
+            (advisory,): MODULE.PROCEED,
+            (asking,): asking.action_kind,
+            (blocking,): blocking.action_kind,
+            (advisory, asking): asking.action_kind,
+            (blocking, asking): blocking.action_kind,
+        }
+        for caps, without in cases.items():
+            ordered = tuple(sorted(caps, key=MODULE.cap_order))
+            with self.subTest(caps=[cap.condition for cap in caps]):
+                self.assertEqual(MODULE.recommended_action(ordered), without)
+                with_ask = MODULE.recommended_action(ordered, ask)
+                # The ask speaks only into a silence: everywhere a cap already
+                # answered, the answer is the cap's, unchanged.
+                expected = (
+                    MODULE.ANSWER_KEY_UNREAD_ASK.action_kind
+                    if without == MODULE.PROCEED
+                    else without
+                )
+                self.assertEqual(with_ask, expected)
+                self.assertIn(with_ask, MODULE.ACTION_KINDS)
+
+    def test_the_order_within_the_asks_is_the_table_s_own(self) -> None:
+        """Declared where the class is decided, not derived at the call site.
+
+        One member routes trivially; the guarantee this pins is that a second
+        one is a decision somebody writes down rather than an accident of
+        whichever order the score happened to build them in.
+        """
+        MODULE.ACTION_FOR_ASK["a-later-ask"] = MODULE.COMPLETE_CALIBRATION
+        try:
+            later = MODULE.Ask(condition="a-later-ask", reason="a reason")
+            first = MODULE.ANSWER_KEY_UNREAD_ASK
+            self.assertLess(MODULE.ask_order(first), MODULE.ask_order(later))
+            for pair in ((first, later), (later, first)):
+                with self.subTest(order=[ask.condition for ask in pair]):
+                    self.assertEqual(
+                        MODULE.recommended_action((), pair), first.action_kind
+                    )
+        finally:
+            del MODULE.ACTION_FOR_ASK["a-later-ask"]
+
+    def test_the_card_and_the_report_read_one_predicate(self) -> None:
+        """Two surfaces stating the same condition differently is how they drift.
+
+        The reassurance beside the hold is true only while nothing BESIDE the
+        hold is outstanding, and both surfaces used to compute that as
+        "`recommended_action` is `proceed`" - a test that goes permanently
+        false the moment the hold routes its own remedy, taking a true sentence
+        off both cards with no assertion failing.
+        """
+        held = _healthy_score()
+        self.assertTrue(MODULE.nothing_pending_beyond(held, MODULE.ANSWER_KEY_UNREAD))
+        reassurance = "this read is the only thing being asked of you"
+        card = MODULE.render_card(held, palette=MODULE.Palette(), unicode_ok=False)
+        self.assertIn(reassurance, card)
+        self.assertIn(reassurance, MODULE.render_markdown(held))
+        # And it is not a claim that nothing at all is pending: the ask this
+        # very sentence describes is outstanding, and the card's last line says
+        # so four lines below it.
+        self.assertIn(f"Action: {held.recommended_action}", card)
+        self.assertFalse(MODULE.nothing_pending_beyond(held, "some-other-ask"))
 
 
 class ADeferredCalibrationSaysSoInTheFieldConsumersReadTests(unittest.TestCase):

@@ -1,7 +1,7 @@
 {
   "id": "clean-proceed",
   "state": "clean",
-  "why": "The arm nothing else reaches: no cap at all, so `recommended_action` falls through both loops and returns `proceed`. Without it the declared cards would cover only degraded runs and could not tell a regression that invents a cap from a healthy run. It scores 91, which is an EXCELLENT number, and reads WORKABLE because the answer-key floor holds the top two bands until somebody has read the expected answers - `band_held_for_unread_answers` is declared true here and is the gate to look at if this band moves. It read 81 until the harness argv obeyed the guide: the evaluator's method, origin and task kind were all omitted from a call SKILL.md requires them on, so the evaluation pillar's task-fit check was withheld and the band was held by pillar confidence instead (traigent-first-run#407).",
+  "why": "The arm nothing else reaches: no cap at all, so `recommended_action` falls through both cap loops. Without it the declared cards would cover only degraded runs and could not tell a regression that invents a cap from a healthy run. It scores 91, which is an EXCELLENT number, and reads WORKABLE because the answer-key floor holds the top two bands until somebody has read the expected answers - `band_held_for_unread_answers` is declared true here and is the gate to look at if this band moves. It read 81 until the harness argv obeyed the guide: the evaluator's method, origin and task kind were all omitted from a call SKILL.md requires them on, so the evaluation pillar's task-fit check was withheld and the band was held by pillar confidence instead (traigent-first-run#407). The action is `review-answer-key` and it used to be `proceed`, which is the card traigent-first-run#396 was filed on: the held band was named in prose on this very case and the one routed field said there was nothing to do about it. The remedy is not a cap's - `caps` is empty and stays empty - it is the run's outstanding ask, so this case is also where a regression that stops routing one shows up. The fall-through to `proceed` is declared on `advisory-bounded-claim`, whose ceilings neither block nor ask.",
   "dataset": "evaluation-dataset.jsonl",
   "agent_origin": "brought",
   "evaluator": "evaluator.py",
@@ -17,7 +17,7 @@
     "overall": 91,
     "band": "WORKABLE",
     "status": "OK",
-    "recommended_action": "proceed",
+    "recommended_action": "review-answer-key",
     "caps": [],
     "asks_about_repeats": false,
     "band_held_for_unread_answers": true

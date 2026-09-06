@@ -236,7 +236,23 @@ def render_text(plan: ReadinessPlan) -> str:
 # The band key is the second half of the same answer. Held at WORKABLE, an 83
 # reads identically to a run that scored 83 and earned WORKABLE, and a consumer
 # on 2 has no key to ask which it is looking at.
-SCHEMA_VERSION = 3
+#
+# 4: `recommended_action` stops emitting `proceed` over a held band, and the
+# remedy it names no longer has to come from `caps`.
+#
+# Additive in keys - `open_asks` is new and nothing was removed or renamed -
+# and, like 3, not additive in MEANING, which is what decides it. Two readings a
+# schema-3 consumer held are now wrong. It read `proceed` for a run whose band
+# was explicitly held and routed it to "start the paid run"; it now reads
+# `review-answer-key`. And it read `recommended_action` as a remedy it could
+# always find in `caps` - every value came from one - so a 3 consumer that
+# looked up the ceiling behind the slug to decide how much to care will not find
+# this one and cannot tell "no such cap" from "a cap I do not know".
+#
+# The version is what lets it tell a payload where the remedy may name an ask
+# that caps nothing from one where every remedy is a ceiling, exactly the
+# distinction 2 and 3 were bumped for.
+SCHEMA_VERSION = 4
 DEFAULT_WEIGHTS = {"dataset": 40.0, "evaluation": 35.0, "agent": 25.0}
 # Read each entry as "score BELOW this number is that band" - these are
 # exclusive upper bounds, not the score a band requires. The last entry is an
@@ -1348,7 +1364,46 @@ ACTION_FOR_CONDITION: dict[str, str] = {
     # rows on their own authority - see `repeated_input_routes`.
     "dataset-repeated-rows": "review-repeats",
 }
-ACTION_KINDS = frozenset({PROCEED, *ACTION_FOR_CONDITION.values()})
+# The asks that are not caps, and the second table `recommended_action` reads.
+#
+# THE CLASS, not the one condition in it. A cap is a ceiling on the SCORE, and
+# every remedy this payload routed was reachable only through one. That left a
+# state with no machine-readable remedy at all: the run is fine, nothing is
+# capped, and something is still owed before the verdict means what it says.
+# The answer-key hold is the first member - `overall == weighted_average` is
+# asserted in its own test, so it costs the score nothing and holds the BAND -
+# and it will not be the last. A hold on a claim, a disclosure the run owes, an
+# input the customer alone can confirm: none of them is a ceiling, and inventing
+# one to carry them would put a false entry in `caps` to fix a silence here
+# (traigent-first-run#396).
+#
+# SEPARATE FROM `ACTION_FOR_CONDITION`, and the separation is enforced rather
+# than observed. That table's keys are exactly `CAP_CEILING`'s - a test asserts
+# the two sets are equal - so a condition that caps nothing cannot be added
+# there without either a ceiling nobody chose or the invariant going. Keeping
+# them apart is also what makes an id answerable: a condition names a cap or an
+# ask, never both, and a reader of either table knows which shape it is holding.
+#
+# THE REMEDIES ARE NOT NEW WORDS. `review-answer-key` is what
+# `ACTION_FOR_CONDITION` already routes for a generated or unsound answer key -
+# the same instruction, "somebody has to read the expected answers before this
+# number means anything" - so a consumer already routing it needs nothing new
+# to route this, and the guard that reads the remedy table keeps working. A
+# future ask may need an instruction nothing else means, which is why the values
+# join `ACTION_KINDS` rather than being constrained to the other table's; what
+# is refused is a second spelling of an instruction that exists.
+#
+# INSERTION ORDER IS PRECEDENCE. Several of these can be outstanding at once and
+# `recommended_action` returns one, so the order they are written in is the
+# order they are done in - declared here, where the class is decided, rather
+# than derived at the call site from a field a future ask might not have.
+ANSWER_KEY_UNREAD = "answer-key-unread"
+ACTION_FOR_ASK: dict[str, str] = {
+    ANSWER_KEY_UNREAD: "review-answer-key",
+}
+ACTION_KINDS = frozenset(
+    {PROCEED, *ACTION_FOR_CONDITION.values(), *ACTION_FOR_ASK.values()}
+)
 
 # What each route ASKS THE USER FOR - a different question from how far the
 # ceiling lets the score rise, and the question that decides whether the run
@@ -2431,6 +2486,92 @@ class Cap:
             )
 
 
+@dataclass(frozen=True)
+class Ask:
+    """Something this run owes that no ceiling carries.
+
+    `Cap.asks` says a CEILING also puts a question; this is the question with
+    no ceiling behind it. It carries no `ceiling`, no `blocks` and no `asks`
+    flag, and the absences are the definition rather than fields nobody got
+    round to: an entry here caps nothing, stops nothing, and is not optional -
+    every member of `ACTION_FOR_ASK` is outstanding work or it would not be
+    constructed.
+
+    So `status` is untouched, `overall` is untouched, and the only field that
+    moves is `recommended_action`, which is the whole of what
+    traigent-first-run#396 reports: a run whose band is held read `proceed`,
+    and a consumer routing that field was told there was nothing to do about
+    the one thing standing between the run and its strongest verdict.
+
+    `reason` is the sentence for a machine-readable artifact, on the same terms
+    as `Cap.reason` - a payload that names a condition and no account of it
+    sends every consumer back to this module's source to find out what it
+    means.
+    """
+
+    condition: str
+    reason: str
+    # Derived, never passed, for the reason `Cap.action_kind` is: the table is
+    # the only place a remedy is decided, so a condition cannot acquire two.
+    action_kind: str = field(init=False)
+
+    def __post_init__(self) -> None:
+        # Fails closed, like the cap guards above it and for the same reason: a
+        # new ask cannot ship without a remedy, and it raises in the author's
+        # own test run rather than emitting an ask no consumer can act on.
+        try:
+            kind = ACTION_FOR_ASK[self.condition]
+        except KeyError:
+            raise ValueError(
+                f"ask {self.condition!r} has no entry in ACTION_FOR_ASK; every "
+                "ask names a remedy and its place in the order they are done "
+                "in, so add one there rather than emitting a question a "
+                "consumer cannot act on"
+            ) from None
+        # An ask that recommends `proceed` is a contradiction in one field: the
+        # last arm of `recommended_action` already returns `proceed` when
+        # nothing is outstanding, so an ask mapped to it would be an
+        # outstanding item asking for nothing - and it would displace a real
+        # remedy from a cap it sorts ahead of nothing.
+        if kind == PROCEED:
+            raise ValueError(
+                f"ask {self.condition!r} is routed to {PROCEED!r}; an ask is "
+                "outstanding work, and a remedy saying there is none describes "
+                "a question that is not being put"
+            )
+        object.__setattr__(self, "action_kind", kind)
+        # And the field the guard above never looked at, on the footing
+        # `Cap.reason` was given after `Cap(cond, 50, None)` constructed: the
+        # reason reaches a payload and a report, where `None` renders as the
+        # word "None" beside a condition id and reads as a finding.
+        if not isinstance(self.reason, str) or not self.reason.strip():
+            raise ValueError(
+                f"ask {self.condition!r} carries no reason; the payload names "
+                "the condition and a consumer has nowhere else to read what it "
+                "means, so an empty one is a finding with no account of itself"
+            )
+
+
+def ask_order(ask: "Ask") -> int:
+    """Where one ask sorts against the others, from the table's own order.
+
+    Read off `ACTION_FOR_ASK` rather than a field on the ask, so the precedence
+    is decided once where the class is decided. `cap_order` does the same job
+    for ceilings against `CAP_SEVERITY_ORDER`.
+    """
+    return tuple(ACTION_FOR_ASK).index(ask.condition)
+
+
+# The first member of that class, built once because one condition produces it.
+ANSWER_KEY_UNREAD_ASK = Ask(
+    condition=ANSWER_KEY_UNREAD,
+    reason=(
+        "no read covering the expected answers this run is graded against has "
+        "reached this score, so the top bands are held until one does"
+    ),
+)
+
+
 # What each check is called on the card.
 #
 # The keys are this module's own vocabulary and stay that way in `--json`,
@@ -2789,6 +2930,17 @@ class ReadinessScore:
     # "was the behavioural question about the answer key ever asked", carried
     # as its own key because no other field in this payload answers it.
     band_limited_by_unread_answers: bool = False
+    # What this run owes that no ceiling carries, in the order it is to be done.
+    #
+    # `caps` answers "what is limiting the score" and answered nothing else, so
+    # a run with no cap and something still outstanding had one field saying
+    # `proceed` and one prose sentence saying otherwise. This is the second
+    # source `recommended_action` reads, and the general answer rather than a
+    # flag for the one condition that exposed it - see `ACTION_FOR_ASK`.
+    #
+    # Empty for the ordinary run, which is why it defaults: a consumer that
+    # never meets an outstanding non-cap ask sees `[]` and can ignore the key.
+    open_asks: tuple[Ask, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -8050,7 +8202,9 @@ def collect_gaps(
     return tuple(text for _weight, _rank, text in gaps)
 
 
-def recommended_action(ordered_caps: Sequence[Cap]) -> str:
+def recommended_action(
+    ordered_caps: Sequence[Cap], open_asks: Sequence[Ask] = ()
+) -> str:
     """The one remedy to do first, from caps already sorted by ceiling.
 
     A blocking cap displaces `proceed` first: the run is waiting on it, so
@@ -8068,9 +8222,26 @@ def recommended_action(ordered_caps: Sequence[Cap]) -> str:
     `status` stays OK, the run is worth making, and the question is what to do
     before it rather than instead of it.
 
+    An ask that is not a cap displaces it third, and last. Nothing here is
+    capped, so the two loops above have nothing to read, and the run still owes
+    something: `open_asks` is where that lives and `ACTION_FOR_ASK` decides the
+    order within it. It sorts after both cap arms because a ceiling standing on
+    the score is doing something to the number this ask is not
+    (traigent-first-run#396).
+
     An advisory ceiling that asks nothing still recommends nothing. A bounded
     top-up may ask before a run without blocking it; a ceiling at or beyond the
     offer limit names no remedy.
+
+    THE ARMS ARE ORDERED, NOT DISJOINT, and the distinction is worth stating
+    because a fourth arm makes it easy to assume otherwise. A run can hold a
+    blocking cap, an asking cap and an outstanding ask at once - the answer-key
+    hold coexists with `dataset-coarse-resolution` on an ordinary card, which
+    the card's own regression sweep walks. What makes the answer single-valued
+    is the precedence below, not a claim that only one arm can be true; and the
+    last arm is total, because `proceed` needs no condition. So the guarantee is
+    exactly: every state returns one slug, and adding an arm can only change the
+    answer for a state where every arm above it was silent.
     """
     for cap in ordered_caps:
         if cap.blocks:
@@ -8078,7 +8249,28 @@ def recommended_action(ordered_caps: Sequence[Cap]) -> str:
     for cap in ordered_caps:
         if cap.asks:
             return cap.action_kind
+    for ask in sorted(open_asks, key=ask_order):
+        return ask.action_kind
     return PROCEED
+
+
+def nothing_pending_beyond(score: "ReadinessScore", condition: str) -> bool:
+    """Whether one named ask is the only thing outstanding on this card.
+
+    The card and the durable report each carry a reassurance beside the
+    answer-key hold - nothing else is capped, and this read is all that is being
+    asked - and each used to compute it as "no cap, and `recommended_action` is
+    `proceed`". That reading was correct only while a non-cap ask could not
+    route: once the hold names its own remedy, `recommended_action` is never
+    `proceed` on the card that prints this sentence, so the test either side of
+    it goes quietly false and a true sentence stops being printed.
+
+    Read as "beyond this one" rather than re-derived from the action, so the
+    sentence keeps saying what it always said while the field beneath it says
+    more than it used to. One home for the predicate, because the two surfaces
+    stating it differently is how they drift.
+    """
+    return not score.caps and {ask.condition for ask in score.open_asks} <= {condition}
 
 
 def aggregate(
@@ -8141,13 +8333,19 @@ def aggregate(
     # path a customer reaches is `score_run`, which computes it from the facts
     # and the review.
     band, held_for_answers = hold_band_for_unread_answers(band, answers_read)
+    # The ask exists exactly while the hold is costing something, which is the
+    # flag above rather than `answers_read` on its own. A run scoring under the
+    # ceiling has unread answers too, and nothing is held there - so there is no
+    # verdict to lift and no ask to put, and routing one would hand a remedy to
+    # a card whose band the read would not move.
+    open_asks = (ANSWER_KEY_UNREAD_ASK,) if held_for_answers else ()
     return ReadinessScore(
         schema_version=SCHEMA_VERSION,
         overall=overall,
         weighted_average=weighted_average,
         band=band,
         status="BLOCKED" if any(cap.blocks for cap in ordered_caps) else "OK",
-        recommended_action=recommended_action(ordered_caps),
+        recommended_action=recommended_action(ordered_caps, open_asks),
         confidence=round(confidence, 2),
         band_limited_by_confidence=limited,
         weights=dict(sorted(weights.items())),
@@ -8160,6 +8358,7 @@ def aggregate(
         agent_route_unverified=agent_route_unverified,
         agent_unfollowed_settings=tuple(agent_unfollowed_settings),
         band_limited_by_unread_answers=held_for_answers,
+        open_asks=open_asks,
     )
 
 
@@ -8519,9 +8718,10 @@ def repeated_input_routes(finding: RepeatedInputs, *, offers_top_up: bool) -> li
     appears only while that offer is live. `offers_top_up` is
     `recommended_action == ADD_EXAMPLES`, which is STRICTER than "the offer has
     room": that field returns the first BLOCKING cap's remedy, then the first
-    ASKING one in ceiling order, so a blocker or any lower-ceiling asking cap
-    displaces the size remedy and this route is dropped while the offer is still
-    live. The reachable case is a project whose answer key was generated: the
+    ASKING one in ceiling order, then any outstanding non-cap ask, so a blocker
+    or any lower-ceiling asking cap displaces the size remedy and this route is
+    dropped while the offer is still live. The third arm cannot take it, because
+    an asking size cap already outranks every ask that is not a cap. The reachable case is a project whose answer key was generated: the
     offer is live, `dataset-coarse-resolution` asks at
     `COARSE_RESOLUTION_CEILING`, nothing blocks, and `review-answer-key` asks
     at the lower `GENERATED_ANSWER_KEY_CEILING`, so it wins the ordering and
@@ -8911,26 +9111,23 @@ def render_card(
         # Asserting the value of a field the payload already carries, four
         # lines from where the card prints that field's consequence, is the
         # defect class this branch exists to remove.
-        nothing_else_pending = not score.caps and score.recommended_action == PROCEED
+        nothing_else_pending = nothing_pending_beyond(score, ANSWER_KEY_UNREAD)
         # Beside the confidence sentence and never instead of it: two different
         # gaps hold this band, only one of them is about the answer key, and a
         # reader told about the wrong one goes and closes the wrong gap.
         #
-        # It carries the remedy in words because no cap carries it. Nothing
-        # here is capped - every measurement stands - so `recommended_action`
-        # has nothing to route, and the one sentence that says what would lift
-        # this band has to say it here or nowhere.
+        # It carries the remedy in words, and now the payload carries it too.
+        # Nothing here is capped - every measurement stands - so `caps` had
+        # nothing to route and this sentence was the whole of what the run
+        # said about the hold. `open_asks` is the other half
+        # (traigent-first-run#396): the remedy is a slug for a machine, this is
+        # the account for the person holding the card, and neither is a second
+        # spelling of the other.
         #
-        # The `proceed` clause is words on purpose, and the alternatives were
-        # weighed rather than skipped (traigent-first-run#396). A cap would
-        # route a remedy and reopen the argument recorded above
-        # `ANSWER_KEY_BAND_CEILING` about why no ceiling can express this hold;
-        # a payload field for asks that are not caps is a schema decision that
-        # belongs with the contract nothing documents yet
-        # (traigent-first-run#401). Neither is needed to stop the card reading
-        # as a contradiction: the band and the next step answer different
-        # questions, exactly as the band and the block already do, and saying
-        # so costs one sentence.
+        # A cap was the alternative and stays refused, for the reason recorded
+        # above `ANSWER_KEY_BAND_CEILING`: a ceiling is a number on the score
+        # and this hold is a verdict on the band, so a ceiling invented to route
+        # it would put an entry in `caps` that caps nothing.
         #
         # In words, and not by naming the flag that carries the read. No line
         # this card renders names an argument today - the only customer-facing
@@ -8945,8 +9142,8 @@ def render_card(
             f"cap and does not stop the run: what it holds is the verdict, not "
             f"the work."
             + (
-                " Nothing else here is capped and nothing is being asked of "
-                "you before the run."
+                " Nothing else here is capped, and this read is the only thing "
+                "being asked of you."
                 if nothing_else_pending
                 else ""
             )
@@ -9028,9 +9225,9 @@ def render_markdown(
                     f"{score.band}. This hold is not a cap and does not stop "
                     "the run: what it holds is the verdict, not the work."
                     + (
-                        " Nothing else is capped and nothing is being asked of "
-                        "you before the run."
-                        if not score.caps and score.recommended_action == PROCEED
+                        " Nothing else is capped, and this read is the only "
+                        "thing being asked of you."
+                        if nothing_pending_beyond(score, ANSWER_KEY_UNREAD)
                         else ""
                     )
                     + " A row-by-row read of each input beside its expected "
@@ -18623,7 +18820,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
             "emit machine-readable output. The scoring payload carries "
             f"'schema_version' (currently {SCHEMA_VERSION}), and a bump means a "
             "consumer of the older version can no longer read this payload "
-            "correctly - so check the field before branching on any value in it"
+            "correctly - so check the field before branching on any value in "
+            "it. 'recommended_action' names one remedy and it is not always a "
+            "cap's: a run may owe something that limits no score, and those "
+            "are in 'open_asks', so read the remedy from that field when no "
+            "entry in 'caps' carries it"
         ),
     )
     return parser.parse_args(argv)

@@ -12679,7 +12679,8 @@ class SkillPackageTests(unittest.TestCase):
             (
                 "SKILL.md",
                 "the lowest-ceiling blocking remedy when a cap blocks, "
-                "otherwise the lowest-ceiling asking one, otherwise `proceed`",
+                "otherwise the lowest-ceiling asking one, otherwise an ask "
+                "that caps nothing, otherwise `proceed`",
             ),
             ("glossary.md", "there are three kinds"),
             ("glossary.md", "some do not block and still put a question to you"),
