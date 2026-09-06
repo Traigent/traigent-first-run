@@ -17563,6 +17563,26 @@ def build_signal_from_entry(
         # that. The sentence after it is the assistant's, like every other
         # `evidence`, and the same constant says so.
         #
+        # WHICH IS WHY THE TWO ARMS ATTRIBUTE IN OPPOSITE ORDERS, and the next
+        # arm has to make the same choice. On `prompt` and `output-contract`
+        # the marking opens the line, so this script's summary sentence ("no
+        # prompt reached the model call") sits inside the attribution - it is a
+        # claim ABOUT THE AGENT, reached only through the assistant's
+        # declaration, so it is the assistant's to answer for. "The agent
+        # declares no tools" is a claim ABOUT THE DOCUMENT - it is what the
+        # document says, read here - so it stays outside. Put a claim about the
+        # agent outside the marking and this script has adopted it.
+        #
+        # AND THE CLAIM ABOUT THE DOCUMENT IS ALL IT IS. `used: false` is a
+        # self-reported boolean and nothing refutes it: the `used: true` arm
+        # below raises on a declared name the file never mentions, and this arm
+        # has no counterpart, so a carried-over `"used": false` over an agent
+        # that visibly calls two tools is accepted - and, being
+        # `applicable=False`, drops out of the denominator as well. Pre-existing
+        # and unchanged here; refuting it needs a derivation that can tell a
+        # tool call from any other call, which this module does not attempt
+        # (traigent-first-run#451).
+        #
         # No "excluded from this score" here: nothing was withheld. A check
         # that does not apply had no measurement to withhold, and claiming one
         # was withheld would read as a penalty for an agent that simply has no
@@ -17571,7 +17591,15 @@ def build_signal_from_entry(
             check,
             0.0,
             "the agent declares no tools, so tool wiring does not apply. "
-            f"{UNCHECKED_OBSERVATION}{evidence}",
+            # The prose's own full stop is dropped before this one is added,
+            # the same normalisation `reason` gets above and for the same
+            # reason: `evidence` is free prose, `cited_source_summary` appends
+            # " Read from ..." with no punctuation of its own, and without a
+            # stop here the assistant's sentence and the machine-derived quote
+            # run together - blurring the one boundary this line exists to
+            # make legible. The sibling arms get it from the closing
+            # parenthesis they wrap the prose in; this arm has none.
+            f"{UNCHECKED_OBSERVATION}{evidence.rstrip('.')}.",
             measured=False,
             applicable=False,
         )
