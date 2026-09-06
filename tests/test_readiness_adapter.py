@@ -5213,6 +5213,52 @@ class AMissingIdIsPricedFromTheCountNotTheStatusTests(unittest.TestCase):
         self.assertIn("FIX BEFORE PAID RUN", card)
         self.assertIn("12 generated rows carry no stable id", card)
 
+    def test_a_collision_under_a_warn_still_reaches_the_ceiling(self) -> None:
+        """The other count, which the tree cannot currently reach on its own.
+
+        `score_dataset` raises the ceiling from `duplicate_ids` as well as from
+        `generated_rows_without_id`, and only the second of those was covered:
+        dropping `or facts.duplicate_ids` left the whole suite green. Colliding
+        ids still FAIL in this preflight, so the clause is unreachable from a
+        payload this repository writes - which is exactly the population it
+        exists for. A third-party or older payload carrying a real collision
+        under a non-FAIL status must still be priced, on the same argument that
+        put the counts ahead of the status in the first place: the price is not
+        the pricer's to skip because somebody else chose a quiet severity.
+
+        Hand-forged deliberately, and it is the one shape in this class that
+        has to be. The sibling tests below score real preflight output; this
+        one describes a payload the current preflight cannot emit, so building
+        it by hand is the only way to reach the arm at all.
+        """
+        rows = [
+            {
+                "id": f"row-{index:03d}",
+                "input": f"question {index} about the billing system and its rules",
+                "output": f"answer-{index % 4}",
+                "source": "production-log",
+            }
+            for index in range(40)
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            records = _preflight_records(
+                _write_jsonl(Path(directory), "eval.jsonl", rows)
+            )
+        for record in records:
+            if record["check"] == "dataset-ids":
+                record["status"] = "WARN"
+                record["metrics"] = {
+                    "duplicate_ids": 3,
+                    "rows_without_id": 0,
+                    "generated_rows_without_id": 0,
+                    "row_id_digests": [],
+                    "run_row_id_digests": [],
+                }
+        score = _score_records(records)
+        cap = _cap(score, "dataset-integrity-fail")
+        self.assertEqual(cap["ceiling"], MODULE.DATASET_INTEGRITY_CEILING)
+        self.assertIn("3 ids are used by more than one row", cap["reason"])
+
     def test_a_clean_corpus_is_not_capped_by_this(self) -> None:
         """The false-red direction, because the trigger moved off a status.
 

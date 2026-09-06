@@ -2546,12 +2546,18 @@ def emit_dataset_id_findings(
 
     Two findings share this check name and this record's metrics travel with
     both, because a reader downstream needs the ARITHMETIC and not the sentence.
-    `dataset-ids` FAILs for two unrelated reasons - ids that collide, and
-    generated rows carrying none - and a consumer reading only the status
-    learned that one of them happened without learning which. The readiness card
-    then printed the reason for a third thing entirely (malformed rows), because
-    a boolean is all it had. Both counts are published on every arm, PASS
-    included, so silence never has two meanings.
+    `dataset-ids` makes two unrelated findings - ids that collide, and generated
+    rows carrying none - and a consumer reading only the status learned that one
+    of them happened without learning which. The readiness card then printed the
+    reason for a third thing entirely (malformed rows), because a boolean is all
+    it had. Both counts are published on every arm, PASS included, so silence
+    never has two meanings.
+
+    Since #438 only the COLLISION fails. A generated row with no id is the same
+    defect as a collected one with no id, so it WARNs - and it is still priced,
+    because `readiness.py` reads both counts off these metrics rather than off
+    this status. That is why "published on every arm" above is load-bearing
+    rather than tidy: the arm that prices is now an arm that does not fail.
     """
     missing_records: list[tuple[int, dict[str, Any]]] = []
     ids: list[str] = []
@@ -2742,6 +2748,16 @@ def emit_dataset_id_findings(
         # coupling is the whole reason to say it here: read off the status, as
         # it was, relaxing this line silently deleted a blocking line from the
         # customer's card.
+        #
+        # The PRICES are not symmetrical, and this is the file where that has
+        # to be said. Generated rows with no id raise a blocking ceiling;
+        # collected rows with no id raise nothing, here or on the card. That
+        # asymmetry predates #438 and is left deliberately - pricing the
+        # collected case would invent a refusal for a customer who brought real
+        # data and has never seen one - but "the same defect" above is a
+        # statement about the DEFECT and about this status, not about the cap.
+        # `readiness.py`'s `generated_rows_without_id` comment is where the
+        # residual is argued.
         #
         # `if generated_missing: status = FAIL` was the fourth spelling of the
         # construct #438 removed, and the one no grep for `FAIL if synthetic`
