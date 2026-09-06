@@ -5679,6 +5679,50 @@ class SkillPackageTests(unittest.TestCase):
         ):
             self.assertIn(phrase, normalized_safety)
 
+    def test_no_document_says_the_scope_refusal_cannot_be_checked(self) -> None:
+        """The guide may not deny a check the module performs.
+
+        `SKILL.md` and the flag's own `--help` both said the declaration
+        "moves no number, because nothing here can check it". The second half
+        was the load-bearing one and it is now false: `score_evaluation`
+        derives the same state from preflight's witness, independently, and
+        the card reaches it with no flag passed at all. "Moves no number"
+        survives, because the CLI refuses `--calibration` beside the flag and
+        the two arms score identically without one.
+
+        Both homes are asserted together on purpose. This is the repository's
+        named defect class - a rule stated in two places is a rule that can be
+        changed in one - and the two happen to be a guidance document and a
+        docstring-shaped help string in the very module whose behaviour moved.
+        """
+        skill = " ".join(SKILL.read_text().casefold().split())
+        # The rendered help, not the source, because the sentence is split
+        # across adjacent string literals and only argparse joins them - a
+        # check over the file text would pass on a half-reworded pair.
+        rendered = subprocess.run(
+            [sys.executable, str(SKILL_ROOT / "scripts" / "readiness.py"), "--help"],
+            capture_output=True,
+            text=True,
+            check=True,
+            env={**os.environ, "COLUMNS": "200"},
+        ).stdout
+        help_text = " ".join(rendered.casefold().split())
+        for where, text in (("SKILL.md", skill), ("readiness.py --help", help_text)):
+            with self.subTest(document=where):
+                self.assertNotIn("nothing here can check it", text)
+                self.assertNotIn("a declaration nothing here can check", text)
+        self.assertIn(
+            "it moves no number, and preflight's witness reaches the same state "
+            "without it",
+            skill,
+        )
+        self.assertIn("a declaration this score cannot verify on its own", help_text)
+        self.assertIn(
+            "where --preflight witnessed an engine the card reaches it with no "
+            "declaration at all",
+            help_text,
+        )
+
     def test_the_three_words_bind_every_calibration_not_only_the_first(
         self,
     ) -> None:

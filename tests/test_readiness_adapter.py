@@ -5663,8 +5663,76 @@ class TaskFitReplayFollowsTheFileNotTheDeclarationTests(unittest.TestCase):
         score = self.score(RUNS_CANDIDATE_SQL, "execution", "code-sql")
         subscore = _task_fit(score)
         self.assertEqual(subscore["value"], MODULE.TASK_FIT_UNFIT_CREDIT)
-        self.assertIn("sqlite3", subscore["evidence"])
+        self.assertIn("execute()", subscore["evidence"])
         self.assertIn("runs the answer, as execution declares", subscore["evidence"])
+
+    def test_the_printed_witness_is_the_call_and_not_the_import(self) -> None:
+        """Which of three witnesses a card quotes, decided end to end.
+
+        preflight orders witnesses by LINE, which is the right order for "what
+        should I look at first" and the wrong one for "why was I refused".
+        Over this scorer it reports three - `imports sqlite3 (line 3)`,
+        `calls .execute() (line 9)`, `calls .execute() (line 10)` - and taking
+        the first put "you import sqlite3" on a card that caps the run at 45
+        and sends the customer to a containment review, while the construct
+        that actually establishes the call path sat unquoted in the same
+        record. Importing a driver is not running the answer, and a customer
+        would be right to argue with a refusal that says it is.
+
+        Driven through the real two scripts rather than a fact set, so
+        preflight's own vocabulary is what the reader is matched against: if
+        `candidate_execution_witnesses` stops saying `calls `, this goes red
+        rather than quietly reverting to the import.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            evaluator = Path(directory) / "evaluator.py"
+            evaluator.write_text(RUNS_CANDIDATE_SQL)
+            records = _preflight_evaluator_records(evaluator)
+        reported = next(r for r in records if r["check"] == "evaluator-shape")[
+            "metrics"
+        ]
+        witnesses = reported["execution_witnesses"]
+        # The record really does lead with the import, or this proves nothing.
+        self.assertTrue(witnesses[0].startswith("imports sqlite3"))
+        self.assertTrue(any(w.startswith("calls .execute()") for w in witnesses))
+
+        executes, printed = MODULE.evaluator_execution_from_preflight(records)
+        self.assertIs(executes, True)
+        self.assertTrue(printed.startswith("calls .execute()"), printed)
+        self.assertNotIn("imports", printed)
+        # And it is the FIRST call, so line order still decides between two
+        # witnesses of the same strength.
+        self.assertEqual(
+            printed, next(w for w in witnesses if w.startswith("calls .execute()"))
+        )
+        # It reaches the card the customer reads, not just the reader.
+        evidence = _task_fit(self.score(RUNS_CANDIDATE_SQL, "execution", "code-sql"))[
+            "evidence"
+        ]
+        self.assertIn(printed, evidence)
+
+    def test_an_import_only_witness_is_still_printed(self) -> None:
+        """Preferring a call may not mean refusing to quote anything else.
+
+        A file that reaches an engine only through a name bound elsewhere
+        leaves preflight with import witnesses alone. The refusal is the same
+        refusal; there is simply nothing stronger to cite, and printing an
+        empty witness there would take away the one thing that makes the
+        finding checkable.
+        """
+        records = [
+            {
+                "check": "evaluator-shape",
+                "status": "WARN",
+                "metrics": {
+                    "executes": True,
+                    "execution_witnesses": ["imports sqlite3 (line 3)"],
+                },
+            }
+        ]
+        executes, printed = MODULE.evaluator_execution_from_preflight(records)
+        self.assertIs(executes, True)
+        self.assertEqual(printed, "imports sqlite3 (line 3)")
 
     def test_the_same_file_refutes_a_comparison_declared_over_it(self) -> None:
         """A word cannot make a database into a string comparison."""

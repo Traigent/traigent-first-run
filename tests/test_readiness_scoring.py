@@ -12425,11 +12425,17 @@ class ADeferredCalibrationSaysSoInTheFieldConsumersReadTests(unittest.TestCase):
     def test_the_declaration_changes_the_ask_and_never_the_number(self) -> None:
         """An unverified declaration may bound a claim; it may not earn credit.
 
-        Nothing in this module can read whether a scorer's complete path
-        executes its own input, so the flag is a claim about the run. If it
-        moved a score, claiming a refusal would be cheaper than doing the
-        work - the same inversion `SubScore.withheld` exists to refuse, and
-        the same rule the row review is held to.
+        The flag ALONE, with no witness beside it, is a claim about the run:
+        nothing in this module reads the scorer's complete call path, and the
+        fixtures below leave `executes_candidate` at `None` on purpose so that
+        is the state under test. If the flag moved a score, claiming a refusal
+        would be cheaper than doing the work - the same inversion
+        `SubScore.withheld` exists to refuse, and the same rule the row review
+        is held to.
+
+        What preflight's walk proves is a different input and is measured in
+        `TheWitnessDecidesTheScopeGateNotTheDeclarationTests`. A witness may
+        raise this state on its own; the flag still may not raise anything.
         """
         plain = self._outstanding(scope_refused=False)
         refused = self._outstanding(scope_refused=True)
@@ -12938,6 +12944,98 @@ class TheWitnessDecidesTheScopeGateNotTheDeclarationTests(unittest.TestCase):
         self.assertIn("did not calibrate it", never_cap.reason)
         self.assertNotIn("a calibration was taken", never_cap.reason)
         self.assertIn("never asked", self._calibration_subscore(never).evidence)
+
+    def test_the_ceiling_the_line_points_at_is_on_the_card_with_no_method(
+        self,
+    ) -> None:
+        """`--evaluator-method` is optional, and the refusal does not need it.
+
+        The sub-score line says the containment review is "named in the
+        ceiling". Deciding that line from one predicate and the cap from a
+        longer one put them a guard apart: with a witness, a calibration taken
+        anyway and no declared method, the cap did not fire, so the card
+        carried the sentence with no such ceiling on it - and, on an otherwise
+        healthy run, `recommended_action: proceed` over a calibration the line
+        directly above had just refused to read. That is the defect this seam
+        exists to remove, one predicate over.
+
+        A declared method says nothing about whether this run may calibrate.
+        An evaluator preflight proved reaches an engine is out of scope under
+        whatever was, or was not, typed over it.
+        """
+        payload = {
+            **_PASSING_CALIBRATION,
+            "task_kind": "code-sql",
+            "executes_candidate": True,
+            "execution_witness": self.WITNESS,
+        }
+        del payload["method"]
+        score = self._score(MODULE.EvaluationFacts(**payload))
+
+        # The fixture really is the state under test.
+        self.assertIsNone(MODULE.EvaluationFacts(**payload).method)
+        self.assertIn(
+            "evaluator-calibration-refused", [cap.condition for cap in score.caps]
+        )
+        self.assertEqual(score.recommended_action, MODULE.REVIEW_EVALUATOR_CONTAINMENT)
+        self.assertEqual(
+            score.overall, MODULE.CAP_CEILING["evaluator-calibration-refused"]
+        )
+        # The opening of the reason may not assert a declaration nobody made.
+        cap = next(
+            c for c in score.caps if c.condition == "evaluator-calibration-refused"
+        )
+        self.assertTrue(cap.reason.startswith("An evaluator is connected, and "))
+        self.assertNotIn("method (None)", cap.reason)
+        # And the line and the ceiling agree, which is the property under test.
+        self.assertIn(
+            "containment review named in the ceiling",
+            self._calibration_subscore(score).evidence,
+        )
+
+    def test_a_timed_out_refusal_names_no_ceiling_and_keeps_its_own_fact(
+        self,
+    ) -> None:
+        """The other half of the same guard, and the sentence it must not take.
+
+        A run that timed out already carries `evaluator-timeout` at the same
+        45, so the refusal yields the ceiling to it rather than printing the
+        number twice. Two things follow, and both were wrong when the refusal
+        arm sat first in the chain and owned the tail unconditionally: the
+        card pointed at a containment review no ceiling on it named, and it
+        lost "calibration ran but did not finish", which is the one fact that
+        explains the timeout cap beside it.
+
+        Latent rather than live - `calibrate_evaluator.py` refuses a witnessed
+        scorer before it can run, so a witnessed evaluator never times out
+        through the bundled tools. That is exactly the status the comment this
+        seam replaced assigned to the bug it fixed, and it was fixed anyway:
+        a sentence that stays true only because a distant refusal stays in
+        place is one flag away from being wrong.
+        """
+        score = self._score(
+            MODULE.EvaluationFacts(
+                **self._executing(
+                    executes_candidate=True,
+                    execution_witness=self.WITNESS,
+                    calibration_present=True,
+                    calibration_supplied=True,
+                    timed_out=True,
+                )
+            )
+        )
+        self.assertEqual([cap.condition for cap in score.caps], ["evaluator-timeout"])
+        evidence = self._calibration_subscore(score).evidence
+        self.assertTrue(evidence.startswith("calibration ran but did not finish"))
+        # No ceiling on this card names a containment review, so the line does
+        # not send the reader to look for one...
+        self.assertNotIn("containment review", evidence)
+        # ...and it still may not ask for the calibration the gate forbids.
+        self.assertNotIn("complete calibration", evidence.casefold())
+        self.assertTrue(evidence.endswith("it costs points until that evidence exists"))
+        # The credit is refused all the same: this is about what the card
+        # SAYS, not about paying for a calibration taken out of scope.
+        self.assertEqual(self._calibration_subscore(score).value, 0.0)
 
     def test_a_calibration_that_failed_still_convicts(self) -> None:
         """The one direction this refusal may fail in.
@@ -21484,6 +21582,21 @@ class TheEvaluatorExecutionReadIsThreeStatedTests(unittest.TestCase):
         )
 
     def test_a_witness_is_carried_through_verbatim(self) -> None:
+        """Verbatim, and the strongest one - which is a change of pin.
+
+        This asserted `imports duckdb (line 4)`, the first entry, because
+        preflight orders witnesses by line and this reader took the head. That
+        order answers "what should I look at first"; the card asks "why was I
+        refused", and since this string started carrying a 45 ceiling and a
+        containment review the two are not the same question. Importing a
+        driver is not running the answer, and a customer would be right to
+        argue with a refusal that says it is, while `calls .execute()` — the
+        construct that establishes the call path — sat unquoted in the same
+        record.
+
+        `verbatim` is still the property under test and is unchanged: the
+        string is printed as preflight wrote it, never re-worded here.
+        """
         executes, witness = self.read(
             {
                 "exists": True,
@@ -21496,7 +21609,7 @@ class TheEvaluatorExecutionReadIsThreeStatedTests(unittest.TestCase):
             }
         )
         self.assertIs(executes, True)
-        self.assertEqual(witness, "imports duckdb (line 4)")
+        self.assertEqual(witness, "calls .execute() (line 9)")
 
     def test_an_unreadable_verdict_is_no_verdict(self) -> None:
         """Read the same three-state way as `parses` beside it.
