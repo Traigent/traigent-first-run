@@ -652,6 +652,10 @@ def parse_env_file(path: Path) -> dict[str, str | None]:
     lines. That file is the one thing this guide asks a first-run customer to
     write by hand, and two stray lines is an ordinary way to write one: a
     pasted note without a `#`, a wrapped value, two bare `export FOO`.
+
+    So this is a parser that also RECORDS, and `read_env` is its one caller
+    for that reason: a second call in the same run would record `env-file` a
+    second time, which is the defect this function was just fixed for.
     """
     values: dict[str, str | None] = {}
     if not path.exists():
@@ -706,7 +710,11 @@ def parse_env_file(path: Path) -> dict[str, str | None]:
             # The same facts as data, on `emit`'s own rule that a wording
             # change must never alter a score, and in full: the sentence
             # truncates for a reader, the metrics do not, so nothing measured
-            # is lost to the display ceiling.
+            # is lost to the display ceiling. Uncapped for the reason the id
+            # digests beside `dataset-ids` are - a consumer asking whether a
+            # line it was told about is a line of this file needs every one -
+            # and the population is bounded by an `.env`, which is the smallest
+            # file this run reads.
             {
                 "ignored_lines": len(unparsed_lines) + len(invalid_name_lines),
                 "unparsed_lines": unparsed_lines,

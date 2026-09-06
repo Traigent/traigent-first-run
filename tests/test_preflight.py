@@ -6635,12 +6635,16 @@ ENV_LINE_SHAPES = (
 #: owns those lines. Excluded here rather than fixed twice: two branches
 #: rewriting the same arms is a conflict, not a second fix.
 #:
-#: It is a hole in the enumeration and is meant to be closed. When #442 lands,
-#: every pair below passes and this frozenset should be emptied in the same
-#: commit; the enumeration is written so that deleting an entry is the whole
-#: edit. Nothing else is excused - the pairs are named, not a predicate, so
-#: this cannot quietly widen.
+#: The pairs are excused for ONE check name and nothing else - see
+#: `DATASET_DUPLICATE_OWNED_ELSEWHERE`. A second, unrelated name recording
+#: twice on the same shape still reds, so this is a hole the width of a known
+#: defect rather than the width of a corpus. When #442 lands these shapes stop
+#: raising, the enumeration goes on asserting over them, and both names here
+#: should be deleted in the same commit.
 DATASET_SHAPES_OWNED_ELSEWHERE = frozenset({("synthetic", "all-easy")})
+#: The one check name the shapes above may record twice, spelled out so the
+#: exemption cannot cover a defect nobody has seen.
+DATASET_DUPLICATE_OWNED_ELSEWHERE = "dataset-difficulty"
 
 #: `--models` entries, including the repeat that raised and two spellings of
 #: an id this check refuses.
@@ -6663,20 +6667,27 @@ class NoInputMakesOneCheckSpeakTwiceTests(unittest.TestCase):
     `dataset-difficulty`, and the two here - and every one of them was found by
     a person reading the file.
 
-    `OneRecordPerCheckTests` pins those five. This class pins the PROPERTY
-    instead: over enumerated input shapes, no check records its name twice.
-    The sixth instance does not have to be thought of first, only reached by
-    one of these enumerations.
+    `OneRecordPerCheckTests` pins the first two and the registry; the two
+    found here are pinned below. This class pins the PROPERTY as well: over
+    enumerated input shapes, no check records its name twice. The sixth
+    instance does not have to be thought of first, only reached by one of these
+    enumerations.
 
-    What it cannot do is worth stating. The enumerations are bounded and
-    hand-written, so a shape nobody listed is a shape nobody covers, and the
-    dataset walk here is small beside the corpus the rest of this module
-    drives. It proves no property of `check_evaluator`, `check_sdk`, or
-    `check_existing_traigent_use`, none of which take a customer-controlled
-    list. And it is a test of the check surface, not of the registry: the
-    registry keeps its own test above. One dataset shape is excluded outright,
+    What it cannot do is worth stating, because a property test that is read as
+    covering more than it does is worse than none. The enumerations are bounded
+    and hand-written, so a shape nobody listed is a shape nobody covers. The
+    `.env` walk drives `read_env` only, not `check_keys`,
+    `check_cost_settings`, or the shadowed-credential check, which read the
+    same file. The dataset walk writes no `split` field and passes no
+    `evaluator_method` or field overrides, so the split, tuning-size, holdout
+    and outcome-field arms are never entered. It proves no property of
+    `check_evaluator`, `check_sdk`, or `check_existing_traigent_use`, none of
+    which take a customer-controlled list. And it is a test of the check
+    surface, not of the registry: the registry keeps its own test above.
+    Finally, one dataset shape may still record `dataset-difficulty` twice -
     named and explained at `DATASET_SHAPES_OWNED_ELSEWHERE`, because a
-    different open branch owns the arms that would fix it.
+    different open branch owns the arms that would fix it - and that exemption
+    is for that one name, not for the shape.
     """
 
     def setUp(self) -> None:
@@ -6772,6 +6783,22 @@ class NoInputMakesOneCheckSpeakTwiceTests(unittest.TestCase):
                 MODULE.RESULTS.clear()
                 combination = (source, bands, ids, identical)
                 if (source, bands) in DATASET_SHAPES_OWNED_ELSEWHERE:
+                    # Still asserted over, and only the one known name
+                    # excused: the shape may raise on
+                    # `DATASET_DUPLICATE_OWNED_ELSEWHERE` while another
+                    # branch owns that fix, and must otherwise obey the
+                    # property like every other shape. Written so it stays
+                    # green when that branch lands and the raise stops.
+                    try:
+                        MODULE.check_dataset(dataset)
+                    except MODULE.DuplicateCheckName as raised:
+                        self.assertIn(
+                            f"{DATASET_DUPLICATE_OWNED_ELSEWHERE!r}",
+                            str(raised),
+                            combination,
+                        )
+                        continue
+                    self.assert_one_record_per_check(combination)
                     continue
                 MODULE.check_dataset(dataset)
                 self.assert_one_record_per_check(combination)
