@@ -19421,10 +19421,16 @@ class TheBuildHalfCitesTheAgentItReadTests(unittest.TestCase):
         simple agent most commonly lands on, so it is the arm the marking was
         most needed on.
 
-        The clause before the marking stays this read's own: the document
-        declares no tools, and tool wiring therefore does not apply. What
-        follows the marking is the assistant's, exactly as on every other
-        check.
+        The clause before the marking stays this read's own, and says only what
+        this read established: that the DOCUMENT declares no tools, and that
+        tool wiring was therefore not checked. It used to say "the agent
+        declares no tools, so tool wiring does not apply", which adopted the
+        declaration as a finding about the customer's agent and reported the
+        question settled - over an agent that visibly calls two tools, both
+        halves were false and both were in this script's voice. Nothing here
+        refutes the declaration, and saying what was read needs no notion of
+        tool-hood to do it. What follows the marking is the assistant's,
+        exactly as on every other check.
         """
         prose = "other_agent.py:100-118 the tool table is empty for this route"
         rows = self._observed(
@@ -19438,7 +19444,15 @@ class TheBuildHalfCitesTheAgentItReadTests(unittest.TestCase):
         # sentence a customer meets and not on the constant agreeing with
         # itself.
         marking = "Assistant observation, which nothing here checks: "
-        self.assertIn("the agent declares no tools", rows["tools"])
+        # "the document", not "the agent": what this read saw is a declaration,
+        # and nothing here checks it against the file. And "was not checked",
+        # not "does not apply": the question is open, not answered.
+        self.assertIn(
+            "the document declares no tools, so tool wiring was not checked here.",
+            rows["tools"],
+        )
+        self.assertNotIn("the agent declares no tools", rows["tools"])
+        self.assertNotIn("does not apply", rows["tools"])
         self.assertIn(marking, rows["tools"])
         self.assertIn(prose, rows["tools"])
         # The read's own clause first, then the marking, then the prose. A

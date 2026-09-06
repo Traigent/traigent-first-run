@@ -17568,29 +17568,37 @@ def build_signal_from_entry(
         # the marking opens the line, so this script's summary sentence ("no
         # prompt reached the model call") sits inside the attribution - it is a
         # claim ABOUT THE AGENT, reached only through the assistant's
-        # declaration, so it is the assistant's to answer for. "The agent
+        # declaration, so it is the assistant's to answer for. "The document
         # declares no tools" is a claim ABOUT THE DOCUMENT - it is what the
         # document says, read here - so it stays outside. Put a claim about the
         # agent outside the marking and this script has adopted it.
         #
-        # AND THE CLAIM ABOUT THE DOCUMENT IS ALL IT IS. `used: false` is a
-        # self-reported boolean and nothing refutes it: the `used: true` arm
-        # below raises on a declared name the file never mentions, and this arm
-        # has no counterpart, so a carried-over `"used": false` over an agent
-        # that visibly calls two tools is accepted - and, being
-        # `applicable=False`, drops out of the denominator as well. Pre-existing
-        # and unchanged here; refuting it needs a derivation that can tell a
-        # tool call from any other call, which this module does not attempt
-        # (traigent-first-run#451).
+        # SO THE CLAUSE SAYS "THE DOCUMENT", AND SAYS "WAS NOT CHECKED". It
+        # used to say "the agent declares no tools, so tool wiring does not
+        # apply", which is the reasoning above contradicted by its own string
+        # twice over: "the agent" adopts the declaration this read never
+        # verified, and "does not apply" reports the question settled when
+        # nothing settled it. `used: false` is a self-reported boolean and
+        # nothing refutes it - the `used: true` arm below raises on a declared
+        # name the file never mentions, and this arm has no counterpart - so a
+        # carried-over `"used": false` over an agent that visibly calls two
+        # tools was printed here, in this script's own voice, as a finding
+        # about the customer's agent. Saying what was actually read costs no
+        # notion of tool-hood; refuting the declaration would need one, which
+        # this module does not attempt (traigent-first-run#451, and #454 for
+        # what an unrefuted answer may do to a denominator - stated there
+        # rather than restated here, because there is more than one
+        # denominator and `combine` is the one place that says what each does
+        # with `applicable`).
         #
         # No "excluded from this score" here: nothing was withheld. A check
-        # that does not apply had no measurement to withhold, and claiming one
-        # was withheld would read as a penalty for an agent that simply has no
+        # with no measurement to withhold had none to exclude, and saying one
+        # was excluded would read as a penalty for an agent that simply has no
         # tools.
         return BuildSignal(
             check,
             0.0,
-            "the agent declares no tools, so tool wiring does not apply. "
+            "the document declares no tools, so tool wiring was not checked here. "
             # The prose's own full stop is dropped before this one is added,
             # the same normalisation `reason` gets above and for the same
             # reason: `evidence` is free prose, `cited_source_summary` appends
@@ -17965,7 +17973,7 @@ def _observed_declaration(signal: BuildSignal) -> BuildSignal:
     """One rendered build declaration: the framing, the prose, the citation.
 
     The citation is appended to every signal that carries one, including the
-    ones that were already unmeasured - a check reporting that the agent
+    ones that were already unmeasured - a check reporting that the document
     declares no tools is still a claim about a line of somebody's file. The
     "not independently verified" framing is added only to the signals that
     would otherwise have scored, because that sentence is about a measurement
