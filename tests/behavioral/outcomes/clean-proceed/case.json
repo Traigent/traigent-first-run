@@ -1,20 +1,25 @@
 {
   "id": "clean-proceed",
   "state": "clean",
-  "why": "The arm nothing else reaches: no cap at all, so `recommended_action` falls through both loops and returns `proceed`. Without it the declared cards would cover only degraded runs and could not tell a regression that invents a cap from a healthy run.",
+  "why": "The arm nothing else reaches: no cap at all, so `recommended_action` falls through both loops and returns `proceed`. Without it the declared cards would cover only degraded runs and could not tell a regression that invents a cap from a healthy run. It scores 91, which is an EXCELLENT number, and reads WORKABLE because the answer-key floor holds the top two bands until somebody has read the expected answers - `band_held_for_unread_answers` is declared true here and is the gate to look at if this band moves. It read 81 until the harness argv obeyed the guide: the evaluator's method, origin and task kind were all omitted from a call SKILL.md requires them on, so the evaluation pillar's task-fit check was withheld and the band was held by pillar confidence instead (traigent-first-run#407).",
   "dataset": "evaluation-dataset.jsonl",
   "agent_origin": "brought",
+  "evaluator": "evaluator.py",
+  "evaluator_origin": "brought",
+  "evaluator_method": "normalized-exact",
+  "task_kind": "closed-label",
   "config_space": "config-space.json",
   "calibration": {
     "scorer": "evaluator.py:score_intent",
     "cases": "calibration-cases.json"
   },
   "expected": {
-    "overall": 81,
+    "overall": 91,
     "band": "WORKABLE",
     "status": "OK",
     "recommended_action": "proceed",
     "caps": [],
-    "asks_about_repeats": false
+    "asks_about_repeats": false,
+    "band_held_for_unread_answers": true
   }
 }

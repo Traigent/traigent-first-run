@@ -28,6 +28,7 @@
         "asks": false
       }
     ],
-    "asks_about_repeats": false
+    "asks_about_repeats": false,
+    "band_held_for_unread_answers": false
   }
 }

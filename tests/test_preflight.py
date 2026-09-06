@@ -4448,6 +4448,30 @@ def score(*, output, expected, input_data, metadata):
         case _:
             return float(str(output).strip() == str(expected).strip())
 '''
+SQLGLOT_RENDER_COMPARISON = '''"""Compare two queries by re-rendering both parse trees. Nothing connects."""
+
+import sqlglot
+
+
+def score(*, output, expected, input_data, metadata):
+    del input_data, metadata
+    produced = sqlglot.parse_one(str(output)).sql(dialect="duckdb", pretty=False)
+    wanted = sqlglot.parse_one(str(expected)).sql()
+    return float(produced.casefold() == wanted.casefold())
+'''
+POLARS_FRAME_COMPARISON = '''"""Read the reference rows with a data-frame library, then compare text."""
+
+import polars as pl
+
+REFERENCE = pl.read_csv("aliases.csv")
+
+
+def score(*, output, expected, input_data, metadata):
+    del input_data, metadata
+    matched = REFERENCE.filter(pl.col("alias") == str(output).strip())
+    canonical = matched["canonical"].to_list()
+    return float(bool(canonical) and canonical[0] == str(expected).strip())
+'''
 NON_EXECUTING_EVALUATORS = {
     "callable object": CALLABLE_OBJECT_COMPARISON,
     "match statement dispatch": MATCH_DISPATCH_COMPARISON,
@@ -4461,6 +4485,8 @@ NON_EXECUTING_EVALUATORS = {
     "reference table lookup": REFERENCE_TABLE_COMPARISON,
     "llm judge": LLM_JUDGE_SCORER,
     "dynamic import of a helper": DYNAMIC_IMPORT_OF_A_HELPER,
+    "sqlglot render comparison": SQLGLOT_RENDER_COMPARISON,
+    "data-frame reference table": POLARS_FRAME_COMPARISON,
 }
 
 SQLITE_ROUNDTRIP = '''"""Run both queries against a fixture database and compare rows."""
@@ -4574,6 +4600,47 @@ def score(*, output, expected, input_data, metadata):
     namespace = runpy.run_path(str(path))
     return float(namespace.get("answer") == expected)
 '''
+PYSPARK_SESSION_SQL = '''"""Submit both queries to a Spark session built at import time."""
+
+import pyspark.sql
+
+SESSION = pyspark.sql.SparkSession.builder.getOrCreate()
+
+
+def score(*, output, expected, input_data, metadata):
+    del input_data, metadata
+    produced = SESSION.sql(output).collect()
+    return float(produced == SESSION.sql(expected).collect())
+'''
+IBIS_BACKEND_SQL = '''"""Same idea through a backend front end."""
+
+import ibis
+
+
+def score(*, output, expected, input_data, metadata):
+    del metadata
+    connection = ibis.duckdb.connect(input_data["database"])
+    produced = connection.sql(output).to_pyarrow()
+    return float(produced == connection.sql(expected).to_pyarrow())
+'''
+POLARS_FRAME_SQL = '''"""A data-frame library with a SQL surface, and no engine import to read."""
+
+import polars as pl
+
+
+def score(*, output, expected, input_data, metadata):
+    del metadata
+    frame = pl.read_parquet(input_data["table"])
+    return float(frame.sql(output).equals(frame.sql(expected)))
+'''
+HANDED_IN_CONNECTION_SQL = '''"""The connection arrives in input_data and is asked with .sql()."""
+
+
+def score(*, output, expected, input_data, metadata):
+    del metadata
+    connection = input_data["connection"]
+    return float(connection.sql(output).fetchall() == connection.sql(expected).fetchall())
+'''
 EXECUTING_EVALUATORS = {
     "sqlite roundtrip": SQLITE_ROUNDTRIP,
     "duckdb roundtrip": DUCKDB_ROUNDTRIP,
@@ -4585,6 +4652,10 @@ EXECUTING_EVALUATORS = {
     "from-import of a runner": FROM_IMPORT_OF_A_RUNNER,
     "postgres driver": POSTGRES_DRIVER,
     "runs a candidate file": RUNS_A_CANDIDATE_FILE,
+    "spark session": PYSPARK_SESSION_SQL,
+    "ibis backend": IBIS_BACKEND_SQL,
+    "data-frame sql surface": POLARS_FRAME_SQL,
+    "handed-in connection asked with .sql()": HANDED_IN_CONNECTION_SQL,
 }
 
 
@@ -4687,6 +4758,61 @@ class TheEvaluatorCallPathIsReadOutOfItsOwnTreeTests(unittest.TestCase):
         )
         self.assertEqual(self.witnesses("from . import duckdb\n"), ())
         self.assertEqual(self.witnesses("from .helpers import subprocess\n"), ())
+
+    def test_the_data_frame_engines_are_reached_through_sql_not_the_dbapi(
+        self,
+    ) -> None:
+        """traigent-first-run#416.
+
+        None of these three submits a statement through a DB-API name, so the
+        table that predates them answered "no" to all of them, and the same
+        scorer written against `sqlite3` was refused. Two are found on the
+        import - a `pyspark` or `ibis` import is a session or a backend being
+        built - and the third only on the call, which is the point of adding
+        the call name: `polars` is a data-frame library first, so importing it
+        proves nothing and `.sql()` over a frame proves the statement ran.
+        """
+        self.assertEqual(
+            self.witnesses("import pyspark.sql\n"),
+            ("imports pyspark.sql (line 1)",),
+        )
+        self.assertEqual(
+            self.witnesses("from pyspark.sql import SparkSession\n"),
+            ("imports from pyspark.sql (line 1)",),
+        )
+        self.assertEqual(self.witnesses("import ibis\n"), ("imports ibis (line 1)",))
+        self.assertEqual(self.witnesses("import polars as pl\n"), ())
+        self.assertEqual(
+            self.witnesses("import polars as pl\nframe.sql(output)\n"),
+            ("calls .sql() (line 2)",),
+        )
+
+    def test_sql_is_a_witness_when_it_is_handed_a_statement_and_not_when_it_renders_one(
+        self,
+    ) -> None:
+        """The one engine call name no standard pins.
+
+        `parse_one(text).sql()` renders a parse tree back to a string and
+        connects to nothing, and it is the shape a canonicalising text-to-SQL
+        comparator uses - the honest evaluator this guide asks for, and the
+        expensive one to refuse. What separates it from `session.sql(text)` is
+        that an engine is handed the statement, so the rule is the argument
+        rather than the name.
+        """
+        for source in (
+            "connection.sql(output)\n",
+            "session.sql(f'select * from ({output})')\n",
+            "connection.sql(*queries)\n",
+        ):
+            with self.subTest(source=source):
+                self.assertTrue(self.witnesses(source), source)
+        for source in (
+            "parsed.sql()\n",
+            "parsed.sql(dialect='duckdb', pretty=False)\n",
+            "parsed.sql('duckdb')\n",
+        ):
+            with self.subTest(source=source):
+                self.assertEqual(self.witnesses(source), (), source)
 
     def test_the_process_family_is_matched_and_ordinary_os_members_are_not(
         self,

@@ -56,9 +56,28 @@ RECORDED_FIELDS = ("band", "status", "recommended_action", "overall")
 # `recommended_action` reads, so a cap that silently changes kind is a change to
 # what the run does, not only to what it scores.
 RECORDED_CAP_FIELDS = ("condition", "ceiling", "blocks", "asks")
-EXPECTED_FIELDS = frozenset((*RECORDED_FIELDS, "caps", "asks_about_repeats"))
+EXPECTED_FIELDS = frozenset(
+    (*RECORDED_FIELDS, "caps", "asks_about_repeats", "band_held_for_unread_answers")
+)
 
 REQUIRED_CASE_KEYS = {"id", "state", "why", "expected"}
+# What a case is allowed to say about the run, beside the four it must say.
+#
+# Checked rather than read with `.get` alone, because every one of these is
+# optional and a misspelled key is therefore silent: the flag is simply not
+# passed, the card moves, and the declaration beneath it is re-recorded to
+# match a call nobody meant to make. That is the failure this file exists to
+# make impossible for a SCORE, and it was available one level up.
+OPTIONAL_CASE_KEYS = {
+    "dataset",
+    "calibration",
+    "config_space",
+    "agent_origin",
+    "evaluator",
+    "evaluator_method",
+    "evaluator_origin",
+    "task_kind",
+}
 # Every state the score's own output selection can be in. `recommended_action`
 # has exactly three arms - first blocking cap, else first asking cap, else
 # `proceed` - and `status` is BLOCKED exactly when a blocking cap exists. These
@@ -92,6 +111,13 @@ def load_case(case_dir: Path) -> dict[str, Any]:
             f"{case_dir.name}: state {contract['state']!r} is not one of "
             f"{sorted(STATES)}"
         )
+    unknown = sorted(set(contract) - REQUIRED_CASE_KEYS - OPTIONAL_CASE_KEYS)
+    if unknown:
+        raise OutcomeError(
+            f"{case_dir.name}: case.json carries unknown key(s) "
+            f"{unknown}; every key here becomes part of the call the card was "
+            "recorded from, so one nobody reads is a flag nobody passed"
+        )
     expected_fields = set(contract["expected"])
     if expected_fields != EXPECTED_FIELDS:
         missing = sorted(EXPECTED_FIELDS - expected_fields)
@@ -113,6 +139,17 @@ def recorded_outcome(score: dict[str, Any]) -> dict[str, Any]:
     # asking about repeats on the clean fixtures would leave every declared
     # field untouched and no case would fail.
     outcome["asks_about_repeats"] = score.get("repeated_inputs") is not None
+    # WHICH GATE HOLDS THE BAND, recorded because a band can be held by more
+    # than one and the card looks identical either way. `clean-proceed` scores
+    # 91 with no cap at all and still reads WORKABLE: the answer-key floor is
+    # what holds it, and before the argv obeyed `SKILL.md` it was the
+    # confidence gate over a withheld task-fit check. Without this field that
+    # substitution is invisible - same band, same number, different reason -
+    # which is the swap `test_contracts.py` used to pin the old argv against
+    # (traigent-first-run#405, #407).
+    outcome["band_held_for_unread_answers"] = (
+        score.get("band_limited_by_unread_answers") is True
+    )
     outcome["caps"] = [
         {field: cap[field] for field in RECORDED_CAP_FIELDS} for cap in score["caps"]
     ]
@@ -143,6 +180,18 @@ def run_case(case_dir: Path, contract: dict[str, Any]) -> dict[str, Any]:
     dataset = contract.get("dataset")
     if dataset:
         argv.extend(("--dataset", str(project / dataset)))
+    # The preflight half of the run-scoped evaluator rules. `SKILL.md` puts the
+    # resolved method on every PAIRED preflight/readiness invocation, so the
+    # method cannot be added to the score alone without splitting the pair the
+    # rule is about, and `preflight.py --evaluator` is to be passed wherever an
+    # evaluator file was found. These cases shipped one and told preflight
+    # nothing about it (traigent-first-run#407).
+    evaluator = contract.get("evaluator")
+    if evaluator:
+        argv.extend(("--evaluator", str(project / evaluator)))
+    evaluator_method = contract.get("evaluator_method")
+    if evaluator_method:
+        argv.extend(("--evaluator-method", evaluator_method))
     argv.extend(("--defer-missing-sdk", "--json"))
     preflight = harness.run_command(argv, project, audit_log)
 
@@ -191,6 +240,26 @@ def run_case(case_dir: Path, contract: dict[str, Any]) -> dict[str, Any]:
     agent_origin = contract.get("agent_origin")
     if agent_origin:
         score_argv.extend(("--agent-origin", agent_origin))
+    # The rest of the same rule, and the reason the recorded cards moved.
+    #
+    # `SKILL.md` declares the evaluator's author on every readiness call under
+    # the paragraph that declares the agent's, and omitting either is permitted
+    # only while that component does not exist; the method is the run-scoped
+    # value paired with preflight above; the task kind is the conditional one,
+    # passed where project evidence grounds a recognised kind. Three of these
+    # four cases ship and calibrate an evaluator over three fixed labels, so all
+    # three flags were forbidden omissions and the reference cards were the
+    # output of a call the guide does not permit (traigent-first-run#407).
+    #
+    # Carried per case rather than derived here on purpose. What each value IS
+    # is a reading of that fixture's own evaluator and rows, and a helper that
+    # guessed it would be this file scoring its own homework.
+    if evaluator_origin := contract.get("evaluator_origin"):
+        score_argv.extend(("--evaluator-origin", evaluator_origin))
+    if evaluator_method:
+        score_argv.extend(("--evaluator-method", evaluator_method))
+    if task_kind := contract.get("task_kind"):
+        score_argv.extend(("--task-kind", task_kind))
     score_argv.append("--json")
     score = json.loads(
         harness.run_command(

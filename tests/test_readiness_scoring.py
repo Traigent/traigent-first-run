@@ -19134,6 +19134,82 @@ class TheBuildHalfCitesTheAgentItReadTests(unittest.TestCase):
             sorted(name for name, _weight in MODULE.AGENT_BUILD_CHECKS),
         )
 
+    def test_the_arm_that_quotes_nothing_still_says_whose_sentence_it_is(
+        self,
+    ) -> None:
+        """traigent-first-run#362, on the arm the mitigation could not reach.
+
+        `determined: false` has no coordinate by construction, so the check
+        that prints the cited line beside the prose has nothing to print - and
+        the marking that says the prose is authored was applied only to the
+        checks that would otherwise have scored. Both halves were therefore
+        absent at once, on the one arm where the read settled least and
+        carried-over prose is likeliest: a fabricated `other_agent.py` sentence
+        arrived in this script's own voice, with nothing beside it.
+
+        The reason keeps its own clause. It is this script's finding about the
+        read, not the assistant's about the agent, and the two are different
+        claims.
+        """
+        rows = {
+            signal.name: signal.evidence
+            for signal in MODULE.build_declarations_are_unmeasured(
+                self._read(
+                    self._undetermined(
+                        evidence=(
+                            "other_agent.py:41-58 SYSTEM carries two worked "
+                            "examples and a retry ladder"
+                        )
+                    )
+                ).build
+            )
+        }
+        # Written out rather than read off the module, so this asserts on the
+        # sentence a customer meets and not on the constant agreeing with
+        # itself.
+        marking = "Assistant observation, which nothing here checks: "
+        for check in MODULE.BUILD_CHECK_ANSWER:
+            with self.subTest(check=check):
+                self.assertIn("not established by this read", rows[check])
+                self.assertIn("the prompt is fetched at runtime", rows[check])
+                self.assertIn(marking, rows[check])
+                self.assertIn("other_agent.py:41-58", rows[check])
+                # The authored sentence sits AFTER the marking, not before it
+                # and not inside a parenthesis that reads as this script's own
+                # aside.
+                self.assertLess(
+                    rows[check].index(marking),
+                    rows[check].index("other_agent.py:41-58"),
+                )
+                # Nothing was withheld here, so nothing claims it was.
+                self.assertNotIn("excluded from this score", rows[check])
+                self.assertNotIn("Read from", rows[check])
+
+    def test_the_marking_is_one_phrase_and_not_two_spellings(self) -> None:
+        """Why the constant exists rather than a literal at each site.
+
+        The arm this issue was about lost the marking by being composed
+        somewhere else, and a second literal is how that happens again. Both
+        the read and the render reach for the same name, and an unmeasured
+        build declaration is marked on every arm that carries authored prose.
+        """
+        source = inspect.getsource(MODULE)
+        self.assertEqual(source.count('"Assistant observation, which nothing'), 1)
+        settled = self._observed(
+            "MODEL = ['a']\ndef selected(q):\n    return q\n",
+            {"control-flow": {"loop": False, "bounded": True}},
+        )
+        undetermined = {
+            signal.name: signal.evidence
+            for signal in MODULE.build_declarations_are_unmeasured(
+                self._read(self._undetermined()).build
+            )
+        }
+        for check in ("prompt", "output-contract"):
+            with self.subTest(check=check):
+                self.assertIn(MODULE.UNCHECKED_OBSERVATION, settled[check])
+                self.assertIn(MODULE.UNCHECKED_OBSERVATION, undetermined[check])
+
     def test_a_quoted_line_cannot_rewrite_the_card_around_it(self) -> None:
         """Customer source text crosses two renderers, so it is made safe first.
 

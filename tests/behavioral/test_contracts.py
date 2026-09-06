@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -161,51 +162,122 @@ class BehavioralContractUnitTests(unittest.TestCase):
             "would clear this.",
         )
 
-    def test_the_clean_cases_band_is_not_an_accident_of_the_harness_argv(
+    # The sentences in the guide that say a flag rides on every scoring call.
+    #
+    # The FLAGS are not listed here, only the phrase each mandate is written
+    # around, so the required set is read out of the guide rather than restated
+    # beside it. That is the whole point: this rule moved twice in one week
+    # (#427, #428), and a test carrying its own copy of the answer would have
+    # stayed green through both.
+    SCORING_MANDATE_PHRASES = (
+        "every readiness call",
+        "every paired preflight/readiness invocation",
+        "every readiness invocation",
+    )
+
+    def mandated_scoring_flags(self) -> set[str]:
+        """Every flag the guide puts on every scoring call, read from the guide."""
+        flags: set[str] = set()
+        corpus = " ".join(
+            " ".join(document.read_text(encoding="utf-8").split())
+            for document in (
+                harness.SKILL,
+                harness.SKILL.parent / "references" / "evaluation-and-dataset.md",
+            )
+        )
+        for phrase in self.SCORING_MANDATE_PHRASES:
+            # Each mandate has to still be findable, or the set below is
+            # whatever is left rather than what the guide requires - which is
+            # the one way a derived test goes quietly wrong.
+            self.assertIn(
+                phrase,
+                corpus,
+                f"the guide no longer says {phrase!r}, so this test can no "
+                "longer read the required flags out of it",
+            )
+        for sentence in re.split(r"(?<=\.) ", corpus):
+            if any(phrase in sentence for phrase in self.SCORING_MANDATE_PHRASES):
+                flags.update(re.findall(r"--[a-z][a-z-]*[a-z]", sentence))
+        return flags
+
+    def test_the_recorded_cards_come_from_the_argv_the_guide_mandates(
         self,
     ) -> None:
-        """`clean-proceed` reads WORKABLE at 81, and 81 is a STRONG number.
+        """traigent-first-run#405 and #407, answered rather than pinned.
 
-        It reads WORKABLE because `band_for` demotes it: `run_case` builds its
-        readiness argv by hand and passes no `--task-kind`, so the evaluation
-        pillar's task-fit check is withheld, pillar confidence falls under the
-        gate, and the band is held for thin evidence.
+        These four cases are this repository's only committed record of what
+        each `recommended_action` arm looks like end to end, and the reference
+        "clean" card was the output of a call the guide forbids: no
+        `--evaluator-origin`, no `--evaluator-method`, no `--task-kind`, over
+        three fixtures that each ship and calibrate an evaluator. Its evaluation
+        pillar read 69 where an obedient run reads 100, and its overall read 81
+        where an obedient run reads 91 - so a regression of up to ten points on
+        the path a customer actually walks moved nothing here.
 
-        That couples a hand-declared card to a flag neither the case nor the
-        declaration names, and it is load-bearing beyond tidiness. The
-        answer-key floor holds the top two bands until a read of the expected
-        answers has entered, and no outcome case supplies one - so the moment
-        this argv gains `--task-kind`, this case scores into STRONG and the
-        floor becomes what holds it, silently, with its recorded card unchanged
-        and its recorded REASON different.
-
-        So the omission is pinned rather than relied on. Adding the flag is a
-        reasonable change - SKILL.md mandates it on every guided scoring call -
-        and this test is what makes it a decision: add it, re-declare the case,
-        and say which gate holds the band now. Filed as
-        traigent-first-run#405.
+        The previous test in this place pinned the omission instead, as a way of
+        making the addition a decision rather than an accident. The decision is
+        taken now, so what stands here is the other half of it: the required set
+        is DERIVED from the sentences that mandate it, and the moment the guide
+        names a fifth flag - or renames one of these - this goes red rather than
+        going stale.
         """
+        required = self.mandated_scoring_flags()
+        self.assertEqual(
+            required,
+            {
+                "--evaluator-method",
+                "--evaluator-origin",
+                "--agent-origin",
+                "--task-kind",
+            },
+            "the guide's scoring mandate names a different set of flags than "
+            "the harness was built against; carry the new one through "
+            "`run_case` and re-declare the cases it moves",
+        )
         source = Path(outcomes.__file__).read_text(encoding="utf-8")
         marker = "score_argv = ["
         self.assertIn(marker, source, "the outcome readiness argv moved")
         argv_block = source.split(marker, 1)[1].split("score = json.loads", 1)[0]
-        self.assertNotIn(
-            "--task-kind",
-            argv_block,
-            "run_case now declares a task kind, so clean-proceed's evaluation "
-            "pillar is no longer under the confidence gate and its band may be "
-            "held by the answer-key floor instead. Re-declare the affected "
-            "cases and say which gate holds each band - see "
-            "traigent-first-run#405.",
-        )
-        # And the shape that argv produces, read off the declaration so this
-        # needs no run: a score of 81 with no cap at all reading WORKABLE is
-        # only possible through a band gate, because 81 is a STRONG number and
-        # nothing capped it. Which gate is the thing this test protects.
+        for flag in sorted(required):
+            with self.subTest(flag=flag):
+                self.assertIn(
+                    flag,
+                    argv_block,
+                    f"`run_case` cannot pass {flag}, which the guide puts on "
+                    "every scoring call, so these cards record a call the "
+                    "guide does not permit",
+                )
+        # The method is the one that is not readiness-only: the guide pairs it
+        # across both scripts, so passing it to the score alone would obey the
+        # letter of the flag and break the pairing the rule is about.
+        preflight_block = source.split(
+            "argv = [sys.executable, str(harness.PREFLIGHT)", 1
+        )[1].split("preflight = harness.run_command", 1)[0]
+        self.assertIn("--evaluator-method", preflight_block)
+        self.assertIn("--evaluator", preflight_block)
+
+    def test_the_clean_cases_band_names_the_gate_that_holds_it(self) -> None:
+        """`clean-proceed` reads WORKABLE at 91, and 91 is an EXCELLENT number.
+
+        A band below the one its number names is always held by a gate, and
+        more than one gate can hold it - which makes the card ambiguous exactly
+        where it matters, because the two say different things about what to do
+        next. It used to be pillar confidence, over a task-fit check withheld
+        because the harness declared no task kind. It is now the answer-key
+        floor: the top two bands are held until a read of the expected answers
+        has entered, and no outcome case supplies one.
+
+        So the gate is declared beside the band rather than left to be inferred
+        from it, and `recorded_outcome` lifts it out of the payload. A future
+        change that swaps one gate for the other keeps the same band and the
+        same number and fails here, which is the substitution the previous
+        version of this test could only prevent by forbidding the flag.
+        """
         contract = outcomes.load_case(outcomes.CASES / "clean-proceed")
-        self.assertEqual(contract["expected"]["overall"], 81)
+        self.assertEqual(contract["expected"]["overall"], 91)
         self.assertEqual(contract["expected"]["band"], "WORKABLE")
         self.assertEqual(contract["expected"]["caps"], [])
+        self.assertTrue(contract["expected"]["band_held_for_unread_answers"])
 
     def test_a_refreshed_manifest_cannot_hide_a_changed_band(self) -> None:
         """The executable form of the claim retiring the hash lock rests on.

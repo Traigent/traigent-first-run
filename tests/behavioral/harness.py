@@ -883,6 +883,21 @@ def score_command(
     scenario runs twice and `main()` compares the two evidence bundles byte for
     byte; raw preflight output embeds the per-pass temporary project path, so a
     raw-stdin digest would report a reproducible scenario as nondeterministic.
+
+    RESIDUAL, and it is deliberate rather than missed. The outcome cases under
+    `outcomes/` now build their readiness argv the way `SKILL.md` mandates -
+    evaluator origin, method and grounded task kind, with the method paired
+    into preflight - and the container scenarios that call this helper do not.
+    Two of them are clean by the guide's own permissions (`zero-anchor` and
+    `stub-agent-no-anchor` ship no evaluator, so every one of those flags is
+    correctly omitted); two are not, and their fix is a design decision rather
+    than a re-record. `partial-missing-dataset` ships a clean evaluator and
+    declares `evaluator-absent` in its opening card, and declaring the method
+    moves its asserted `opening_score` from 0 to 8; `weak-invalid` ships one
+    the scenario is named for calling the wrong ruler, and declaring `exact`
+    over it moves its asserted band from NOT READY to PARTIAL. Both would
+    change what those scenarios demonstrate, which is the owner's call and not
+    this helper's (traigent-first-run#407).
     """
     argv = [sys.executable, str(READINESS), "--preflight", "-"]
     if calibration is not None:

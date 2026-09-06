@@ -4082,6 +4082,41 @@ class ExecutionScopeGateTests(unittest.TestCase):
         self.assertIn("engine_scorer.py", process.stderr)
         self.assertIn("sqlite3", process.stderr)
 
+    def test_a_data_frame_engine_is_refused_like_a_dbapi_one(self) -> None:
+        """traigent-first-run#416, through this gate rather than through a score.
+
+        The same scorer written twice: `sqlite3` was refused and a Spark
+        session that submits the candidate with `.sql()` was not, because the
+        walk behind this gate knew neither the module nor the call name. The
+        refusal reads the same either way now, which is what the gate says it
+        is for - the target is unbounded, and a first run does not grade
+        against a database it cannot bound.
+
+        `pyspark` is not installed here and does not need to be: the refusal
+        precedes the import, so the marker file records that the module never
+        ran.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            marker = Path(directory) / "spark.marker"
+            scorer = self.write(
+                directory,
+                "pyspark_scorer.py",
+                "import pathlib\n"
+                f"pathlib.Path({str(marker)!r}).write_text('ran')\n"
+                "import pyspark.sql\n\n"
+                "SESSION = pyspark.sql.SparkSession.builder.getOrCreate()\n\n\n"
+                "def score(*, output, expected, input_data, metadata):\n"
+                "    del input_data, metadata\n"
+                "    produced = SESSION.sql(str(output)).collect()\n"
+                "    return float(produced == SESSION.sql(str(expected)).collect())\n",
+            )
+            process = self.calibrate(scorer, "score", "--task-kind", "code-sql")
+            self.assertEqual(process.returncode, 2, process.stdout)
+            self.assertFalse(marker.exists(), process.stderr)
+        self.assertIn("pyspark_scorer.py", process.stderr)
+        self.assertIn("pyspark", process.stderr)
+        self.assertIn("calls .sql()", process.stderr)
+
     def test_the_reply_transform_is_read_too(self) -> None:
         """The file nothing had ever looked at, and the reason it matters.
 

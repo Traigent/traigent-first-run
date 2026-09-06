@@ -290,6 +290,33 @@ HEALTHY_SPACE = {
 
 
 class ReadinessAdapterReplayTests(unittest.TestCase):
+    def test_the_payload_contract_is_stated_where_its_readers_are(self) -> None:
+        """traigent-first-run#401.
+
+        `schema_version` decides how a consumer reads this payload and
+        `--previous` refuses across versions, and neither appeared in any
+        document. It is stated on `--help` rather than in the guide because no
+        instruction this package ships runs `readiness.py --json`: nobody
+        following the guide holds one of these documents, and whoever automates
+        the script reads the script.
+
+        The version in the sentence is asserted against the constant, not
+        against a number written here, because a sentence naming a version this
+        script does not write is worse than the silence it replaced.
+        """
+        help_result = subprocess.run(
+            [sys.executable, str(READINESS), "--help"],
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(help_result.returncode, 0, help_result.stderr)
+        help_text = " ".join(help_result.stdout.split())
+        self.assertIn(
+            f"'schema_version' (currently {MODULE.SCHEMA_VERSION})", help_text
+        )
+        self.assertIn("a new key does not bump it", help_text)
+        self.assertIn("--previous refuses a payload from another version", help_text)
+
     def test_task_kind_cli_is_closed_and_distinguishes_code_from_sql(self) -> None:
         help_result = subprocess.run(
             [sys.executable, str(READINESS), "--help"],

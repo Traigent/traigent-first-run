@@ -2404,6 +2404,16 @@ def emit_dataset_id_findings(
 # is derived: the DB-API call names are pinned against `sqlite3.Connection` in
 # tests/test_preflight.py, and the process family is matched by prefix rather
 # than by a list of `os` members, so it holds on every platform.
+#
+# SO THIS TABLE GOES STALE, AND THAT IS ACCEPTED HERE RATHER THAN CHECKED FOR.
+# A library surface moves when somebody ships a new engine, and no test in this
+# repository can notice: there is nothing to compare the table against. The
+# first instance was `pyspark`, `ibis` and `polars` arriving after it was
+# written (traigent-first-run#416), and `.sql` will not be the last spelling.
+# What the walk's one-directional reading buys is that staleness costs a claim
+# and never a false one - an engine this table has not met yet is a witness
+# nobody found, which is exactly what an empty result already means. Reviewing
+# it is a person's job, on the same read of the call path `SKILL.md` mandates.
 _EXECUTION_MODULE_NAMES: frozenset[str] = frozenset(
     {
         # Candidate text run as a program, or handed to a shell.
@@ -2422,6 +2432,10 @@ _EXECUTION_MODULE_NAMES: frozenset[str] = frozenset(
         "databricks",
         "duckdb",
         "google.cloud.bigquery",
+        # A backend front end: importing it is building a connection, and it
+        # submits statements under `.sql()` rather than under the DB-API names
+        # below.
+        "ibis",
         "MySQLdb",
         "mysql.connector",
         "oracledb",
@@ -2433,6 +2447,13 @@ _EXECUTION_MODULE_NAMES: frozenset[str] = frozenset(
         "pymssql",
         "pymysql",
         "pyodbc",
+        # A cluster session, and the one shape here that a contained
+        # calibration cannot rescue: it needs a subprocess of its own, so a
+        # witness over it stops the run rather than rerouting it. Listed
+        # anyway, because an import of it is a session being built and the
+        # `SparkSession.builder.getOrCreate()` that follows usually runs at
+        # module level, before anything has read a line of the scorer.
+        "pyspark",
         "snowflake.connector",
         "sqlalchemy",
         "sqlite3",
@@ -2464,6 +2485,29 @@ _ENGINE_CALL_NAMES: frozenset[str] = frozenset(
         "execute_values",
     }
 )
+# The engine call that no standard pins, so the argument decides.
+#
+# `sql` is how the data-frame engines submit a statement - `session.sql(text)`
+# on pyspark, `connection.sql(text)` on duckdb and ibis, `frame.sql(text)` on
+# polars - and none of them is reachable through the DB-API names above. It
+# cannot join that table, though, because the same attribute has a second and
+# equally common meaning in exactly this domain: `sqlglot.parse_one(text).sql()`
+# RENDERS a parsed statement back to a string and connects to nothing, which is
+# what a canonicalising text-to-SQL comparator does - the honest shape this
+# guide asks a customer for, and the expensive one to refuse.
+#
+# What separates them statically is where the statement sits. An engine is
+# HANDED the statement, so the call carries it as a positional argument; the
+# renderer already holds it and takes a dialect or nothing at all. So `.sql()`
+# is a witness when it is passed a positional argument that is not a string
+# literal - a literal is a query somebody wrote into this file, or a dialect
+# name, and neither is the candidate. `f"...{output}"` is not a literal and is
+# read as a witness, which is the shape that concatenates the answer in.
+#
+# The DB-API names deliberately keep the flat match. `.execute()` means one
+# thing because a specification says so, so there is no second reading to tell
+# apart, and every `.execute()` is a cursor whatever it was handed.
+_ENGINE_STATEMENT_CALL_NAMES: frozenset[str] = frozenset({"sql"})
 # `os` members that start a process. Matched by prefix so `execl`, `execve`,
 # `spawnv`, `posix_spawnp` and every sibling are covered without a list that
 # goes stale, and so the answer does not change with the platform the check
@@ -2501,13 +2545,30 @@ def _attribute_root(node: ast.expr) -> str | None:
     return node.id if isinstance(node, ast.Name) else None
 
 
+def _is_handed_a_statement(call: ast.Call) -> bool:
+    """Whether this call is passed something other than a written-out string.
+
+    The discriminator behind `_ENGINE_STATEMENT_CALL_NAMES`. A positional
+    argument that is not a string literal is text this file did not write, so
+    it may be the candidate; a string literal is a query or a dialect the
+    author typed, and `*args` is unknown and read as a statement.
+    """
+    return any(
+        isinstance(argument, ast.Starred)
+        or not (isinstance(argument, ast.Constant) and isinstance(argument.value, str))
+        for argument in call.args
+    )
+
+
 def _execution_call_description(call: ast.Call) -> str | None:
     """How this call reaches an engine or a process, in the reader's terms."""
     func = call.func
     if isinstance(func, ast.Name) and func.id in _EXECUTION_BUILTIN_CALLS:
         return f"calls {func.id}()"
     if isinstance(func, ast.Attribute):
-        if func.attr in _ENGINE_CALL_NAMES:
+        if func.attr in _ENGINE_CALL_NAMES or (
+            func.attr in _ENGINE_STATEMENT_CALL_NAMES and _is_handed_a_statement(call)
+        ):
             return f"calls .{func.attr}()"
         if _attribute_root(func) == "os" and _is_process_attribute(func.attr):
             return f"calls os.{func.attr}()"

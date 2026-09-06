@@ -4,6 +4,10 @@
   "why": "Caps that neither block nor ask: the run proceeds and the action is still `proceed`, but the ceiling bounds what the result may claim. This is the state the guide is in for most of a generated walkthrough, and it is the one most easily broken into either neighbour - promote an advisory cap to blocking and a healthy run stops; demote a blocking one and an invalid evaluator runs. Built from the material `partial-missing-dataset` already commits.",
   "dataset": "evaluation-dataset.jsonl",
   "agent_origin": "brought",
+  "evaluator": "evaluator.py",
+  "evaluator_origin": "brought",
+  "evaluator_method": "normalized-exact",
+  "task_kind": "closed-label",
   "calibration": {
     "scorer": "evaluator.py:score_intent",
     "cases": "calibration-cases.json"
@@ -33,6 +37,7 @@
         "asks": false
       }
     ],
-    "asks_about_repeats": false
+    "asks_about_repeats": false,
+    "band_held_for_unread_answers": false
   }
 }
