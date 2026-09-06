@@ -6,6 +6,18 @@ the last), TOTAL (every document a full guided run loads), and DOCUMENT (the
 largest single one, because a sum cannot see one file stepping alone). The ceilings are
 not in the test. They are in this directory, one file per raise.
 
+## Probing a guard, not raising a ceiling
+
+Any uncommitted edit to an assistant-facing document reds exactly two tests -
+`test_the_guidance_budget_is_not_silently_exceeded` and
+`test_the_newest_ledger_entry_measured_the_tree_it_ships_with` - regardless of
+what the edit says. That is correct behaviour for an unrecorded edit and it
+carries no information about whether any content guard caught anything. So when
+you are planting a defect into a document to find out what the suite notices,
+discount those two and read the rest; a run whose only failures are those two
+is a run in which no guard fired. Re-measure and add an entry below only when
+the edit is one you are actually shipping.
+
 ## Raising a ceiling
 
 Add a file. Do not edit an existing one, except for a schema migration that

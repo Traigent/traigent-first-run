@@ -994,9 +994,33 @@ POLARITY_CLAUSE_BREAK = re.compile(
     r"[,;:()]|\s(?:and|but|so|because|which|while|when|if|unless|after|before|"
     r"though|although|yet|then|rather)\s"
 )
+#: An aside a governor reaches over: a subordinate clause fenced by a comma on
+#: each side. "No card may, when the second route is priced, end on
+#: `Continue?`" is a prohibition, and cutting at the LAST clause break read its
+#: run-up as the empty string after `priced,` and threw `No card may` away - so
+#: the guards refused to be quoted about a defect they forbid. The aside is
+#: removed before the cut rather than the cut being widened, because widening
+#: it is the sentence-wide read that let one `no` two clauses back exempt six
+#: real defects. A subordinate clause that is NOT fenced on the left - "when no
+#: second route has been priced, end the preview" - does not match, and still
+#: keeps its `no` to itself.
+POLARITY_ASIDE = re.compile(
+    r",\s*(?:when|where|if|unless|while|after|before|because|though|although)"
+    r"\b[^,;:()]*,\s*"
+)
 #: How far back a governor can sit and still be read as governing. Not a
 #: sentence: the sentence-wide read is what let one `no` in a subordinate
 #: clause exempt six natural phrasings of real defects.
+#:
+#: Chosen as a bound, not fitted to this corpus, and deliberately still a
+#: chosen number after traigent-first-run#364 asked for it to be derived.
+#: Deriving it as `max(governing run-up) + margin` over the shipped documents
+#: would make the window grow with the corpus: one long governing run-up
+#: anywhere would license every distant governor everywhere, which is the
+#: sentence-wide read arriving by arithmetic. The window is an assertion about
+#: how far a reader carries a governor, so it is stated here and the cost of
+#: it - a governor further back than this is not read - is a false green this
+#: file accepts.
 POLARITY_ADJACENT = 90
 
 
@@ -1009,11 +1033,15 @@ def adjacent_runup(flat: str, at: int) -> str:
     ahead of a match exempted it, which is how "Present the two outcomes with
     no default, which reads as a neutral choice" and five phrasings like it
     passed every content guard in the suite.
+
+    What comes back is the governing words, not a contiguous slice: a
+    comma-fenced aside (`POLARITY_ASIDE`) is dropped first, so the governor in
+    front of it is read and the aside's own subordinator is not.
     """
     start = 0
     for boundary in POLARITY_SENTENCE_BREAK.finditer(flat, 0, at):
         start = boundary.end()
-    window = flat[max(start, at - POLARITY_ADJACENT) : at]
+    window = POLARITY_ASIDE.sub(" ", flat[max(start, at - POLARITY_ADJACENT) : at])
     cut = 0
     for boundary in POLARITY_CLAUSE_BREAK.finditer(window):
         cut = boundary.end()
@@ -1050,6 +1078,16 @@ def adjacent_tail(flat: str, end: int) -> str:
 #: has reached this point should end the card with `Shall I go ahead?`" is an
 #: instruction, and it was exempted. What is left is past-tense and specific,
 #: so recording history costs an author one explicit word.
+#:
+#: `once closed on` was here too and is gone as dead weight, not as a
+#: narrowing. A run-up stops where the match starts, so for the closing scanner
+#: - whose match opens on `closed on` - the run-up could only ever hold `the
+#: preview once `, and the token could not fire from any position. Deleting it
+#: leaves the `once`/`previously` asymmetry that traigent-first-run#364 names,
+#: and that asymmetry is the policy above rather than an oversight: bare `once`
+#: is a stock opener ("once the run has started, end the card with ..."), so an
+#: author recording history writes `previously` or `used to` and pays the one
+#: explicit word.
 GUARD_REPORTED = (
     "used to",
     "no longer",
@@ -1057,7 +1095,6 @@ GUARD_REPORTED = (
     "was read as",
     "were read as",
     "had already",
-    "once closed on",
 )
 #: Predicates that mean the sentence NAMES the defect rather than issuing it.
 #: "A pair offered with no default is that same menu" is the rule; refusing it
@@ -1237,7 +1274,18 @@ def prohibition_defects(text: str, clauses: tuple[str, ...]) -> list[str]:
             for at in clause_occurrences(flat, clause)
             if not offset <= at < offset + len(sentence)
         ]
-        if outside:
+        # Read what the other occurrence says instead of asserting it says
+        # nothing. This branch used to report "where nothing says it is
+        # forbidden" over any second mention, including a second mention that
+        # forbids the clause in its own words - a false statement printed as a
+        # failure, which is how a guard teaches an author to stop explaining a
+        # rule. A second forbidding sentence is redundant, not a defect of the
+        # kind this function is for; the defect is a mention that leaves the
+        # clause unguarded, and that is what stays red.
+        ungoverned = [
+            at for at in outside if polarity_of(adjacent_runup(flat, at)) != "forbids"
+        ]
+        if ungoverned:
             defects.append(
                 f"{clause!r} is also written outside that sentence, where "
                 "nothing says it is forbidden"
@@ -27767,6 +27815,83 @@ class ClausePolarityIsReadNotAssumedTests(unittest.TestCase):
             "forbids",
         )
 
+    def test_a_governor_reaches_over_a_comma_fenced_aside(self) -> None:
+        """The prohibition whose governor the comma cut threw away.
+
+        "No card may, when the second route is priced, end on `Continue?`."
+        cut at the comma after `priced` and left the empty string, so a
+        sentence that FORBIDS the shape read as one that issues it and the
+        closing scanner refused the paragraph stating its own rule. The aside
+        is dropped and `no card may` is read.
+
+        Both directions, on invented text: the aside has to be fenced on the
+        left as well as the right, so the unfenced subordinate clause the comma
+        cut exists for keeps its `no` to itself, and dropping an aside may not
+        manufacture a governor that was never in front of the clause.
+        """
+        fenced = "no card may, when the second route is priced, end on `continue?`"
+        self.assertEqual(
+            polarity_of(adjacent_runup(fenced, fenced.index("end on"))), "forbids"
+        )
+        unfenced = "when the second route is priced, end on `continue?`"
+        self.assertEqual(
+            polarity_of(adjacent_runup(unfenced, unfenced.index("end on"))),
+            "unqualified",
+        )
+        instruction = "end the preview, when no cap applies, with `continue?`"
+        self.assertEqual(
+            polarity_of(adjacent_runup(instruction, instruction.index("with"))),
+            "unqualified",
+        )
+
+    def test_every_reporting_token_can_reach_a_run_up(self) -> None:
+        """A token that cannot appear in a run-up exempts nothing.
+
+        `once closed on` sat in `GUARD_REPORTED` and could not. A run-up stops
+        where the match starts, and `closed on` is inside the closing
+        scanner's own match, so the token straddled that boundary and never
+        appeared whole in front of anything. It read as an exemption in the
+        source and was one nowhere; traigent-first-run#364 found it by reading
+        the tuple, which is the only way it was findable. Each surviving token
+        is shown reaching a run-up here, so the next dead one is a red.
+        """
+        for token in GUARD_REPORTED:
+            with self.subTest(token=token):
+                flat = f"the preview {token} ended with `continue?`"
+                self.assertIn(token, adjacent_runup(flat, flat.index("ended with")))
+
+    def test_a_restated_prohibition_is_not_reported_as_an_unguarded_mention(
+        self,
+    ) -> None:
+        """The occurrence-outside branch reads the mention instead of assuming it.
+
+        It used to print "where nothing says it is forbidden" over any second
+        mention, including one that forbids the clause in its own words - a
+        false sentence printed as a failure, which is how a guard teaches an
+        author to stop explaining a rule. A second forbidding statement is
+        redundancy, and redundancy is not what this function is for. The
+        mention that leaves the clause unguarded is still red.
+        """
+        self.assertEqual(
+            prohibition_defects(
+                f"{self.SHIPPED} No preview may suggest that a customer who "
+                "stops has made a mistake.",
+                self.LIMITS,
+            ),
+            [],
+        )
+        self.assertEqual(
+            prohibition_defects(
+                f"{self.SHIPPED} In practice every preview must suggest that a "
+                "customer who stops has made a mistake.",
+                self.LIMITS,
+            ),
+            [
+                "'suggest that a customer who stops has made a mistake' is also "
+                "written outside that sentence, where nothing says it is forbidden"
+            ],
+        )
+
 
 class OneShapeAndOneMarkForEveryChoiceTests(unittest.TestCase):
     """Five watched runs, and the same rule missing from three of them.
@@ -28866,6 +28991,34 @@ class GuardExemptionsAreNarrowEnoughToCatchTheDefectTests(unittest.TestCase):
     the swallowed prose line in #372. The four scanners in this class are
     unchanged in kind: they are still word lists, and the counts above are
     still counts of phrasings somebody wrote down.
+
+    **The denylist layer is capped here, and that is a decision rather than an
+    open argument.** The measurement is all in one place now because it was
+    previously only readable by someone who read three issues and this
+    docstring together: 21 of 21 on the set above, which is the set these
+    scanners were narrowed against and so is the ceiling and not the yield;
+    36 of 60 caught and 54 of 60 green on an independent set nobody tuned
+    against; 15 of the 24 misses vocabulary the lists do not name and 9 of them
+    an exemption suppressing a real defect. Read together: the layer catches
+    roughly three defects in five that a person thinks of, and every miss it
+    has is either a word nobody listed or an exemption doing its job too well -
+    both of which a longer list makes worse, because a longer list is more
+    vocabulary to be outside of and more exemptions to fire.
+
+    So growing this layer is refused, and the residue is named instead of
+    tracked. Two known costs stay: the practice-word escape excuses an option
+    carrying one trade word and one possessive in one clause ("Map your columns
+    onto the schema the warehouse expects"), and `clause_polarity` answers
+    `mixed` for a document that forbids a clause and also mentions it
+    elsewhere, so guidance cannot discuss a clause it forbids without saying so
+    in the same breath. Both are the narrowing working as specified and neither
+    is an open defect. The class this layer cannot reach at all - a mandate
+    kept verbatim and reversed by the correct-looking sentence after it - is
+    not a parsing problem and has no guard here or anywhere in this file. It is
+    held by `CLAUDE.md`'s rule that a guidance change is reviewed by reading
+    the whole document, which is how all four historical contradictions in this
+    repository were actually found; traigent-first-run#364 records the three
+    worked reproductions and why no scanner in this file reds on them.
     """
 
     #: 21 natural phrasings of real defects. Every one must be caught.
