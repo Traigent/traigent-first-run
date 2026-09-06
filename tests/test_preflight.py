@@ -585,7 +585,9 @@ class StaticPreflightTests(unittest.TestCase):
             {
                 "OPENAI_API_KEY": "placeholder-openai",
                 "ANTHROPIC_API_KEY": "placeholder-anthropic",
-            }
+            },
+            {},
+            {},
         )
         result = next(
             item for item in MODULE.RESULTS if item.check == "provider-credentials"
@@ -612,7 +614,7 @@ class StaticPreflightTests(unittest.TestCase):
         telling somebody to halt.
         """
         MODULE.RESULTS.clear()
-        MODULE.check_keys({})
+        MODULE.check_keys({}, {}, {})
         result = next(
             item for item in MODULE.RESULTS if item.check == "provider-credentials"
         )
@@ -1292,17 +1294,45 @@ class StaticPreflightTests(unittest.TestCase):
         self.assertEqual(normalized["input"], {"message": "same"})
         self.assertEqual(normalized["output"], "answer")
 
-    def test_duplicate_synthetic_input_fails(self) -> None:
+    def _repetition_statuses(self, source: str) -> dict[str, str]:
         rows = synthetic_rows()
+        for row in rows:
+            row["source"] = source
         rows[1]["input"] = rows[0]["input"]
+        MODULE.RESULTS.clear()
         with tempfile.TemporaryDirectory() as directory:
             dataset = Path(directory) / "eval.jsonl"
             dataset.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
             MODULE.check_dataset(dataset)
-        failures = [
-            result.check for result in MODULE.RESULTS if result.status == MODULE.FAIL
-        ]
-        self.assertIn("dataset-duplicates", failures)
+        return {
+            result.check: result.status
+            for result in MODULE.RESULTS
+            if result.check in ("dataset-duplicates", "dataset-near-duplicates")
+        }
+
+    def test_a_repeated_input_reads_the_same_whoever_wrote_the_row(self) -> None:
+        """Provenance must not decide whether repetition is a refusal.
+
+        `FAIL if synthetic` made preflight's exit code turn on where the rows
+        came from: the same fourteen rows exited 1 as `synthetic` and 0 as
+        `production-log`, while the readiness card - which reads only whether a
+        repetition detector fired, never how loudly - printed a byte-identical
+        page for both, capped the run and recommended continuing on the
+        examples that differ. So one surface refused the file and the other
+        told the customer to carry on with it.
+
+        Repetition is measured here and priced there. Provenance is priced once
+        already, by `dataset-fully-synthetic`; charging it a second time inside
+        the repetition finding is the double-count `DIVERSITY_CHECKS` exists to
+        prevent. Both checks now WARN, and this asserts the two provenances
+        agree rather than asserting a constant, so the next author who reaches
+        for `FAIL if synthetic` here fails on the inconsistency itself.
+        """
+        generated = self._repetition_statuses("synthetic")
+        collected = self._repetition_statuses("production-log")
+        self.assertEqual(generated, collected)
+        self.assertEqual(generated["dataset-duplicates"], MODULE.WARN)
+        self.assertEqual(generated["dataset-near-duplicates"], MODULE.WARN)
 
     @staticmethod
     def _pairwise_near_duplicates(
@@ -4126,6 +4156,180 @@ class TheDistinctCountAndTheCountItBoundsDescribeOneSetTests(unittest.TestCase):
         self.assertEqual(metrics["tuning_distinct_scoreable_rows"], 50)
 
 
+class AShadowedCredentialIsNamedTests(unittest.TestCase):
+    """#426: an inherited key beat the one in .env, in silence.
+
+    `load_dotenv` never overrides a value the process already carries, so a
+    `TRAIGENT_API_KEY` exported in a parent shell - or by an agent harness that
+    launched this session - wins over the one the customer just pasted into
+    `.env`. Preflight printed `env-source PASS ... process values take
+    precedence` and `traigent-key PASS portal key shape looks plausible` and
+    exited 0: both values are shaped `uk_`, so the shape test cannot separate
+    them, and the merged environment cannot say where either came from. The
+    customer met it as a 401 on the first paid probe with a correct key sitting
+    in the file.
+    """
+
+    def setUp(self) -> None:
+        MODULE.RESULTS.clear()
+
+    @staticmethod
+    def _record(check: str) -> MODULE.Result:
+        return next(item for item in MODULE.RESULTS if item.check == check)
+
+    def test_a_disagreement_is_named_with_both_fingerprints(self) -> None:
+        shell = "uk_FROMSHELLvalue9999"
+        dotenv = "uk_FROMDOTENVvalue1234"
+        MODULE.check_keys(
+            {"TRAIGENT_API_KEY": shell},
+            {"TRAIGENT_API_KEY": dotenv},
+            {"TRAIGENT_API_KEY": shell},
+        )
+        record = self._record("env-shadowed-key")
+        self.assertEqual(record.status, MODULE.WARN)
+        self.assertIn("TRAIGENT_API_KEY", record.detail)
+        self.assertIn(MODULE.value_fingerprint(shell), record.detail)
+        self.assertIn(MODULE.value_fingerprint(dotenv), record.detail)
+        # Both remedies, because which one is right depends on which value the
+        # reader meant, and preflight cannot know that.
+        self.assertIn("env -u TRAIGENT_API_KEY", record.detail)
+        self.assertIn("load_dotenv(override=True)", record.detail)
+        self.assertEqual(record.metrics["shadowed_variables"], ["TRAIGENT_API_KEY"])
+        self.assertEqual(
+            record.metrics["fingerprints"]["TRAIGENT_API_KEY"],
+            {
+                "process": MODULE.value_fingerprint(shell),
+                "file": MODULE.value_fingerprint(dotenv),
+            },
+        )
+
+    def test_no_credential_value_is_ever_printed(self) -> None:
+        """A preflight report is pasted into chat logs and issue threads.
+
+        The fingerprint exists so this line can name the key without becoming a
+        way to leak it, and that property has to be asserted rather than
+        assumed - a later author adding "expected uk_...1234" would undo it.
+        """
+        shell = "uk_FROMSHELLvalue9999"
+        dotenv = "uk_FROMDOTENVvalue1234"
+        MODULE.check_keys(
+            {"TRAIGENT_API_KEY": shell, "OPENAI_API_KEY": "sk-shell-openai"},
+            {"TRAIGENT_API_KEY": dotenv, "OPENAI_API_KEY": "sk-file-openai"},
+            {"TRAIGENT_API_KEY": shell, "OPENAI_API_KEY": "sk-shell-openai"},
+        )
+        printed = json.dumps(
+            [
+                {"detail": item.detail, "metrics": item.metrics}
+                for item in MODULE.RESULTS
+            ]
+        )
+        for secret in (shell, dotenv, "sk-shell-openai", "sk-file-openai"):
+            self.assertNotIn(secret, printed)
+
+    def test_every_route_credential_is_read_not_only_the_portal_key(self) -> None:
+        """The filed incident had two shadowed keys, not one.
+
+        The names come from the inventories this file already keeps, so a
+        vendor added to `VENDOR_KEYS` is covered here without a second list
+        being remembered.
+        """
+        self.assertIn("TRAIGENT_API_KEY", MODULE.CREDENTIAL_ENV_NAMES)
+        for names in MODULE.VENDOR_KEYS.values():
+            for name in names:
+                self.assertIn(name, MODULE.CREDENTIAL_ENV_NAMES)
+        MODULE.check_keys(
+            {"OPENROUTER_API_KEY": "sk-or-shell", "OPENAI_API_KEY": "sk-shell"},
+            {"OPENROUTER_API_KEY": "sk-or-file", "OPENAI_API_KEY": "sk-file"},
+            {"OPENROUTER_API_KEY": "sk-or-shell", "OPENAI_API_KEY": "sk-shell"},
+        )
+        record = self._record("env-shadowed-key")
+        self.assertEqual(
+            sorted(record.metrics["shadowed_variables"]),
+            ["OPENAI_API_KEY", "OPENROUTER_API_KEY"],
+        )
+
+    def test_agreement_and_absence_both_report_a_pass(self) -> None:
+        """The check answers on every arm, so its silence has one meaning.
+
+        A value present in only one place is the ordinary case and is not a
+        finding; a value present in both and equal is not one either, whatever
+        `load_dotenv` did with it.
+        """
+        for label, file_values, process_values in (
+            ("equal", {"TRAIGENT_API_KEY": "uk_same"}, {"TRAIGENT_API_KEY": "uk_same"}),
+            ("file only", {"TRAIGENT_API_KEY": "uk_same"}, {}),
+            ("process only", {}, {"TRAIGENT_API_KEY": "uk_same"}),
+        ):
+            with self.subTest(label):
+                MODULE.RESULTS.clear()
+                MODULE.check_keys(
+                    {"TRAIGENT_API_KEY": "uk_same"}, file_values, process_values
+                )
+                record = self._record("env-shadowed-key")
+                self.assertEqual(record.status, MODULE.PASS)
+                self.assertEqual(record.metrics["shadowed_variables"], [])
+
+    def test_the_key_line_names_the_value_and_the_host_it_reaches(self) -> None:
+        """Ask 2: a dev key against a prod host fails as a 401 too.
+
+        Reported on `traigent-key` rather than under a new check name, because
+        it is the same question - which credential is about to be presented,
+        and to whom - and a second record for the second half would be a fact a
+        reader has to join up themselves. `backend-url` still owns whether an
+        override needs approving.
+        """
+        key = "uk_local1234"
+        MODULE.check_keys({"TRAIGENT_API_KEY": key}, {}, {})
+        record = self._record("traigent-key")
+        self.assertEqual(record.status, MODULE.PASS)
+        self.assertIn(f"sha256:{MODULE.value_fingerprint(key)}", record.detail)
+        self.assertIn("the SDK's default backend origin", record.detail)
+
+        MODULE.RESULTS.clear()
+        MODULE.check_keys(
+            {
+                "TRAIGENT_API_KEY": key,
+                "TRAIGENT_API_URL": "https://example.invalid/api",
+            },
+            {},
+            {},
+        )
+        record = self._record("traigent-key")
+        self.assertIn("https://example.invalid/api (overridden)", record.detail)
+
+    def test_the_shadow_check_is_reached_through_main(self) -> None:
+        """The views are computed and were handed to one caller only.
+
+        `read_env` has produced `file_values` and `process_values` all along;
+        `check_keys` was simply never given them, which is why the disagreement
+        was invisible. Asserted through `main` so an unthreaded argument fails
+        here rather than in a customer's report.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            env_path = Path(directory) / ".env"
+            # Two obvious placeholders, differing only so the check has
+            # something to disagree about.
+            env_path.write_text("TRAIGENT_API_KEY=" + "uk_" + "dotenv-placeholder\n")
+            env_path.chmod(0o600)
+            stdout = io.StringIO()
+            with mock.patch.object(
+                sys,
+                "argv",
+                [str(SCRIPT), "--env", str(env_path), "--defer-missing-sdk", "--json"],
+            ), mock.patch.dict(
+                os.environ, {"TRAIGENT_API_KEY": "uk_shell-placeholder"}, clear=False
+            ):
+                with redirect_stdout(stdout):
+                    exit_code = MODULE.main()
+        payload = json.loads(stdout.getvalue())
+        record = next(item for item in payload if item["check"] == "env-shadowed-key")
+        self.assertEqual(record["status"], "WARN")
+        self.assertIn("TRAIGENT_API_KEY", record["detail"])
+        # WARN, not FAIL: a disagreement is not proof the shell's value is the
+        # dead one, and this exit code gates the free local pass.
+        self.assertEqual(exit_code, 0)
+
+
 class ATruncatedListSaysThatItIsTruncatedTests(unittest.TestCase):
     """#378: two lists stopped at ten entries and said nothing about it.
 
@@ -4204,6 +4408,40 @@ class ATruncatedListSaysThatItIsTruncatedTests(unittest.TestCase):
             )
         )
         self.assertNotIn("shown)", details["dataset-duplicates"])
+
+    def test_the_near_duplicate_pairs_are_counted_and_bounded_too(self) -> None:
+        """#411: the fourth repetition list, left on a literal ten.
+
+        `dataset-near-duplicates` printed `near_pairs[:10]` with no total and no
+        marker while its three siblings were fixed, so it was the only one of
+        the four whose truncation a reader could not detect - forty pairs and
+        ten pairs printing the same sentence, which is the defect this class
+        exists for.
+
+        Its own "the scan stopped early" clause does not cover this: that one
+        says the scan declined to LOOK further, and this one says the sentence
+        declined to PRINT further. A reader who read them as one would
+        de-duplicate a file that was never fully compared.
+        """
+        detail = self._details(30, share_ids=False)["dataset-near-duplicates"]
+        self.assertTrue(detail.startswith("30 input pairs at least"), detail)
+        self.assertIn("(first 10 shown)", detail)
+        self.assertEqual(detail.count("("), detail.count(")"))
+        self.assertNotIn("the scan stopped early", detail)
+
+        complete = self._details(10, share_ids=False)["dataset-near-duplicates"]
+        self.assertTrue(complete.startswith("10 input pairs at least"), complete)
+        self.assertNotIn("shown)", complete)
+
+    def test_the_shared_ceiling_is_named_for_findings_and_not_for_ids(self) -> None:
+        """#411: one constant, four lists, and only the first was ids.
+
+        The name is internal, but it is the sentence a future author reads
+        before deciding which lists the ceiling may be applied to - and three
+        of the four it already bounds hold no id at all.
+        """
+        self.assertFalse(hasattr(MODULE, "MAX_REPORTED_DATASET_IDS"))
+        self.assertEqual(MODULE.MAX_REPORTED_DATASET_FINDINGS, 10)
 
     def test_the_repetition_list_does_not_depend_on_the_ids(self) -> None:
         """The two checks answer two questions, and only one reads an id.
@@ -5426,7 +5664,12 @@ class OneRecordPerCheckTests(unittest.TestCase):
 
     def test_a_partial_bedrock_triple_is_one_warning_on_the_inventory(self) -> None:
         MODULE.check_keys(
-            {"OPENAI_API_KEY": "placeholder-openai", "AWS_ACCESS_KEY_ID": "placeholder"}
+            {
+                "OPENAI_API_KEY": "placeholder-openai",
+                "AWS_ACCESS_KEY_ID": "placeholder",
+            },
+            {},
+            {},
         )
         records = [r for r in MODULE.RESULTS if r.check == "provider-credentials"]
         self.assertEqual(len(records), 1)
@@ -5437,7 +5680,7 @@ class OneRecordPerCheckTests(unittest.TestCase):
         self.assertIn("AWS credential chain", records[0].detail)
         # And with nothing else present, the absent-names warning carries it.
         MODULE.RESULTS.clear()
-        MODULE.check_keys({"AWS_REGION": "eu-west-1"})
+        MODULE.check_keys({"AWS_REGION": "eu-west-1"}, {}, {})
         records = [r for r in MODULE.RESULTS if r.check == "provider-credentials"]
         self.assertEqual(len(records), 1)
         self.assertEqual(records[0].status, MODULE.WARN)

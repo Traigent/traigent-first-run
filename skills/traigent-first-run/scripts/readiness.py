@@ -4287,10 +4287,11 @@ def _row_count(
     """Read one provenance row count, refusing an absent or impossible one.
 
     An absent key used to fall back to 0, on the rationale that "the preflight
-    JSON predates the field, so an older payload keeps scoring as it did". That
-    is a backward-compatibility decision, and this repository has published
-    nothing for anyone to be compatible with - there is no older payload. What
-    the fallback bought instead was a gate that fails open: `answerable_rows`
+    JSON predates the field, so an older payload keeps scoring as it did". An
+    older payload is an ordinary thing to be holding - a `preflight.json` left
+    on disk by an earlier checkout - and the refusal messages below say so and
+    tell the reader to regenerate it, which is the right treatment. What the
+    fallback bought instead was a gate that fails open: `answerable_rows`
     guards the whole generated-answer-key ladder, and a 0 short-circuits it, so
     a preflight JSON with the key deleted scored the same 200-row dataset
     EXCELLENT with no cap where the real payload capped it at 74. Silence was
@@ -4394,9 +4395,8 @@ def _shared_family_count(value: Any) -> int | None:
     families, on a payload that never said so. A quoted `"0"` fails the same
     comparison the other way and drops a real cap in silence.
 
-    `None` is legitimate here and does NOT mean an older payload - `_row_count`
-    is right that this repository has published nothing to be compatible with.
-    It means the check did not answer, and the check is conditional by design:
+    `None` is legitimate here and does NOT mean a truncated or older payload -
+    it means the check did not answer, and the check is conditional by design:
     preflight raises `dataset-split-family` only where both sides of a declared
     split hold rows, and SKIPs where no recurring form can be read off them. So
     absence is the same measured "nothing to say" that `dataset-output-
@@ -4447,12 +4447,14 @@ def score_provenance(
         # (`COUNTERFACTUAL_SOURCE`) and its own branch in
         # `provenance_assumption`. Its stated purpose was a preflight JSON
         # written before the counts existed. `emit_dataset_provenance` emits
-        # all three counts together for every dataset with a row in it, and
-        # this repository has published nothing that could have been written
-        # before that - so the machinery guarded a payload that has never
-        # existed, and any real one that reaches this line is truncated. The
-        # adapter refuses that one at the boundary; here the fail-closed
-        # reading is enough, and it is the same reading a silent row gets.
+        # all three counts together for every dataset with a row in it, so a
+        # payload that reaches this line without them is truncated rather than
+        # merely old - which is a thing to REFUSE, not a thing to score around,
+        # and forty lines that scored around it were forty lines guarding a
+        # reading nothing should be given. The adapter refuses it at the
+        # boundary, with a message that tells the reader to re-run preflight
+        # from this version; here the fail-closed reading is enough, and it is
+        # the same reading a silent row gets.
         # `synthetic` is preflight's own all-or-nothing statement about the
         # same rows and is kept, so a count-free fixture that says every row is
         # generated is still scored generated rather than merely unread.
