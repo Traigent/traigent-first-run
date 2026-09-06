@@ -896,10 +896,10 @@ When the SDK exposes trustworthy live progress, report only those values; otherw
 observable phase milestones. Never invent progress or quietly drop validation. A timeout follows
 Recovery in `references/run-safety.md`.
 
-If the estimate exceeds `$5.00` or 30 minutes, first recommend a smaller representative slice or
-trial target while preserving meaningful difficulty coverage; disclose any
-reduction from the twelve-configuration baseline target. Proceed after one explicit
-approval and keep it process-only. Follow `references/run-safety.md` for SDK limits and retries.
+If the estimate exceeds `$5.00` or 30 minutes, first recommend a smaller representative slice
+while preserving meaningful difficulty coverage; the baseline grid is never reduced - a generated
+one runs its twelve configurations and a preserved one runs as the user defined it. Proceed after
+one explicit approval and keep it process-only. Follow `references/run-safety.md` for SDK limits and retries.
 Maintain its single
 running total across every paid phase, stop before the next estimate exceeds the remainder, and
 do not layer another retry loop. Launch every paid process with the three approved figures that

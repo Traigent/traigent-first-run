@@ -9909,7 +9909,7 @@ class SkillPackageTests(unittest.TestCase):
                 total *= len(values)
             return total
 
-        def load(flag: bool) -> None:
+        def load(user_owned: bool) -> None:
             baseline = {
                 "model": ["a", "b"],
                 "temperature": [0.0],
@@ -9921,7 +9921,7 @@ class SkillPackageTests(unittest.TestCase):
                 "prompt_style": ["x", "y"],
             }
             namespace = {
-                "BASELINE_IS_USER_OWNED": flag,
+                "BASELINE_IS_USER_OWNED": user_owned,
                 "BASELINE_CONFIG": {
                     knob: values[0] for knob, values in baseline.items()
                 },
@@ -32610,7 +32610,25 @@ class TheIntegrationReadsArePinnedTests(unittest.TestCase):
             .casefold()
             .split()
         )
+        execution = " ".join(SDK_EXECUTION.read_text().casefold().split())
         for document, text, phrase in (
+            (
+                "execution",
+                execution,
+                "or a lower enhanced trial cap; the baseline grid is never reduced, "
+                "because a grid that does not run its whole space has ranked nothing",
+            ),
+            (
+                "safety",
+                safety,
+                "recommend a smaller slice or, for the search, a lower trial cap",
+            ),
+            (
+                "skill",
+                skill,
+                "the baseline grid is never reduced - a generated one runs its "
+                "twelve configurations and a preserved one runs as the user defined it",
+            ),
             (
                 "skill",
                 skill,

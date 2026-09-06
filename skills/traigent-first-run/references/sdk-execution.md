@@ -103,8 +103,9 @@ run is not truncated wholesale by a fixed clock. Its real bounds are the trial c
 ceiling, and the per-model-request timeout below: a stuck provider call is caught by the request
 timeout and total spend by the ceiling. Keep a first run from taking too long by sizing it up
 front, not by cutting it: if the runtime estimate is too high, reduce the run before starting - a
-smaller representative tuning slice, fewer trials, or a smaller model set - and disclose the
-revised estimate; a large *preserved* baseline (never shrink a user-owned one) then runs to
+smaller representative tuning slice for either phase, or a lower enhanced trial cap; the baseline
+grid is never reduced, because a grid that does not run its whole space has ranked nothing - and
+disclose the revised estimate; a large *preserved* baseline (never shrink a user-owned one) then runs to
 completion under the cost ceiling rather than being truncated. The estimate above still drives the
 up-front time/cost disclosure and the baseline phase timeout. That timeout is
 `TRAIGENT_FIRST_RUN_BASELINE_TIMEOUT_SECONDS`, the fourth process variable beside the three cost
@@ -744,8 +745,8 @@ BEHAVIOUR_KNOBS = ["prompt_style", "thinking_shape", "reflect"]
 assert set(BASELINE_CONFIG) == set(BASELINE_SPACE), (
     "every baseline config key must be a grid dimension, or exact trial lookup fails"
 )
-# These four pin the generated walkthrough's counts; a preserved customer
-# baseline (BASELINE_IS_USER_OWNED above) skips them.
+# These four pin the generated walkthrough's counts; only a preserved customer
+# baseline (BASELINE_IS_USER_OWNED above) skips them - a generated one is never reduced.
 if not BASELINE_IS_USER_OWNED:
     assert len(set(BASELINE_SPACE["model"])) == 3
 assert ENHANCED_SPACE["model"] == BASELINE_SPACE["model"]
@@ -2078,10 +2079,8 @@ grid would only ever cover the corner it starts from; use `random` there instead
 one ran and why.
 
 Do not supply a separate `default_config`; on local proposal paths it can consume a trial slot and
-truncate the grid. Normally verify all twelve distinct points executed and that `BASELINE_CONFIG`
-appears in the returned trials. If the baseline approval explicitly reduced that default, verify
-the returned count matches the disclosed plan and still contains `BASELINE_CONFIG`. For an
-existing user-owned baseline, replace the generated example's configuration, spaces, wired list,
+truncate the grid. Verify all twelve distinct points executed and that `BASELINE_CONFIG`
+appears in the returned trials. For an existing user-owned baseline, replace the generated example's configuration, spaces, wired list,
 trial count, and algorithm with the preserved values and behavior exactly. A
 real single fixed configuration remains one configuration; never manufacture variants around it.
 
@@ -2459,8 +2458,7 @@ assert optimized_results.best_config is not None, "no best configuration selecte
 ```
 
 Also verify that a user-owned baseline was preserved exactly, or that the generated baseline
-returned all twelve intended distinct configurations, its initial one among them. For an explicitly
-approved reduced plan, verify the disclosed lower count and initial configuration instead. Inspect
+returned all twelve intended distinct configurations, its initial one among them. Inspect
 failed trials, cost tracking, truncation, declared measures, stop reason, and persistence status
 as defined in `run-safety.md`. The baseline portal URL, when exact sync was supported, comes from
 the successful sync JSON; otherwise label it local-only. Keep and link every experiment actually
