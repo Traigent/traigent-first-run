@@ -35,6 +35,7 @@ import argparse
 import ast
 import builtins
 import difflib
+import hashlib
 import io
 import json
 import math
@@ -2777,6 +2778,19 @@ class DatasetFacts:
     # the failure, and a failure this score cannot explain fails loud instead of
     # falling through to no cap.
     id_check_failed: bool = False
+    # The row ids preflight read, as truncated digests, and the subset of them
+    # on the tuning or held-out side. Membership sets, not counts: they are the
+    # only facts in this class that can answer whether a row review entry names
+    # a row of this dataset at all (traigent-first-run#391).
+    #
+    # `None` means preflight published no such list - a payload from before the
+    # metric, or one written by something else. It is NOT an empty dataset,
+    # which is `()`, and the difference decides a refusal: `row_review_from_
+    # document` will not accept a review it cannot check, so absence fails loud
+    # here rather than quietly restoring the count-only release the digests
+    # exist to close.
+    row_id_digests: tuple[str, ...] | None = None
+    run_row_id_digests: tuple[str, ...] | None = None
     # True only when EVERY row is generated. Mixtures are read from the counts
     # below; asking "is this dataset synthetic" of a mixture has no true answer.
     synthetic: bool | None = False
@@ -4277,8 +4291,37 @@ def row_review_shape() -> str:
         '"id" names the row this verdict is about and "note" says in one '
         "sentence why, so a\nreader can trace the judgement back to a row. "
         "Review the rows you actually read: the\norigins counted here have to "
-        "match what the preflight counted over the same rows."
+        "match what the preflight counted over the same rows, and every "
+        '"id"\nhas to be an id preflight read in that dataset - the two here '
+        "are placeholders for\nyour own."
     )
+
+
+def _id_digests(metrics: dict[str, Any], name: str) -> tuple[str, ...] | None:
+    """Read one published list of row id digests, or say it was not published.
+
+    Three answers, and the middle one is the reason this is not a `.get(name,
+    ())`. A list is the measurement. `None` is preflight having published no
+    such list, which `row_review_from_document` turns into a refusal rather
+    than into the count-only acceptance the digests exist to end - the same
+    call `_row_count` makes about an absent provenance count, for the same
+    reason: silence must not be the highest-scoring input. And anything that is
+    not a list of strings is refused outright, because a membership test
+    against it would quietly pass or quietly fail depending on the shape.
+    """
+    value = metrics.get(name)
+    if value is None:
+        return None
+    if not isinstance(value, list) or not all(
+        isinstance(entry, str) and entry for entry in value
+    ):
+        raise PreflightInputError(
+            f"dataset-ids carries {name} as {value!r}; it is the list of row id "
+            "digests a row review is checked against, so it is a list of "
+            "strings or it is absent - re-run preflight.py --json from the "
+            "same version as this script"
+        )
+    return tuple(value)
 
 
 def _row_count(
@@ -4738,11 +4781,23 @@ def provided_rows(facts: DatasetFacts) -> int:
     `answer_key_read` below decides the top-band floor against the same
     population; two spellings of one denominator is how a card comes to print
     "read 28 of 28" beside a floor that is still holding.
+
+    The uncounted arm reads the same way `score_dataset` reads an uncounted
+    dataset, which it did not (traigent-first-run#404). That ladder scores
+    every row as undeclared unless `synthetic` is true, and as generated when
+    it is; this returned `facts.rows` either way, so in the synthetic arm it
+    offered generated rows as reviewable - against the paragraph above, in the
+    one state where the two disagreed. No payload `preflight.py` writes reaches
+    the arm at all: `emit_dataset_provenance` puts every row in exactly one of
+    the three buckets and `_row_count` refuses an absent one, so `counted == 0`
+    implies `rows == 0`. It is aligned rather than deleted because "unreachable
+    today, through a rule enforced somewhere else" is how the divergence got
+    written in the first place.
     """
     counted = facts.collected_rows + facts.synthesised_rows + facts.undeclared_rows
     if counted:
         return facts.collected_rows + facts.undeclared_rows
-    return facts.rows or 0
+    return 0 if facts.synthetic is True else (facts.rows or 0)
 
 
 def graded_rows(facts: DatasetFacts) -> int | None:
@@ -4784,20 +4839,28 @@ def answer_key_read(facts: DatasetFacts, review: RowReview) -> bool:
     scores near zero. A release bought by evidence about a different question
     is the failure this predicate exists to refuse.
 
-    DECLARED, and not earned, which is the honest word for what this returns.
-    Entries are counted and never matched against rows: `preflight.py` emits no
-    row ids for them to be matched to, so a review of the right size whose ids
-    name nothing in the dataset releases the hold exactly as a real read does.
-    What is checked is everything counts can carry - `row_review_from_document`
-    refuses a repeated id, an origin the review may not claim, more collected
-    or undeclared rows than preflight counted, and more `in_run` rows than the
-    declared split holds - and identity is not among them.
+    ABOUT THIS DATASET, and that much is earned rather than declared. Entries
+    used to be counted and never matched against rows, so a review of the right
+    size whose ids named nothing in the dataset released the hold exactly as a
+    real read did (traigent-first-run#391). `preflight.py` now publishes a
+    truncated digest of every row id it read, and of the ids on the tuning and
+    held-out sides, and `row_review_from_document` refuses an entry naming no
+    row of the file and an entry claiming `in_run` for a row outside the
+    declared split - beside everything counts already carried: a repeated id,
+    an origin the review may not claim, more collected or undeclared rows than
+    preflight counted, and more `in_run` rows than the split holds.
 
-    So this is a bounded improvement on no gate at all, not a proof that anyone
-    read anything, and the guidance and the flag's own help say so in those
-    words. Closing it needs preflight to publish the ids it already reads,
-    which is a decision about writing customer row ids into a payload rather
-    than a small change: traigent-first-run#391.
+    What stays declared is the reading itself. Nothing here can tell a row that
+    was read from a row whose id was copied off the file, so this returns "a
+    read of this dataset's own rows was claimed", not "somebody read them" -
+    which is the most any file the assistant writes about its own work can
+    establish, and why the review carries no points and only lifts a hold. Two
+    narrower residuals, both written where they are decided: the digest is
+    obfuscation and not secrecy over a guessable id namespace
+    (`preflight.row_id_digest`), and `in_run` is checked against the DECLARED
+    split, which for a bounded draw out of a larger split is a necessary
+    condition and not the drawn subset itself - preflight reads the file the
+    run was pointed at and no draw has happened when it reads it.
 
     True in the three states where there is no such question to ask, and each
     is a real state rather than a convenience:
@@ -4827,6 +4890,20 @@ def answer_key_read(facts: DatasetFacts, review: RowReview) -> bool:
     # review that did not is a read of the file, and then the file is the
     # population it has to cover.
     graded = graded_rows(facts)
+    # A graded population of zero is not a threshold every review clears, which
+    # is what `reviewed_in_run >= 0` made it (traigent-first-run#395). Reaching
+    # this line means `answerable_rows > 0` - the file HAS answers - while the
+    # side the run is compared on has none, so there is no read of them to
+    # supply and no false red here: the honest answer to "was the answer key
+    # this run grades against read" is no, because there is no such key.
+    #
+    # A branch that is safe on its own account rather than by a neighbour's
+    # rule. `dataset-tuning-split-empty` caps this state under every
+    # reference-based method, which is why it was never reachable in a top
+    # band; under a reference-free judge that cap does not fire at all, because
+    # `score_dataset` there counts rows and never labels.
+    if graded is not None and graded <= 0:
+        return False
     if review.reviewed_in_run is not None and graded is not None:
         return review.reviewed_in_run >= graded
     return review.reviewed >= provided
@@ -4854,7 +4931,12 @@ def row_review_evidence(review: RowReview, facts: DatasetFacts) -> str:
     # one read, which is the class `provided_rows` was extracted to close and
     # this is the same class in the other direction.
     graded = graded_rows(facts)
-    if review.reviewed_in_run is not None and graded is not None:
+    # `graded` of zero is left unsaid rather than printed. "covering 0 of the 0
+    # rows this run is graded on" is a true arithmetic and a nonsense sentence:
+    # it reads as a coverage failure where the finding is that the split the
+    # run compares on carries no answer at all, which the dataset pillar's own
+    # cap is the place that says so (traigent-first-run#395).
+    if review.reviewed_in_run is not None and graded:
         line += (
             f", covering {review.reviewed_in_run} of the {graded} rows this "
             "run is graded on"
@@ -9339,6 +9421,20 @@ def score_delta(previous: PreviousScore, score: ReadinessScore) -> dict[str, Any
     }
 
 
+#: The digest preflight publishes per row id, restated here because these two
+#: scripts do not import each other - `readiness.py` reads a payload and never
+#: the project. One home for the decision, and a pin rather than a second
+#: decision: `tests/test_readiness_adapter.py` imports both modules and fails if
+#: either half of this - the algorithm or the length - stops agreeing with
+#: `preflight.row_id_digest`, which is the copy that reads the customer's file.
+ROW_ID_DIGEST_LENGTH = 16
+
+
+def row_id_digest(value: str) -> str:
+    """The digest of one row id, computed the way `preflight.py` computed it."""
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()[:ROW_ID_DIGEST_LENGTH]
+
+
 class RowReviewInputError(ValueError):
     """A row review the scorer cannot read, or may not accept as one.
 
@@ -9367,6 +9463,13 @@ def row_review_from_document(document: Any, facts: DatasetFacts) -> RowReview:
       author is a required field with one accepted value, so a file asserting
       the user said something is refused here instead of being scored as if
       they had. Their answer arrives through the approval gate, not this file.
+
+    * It reviews rows that exist. Every entry's id is matched against the
+      digests preflight published for the rows it read, because the alternative
+      is what this function used to do: count entries naming nothing and hand
+      `answer_key_read` a release bought by a file (traigent-first-run#391).
+      A payload publishing no such list is refused rather than accepted on
+      counts, since that is the exact input the match was added to check.
 
     * It may say which rows the run actually reads, and is checked when it
       does. `in_run` is optional because at the opening gate on a large dataset
@@ -9399,6 +9502,35 @@ def row_review_from_document(document: Any, facts: DatasetFacts) -> RowReview:
             "supplying an empty review, which would read as 'nothing was wrong'"
         )
 
+    # Identity, which is what this check could not ask until preflight
+    # published the ids (traigent-first-run#391). A review of the right size
+    # whose entries name nothing in the dataset used to clear every count here
+    # and release the answer-key hold exactly as a real read did.
+    #
+    # Absence is refused rather than waved through. A review is a claim about a
+    # dataset, and a payload carrying no id list is one this scorer cannot hold
+    # that claim up against - accepting it would leave the whole of the release
+    # resting on counts again for exactly the inputs the digests were added to
+    # check, which is the fallback shape `_row_count` refuses upstream and for
+    # the same reason.
+    known_ids = facts.row_id_digests
+    if known_ids is None:
+        raise RowReviewInputError(
+            "the preflight JSON beside this review publishes no row_id_digests, "
+            "so no entry in it can be matched to a row of the dataset. Re-run "
+            "preflight.py --json from the same version as this script, or omit "
+            "--row-review rather than have the score accept a read it cannot "
+            "check"
+        )
+    known = set(known_ids)
+    # The rows the run reads, which is the second and narrower claim an entry
+    # can make. `None` is preflight publishing no such list; an empty list on a
+    # file with no declared split is the honest measurement, and the `in_run`
+    # check below is skipped in that state on the same `run_rows` witness the
+    # count check at the end of this function already uses.
+    in_run_known = (
+        set(facts.run_row_id_digests) if facts.run_row_id_digests is not None else None
+    )
     seen: set[str] = set()
     counts = {verdict: 0 for verdict in ROW_REVIEW_VERDICTS}
     origins = {origin: 0 for origin in ROW_REVIEW_ORIGINS}
@@ -9424,6 +9556,14 @@ def row_review_from_document(document: Any, facts: DatasetFacts) -> RowReview:
                 "and a repeat inflates the share the ceiling is decided on"
             )
         seen.add(row_id)
+        digest = row_id_digest(row_id)
+        if digest not in known:
+            raise RowReviewInputError(
+                f"{where} reviews id {row_id!r}, which is not a row preflight "
+                "read in this dataset. A verdict about a row that is not there "
+                "is not a read of this answer key, and the hold this review "
+                "lifts is about this dataset's answers"
+            )
         verdict = entry.get("verdict")
         if verdict not in ROW_REVIEW_VERDICTS:
             raise RowReviewInputError(
@@ -9456,6 +9596,23 @@ def row_review_from_document(document: Any, facts: DatasetFacts) -> RowReview:
                 f"{where} has in_run {in_run!r}; it says whether this run reads "
                 "that row, so it is true or false or absent - and absent means "
                 "the rows have not been drawn yet, never 'no'"
+            )
+        # The narrower claim, checked where a fact exists to check it against.
+        # `run_rows` is the witness that a split was declared at all, the same
+        # one the count check below uses; without it nothing here knows which
+        # rows the run reads and the entry's word is all there is.
+        if (
+            in_run
+            and in_run_known is not None
+            and run_rows(facts) is not None
+            and digest not in in_run_known
+        ):
+            raise RowReviewInputError(
+                f"{where} marks id {row_id!r} as one this run reads, but that "
+                "row is on neither the tuning nor the held-out side of the "
+                "declared split. That claim is the one the answer-key hold is "
+                "released against, so it is checked against the split rather "
+                "than counted"
             )
         in_run_declared.add(in_run is not None)
         counts[verdict] += 1
@@ -9646,6 +9803,8 @@ def dataset_facts_from_preflight(records: Sequence[dict[str, Any]]) -> DatasetFa
                 "failure - re-run preflight.py --json from the same version as "
                 "this script"
             )
+    row_id_digests = _id_digests(ids_metrics, "row_id_digests")
+    run_row_id_digests = _id_digests(ids_metrics, "run_row_id_digests")
     tuning_metrics = metrics.get("dataset-tuning-size", {})
     holdout_metrics = metrics.get("dataset-holdout-resolution", {})
     split_metrics = metrics.get("dataset-split", {})
@@ -9870,6 +10029,8 @@ def dataset_facts_from_preflight(records: Sequence[dict[str, Any]]) -> DatasetFa
         generated_answer_rows=_row_count(
             provenance.get("generated_answer_rows"), "generated_answer_rows"
         ),
+        row_id_digests=row_id_digests,
+        run_row_id_digests=run_row_id_digests,
         sources=tuple(provenance.get("sources", ())),
         unrecognised_sources=tuple(provenance.get("unrecognised_sources", ())),
     )
@@ -17313,10 +17474,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
             "when a material share do not, and adds no points. It is not "
             "scoreless, and this sentence used to say so: a read covering the "
             "rows the run is graded on releases the hold that keeps an "
-            "unreviewed answer key out of the top two bands. Entries are "
-            "counted, never matched against the dataset - preflight emits no "
-            "row ids to match them to - so the release is on this document's "
-            "word"
+            "unreviewed answer key out of the top two bands. Every entry is "
+            "matched to a row preflight read, and an entry claiming the run "
+            "reads its row is matched to the declared split, so an id naming "
+            "nothing is refused rather than counted; that a named row was "
+            "actually read stays this document's word"
         ),
     )
     parser.add_argument(

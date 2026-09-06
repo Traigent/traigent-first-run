@@ -16213,10 +16213,15 @@ class SkillPackageTests(unittest.TestCase):
         # contradicting "Say how much you read" below it: the opening pass
         # above the subset size names a count and releases nothing by design
         # rather than by failing, and the release is taken on the reviewer's
-        # word because readiness counts entries and never matches them to rows
+        # word only for the READING - readiness now matches every entry to a row
+        # preflight read, and an `in_run` claim to the declared split, so the
+        # forged review that used to release the hold is refused
         # (traigent-first-run#391).
         self.assertIn("The hold comes off at the section-4 re-score", normalized)
-        self.assertIn("this release is taken on your word", normalized)
+        self.assertIn(
+            "Readiness matches every entry to a row preflight read", normalized
+        )
+        self.assertIn("Having read the row you name stays your word", normalized)
         # 4. A finding is a question, never an edit - and the question has a
         #    shape: every flagged row's id, its quoted content, the reason, and
         #    whether the run will actually read it. Then the user's answer

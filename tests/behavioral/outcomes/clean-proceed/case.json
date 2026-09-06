@@ -1,19 +1,23 @@
 {
   "id": "clean-proceed",
   "state": "clean",
-  "why": "The arm nothing else reaches: no cap at all, so `recommended_action` falls through both loops and returns `proceed`. Without it the declared cards would cover only degraded runs and could not tell a regression that invents a cap from a healthy run.",
+  "why": "The arm nothing else reaches: no cap at all, so `recommended_action` falls through both loops and returns `proceed`. Without it the declared cards would cover only degraded runs and could not tell a regression that invents a cap from a healthy run. Its band is the other half of what it records: 91 is a STRONG number under no cap, and what holds it at WORKABLE is the answer-key floor - no outcome case supplies a row review - which the declaration below now says rather than leaving to a flag nobody named (#405).",
   "dataset": "evaluation-dataset.jsonl",
   "agent_origin": "brought",
   "config_space": "config-space.json",
+  "task_kind": "closed-label",
+  "evaluator_method": "normalized-exact",
   "calibration": {
     "scorer": "evaluator.py:score_intent",
     "cases": "calibration-cases.json"
   },
   "expected": {
-    "overall": 81,
     "band": "WORKABLE",
     "status": "OK",
     "recommended_action": "proceed",
+    "overall": 91,
+    "band_limited_by_confidence": false,
+    "band_limited_by_unread_answers": true,
     "caps": [],
     "asks_about_repeats": false
   }

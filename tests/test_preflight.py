@@ -4291,6 +4291,106 @@ class ATruncatedListSaysThatItIsTruncatedTests(unittest.TestCase):
         self.assertEqual(result.metrics["duplicate_ids"], 0)
 
 
+class ARowReviewCanBeMatchedToTheRowsThisCheckReadTests(unittest.TestCase):
+    """traigent-first-run#391: the ids `dataset-ids` reads, published.
+
+    This check already reads every row id to find collisions, and threw them
+    away. `readiness.py` had no way to ask whether a row review entry named a
+    row of the dataset, so a document of the right size naming nothing
+    released the hold that keeps an unread answer key out of the top two
+    bands. The digests are what that question is asked against.
+    """
+
+    def setUp(self) -> None:
+        MODULE.RESULTS.clear()
+
+    def test_the_ids_are_published_as_digests_over_two_populations(self) -> None:
+        """traigent-first-run#391: what lets readiness match a review to a row.
+
+        Two lists, because the row review makes two claims. Every id is what
+        "this entry names a row" is asked against; the ids on the tuning and
+        held-out sides are what an entry claiming `in_run` is asked against.
+        The digest is what travels, so the payload does not carry the
+        customer's own identifiers a second time.
+        """
+        rows = [
+            {
+                "id": f"ticket-{index:03d}",
+                "input": f"question {index} about the billing system and its rules",
+                "output": f"answer-{index % 4}",
+                "source": "production-log",
+                **({"split": "tuning"} if index < 20 else {}),
+                **({"split": "holdout"} if 20 <= index < 30 else {}),
+            }
+            for index in range(40)
+        ]
+        with tempfile.TemporaryDirectory() as raw:
+            dataset = Path(raw) / "dataset.jsonl"
+            dataset.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+            MODULE.RESULTS.clear()
+            MODULE.check_dataset(dataset)
+        metrics = next(
+            result.metrics for result in MODULE.RESULTS if result.check == "dataset-ids"
+        )
+        self.assertEqual(
+            metrics["row_id_digests"],
+            sorted(MODULE.row_id_digest(row["id"]) for row in rows),
+        )
+        # The ten rows with no split declaration are in the first list and not
+        # the second: nothing says the run reads them, which is the same
+        # silence `dataset-split` reports.
+        self.assertEqual(
+            metrics["run_row_id_digests"],
+            sorted(MODULE.row_id_digest(row["id"]) for row in rows[:30]),
+        )
+        # And no id travels in the clear.
+        rendered = json.dumps(metrics)
+        for row in rows:
+            self.assertNotIn(row["id"], rendered)
+
+    def test_a_row_with_no_id_is_published_under_the_name_the_guide_gives_it(
+        self,
+    ) -> None:
+        """The warning and the digest list have to agree, or the guide misfires.
+
+        `references/evaluation-and-dataset.md` tells a reviewer to name a row
+        with no stable id by its 1-based source line as `line-<n>` - on exactly
+        the dataset this check WARNs about. Publishing only the rows that carry
+        an id would make readiness refuse a review written by following that
+        instruction, which is a false refusal produced by two halves of this
+        package disagreeing.
+        """
+        rows = [
+            {
+                "input": f"question {index} about the billing system and its rules",
+                "output": f"answer-{index % 4}",
+                "source": "production-log",
+                "split": "tuning",
+                **({"id": f"ticket-{index:03d}"} if index else {}),
+            }
+            for index in range(12)
+        ]
+        with tempfile.TemporaryDirectory() as raw:
+            dataset = Path(raw) / "dataset.jsonl"
+            dataset.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+            MODULE.RESULTS.clear()
+            MODULE.check_dataset(dataset)
+        result = next(
+            result for result in MODULE.RESULTS if result.check == "dataset-ids"
+        )
+        self.assertEqual(result.status, MODULE.WARN)
+        self.assertEqual(result.metrics["rows_without_id"], 1)
+        # The unnamed row is the first line of the file, and it is nameable.
+        self.assertIn(MODULE.row_id_digest("line-1"), result.metrics["row_id_digests"])
+        self.assertIn(
+            MODULE.row_id_digest("line-1"), result.metrics["run_row_id_digests"]
+        )
+        # And it is not counted as an id, because a position is not an
+        # identity: `duplicate_ids` is about ids that collide.
+        self.assertEqual(result.metrics["duplicate_ids"], 0)
+        self.assertEqual(len(result.metrics["row_id_digests"]), len(rows))
+
+
 # Evaluators a customer would plausibly hand this guide, written before the
 # walk they are pointed at and NOT from the constructs it happens to name.
 # Three of them are here specifically because an implementation could pass the

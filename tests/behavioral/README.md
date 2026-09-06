@@ -21,8 +21,8 @@ in its `seed/` and `generated/` trees. The container job has no git to compare a
 is what lets it prove the starting state it measures is the one that was reviewed.
 
 What the free chain `preflight.py | calibrate_evaluator.py | readiness.py` actually *decides* for
-the committed inputs under `outcomes/` - the band, the status, the recommended action, and the caps
-with their `blocks`/`asks` routing - is declared by hand in each case's `case.json`, in an
+the committed inputs under `outcomes/` - the band, the status, the recommended action, the
+two gates that can hold a band, and the caps with their `blocks`/`asks` routing - is declared by hand in each case's `case.json`, in an
 `expected` block that no tool writes. The suite runs the chain fresh and compares it to that
 declaration, so a change that alters what a customer is told fails as a diff of that card, naming
 the thing that moved.

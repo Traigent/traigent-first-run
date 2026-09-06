@@ -5947,3 +5947,195 @@ class TheWalkthroughSizeReachesTheCardTests(unittest.TestCase):
             "18 examples - at or above the 18 this walkthrough tunes on", card
         )
         self.assertEqual(card.rstrip("\n").splitlines()[-1], "Action: proceed")
+
+
+class ARowReviewIsMatchedToTheRowsPreflightReadTests(unittest.TestCase):
+    """traigent-first-run#391, end to end over the two real scripts.
+
+    The hold on the top two bands is the only thing standing between an unread
+    answer key and the strongest verdict this card prints, and until preflight
+    published the ids it reads, the release was bought by counting entries. A
+    document of the right size naming no row of the dataset cleared every check
+    the scorer made. These replay both halves through
+    `preflight.py --json | readiness.py --preflight -`, because the fix is a
+    metric on one side and a refusal on the other and a unit test of either
+    half alone would not see the two agree.
+    """
+
+    #: The other script, imported so this file can assert the two digests are
+    #: one decision rather than two copies of it. `readiness.py` never imports
+    #: `preflight.py` - it reads a payload and never the customer's project -
+    #: so the algorithm is written twice and pinned here.
+    PREFLIGHT_MODULE = None
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        spec = importlib.util.spec_from_file_location(
+            "first_run_preflight_for_digests", PREFLIGHT
+        )
+        module = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        sys.modules[spec.name] = module
+        spec.loader.exec_module(module)
+        cls.PREFLIGHT_MODULE = module
+
+    def _rows(self, count: int = 40) -> list[dict]:
+        return [
+            {
+                "id": f"ticket-{index:03d}",
+                "input": f"question {index} about the billing system and its rules",
+                "output": f"answer-{index % 4}",
+                "source": "production-log",
+                "split": "tuning" if index < 28 else "holdout",
+                "difficulty": ("easy", "medium", "hard")[index % 3],
+            }
+            for index in range(count)
+        ]
+
+    @staticmethod
+    def _review(ids: list[str]) -> dict:
+        return {
+            "reviewer": "assistant",
+            "rows": [
+                {
+                    "id": row_id,
+                    "origin": "collected",
+                    "verdict": "yes",
+                    "in_run": True,
+                    "note": "the expected answer is the label this question asks for",
+                }
+                for row_id in ids
+            ],
+        }
+
+    def _score_with_review(self, rows: list[dict], review: dict, *, render=False):
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            dataset = _write_jsonl(directory, "d.jsonl", rows)
+            review_path = directory / "row-review.json"
+            review_path.write_text(json.dumps(review))
+            records = _preflight_records(dataset)
+            return subprocess.run(
+                [
+                    sys.executable,
+                    str(READINESS),
+                    "--preflight",
+                    "-",
+                    "--row-review",
+                    str(review_path),
+                    *(() if render else ("--json",)),
+                ],
+                input=json.dumps(records),
+                capture_output=True,
+                text=True,
+            )
+
+    def test_the_two_scripts_compute_one_digest(self) -> None:
+        """One decision, written twice because these scripts do not import."""
+        self.assertEqual(
+            MODULE.ROW_ID_DIGEST_LENGTH, self.PREFLIGHT_MODULE.ROW_ID_DIGEST_LENGTH
+        )
+        for value in ("ticket-118", "row-7", "line-12", "", "échec-1"):
+            with self.subTest(value=value):
+                self.assertEqual(
+                    MODULE.row_id_digest(value),
+                    self.PREFLIGHT_MODULE.row_id_digest(value),
+                )
+
+    def test_a_review_naming_no_row_of_the_dataset_is_refused(self) -> None:
+        rows = self._rows()
+        process = self._score_with_review(
+            rows, self._review([f"not-a-real-row-{index:03d}" for index in range(40)])
+        )
+        self.assertEqual(process.returncode, 2)
+        self.assertIn("not a row preflight read", process.stderr)
+        self.assertEqual(process.stdout, "")
+
+    def test_a_review_of_this_dataset_is_read_rather_than_refused(self) -> None:
+        """The same document with the file's own ids, so the refusal is the forgery.
+
+        Read all the way through to the sentence the customer sees, because
+        "the scorer exited 0" would also be true of a review it silently
+        dropped: the coverage claim on the card is what says the entries were
+        counted after they were matched.
+        """
+        rows = self._rows()
+        process = self._score_with_review(
+            rows, self._review([row["id"] for row in rows])
+        )
+        self.assertEqual(process.returncode, 0, process.stderr)
+        score = json.loads(process.stdout)
+        self.assertFalse(score["band_limited_by_unread_answers"])
+        card = self._score_with_review(
+            rows, self._review([row["id"] for row in rows]), render=True
+        )
+        self.assertEqual(card.returncode, 0, card.stderr)
+        self.assertIn(
+            "the coding assistant read 40 of 40 provided rows, covering 40 of "
+            "the 40 rows this run is graded on",
+            " ".join(card.stdout.split()),
+        )
+
+    def test_an_in_run_claim_is_matched_to_the_declared_split(self) -> None:
+        """A real id on neither side of the split is not a row this run reads."""
+        rows = self._rows()
+        rows.append(
+            {
+                "id": "ticket-999",
+                "input": "a question nobody put on either side of the split",
+                "output": "answer-0",
+                "source": "production-log",
+                "difficulty": "easy",
+            }
+        )
+        process = self._score_with_review(
+            rows, self._review([row["id"] for row in rows])
+        )
+        self.assertEqual(process.returncode, 2)
+        self.assertIn("neither the tuning nor the held-out side", process.stderr)
+
+    def test_a_payload_publishing_no_digests_refuses_the_review(self) -> None:
+        """Absence is refused rather than read as the count-only release."""
+        rows = self._rows()
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            dataset = _write_jsonl(directory, "d.jsonl", rows)
+            records = _preflight_records(dataset)
+        for record in records:
+            if record["check"] == "dataset-ids":
+                record["metrics"].pop("row_id_digests")
+                record["metrics"].pop("run_row_id_digests")
+        with tempfile.TemporaryDirectory() as raw:
+            review_path = Path(raw) / "row-review.json"
+            review_path.write_text(
+                json.dumps(self._review([row["id"] for row in rows]))
+            )
+            process = subprocess.run(
+                [
+                    sys.executable,
+                    str(READINESS),
+                    "--preflight",
+                    "-",
+                    "--row-review",
+                    str(review_path),
+                    "--json",
+                ],
+                input=json.dumps(records),
+                capture_output=True,
+                text=True,
+            )
+        self.assertEqual(process.returncode, 2)
+        self.assertIn("publishes no row_id_digests", process.stderr)
+
+    def test_a_digest_list_that_is_not_a_list_of_strings_is_refused(self) -> None:
+        """A membership test against a malformed list passes or fails silently."""
+        with tempfile.TemporaryDirectory() as raw:
+            dataset = _write_jsonl(Path(raw), "d.jsonl", self._rows())
+            records = _preflight_records(dataset)
+        for record in records:
+            if record["check"] == "dataset-ids":
+                record["metrics"]["row_id_digests"] = 40
+        process = _run_readiness(records)
+        self.assertEqual(process.returncode, 2)
+        self.assertIn("row_id_digests", process.stderr)
+        self.assertIn("list of", process.stderr)

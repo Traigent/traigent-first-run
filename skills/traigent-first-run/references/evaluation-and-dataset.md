@@ -824,10 +824,10 @@ marked `in_run` where the split is drawn, or every provided row where it is not.
 names its count and releases nothing, and on a corpus above the first-run subset size that is the
 ordinary state of the opening pass rather than a failure of it: nothing has been drawn yet, so no
 read can cover the rows the comparison will run on. The hold comes off at the section-4 re-score of
-the drawn rows, which "Say how much you read" below already asks for. Readiness counts your entries
-and never matches them to rows - preflight publishes no ids for it to match against - so this
-release is taken on your word, and a review naming rows you did not read is a false statement to the
-customer rather than a shortcut. Say that the band is held and
+the drawn rows, which "Say how much you read" below already asks for. Readiness matches every entry
+to a row preflight read, and an `in_run` claim to the declared split, so an id naming nothing is
+refused. Having read the row you name stays your word, and a review of rows you did not read is a
+false statement to the customer. Say that the band is held and
 where it lifts, rather than letting the opening card read as though the pass went wrong.
 An `unsure` is reported there too and never scored, because uncertainty is not a finding.
 
