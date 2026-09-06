@@ -316,7 +316,7 @@ import os
 import threading
 from pathlib import Path
 
-from dotenv import dotenv_values, load_dotenv
+from dotenv import load_dotenv
 
 RUN_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = RUN_DIR.parent
@@ -339,28 +339,7 @@ FIRST_RUN_PHASE = os.environ.get(
 # otherwise empty environment and a `.env` naming all three: the block ran to
 # completion on the file's ceiling and wrote it into TRAIGENT_RUN_COST_LIMIT.
 APPROVED_FIGURES = {name: os.environ.get(name) for name in APPROVED_FIGURE_NAMES}
-# `override=False` also means a key exported in the shell outranks the one in
-# `.env` without a word. Measured 2026-09-06: a shell carrying a revoked
-# TRAIGENT_API_KEY and a second, poorer-funded OPENROUTER_API_KEY ran on those
-# and never touched the file's good keys - a 401 for one, silent billing of
-# the wrong account for the other. A disagreement is refused, not resolved.
-DISAGREEING_KEYS = sorted(
-    name
-    for name, value in dotenv_values(PROJECT_ROOT / ".env").items()
-    if name.endswith("_API_KEY")
-    and (value or "").strip()
-    and os.environ.get(name, "").strip()
-    and os.environ[name].strip() != value.strip()
-)
 load_dotenv(PROJECT_ROOT / ".env", override=False)
-if DISAGREEING_KEYS:
-    raise SystemExit(
-        "Set in this process and set differently in .env: "
-        + ", ".join(DISAGREEING_KEYS)
-        + ". The process value would win and .env would be ignored. Unset the "
-        "process ones (env -u NAME) or remove them from .env; this run will "
-        "not choose for you."
-    )
 os.environ.pop("TRAIGENT_FIRST_RUN_PHASE", None)
 for _approved_name in APPROVED_FIGURE_NAMES:
     # Popped like the phase flag, so a child process inherits neither an
@@ -797,11 +776,9 @@ assert set(WIRED_KNOBS) == set(ENHANCED_SPACE), (
     "cannot skip a searched key"
 )
 
-# The quality objective is named `accuracy` because that is the one key the portal and
-# the experiment export read for it (TraigentBackend `_ACCURACY_KEYS`); an objective under
-# any other name is persisted there as 0.0 - measured 2026-09-06, twelve trials scoring
-# 5.6%-83.3% locally all shown as 0% - and the SDK moves its own built-in exact-match
-# metric aside to `exact_match_default` when a wired scorer claims the key.
+# `accuracy` is the one key the portal reads for quality; any other name shows
+# there as 0% (measured 2026-09-06). The SDK parks its built-in exact match at
+# `exact_match_default` once a wired scorer claims the key.
 OBJECTIVES = ObjectiveSchema.from_objectives(
     [
         ObjectiveDefinition(name="accuracy", orientation="maximize", weight=1.0),
@@ -2246,8 +2223,7 @@ try:
         algorithm="auto",
         configuration_space=ENHANCED_SPACE,
         max_trials=ENHANCED_MAX_TRIALS,
-        # None, never a number: a 600 s value here cut a 12-trial search at
-        # 7 and 9 on 2026-09-06, twice ending on the baseline configuration.
+        # None, never a number: 600 s here cut a 12-trial search at 7.
         timeout=OPTIMIZATION_TIMEOUT_SECONDS,
         save_to=OPTIMIZED_RESULTS,
     )

@@ -22,8 +22,7 @@ containing the loaded `SKILL.md`** from the path the coding assistant actually l
 tool's working directory at the user's project root and interpolate that literal absolute skill
 directory into each invocation; do not depend on an exported variable surviving a later tool call.
 In a clone the resolved directory ends in `skills/traigent-first-run`; after Agent Skill
-installation it may live elsewhere. Clone **beside** the user's project - a sibling directory,
-never inside the project root - so the guide is not read as part of the project it is optimizing.
+installation it may live elsewhere. Clone **beside** the user's project, never inside its root, so the guide is not read as part of it.
 
 ## Keep the guide source separate from the project being optimized
 

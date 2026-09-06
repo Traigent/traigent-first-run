@@ -91,13 +91,10 @@ When building an evaluator:
 - Return a normalized score in `[0, 1]` from every metric helper.
 - Fail evaluator/runtime errors distinctly; do not let a crashed harness look like an incorrect
   agent answer.
-- Name the primary objective `accuracy`: the portal and the experiment export read that one
-  key, and an objective under any other name is persisted there as 0.0 (measured 2026-09-06).
-  Say what it measures in the metric helper's name instead.
-- When the scorer reads row metadata, prove the SDK delivers it before paid work: 0.26.0's loader
-  nests an explicit `metadata` object one level down (`evaluators/base.py`), so
-  `metadata["db_id"]` reads `None` on a row that carries one. Read both shapes, or lift the
-  fields to the row's top level.
+- Name the primary objective `accuracy`: the portal reads that one key for quality, and any
+  other name shows there as 0% (measured 2026-09-06).
+- When the scorer reads row metadata, prove the SDK delivers it: the 0.26.0 loader nests an
+  explicit `metadata` object one level down, so `metadata["db_id"]` reads `None`. Read both shapes.
 
 ## Mandatory calibration
 
