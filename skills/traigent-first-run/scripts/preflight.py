@@ -2736,7 +2736,12 @@ def emit_dataset_id_findings(
         # `PASS/FAIL/WARN/SKIP` at the top of this file. A missing id is the
         # same defect in a generated row and a collected one: it is measured
         # exactly, the count of generated rows travels in the sentence and in
-        # `generated_rows_without_id`, and the card prices it.
+        # `generated_rows_without_id`, and the card prices it off that COUNT -
+        # `readiness.dataset_facts_from_preflight` reads the metric, not this
+        # status, so the ceiling it feeds is unchanged by the WARN. That
+        # coupling is the whole reason to say it here: read off the status, as
+        # it was, relaxing this line silently deleted a blocking line from the
+        # customer's card.
         #
         # `if generated_missing: status = FAIL` was the fourth spelling of the
         # construct #438 removed, and the one no grep for `FAIL if synthetic`

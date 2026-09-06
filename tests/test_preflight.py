@@ -2090,10 +2090,12 @@ class StaticPreflightTests(unittest.TestCase):
         names. They were not the last two: the missing-bands arm and
         `dataset-ids` spelled the same decision without the words
         `FAIL if synthetic`, which is why a grep for the construct reported
-        the file clean while two of them were live. All four are asserted
-        here, and the id-less arm below asserts the two provenances AGREE
-        rather than asserting a constant, so the next author who reaches for
-        this construct fails on the inconsistency itself.
+        the file clean while two of them were live. This fixture carries ids
+        and tags every row easy, so it reaches two of the four - the two #438
+        names - and the two sibling tests below carry the missing-bands arm and
+        `dataset-ids`. The id-less one asserts the two provenances AGREE rather
+        than asserting a constant, so the next author who reaches for this
+        construct fails on the inconsistency itself.
 
         Nothing downstream can see the difference at either consumer of these
         two names: `DIVERSITY_CHECKS` tests `status in ("FAIL", "WARN")`, and
@@ -2178,11 +2180,13 @@ class StaticPreflightTests(unittest.TestCase):
         # one constant, which is the form that reds on the inconsistency
         # itself.
         #
-        # Two checks DO still read provenance, and neither is a gate:
-        # `dataset-provenance`, whose whole subject is where the rows came
-        # from, and `dataset-coverage`, which speaks only for a synthetic
-        # corpus. Both are WARN-against-PASS or WARN-against-silence, never
-        # FAIL, so neither reaches the exit code.
+        # Checks that still READ provenance are deliberately not enumerated
+        # here. A list of them is a completeness claim maintained by hand
+        # beside a property maintained by execution, and the first draft of
+        # this comment named two where the same commit's own comment in
+        # `preflight.py` named a third. The assertion below is the claim: no
+        # check reaches FAIL on provenance. Which ones differ at WARN is a
+        # different question and is not one a comment should answer.
         self.assertEqual(
             {check for check, status in generated.items() if status == MODULE.FAIL},
             {check for check, status in collected.items() if status == MODULE.FAIL},
