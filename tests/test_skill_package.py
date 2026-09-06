@@ -32592,9 +32592,18 @@ class TheAcceptedRouteIsReadableBeforeItIsRefusedTests(unittest.TestCase):
         # was refused by a rule the document did not state - the mirror of the
         # rule-stated-twice defect this guide names, and it produced a refusal
         # telling a correct agent to do what it had already done.
+        #
+        # Pinned with the condition attached to the arm it governs, and as a
+        # PARAMETER rather than as a location. Written the other way round -
+        # "in the selected callable alone" after both spellings - it read as
+        # restricting the mapping read too, which item 4 above and the
+        # settings-mapping limit both promise in a same-file helper; and a
+        # location alone blesses `temperature = config["temperature"]`
+        # followed by `temperature=temperature`, which is a local rather than
+        # a parameter and is refused.
         self.assertIn(
-            "`temperature=temperature` in the selected callable alone - a "
-            "helper parameter says nothing about its caller",
+            "or, where that name is a parameter of the selected callable "
+            "rather than of a helper, `temperature=temperature`",
             reference,
         )
 

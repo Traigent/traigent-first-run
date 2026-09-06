@@ -21530,6 +21530,39 @@ def run(config, question):
         self.assertIn("forward the whole mapping and read it in the helper", forwarded)
         self.assertIn("does not return that call's result", telemetry)
 
+    BOTH_CONDITIONS = """
+def _send(temperature, question):
+    client.log.record(temperature=temperature)
+    return client.chat.completions.create(
+        model="gpt-4o-mini", temperature=0.2,
+        messages=[{"role": "user", "content": question}])
+
+
+def run(config, question):
+    return _send(config["temperature"], question)
+"""
+
+    def test_a_shape_that_fails_both_conditions_is_told_both(self) -> None:
+        """Naming one of two sends the reader to a shape still refused.
+
+        Each single-condition branch holds the other condition strict, so a
+        helper that logs the setting on the client without returning that
+        call's result satisfies neither. Reported as either one alone, the
+        repair it names lands on the other and is refused again - a card the
+        reader learns cannot be worked through. Both are named instead.
+        """
+        both = self._diagnosis(self.BOTH_CONDITIONS)
+        self.assertFalse(self._credited(self.BOTH_CONDITIONS))
+        self.assertIn("fails both remaining conditions at once", both)
+        self.assertIn("AND the callable does not return that call's result", both)
+        self.assertNotIn(
+            "nothing on the selected call path uses this setting to index", both
+        )
+        # And each single-condition shape keeps its own sentence, so this
+        # branch cannot quietly become the answer to all three.
+        self.assertNotEqual(both, self._diagnosis(self.FORWARDED_FROM_THE_CALL_SITE))
+        self.assertNotEqual(both, self._diagnosis(self.TELEMETRY_NAMES_IT))
+
     def test_the_relaxed_flags_are_the_predicate_credit_applies(self) -> None:
         """One predicate with two switches, not a second copy beside it.
 
@@ -21564,6 +21597,120 @@ def run(config, question):
                 selected_only=False,
                 require_returned_result=False,
             )
+        )
+
+
+class TheNumericBranchesDoNotSpeakForACategoricalSettingTests(unittest.TestCase):
+    """The route the setting was judged by decides which conditions may be named.
+
+    `route_refusal_diagnosis` serves two callers. The categorical one refuses a
+    setting for indexing no declared table and never consults the numeric route
+    at all; the numeric one reaches it only in the `else` of that route's own
+    credit check. A branch that infers "this condition failed" from "the
+    predicate is true once this condition is relaxed" is sound only under the
+    second, and keying it on the predicate alone reintroduced the defect it
+    was written to remove, on the most ordinary agent in the guide:
+    `model=config["model"]` was told its setting reaches a parameter of a
+    helper, over a file containing no helper, and handed back the line its
+    author had already written.
+
+    Every shape here is correctly refused - nothing indexes `MODELS` - so the
+    assertion is about the sentence, which is what these two issues are about.
+    """
+
+    HEAD = 'from openai import OpenAI\n\nMODELS = ["gpt-4o-mini", "gpt-4o"]\n\nclient = OpenAI()\n\n'
+    KNOB = {
+        "model": {
+            "values": ["gpt-4o-mini", "gpt-4o"],
+            "source_lines": [3],
+            "evidence": "agent.py:3 lists the models.",
+        }
+    }
+
+    SHAPES = {
+        "the mapping read straight into the request": """
+def run(config, question):
+    return client.chat.completions.create(
+        model=config["model"],
+        messages=[{"role": "user", "content": question}])
+""",
+        "the selected callable's own parameter": """
+def run(model, question):
+    return client.chat.completions.create(
+        model=model, messages=[{"role": "user", "content": question}])
+""",
+        "forwarded to a helper": """
+def _send(model, question):
+    return client.chat.completions.create(
+        model=model, messages=[{"role": "user", "content": question}])
+
+
+def run(config, question):
+    return _send(config["model"], question)
+""",
+        "named on a call whose result is not returned": """
+def run(config, question):
+    client.log.record(model=config["model"])
+    return client.chat.completions.create(
+        model="gpt-4o-mini", messages=[{"role": "user", "content": question}])
+""",
+    }
+
+    def test_a_setting_with_options_gets_the_table_route_refusal(self) -> None:
+        for shape, body in self.SHAPES.items():
+            with self.subTest(shape=shape):
+                with tempfile.TemporaryDirectory() as directory:
+                    root = Path(directory)
+                    (root / "agent.py").write_text(self.HEAD + body)
+                    facts = MODULE.agent_facts_from_discovery(
+                        {"source": "agent.py", "knobs": self.KNOB},
+                        source_root=root,
+                        selected_agent=root / "agent.py",
+                        selected_agent_callable="run",
+                    )
+                knob = facts.discovered[0]
+                self.assertFalse(knob.credited, shape)
+                self.assertIn(
+                    "nothing on the selected call path uses this setting to "
+                    "index a declared table",
+                    knob.uncredited_reason,
+                    shape,
+                )
+                # The two sentences that would be false here: there is no
+                # helper in three of these files, and the fourth's helper is
+                # not why the table route refused it.
+                self.assertNotIn(
+                    "a parameter of a helper", knob.uncredited_reason, shape
+                )
+                self.assertNotIn(
+                    "does not return that call's result",
+                    knob.uncredited_reason,
+                    shape,
+                )
+
+    def test_the_precondition_is_what_the_branches_are_keyed_on(self) -> None:
+        """Not the predicate: on the first shape the predicate is TRUE.
+
+        `model=config["model"]` satisfies the numeric route's predicate
+        unrelaxed and is still refused, because the categorical route wants
+        the choice to index a module binding. That is why the guard has to be
+        the caller's statement about which route it applied rather than
+        anything this function can compute from the source.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "agent.py").write_text(
+                self.HEAD + self.SHAPES["the mapping read straight into the request"]
+            )
+            source = MODULE.static_source_evidence(
+                "agent.py", root, root / "agent.py", "run"
+            )
+        self.assertTrue(
+            MODULE._knob_reaches_its_named_request_argument("model", source)
+        )
+        self.assertIn(
+            "nothing on the selected call path uses this setting to index",
+            MODULE.route_refusal_diagnosis("model", [3], source),
         )
 
 

@@ -15548,6 +15548,8 @@ def route_refusal_diagnosis(
     lines: Sequence[int],
     source: StaticSourceEvidence,
     siblings: Sequence[str] = (),
+    *,
+    numeric_route_refused: bool = False,
 ) -> str:
     """Which condition of the accepted route this read could not confirm.
 
@@ -15572,9 +15574,26 @@ def route_refusal_diagnosis(
     customer's agent needs a branch here and a home in the guidance; the
     selected-callable condition had neither and lived only in a comment.
 
+    WHICH ROUTE was being diagnosed is the other half of that, and leaving it
+    implicit reintroduced the same harm on the other path. This function
+    serves two callers: a setting with options, refused by the TABLE route,
+    and a range, refused by the NUMERIC one. The numeric route's branches
+    below infer from "the predicate is true once this condition is relaxed"
+    that the relaxed condition is what failed - which holds only where the
+    unrelaxed predicate is already known false. The numeric caller guarantees
+    that, because it reaches this function only in the `else` of that same
+    predicate; the categorical caller never consults the numeric route at all,
+    so for a setting with options the unrelaxed predicate can be TRUE while
+    the setting is refused for indexing no declared table. Keyed on the
+    predicate alone, `model=config["model"]` - the most ordinary agent in the
+    guide - was told its setting reaches a helper's parameter, over a file
+    with no helper in it, and handed back the line its author had written.
+    `numeric_route_refused` is that precondition, named rather than assumed:
+    the caller states it has applied the numeric route and been refused, and
+    only then do those branches speak.
+
     The residual: the branches below name a condition, not a line. Where a
-    file holds several calls this cannot say which one it judged, and a
-    setting that fails two conditions hears only the first.
+    file holds several calls this cannot say which one it judged.
     """
     declared = _declared_module_names(source)
     reachable = _module_names_a_subscript_can_reach(source)
@@ -15656,7 +15675,19 @@ def route_refusal_diagnosis(
         # "the value passed straight to the request argument named for it",
         # which is what its author wrote. Advice describing the customer's own
         # code produces no correction and no bug report.
-        if _knob_reaches_its_named_request_argument(knob, source, selected_only=False):
+        # Guarded on the caller having applied that route and been refused,
+        # never on the predicate alone: a setting with options reaches this
+        # function from the table route, where the numeric predicate can be
+        # true over a setting refused for indexing nothing.
+        in_a_helper = numeric_route_refused and (
+            _knob_reaches_its_named_request_argument(knob, source, selected_only=False)
+        )
+        result_not_returned = numeric_route_refused and (
+            _knob_reaches_its_named_request_argument(
+                knob, source, require_returned_result=False
+            )
+        )
+        if in_a_helper:
             return (
                 "this setting does reach a request argument of its own name, "
                 "but the argument is a parameter of a helper rather than of "
@@ -15667,9 +15698,7 @@ def route_refusal_diagnosis(
                 "of the mapping in the selected callable itself, or forward "
                 "the whole mapping and read it in the helper"
             )
-        if _knob_reaches_its_named_request_argument(
-            knob, source, selected_only=False, require_returned_result=False
-        ):
+        if result_not_returned:
             return (
                 "a call on the provider client names this setting, but the "
                 "callable does not return that call's result, so this read "
@@ -15678,6 +15707,25 @@ def route_refusal_diagnosis(
                 "what separates the request from a telemetry or logging line "
                 "beside it. Name the setting on the call whose result the "
                 "callable returns"
+            )
+        # Both at once, and said so. Each single-condition branch above holds
+        # the OTHER condition strict, so a helper that logs the setting
+        # without returning that call's result satisfies neither and used to
+        # fall to whichever branch relaxed enough to catch it - naming one
+        # condition, whose repair lands on the other, still refused. A reader
+        # who fixes one of two and is refused again learns that this card
+        # cannot be worked through.
+        if numeric_route_refused and _knob_reaches_its_named_request_argument(
+            knob, source, selected_only=False, require_returned_result=False
+        ):
+            return (
+                "this setting is named as a request argument of its own name, "
+                "but on a call that fails both remaining conditions at once: "
+                "the argument is a parameter of a helper rather than of the "
+                "selected callable, AND the callable does not return that "
+                "call's result, so the call is not read as the request. Both "
+                "have to hold - read the setting in the callable whose result "
+                "is returned, or forward the whole mapping and read it there"
             )
         return (
             "nothing on the selected call path uses this setting to index a "
@@ -16341,7 +16389,16 @@ def discovered_knob_from_entry(
                 "the cited executable source shows the declared bounds, but "
                 "this deliberately narrow static read could not follow the "
                 "setting to the request on the selected agent path: "
-                + route_refusal_diagnosis(name, checked_lines, source, siblings)
+                + route_refusal_diagnosis(
+                    name,
+                    checked_lines,
+                    source,
+                    siblings,
+                    # This branch is the `else` of the numeric route's own
+                    # credit check above, so its conditions are the ones this
+                    # setting really failed.
+                    numeric_route_refused=True,
+                )
                 + "; no source defect is inferred - the setting may well "
                 "change the request - and the enhanced run can settle this "
                 "dimension",
