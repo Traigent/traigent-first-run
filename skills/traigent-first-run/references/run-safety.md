@@ -331,7 +331,7 @@ card says why.
 ### Deterministic calibration and mock plumbing
 
 Deterministic calibration is a separate execution gate and always requires a recorded `sufficient`
-evidence-backed semantic-coverage verdict. Before every calibration this run performs, run only a
+evidence-backed semantic-coverage verdict. Before every calibration this stage performs, run only a
 non-executing evaluator whose complete call path is local-only, side-effect-free, and
 standard-library-only. The same three words bind anything else this stage imports, and a reply
 transform is the one other thing it does: reaching that function executes its module's top level,

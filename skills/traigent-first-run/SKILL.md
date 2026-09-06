@@ -310,8 +310,8 @@ not a failed evaluator; the `evaluator-unvalidated` ceiling limits the readiness
 the evaluation method is actually checked, and the card's recommended action names that outstanding
 calibration rather than reading `proceed`. Where the deferral is the evaluator-execution scope gate
 rather than a step this run could take, pass `--calibration-scope-refused` so the card asks for the
-containment review instead of for the calibration the gate forbids; it moves no number, and
-preflight's witness reaches the same state without it. `calibrate_evaluator.py` refuses such an
+containment review instead of for the calibration the gate forbids; it moves no number, and it is
+the only route where preflight finds no engine. `calibrate_evaluator.py` refuses such an
 evaluator itself, naming the file and line, and `references/run-safety.md` records why no
 in-process route replaces it. Apply the run-scoped evaluator-method rule above to both
 scripts, and apply the run-scoped task-kind rule to readiness only here - narrower than its

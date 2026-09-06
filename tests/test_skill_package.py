@@ -5680,7 +5680,7 @@ class SkillPackageTests(unittest.TestCase):
             self.assertIn(phrase, normalized_safety)
 
     def test_no_document_says_the_scope_refusal_cannot_be_checked(self) -> None:
-        """The guide may not deny a check the module performs.
+        """The guide may not deny a check the module performs, or oversell it.
 
         `SKILL.md` and the flag's own `--help` both said the declaration
         "moves no number, because nothing here can check it". The second half
@@ -5689,6 +5689,20 @@ class SkillPackageTests(unittest.TestCase):
         the card reaches it with no flag passed at all. "Moves no number"
         survives, because the CLI refuses `--calibration` beside the flag and
         the two arms score identically without one.
+
+        The first replacement over-corrected in the other direction. It read
+        "it moves no number, and preflight's witness reaches the same state
+        without it", which is true only where a witness exists and reads, in
+        the one place an assistant decides whether to pass a safety
+        declaration, as though the flag were redundant. Measured on an
+        evaluator reaching its engine through a helper module - one of the two
+        shapes `run-safety.md` names as invisible to the walk - the states are
+        not the same at all: without the flag the card raises
+        `evaluator-unvalidated` and recommends `complete-calibration`, the
+        step this guide forbids that project, and with it the card raises
+        `evaluator-calibration-refused` and sends the run to the containment
+        review. So the document says what the flag is FOR: the only route
+        where preflight finds no engine.
 
         Both homes are asserted together on purpose. This is the repository's
         named defect class - a rule stated in two places is a rule that can be
@@ -5712,10 +5726,14 @@ class SkillPackageTests(unittest.TestCase):
                 self.assertNotIn("nothing here can check it", text)
                 self.assertNotIn("a declaration nothing here can check", text)
         self.assertIn(
-            "it moves no number, and preflight's witness reaches the same state "
-            "without it",
+            "it moves no number, and it is the only route where preflight finds "
+            "no engine",
             skill,
         )
+        # The over-correction, refused by name: the flag is not redundant, and
+        # a document that implies it is costs the run its containment routing
+        # for every evaluator the walk cannot see.
+        self.assertNotIn("reaches the same state without it", skill)
         self.assertIn("a declaration this score cannot verify on its own", help_text)
         self.assertIn(
             "where --preflight witnessed an engine the card reaches it with no "
@@ -5743,18 +5761,40 @@ class SkillPackageTests(unittest.TestCase):
         `references/run-safety.md`'s execution-evaluator scope gate" - so the
         reference was the half that disagreed, and restating the mandate in
         `SKILL.md` would have given one rule a second home.
+
+        THIS STAGE, not this run, and the narrowing is the point rather than a
+        hedge. Written as "every calibration this run performs" the rule bound
+        a calibration that cannot satisfy it: the same paragraph sends an
+        evaluator needing a declared local dependency away to wait for the
+        install, and `SKILL.md` section 5 step 5 then mandates running that
+        deferred calibration - whose call path is, after the install and by
+        construction, not standard-library-only. One document forbidding what
+        another mandates is this repository's named defect, so the rule binds
+        every calibration at the stage where the three words CAN hold, which
+        is the stage #397's re-calibration-after-repair happens in and the one
+        the paragraph's own closing sentence anchors ("run either before
+        creating `.env` or requesting a provider key"). It also gives "the
+        same three words bind anything else this stage imports", two sentences
+        later, the antecedent it lost when "environment setup" was deleted.
         """
         safety = " ".join(RUN_SAFETY.read_text().casefold().split())
         paragraph = safety.split("### deterministic calibration and mock plumbing", 1)[
             1
         ]
         self.assertIn(
-            "before every calibration this run performs, run only a "
+            "before every calibration this stage performs, run only a "
             "non-executing evaluator whose complete call path is local-only, "
             "side-effect-free, and standard-library-only",
             paragraph,
         )
         self.assertNotIn("before environment setup", paragraph)
+        # The stage the rule binds is anchored in the paragraph that states
+        # it, and "this stage" below it now has something to refer back to.
+        self.assertIn("before creating `.env` or requesting a provider key", paragraph)
+        self.assertIn("bind anything else this stage imports", paragraph)
+        # And it may not reach the calibration section 5 mandates after an
+        # install, which is the contradiction the wider wording created.
+        self.assertNotIn("every calibration this run performs", safety)
         # The mandate stays where SKILL.md already carries it, and the
         # reference does not grow a second copy of it.
         skill = " ".join(SKILL.read_text().casefold().split())
@@ -5763,7 +5803,10 @@ class SkillPackageTests(unittest.TestCase):
             "execution-evaluator scope gate",
             skill,
         )
-        self.assertNotIn("before every calibration this run performs", skill)
+        self.assertIn(
+            "run calibration deferred solely for a local installed dependency", skill
+        )
+        self.assertNotIn("before every calibration this", skill)
 
     def test_local_baseline_checkpoint_precedes_every_traigent_key_request(
         self,
@@ -8747,8 +8790,11 @@ class SkillPackageTests(unittest.TestCase):
             # "Before environment setup" until traigent-first-run#397: that
             # read as a precondition met once on the way in, and a repaired
             # evaluator was recalibrated with nothing re-establishing the
-            # three words over its new call path.
-            "before every calibration this run performs, run only a non-executing evaluator",
+            # three words over its new call path. "This stage" rather than
+            # "this run" because section 5 step 5 mandates a calibration
+            # deferred for an installed dependency, whose path is not
+            # standard-library-only by then.
+            "before every calibration this stage performs, run only a non-executing evaluator",
             "an execution evaluator has already ended this guide at the scope gate above",
         ):
             with self.subTest(calibration_phrase=phrase):
@@ -22396,6 +22442,32 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
 
     # (decision, phrases asserting one answer, phrases asserting the opposite)
     CONTRADICTIONS = (
+        (
+            # Settled twice in one change, in opposite directions, which is
+            # why it belongs in the registry rather than in a local assertion
+            # inside one test.
+            #
+            # It read "before environment setup", a precondition met once on
+            # the way in: a calibration that finished and did not pass sends
+            # the run to repair the evaluator, and the repaired path was
+            # calibrated again with nothing re-establishing the three words
+            # over it (traigent-first-run#397). Rewritten as "every
+            # calibration this run performs" it then forbade a calibration
+            # `SKILL.md` section 5 step 5 mandates - the one deferred for a
+            # local dependency, whose path after the install is by
+            # construction not standard-library-only.
+            #
+            # Settled: the rule binds every calibration at the stage where the
+            # three words can hold, it is stated in `run-safety.md` alone, and
+            # `SKILL.md` carries the mandate to apply the gate rather than a
+            # second copy of the words.
+            "when the local-only, side-effect-free, standard-library-only read is redone",
+            ("before every calibration this stage performs",),
+            (
+                "before environment setup, run only a non-executing evaluator",
+                "before every calibration this run performs",
+            ),
+        ),
         (
             # Two different limits were collapsed into one sentence, and a
             # customer read the wrong one. The guide will not run an evaluator
