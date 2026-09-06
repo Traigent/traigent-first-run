@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import hashlib
 import json
 import os
 import re
@@ -1025,6 +1026,11 @@ def dataset_field_value(row: dict[str, Any], field_path: str) -> tuple[bool, Any
 #: the same question of the same names, and two copies of this set are two
 #: answers waiting to disagree about what "the tuning split" means.
 TUNING_SPLIT_NAMES = frozenset({"tune", "tuning", "train", "search"})
+#: The split names a run holds back and grades on at the end. Hoisted here for
+#: the reason its sibling above was: the split walk and the id digests below
+#: both have to agree on which rows this run reads, and a second literal set is
+#: a second answer to that question.
+HOLDOUT_SPLIT_NAMES = frozenset({"holdout", "test", "validation", "validate"})
 #: What `drawable_distinct_inputs` counted over, in the customer's terms.
 TUNING_SPLIT_SCOPE = "the tuning split"
 DATASET_SCOPE = "this dataset"
@@ -2268,6 +2274,35 @@ def stable_id_is_missing(value: Any) -> bool:
     return value is None or (isinstance(value, str) and not value.strip())
 
 
+#: How much of the SHA-256 of a row id travels in the payload. Sixty-four bits,
+#: which is far more than enough to make an accidental collision between two of
+#: one file's rows unreachable, and short enough that the two lists below cost
+#: about 20 bytes per row rather than 70.
+ROW_ID_DIGEST_LENGTH = 16
+
+
+def row_id_digest(value: str) -> str:
+    """The published stand-in for one row id.
+
+    Published rather than the id itself so the payload does not carry the
+    customer's own strings out of their file a second time, and truncated
+    because `readiness.py` only ever asks this of it: is the id in this review
+    entry one of the ids preflight read?
+
+    Say what this is not, because the shape invites the wrong reading. It is
+    obfuscation, not secrecy. Row ids live in a small, guessable namespace -
+    `support-004`, `ticket-118`, and the `row-<n>`/`line-<n>` this package
+    stamps itself - so anyone holding the payload and a guess at the scheme can
+    confirm a guess by hashing it. What the digest buys is that the payload
+    stops being a readable list of the customer's identifiers; what it does not
+    buy is that the ids cannot be recovered. The run already writes ids into the
+    project in plaintext - the row-review document is the one file a scoring run
+    leaves behind and its entries carry `"id": "ticket-118"` - so this is a
+    second, weaker copy of an exposure that exists rather than a new one.
+    """
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()[:ROW_ID_DIGEST_LENGTH]
+
+
 def emit_dataset_id_findings(
     row_records: list[tuple[int, dict[str, Any]]],
 ) -> None:
@@ -2284,14 +2319,60 @@ def emit_dataset_id_findings(
     """
     missing_records: list[tuple[int, dict[str, Any]]] = []
     ids: list[str] = []
+    reviewable: list[str] = []
+    run_ids: list[str] = []
     for line_number, row in row_records:
         value = row_metadata_value(row, "id")
         if stable_id_is_missing(value):
             missing_records.append((line_number, row))
+            # The name the guide tells a reviewer to use for a row with no id
+            # of its own: `references/evaluation-and-dataset.md` says to write
+            # the 1-based source line as `line-<n>`. Published so that reading
+            # THIS check's warning and then following that instruction produces
+            # a review readiness accepts, rather than one it refuses for naming
+            # rows that are there. It is not counted as an id - `ids` below is
+            # what collides and what `duplicate_ids` is about - because a
+            # position is not an identity: it is only what a review may name.
+            #
+            # Which puts these names in the same namespace as real ids, so a
+            # dataset carrying a genuine id spelled `line-4` on one row and no
+            # id on source line 4 publishes one digest for both, and
+            # `duplicate_ids` cannot see it by the same exclusion. Contrived -
+            # nobody names a row after a line it is not on - and its whole cost
+            # is that a review naming one of the two is accepted for the other:
+            # a membership set one row too generous, not a wrong verdict. Left
+            # as it is and written down, because separating the namespaces
+            # would mean publishing a shape the guide would then have to teach.
+            rendered = f"line-{line_number}"
         else:
-            ids.append(
+            rendered = (
                 stable_json(value) if isinstance(value, (dict, list)) else str(value)
             )
+            ids.append(rendered)
+            # Published stripped, and counted for collisions unstripped.
+            #
+            # `"  ticket-101  "` is an ordinary export artefact, and this check
+            # calls it a stable unique id - `stable_id_is_missing` strips only
+            # to decide emptiness. A reviewer reading that file writes
+            # `ticket-101`, because that is the row, so the published name has
+            # to be the one a reader would write or the identity match refuses
+            # a truthful review over invisible whitespace.
+            #
+            # The two questions are kept apart deliberately. Collisions are
+            # this check's own long-standing finding and its answer does not
+            # move: `ids` above stays verbatim, so a file carrying `a` and
+            # ` a ` still reports the ids it reports today rather than gaining
+            # a FAIL nobody asked this branch for. What that leaves is one
+            # digest standing for both rows - the same over-generosity the
+            # `line-<n>` namespace has, and the same size: a membership set one
+            # row wide, never a verdict.
+            rendered = rendered.strip() or rendered
+        reviewable.append(rendered)
+        split = row_metadata_value(row, "split")
+        if split and str(split).casefold() in (
+            TUNING_SPLIT_NAMES | HOLDOUT_SPLIT_NAMES
+        ):
+            run_ids.append(rendered)
     id_counts = Counter(ids)
     duplicate_ids = sorted(value for value, count in id_counts.items() if count > 1)
     generated_missing = sum(
@@ -2311,6 +2392,58 @@ def emit_dataset_id_findings(
         # A consumer building a reason for that FAIL needs the count that caused
         # it, and the wider one would name rows the check did not object to.
         "generated_rows_without_id": generated_missing,
+        # The ids themselves, as digests, so a downstream reader can ask
+        # whether a row it was told about is a row of this file.
+        #
+        # `readiness.py` is that reader, and until this existed the one input it
+        # accepts on nothing but its own word - the row review, which releases
+        # the hold that keeps an unread answer key out of the top two bands -
+        # could name forty-eight rows that do not exist and be counted as a read
+        # of forty-eight rows that do (traigent-first-run#391). Nothing counted
+        # off the file can catch that; the ids can, and this check already reads
+        # them to find collisions.
+        #
+        # Two populations, because the review makes two claims. The first is
+        # every id in the file, which is what "this entry names a row" is asked
+        # against. The second is the ids on the tuning and held-out sides, which
+        # is what an entry claiming `in_run` is asked against - the review says
+        # that row is one this run reads, and the split is where that is
+        # written down. Rows with no split declaration appear only in the first,
+        # which is the same silence `dataset-split` reports as "no explicit
+        # tuning/held-out split was found", and readiness makes no membership
+        # claim in that state.
+        #
+        # Both lists name a row with no id of its own by the `line-<n>` the
+        # guide tells the reviewer to write for it, so following the warning
+        # this same check emits produces a review readiness accepts.
+        #
+        # UNCAPPED, and that is the decision rather than an oversight, so it is
+        # written here: every other list this check prints stops at
+        # `MAX_REPORTED_DATASET_IDS` and a reader will assume this one does too.
+        # Those lists are EXAMPLES - ten colliding ids tell a reader what is
+        # wrong - and this is a membership set. A truncated membership set
+        # refuses real rows, which is a false red on an honest review, and the
+        # worse failure of the two. Measured, and re-measurable from
+        # `ROW_ID_DIGEST_LENGTH` above and `tests/test_preflight.py`'s
+        # `test_the_per_row_cost_of_the_two_lists_is_pinned`: 16 hex characters
+        # per row per list, about 20 bytes of JSON each, so the two lists are
+        # 70% of the payload on the 4,812-row corpus the worked example in
+        # `references/evaluation-and-dataset.md` uses, and `SKILL.md` has that
+        # payload written into the customer's project.
+        # That cost is real and is paid because the alternatives that remove it
+        # - a Bloom filter, a prefix trie, the set in a file beside the payload
+        # - all make the artefact harder to read by hand rather than easier,
+        # which is the property this package keeps choosing. The per-row cost is
+        # pinned by `tests/test_preflight.py`, so a bulkier encoding fails
+        # rather than growing quietly.
+        #
+        # Sorted and de-duplicated: this answers membership, not multiplicity,
+        # and `duplicate_ids` above already answers the other question. Both
+        # lists are published on every arm, PASS included, for the same reason
+        # the counts above are - a consumer must never have to read a status to
+        # know whether a metric means "none" or "not measured".
+        "row_id_digests": sorted({row_id_digest(value) for value in reviewable}),
+        "run_row_id_digests": sorted({row_id_digest(value) for value in run_ids}),
     }
     # One record, both findings. These were two emits under one check name,
     # and the reader keyed by name kept the later one: with a WARN for rows
@@ -3731,7 +3864,7 @@ def check_dataset(
             if reference_free or labelled_row:
                 scoreable_splits.setdefault(split_name, set()).add(identity)
     tune_names = TUNING_SPLIT_NAMES
-    holdout_names = {"holdout", "test", "validation", "validate"}
+    holdout_names = HOLDOUT_SPLIT_NAMES
     tune_inputs = set().union(
         *(values for name, values in splits.items() if name in tune_names)
     )

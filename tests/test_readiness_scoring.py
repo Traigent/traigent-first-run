@@ -10884,6 +10884,32 @@ def _brought(rows: int, **extra) -> "MODULE.DatasetFacts":
     return MODULE.DatasetFacts(**defaults)
 
 
+#: Every row id the row-review documents in this file name. Published as
+#: digests on the facts those documents are read against, because a review is
+#: now matched to the rows preflight read: an entry naming no row is refused
+#: before any other rule in `row_review_from_document` is reached
+#: (traigent-first-run#391).
+_REVIEWED_IDS = ("row-1", "row-2", "a", "b", "c", "d", *(f"row-{n}" for n in range(8)))
+
+
+def _reviewable(facts: "MODULE.DatasetFacts", *, in_run=_REVIEWED_IDS):
+    """The same facts, with the ids a review may name published on them.
+
+    `in_run` is the narrower list - the rows on the declared split - and
+    defaults to all of them, which is what a dataset whose every row the run
+    reads publishes. A test about the split membership check passes its own.
+    """
+    return replace(
+        facts,
+        row_id_digests=tuple(
+            sorted({MODULE.row_id_digest(value) for value in _REVIEWED_IDS})
+        ),
+        run_row_id_digests=tuple(
+            sorted({MODULE.row_id_digest(value) for value in in_run})
+        ),
+    )
+
+
 def _review(**counts) -> "MODULE.RowReview":
     reviewed = counts.pop("reviewed")
     return MODULE.RowReview(
@@ -11579,10 +11605,163 @@ class TheTopBandsNeedAReadOfTheAnswersTests(unittest.TestCase):
         facts = _routing_corpus(collected_rows=0, synthesised_rows=48, synthetic=True)
         self.assertTrue(MODULE.answer_key_read(facts, MODULE.RowReview()))
 
+    def test_a_review_naming_rows_the_dataset_does_not_have_releases_nothing(
+        self,
+    ) -> None:
+        """traigent-first-run#391: the release used to be bought by a file.
+
+        The forged document is the honest one in every respect a count can
+        measure - the right size, the right origins, `in_run` answered on every
+        entry, and no more of them than the split holds - and names not one row
+        of the dataset. It cleared every check this function makes and lifted
+        the hold exactly as a real read did.
+        """
+        facts = _reviewable(_routing_corpus())
+        forged = {
+            "reviewer": "assistant",
+            "rows": [
+                {
+                    "id": f"not-a-real-row-{index:03d}",
+                    "origin": "collected",
+                    "verdict": "yes",
+                    "in_run": True,
+                    "note": "the expected answer follows from the input",
+                }
+                for index in range(48)
+            ],
+        }
+        with self.assertRaises(MODULE.RowReviewInputError) as raised:
+            MODULE.row_review_from_document(forged, facts)
+        self.assertIn("names 48 ids preflight did not read", str(raised.exception))
+        # And the same document with this dataset's own ids is read, so what
+        # was refused is the forgery rather than the shape.
+        honest = json.loads(json.dumps(forged))
+        for index, entry in enumerate(honest["rows"]):
+            entry["id"] = f"row-{index}"
+        real = _reviewable(
+            _routing_corpus(),
+            in_run=tuple(f"row-{index}" for index in range(48)),
+        )
+        real = replace(
+            real,
+            row_id_digests=tuple(
+                sorted({MODULE.row_id_digest(f"row-{index}") for index in range(48)})
+            ),
+        )
+        review = MODULE.row_review_from_document(honest, real)
+        self.assertEqual(review.reviewed_in_run, 48)
+        self.assertTrue(MODULE.answer_key_read(real, review))
+
+    def test_a_review_cannot_place_a_real_row_in_a_split_it_is_not_on(self) -> None:
+        """The second half of #391, and the one the hold actually reads.
+
+        `reviewed_in_run >= graded_rows` is the comparison that lifts this
+        floor on a corpus nobody reads whole, so an entry claiming `in_run` is
+        matched against the split rather than only counted against its size.
+        """
+        facts = _reviewable(
+            _routing_corpus(),
+            in_run=tuple(f"row-{index}" for index in range(4)),
+        )
+        document = {
+            "reviewer": "assistant",
+            "rows": [
+                {
+                    "id": f"row-{index}",
+                    "origin": "collected",
+                    "verdict": "yes",
+                    "in_run": True,
+                    "note": "the expected answer follows from the input",
+                }
+                for index in range(6)
+            ],
+        }
+        with self.assertRaises(MODULE.RowReviewInputError) as raised:
+            MODULE.row_review_from_document(document, facts)
+        self.assertIn("neither the tuning nor the held-out side", str(raised.exception))
+
+    def test_a_review_is_refused_where_no_ids_were_published_to_check_it(self) -> None:
+        """Absence fails loud rather than restoring the count-only release."""
+        with self.assertRaises(MODULE.RowReviewInputError) as raised:
+            MODULE.row_review_from_document(
+                {
+                    "reviewer": "assistant",
+                    "rows": [
+                        {
+                            "id": "row-0",
+                            "origin": "collected",
+                            "verdict": "yes",
+                            "note": "the expected answer follows from the input",
+                        }
+                    ],
+                },
+                _routing_corpus(),
+            )
+        self.assertIn("publishes no row id digests", str(raised.exception))
+        # Both causes named, because the message used to diagnose one: a
+        # payload predating the lists is a re-run, and a payload describing no
+        # dataset at all is not.
+        self.assertIn("describes no dataset", str(raised.exception))
+        self.assertIn("predates these lists", str(raised.exception))
+
+    def test_a_run_graded_on_no_answered_row_is_not_released_by_any_review(
+        self,
+    ) -> None:
+        """traigent-first-run#395: `0 >= 0` was a threshold every review cleared.
+
+        The file has answers and the split the run compares on has none, so
+        there is no read of that key to supply. `dataset-tuning-split-empty`
+        caps this under every reference-based method, which is why the release
+        was never seen in a top band - but that cap reads label counts and does
+        not fire under a reference-free judge, so the branch is made safe on
+        its own account instead.
+        """
+        facts = _routing_corpus(tuning_labelled_rows=0, holdout_labelled_rows=0)
+        self.assertEqual(MODULE.graded_rows(facts), 0)
+        for review in (
+            MODULE.RowReview(supplied=True, reviewed=1, reviewed_in_run=0),
+            MODULE.RowReview(supplied=True, reviewed=48, reviewed_in_run=48),
+        ):
+            with self.subTest(reviewed=review.reviewed):
+                self.assertFalse(MODULE.answer_key_read(facts, review))
+        # And the evidence line stops printing "covering 0 of the 0 rows this
+        # run is graded on", which is a true arithmetic and a nonsense sentence.
+        line = MODULE.row_review_evidence(
+            MODULE.RowReview(supplied=True, reviewed=1, reviewed_in_run=0), facts
+        )
+        self.assertNotIn("of the 0 rows", line)
+        self.assertIn("read 1 of", line)
+
     def test_a_payload_predating_the_provenance_counts_is_never_held(self) -> None:
         """This module does not charge a caller for a field it could not send."""
         facts = MODULE.DatasetFacts(exists=True, rows=48, labelled_rows=48)
         self.assertTrue(MODULE.answer_key_read(facts, MODULE.RowReview()))
+
+    def test_an_uncounted_dataset_offers_the_rows_the_provenance_ladder_does(
+        self,
+    ) -> None:
+        """traigent-first-run#404: two readings of one uncounted dataset.
+
+        `score_dataset` reads an uncounted dataset as undeclared unless
+        `synthetic` is true and as generated when it is; `provided_rows` read
+        it as brought either way, so in the synthetic arm it offered generated
+        rows to a review that refuses them. Nothing preflight writes reaches
+        the arm - every row lands in one of the three buckets and an absent
+        count is refused - which is why this is an alignment and a test rather
+        than a cap.
+        """
+        uncounted = MODULE.DatasetFacts(
+            exists=True, rows=40, labelled_rows=40, answerable_rows=40
+        )
+        self.assertEqual(MODULE.provided_rows(uncounted), 40)
+        generated = replace(uncounted, synthetic=True)
+        self.assertEqual(MODULE.provided_rows(generated), 0)
+        # Which is the same answer the counted path gives for the same
+        # dataset, and the same one the hold's generated-corpus branch needs.
+        self.assertEqual(
+            MODULE.provided_rows(replace(uncounted, synthesised_rows=40)), 0
+        )
+        self.assertTrue(MODULE.answer_key_read(generated, MODULE.RowReview()))
 
     def test_a_band_already_at_or_below_the_ceiling_is_not_held_again(self) -> None:
         """Two reasons to hold one band compose; only the live one is reported.
@@ -12415,7 +12594,7 @@ class RowReviewInputTests(unittest.TestCase):
     shape.
     """
 
-    facts = _brought(30, collected_rows=25, undeclared_rows=5)
+    facts = _reviewable(_brought(30, collected_rows=25, undeclared_rows=5))
 
     def _read(self, document) -> "MODULE.RowReview":
         return MODULE.row_review_from_document(document, self.facts)
@@ -12543,7 +12722,9 @@ class RowReviewInputTests(unittest.TestCase):
         self,
     ) -> None:
         """The same check the origin counts already get, against the split."""
-        facts = _brought(30, collected_rows=30, tuning_rows=2, holdout_rows=1)
+        facts = _reviewable(
+            _brought(30, collected_rows=30, tuning_rows=2, holdout_rows=1)
+        )
         entries = [self._entry(id=f"row-{index}", in_run=True) for index in range(4)]
         with self.assertRaises(MODULE.RowReviewInputError) as raised:
             MODULE.row_review_from_document(self._rows(*entries), facts)
@@ -19790,6 +19971,11 @@ def _row_review_refusal(
         answerable_rows=1,
         generated_answer_rows=0,
         placeholder_rows=0,
+        # The example's own id, published the way preflight publishes it, so
+        # what this exercises is the vocabulary rules rather than the identity
+        # check that now runs before them.
+        row_id_digests=(MODULE.row_id_digest(entry["id"]),),
+        run_row_id_digests=(MODULE.row_id_digest(entry["id"]),),
         sources=(),
         unrecognised_sources=(),
     )

@@ -5947,3 +5947,321 @@ class TheWalkthroughSizeReachesTheCardTests(unittest.TestCase):
             "18 examples - at or above the 18 this walkthrough tunes on", card
         )
         self.assertEqual(card.rstrip("\n").splitlines()[-1], "Action: proceed")
+
+
+class ARowReviewIsMatchedToTheRowsPreflightReadTests(unittest.TestCase):
+    """traigent-first-run#391, end to end over the two real scripts.
+
+    The hold on the top two bands is the only thing standing between an unread
+    answer key and the strongest verdict this card prints, and until preflight
+    published the ids it reads, the release was bought by counting entries. A
+    document of the right size naming no row of the dataset cleared every check
+    the scorer made. These replay both halves through
+    `preflight.py --json | readiness.py --preflight -`, because the fix is a
+    metric on one side and a refusal on the other and a unit test of either
+    half alone would not see the two agree.
+    """
+
+    #: The other script, imported so this file can assert the two digests are
+    #: one decision rather than two copies of it. `readiness.py` never imports
+    #: `preflight.py` - it reads a payload and never the customer's project -
+    #: so the algorithm is written twice and pinned here.
+    PREFLIGHT_MODULE = None
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        spec = importlib.util.spec_from_file_location(
+            "first_run_preflight_for_digests", PREFLIGHT
+        )
+        module = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        sys.modules[spec.name] = module
+        spec.loader.exec_module(module)
+        cls.PREFLIGHT_MODULE = module
+
+    def _rows(self, count: int = 40) -> list[dict]:
+        return [
+            {
+                "id": f"ticket-{index:03d}",
+                "input": f"question {index} about the billing system and its rules",
+                "output": f"answer-{index % 4}",
+                "source": "production-log",
+                "split": "tuning" if index < 28 else "holdout",
+                "difficulty": ("easy", "medium", "hard")[index % 3],
+            }
+            for index in range(count)
+        ]
+
+    @staticmethod
+    def _review(ids: list[str]) -> dict:
+        return {
+            "reviewer": "assistant",
+            "rows": [
+                {
+                    "id": row_id,
+                    "origin": "collected",
+                    "verdict": "yes",
+                    "in_run": True,
+                    "note": "the expected answer is the label this question asks for",
+                }
+                for row_id in ids
+            ],
+        }
+
+    def _score_with_review(self, rows: list[dict], review: dict, *, render=False):
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            dataset = _write_jsonl(directory, "d.jsonl", rows)
+            review_path = directory / "row-review.json"
+            review_path.write_text(json.dumps(review))
+            records = _preflight_records(dataset)
+            return subprocess.run(
+                [
+                    sys.executable,
+                    str(READINESS),
+                    "--preflight",
+                    "-",
+                    "--row-review",
+                    str(review_path),
+                    *(() if render else ("--json",)),
+                ],
+                input=json.dumps(records),
+                capture_output=True,
+                text=True,
+            )
+
+    def test_the_two_scripts_compute_one_digest(self) -> None:
+        """One decision, written twice because these scripts do not import."""
+        self.assertEqual(
+            MODULE.ROW_ID_DIGEST_LENGTH, self.PREFLIGHT_MODULE.ROW_ID_DIGEST_LENGTH
+        )
+        for value in ("ticket-118", "row-7", "line-12", "", "échec-1"):
+            with self.subTest(value=value):
+                self.assertEqual(
+                    MODULE.row_id_digest(value),
+                    self.PREFLIGHT_MODULE.row_id_digest(value),
+                )
+
+    def test_a_review_naming_no_row_of_the_dataset_is_refused(self) -> None:
+        rows = self._rows()
+        process = self._score_with_review(
+            rows, self._review([f"not-a-real-row-{index:03d}" for index in range(40)])
+        )
+        self.assertEqual(process.returncode, 2)
+        self.assertIn("names 40 ids preflight did not read", process.stderr)
+        # Bounded, and it says so: a review of the wrong dataset entirely is
+        # every entry, and a wall of ids answers with the question.
+        self.assertIn("(first 10 of 40 shown)", process.stderr)
+        self.assertEqual(process.stdout, "")
+
+    def test_a_review_of_this_dataset_is_read_rather_than_refused(self) -> None:
+        """The same document with the file's own ids, so the refusal is the forgery.
+
+        Read all the way through to the sentence the customer sees, because
+        "the scorer exited 0" would also be true of a review it silently
+        dropped: the coverage claim on the card is what says the entries were
+        counted after they were matched.
+        """
+        rows = self._rows()
+        process = self._score_with_review(
+            rows, self._review([row["id"] for row in rows])
+        )
+        self.assertEqual(process.returncode, 0, process.stderr)
+        score = json.loads(process.stdout)
+        self.assertFalse(score["band_limited_by_unread_answers"])
+        card = self._score_with_review(
+            rows, self._review([row["id"] for row in rows]), render=True
+        )
+        self.assertEqual(card.returncode, 0, card.stderr)
+        self.assertIn(
+            "the coding assistant read 40 of 40 provided rows, covering 40 of "
+            "the 40 rows this run is graded on",
+            " ".join(card.stdout.split()),
+        )
+
+    def test_an_in_run_claim_is_matched_to_the_declared_split(self) -> None:
+        """A real id on neither side of the split is not a row this run reads."""
+        rows = self._rows()
+        rows.append(
+            {
+                "id": "ticket-999",
+                "input": "a question nobody put on either side of the split",
+                "output": "answer-0",
+                "source": "production-log",
+                "difficulty": "easy",
+            }
+        )
+        process = self._score_with_review(
+            rows, self._review([row["id"] for row in rows])
+        )
+        self.assertEqual(process.returncode, 2)
+        self.assertIn("neither the tuning nor the held-out side", process.stderr)
+
+    def test_a_payload_publishing_no_digests_refuses_the_review(self) -> None:
+        """Absence is refused rather than read as the count-only release."""
+        rows = self._rows()
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            dataset = _write_jsonl(directory, "d.jsonl", rows)
+            records = _preflight_records(dataset)
+        for record in records:
+            if record["check"] == "dataset-ids":
+                record["metrics"].pop("row_id_digests")
+                record["metrics"].pop("run_row_id_digests")
+        with tempfile.TemporaryDirectory() as raw:
+            review_path = Path(raw) / "row-review.json"
+            review_path.write_text(
+                json.dumps(self._review([row["id"] for row in rows]))
+            )
+            process = subprocess.run(
+                [
+                    sys.executable,
+                    str(READINESS),
+                    "--preflight",
+                    "-",
+                    "--row-review",
+                    str(review_path),
+                    "--json",
+                ],
+                input=json.dumps(records),
+                capture_output=True,
+                text=True,
+            )
+        self.assertEqual(process.returncode, 2)
+        self.assertIn("publishes no row id digests", process.stderr)
+        # Both causes, because the message used to name one. A payload that
+        # predates the lists is a re-run; a payload that describes no dataset -
+        # `--dataset` omitted, which SKILL.md mandates for a source-only
+        # project, or a file preflight could not read - is not, and sending
+        # that reader to re-run preflight sends them to do what already
+        # happened.
+        self.assertIn("describes no dataset", process.stderr)
+        self.assertIn("predates these lists", process.stderr)
+
+    def test_a_review_beside_a_payload_with_no_dataset_at_all_is_refused(self) -> None:
+        """The state the version-mismatch diagnosis was wrong about.
+
+        Preflight run without `--dataset` emits no `dataset-ids` record at all,
+        so there is no id list and no dataset either. The review is refused -
+        silently dropping it is the fail-open the digests exist to close - and
+        the message has to be one this reader can act on.
+        """
+        process = subprocess.run(
+            [
+                sys.executable,
+                str(PREFLIGHT),
+                "--defer-missing-sdk",
+                "--json",
+            ],
+            capture_output=True,
+            text=True,
+        )
+        assert process.returncode in (0, 1), process.stderr
+        records = json.loads(process.stdout)
+        self.assertNotIn("dataset-ids", {record["check"] for record in records})
+        with tempfile.TemporaryDirectory() as raw:
+            review_path = Path(raw) / "row-review.json"
+            review_path.write_text(json.dumps(self._review(["ticket-000"])))
+            scored = subprocess.run(
+                [
+                    sys.executable,
+                    str(READINESS),
+                    "--preflight",
+                    "-",
+                    "--row-review",
+                    str(review_path),
+                    "--json",
+                ],
+                input=json.dumps(records),
+                capture_output=True,
+                text=True,
+            )
+        self.assertEqual(scored.returncode, 2)
+        self.assertIn("describes no dataset", scored.stderr)
+        self.assertNotIn("Traceback", scored.stderr)
+
+    def test_an_id_padded_with_whitespace_still_matches_what_a_reader_writes(
+        self,
+    ) -> None:
+        """The regression an alignment audit over the merged branches found.
+
+        `"  ticket-101  "` is an ordinary export artefact, and `dataset-ids`
+        calls it a stable unique id - it strips only to decide emptiness. So
+        nothing warns anybody, and a reviewer who writes what the row plainly
+        is loses the whole opening card to invisible whitespace. Trunk scored
+        this project; the identity check must not be what breaks it.
+        """
+        rows = self._rows()
+        for row in rows:
+            row["id"] = f"  {row['id']}  "
+        review = self._review([row["id"].strip() for row in rows])
+        process = self._score_with_review(rows, review)
+        self.assertEqual(process.returncode, 0, process.stderr)
+        self.assertFalse(json.loads(process.stdout)["band_limited_by_unread_answers"])
+        # And the padded spelling is accepted too, since it names the same row.
+        padded = self._score_with_review(rows, self._review([r["id"] for r in rows]))
+        self.assertEqual(padded.returncode, 0, padded.stderr)
+
+    def test_every_unmatched_id_is_named_by_one_refusal(self) -> None:
+        """Three bad ids used to cost three runs, one refusal each.
+
+        `preflight.py`'s shadowed-credential report abandoned that convention
+        for the reason this one has to: a reader who fixes what the message
+        names should not meet the next instance as a fresh surprise.
+        """
+        rows = self._rows()
+        review = self._review([row["id"] for row in rows])
+        for index in (1, 3, 5):
+            review["rows"][index]["id"] = f"not-a-row-{index}"
+        process = self._score_with_review(rows, review)
+        self.assertEqual(process.returncode, 2)
+        self.assertIn("names 3 ids preflight did not read", process.stderr)
+        for index in (1, 3, 5):
+            self.assertIn(f"not-a-row-{index}", process.stderr)
+
+    def test_an_in_run_claim_is_checked_on_a_tuning_only_dataset(self) -> None:
+        """The shape the old `run_rows` gate let through entirely.
+
+        `run_rows` needs both sides of the split, so a dataset declaring only a
+        tuning side had every `in_run` claim on it go unchecked - the same
+        class this branch exists to close, left open on a shape the guide's own
+        tuning-only path produces. The published list is the better witness: it
+        is non-empty exactly when some row of this file is one the run reads.
+        """
+        rows = self._rows()
+        for index, row in enumerate(rows):
+            if index < 28:
+                row["split"] = "tuning"
+            else:
+                row.pop("split", None)
+        review = self._review([row["id"] for row in rows])
+        process = self._score_with_review(rows, review)
+        self.assertEqual(process.returncode, 2)
+        self.assertIn("neither the tuning nor the held-out side", process.stderr)
+        # The rows that ARE on the tuning side are accepted, so what was
+        # refused is the claim and not the shape.
+        honest = self._review([row["id"] for row in rows[:28]])
+        self.assertEqual(self._score_with_review(rows, honest).returncode, 0)
+
+    def test_an_id_written_as_a_number_says_how_to_write_it(self) -> None:
+        """`{"id": 101}` is published as `"101"`, and copying it is mandatory."""
+        rows = self._rows()
+        review = self._review([row["id"] for row in rows])
+        review["rows"][0]["id"] = 101
+        process = self._score_with_review(rows, review)
+        self.assertEqual(process.returncode, 2)
+        self.assertIn("which is not a string", process.stderr)
+        self.assertNotIn("has no 'id'", process.stderr)
+
+    def test_a_digest_list_that_is_not_a_list_of_strings_is_refused(self) -> None:
+        """A membership test against a malformed list passes or fails silently."""
+        with tempfile.TemporaryDirectory() as raw:
+            dataset = _write_jsonl(Path(raw), "d.jsonl", self._rows())
+            records = _preflight_records(dataset)
+        for record in records:
+            if record["check"] == "dataset-ids":
+                record["metrics"]["row_id_digests"] = 40
+        process = _run_readiness(records)
+        self.assertEqual(process.returncode, 2)
+        self.assertIn("row_id_digests", process.stderr)
+        self.assertIn("list of", process.stderr)

@@ -413,11 +413,11 @@ write.
 `--evaluation`. Those three flags are fallback declarations for material the score was not given;
 adding them beside measurements supplies two incompatible accounts of the same project, so
 `readiness.py` rejects the invocation. The opening readiness argv therefore contains the measured
-inputs plus the run-scoped `--task-kind`, `--evaluator-method`, and component-origin
-flags that the rules above establish. Before running it, check the row-review mechanically against its documented
-shape: every reviewed row has `id`, normalized `origin`, `verdict`, one-sentence `note`, and the
-same explicit `in_run` boolean when membership is settled. Do not rely on a successful exit to
-prove an omitted review field was intentionally omitted.
+inputs plus the run-scoped `--task-kind`, `--evaluator-method`, and component-origin flags the
+rules above establish. Before running it, check the row-review mechanically against its shape:
+every row has a preflight-read `id`, normalized `origin`, `verdict`, one-sentence `note`, and the
+same explicit `in_run` boolean, on the split, when membership is settled. Do not rely on a
+successful exit to prove an omitted field was intentionally omitted.
 
 #### Zero-anchor intent gate
 

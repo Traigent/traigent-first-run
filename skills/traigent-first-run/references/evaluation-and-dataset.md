@@ -750,25 +750,24 @@ this input?** Answer `yes`, `no`, or `unsure`, with the row id and one sentence.
 
 When the rows carry no stable id - which `preflight.py`'s `dataset-ids` check reports as a warning
 on exactly this dataset - use the 1-based source line as `line-<n>`, and say in the conversation
-that the ids are positional. Any scheme satisfies the scorer, and that is the problem: two review
-documents written for the same file cannot be compared unless the ids mean the same thing. The line
-number is chosen because it is the one
-identifier the file already has, and because preflight's own warning quotes source lines, so a user
-told `line-7` can find row 7 without a mapping. It is not an id the customer owns - if they later
-add stable ids, the next run uses theirs.
+that the ids are positional. Only that spelling is accepted: preflight publishes an id-less row
+under that name and readiness refuses any other, so two reviews of one file name the same rows.
+That line number is chosen because preflight's own warning quotes source lines, so a user told
+`line-7` can find row 7 without a mapping. It is not an id the customer owns - if they later add
+stable ids, the next run uses theirs.
 
-That reason is also its whole scope, so state it rather than assuming it. A line number identifies a
-row only where the file the CUSTOMER holds is one row per line, and `preflight.py` skips blank lines
-while still counting them, so one blank line makes `line-7` the sixth row. Use `line-<n>` only for a
-JSONL file the customer wrote, and check the last number against the row count rather than assuming
-they agree.
+That reason is its whole scope, so state it rather than assuming it. A line number identifies a row
+only where the file the CUSTOMER holds is one row per line, and `preflight.py` skips blank lines
+while still counting them, so one blank line makes `line-7` the sixth row. Use `line-<n>` only for
+a JSONL file the customer wrote, and count source lines: past a blank line the last number exceeds
+the row count, and the larger number is the published one.
 
 Anything else arrives here already carrying `row-<n>`, stamped as it was converted above, because
 that is the only moment the customer's own row position is still known. Read that id; do not
-re-derive one from the working copy, which no longer numbers what they hold. Two conventions and one
+re-derive one from the working copy, which no longer numbers what they hold. Two conventions, one
 rule: the id names a position in the customer's own file either way, and the run says which
-convention it used, because `line-` and `row-` count different things - an id nobody can resolve
-against their own file is the mistake here, not the scheme used to build it.
+convention it used, because `line-` and `row-` count different things - and a name preflight did
+not publish is refused, whichever of them you meant.
 Record the answers
 where `SKILL.md`'s opening gate places a scoring's own files, and pass that file to
 `scripts/readiness.py --row-review`:
@@ -824,10 +823,10 @@ marked `in_run` where the split is drawn, or every provided row where it is not.
 names its count and releases nothing, and on a corpus above the first-run subset size that is the
 ordinary state of the opening pass rather than a failure of it: nothing has been drawn yet, so no
 read can cover the rows the comparison will run on. The hold comes off at the section-4 re-score of
-the drawn rows, which "Say how much you read" below already asks for. Readiness counts your entries
-and never matches them to rows - preflight publishes no ids for it to match against - so this
-release is taken on your word, and a review naming rows you did not read is a false statement to the
-customer rather than a shortcut. Say that the band is held and
+the drawn rows, which "Say how much you read" below already asks for. Readiness matches every entry
+to a row preflight read, and an `in_run` claim to the split, so an id naming nothing is refused. It
+matches on hashed ids: obfuscation, not secrecy. Having read the row you name stays your word, and
+a review of rows you did not read is a false statement to the customer. Say that the band is held and
 where it lifts, rather than letting the opening card read as though the pass went wrong.
 An `unsure` is reported there too and never scored, because uncertainty is not a finding.
 
