@@ -25912,6 +25912,13 @@ class RowIdsHaveAFallbackWhenTheDatasetHasNoneTests(unittest.TestCase):
     The file's own line number is the fallback because it is the identifier the
     file already has, and because preflight's warning quotes source lines - so a
     user told `line-7` can find row 7 without being handed a mapping.
+
+    Since traigent-first-run#391 the convergence is no longer luck: preflight
+    publishes an id-less row under exactly that name and `readiness.py` refuses
+    any other, so the scheme is enforced rather than agreed. That makes the
+    scope pins below load-bearing in a way they were not - a reader who takes
+    the old "any scheme satisfies the scorer" reading now writes a document the
+    scorer exits 2 on, so the guidance has to say which scheme and how to count.
     """
 
     def _dataset(self) -> str:
@@ -25934,6 +25941,47 @@ class RowIdsHaveAFallbackWhenTheDatasetHasNoneTests(unittest.TestCase):
     def test_a_customer_owned_id_still_wins(self) -> None:
         """A fallback, not a replacement for ids the customer actually owns."""
         self.assertIn("the next run uses theirs", self._dataset())
+
+    def test_the_scheme_is_stated_as_the_only_one_the_scorer_accepts(self) -> None:
+        """traigent-first-run#391 turned a convention into a refusal.
+
+        The old text said "any scheme satisfies the scorer, and that is the
+        problem", and argued comparability as the reason to pick one. Since the
+        ids are published and matched, exactly one scheme satisfies the scorer
+        and every other exits 2 with no card - so a reader following the old
+        sentence writes `row-1` or a bare `1` and loses the opening gate. The
+        comparability point survives as the REASON; the licence does not.
+        """
+        dataset = self._dataset()
+        self.assertIn(
+            "only that spelling is accepted: preflight publishes an id-less row "
+            "under that name and readiness refuses any other",
+            dataset,
+        )
+        self.assertNotIn("any scheme satisfies the scorer", dataset)
+
+    def test_the_blank_line_skew_says_which_number_to_keep(self) -> None:
+        """The skew stopped being hygiene and became accept-or-refuse.
+
+        The old sentence said to check the last `line-<n>` against the row count
+        "rather than assuming they agree" - advice that reads as "make them
+        agree". Past a blank line they do not agree, and the source line is the
+        one preflight published, so renumbering to the row count is precisely
+        the edit that gets the review refused.
+        """
+        dataset = self._dataset()
+        self.assertIn(
+            "count source lines: past a blank line the last number exceeds the "
+            "row count, and the larger number is the published one",
+            dataset,
+        )
+
+    def test_neither_convention_is_accepted_on_its_own_authority(self) -> None:
+        """`line-` and `row-` are still two conventions, and both are checked."""
+        self.assertIn(
+            "a name preflight did not publish is refused, whichever of them you meant",
+            self._dataset(),
+        )
 
     # The four below pin the SCOPE, not the scheme. Review deleted the whole
     # scoping paragraph and the three tests above stayed green: only the byte
@@ -26048,8 +26096,28 @@ class OpeningMeasuredEvidenceContractTests(unittest.TestCase):
 
     def test_settled_row_reviews_have_an_explicit_membership_field(self) -> None:
         gate = self._gate()
-        self.assertIn("same explicit `in_run` boolean when membership is settled", gate)
+        self.assertIn(
+            "same explicit `in_run` boolean, on the split, when membership is settled",
+            gate,
+        )
         self.assertIn("do not rely on a successful exit", gate)
+
+    def test_the_pre_run_check_lists_the_two_rules_readiness_refuses_on(
+        self,
+    ) -> None:
+        """The enumerated shape has to be the shape, or the check cannot catch.
+
+        This sentence tells the assistant to check the document mechanically
+        BEFORE running readiness, and then lists what to check. Since
+        traigent-first-run#391 two of the refusals are about values rather than
+        presence - the `id` must be one preflight read, and an `in_run` row must
+        sit on the split - so a list of field names alone passes its own check
+        and readiness then exits 2, which is the failure `do not rely on a
+        successful exit` exists to prevent in the other direction.
+        """
+        gate = self._gate()
+        self.assertIn("every row has a preflight-read `id`", gate)
+        self.assertIn("`in_run` boolean, on the split,", gate)
 
 
 class ACommentIsNotAKnobTests(unittest.TestCase):

@@ -4348,6 +4348,53 @@ class ARowReviewCanBeMatchedToTheRowsThisCheckReadTests(unittest.TestCase):
         for row in rows:
             self.assertNotIn(row["id"], rendered)
 
+    def test_the_per_row_cost_of_the_two_lists_is_pinned(self) -> None:
+        """The one list in this check with no cap, held to a known price.
+
+        `MAX_REPORTED_DATASET_IDS` truncates every other list here, and this one
+        cannot be truncated: it is a membership set, and a short one refuses
+        rows that exist. So the bound is on the ENCODING instead. Two lists at
+        16 hex characters a row is about 40 bytes of JSON per row in total, and
+        `SKILL.md` has this payload written into the customer's project - on the
+        4,812-row corpus the worked example uses that is roughly 190 KB. A
+        change to a bulkier digest, or a third list, fails here instead of
+        growing the artefact quietly.
+        """
+        rows = [
+            {
+                "id": f"ticket-{index:03d}",
+                "input": f"question {index} about the billing system and its rules",
+                "output": f"answer-{index % 4}",
+                "source": "production-log",
+                "split": "tuning",
+            }
+            for index in range(50)
+        ]
+        with tempfile.TemporaryDirectory() as raw:
+            dataset = Path(raw) / "dataset.jsonl"
+            dataset.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+            MODULE.RESULTS.clear()
+            MODULE.check_dataset(dataset)
+        metrics = next(
+            result.metrics for result in MODULE.RESULTS if result.check == "dataset-ids"
+        )
+        lists = {"row_id_digests", "run_row_id_digests"}
+        # Exactly these two, so a third unbounded list is a deliberate act.
+        self.assertEqual(
+            {name for name, value in metrics.items() if isinstance(value, list)},
+            lists,
+        )
+        for name in lists:
+            with self.subTest(metric=name):
+                self.assertEqual(len(metrics[name]), len(rows))
+                for digest in metrics[name]:
+                    self.assertRegex(digest, r"^[0-9a-f]{16}$")
+        # And the serialised price of one row, measured rather than argued.
+        per_row = len(
+            json.dumps({name: metrics[name] for name in sorted(lists)})
+        ) / len(rows)
+        self.assertLess(per_row, 42)
+
     def test_a_row_with_no_id_is_published_under_the_name_the_guide_gives_it(
         self,
     ) -> None:

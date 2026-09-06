@@ -2333,6 +2333,16 @@ def emit_dataset_id_findings(
             # rows that are there. It is not counted as an id - `ids` below is
             # what collides and what `duplicate_ids` is about - because a
             # position is not an identity: it is only what a review may name.
+            #
+            # Which puts these names in the same namespace as real ids, so a
+            # dataset carrying a genuine id spelled `line-4` on one row and no
+            # id on source line 4 publishes one digest for both, and
+            # `duplicate_ids` cannot see it by the same exclusion. Contrived -
+            # nobody names a row after a line it is not on - and its whole cost
+            # is that a review naming one of the two is accepted for the other:
+            # a membership set one row too generous, not a wrong verdict. Left
+            # as it is and written down, because separating the namespaces
+            # would mean publishing a shape the guide would then have to teach.
             rendered = f"line-{line_number}"
         else:
             rendered = (
@@ -2388,6 +2398,26 @@ def emit_dataset_id_findings(
         # Both lists name a row with no id of its own by the `line-<n>` the
         # guide tells the reviewer to write for it, so following the warning
         # this same check emits produces a review readiness accepts.
+        #
+        # UNCAPPED, and that is the decision rather than an oversight, so it is
+        # written here: every other list this check prints stops at
+        # `MAX_REPORTED_DATASET_IDS` and a reader will assume this one does too.
+        # Those lists are EXAMPLES - ten colliding ids tell a reader what is
+        # wrong - and this is a membership set. A truncated membership set
+        # refuses real rows, which is a false red on an honest review, and the
+        # worse failure of the two. Measured, and re-measurable from
+        # `ROW_ID_DIGEST_LENGTH` above and `tests/test_preflight.py`'s
+        # `test_the_per_row_cost_of_the_two_lists_is_pinned`: 16 hex characters
+        # per row per list, about 20 bytes of JSON each, so the two lists are
+        # 70% of the payload on the 4,812-row corpus the worked example in
+        # `references/evaluation-and-dataset.md` uses, and `SKILL.md` has that
+        # payload written into the customer's project.
+        # That cost is real and is paid because the alternatives that remove it
+        # - a Bloom filter, a prefix trie, the set in a file beside the payload
+        # - all make the artefact harder to read by hand rather than easier,
+        # which is the property this package keeps choosing. The per-row cost is
+        # pinned by `tests/test_preflight.py`, so a bulkier encoding fails
+        # rather than growing quietly.
         #
         # Sorted and de-duplicated: this answers membership, not multiplicity,
         # and `duplicate_ids` above already answers the other question. Both

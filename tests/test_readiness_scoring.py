@@ -11697,7 +11697,12 @@ class TheTopBandsNeedAReadOfTheAnswersTests(unittest.TestCase):
                 },
                 _routing_corpus(),
             )
-        self.assertIn("publishes no row_id_digests", str(raised.exception))
+        self.assertIn("publishes no row id digests", str(raised.exception))
+        # Both causes named, because the message used to diagnose one: a
+        # payload predating the lists is a re-run, and a payload describing no
+        # dataset at all is not.
+        self.assertIn("describes no dataset", str(raised.exception))
+        self.assertIn("predates these lists", str(raised.exception))
 
     def test_a_run_graded_on_no_answered_row_is_not_released_by_any_review(
         self,

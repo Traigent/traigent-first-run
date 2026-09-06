@@ -4902,6 +4902,15 @@ def answer_key_read(facts: DatasetFacts, review: RowReview) -> bool:
     # reference-based method, which is why it was never reachable in a top
     # band; under a reference-free judge that cap does not fire at all, because
     # `score_dataset` there counts rows and never labels.
+    #
+    # One narrower thing than the guidance says, and the difference is written
+    # here because it is not worth guidance bytes to say twice:
+    # `references/evaluation-and-dataset.md` tells the reader that covering the
+    # rows the run reads is what releases the hold, and in this one state no
+    # coverage releases it. Every reference-based method caps that state
+    # `dataset-tuning-split-empty` and blocks it, far below the bands this
+    # floor holds, so the promise the reference makes is kept everywhere a card
+    # could act on it.
     if graded is not None and graded <= 0:
         return False
     if review.reviewed_in_run is not None and graded is not None:
@@ -9515,12 +9524,23 @@ def row_review_from_document(document: Any, facts: DatasetFacts) -> RowReview:
     # the same reason.
     known_ids = facts.row_id_digests
     if known_ids is None:
+        # Three causes, and the message names all three rather than diagnosing
+        # one. It said "re-run preflight.py from the same version", which is
+        # right for a payload predating the lists and wrong for the other two:
+        # `emit_dataset_id_findings` is not reached when `check_dataset`
+        # returns early on a file it cannot read, and it is not reached at all
+        # when `--dataset` was omitted, which SKILL.md mandates for a
+        # source-only project. Sending that reader to re-run preflight sends
+        # them to do the thing that already happened.
         raise RowReviewInputError(
-            "the preflight JSON beside this review publishes no row_id_digests, "
-            "so no entry in it can be matched to a row of the dataset. Re-run "
-            "preflight.py --json from the same version as this script, or omit "
-            "--row-review rather than have the score accept a read it cannot "
-            "check"
+            "the preflight JSON beside this review publishes no row id digests, "
+            "so no entry in it can be matched to a row of the dataset. Either it "
+            "describes no dataset - --dataset was omitted, or preflight could "
+            "not read the file - in which case there is nothing here to review; "
+            "or its dataset-ids record predates these lists, in which case "
+            "re-run preflight.py --json from the same version as this script. "
+            "Omit --row-review rather than have the score accept a read it "
+            "cannot check"
         )
     known = set(known_ids)
     # The rows the run reads, which is the second and narrower claim an entry

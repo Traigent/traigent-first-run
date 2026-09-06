@@ -6125,7 +6125,57 @@ class ARowReviewIsMatchedToTheRowsPreflightReadTests(unittest.TestCase):
                 text=True,
             )
         self.assertEqual(process.returncode, 2)
-        self.assertIn("publishes no row_id_digests", process.stderr)
+        self.assertIn("publishes no row id digests", process.stderr)
+        # Both causes, because the message used to name one. A payload that
+        # predates the lists is a re-run; a payload that describes no dataset -
+        # `--dataset` omitted, which SKILL.md mandates for a source-only
+        # project, or a file preflight could not read - is not, and sending
+        # that reader to re-run preflight sends them to do what already
+        # happened.
+        self.assertIn("describes no dataset", process.stderr)
+        self.assertIn("predates these lists", process.stderr)
+
+    def test_a_review_beside_a_payload_with_no_dataset_at_all_is_refused(self) -> None:
+        """The state the version-mismatch diagnosis was wrong about.
+
+        Preflight run without `--dataset` emits no `dataset-ids` record at all,
+        so there is no id list and no dataset either. The review is refused -
+        silently dropping it is the fail-open the digests exist to close - and
+        the message has to be one this reader can act on.
+        """
+        process = subprocess.run(
+            [
+                sys.executable,
+                str(PREFLIGHT),
+                "--defer-missing-sdk",
+                "--json",
+            ],
+            capture_output=True,
+            text=True,
+        )
+        assert process.returncode in (0, 1), process.stderr
+        records = json.loads(process.stdout)
+        self.assertNotIn("dataset-ids", {record["check"] for record in records})
+        with tempfile.TemporaryDirectory() as raw:
+            review_path = Path(raw) / "row-review.json"
+            review_path.write_text(json.dumps(self._review(["ticket-000"])))
+            scored = subprocess.run(
+                [
+                    sys.executable,
+                    str(READINESS),
+                    "--preflight",
+                    "-",
+                    "--row-review",
+                    str(review_path),
+                    "--json",
+                ],
+                input=json.dumps(records),
+                capture_output=True,
+                text=True,
+            )
+        self.assertEqual(scored.returncode, 2)
+        self.assertIn("describes no dataset", scored.stderr)
+        self.assertNotIn("Traceback", scored.stderr)
 
     def test_a_digest_list_that_is_not_a_list_of_strings_is_refused(self) -> None:
         """A membership test against a malformed list passes or fails silently."""
