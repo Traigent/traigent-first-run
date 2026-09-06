@@ -2539,6 +2539,27 @@ class Ask:
                 "outstanding work, and a remedy saying there is none describes "
                 "a question that is not being put"
             )
+        # And the one cap remedy an ask may not borrow, which is a coupling
+        # rather than a preference. `repeated_input_routes` gates its top-up
+        # route on `recommended_action == ADD_EXAMPLES`, deliberately reading
+        # that field instead of the offer's own conditions - so the slug is not
+        # only a remedy here, it is the signal that a SIZE CAP computed a
+        # bounded offer. An ask returning it would set that gate with no cap and
+        # no offer behind it, and the card would print a top-up this run never
+        # computed: an offer made on the customer's behalf, which is the exact
+        # substitution `Cap.asks` was added to refuse.
+        #
+        # Refused where the remedy is decided rather than argued at the reader
+        # in `repeated_input_routes`, because the ordering that docstring can
+        # see - an ask sorts after every cap - does not constrain this direction
+        # at all. Lift it by decoupling that gate from the slug first.
+        if kind == ADD_EXAMPLES:
+            raise ValueError(
+                f"ask {self.condition!r} is routed to {ADD_EXAMPLES!r}; that "
+                "remedy also signals that a size cap computed a bounded top-up "
+                "offer, and an ask carries no offer - so the card would print "
+                "one this run never computed"
+            )
         object.__setattr__(self, "action_kind", kind)
         # And the field the guard above never looked at, on the footing
         # `Cap.reason` was given after `Cap(cond, 50, None)` constructed: the
@@ -8720,8 +8741,21 @@ def repeated_input_routes(finding: RepeatedInputs, *, offers_top_up: bool) -> li
     room": that field returns the first BLOCKING cap's remedy, then the first
     ASKING one in ceiling order, then any outstanding non-cap ask, so a blocker
     or any lower-ceiling asking cap displaces the size remedy and this route is
-    dropped while the offer is still live. The third arm cannot take it, because
-    an asking size cap already outranks every ask that is not a cap. The reachable case is a project whose answer key was generated: the
+    dropped while the offer is still live.
+
+    The third arm cannot PUT this route back, and the reason is a guard rather
+    than an ordering. An ask sorts after every cap, so it cannot displace a size
+    cap that asks - but that says nothing about the direction that would break
+    this block, which is an ask RETURNING `add-examples` while no size cap
+    exists at all. `offers_top_up` would then be true with no offer behind it,
+    and route A would print a top-up this run never computed - the inverse of
+    the substitution `Cap.asks` exists to refuse, and a silent break of "THE
+    MARK NEVER CONTRADICTS `recommended_action`" below. `ACTION_FOR_ASK` refuses
+    that remedy at construction, so the guarantee is enforced where the remedy
+    is decided rather than inferred here from a table that happens not to
+    contain it today.
+
+    The reachable case is a project whose answer key was generated: the
     offer is live, `dataset-coarse-resolution` asks at
     `COARSE_RESOLUTION_CEILING`, nothing blocks, and `review-answer-key` asks
     at the lower `GENERATED_ANSWER_KEY_CEILING`, so it wins the ordering and

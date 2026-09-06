@@ -12133,6 +12133,10 @@ class AnAskThatIsNotACapIsStillRoutedTests(unittest.TestCase):
         """
         ask = (MODULE.ANSWER_KEY_UNREAD_ASK,)
         blocking, asking, advisory = self._blocking(), self._asking(), self._advisory()
+        # Every subset of the three cap shapes, and all eight of them rather
+        # than a sample: the two cells that carry a blocker beside an advisory
+        # ceiling were missing, which left "the product" a claim the loop below
+        # did not make.
         cases = {
             (): MODULE.PROCEED,
             (advisory,): MODULE.PROCEED,
@@ -12140,7 +12144,14 @@ class AnAskThatIsNotACapIsStillRoutedTests(unittest.TestCase):
             (blocking,): blocking.action_kind,
             (advisory, asking): asking.action_kind,
             (blocking, asking): blocking.action_kind,
+            (blocking, advisory): blocking.action_kind,
+            (blocking, asking, advisory): blocking.action_kind,
         }
+        self.assertEqual(
+            len(cases),
+            2 ** len({cap.condition for cap in (blocking, asking, advisory)}),
+            "the grid stopped being every subset of the three cap shapes",
+        )
         for caps, without in cases.items():
             ordered = tuple(sorted(caps, key=MODULE.cap_order))
             with self.subTest(caps=[cap.condition for cap in caps]):
@@ -12175,6 +12186,79 @@ class AnAskThatIsNotACapIsStillRoutedTests(unittest.TestCase):
                     )
         finally:
             del MODULE.ACTION_FOR_ASK["a-later-ask"]
+
+    def test_the_flag_and_the_ask_never_disagree(self) -> None:
+        """One fact, stored twice, and nothing was asserting the two agree.
+
+        `aggregate` derives `open_asks` from the same `held_for_answers` the
+        flag carries, so today they cannot diverge - but both renderers guard
+        the hold paragraph on the FLAG and compute the reassurance inside it
+        from `open_asks`. If those two ever came apart, the card would print
+        "this read is the only thing being asked of you" beside `Action:
+        proceed`, which is the defect this branch fixes, inverted.
+
+        So the equivalence is pinned rather than left to one call site's
+        arithmetic, and it is pinned over a sweep rather than one fixture,
+        because the interesting states are the ones where a cap coexists with
+        the hold.
+        """
+        seen = {True: 0, False: 0}
+        for tuning in range(6, 39):
+            for holdout in (6, 10):
+                score = _healthy_score(
+                    tuning_rows=tuning,
+                    holdout_rows=holdout,
+                    tuning_labelled_rows=tuning,
+                    holdout_labelled_rows=holdout,
+                    rows=tuning + holdout,
+                    labelled_rows=tuning + holdout,
+                    answerable_rows=tuning + holdout,
+                    collected_rows=tuning + holdout,
+                    distinct_rows=tuning + holdout,
+                    tuning_distinct_rows=tuning,
+                    tuning_distinct_scoreable_rows=tuning,
+                    difficulty_tagged_rows=tuning + holdout,
+                )
+                held = score.band_limited_by_unread_answers
+                carried = MODULE.ANSWER_KEY_UNREAD in {
+                    ask.condition for ask in score.open_asks
+                }
+                seen[held] += 1
+                with self.subTest(tuning=tuning, holdout=holdout):
+                    self.assertEqual(
+                        held,
+                        carried,
+                        "the band-hold flag and the ask that names its remedy "
+                        "describe the same fact and disagreed",
+                    )
+        # Both states reached, or the equivalence above is asserted over one of
+        # them and says nothing about the other.
+        self.assertGreater(seen[True], 0)
+        self.assertGreater(seen[False], 0)
+
+    def test_an_ask_may_not_borrow_the_top_up_remedy(self) -> None:
+        """`add-examples` is a signal as well as a remedy, and asks carry no offer.
+
+        `repeated_input_routes` gates its top-up route on `recommended_action ==
+        ADD_EXAMPLES` on purpose, reading the routed field rather than the
+        offer's own conditions. That makes the slug mean "a size cap computed a
+        bounded offer" as well as "add examples", so an ask returning it would
+        print a top-up this run never computed - an offer made on the customer's
+        behalf, with no cap and no offer behind it.
+
+        The arm order does not prevent this: an ask sorting after every cap says
+        nothing about an ask returning that remedy when no size cap exists.
+        """
+        MODULE.ACTION_FOR_ASK["an-ask-that-offers-rows"] = MODULE.ADD_EXAMPLES
+        try:
+            with self.assertRaises(ValueError) as caught:
+                MODULE.Ask(condition="an-ask-that-offers-rows", reason="a reason")
+        finally:
+            del MODULE.ACTION_FOR_ASK["an-ask-that-offers-rows"]
+        self.assertIn(MODULE.ADD_EXAMPLES, str(caught.exception))
+        # And the live table obeys it, so the guard is not a rule about a state
+        # nobody is in.
+        self.assertNotIn(MODULE.ADD_EXAMPLES, set(MODULE.ACTION_FOR_ASK.values()))
 
     def test_the_card_and_the_report_read_one_predicate(self) -> None:
         """Two surfaces stating the same condition differently is how they drift.
