@@ -6,14 +6,14 @@ follows-total-measured: 498_266
 follows-document-measured: 136_303
 resident-ceiling: 106_500
 resident-measured: 106_371
-total-ceiling: 499_700
-total-measured: 499_461
+total-ceiling: 499_900
+total-measured: 499_816
 document-ceiling: 137_550
 document-measured: 136_303
 
-**This raises the TOTAL ceiling by 1_400 bytes, on the owner's instruction, and it is the only
-ceiling that moves.** The paragraph it buys is 1_195 bytes in `references/run-safety.md`, the
-document that owns the execution-evaluator stage.
+**This raises the TOTAL ceiling to 499_900, on the owner's instruction, and it is the only ceiling
+that moves.** It buys 1_550 bytes in `references/run-safety.md`, the document that owns the
+execution-evaluator stage.
 
 What was missing was not a rule but a disclosure. A project whose evaluator reaches a code or SQL
 engine has its calibration refused, earns nothing for that check, never measures probe spread, and
@@ -22,24 +22,40 @@ document said any of that would happen, so the first the customer heard of it wa
 part of that outcome follows from a decision this guide makes on their behalf, about an evaluator
 nothing here says is wrong, and the reference that argues the decision now also states its
 consequences and the customer's route out of them: run the evaluator against their own database,
-outside this guide, on known-good and known-bad answers, and confirm it separates them.
+outside this guide, on known-good and known-bad answers, and confirm it separates them. It states
+the half that is not free, too - where only the declaration says the gate refused, the charge
+stands - because a disclosure that mentions only the outcome that costs nothing is not a
+disclosure.
+
+The same paragraph settles which calibrations the three words above it bind. "This stage" narrowed
+the rule off `SKILL.md` section 5 step 5's dependency-deferred calibration, but nothing marked where
+the stage ENDS except the `.env` anchor two sentences down, and step 5 runs before step 6 creates
+`.env` - so a mandated step was still inside a window it cannot satisfy. The exclusion is now named
+beside the sentence that defers it.
 
 One home, and it is this one. `SKILL.md` already carries the mandate - section 4's "Before
-calibration, apply `references/run-safety.md`'s execution-evaluator scope gate" - and the depth
-behind that stage belongs to the reference, so the paragraph sits beside the argument it explains
-rather than being restated in the flow. Thirty-four bytes came back in the same passage, where the
-preceding paragraph's "the readiness card says why" was a forward pointer to what is now the next
-sentence.
+calibration, apply `references/run-safety.md`'s execution-evaluator scope gate" - and the wording
+mandate for this cap, so the reference states the consequences and the facts behind them and
+restates neither. The depth behind a stage belongs to the reference; the flow and the mandates do
+not.
 
-Why the ceiling rather than a prune: there was no honest prune of this size available. The three
+Why a ceiling rather than a prune: there was no honest prune of this size available. The three
 budgets stood at 129 resident, 34 total and 1_247 document bytes of headroom, and the alternative to
 raising was compressing a customer-facing explanation until it stopped being actionable - which is
-the failure this disclosure exists to fix. 1_400 is the median TOTAL raise this ledger already
-records over 80 raises, so it is the tree's own precedent for a change of this size rather than a
-number invented for this branch. It leaves 239 bytes.
+the failure this disclosure exists to fix. Thirty-four bytes did come back in the same passage,
+where the preceding paragraph's "the readiness card says why" was a forward pointer to what is now
+the next sentence.
 
-That 239 is not room for the next branch, and this entry does not pretend otherwise. A cross-branch
-audit measured all three budgets simultaneously under their own typical-raise thresholds, which this
+**The size is the measurement, not a convention.** An earlier draft of this entry took the ledger's
+median TOTAL raise - 1_400 over 80 prior raises - which was 238 bytes more than the prose needed at
+the time. Sizing by precedent is defensible for a raise nobody has measured yet; this one is
+measured, and the leftover would have served no one, since the paragraph below refuses to offer it
+to a sibling. So the ceiling is the measured total rounded up to the next hundred: 499_816 becomes
+499_900, and the 84 bytes left are slack for a wording correction on this branch rather than a
+budget for the next.
+
+That 84 is not room for the next branch, and neither was the 239 it replaces. A cross-branch audit
+measured all three budgets simultaneously under their own typical-raise thresholds, which this
 ledger has no precedent for; the next guidance sentence anyone writes should expect to raise a
 ceiling deliberately, measured on the merged tree rather than on one branch. Sizing TOTAL for that
 is a decision about the package, not about this paragraph, and it is left to the owner.

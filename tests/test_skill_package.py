@@ -5709,9 +5709,14 @@ class SkillPackageTests(unittest.TestCase):
             "asks for the containment review instead of for the calibration",
             # That the refusal does not also charge for itself.
             "the unmade check is not counted against them either",
-            # That it is not a verdict on their evaluator.
-            "none of it is a finding against their evaluator",
+            # That it is not a verdict on their evaluator. The MANDATE to
+            # say so lives in `SKILL.md`'s cap-routing paragraph and may not
+            # be restated here; what belongs here is the fact behind it.
+            "none of it follows from anything their evaluator did",
             "opens their database",
+            # And that the other arm is charged, which is the half of the
+            # outcome the disclosure would otherwise leave out.
+            "where only the flag says so, the charge stands",
             # And the route that is theirs to take.
             "run that evaluator against\ntheir own database".replace("\n", " "),
             "known-good and known-bad answers",
@@ -5727,6 +5732,18 @@ class SkillPackageTests(unittest.TestCase):
             skill,
         )
         self.assertNotIn("the probe spread is never measured", skill)
+        # And the reference does not grow a second copy of SKILL.md's
+        # wording mandate for this cap, which is where the copy actually
+        # appeared: a rule stated in two documents is a rule that can be
+        # changed in one, and this pair is a guidance document and its own
+        # reference.
+        safety_all = " ".join(RUN_SAFETY.read_text().casefold().split())
+        self.assertIn(
+            "say that the ceiling is about missing evidence and not a finding "
+            "against their evaluator",
+            skill,
+        )
+        self.assertNotIn("not a finding against their evaluator", safety_all)
 
     def test_no_document_says_the_scope_refusal_cannot_be_checked(self) -> None:
         """The guide may not deny a check the module performs, or oversell it.
@@ -5844,6 +5861,18 @@ class SkillPackageTests(unittest.TestCase):
         # And it may not reach the calibration section 5 mandates after an
         # install, which is the contradiction the wider wording created.
         self.assertNotIn("every calibration this run performs", safety)
+        # "This stage" alone did not settle that, and saying so was the
+        # correction: nothing marked where the stage ENDS except the `.env`
+        # anchor two sentences down, and section 5 step 5 runs before step 6
+        # creates `.env` - so the deferred calibration still fell inside the
+        # window while being unable to satisfy the words. The exclusion is now
+        # named, next to the sentence that defers it.
+        self.assertIn(
+            "that deferred calibration is outside these three words and "
+            "skill.md section 5 step 5 runs it",
+            paragraph,
+        )
+        self.assertIn("carries the installed dependency by construction", paragraph)
         # The mandate stays where SKILL.md already carries it, and the
         # reference does not grow a second copy of it.
         skill = " ".join(SKILL.read_text().casefold().split())
@@ -22518,6 +22547,33 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
             ),
         ),
         (
+            # Settled twice in opposite directions inside one branch, which is
+            # this registry's own criterion for an entry rather than a local
+            # assertion.
+            #
+            # It read "it moves no number, because nothing here can check it",
+            # which denied a check `score_evaluation` performs: the same state
+            # is derived from preflight's witness with no flag passed at all.
+            # Corrected to "preflight's witness reaches the same state without
+            # it", which over-corrected in the other direction - true only
+            # where a witness exists, and read, in the one place an assistant
+            # decides whether to pass a safety declaration, as though the flag
+            # were redundant. It is not: for an evaluator whose engine the
+            # walk cannot see, the run without the flag is told to complete
+            # the calibration this guide forbids it.
+            #
+            # Settled: the document says what the flag is FOR. The scoped
+            # claim - that a witness reaches the state too - stays in the
+            # flag's own `--help`, where the reader is deciding about the flag
+            # rather than about their run.
+            "what the evaluator-execution scope-refusal declaration is for",
+            ("the only route where preflight finds no engine",),
+            (
+                "it moves no number, because nothing here can check it",
+                "preflight's witness reaches the same state without it",
+            ),
+        ),
+        (
             # Two different limits were collapsed into one sentence, and a
             # customer read the wrong one. The guide will not run an evaluator
             # that executes the answer - that is the whole of the limit. It has
@@ -23404,6 +23460,15 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         # banned outright in CONTRADICTIONS above, so a pattern anchored on
         # `\d+-\d+` would match nothing and quietly stop checking anything.
         ("the enhanced-run configuration ceiling", r"up to (\d+) configurations"),
+        # The readiness ceiling the two unvalidated-evidence caps share.
+        # `SKILL.md` states it for `evaluator-unvalidated` and
+        # `references/run-safety.md` for `evaluator-calibration-refused`; the
+        # constants beside each other in `readiness.py` are deliberately
+        # equal, and the documents restate the number rather than the
+        # condition - so moving either constant leaves two customer-facing
+        # documents wrong on a green suite. Matched on the phrase both use,
+        # which is the phrase a third home would most likely be written in.
+        ("the unvalidated-evidence readiness ceiling", r"readiness claim to (\d+)"),
         # Spelled either way: the size is counted in configurations, and the
         # documents that still write "-row" for it are compared against the
         # ones that no longer do, so the rename cannot leave one home unread.

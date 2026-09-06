@@ -333,13 +333,14 @@ calibration check earns nothing and the probe spread is never measured; `readine
 `evaluator-calibration-refused`, which limits the readiness claim to 45 and asks for the containment
 review instead of for the calibration. Where preflight's walk is what established the engine, the
 unmade check is not counted against them either - the run that declined to make the measurement does
-not also charge for it - so the evaluation pillar reads what this run could actually establish. Say
-in the same breath that none of it is a finding against their evaluator, which may be perfectly
-sound: this guide declines to run it because doing so opens their database from inside a run that
-will not reach into it. The route forward is theirs and it is ordinary - run that evaluator against
-their own database, outside this guide, on known-good and known-bad answers, and confirm it
-separates them. What no run can do is claim the evaluator grades correctly until some run makes that
-check, and the ceiling is reporting exactly that.
+not also charge for it - so the evaluation pillar reads what this run could actually establish.
+Where only the flag says so, the charge stands, because a declaration about a file this run never
+read may bound a claim and may not lift one. None of it follows from anything their evaluator did:
+this guide declines to run it because doing so opens their database from inside a run that will not
+reach into it. The route forward is theirs and it is ordinary - run that evaluator against their own
+database, outside this guide, on known-good and known-bad answers, and confirm it separates them.
+What no run can do is claim the evaluator grades correctly until some run makes that check, and the
+ceiling is reporting exactly that.
 
 ### Deterministic calibration and mock plumbing
 
@@ -350,11 +351,14 @@ standard-library-only. The same three words bind anything else this stage import
 transform is the one other thing it does: reaching that function executes its module's top level,
 which for an agent file is commonly a provider client. A non-executing evaluator that needs a
 declared local dependency waits until that dependency is installed, and so does a transform whose
-module does - the flag waits with it rather than pulling an install into this stage. An execution
-evaluator has already ended this guide at the scope gate above. Run either before creating `.env`
-or requesting a provider key. A generic outside-review wait is not a gate; pause only when one
-unresolved product-grading ambiguity would materially change correctness or ranking. Do not execute
-an LLM judge or an uncertain or external evaluator without explicit approval in the stage where it
+module does - the flag waits with it rather than pulling an install into this stage. That deferred
+calibration is outside these three words and SKILL.md section 5 step 5 runs it: its path carries
+the installed dependency by construction, so what binds it there is the inspection that declared
+the dependency, not a standard library it no longer has. An execution evaluator has already ended
+this guide at the scope gate above. Run either before creating `.env` or requesting a provider key.
+A generic outside-review wait is not a gate; pause only when one unresolved product-grading
+ambiguity would materially change correctness or ranking. Do not execute an LLM judge or an
+uncertain or external evaluator without explicit approval in the stage where it
 runs, covering recipients, data, calls, runtime, and spend.
 
 A Traigent mock run is a separate plumbing check:

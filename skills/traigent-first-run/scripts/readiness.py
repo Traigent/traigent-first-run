@@ -3374,21 +3374,34 @@ class EvaluationFacts:
     # choice between a new terminal status and a blocking cap, and that is the
     # owner's to make.
     #
-    # And the `calibration` sub-score is STILL marked withheld for a run that
-    # was refused rather than asked: traigent-first-run#394. That issue named
-    # a verified signal as its precondition and this seam now has one, so the
-    # original objection - a declaration must not lift a pillar - no longer
-    # covers the witness arm. What replaced it is an argument the issue does
-    # not have yet, and it is why this is filed rather than fixed here.
-    # Clearing `withheld` on the witness arm ALONE renormalizes the check out
-    # of the denominator there and not for a run that declared the same fact,
-    # so the evaluation pillar reads about 59 for a project caught by the walk
-    # and 31 for one that said so itself - being found out scoring better than
-    # confessing, over the same forbidden path. Clearing BOTH arms is the
-    # inversion the flag has always refused. Neither is obviously right, the
-    # overall is 45 under every one of them because the ceiling binds, and
-    # choosing between them is a decision about what the pillar means rather
-    # than a defect to patch quietly.
+    # And traigent-first-run#394 - the `calibration` sub-score marked withheld
+    # for a run that was refused rather than asked - is now HALF closed, on
+    # the arm this flag is not.
+    #
+    # The owner settled it: the refusal stays, because not reaching into the
+    # customer's database is the point of it, and the card stops charging for
+    # the check it refused. So `score_evaluation` renormalizes that check away
+    # wherever preflight's walk established the engine, and keeps the 45
+    # ceiling, which is the half that is true - nothing there established that
+    # the evaluator ranks the task.
+    #
+    # THIS flag is the arm that still pays, and the asymmetry is the rule
+    # rather than an oversight. #394's objection was that a declaration must
+    # not lift a pillar; a witness is not a declaration, so it no longer
+    # covers the witness arm, and what retired the objection there is that
+    # evidence retires a charge and a claim does not. Nothing retires it here:
+    # this is a customer's word about a file this run never read, and
+    # retiring a deduction is raising a number. Measured through
+    # tests/test_readiness_scoring.py's
+    # `TheWitnessDecidesTheScopeGateNotTheDeclarationTests`: the witnessed arm
+    # reads 59 against this arm's 31 on the evaluation pillar, and the overall
+    # is 45 on both because the ceiling binds either way - so the difference
+    # is what this score can say it knows, never what a run can buy.
+    #
+    # The half that stays open is the population, not the rule: an engine
+    # behind a helper module leaves the walk nothing to find, so those
+    # projects pay a charge no rerun lifts. The card says so rather than
+    # promising them the evidence is coming.
     calibration_scope_refused: bool = False
 
 
@@ -6845,19 +6858,30 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
             # from the caps. The tail below still says the refusal, so nothing
             # about the scope is lost by yielding the sentence.
             #
-            # ONLY THE SENTENCE AND THE TAIL MOVE. `value`, `maximum`,
-            # `measured` and `withheld` are identical to every other arm here,
-            # so the pillar stays where it was and neither the declaration nor
-            # a calibration taken anyway buys a point. Whether `withheld`
-            # should CLEAR on the witness arm is a live question and is not
-            # settled here - see `calibration_scope_refused` on
-            # `EvaluationFacts` for the trade and traigent-first-run#394.
+            # `value` and `measured` are identical to every other arm here,
+            # so neither the declaration nor a calibration taken anyway buys a
+            # point: nothing in this branch can make a card claim the
+            # evaluator works. `withheld` is the one field that moves, and it
+            # moves only where the walk found the engine - see the argument on
+            # the `withheld` argument below, and `calibration_scope_refused`
+            # on `EvaluationFacts` for the half of traigent-first-run#394 that
+            # stays open.
             if calibration_engaged:
+                # "an evaluator this run proved reaches a code or SQL engine"
+                # is a claim about a walk, so only the arm that has one may
+                # make it. A flag-only run with a calibration payload printed
+                # it with no witness anywhere - CLI-unreachable, since the two
+                # options refuse each other, and reachable by a direct caller,
+                # which is the shape this scorer exists to survive.
                 evidence = (
                     "a calibration was taken for an evaluator this run proved "
                     "reaches a code or SQL engine, which is the measurement "
                     "the evaluator-execution scope gate refuses, so it earns "
                     "no credit here"
+                    if facts.executes_candidate is True
+                    else "a calibration was taken for an evaluator this run "
+                    "was told the scope gate refuses, so it earns no credit "
+                    "here"
                 )
             else:
                 # "...and the weight stays because the evidence is absent
@@ -6924,16 +6948,68 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
                 # make; charging forty points for it would bill them for a
                 # decision this guide made on their behalf about an evaluator
                 # nothing here says is wrong.
+                #
+                # WHICH no-deduction sentence is decided by `calibration_
+                # engaged`, and that is the fix rather than a preference. This
+                # clause used to be single, so "this run was not the one to
+                # make that measurement" was appended to the arm whose own
+                # sentence says a calibration WAS taken, and to the timed-out
+                # arm, which says one ran and did not finish - one line of a
+                # card contradicting the line before it, twice, over a state
+                # the customer knows the truth of better than the card does.
+                #
+                # `calibration_engaged` is the SAME predicate the evidence
+                # chain above branches on, which is the property that stops
+                # this recurring. The two halves of one sentence used to be
+                # chosen by two predicates - the arm by `calibration_engaged`,
+                # the tail by `calibration_refusal_witnessed` - and a sentence
+                # assembled from two conditions is true only where they agree.
+                # Read them off one condition and the halves cannot disagree:
+                # "a calibration happened" decides both what the first half
+                # reports and which second half can follow it.
                 consequence = (
-                    "no points are deducted for it - this run was not the one "
-                    "to make that measurement"
+                    "no points are deducted for it - this card may not read "
+                    "what that calibration measured"
+                    if calibration_engaged
+                    else "no points are deducted for it - this run was not "
+                    "the one to make that measurement"
                 )
+                if calibration_refusal_capped:
+                    # Appended HERE and not after both branches, because the
+                    # charged branch above already ends on the route it can
+                    # take and a second route clause behind it said the same
+                    # thing twice in one line. Each branch owns its whole
+                    # sentence; nothing is appended to a sentence chosen
+                    # somewhere else.
+                    #
+                    # "the route to it" until the pronoun was read on this
+                    # arm: the clause before it ends on a measurement nobody
+                    # made, so the pronoun pointed at nothing.
+                    consequence += (
+                        ", and the containment review named in the ceiling is "
+                        "where a run that could make that check gets designed"
+                    )
             else:
-                consequence = "it costs points until that evidence exists"
-            if calibration_refusal_capped:
-                consequence += (
-                    ", and the containment review named in the ceiling is the "
-                    "route to it"
+                # The charged arm, and it may not promise a remedy this
+                # population cannot reach. "It costs points until that
+                # evidence exists" is the right sentence for a run that has
+                # simply not calibrated yet; here it lands on exactly the
+                # projects the flag exists for - the ones whose engine the
+                # walk cannot see - and `references/run-safety.md` says of
+                # them that no run this guide defines will ever produce that
+                # evidence. Naming a condition that never arrives is the same
+                # defect as naming a remedy the guide forbids, one step
+                # further out: it reads as temporary and it is not.
+                #
+                # So it says why the charge stands, and hands them the two
+                # things that can actually change it - a walk that can reach
+                # the file, or the check made outside this guide, which the
+                # ceiling below describes.
+                consequence = (
+                    "it costs points because this run could not read the file "
+                    "itself - hand the evaluator to --preflight if the walk "
+                    "can reach it, and otherwise establish it as the ceiling "
+                    "describes"
                 )
         subs.append(
             SubScore(

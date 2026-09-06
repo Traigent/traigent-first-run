@@ -12874,7 +12874,10 @@ class TheWitnessDecidesTheScopeGateNotTheDeclarationTests(unittest.TestCase):
         for line in (witnessed_line, declared_line):
             self.assertIn("evaluator-execution scope gate refused it", line)
         self.assertIn("no points are deducted for it", witnessed_line)
-        self.assertIn("it costs points until that evidence exists", declared_line)
+        self.assertIn(
+            "it costs points because this run could not read the file itself",
+            declared_line,
+        )
         self.assertFalse(self._calibration_subscore(witnessed).withheld)
         self.assertTrue(self._calibration_subscore(declared).withheld)
 
@@ -12919,7 +12922,15 @@ class TheWitnessDecidesTheScopeGateNotTheDeclarationTests(unittest.TestCase):
                 score = self._score(facts)
                 evidence = self._calibration_subscore(score).evidence
                 self.assertNotIn("complete calibration", evidence.casefold())
-                self.assertIn("containment review", evidence)
+                # Every arm ends on a route the run can actually take, but
+                # not on the same one: the charged arm names what would lift
+                # its own charge, and only an arm with nothing else to offer
+                # sends the reader to the containment review. Asserting one
+                # phrase across both is what let a route clause be appended
+                # to a sentence that already carried one.
+                self.assertRegex(
+                    evidence, r"containment review|hand the evaluator to --preflight"
+                )
                 cap = next(
                     c
                     for c in score.caps
@@ -13059,15 +13070,24 @@ class TheWitnessDecidesTheScopeGateNotTheDeclarationTests(unittest.TestCase):
         self.assertNotIn("containment review", evidence)
         # ...and it still may not ask for the calibration the gate forbids.
         self.assertNotIn("complete calibration", evidence.casefold())
+        # A calibration RAN on this arm, so the tail may not say nobody made
+        # the measurement. This assertion pinned that contradiction verbatim
+        # before the review found it - a guard protecting the defect it was
+        # written beside.
         self.assertTrue(
             evidence.endswith(
-                "no points are deducted for it - this run was not the one to "
-                "make that measurement"
+                "no points are deducted for it - this card may not read what "
+                "that calibration measured"
             )
         )
+        self.assertNotIn("was not the one to make that measurement", evidence)
         # The credit is refused all the same: this is about what the card
         # SAYS, not about paying for a calibration taken out of scope.
         self.assertEqual(self._calibration_subscore(score).value, 0.0)
+        # And the retirement itself was unpinned on this arm, which is how the
+        # contradictory tail reached it: a witnessed refusal does not charge,
+        # whether or not the calibration that was forbidden also timed out.
+        self.assertFalse(self._calibration_subscore(score).withheld)
 
     def test_the_refused_card_explains_itself_and_names_the_way_out(self) -> None:
         """An explanation, not an accusation, and it ends somewhere.
@@ -13258,6 +13278,80 @@ class TheWitnessDecidesTheScopeGateNotTheDeclarationTests(unittest.TestCase):
             next(p for p in declared.pillars if p.name == "evaluation").score,
             next(p for p in deferred.pillars if p.name == "evaluation").score,
         )
+
+    def test_no_calibration_line_contradicts_its_own_first_half(self) -> None:
+        """The class, swept, rather than the two instances that were found.
+
+        This seam has now produced the same defect twice: a consequence
+        appended to a sentence chosen by a different predicate, so the two
+        halves are true only where the predicates happen to agree. Round one
+        found a shared tail pointing a refused run at the calibration the gate
+        forbids. Round two found "this run was not the one to make that
+        measurement" landing on two arms whose own first half says a
+        calibration WAS taken - one of them live, and pinned verbatim by a
+        test written in the same commit.
+
+        Patching the instances is what produced the second one, so this checks
+        the PROPERTY over every state that reaches the line: whichever half
+        speaks about a calibration happening, the other half may not contradict
+        it. A new arm inherits the check by existing rather than by someone
+        remembering to add it.
+        """
+        payload = dict(
+            calibration_present=True,
+            calibration_supplied=True,
+            calibration_complete=True,
+            calibration_passed=True,
+            checks=(_CALIBRATION_CASE, _CALIBRATION_CASE),
+            probe_scores=((1.0, 0.0), (1.0, 0.0)),
+        )
+        witness = dict(executes_candidate=True, execution_witness=self.WITNESS)
+        states = {
+            "witness, calibration taken": {**payload, **witness},
+            "witness, never asked": witness,
+            "declared only": dict(calibration_scope_refused=True),
+            "declared, payload anyway": {**payload, "calibration_scope_refused": True},
+            "witness, timed out": {
+                **witness,
+                "calibration_present": True,
+                "calibration_supplied": True,
+                "timed_out": True,
+            },
+            "witness, calibration reported nothing": {
+                **witness,
+                "calibration_supplied": True,
+            },
+            "no refusal at all": {},
+            "plain timeout": {"calibration_supplied": True, "timed_out": True},
+        }
+        # Phrases that assert a calibration happened, and phrases that assert
+        # none did. No line may carry one of each.
+        happened = (
+            "a calibration was taken",
+            "calibration ran",
+            "calibration reported",
+            "may not read what that calibration measured",
+        )
+        did_not = (
+            "never asked for a calibration",
+            "was not the one to make that measurement",
+            "no calibration result was provided",
+        )
+        for label, extra in states.items():
+            with self.subTest(state=label):
+                line = self._calibration_subscore(
+                    self._score(MODULE.EvaluationFacts(**self._executing(**extra)))
+                ).evidence
+                said_happened = [p for p in happened if p in line]
+                said_not = [p for p in did_not if p in line]
+                self.assertFalse(
+                    said_happened and said_not,
+                    f"one line says a calibration both happened {said_happened} "
+                    f"and did not {said_not}: {line}",
+                )
+                # And it says one of the two, so a line that drifts into
+                # saying neither does not pass by being silent.
+                self.assertTrue(said_happened or said_not, line)
 
     def test_a_calibration_that_failed_still_convicts(self) -> None:
         """The one direction this refusal may fail in.
