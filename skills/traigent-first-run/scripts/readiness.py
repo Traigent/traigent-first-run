@@ -6709,6 +6709,16 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
     calibration_refusal_capped = (
         calibration_credit_refused and facts.timed_out is not True
     )
+    # ...and whether the refusal rests on evidence rather than on a word,
+    # which decides whether the missing calibration is CHARGED for.
+    #
+    # Only the witness retires the deduction. See the `withheld` argument on
+    # the calibration sub-score for why the declared arm may not: retiring a
+    # charge is raising a number, and a declaration may bound a claim and may
+    # never raise one.
+    calibration_refusal_witnessed = (
+        calibration_credit_refused and facts.executes_candidate is True
+    )
 
     if disqualifying and facts.checks and not calibration_credit_refused:
         gating_failed = [
@@ -6850,10 +6860,16 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
                     "no credit here"
                 )
             else:
+                # "...and the weight stays because the evidence is absent
+                # either way" used to close this sentence, from when both arms
+                # were charged. It is now decided below and differs between
+                # them, so a clause asserting it here contradicted the
+                # consequence on the witnessed arm - the same defect as the
+                # shared tail this seam already removed, one clause earlier.
+                # What it costs is said once, in the half that knows.
                 evidence = (
                     "this run was never asked for a calibration - the "
-                    "evaluator-execution scope gate refused it, and the "
-                    "weight stays because the evidence is absent either way"
+                    "evaluator-execution scope gate refused it"
                 )
         elif defects := [
             reason
@@ -6901,7 +6917,19 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
         # reader cannot find.
         consequence = "it costs points until a complete calibration is measured"
         if calibration_credit_refused:
-            consequence = "it costs points until that evidence exists"
+            if calibration_refusal_witnessed:
+                # Not a deduction, and the line has to say so, because the
+                # marker beside it cannot. This run read the customer's own
+                # file and established that the measurement was not its to
+                # make; charging forty points for it would bill them for a
+                # decision this guide made on their behalf about an evaluator
+                # nothing here says is wrong.
+                consequence = (
+                    "no points are deducted for it - this run was not the one "
+                    "to make that measurement"
+                )
+            else:
+                consequence = "it costs points until that evidence exists"
             if calibration_refusal_capped:
                 consequence += (
                     ", and the containment review named in the ceiling is the "
@@ -6929,7 +6957,42 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
                 # result earns these points; one that was not found or passed
                 # in does not. Keeping the check in the denominator makes the
                 # readiness gap visible without claiming the evaluator failed.
-                withheld=True,
+                #
+                # Except where this run PROVED the measurement was not its to
+                # make, which is the one state that is not a silence at all.
+                # `withheld` means, in this module's own words, that the run
+                # was asked for the evidence and did not give it. A project
+                # whose evaluator preflight walked and found reaching an
+                # engine was not asked and could not have answered: the guide
+                # declines to run that scorer against the customer's database,
+                # and billing them forty points for a decision made on their
+                # behalf, about an evaluator nothing here says is wrong, is
+                # the accusation the owner ruled this card must stop making.
+                # Renormalized, not credited - the check leaves the
+                # denominator and earns nothing, so no card claims this
+                # evaluator distinguishes answers. Measured through
+                # tests/test_readiness_scoring.py's
+                # `TheWitnessDecidesTheScopeGateNotTheDeclarationTests`, which
+                # executes both readings: the evaluation pillar reads 59
+                # rather than 31, and the overall is 45 either way because
+                # `evaluator-calibration-refused` binds it.
+                #
+                # The DECLARED arm keeps its weight, and the asymmetry is the
+                # rule rather than an oversight. `--calibration-scope-refused`
+                # is a customer's word about a file this run never read, and a
+                # declaration may bound a claim and may never raise one - the
+                # rule this module applies to every unverified input, and the
+                # one this whole seam exists to enforce. Retiring a deduction
+                # is raising a number. So the charge is retired by evidence
+                # and only by evidence, and the way a project gets it retired
+                # is the thing SKILL.md already asks of them: hand the
+                # evaluator to preflight and let the walk read it.
+                #
+                # Where that walk can see nothing - an engine behind a helper
+                # module - the charge stands and cannot be lifted by running
+                # anything, which is honest about what this score knows and is
+                # the half of traigent-first-run#394 that stays open.
+                withheld=not calibration_refusal_witnessed,
             )
         )
 
@@ -7245,26 +7308,53 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
             body = (
                 "a calibration was taken for it that this guide's evaluator-"
                 f"execution scope gate does not permit{witness}, so this card "
-                "cannot read that result. What it measured stays outside this "
-                "score, so this card cannot claim that this evaluator "
-                "distinguishes answers."
+                "cannot read that result. This guide does not accept a "
+                "calibration that opens your database, which is why it will "
+                "not read that one."
             )
         else:
             body = (
                 "this run did not calibrate it because running it here is "
-                "outside the scope this guide permits. Nothing about the "
-                "evaluator is known to be wrong, and nothing about it has "
-                "been established either, so this card cannot claim that it "
-                "distinguishes answers."
+                "outside the scope this guide permits. This run did not "
+                "execute your evaluator: doing so opens your database from "
+                "inside this guide, and it will not reach into it."
             )
         caps.append(
             Cap(
                 "evaluator-calibration-refused",
                 CALIBRATION_REFUSED_CEILING,
-                declared + body + " The ceiling is about the missing evidence "
-                "and is not a finding against your project. Settle it through "
-                "the separate containment review rather than by running this "
-                "check here.",
+                # The order is the message: what we did, why, that it is not
+                # about them, and what they can do next.
+                #
+                # This line reads to a customer who did nothing wrong and is
+                # holding a lower number than the run beside them. Every
+                # earlier draft explained CONTAINMENT - true, and an
+                # explanation of our machinery rather than of their
+                # situation - and closed on "settle it through the separate
+                # containment review", which is a process this guide does not
+                # run and they cannot start from the card. So the reason now
+                # says the plain fact first - and each arm says its OWN
+                # plain fact, because "this run did not execute your
+                # evaluator" is false of the run that calibrated anyway and
+                # true of the run that obeyed. Then the reason in their terms
+                # (it opens your database, and this guide will not reach into
+                # it), and then the one thing they can actually do, which is
+                # the check itself, against their own database, where they own
+                # the blast radius.
+                #
+                # The ceiling sentence stays and stays last. It is the true
+                # part - nothing here established that this evaluator ranks
+                # the task - and it is what the band is reporting; what
+                # changed is that it no longer arrives as the whole message.
+                declared + body + " That is a limit of this run and not a "
+                "judgement of your evaluator, which may well be sound. You can "
+                "establish that yourself, outside this guide, by running it "
+                "against your own database on answers you already know are "
+                "right and wrong, and confirming it separates them; the "
+                "containment review is where the boundary for doing that here "
+                "gets designed. Until "
+                "some run makes that check, no card can claim this evaluator "
+                "grades correctly, which is what the ceiling reports.",
                 blocks=False,
                 # ASKS, on the same argument the condition above it carries:
                 # there is genuinely something for a person to settle, it

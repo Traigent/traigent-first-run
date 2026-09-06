@@ -5679,6 +5679,55 @@ class SkillPackageTests(unittest.TestCase):
         ):
             self.assertIn(phrase, normalized_safety)
 
+    def test_the_guide_says_what_the_refused_card_will_do_before_it_does_it(
+        self,
+    ) -> None:
+        """The consequence of a decision this guide makes has a home.
+
+        A project whose evaluator reaches a code or SQL engine has its
+        calibration refused, earns nothing for that check, never measures
+        probe spread, and carries a 45 ceiling whose recommended action is a
+        containment review. Every part of that follows from a decision this
+        guide makes on the customer's behalf, and no assistant-facing document
+        said any of it would happen - so the first they heard of it was the
+        card, which is the one place it reads as a verdict on their project.
+
+        One home, and it is `run-safety.md`: `SKILL.md` carries the mandate to
+        apply the gate, and the depth behind that stage belongs to the
+        reference, so the disclosure sits beside the argument it explains
+        rather than being restated in the flow.
+        """
+        safety = " ".join(RUN_SAFETY.read_text().casefold().split())
+        section = safety.split("### execution evaluators are out of scope", 1)[1].split(
+            "### deterministic calibration", 1
+        )[0]
+        for phrase in (
+            # What the card does, in the words the card uses.
+            "the calibration check earns nothing and the probe spread is never measured",
+            "`evaluator-calibration-refused`",
+            "limits the readiness claim to 45",
+            "asks for the containment review instead of for the calibration",
+            # That the refusal does not also charge for itself.
+            "the unmade check is not counted against them either",
+            # That it is not a verdict on their evaluator.
+            "none of it is a finding against their evaluator",
+            "opens their database",
+            # And the route that is theirs to take.
+            "run that evaluator against\ntheir own database".replace("\n", " "),
+            "known-good and known-bad answers",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, section)
+        # The mandate is not restated here, and the reference does not grow a
+        # second copy of the flow.
+        skill = " ".join(SKILL.read_text().casefold().split())
+        self.assertIn(
+            "before calibration, apply `references/run-safety.md`'s "
+            "execution-evaluator scope gate",
+            skill,
+        )
+        self.assertNotIn("the probe spread is never measured", skill)
+
     def test_no_document_says_the_scope_refusal_cannot_be_checked(self) -> None:
         """The guide may not deny a check the module performs, or oversell it.
 
