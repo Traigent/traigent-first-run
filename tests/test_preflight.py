@@ -1059,7 +1059,15 @@ class StaticPreflightTests(unittest.TestCase):
         self.assertIn("2 rows at source lines [11, 12]", ids[0].detail)
         self.assertIn("add stable ids in a working copy", ids[0].detail)
 
-    def test_generated_row_without_id_fails_inside_a_mixed_dataset(self) -> None:
+    def test_generated_row_without_id_warns_inside_a_mixed_dataset(self) -> None:
+        """Re-pinned by #438: a missing id reads the same whoever wrote the row.
+
+        This pinned the escalation to FAIL on generated provenance, which was
+        the fourth spelling of the construct #438 removed. The sentence it
+        checks is unchanged - the generated count still travels in it - and
+        only the status moves, because the exit code no longer turns on where
+        a row came from.
+        """
         rows = [
             {
                 "id": f"real-{index}",
@@ -1081,7 +1089,7 @@ class StaticPreflightTests(unittest.TestCase):
             dataset.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
             MODULE.check_dataset(dataset)
         ids = next(result for result in MODULE.RESULTS if result.check == "dataset-ids")
-        self.assertEqual(ids.status, MODULE.FAIL)
+        self.assertEqual(ids.status, MODULE.WARN)
         self.assertIn("1 row at source line 10 has no stable id", ids.detail)
         self.assertIn("1 generated row requires an id", ids.detail)
 
@@ -2076,15 +2084,25 @@ class StaticPreflightTests(unittest.TestCase):
         )
 
     def test_a_provenance_fact_is_not_priced_at_the_exit_code(self) -> None:
-        """#438: WARN whoever wrote the rows, on both remaining sites.
+        """#438: WARN whoever wrote the rows, at every site that priced it.
 
-        `dataset-outputs` and `dataset-difficulty` were the last two
-        `FAIL if synthetic else WARN` constructs in this file. Nothing
-        downstream can see the difference - `readiness.py` tests
-        `status in ("WARN", "FAIL")` at every consumer - so the only
-        observable effect was preflight's exit code, which refused a generated
-        corpus and waved through a collected one carrying the identical
-        defect. Both facts are still published; the card prices them.
+        `dataset-outputs` and `dataset-difficulty` are the two sites #438
+        names. They were not the last two: the missing-bands arm and
+        `dataset-ids` spelled the same decision without the words
+        `FAIL if synthetic`, which is why a grep for the construct reported
+        the file clean while two of them were live. All four are asserted
+        here, and the id-less arm below asserts the two provenances AGREE
+        rather than asserting a constant, so the next author who reaches for
+        this construct fails on the inconsistency itself.
+
+        Nothing downstream can see the difference at either consumer of these
+        two names: `DIVERSITY_CHECKS` tests `status in ("FAIL", "WARN")`, and
+        `_answer_dominance_status` treats only a PASS on `dataset-outputs` as
+        its witness. That is NOT a property of `readiness.py` as a whole -
+        `_failed()` tests `status == "FAIL"` exactly, and `dataset-ids` is one
+        of the two names it is called with, which is why the fourth site was
+        the one where the distinction actually bit. Every fact is still
+        published; the card prices them.
         """
         rows = [
             {
@@ -2106,12 +2124,98 @@ class StaticPreflightTests(unittest.TestCase):
             "every expected output is identical", checks["dataset-outputs"].detail
         )
         self.assertEqual(checks["dataset-difficulty"].status, MODULE.WARN)
-        # And no FAIL anywhere in the run, so the exit code does not turn on
-        # who wrote these rows.
+        # And no FAILing check, so the exit code does not turn on who wrote
+        # these rows. Asserted over the dataset checks, which is the scope
+        # `check_dataset` covers - `check_keys` and `check_models` are not
+        # reached from here and are not claimed.
         self.assertEqual(
             [result.check for result in MODULE.RESULTS if result.status == MODULE.FAIL],
             [],
         )
+
+    def test_an_id_less_corpus_reads_the_same_whoever_wrote_the_row(self) -> None:
+        """The fourth site, and the one no grep for the construct could find.
+
+        `dataset-ids` escalated a missing id to FAIL when the row declared
+        generated provenance, spelled as `if generated_missing: status = FAIL`
+        rather than `FAIL if synthetic else WARN`. Twelve id-less rows,
+        identical in every other respect, exited 1 as `synthetic` and 0 as
+        `production-log` - #438's harm exactly, landing precisely where this
+        guide's own generated rows land, since a row this guide writes carries
+        generated provenance by construction.
+
+        A missing id is the same defect whoever wrote the row, so both
+        provenances now WARN, and the generated count stays in the sentence
+        and in `generated_rows_without_id` so nothing is lost from the
+        finding. Asserted as an equality between the two runs rather than as
+        two constants: that is the form that fails on the inconsistency
+        itself.
+        """
+
+        def statuses(source: str) -> dict[str, str]:
+            MODULE.RESULTS.clear()
+            rows = [
+                {
+                    "input": f"scenario {index} unique_token_{index}",
+                    "output": f"answer {index % 4}",
+                    "difficulty": ["easy", "medium", "hard", "very-hard"][index % 4],
+                    "source": source,
+                }
+                for index in range(12)
+            ]
+            with tempfile.TemporaryDirectory() as directory:
+                dataset = Path(directory) / "eval.jsonl"
+                dataset.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+                MODULE.check_dataset(dataset)
+            return {result.check: result.status for result in MODULE.RESULTS}
+
+        generated = statuses("synthetic")
+        collected = statuses("production-log")
+        self.assertEqual(generated["dataset-ids"], collected["dataset-ids"])
+        self.assertEqual(generated["dataset-ids"], MODULE.WARN)
+        # The property in full: provenance moves no check to FAIL, so it moves
+        # the exit code nowhere. Compared as two sets rather than asserted as
+        # one constant, which is the form that reds on the inconsistency
+        # itself.
+        #
+        # Two checks DO still read provenance, and neither is a gate:
+        # `dataset-provenance`, whose whole subject is where the rows came
+        # from, and `dataset-coverage`, which speaks only for a synthetic
+        # corpus. Both are WARN-against-PASS or WARN-against-silence, never
+        # FAIL, so neither reaches the exit code.
+        self.assertEqual(
+            {check for check, status in generated.items() if status == MODULE.FAIL},
+            {check for check, status in collected.items() if status == MODULE.FAIL},
+        )
+        self.assertEqual(
+            [check for check, status in generated.items() if status == MODULE.FAIL],
+            [],
+        )
+
+    def test_a_missing_id_still_counts_the_generated_rows(self) -> None:
+        """Relaxing the status must not cost the finding its detail.
+
+        The count of generated rows without an id is what a consumer needs to
+        say how much of the gap is in rows this guide itself wrote, so it
+        stays in the sentence and in the metrics now that it decides nothing.
+        """
+        rows = [
+            {
+                "input": f"scenario {index} unique_token_{index}",
+                "output": f"answer {index % 4}",
+                "difficulty": ["easy", "medium", "hard", "very-hard"][index % 4],
+                "source": "synthetic",
+            }
+            for index in range(12)
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            dataset = Path(directory) / "eval.jsonl"
+            dataset.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+            MODULE.check_dataset(dataset)
+        ids = next(result for result in MODULE.RESULTS if result.check == "dataset-ids")
+        self.assertEqual(ids.status, MODULE.WARN)
+        self.assertIn("12 generated rows require an id", ids.detail)
+        self.assertEqual(ids.metrics["generated_rows_without_id"], 12)
 
     def test_a_synthetic_corpus_missing_bands_warns_rather_than_fails(self) -> None:
         """The other half of #438: the missing-bands arm fired only when
@@ -4761,12 +4865,18 @@ class ATruncatedListSaysThatItIsTruncatedTests(unittest.TestCase):
     def test_a_generated_row_with_no_id_is_counted_apart_from_the_rest(
         self,
     ) -> None:
-        """The two ways this check FAILs, kept as two numbers.
+        """The two populations, kept as two numbers.
 
-        A collected row missing an id WARNs and caps nothing; a generated one
-        FAILs. A reason built from the wider count would name rows the check did
-        not object to, so both counts are published and only the narrower one
-        describes the failure.
+        A reason built from the wider count would name rows the check did not
+        object to, so both counts are published and the narrower one stays
+        available to whoever needs to say how much of the gap is in generated
+        rows.
+
+        This read "the two ways this check FAILs" while the narrower count
+        escalated a missing id to FAIL on generated provenance. #438 removed
+        that escalation - a missing id is the same defect whoever wrote the
+        row - so the counts are still two and the status is one WARN. What the
+        test guards is unchanged: the two populations must not be conflated.
         """
         rows = [
             {
@@ -4799,7 +4909,7 @@ class ATruncatedListSaysThatItIsTruncatedTests(unittest.TestCase):
         result = next(
             result for result in MODULE.RESULTS if result.check == "dataset-ids"
         )
-        self.assertEqual(result.status, MODULE.FAIL)
+        self.assertEqual(result.status, MODULE.WARN)
         self.assertEqual(result.metrics["rows_without_id"], 2)
         self.assertEqual(result.metrics["generated_rows_without_id"], 1)
         self.assertEqual(result.metrics["duplicate_ids"], 0)
@@ -6494,6 +6604,12 @@ class OneRecordPerCheckTests(unittest.TestCase):
         self.assertIn("ceiling effect", difficulty[0].detail)
         self.assertIn("missing bands", difficulty[0].detail)
         self.assertIn("very-hard", difficulty[0].detail)
+        # And as data, not only as prose: `emit`'s own docstring is that a
+        # wording change must never alter a score.
+        self.assertEqual(difficulty[0].metrics["bands"], ["easy"])
+        self.assertEqual(
+            difficulty[0].metrics["missing_bands"], ["hard", "medium", "very-hard"]
+        )
         self.assertEqual(
             len({result.check for result in MODULE.RESULTS}),
             len(MODULE.RESULTS),

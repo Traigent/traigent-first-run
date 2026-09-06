@@ -2623,10 +2623,12 @@ def emit_dataset_id_findings(
         "duplicate_ids": len(duplicate_ids),
         "rows_without_id": len(missing_records),
         # Published BESIDE the count above and not instead of it, because they
-        # answer different questions and only this one decides the status: a
-        # collected row with no id is a WARN, and a generated one is the FAIL.
-        # A consumer building a reason for that FAIL needs the count that caused
-        # it, and the wider one would name rows the check did not object to.
+        # answer different questions. This one decided the status until #438
+        # finished - a collected row with no id WARNed and a generated one
+        # FAILed - and it is kept now that it decides nothing, because it is
+        # still the count a consumer needs to say how much of the gap is in
+        # rows this guide generated, and the wider count above would name rows
+        # alongside them.
         "generated_rows_without_id": generated_missing,
         # The ids themselves, as digests, so a downstream reader can ask
         # whether a row it was told about is a row of this file.
@@ -2730,9 +2732,20 @@ def emit_dataset_id_findings(
             "no stable id; add stable ids in a working copy before excluding rows "
             f"or selecting a bounded subset, then re-run validation{generated_detail}"
         )
-        if generated_missing:
-            status = FAIL
-        elif status != FAIL:
+        # WARN whoever wrote the rows, on the rule stated beside
+        # `PASS/FAIL/WARN/SKIP` at the top of this file. A missing id is the
+        # same defect in a generated row and a collected one: it is measured
+        # exactly, the count of generated rows travels in the sentence and in
+        # `generated_rows_without_id`, and the card prices it.
+        #
+        # `if generated_missing: status = FAIL` was the fourth spelling of the
+        # construct #438 removed, and the one no grep for `FAIL if synthetic`
+        # could find. It exited 1 on a corpus declaring `source: synthetic` and
+        # 0 on the byte-identical collected one, and it landed exactly where
+        # this guide's OWN generated rows land - so the surface that refused
+        # them and the card that told the customer to continue disagreed over
+        # one file, which is what #410 was and what #438 finished.
+        if status != FAIL:
             status = WARN
     if findings:
         emit("dataset-ids", status, "; ".join(findings), id_metrics)
@@ -4644,6 +4657,16 @@ def check_dataset(
             f"all {len(difficulty_values)} difficulty-tagged rows are easy "
             f"(missing bands: {sorted(missing_difficulties)}); a ceiling effect "
             "may leave configurations indistinguishable",
+            # The second observation as DATA and not only as prose, on `emit`'s
+            # own rule that a wording change must never alter a score. No row
+            # count rides along: `dataset-difficulty-coverage` two records
+            # earlier owns the population this was measured over, and stating a
+            # denominator twice is how two records come to disagree about one
+            # file.
+            {
+                "bands": sorted(difficulties),
+                "missing_bands": sorted(missing_difficulties),
+            },
         )
     elif (
         not synthetic and difficulty_values and not difficulties & {"hard", "very-hard"}
@@ -4657,6 +4680,16 @@ def check_dataset(
     elif not synthetic and EXPECTED_DIFFICULTIES <= difficulties:
         emit("dataset-difficulty", PASS, "all four difficulty bands are represented")
     elif synthetic:
+        # Provenance still decides whether this arm speaks at all, and that
+        # residual is left deliberately rather than overlooked: a collected
+        # corpus carrying `hard` but no `very-hard` gets no record here, while
+        # a synthetic one gets this WARN. That is WARN against silence, not
+        # FAIL against WARN - the exit code no longer moves either way - and it
+        # is the one place the file still reads provenance into a difficulty
+        # verdict. A future author narrowing it further should move the
+        # judgement into `dataset-difficulty-coverage`, which measures the
+        # bands for every corpus and publishes `missing_bands` whoever wrote
+        # the rows, rather than adding a second provenance test here.
         if missing_difficulties:
             emit(
                 "dataset-difficulty",
