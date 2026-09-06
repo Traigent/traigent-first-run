@@ -2777,6 +2777,29 @@ def emit_dataset_id_findings(
 # is derived: the DB-API call names are pinned against `sqlite3.Connection` in
 # tests/test_preflight.py, and the process family is matched by prefix rather
 # than by a list of `os` members, so it holds on every platform.
+#
+# SO THIS TABLE GOES STALE, AND THAT IS ACCEPTED HERE RATHER THAN CHECKED FOR.
+# A library surface moves when somebody ships a new engine, and no test in this
+# repository can notice: there is nothing to compare the table against. The
+# first instance was `pyspark`, `ibis` and `polars` arriving after it was
+# written (traigent-first-run#416), and `.sql` will not be the last spelling.
+# What the walk's one-directional reading buys is that staleness costs a claim
+# and never a false one - an engine this table has not met yet is a witness
+# nobody found, which is exactly what an empty result already means. Reviewing
+# it is a person's job, on the same read of the call path `SKILL.md` mandates.
+#
+# ONE ENGINE IS KNOWINGLY ABSENT, so it is named rather than left to be found.
+# `polars` is not here, and the reason is that an import of it does not prove
+# what an import of the others does: it is a data-frame library first, and the
+# common evaluator that imports it reads a fixture and compares text. Listing
+# it would refuse that file. Its SQL routes are covered by name below instead -
+# `SQLContext(...).execute()`, `frame.sql(...)`, and `read_database` /
+# `read_database_uri`, which submit a statement to a REMOTE database over
+# connectorx with no driver import and no DB-API name to catch them. What is
+# given up is the general property the other entries have: a polars route this
+# file has not met is not caught by the import, where a new `duckdb` spelling
+# would be. That is the trade, and it is the module list's own bargain read the
+# other way round.
 _EXECUTION_MODULE_NAMES: frozenset[str] = frozenset(
     {
         # Candidate text run as a program, or handed to a shell.
@@ -2795,6 +2818,10 @@ _EXECUTION_MODULE_NAMES: frozenset[str] = frozenset(
         "databricks",
         "duckdb",
         "google.cloud.bigquery",
+        # A backend front end: importing it is building a connection, and it
+        # submits statements under `.sql()` rather than under the DB-API names
+        # below.
+        "ibis",
         "MySQLdb",
         "mysql.connector",
         "oracledb",
@@ -2806,6 +2833,13 @@ _EXECUTION_MODULE_NAMES: frozenset[str] = frozenset(
         "pymssql",
         "pymysql",
         "pyodbc",
+        # A cluster session, and the one shape here that a contained
+        # calibration cannot rescue: it needs a subprocess of its own, so a
+        # witness over it stops the run rather than rerouting it. Listed
+        # anyway, because an import of it is a session being built and the
+        # `SparkSession.builder.getOrCreate()` that follows usually runs at
+        # module level, before anything has read a line of the scorer.
+        "pyspark",
         "snowflake.connector",
         "sqlalchemy",
         "sqlite3",
@@ -2837,6 +2871,93 @@ _ENGINE_CALL_NAMES: frozenset[str] = frozenset(
         "execute_values",
     }
 )
+# The engine calls no standard pins, where the file decides and then the
+# argument does.
+#
+# These are how the data-frame engines submit a statement - `session.sql(text)`
+# on pyspark, `connection.sql(text)` on duckdb and ibis, `frame.sql(text)` and
+# `read_database_uri(text, uri)` on polars - and none of them is reachable
+# through the DB-API names above. They cannot join that table, because unlike
+# `.execute()` no specification says what they mean, and the reading has to be
+# argued rather than looked up.
+#
+# THE FILE DECIDES, AND THEN WHAT WAS HANDED OVER DOES.
+#
+# `sql` has a second and equally common meaning in exactly this domain:
+# `sqlglot.parse_one(text).sql(dialect)` RENDERS a parsed statement back to a
+# string and connects to nothing, which is what a canonicalising text-to-SQL
+# comparator does - the honest shape this guide asks a customer for, and the
+# expensive one to refuse. An earlier revision of this table tried to tell the
+# two apart by the argument alone, on the reasoning that an engine is handed
+# the statement and a renderer is handed a dialect. That reasoning was simply
+# wrong about the library: `Expression.sql(dialect=None, **opts)` takes the
+# DIALECT as its first positional parameter, so `parsed.sql(dialect)` - the
+# same comparator reading its dialect out of `metadata` instead of typing it -
+# read as a witness and was hard-refused by the calibration gate. A file that
+# opens no connection was told to design containment.
+#
+# So the discriminator is the file, not the call: `.sql()` is read as an engine
+# call only in a file that SHOWS an engine - one that imports something from
+# the table above, or one of the data-frame libraries below that carry a SQL
+# surface - and does not show a renderer. Naming the receiver decides nothing,
+# because `parsed` and `connection` are both local names, and following the
+# assignment only moves the question one line: a comparator that gets its parse
+# tree from the project's own helper (`from canon import parse_statement`, then
+# `parse_statement(output).sql(dialect)`) is the shape this guide asks a
+# text-to-SQL customer for, and it is indistinguishable, call by call, from a
+# connection being handed a query.
+#
+# That is the same one-directional reading the module list is built on: the
+# cost of declining is a claim, and the cost of claiming wrongly is a customer
+# refused an evaluator that does what the guide asked for - which since the
+# calibration scope gate is a stop and a manual containment review, not a
+# smaller number.
+#
+# WHAT IT GIVES UP, named rather than left to be found: a scorer that imports
+# nothing at all and submits candidate text through a connection handed in with
+# the row escapes on `.sql()` alone. The DB-API half still catches the
+# `.execute()` spelling of exactly that shape, so what is lost is one spelling
+# of one arrangement - and it is lost as a CLAIM, which is the direction this
+# walk is allowed to fail in. And, like every static read here, none of this is
+# a defence against somebody editing the file to escape it. Nothing static
+# answers that; the read of the whole call path `SKILL.md` mandates is what
+# does.
+#
+# THE SECOND CONDITION IS THAT SOMETHING WAS HANDED OVER. A call that passes
+# nothing submits nothing, and the statement arrives either positionally or
+# under one of the keyword names these libraries document for it - `query` on
+# polars' readers, `sqlQuery` on pyspark's session. Read from `call.args` and
+# `call.keywords` both, because a rule that read only the positional half made
+# `frame.sql(query=output)` invisible.
+#
+# The DB-API names deliberately keep the flat match. `.execute()` means one
+# thing because a specification says so, so there is no second reading to tell
+# apart, and every `.execute()` is a cursor whatever it was handed.
+_ENGINE_STATEMENT_CALL_NAMES: frozenset[str] = frozenset(
+    {"read_database", "read_database_uri", "sql"}
+)
+# The keyword names those calls document for the statement itself.
+_STATEMENT_KEYWORD_NAMES: frozenset[str] = frozenset({"query", "sql", "sqlQuery"})
+# Libraries whose whole purpose is to parse and re-render SQL without running
+# it. An import of one of these is what makes `.sql()` ambiguous in a file.
+_SQL_RENDERING_MODULE_NAMES: frozenset[str] = frozenset(
+    {"sqlfluff", "sqlglot", "sqlparse"}
+)
+# The subset of the names above that a renderer import makes ambiguous.
+# `read_database` and `read_database_uri` have no rendering reading, so a
+# renderer beside them changes nothing about what they do.
+_RENDERER_AMBIGUOUS_CALL_NAMES: frozenset[str] = frozenset({"sql"})
+# Data-frame libraries that carry a SQL surface: they submit statements under
+# the names above rather than under the DB-API ones, and they export some of
+# those names as plain functions, so `from polars import read_database_uri`
+# binds a reader rather than a helper.
+#
+# Kept apart from `_EXECUTION_MODULE_NAMES` because an entry there is a witness
+# on its own, and importing a data-frame library proves nothing - the common
+# evaluator that imports one reads a fixture and compares text. Here it does
+# something weaker and sufficient: it is one of the two ways a file SHOWS an
+# engine, which is what lets `.sql()` in that file be read as one.
+_SQL_SURFACE_MODULE_NAMES: frozenset[str] = frozenset({"polars"})
 # `os` members that start a process. Matched by prefix so `execl`, `execve`,
 # `spawnv`, `posix_spawnp` and every sibling are covered without a list that
 # goes stale, and so the answer does not change with the platform the check
@@ -2874,16 +2995,144 @@ def _attribute_root(node: ast.expr) -> str | None:
     return node.id if isinstance(node, ast.Name) else None
 
 
-def _execution_call_description(call: ast.Call) -> str | None:
-    """How this call reaches an engine or a process, in the reader's terms."""
+def _is_handed_a_statement(call: ast.Call) -> bool:
+    """Whether this call was handed something to submit.
+
+    The second condition behind `_ENGINE_STATEMENT_CALL_NAMES`. A call that
+    passes nothing submits nothing; a statement arrives either positionally or
+    under one of the keyword names these libraries document for it. `*args` is
+    unknown and read as handed over, because the refusing direction is the safe
+    one once the file has already been established as not a renderer's.
+    """
+    if call.args:
+        return True
+    return any(keyword.arg in _STATEMENT_KEYWORD_NAMES for keyword in call.keywords)
+
+
+def _renders_sql_without_running_it(tree: ast.Module) -> bool:
+    """Whether this file imports a library whose `.sql()` renders rather than runs.
+
+    File-scoped on purpose, and it is the first of the two conditions on
+    `_ENGINE_STATEMENT_CALL_NAMES`. The comment on that table says why: the
+    argument cannot tell `parsed.sql(dialect)` from `connection.sql(query)`,
+    because the renderer takes the dialect first and positionally.
+    """
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            if any(
+                alias.name.partition(".")[0] in _SQL_RENDERING_MODULE_NAMES
+                for alias in node.names
+            ):
+                return True
+        elif isinstance(node, ast.ImportFrom):
+            if (node.module or "").partition(".")[0] in _SQL_RENDERING_MODULE_NAMES:
+                return True
+    return False
+
+
+def _imported_statement_readers(tree: ast.Module) -> dict[str, str]:
+    """Names this file bound from a library that exports a statement reader.
+
+    WHAT THIS EXISTS TO REFUSE. `_ENGINE_STATEMENT_CALL_NAMES` holds ordinary
+    English words, and an earlier revision matched them on a bare call as well
+    as on an attribute - so that `from polars import read_database_uri` was
+    still seen after the module half declined to list `polars`. What it also
+    saw was `def sql(text): return " ".join(text.split()).casefold()`, a local
+    normaliser in an evaluator that imports nothing at all: the purest
+    non-executing comparator this guide exists to serve, reported as reaching a
+    SQL engine and refused calibration over a helper that runs nothing.
+
+    A bare name is whatever this file bound to it, so the binding is what has
+    to be read - and it is in the tree, which makes this derived rather than
+    guessed. A name bound from a library that exports one of these readers is
+    that reader; a name the file defined, or took from the customer's own
+    package, is not, and no amount of it being spelled `sql` changes that.
+
+    An attribute call needs none of this: `frame.sql(...)` is a method on
+    something, and a local function is never reached that way.
+    """
+    bound: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ImportFrom) or node.level != 0:
+            # A relative import is the customer's own package, exactly as it
+            # is for `from . import duckdb` in the module walk.
+            continue
+        module = node.module or ""
+        if (
+            _execution_module_name(module) is None
+            and module.partition(".")[0] not in _SQL_SURFACE_MODULE_NAMES
+        ):
+            continue
+        for alias in node.names:
+            if alias.name in _ENGINE_STATEMENT_CALL_NAMES:
+                # Keyed by the name the call site uses and valued by the
+                # reader it reaches, so an `as` alias is followed and the
+                # witness still names the library's own function.
+                bound[alias.asname or alias.name] = alias.name
+    return bound
+
+
+def _shows_a_sql_engine(tree: ast.Module) -> bool:
+    """Whether this file imports anything that submits SQL.
+
+    The first condition on `_ENGINE_STATEMENT_CALL_NAMES`, and the reason those
+    names can be read at all: `.sql()` is an ordinary method name, and only the
+    file around it says whether the thing it was called on is a connection.
+
+    Deliberately WIDER than the witness question. A file that merely imports
+    `polars` is not a witness and never becomes one here; what the import does
+    is make `.sql()` in that file readable as an engine call rather than as a
+    renderer's.
+    """
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            names = [alias.name for alias in node.names]
+        elif isinstance(node, ast.ImportFrom) and node.level == 0:
+            names = [node.module or ""]
+        else:
+            continue
+        for name in names:
+            if (
+                _execution_module_name(name) is not None
+                or name.partition(".")[0] in _SQL_SURFACE_MODULE_NAMES
+            ):
+                return True
+    return False
+
+
+def _execution_call_description(
+    call: ast.Call,
+    reads_as_an_engine: bool = False,
+    statement_readers: dict[str, str] | None = None,
+) -> str | None:
+    """How this call reaches an engine or a process, in the reader's terms.
+
+    `reads_as_an_engine` and `statement_readers` are file-level answers,
+    computed once over the module and passed in: both are questions about the
+    file rather than about any call in it, and asking either per node would
+    walk the whole tree for every call in it.
+    """
     func = call.func
-    if isinstance(func, ast.Name) and func.id in _EXECUTION_BUILTIN_CALLS:
-        return f"calls {func.id}()"
-    if isinstance(func, ast.Attribute):
-        if func.attr in _ENGINE_CALL_NAMES:
-            return f"calls .{func.attr}()"
-        if _attribute_root(func) == "os" and _is_process_attribute(func.attr):
-            return f"calls os.{func.attr}()"
+    name = func.id if isinstance(func, ast.Name) else None
+    if name is not None and name in _EXECUTION_BUILTIN_CALLS:
+        return f"calls {name}()"
+    attribute = func.attr if isinstance(func, ast.Attribute) else None
+    # A bare name has to have been bound from a library that exports this
+    # reader, and is reported under the reader's own name however it was
+    # aliased; an attribute only has to survive the renderer question.
+    if attribute is None:
+        reader = (statement_readers or {}).get(name or "")
+    elif attribute in _ENGINE_STATEMENT_CALL_NAMES and reads_as_an_engine:
+        reader = attribute
+    else:
+        reader = None
+    if reader is not None and _is_handed_a_statement(call):
+        return f"calls .{reader}()" if attribute else f"calls {reader}()"
+    if attribute is not None:
+        if attribute in _ENGINE_CALL_NAMES:
+            return f"calls .{attribute}()"
+        if _attribute_root(func) == "os" and _is_process_attribute(attribute):
+            return f"calls os.{attribute}()"
     return None
 
 
@@ -2895,6 +3144,14 @@ def candidate_execution_witnesses(tree: ast.Module) -> tuple[str, ...]:
     Ordered by line, so the first one is the first thing to look at.
     """
     witnesses: list[tuple[int, str]] = []
+    # Asked once, of the whole module, because it is a question about the file
+    # rather than about any call in it.
+    # A file shows an engine, and does not show a renderer that would make the
+    # same method name mean something else.
+    reads_as_an_engine = _shows_a_sql_engine(tree) and not (
+        _renders_sql_without_running_it(tree)
+    )
+    statement_readers = _imported_statement_readers(tree)
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
@@ -2920,7 +3177,9 @@ def candidate_execution_witnesses(tree: ast.Module) -> tuple[str, ...]:
                 ):
                     witnesses.append((node.lineno, f"imports {module}.{alias.name}"))
         elif isinstance(node, ast.Call):
-            description = _execution_call_description(node)
+            description = _execution_call_description(
+                node, reads_as_an_engine, statement_readers
+            )
             if description is not None:
                 witnesses.append((node.lineno, description))
     ordered = sorted(dict.fromkeys(witnesses))

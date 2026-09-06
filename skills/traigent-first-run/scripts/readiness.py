@@ -3154,6 +3154,16 @@ SOURCE_CHECK_SCOPE = {
     ),
 }
 SOURCE_CHECKED_BUILD_CHECKS = frozenset(SOURCE_CHECK_SCOPE)
+# WHOSE VOICE THE REST OF THE LINE IS IN, in the one form the card uses.
+#
+# `evidence` on a build check is prose the assistant being scored wrote about
+# somebody else's code, and the card prints it verbatim. Every sentence it
+# prints has to say so, because a reader who takes an authored observation for
+# a finding has been misled by the layout rather than by the words - which is
+# the whole of what this phrase is for, and why it is a constant rather than
+# two literals: the arm that lost it lost it by being written somewhere else
+# (traigent-first-run#362).
+UNCHECKED_OBSERVATION = "Assistant observation, which nothing here checks: "
 
 
 # What the read of the agent's build is asked, and what each answer is worth.
@@ -17413,10 +17423,33 @@ def build_signal_from_entry(
                 "no line that establishes it. Drop the citation, or drop "
                 "'determined': false and answer the check"
             )
+        # FRAMED HERE, and that is the difference this arm used to have from
+        # the other two. `_observed_declaration` marks an authored observation
+        # as one, and it only ever reached the checks that would otherwise
+        # have scored; an undetermined check returns before it with
+        # `measured=False` and passes through untouched, and it carries no
+        # citation by construction. So this was the one sentence on the card
+        # with nothing beside it and no marker on it: a fabricated
+        # `other_agent.py:41-58 SYSTEM carries two worked examples` was
+        # rendered in this script's own voice, on the arm where the read
+        # settled least and inherited prose is therefore likeliest
+        # (traigent-first-run#362).
+        #
+        # Composed at the read rather than at the render, so the marking is on
+        # the sentence wherever it is read from - including a consumer of
+        # `AgentFacts` that never calls `build_declarations_are_unmeasured`.
+        # The phrase itself is `UNCHECKED_OBSERVATION`, shared with the
+        # renderer, because two spellings of "this is not our voice" is how
+        # one of them goes missing.
         return BuildSignal(
             check,
             0.0,
-            f"not established by this read - {reason.strip()} ({evidence})",
+            # The reason's own full stop is dropped before this one is added.
+            # It is free prose and nothing normalises its punctuation, so the
+            # common case - an author who writes a sentence - rendered
+            # "fetched at runtime.. Assistant observation".
+            f"not established by this read - {reason.strip().rstrip('.')}. "
+            f"{UNCHECKED_OBSERVATION}{evidence}",
             measured=False,
         )
 
@@ -17891,6 +17924,13 @@ def _observed_declaration(signal: BuildSignal) -> BuildSignal:
     "not independently verified" framing is added only to the signals that
     would otherwise have scored, because that sentence is about a measurement
     being withheld and there is none to withhold on the others.
+
+    `UNCHECKED_OBSERVATION` is the half that belongs on every arm, and the
+    already-unmeasured ones do not get it here: an undetermined check is built
+    carrying it (`build_signal_from_entry`), and a settled check that answers
+    "no tools" is this script's reading of a citation rather than an authored
+    claim about behaviour. Passing them through twice is what a second
+    application would do.
     """
     quoted = cited_source_summary(signal)
     if not signal.measured:
@@ -17903,7 +17943,7 @@ def _observed_declaration(signal: BuildSignal) -> BuildSignal:
             + (
                 f"Assistant observation ({SOURCE_CHECK_SCOPE[signal.name]}): "
                 if signal.source_checked
-                else "Assistant observation, which nothing here checks: "
+                else UNCHECKED_OBSERVATION
             )
             + signal.evidence
             + quoted
@@ -18103,8 +18143,38 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
             "because its numbers were computed under different rules"
         ),
     )
+    # THE PAYLOAD CONTRACT, SAID WHERE ITS READERS ARE.
+    #
+    # `schema_version` decides how a consumer of this payload reads it, and it
+    # was written down nowhere a reader would look (traigent-first-run#401). It
+    # is not written into the guide, and deliberately not: no instruction this
+    # package ships runs `readiness.py --json`, so nobody following the guide
+    # holds one of these documents. Its readers are whoever automates this
+    # script - and, because `GUIDE.md` tells the assistant to invoke
+    # `readiness.py --help` on every guided run, the assistant too. Both read
+    # this string, which is why it says what to DO with the number rather than
+    # recounting the history behind it.
+    #
+    # The number is interpolated rather than typed, so this sentence cannot
+    # name a version this script does not write.
+    #
+    # WHAT IT DOES NOT SAY is when a bump happens, and an earlier revision got
+    # that wrong in a way worth recording: it said a new key does not bump the
+    # version. Schema 2 was purely additive and bumped anyway (`SCHEMA_VERSION`
+    # above), because the ABSENCE of the new key had been unambiguous and no
+    # longer was. The rule is about what a consumer can still read correctly,
+    # not about which keys moved, and the reasoning stays at the constant.
+    # `--previous`'s own help already carries the cross-version refusal, so it
+    # is not restated here.
     parser.add_argument(
-        "--json", action="store_true", help="emit machine-readable output"
+        "--json",
+        action="store_true",
+        help=(
+            "emit machine-readable output. The scoring payload carries "
+            f"'schema_version' (currently {SCHEMA_VERSION}), and a bump means a "
+            "consumer of the older version can no longer read this payload "
+            "correctly - so check the field before branching on any value in it"
+        ),
     )
     return parser.parse_args(argv)
 

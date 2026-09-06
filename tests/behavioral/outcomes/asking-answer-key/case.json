@@ -4,6 +4,10 @@
   "why": "The middle arm of `recommended_action`: no cap blocks, but one asks, so the action is that cap's (`review-answer-key`) rather than `proceed`. Deliberately a minimal pair with `clean-proceed` - identical agent, evaluator, config space and rows, differing only in each row's `output_source`. A file hash would see two different datasets and say nothing; this case's declared `expected` block records that one field moves the customer from `proceed` to being asked about the answer key.",
   "dataset": "evaluation-dataset.jsonl",
   "agent_origin": "brought",
+  "evaluator": "evaluator.py",
+  "evaluator_origin": "brought",
+  "evaluator_method": "normalized-exact",
+  "task_kind": "closed-label",
   "config_space": "config-space.json",
   "calibration": {
     "scorer": "evaluator.py:score_intent",
@@ -22,6 +26,7 @@
         "asks": true
       }
     ],
-    "asks_about_repeats": false
+    "asks_about_repeats": false,
+    "band_held_for_unread_answers": false
   }
 }
