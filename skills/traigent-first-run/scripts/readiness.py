@@ -14187,6 +14187,18 @@ def _reference_only_routes_a_request(
     rule should admit a loop is a separate question with its own argument to
     make, and it is not made here.
 
+    WHERE THIS RULE LIVES IN THE GUIDANCE, because a rule that can refuse a
+    customer's agent needs one and this one nearly shipped without: part 4 of
+    the accepted route, `ACCEPTED_ROUTE_LOCAL_CLAUSE` in this module and rule 4
+    of `references/component-creation.md`, already allows the selected value to
+    reach the request "through one plain local that nothing else rewrites".
+    That IS this rule; what follows below is a NARROWING of it, not a second
+    rule, and the refusal card says so in the clause's own words rather than in
+    a paraphrase. The narrowing can refuse no agent the guidance promised,
+    because before it every local on this path was refused: this branch only
+    adds credit. What it must not do is describe itself to an author as
+    something other than a narrowing of a written rule.
+
     An assignment is not an escape when it settles a plain local, and that
     condition is NOT decided here: `_settled_local_binding` is its one home,
     shared with `_table_alias_is_only_read`, which asks the same question of
@@ -15845,6 +15857,20 @@ def route_refusal_diagnosis(
         # that is dead to the request while the concatenation goes unmentioned.
         # `unexplained` is that guard, and it is the same failure #387 filed -
         # a card that names a rule other than the one that fired.
+        #
+        # The sentence names the accepted route's own clause rather than
+        # inventing a second wording of it, and states what this read adds to
+        # it as a NARROWING rather than as a separate rule. Two things follow
+        # from that and both were defects here. A rule that can refuse a
+        # customer's agent has a home in the guidance and the card names it -
+        # `ACCEPTED_ROUTE_LOCAL_CLAUSE` is that home, part 4 of the accepted
+        # route, `references/component-creation.md` rule 4 - and an author who
+        # goes there after reading this finds the same words. And the card may
+        # not offer a spelling that cannot score: it listed `while` among the
+        # accepted tests, and a `while` anywhere in the callable removes the
+        # setting before this walk runs, so an author who took the advice was
+        # refused again. `if`, `assert` and a conditional test all score;
+        # `while` is named nowhere the author is told to write it.
         if unfollowed and not unexplained:
             return (
                 "this setting is read into a local binding this check does not "
@@ -15853,14 +15879,18 @@ def route_refusal_diagnosis(
                     f"{alias} at {source.display_path}:{line}"
                     for alias, line in sorted(unfollowed)
                 )
-                + "): a followed binding is one plain assignment of one bare "
-                "name, written as a direct statement of the function's body, "
-                "the only binding of that spelling in it, and out of reach of "
-                "any nested def, lambda or class; and every read of it has to "
-                "be the test of an `if`, `assert`, `while` or conditional "
-                "expression. An alias handed to a call - including a bare "
-                "f-string in an error message - to an attribute, or on to a "
-                "request argument stays an escape"
+                + "): the accepted route allows "
+                + ACCEPTED_ROUTE_LOCAL_CLAUSE
+                + ", and this read follows that only in its narrowest form - "
+                "one plain assignment of one bare name, written as a direct "
+                "statement of the function's body, the only binding of that "
+                "spelling in it, out of reach of any nested def, lambda or "
+                "class, and read only in an `if` test, an `assert`, or a "
+                "conditional expression's test. Rewriting the guard as an "
+                "`if` over the local is the spelling this read follows. An "
+                "alias handed to a call - including a bare f-string in an "
+                "error message - to an attribute, or on to a request argument "
+                "stays an escape"
             )
         return (
             "the selected value does not survive whole to the request: it is "
@@ -16760,6 +16790,19 @@ ACCEPTED_ROUTE_KNOB: dict[str, Any] = {
 # against. Keeping them true is a reviewer's job, and
 # `route_refusal_diagnosis` is where a drift shows up first, because it reports
 # these conditions by name.
+#: The accepted route's own words for a followed local, part 4's operative
+#: clause, `references/component-creation.md` rule 4.
+#:
+#: A constant because the refusal diagnosis has to say it too, and the first
+#: revision of that diagnosis said it in different words. Two wordings of one
+#: rule is the defect this whole area was rewritten to remove, and the card is
+#: the worst place to keep the second one: an author reads the card, goes to
+#: the reference for the rule it names, and has to decide for themselves
+#: whether two paragraphs are the same requirement. There is now one string,
+#: so they cannot differ.
+ACCEPTED_ROUTE_LOCAL_CLAUSE = "one plain local that nothing else rewrites"
+
+
 ACCEPTED_ROUTE_PARTS: tuple[str, ...] = (
     "the options are written out as literals in a module-level binding, and "
     "'source_lines' cites that line",
@@ -16768,8 +16811,7 @@ ACCEPTED_ROUTE_PARTS: tuple[str, ...] = (
     "to it",
     "that choice is what indexes the module binding",
     "the selected value reaches an argument named for the setting, either "
-    "written into the call or through one plain local that nothing else "
-    "rewrites",
+    "written into the call or through " + ACCEPTED_ROUTE_LOCAL_CLAUSE,
     # The conditional part, named because it is the one an author cannot
     # infer from the example: the example chooses by parameter, and that
     # route reads any call. The mapping route needs the stronger proof, and

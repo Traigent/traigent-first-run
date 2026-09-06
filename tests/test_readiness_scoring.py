@@ -22266,12 +22266,86 @@ def run(style, question):
         )
         self.assertIn(self.LOCAL_RULE, evidence)
         self.assertIn(
-            "every read of it has to be the test of an `if`, `assert`, "
-            "`while` or conditional expression",
+            "read only in an `if` test, an `assert`, or a conditional "
+            "expression's test",
             evidence,
         )
         self.assertIn("f-string in an error message", evidence)
         self.assertNotIn("read only in guards", evidence)
+
+    def test_the_card_names_the_written_rule_it_narrows(self) -> None:
+        """A rule that can refuse an agent has a home, and the card names it.
+
+        The norm is stated in this module's own diagnosis docstring - "a rule
+        that can refuse a customer's agent needs a branch here and a home in
+        the guidance" - and a cross-branch audit caught this rule shipping with
+        neither a home nor a mention, in the same tree as that sentence.
+
+        The home was already there: part 4 of the accepted route, which is
+        rule 4 of `references/component-creation.md`, allows the value to reach
+        the request through one plain local that nothing else rewrites. What
+        this read adds is a narrowing of that, so the card quotes the clause
+        rather than paraphrasing it, and this asserts they are ONE STRING -
+        a paraphrase is how the two would drift, and drift is what sends an
+        author to a reference that does not say what the card said.
+        """
+        clause = MODULE.ACCEPTED_ROUTE_LOCAL_CLAUSE
+        self.assertIn(clause, MODULE.ACCEPTED_ROUTE_PARTS[3])
+        reference = (
+            ROOT / "skills/traigent-first-run/references/component-creation.md"
+        ).read_text(encoding="utf-8")
+        self.assertIn(clause, " ".join(reference.split()))
+        _credited, _value, evidence = self._verdict(
+            "    needed = MODEL_CREDENTIALS[model]\n"
+            '    raise ValueError(f"missing {needed}")\n'
+        )
+        self.assertIn(self.LOCAL_RULE, evidence)
+        self.assertIn(clause, evidence)
+        self.assertIn("this read follows that only in its narrowest form", evidence)
+
+    def test_the_card_never_recommends_a_spelling_that_cannot_score(self) -> None:
+        """The card may not send an author to a guard that scores zero.
+
+        `while` was in the card's list of accepted reads. A `while` anywhere in
+        the selected callable removes the setting before this walk runs - see
+        `test_a_while_is_refused_by_the_path_shape_and_not_by_this_rule` - so
+        an author who obeyed the card was refused again, which is the harm the
+        diagnosis exists to prevent, produced by the diagnosis.
+
+        Both halves are asserted, because dropping the word without checking
+        the alternatives would only move the defect: every spelling the card
+        does name has to score what the guard's absence scores.
+        """
+        _credited, _value, evidence = self._verdict(
+            "    needed = MODEL_CREDENTIALS[model]\n"
+            '    raise ValueError(f"missing {needed}")\n'
+        )
+        self.assertIn(self.LOCAL_RULE, evidence)
+        self.assertNotIn("while", evidence)
+        deleted = self._verdict("")[1]
+        for label, guard in (
+            (
+                "an `if` test",
+                "    needed = MODEL_CREDENTIALS[model]\n"
+                "    if needed not in supplied:\n"
+                '        raise ValueError("missing credential")\n',
+            ),
+            (
+                "an `assert`",
+                "    needed = MODEL_CREDENTIALS[model]\n"
+                "    assert needed in supplied\n",
+            ),
+            (
+                "a conditional expression's test",
+                "    needed = MODEL_CREDENTIALS[model]\n"
+                '    checked = "y" if needed in supplied else "n"\n'
+                "    del checked\n",
+            ),
+        ):
+            with self.subTest(recommended=label):
+                credited, value, guard_evidence = self._verdict(guard)
+                self.assertTrue(credited, guard_evidence)
+                self.assertEqual(value, deleted, guard_evidence)
 
     def _names_mentioned(self, reader: object) -> set[str]:
         """Every identifier a function's own body mentions, however spelt.
