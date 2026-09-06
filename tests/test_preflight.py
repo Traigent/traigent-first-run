@@ -4170,6 +4170,20 @@ class AShadowedCredentialIsNamedTests(unittest.TestCase):
     in the file.
     """
 
+    # One spelling of each placeholder, used in the dict fixtures and in the
+    # `.env` file the end-to-end case writes. The file line used to be built by
+    # concatenating fragments to dodge a secret scanner while the dict form
+    # three lines away was left whole, which made the file harder to read and
+    # stopped nothing; the value itself is what has to be obviously fake.
+    # Deliberately wordless: the fragment assertion below searches the whole
+    # report for any six characters of these, and a placeholder spelling
+    # "dotenv" or "shell" collides with the report's own prose rather than
+    # catching a leak.
+    PLACEHOLDER_SHELL_KEY = "uk_QQZZXXVV11WW22"
+    PLACEHOLDER_FILE_KEY = "uk_JJKKPPRR33SS44"
+    PLACEHOLDER_SHELL_OPENAI = "sk-MMNNBBVV55CC66"
+    PLACEHOLDER_FILE_OPENAI = "sk-GGHHTTYY77DD88"
+
     def setUp(self) -> None:
         MODULE.RESULTS.clear()
 
@@ -4178,8 +4192,8 @@ class AShadowedCredentialIsNamedTests(unittest.TestCase):
         return next(item for item in MODULE.RESULTS if item.check == check)
 
     def test_a_disagreement_is_named_with_both_fingerprints(self) -> None:
-        shell = "uk_FROMSHELLvalue9999"
-        dotenv = "uk_FROMDOTENVvalue1234"
+        shell = self.PLACEHOLDER_SHELL_KEY
+        dotenv = self.PLACEHOLDER_FILE_KEY
         MODULE.check_keys(
             {"TRAIGENT_API_KEY": shell},
             {"TRAIGENT_API_KEY": dotenv},
@@ -4192,8 +4206,16 @@ class AShadowedCredentialIsNamedTests(unittest.TestCase):
         self.assertIn(MODULE.value_fingerprint(dotenv), record.detail)
         # Both remedies, because which one is right depends on which value the
         # reader meant, and preflight cannot know that.
-        self.assertIn("env -u TRAIGENT_API_KEY", record.detail)
-        self.assertIn("load_dotenv(override=True)", record.detail)
+        self.assertIn("env -u TRAIGENT_API_KEY <command>", record.detail)
+        self.assertIn("`override=True` to `load_dotenv`", record.detail)
+        # And the scope of the second one, because the guide's own launcher
+        # pins `override=False` with a recorded reason and a package test.
+        self.assertIn("in your own loader", record.detail)
+        # The recipe, so the fingerprint is comparable to something the reader
+        # can produce. Without it the two halves of this line are the only
+        # things it can be compared against, which is the pressure that would
+        # eventually turn the digest into a readable prefix of the key.
+        self.assertIn(MODULE.FINGERPRINT_RECIPE, record.detail)
         self.assertEqual(record.metrics["shadowed_variables"], ["TRAIGENT_API_KEY"])
         self.assertEqual(
             record.metrics["fingerprints"]["TRAIGENT_API_KEY"],
@@ -4203,28 +4225,88 @@ class AShadowedCredentialIsNamedTests(unittest.TestCase):
             },
         )
 
-    def test_no_credential_value_is_ever_printed(self) -> None:
-        """A preflight report is pasted into chat logs and issue threads.
+    def test_the_fingerprint_cannot_be_read_back_to_the_secret(self) -> None:
+        """The property, not the absence of one literal.
 
-        The fingerprint exists so this line can name the key without becoming a
-        way to leak it, and that property has to be asserted rather than
-        assumed - a later author adding "expected uk_...1234" would undo it.
+        Asserting `assertNotIn(whole_secret, printed)` guards nothing worth
+        guarding: the plausible way this is undone is not someone printing the
+        key entire, it is someone "improving" the digest into a readable prefix
+        so a reader can match it against the portal page - and a prefix passes
+        a whole-string search. So assert what the digest has to BE.
+
+        `value_fingerprint` is checked directly rather than only through the
+        report, because a report that happens not to print a value today is not
+        the same promise as a function that cannot leak one.
         """
-        shell = "uk_FROMSHELLvalue9999"
-        dotenv = "uk_FROMDOTENVvalue1234"
+        for placeholder in (
+            self.PLACEHOLDER_SHELL_KEY,
+            self.PLACEHOLDER_FILE_KEY,
+            self.PLACEHOLDER_SHELL_OPENAI,
+            self.PLACEHOLDER_FILE_OPENAI,
+        ):
+            with self.subTest(placeholder=placeholder):
+                digest = MODULE.value_fingerprint(placeholder)
+                self.assertEqual(len(digest), 8)
+                self.assertNotEqual(digest, placeholder.strip()[:8])
+                self.assertNotEqual(digest, placeholder.strip()[-8:])
+                self.assertNotIn(digest, placeholder)
+                # Hex, so it cannot be carrying anything else.
+                self.assertRegex(digest, r"^[0-9a-f]{8}$")
+                # One-way: two values that share a long prefix must not share a
+                # fingerprint, which a truncation would.
+                self.assertNotEqual(
+                    MODULE.value_fingerprint(placeholder),
+                    MODULE.value_fingerprint(placeholder + "x"),
+                )
+
+    def test_no_fragment_of_a_secret_reaches_the_report(self) -> None:
+        """And through the whole path, on fragments rather than whole values.
+
+        Six characters is short enough to catch a prefix, a suffix or a middle
+        slice, and long enough that these fixtures do not collide with ordinary
+        report prose. The check is asserted to have actually fired first, so
+        this cannot pass by the detector being blind - "nothing printed because
+        nothing leaks" and "nothing printed because nothing ran" are different
+        results and only one of them is this test passing.
+        """
+        secrets = {
+            "TRAIGENT_API_KEY": (self.PLACEHOLDER_SHELL_KEY, self.PLACEHOLDER_FILE_KEY),
+            "OPENAI_API_KEY": (
+                self.PLACEHOLDER_SHELL_OPENAI,
+                self.PLACEHOLDER_FILE_OPENAI,
+            ),
+        }
         MODULE.check_keys(
-            {"TRAIGENT_API_KEY": shell, "OPENAI_API_KEY": "sk-shell-openai"},
-            {"TRAIGENT_API_KEY": dotenv, "OPENAI_API_KEY": "sk-file-openai"},
-            {"TRAIGENT_API_KEY": shell, "OPENAI_API_KEY": "sk-shell-openai"},
+            {name: pair[0] for name, pair in secrets.items()},
+            {name: pair[1] for name, pair in secrets.items()},
+            {name: pair[0] for name, pair in secrets.items()},
         )
+        record = self._record("env-shadowed-key")
+        self.assertEqual(record.status, MODULE.WARN)
+        self.assertEqual(sorted(record.metrics["shadowed_variables"]), sorted(secrets))
         printed = json.dumps(
             [
                 {"detail": item.detail, "metrics": item.metrics}
                 for item in MODULE.RESULTS
             ]
         )
-        for secret in (shell, dotenv, "sk-shell-openai", "sk-file-openai"):
-            self.assertNotIn(secret, printed)
+        for name, (shell, dotenv) in secrets.items():
+            for value in (shell, dotenv):
+                for start in range(len(value) - 6 + 1):
+                    fragment = value[start : start + 6]
+                    self.assertNotIn(
+                        fragment,
+                        printed,
+                        f"{name}: a 6-character fragment of a secret reached "
+                        f"the report",
+                    )
+            # And the two sides are distinguishable, which is what the finding
+            # is for - a digest that collapsed both to one value would leak
+            # nothing and also say nothing.
+            self.assertNotEqual(
+                record.metrics["fingerprints"][name]["process"],
+                record.metrics["fingerprints"][name]["file"],
+            )
 
     def test_every_route_credential_is_read_not_only_the_portal_key(self) -> None:
         """The filed incident had two shadowed keys, not one.
@@ -4233,10 +4315,16 @@ class AShadowedCredentialIsNamedTests(unittest.TestCase):
         vendor added to `VENDOR_KEYS` is covered here without a second list
         being remembered.
         """
-        self.assertIn("TRAIGENT_API_KEY", MODULE.CREDENTIAL_ENV_NAMES)
+        self.assertIn("TRAIGENT_API_KEY", MODULE.SECRET_ENV_NAMES)
         for names in MODULE.VENDOR_KEYS.values():
             for name in names:
-                self.assertIn(name, MODULE.CREDENTIAL_ENV_NAMES)
+                self.assertIn(name, MODULE.SECRET_ENV_NAMES)
+        # And the scanned set is the two sets and nothing else, so a name added
+        # to either is scanned without a third list to remember.
+        self.assertEqual(
+            sorted(MODULE.SHADOW_SCANNED_ENV_NAMES),
+            sorted({*MODULE.SECRET_ENV_NAMES, *MODULE.ROUTE_ENV_NAMES}),
+        )
         MODULE.check_keys(
             {"OPENROUTER_API_KEY": "sk-or-shell", "OPENAI_API_KEY": "sk-shell"},
             {"OPENROUTER_API_KEY": "sk-or-file", "OPENAI_API_KEY": "sk-file"},
@@ -4283,7 +4371,7 @@ class AShadowedCredentialIsNamedTests(unittest.TestCase):
         record = self._record("traigent-key")
         self.assertEqual(record.status, MODULE.PASS)
         self.assertIn(f"sha256:{MODULE.value_fingerprint(key)}", record.detail)
-        self.assertIn("the SDK's default backend origin", record.detail)
+        self.assertIn("portal.traigent.ai", record.detail)
 
         MODULE.RESULTS.clear()
         MODULE.check_keys(
@@ -4295,7 +4383,100 @@ class AShadowedCredentialIsNamedTests(unittest.TestCase):
             {},
         )
         record = self._record("traigent-key")
-        self.assertIn("https://example.invalid/api (overridden)", record.detail)
+        self.assertIn("https://example.invalid (overridden)", record.detail)
+        # Host, scheme and port only. This is the one place preflight prints an
+        # environment value, and a backend URL can carry a token in its
+        # userinfo or its query string.
+        self.assertNotIn("/api", record.detail)
+
+    def test_a_route_value_is_printed_because_naming_it_is_the_finding(
+        self,
+    ) -> None:
+        """A region is not a secret, and hashing it hides the only useful fact.
+
+        "My shell says us-east-1 and my .env says eu-west-1, which region am I
+        signing for?" is the reader's whole question, and a pair of digests
+        refuses to answer it while buying nothing - there are about thirty
+        public AWS region strings, so sha256 over one is reversible by anyone
+        who cares.
+        """
+        MODULE.check_keys(
+            {"AWS_REGION": "us-east-1"},
+            {"AWS_REGION": "eu-west-1"},
+            {"AWS_REGION": "us-east-1"},
+        )
+        record = self._record("env-shadowed-key")
+        self.assertEqual(record.status, MODULE.WARN)
+        self.assertIn("AWS_REGION is us-east-1 in the process", record.detail)
+        self.assertIn("eu-west-1 in .env", record.detail)
+        self.assertNotIn("sha256:", record.detail)
+        self.assertEqual(
+            record.metrics["route_values"]["AWS_REGION"],
+            {"process": "us-east-1", "file": "eu-west-1"},
+        )
+        self.assertEqual(record.metrics["fingerprints"], {})
+
+    def test_a_shadowed_backend_url_is_a_finding_reduced_to_its_host(self) -> None:
+        """The exact case #426 named, and it used to report PASS.
+
+        `.env` asks for dev, the shell exports prod, the key is the same on
+        both sides: the line that exists to say what the shell silently won
+        said nothing was won. A route value is printed for the same reason a
+        region is, and reduced first because a URL can carry a token in its
+        userinfo or its query string.
+        """
+        MODULE.check_keys(
+            {"TRAIGENT_BACKEND_URL": "https://prod.example.invalid"},
+            {"TRAIGENT_BACKEND_URL": "https://dev.example.invalid/api?token=abcdef"},
+            {"TRAIGENT_BACKEND_URL": "https://prod.example.invalid"},
+        )
+        record = self._record("env-shadowed-key")
+        self.assertEqual(record.status, MODULE.WARN)
+        self.assertEqual(record.metrics["shadowed_variables"], ["TRAIGENT_BACKEND_URL"])
+        self.assertIn("https://prod.example.invalid", record.detail)
+        self.assertIn("https://dev.example.invalid", record.detail)
+        for carried in ("token", "abcdef", "/api"):
+            self.assertNotIn(carried, record.detail)
+
+    def test_the_unset_remedy_names_every_shadowed_variable(self) -> None:
+        """A customer runs the printed command verbatim; that is the point.
+
+        Naming only the first cleared one 401 and left the run to fail on the
+        next still-shadowed name with a different, unexplained provider error -
+        after the report had declared the problem solved.
+        """
+        shadowed = {
+            "TRAIGENT_API_KEY": (self.PLACEHOLDER_SHELL_KEY, self.PLACEHOLDER_FILE_KEY),
+            "OPENAI_API_KEY": (
+                self.PLACEHOLDER_SHELL_OPENAI,
+                self.PLACEHOLDER_FILE_OPENAI,
+            ),
+            "AWS_REGION": ("us-east-1", "eu-west-1"),
+        }
+        MODULE.check_keys(
+            {name: pair[0] for name, pair in shadowed.items()},
+            {name: pair[1] for name, pair in shadowed.items()},
+            {name: pair[0] for name, pair in shadowed.items()},
+        )
+        record = self._record("env-shadowed-key")
+        for name in shadowed:
+            self.assertIn(f"-u {name}", record.detail)
+        self.assertEqual(record.detail.count("-u "), len(shadowed))
+
+    def test_a_url_keeps_only_scheme_host_and_port(self) -> None:
+        """`route_display` on its own, including what must not survive it."""
+        for value, expected in (
+            (
+                "https://user:pw@dev.example.invalid/a/b?t=1#f",
+                "https://dev.example.invalid",
+            ),
+            ("https://dev.example.invalid:8443/x", "https://dev.example.invalid:8443"),
+            ("eu-west-1", "eu-west-1"),
+            ("  us-east-1  ", "us-east-1"),
+            ("not a url at all", "not a url at all"),
+        ):
+            with self.subTest(value=value):
+                self.assertEqual(MODULE.route_display(value), expected)
 
     def test_the_shadow_check_is_reached_through_main(self) -> None:
         """The views are computed and were handed to one caller only.
@@ -4307,9 +4488,7 @@ class AShadowedCredentialIsNamedTests(unittest.TestCase):
         """
         with tempfile.TemporaryDirectory() as directory:
             env_path = Path(directory) / ".env"
-            # Two obvious placeholders, differing only so the check has
-            # something to disagree about.
-            env_path.write_text("TRAIGENT_API_KEY=" + "uk_" + "dotenv-placeholder\n")
+            env_path.write_text(f"TRAIGENT_API_KEY={self.PLACEHOLDER_FILE_KEY}\n")
             env_path.chmod(0o600)
             stdout = io.StringIO()
             with mock.patch.object(
@@ -4317,7 +4496,9 @@ class AShadowedCredentialIsNamedTests(unittest.TestCase):
                 "argv",
                 [str(SCRIPT), "--env", str(env_path), "--defer-missing-sdk", "--json"],
             ), mock.patch.dict(
-                os.environ, {"TRAIGENT_API_KEY": "uk_shell-placeholder"}, clear=False
+                os.environ,
+                {"TRAIGENT_API_KEY": self.PLACEHOLDER_SHELL_KEY},
+                clear=False,
             ):
                 with redirect_stdout(stdout):
                     exit_code = MODULE.main()
@@ -4376,6 +4557,11 @@ class ATruncatedListSaysThatItIsTruncatedTests(unittest.TestCase):
             MODULE.check_dataset(dataset)
         return {result.check: result.detail for result in MODULE.RESULTS}
 
+    def _metrics(self, repeats: int, *, share_ids: bool) -> dict[str, dict]:
+        """The same file as `_details`, read for its metrics instead."""
+        self._details(repeats, share_ids=share_ids)
+        return {result.check: result.metrics for result in MODULE.RESULTS}
+
     def test_thirty_findings_say_thirty_and_say_the_list_is_partial(self) -> None:
         details = self._details(30, share_ids=True)
         self.assertTrue(details["dataset-ids"].startswith("30 duplicate ids:"))
@@ -4432,6 +4618,34 @@ class ATruncatedListSaysThatItIsTruncatedTests(unittest.TestCase):
         complete = self._details(10, share_ids=False)["dataset-near-duplicates"]
         self.assertTrue(complete.startswith("10 input pairs at least"), complete)
         self.assertNotIn("shown)", complete)
+
+    def test_the_near_duplicate_count_is_published_as_data_too(self) -> None:
+        """The count in the sentence is truncated; the scorer needs the number.
+
+        The sibling check states this exactly (`duplicate_metrics`: "a reader
+        downstream needs the ARITHMETIC and not the sentence"), and the
+        readiness adapter records itself as stuck without it. Published on the
+        PASS arm as well, so absence has one meaning.
+        """
+        found = self._metrics(30, share_ids=False)["dataset-near-duplicates"]
+        self.assertEqual(found["near_duplicate_pairs"], 30)
+        self.assertTrue(found["near_duplicate_scan_complete"])
+
+        clean = self._metrics(0, share_ids=False)["dataset-near-duplicates"]
+        self.assertEqual(clean["near_duplicate_pairs"], 0)
+        self.assertTrue(clean["near_duplicate_scan_complete"])
+
+    def test_a_scan_that_did_not_run_publishes_none_and_not_zero(self) -> None:
+        """A SKIP must not be readable as "compared, and found nothing".
+
+        Zero is the answer a completed scan gives; the two SKIP arms did not
+        compare anything, so they publish `None`. A 0 here would let a payload
+        from a dataset that was never scanned score as clean.
+        """
+        with mock.patch.object(MODULE, "MAX_NEAR_DUPLICATE_SHINGLES", 0):
+            metrics = self._metrics(0, share_ids=False)["dataset-near-duplicates"]
+        self.assertIsNone(metrics["near_duplicate_pairs"])
+        self.assertFalse(metrics["near_duplicate_scan_complete"])
 
     def test_the_shared_ceiling_is_named_for_findings_and_not_for_ids(self) -> None:
         """#411: one constant, four lists, and only the first was ids.
