@@ -776,11 +776,12 @@ assert set(WIRED_KNOBS) == set(ENHANCED_SPACE), (
     "cannot skip a searched key"
 )
 
+# `accuracy` is the one key the portal reads for quality; any other name shows
+# there as 0% (measured 2026-09-06). The SDK parks its built-in exact match at
+# `exact_match_default` once a wired scorer claims the key.
 OBJECTIVES = ObjectiveSchema.from_objectives(
     [
-        ObjectiveDefinition(
-            name="task_success", orientation="maximize", weight=1.0
-        ),
+        ObjectiveDefinition(name="accuracy", orientation="maximize", weight=1.0),
         ObjectiveDefinition(name="cost", orientation="minimize", weight=1.0),
     ]
 )
@@ -1875,7 +1876,7 @@ def assert_wiring_still_proven() -> None:
     configuration_space=ENHANCED_SPACE,
     evaluation=EvaluationOptions(
         eval_dataset=TUNING_DATASET,
-        metric_functions={"task_success": task_score},
+        metric_functions={"accuracy": task_score},
     ),
 )
 def agent(message: str) -> str:
@@ -2222,6 +2223,7 @@ try:
         algorithm="auto",
         configuration_space=ENHANCED_SPACE,
         max_trials=ENHANCED_MAX_TRIALS,
+        # None, never a number: 600 s here cut a 12-trial search at 7.
         timeout=OPTIMIZATION_TIMEOUT_SECONDS,
         save_to=OPTIMIZED_RESULTS,
     )
@@ -2339,9 +2341,9 @@ def frontier_at_or_above(trials, metric_name, floor):
     """Non-dominated completed trials scoring at or above `floor`, cheapest first.
 
     `metric_name` is this run's own objective name - the key wired through
-    `metric_functions`, which is `"task_success"` in this reference's worked
-    example - and never `"accuracy"`, which can sit in the same metrics map
-    while being built-in exact match rather than the scorer this run wired.
+    `metric_functions`, which is `"accuracy"` in this reference's worked
+    example. Read that key and not `"exact_match_default"`, where the SDK
+    keeps its built-in exact match once a wired scorer has claimed `accuracy`.
 
     `floor` is the incumbent trial's value under this same `metric_name`, so
     both sides of the comparison are the same measurement. Never pass the
