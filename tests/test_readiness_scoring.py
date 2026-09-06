@@ -19137,8 +19137,11 @@ class TheBuildHalfCitesTheAgentItReadTests(unittest.TestCase):
                 self.assertIn("nothing here checks", rows[check])
                 self.assertNotIn("does not establish", rows[check])
         # `tools` above answers "no tools", which is not applicable rather than
-        # unverified, so it carries no observation to mark either way. The
-        # applicable case is the one that has to say it.
+        # unverified, so it carries no SCOPE clause: no derivation ran and
+        # there is none to state. It still carries the assistant's sentence,
+        # and so still says whose that is - asserted in
+        # `test_the_no_tools_arm_says_whose_sentence_it_is`. The applicable
+        # case below is the one that has a scope to state.
         used = self._score_source(
             "MODEL = ['a']\nTOOLS = ['search']\ndef selected(q):\n    return q\n",
             {
@@ -19378,6 +19381,52 @@ class TheBuildHalfCitesTheAgentItReadTests(unittest.TestCase):
                 self.assertNotIn("excluded from this score", rows[check])
                 self.assertNotIn("Read from", rows[check])
 
+    def test_the_no_tools_arm_says_whose_sentence_it_is(self) -> None:
+        """traigent-first-run#362, on the last arm that was still unmarked.
+
+        `tools: used=false` is the only SETTLED check that returns
+        `measured=False`, so it returns before `_observed_declaration` and used
+        to reach the card as "the agent declares no tools, so tool wiring does
+        not apply (other_agent.py:100-118 the tool table is empty for this
+        route)" - the author's sentence in this script's own voice, inside a
+        parenthesis that reads as this script's own aside. It is the arm a
+        simple agent most commonly lands on, so it is the arm the marking was
+        most needed on.
+
+        The clause before the marking stays this read's own: the document
+        declares no tools, and tool wiring therefore does not apply. What
+        follows the marking is the assistant's, exactly as on every other
+        check.
+        """
+        prose = "other_agent.py:100-118 the tool table is empty for this route"
+        rows = self._observed(
+            "MODEL = ['a']\ndef selected(question):\n    return question\n",
+            {
+                "control-flow": {"loop": False, "bounded": True},
+                "tools": {"used": False, "evidence": prose},
+            },
+        )
+        # Written out rather than read off the module, so this asserts on the
+        # sentence a customer meets and not on the constant agreeing with
+        # itself.
+        marking = "Assistant observation, which nothing here checks: "
+        self.assertIn("the agent declares no tools", rows["tools"])
+        self.assertIn(marking, rows["tools"])
+        self.assertIn(prose, rows["tools"])
+        # The read's own clause first, then the marking, then the prose. A
+        # marking that opened the line would hand this script's finding to the
+        # assistant as well.
+        self.assertLess(
+            rows["tools"].index("tool wiring"), rows["tools"].index(marking)
+        )
+        self.assertLess(rows["tools"].index(marking), rows["tools"].index(prose))
+        # Nothing was withheld on a check that does not apply, so nothing
+        # claims a withheld measurement - that sentence would read as a
+        # penalty for an agent that simply has no tools.
+        self.assertNotIn("excluded from this score", rows["tools"])
+        # #368's derived clause is unaffected and still stands beside it.
+        self.assertIn("Read from agent.py, 1:", rows["tools"])
+
     def test_the_reason_does_not_bring_its_own_full_stop_to_the_card(self) -> None:
         """A separator this script adds, on prose it does not control.
 
@@ -19426,7 +19475,7 @@ class TheBuildHalfCitesTheAgentItReadTests(unittest.TestCase):
                 self._read(self._undetermined()).build
             )
         }
-        for check in ("prompt", "output-contract"):
+        for check in ("prompt", "output-contract", "tools"):
             with self.subTest(check=check):
                 self.assertIn(MODULE.UNCHECKED_OBSERVATION, settled[check])
                 self.assertIn(MODULE.UNCHECKED_OBSERVATION, undetermined[check])

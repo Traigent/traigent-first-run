@@ -17550,10 +17550,28 @@ def build_signal_from_entry(
         # Excluded rather than credited or charged. Only tool wiring is N/A;
         # prompt, output-contract, control-flow, and search-space checks remain.
         # Crediting no tools would pay for being simpler than the question.
+        #
+        # MARKED HERE FOR THE SAME REASON THE UNDETERMINED ARM IS. This is the
+        # only settled check that returns `measured=False`, so it returns
+        # before `_observed_declaration` adds the framing, exactly as
+        # `determined: false` used to - and it reached the card as
+        # "tool wiring does not apply (other_agent.py:100-118 the tool table is
+        # empty for this route)", the author's sentence in this script's own
+        # voice inside an aside that reads as this script's own
+        # (traigent-first-run#362). Only the clause before the marking is this
+        # read's: that the document declares no tools, and what follows from
+        # that. The sentence after it is the assistant's, like every other
+        # `evidence`, and the same constant says so.
+        #
+        # No "excluded from this score" here: nothing was withheld. A check
+        # that does not apply had no measurement to withhold, and claiming one
+        # was withheld would read as a penalty for an agent that simply has no
+        # tools.
         return BuildSignal(
             check,
             0.0,
-            f"the agent declares no tools, so tool wiring does not apply ({evidence})",
+            "the agent declares no tools, so tool wiring does not apply. "
+            f"{UNCHECKED_OBSERVATION}{evidence}",
             measured=False,
             applicable=False,
         )
@@ -17926,11 +17944,20 @@ def _observed_declaration(signal: BuildSignal) -> BuildSignal:
     being withheld and there is none to withhold on the others.
 
     `UNCHECKED_OBSERVATION` is the half that belongs on every arm, and the
-    already-unmeasured ones do not get it here: an undetermined check is built
-    carrying it (`build_signal_from_entry`), and a settled check that answers
-    "no tools" is this script's reading of a citation rather than an authored
-    claim about behaviour. Passing them through twice is what a second
-    application would do.
+    already-unmeasured ones do not get it here because they are built carrying
+    it in `build_signal_from_entry` - both the undetermined check and the
+    settled `tools` check that answers "no tools". A second application would
+    only print the phrase twice.
+
+    That exemption used to read differently, and the difference is the defect
+    it hid: it said the "no tools" line was this script's reading of a citation
+    rather than an authored claim, and so needed no marking. Only the clause
+    before the parenthesis was ever this script's. Inside it sat the check's
+    `evidence` verbatim - an assistant's sentence about somebody's code, like
+    every other `evidence` on this card - and a document carried over from
+    another agent put "the tool table is empty for this route" on the card in
+    this script's voice. Marking is composed at the read now, so a consumer of
+    `AgentFacts` that never renders through here still gets the attribution.
     """
     quoted = cited_source_summary(signal)
     if not signal.measured:
