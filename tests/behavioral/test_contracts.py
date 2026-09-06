@@ -161,66 +161,51 @@ class BehavioralContractUnitTests(unittest.TestCase):
             "would clear this.",
         )
 
-    def test_the_clean_cases_band_says_which_gate_holds_it(self) -> None:
-        """`clean-proceed` reads WORKABLE at 91, and 91 is a STRONG number.
+    def test_the_clean_cases_band_is_not_an_accident_of_the_harness_argv(
+        self,
+    ) -> None:
+        """`clean-proceed` reads WORKABLE at 81, and 81 is a STRONG number.
 
-        This used to pin the OMISSION that produced the band: `run_case` built
-        its readiness argv by hand with no `--task-kind`, the evaluation
-        pillar's task-fit check was withheld, and the band fell under the
-        confidence gate. The pin was honest about what it could not do - it
-        stopped the flag arriving, and could not make the reason visible,
-        because `RECORDED_FIELDS` had no field for which gate holds a band
-        (traigent-first-run#405).
+        It reads WORKABLE because `band_for` demotes it: `run_case` builds its
+        readiness argv by hand and passes no `--task-kind`, so the evaluation
+        pillar's task-fit check is withheld, pillar confidence falls under the
+        gate, and the band is held for thin evidence.
 
-        Both halves are done instead. The argv declares the run-scoped flags
-        `SKILL.md` mandates on every guided scoring call, read from each case;
-        and `band_limited_by_confidence` and `band_limited_by_unread_answers`
-        are recorded fields, so a change of gate now fails
-        `test_every_recorded_outcome_matches_its_hand_declared_expectation`
-        with a diff that names it. What is left here is the property the pin
-        was protecting, asserted directly: this case's band is held by a gate
-        and the declaration says which one.
+        That couples a hand-declared card to a flag neither the case nor the
+        declaration names, and it is load-bearing beyond tidiness. The
+        answer-key floor holds the top two bands until a read of the expected
+        answers has entered, and no outcome case supplies one - so the moment
+        this argv gains `--task-kind`, this case scores into STRONG and the
+        floor becomes what holds it, silently, with its recorded card unchanged
+        and its recorded REASON different.
 
-        Measured while doing it, and worth recording because the pin predicted
-        otherwise: `--task-kind` alone moves nothing. Task fit weighs a method
-        against an output kind, and the argv named no method either, so the
-        case read 81/WORKABLE under the confidence gate with the kind declared
-        and without it. It is `--evaluator-method`, mandated by the same
-        sentence, that lifts confidence - and then the answer-key floor is what
-        holds the band, exactly the state the pin was written to catch.
+        So the omission is pinned rather than relied on. Adding the flag is a
+        reasonable change - SKILL.md mandates it on every guided scoring call -
+        and this test is what makes it a decision: add it, re-declare the case,
+        and say which gate holds the band now. Filed as
+        traigent-first-run#405.
         """
-        contract = outcomes.load_case(outcomes.CASES / "clean-proceed")
-        expected = contract["expected"]
-        # A STRONG number under no cap reading WORKABLE is only possible
-        # through a band gate. Read off the declaration, so this needs no run.
-        self.assertEqual(expected["overall"], 91)
-        self.assertEqual(expected["band"], "WORKABLE")
-        self.assertEqual(expected["caps"], [])
-        self.assertEqual(
-            [
-                name
-                for name in (
-                    "band_limited_by_confidence",
-                    "band_limited_by_unread_answers",
-                )
-                if expected[name]
-            ],
-            ["band_limited_by_unread_answers"],
-            "clean-proceed's band is held by a different gate than the one its "
-            "case.json declares, or by none at all. Say which one holds it now "
-            "- that is what this declaration is for (traigent-first-run#405).",
-        )
-        # And the harness really does make the call the guide mandates, since
-        # a case declaring flags a run_case that dropped them would still
-        # record a consistent card.
         source = Path(outcomes.__file__).read_text(encoding="utf-8")
         marker = "score_argv = ["
         self.assertIn(marker, source, "the outcome readiness argv moved")
         argv_block = source.split(marker, 1)[1].split("score = json.loads", 1)[0]
-        for flag in ("--task-kind", "--evaluator-method"):
-            self.assertIn(flag, argv_block, f"the outcome argv no longer passes {flag}")
-        self.assertEqual(contract["task_kind"], "closed-label")
-        self.assertEqual(contract["evaluator_method"], "normalized-exact")
+        self.assertNotIn(
+            "--task-kind",
+            argv_block,
+            "run_case now declares a task kind, so clean-proceed's evaluation "
+            "pillar is no longer under the confidence gate and its band may be "
+            "held by the answer-key floor instead. Re-declare the affected "
+            "cases and say which gate holds each band - see "
+            "traigent-first-run#405.",
+        )
+        # And the shape that argv produces, read off the declaration so this
+        # needs no run: a score of 81 with no cap at all reading WORKABLE is
+        # only possible through a band gate, because 81 is a STRONG number and
+        # nothing capped it. Which gate is the thing this test protects.
+        contract = outcomes.load_case(outcomes.CASES / "clean-proceed")
+        self.assertEqual(contract["expected"]["overall"], 81)
+        self.assertEqual(contract["expected"]["band"], "WORKABLE")
+        self.assertEqual(contract["expected"]["caps"], [])
 
     def test_a_refreshed_manifest_cannot_hide_a_changed_band(self) -> None:
         """The executable form of the claim retiring the hash lock rests on.

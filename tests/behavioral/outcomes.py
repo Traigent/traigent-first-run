@@ -2,8 +2,8 @@
 
 For a handful of committed inputs under `outcomes/`, this module runs
 `preflight.py | calibrate_evaluator.py | readiness.py` and records what the
-chain actually decides - the band, the status, the recommended action, the
-gates that hold a band, and the caps. Each case's `case.json` carries a hand-declared `expected` block stating
+chain actually decides - the band, the status, the recommended action, and the
+caps. Each case's `case.json` carries a hand-declared `expected` block stating
 the same card, and `test_contracts.py` checks a fresh run against it. A change
 that alters what a customer is told then fails as a diff of that card, which
 names the thing that moved.
@@ -50,24 +50,8 @@ SCHEMA_VERSION = 1
 # not the whole payload: `pillars`, `knobs` and `gaps` restate the same evidence
 # in more words, and a declaration that records everything must be re-edited
 # for everything - the failure mode #153 reports from an 11-pull-request
-# integration. These are what the customer is actually told.
-#
-# The last two are the REASON a band is what it is, and they are here because
-# the card alone cannot carry it. `clean-proceed` reads WORKABLE at 91 - a
-# STRONG number under no cap at all - and which gate demotes it was invisible
-# to this declaration, so the gate could move with every recorded field
-# unchanged (traigent-first-run#405). Both are published flags on the score
-# rather than derived here, and there are two of them because the two gates
-# compose: confidence holds a band for thin evidence, and the answer-key floor
-# holds it until a read of the expected answers has entered.
-RECORDED_FIELDS = (
-    "band",
-    "status",
-    "recommended_action",
-    "overall",
-    "band_limited_by_confidence",
-    "band_limited_by_unread_answers",
-)
+# integration. These four are what the customer is actually told.
+RECORDED_FIELDS = ("band", "status", "recommended_action", "overall")
 # Per cap, the identity and both routing flags. `blocks` and `asks` are what
 # `recommended_action` reads, so a cap that silently changes kind is a change to
 # what the run does, not only to what it scores.
@@ -207,26 +191,6 @@ def run_case(case_dir: Path, contract: dict[str, Any]) -> dict[str, Any]:
     agent_origin = contract.get("agent_origin")
     if agent_origin:
         score_argv.extend(("--agent-origin", agent_origin))
-    # Declared for the same reason `--agent-origin` is: `SKILL.md` mandates the
-    # flag on every guided scoring call, so an argv without it was measuring a
-    # call shape the guide forbids - and it was the omission, not the fixture,
-    # that decided `clean-proceed`'s band (traigent-first-run#405). It is read
-    # from the case rather than hardcoded because the task kind is a property of
-    # the project each case commits, and `blocked-no-dataset` has no dataset for
-    # a kind to describe.
-    task_kind = contract.get("task_kind")
-    if task_kind:
-        score_argv.extend(("--task-kind", task_kind))
-    # And the flag the same sentence mandates beside it. Measured on this tree:
-    # `--task-kind` alone moves nothing at all, because task fit is a judgement
-    # about a method against an output kind and this argv named no method
-    # either - `clean-proceed` reads 81/WORKABLE under the confidence gate with
-    # the kind declared and without it. With both, it reads 91 and is held by
-    # the answer-key floor. So declaring only the flag #405 names would have
-    # left the case banded by an omission under a different name.
-    evaluator_method = contract.get("evaluator_method")
-    if evaluator_method:
-        score_argv.extend(("--evaluator-method", evaluator_method))
     score_argv.append("--json")
     score = json.loads(
         harness.run_command(

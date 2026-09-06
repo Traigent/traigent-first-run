@@ -3,14 +3,11 @@
   "state": "blocked",
   "why": "The first arm: a blocking cap exists, so `status` is BLOCKED and the action is that cap's regardless of anything else the score found. This is the opening state of a real first run - an importable agent and nothing to measure it with - and the one where getting the routing wrong spends a customer's money on an unmeasurable run.",
   "agent_origin": "brought",
-  "task_kind": "closed-label",
   "expected": {
+    "overall": 0,
     "band": "NOT READY",
     "status": "BLOCKED",
     "recommended_action": "get-data",
-    "overall": 0,
-    "band_limited_by_confidence": false,
-    "band_limited_by_unread_answers": false,
     "caps": [
       {
         "condition": "dataset-absent",

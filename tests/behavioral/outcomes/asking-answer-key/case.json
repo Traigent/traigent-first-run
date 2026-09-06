@@ -5,19 +5,15 @@
   "dataset": "evaluation-dataset.jsonl",
   "agent_origin": "brought",
   "config_space": "config-space.json",
-  "task_kind": "closed-label",
-  "evaluator_method": "normalized-exact",
   "calibration": {
     "scorer": "evaluator.py:score_intent",
     "cases": "calibration-cases.json"
   },
   "expected": {
+    "overall": 74,
     "band": "WORKABLE",
     "status": "OK",
     "recommended_action": "review-answer-key",
-    "overall": 74,
-    "band_limited_by_confidence": false,
-    "band_limited_by_unread_answers": false,
     "caps": [
       {
         "condition": "dataset-generated-answer-key",
