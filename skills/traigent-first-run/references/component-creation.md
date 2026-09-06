@@ -520,14 +520,14 @@ A builtin your file has rebound counts as your own function. `f"{tuple(TABLE)}"`
 `f"{spell_out(TABLE)}"` is not.
 
 **A range has no options to index, so it has its own route:** the setting passed straight to the
-request argument named for it, on the provider client's own request, as `temperature=temperature`
-or `temperature=config["temperature"]`. Do not build a mapping whose keys and values are the same
-numbers to satisfy the table route. It is worse code and it buys nothing.
+request argument named for it, on the provider client's own request, as
+`temperature=config["temperature"]`, or, where that name is a parameter of the selected callable
+rather than of a helper, `temperature=temperature`. Do not build a mapping whose keys and values
+are the same numbers to satisfy the table route. It is worse code and it buys nothing.
 
 A setting outside all of these is still recorded with its options, and the card names it as one this
 read could not follow, says which of these rules it fell outside, and prints the followed count as a
 floor beside the count those settings would reach if they vary. Neither figure is credit for them.
-The pre-approval request-difference probe is what settles them before a paid grid.
 
 A parameter's `source_lines` are positive physical lines in relative `source`; that file must be
 `--selected-agent` below `--agent-source-root`. `--selected-agent-callable` names the selected

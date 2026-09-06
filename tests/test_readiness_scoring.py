@@ -21493,6 +21493,17 @@ def run(config, question):
         space = next(sub for sub in pillar.subscores if sub.name == "search-space")
         self.assertNotIn("come to 0 configurations", space.evidence)
         self.assertIn("their cited options come to 2 configurations", space.evidence)
+        # And the figure says which of the names it counted. The sentence
+        # before it names both settings; 2 is a product over one of them. The
+        # credited branch has always disclosed that and this branch printed
+        # the number bare, in the one state where nothing else was
+        # established, so `2` read as a count of the list just printed.
+        self.assertIn(
+            "2 counts only the ones whose options this read found under a "
+            "binding named for them, so tone is named here without a factor "
+            "and the figure is a lower bound",
+            space.evidence,
+        )
 
 
 class TheNamedRequestArgumentRouteFollowsTheArgumentTests(unittest.TestCase):
@@ -21521,17 +21532,41 @@ class TheNamedRequestArgumentRouteFollowsTheArgumentTests(unittest.TestCase):
         }
     }
 
-    def _credited(self, body: str) -> bool:
+    def _facts(self, body: str):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "agent.py").write_text(self.HEAD + body)
-            facts = MODULE.agent_facts_from_discovery(
+            return MODULE.agent_facts_from_discovery(
                 {"source": "agent.py", "knobs": self.KNOB},
                 source_root=root,
                 selected_agent=root / "agent.py",
                 selected_agent_callable="run",
             )
-        return facts.discovered[0].credited
+
+    def _credited(self, body: str) -> bool:
+        return self._facts(body).discovered[0].credited
+
+    def _diagnosis(self, body: str) -> str:
+        return self._facts(body).discovered[0].uncredited_reason
+
+    def _source(self, body: str):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "agent.py").write_text(self.HEAD + body)
+            return MODULE.static_source_evidence(
+                "agent.py", root, root / "agent.py", "run"
+            )
+
+    FORWARDED_FROM_THE_CALL_SITE = """
+def _send(temperature, question):
+    return client.chat.completions.create(
+        model="gpt-4o-mini", temperature=temperature,
+        messages=[{"role": "user", "content": question}])
+
+
+def run(config, question):
+    return _send(config["temperature"], question)
+"""
 
     LITERAL_AT_THE_CALL_SITE = """
 def _send(temperature, question):
@@ -21632,6 +21667,238 @@ def run(config, question):
         ):
             with self.subTest(shape=name):
                 self.assertTrue(self._credited(body), name)
+
+    def test_each_refusal_names_the_condition_that_actually_failed(self) -> None:
+        """The refusal a correct agent was handed, and why it was the wrong one.
+
+        Both conditions above are rules of the numeric route with no branch in
+        `route_refusal_diagnosis`, so the catch-all beneath spoke for them and
+        printed "the accepted route is ... the value passed straight to the
+        request argument named for it" - which is exactly what the author of
+        the forwarded shape wrote. An agent that is correct, whose temperature
+        really does vary, was told to do what it had already done. That
+        refusal produces no correction and no bug report, so nobody reports it.
+
+        Asserted as three groups that differ from one another rather than as
+        three literal sentences: the property that matters is that the
+        catch-all cannot silently reabsorb a condition, and a literal pin goes
+        red on a rewording instead.
+
+        The forwarded shape and the constant at the call site SHARE a
+        diagnosis, and must. This read cannot tell them apart - that is the
+        whole reason the parameter spelling is confined to the selected
+        callable - so a sentence separating them would be asserting something
+        the read did not establish. What it can say is that the call site is
+        what it does not follow, and name the two spellings that are followed,
+        one of which is a one-line repair for the correct agent.
+        """
+        forwarded = self._diagnosis(self.FORWARDED_FROM_THE_CALL_SITE)
+        constant = self._diagnosis(self.LITERAL_AT_THE_CALL_SITE)
+        telemetry = self._diagnosis(self.TELEMETRY_NAMES_IT)
+        table = self._diagnosis("""
+def run(config, question):
+    return client.chat.completions.create(
+        model="gpt-4o-mini", temperature=0.2,
+        messages=[{"role": "user", "content": question + config["temperature"]}])
+""")
+        self.assertEqual(forwarded, constant)
+        self.assertNotEqual(forwarded, telemetry)
+        self.assertNotEqual(forwarded, table)
+        self.assertNotEqual(telemetry, table)
+        # The catch-all is what each of the two new branches was reabsorbed
+        # into, so its sentence must be gone from both and still present on a
+        # setting that really did fall outside every accepted shape.
+        catch_all = "nothing on the selected call path uses this setting to index"
+        self.assertNotIn(catch_all, forwarded)
+        self.assertNotIn(catch_all, telemetry)
+        self.assertIn(catch_all, table)
+        # And each names the condition and the repair, not just the failure.
+        self.assertIn("a parameter of a helper rather than of the selected", forwarded)
+        self.assertIn("forward the whole mapping and read it in the helper", forwarded)
+        self.assertIn("does not return that call's result", telemetry)
+
+    BOTH_CONDITIONS = """
+def _send(temperature, question):
+    client.log.record(temperature=temperature)
+    return client.chat.completions.create(
+        model="gpt-4o-mini", temperature=0.2,
+        messages=[{"role": "user", "content": question}])
+
+
+def run(config, question):
+    return _send(config["temperature"], question)
+"""
+
+    def test_a_shape_that_fails_both_conditions_is_told_both(self) -> None:
+        """Naming one of two sends the reader to a shape still refused.
+
+        Each single-condition branch holds the other condition strict, so a
+        helper that logs the setting on the client without returning that
+        call's result satisfies neither. Reported as either one alone, the
+        repair it names lands on the other and is refused again - a card the
+        reader learns cannot be worked through. Both are named instead.
+        """
+        both = self._diagnosis(self.BOTH_CONDITIONS)
+        self.assertFalse(self._credited(self.BOTH_CONDITIONS))
+        self.assertIn("fails both remaining conditions at once", both)
+        self.assertIn("AND the callable does not return that call's result", both)
+        self.assertNotIn(
+            "nothing on the selected call path uses this setting to index", both
+        )
+        # And each single-condition shape keeps its own sentence, so this
+        # branch cannot quietly become the answer to all three.
+        self.assertNotEqual(both, self._diagnosis(self.FORWARDED_FROM_THE_CALL_SITE))
+        self.assertNotEqual(both, self._diagnosis(self.TELEMETRY_NAMES_IT))
+
+    def test_the_relaxed_flags_are_the_predicate_credit_applies(self) -> None:
+        """One predicate with two switches, not a second copy beside it.
+
+        The flags exist so the diagnosis asks the credit path's own question
+        with one condition lifted. If a later change moves a condition out of
+        this predicate the diagnosis follows it, which is what a parallel
+        reimplementation would not do.
+        """
+        forwarded = self._source(self.FORWARDED_FROM_THE_CALL_SITE)
+        telemetry = self._source(self.TELEMETRY_NAMES_IT)
+        for source, shape in ((forwarded, "forwarded"), (telemetry, "telemetry")):
+            with self.subTest(shape=shape):
+                self.assertFalse(
+                    MODULE._knob_reaches_its_named_request_argument(
+                        "temperature", source
+                    )
+                )
+        self.assertTrue(
+            MODULE._knob_reaches_its_named_request_argument(
+                "temperature", forwarded, selected_only=False
+            )
+        )
+        self.assertFalse(
+            MODULE._knob_reaches_its_named_request_argument(
+                "temperature", telemetry, selected_only=False
+            )
+        )
+        self.assertTrue(
+            MODULE._knob_reaches_its_named_request_argument(
+                "temperature",
+                telemetry,
+                selected_only=False,
+                require_returned_result=False,
+            )
+        )
+
+
+class TheNumericBranchesDoNotSpeakForACategoricalSettingTests(unittest.TestCase):
+    """The route the setting was judged by decides which conditions may be named.
+
+    `route_refusal_diagnosis` serves two callers. The categorical one refuses a
+    setting for indexing no declared table and never consults the numeric route
+    at all; the numeric one reaches it only in the `else` of that route's own
+    credit check. A branch that infers "this condition failed" from "the
+    predicate is true once this condition is relaxed" is sound only under the
+    second, and keying it on the predicate alone reintroduced the defect it
+    was written to remove, on the most ordinary agent in the guide:
+    `model=config["model"]` was told its setting reaches a parameter of a
+    helper, over a file containing no helper, and handed back the line its
+    author had already written.
+
+    Every shape here is correctly refused - nothing indexes `MODELS` - so the
+    assertion is about the sentence, which is what these two issues are about.
+    """
+
+    HEAD = 'from openai import OpenAI\n\nMODELS = ["gpt-4o-mini", "gpt-4o"]\n\nclient = OpenAI()\n\n'
+    KNOB = {
+        "model": {
+            "values": ["gpt-4o-mini", "gpt-4o"],
+            "source_lines": [3],
+            "evidence": "agent.py:3 lists the models.",
+        }
+    }
+
+    SHAPES = {
+        "the mapping read straight into the request": """
+def run(config, question):
+    return client.chat.completions.create(
+        model=config["model"],
+        messages=[{"role": "user", "content": question}])
+""",
+        "the selected callable's own parameter": """
+def run(model, question):
+    return client.chat.completions.create(
+        model=model, messages=[{"role": "user", "content": question}])
+""",
+        "forwarded to a helper": """
+def _send(model, question):
+    return client.chat.completions.create(
+        model=model, messages=[{"role": "user", "content": question}])
+
+
+def run(config, question):
+    return _send(config["model"], question)
+""",
+        "named on a call whose result is not returned": """
+def run(config, question):
+    client.log.record(model=config["model"])
+    return client.chat.completions.create(
+        model="gpt-4o-mini", messages=[{"role": "user", "content": question}])
+""",
+    }
+
+    def test_a_setting_with_options_gets_the_table_route_refusal(self) -> None:
+        for shape, body in self.SHAPES.items():
+            with self.subTest(shape=shape):
+                with tempfile.TemporaryDirectory() as directory:
+                    root = Path(directory)
+                    (root / "agent.py").write_text(self.HEAD + body)
+                    facts = MODULE.agent_facts_from_discovery(
+                        {"source": "agent.py", "knobs": self.KNOB},
+                        source_root=root,
+                        selected_agent=root / "agent.py",
+                        selected_agent_callable="run",
+                    )
+                knob = facts.discovered[0]
+                self.assertFalse(knob.credited, shape)
+                self.assertIn(
+                    "nothing on the selected call path uses this setting to "
+                    "index a declared table",
+                    knob.uncredited_reason,
+                    shape,
+                )
+                # The two sentences that would be false here: there is no
+                # helper in three of these files, and the fourth's helper is
+                # not why the table route refused it.
+                self.assertNotIn(
+                    "a parameter of a helper", knob.uncredited_reason, shape
+                )
+                self.assertNotIn(
+                    "does not return that call's result",
+                    knob.uncredited_reason,
+                    shape,
+                )
+
+    def test_the_precondition_is_what_the_branches_are_keyed_on(self) -> None:
+        """Not the predicate: on the first shape the predicate is TRUE.
+
+        `model=config["model"]` satisfies the numeric route's predicate
+        unrelaxed and is still refused, because the categorical route wants
+        the choice to index a module binding. That is why the guard has to be
+        the caller's statement about which route it applied rather than
+        anything this function can compute from the source.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "agent.py").write_text(
+                self.HEAD + self.SHAPES["the mapping read straight into the request"]
+            )
+            source = MODULE.static_source_evidence(
+                "agent.py", root, root / "agent.py", "run"
+            )
+        self.assertTrue(
+            MODULE._knob_reaches_its_named_request_argument("model", source)
+        )
+        self.assertIn(
+            "nothing on the selected call path uses this setting to index",
+            MODULE.route_refusal_diagnosis("model", [3], source),
+        )
 
 
 class TheFloorSentenceDoesNotDependOnHowATableIsNamedTests(unittest.TestCase):
@@ -21781,6 +22048,90 @@ def run(config, question):
         self.assertEqual(dict(MODULE.unfollowed_settings(facts)), {"prompt_style": 0})
         self.assertFalse(MODULE._name_matches_knob("LOOKUP", "prompt_style"))
         self.assertTrue(MODULE._name_matches_knob("STYLES", "prompt_style"))
+
+    MIXED_AGENT = """from openai import OpenAI
+
+MODELS = {"fast": "gpt-4o-mini", "balanced": "gpt-4o"}
+PROMPT_STYLES = {"terse": "Be brief.", "warm": "Be friendly."}
+LOOKUP = {"dry": "Dry.", "chatty": "Chatty."}
+
+client = OpenAI()
+
+
+def spell_out(table):
+    return sorted(table)
+
+
+def describe():
+    return spell_out(PROMPT_STYLES), spell_out(LOOKUP)
+
+
+def run(config, question):
+    reply = client.chat.completions.create(
+        model=MODELS[config["model"]],
+        messages=[{"role": "user", "content": PROMPT_STYLES[config["prompt_style"]]
+                   + LOOKUP[config["tone"]] + question}],
+    )
+    return reply.choices[0].message.content
+"""
+
+    def test_a_source_agent_reaches_the_lower_bound_disclosure(self) -> None:
+        """The branch an agent reaches, not only a direct call into the clause.
+
+        The disclosure runs only on a MIXED unfollowed list, and no source
+        fixture produced one: the three above are all-counted or none-counted,
+        so the clause was reachable from `search_space_evidence` and from no
+        agent. A pin that only calls the function keeps the sentence alive
+        while a change in how `unfollowed_settings` classifies a knob routes
+        every real agent away from the branch, and nothing goes red.
+
+        This agent is the mixed shape written out. `model` is credited through
+        `MODELS`; `prompt_style` and `tone` are refused because their tables
+        are handed to the file's own `spell_out`, and of the two only
+        `PROMPT_STYLES` is named for its setting, so the ceiling counts one of
+        the two names it prints.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "agent.py").write_text(self.MIXED_AGENT)
+            facts = MODULE.agent_facts_from_discovery(
+                {
+                    "source": "agent.py",
+                    "knobs": {
+                        "model": {
+                            "values": ["fast", "balanced"],
+                            "source_lines": [3],
+                            "evidence": "agent.py:3 lists the models.",
+                        },
+                        "prompt_style": {
+                            "values": ["terse", "warm"],
+                            "source_lines": [4],
+                            "evidence": "agent.py:4 lists the styles.",
+                        },
+                        "tone": {
+                            "values": ["dry", "chatty"],
+                            "source_lines": [5],
+                            "evidence": "agent.py:5 lists the tones.",
+                        },
+                    },
+                },
+                source_root=root,
+                selected_agent=root / "agent.py",
+                selected_agent_callable="run",
+            )
+        self.assertEqual(
+            dict(MODULE.unfollowed_settings(facts)), {"prompt_style": 2, "tone": 0}
+        )
+        pillar, _caps, _rows = MODULE.score_agent(facts)
+        space = next(sub for sub in pillar.subscores if sub.name == "search-space")
+        self.assertIn("it could not follow prompt_style, tone", space.evidence)
+        self.assertIn("the space is 2 only if none of those vary and 4", space.evidence)
+        self.assertIn(
+            "4 counts only the ones whose options this read found under a "
+            "binding named for them, so tone is named here without a factor "
+            "and the figure is a lower bound",
+            space.evidence,
+        )
 
 
 class TableReadWideningTests(unittest.TestCase):

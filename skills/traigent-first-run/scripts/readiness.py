@@ -6929,19 +6929,45 @@ def unfollowed_space_clause(
         f"spell out, so the space is {configurations} only if none of those "
         f"vary and {ceiling} if they all do"
     )
-    if len(counted) < len(unfollowed):
-        uncounted = ", ".join(name for name, count in unfollowed if count <= 1)
-        clause += (
-            f"; {ceiling} counts only the ones whose options this read found "
-            f"under a binding named for them, so {uncounted} is named here "
-            "without a factor and the figure is a lower bound"
-        )
+    clause += lower_bound_disclosure(ceiling, unfollowed)
     return (
         clause
         + search_space_shortfall(
             configurations, budget, budget_declarable=budget_declarable
         )
         + _settling_clause()
+    )
+
+
+def lower_bound_disclosure(ceiling: int, unfollowed: Sequence[tuple[str, int]]) -> str:
+    """Say that the ceiling counted only some of the settings it names.
+
+    One home, because there are two branches that print a ceiling over an
+    unfollowed list and only one of them said this. `unfollowed_settings`
+    names every setting whose options the source shows and counts only the
+    ones whose binding is named for the setting, so any figure multiplied out
+    of that list can be a product over a subset of the names printed beside
+    it. Without this sentence the reader sizes a grid against a number that
+    silently left settings out.
+
+    The all-refused branch is where that was worst: it prints "their cited
+    options come to N configurations" directly after a `detail` naming every
+    refused setting, in the one state where nothing else was established, so N
+    read as a complete count of the list above it. Deriving both sentences
+    from the same predicate here is what stops the two branches disagreeing
+    again - the rule `route_refusal_diagnosis` states for the refusal side,
+    applied to the disclosure side.
+
+    Empty where the ceiling counted everything it names: a qualification on a
+    figure that owes none is a false one.
+    """
+    uncounted = ", ".join(name for name, count in unfollowed if count <= 1)
+    if not uncounted:
+        return ""
+    return (
+        f"; {ceiling} counts only the ones whose options this read found "
+        f"under a binding named for them, so {uncounted} is named here "
+        "without a factor and the figure is a lower bound"
     )
 
 
@@ -7329,15 +7355,21 @@ def score_discovered_agent(
             # carries settings it can name but not count, and multiplying a
             # zero through produced "their cited options come to 0
             # configurations", which is not a sentence about anything.
-            unfollowed = [
-                (name, count) for name, count in unfollowed_settings(facts) if count > 1
-            ]
+            named = unfollowed_settings(facts)
+            unfollowed = [(name, count) for name, count in named if count > 1]
             if unfollowed:
                 ceiling = math.prod(count for _, count in unfollowed)
                 evidence += (
                     f"; their cited options come to {ceiling} configurations if "
                     "they vary, which this read has not established either way"
                 )
+                # And which of them the figure counted. `detail` above names
+                # every refused setting, so on a mixed list this ceiling is a
+                # product over a subset of the names the customer just read,
+                # in the state where the card established nothing else. The
+                # credited branch has always disclosed that; this one printed
+                # the number bare. Same sentence, same predicate, one home.
+                evidence += lower_bound_disclosure(ceiling, named)
         else:
             evidence = (
                 "the agent was read and no varying setting was established - "
@@ -14980,11 +15012,20 @@ def _value_is_this_setting(
     callable_node: ast.FunctionDef | ast.AsyncFunctionDef,
     dynamic_parameters: frozenset[str],
     source: StaticSourceEvidence,
+    *,
+    selected_only: bool = True,
 ) -> bool:
     """Whether this expression is the setting itself and nothing else.
 
     Two spellings and one wrapper. The setting arrives as a parameter of its
     own name, or as a read of it out of the mapping the callable was given.
+
+    `selected_only` is the parameter-spelling guard below, and it is a keyword
+    rather than a constant so the diagnosis can ask this same predicate with
+    that one condition relaxed and report the condition that actually failed.
+    Credit never passes anything but the default: what the flag exists for is
+    telling a refusal apart from the catch-all, which spoke for this rule and
+    spoke wrongly.
 
     The wrapper is `float` alone, and the reason is arithmetic rather than
     taste: `float` is injective over the values a range can hold, so two
@@ -15016,7 +15057,7 @@ def _value_is_this_setting(
         # different in kind: its caller is the customer's harness, outside this
         # file and outside anything this read could inspect, and varying it is
         # the whole premise of the score.
-        and callable_node is source.selected_callable
+        and (not selected_only or callable_node is source.selected_callable)
         and value.id in _callable_parameter_names(callable_node)
         and _callable_parameter_is_unshadowed(value.id, callable_node)
     ):
@@ -15026,7 +15067,11 @@ def _value_is_this_setting(
 
 
 def _knob_reaches_its_named_request_argument(
-    knob: str, source: StaticSourceEvidence
+    knob: str,
+    source: StaticSourceEvidence,
+    *,
+    selected_only: bool = True,
+    require_returned_result: bool = True,
 ) -> bool:
     """The request argument of this setting's name receives this setting.
 
@@ -15051,6 +15096,22 @@ def _knob_reaches_its_named_request_argument(
     could inflate - a credited numeric knob contributes its two bounds and no
     more however wide they are, and `noise_floor` has already refused a range
     too narrow to tell apart.
+
+    The two conditions this route adds beyond "an argument of that name" are
+    keyword flags rather than constants, and only `route_refusal_diagnosis`
+    ever moves them. A condition the credit path applies and the refusal path
+    cannot ask about is a condition the catch-all speaks for, and it spoke
+    wrongly: a correct agent that forwards its setting into a helper was told
+    to do what its author had already done. Relaxing one flag at a time is how
+    the diagnosis names the condition that really failed, relaxing both is how
+    it tells a shape that failed both, and either way it is the same predicate
+    rather than a second copy of it beside the decision.
+
+    A relaxed-true says which condition failed only where the UNRELAXED
+    predicate is known false, which is the caller's job to establish and not
+    something visible from here: a setting refused by the table route can
+    satisfy this one whole. `route_refusal_diagnosis` carries that
+    precondition as a parameter for exactly that reason.
     """
     for callable_node, dynamic_parameters in _callables_on_the_call_path(source):
         for call in _callable_body_nodes(callable_node):
@@ -15070,14 +15131,22 @@ def _knob_reaches_its_named_request_argument(
                 # already applies for exactly this reason. Without it a
                 # telemetry line naming the setting credited a route while the
                 # real request beside it sent a constant.
-                and _request_result_return_nodes(call, callable_node, source)
+                and (
+                    not require_returned_result
+                    or _request_result_return_nodes(call, callable_node, source)
+                )
             ):
                 continue
             for keyword in call.keywords:
                 if keyword.arg is None or keyword.arg.casefold() != knob.casefold():
                     continue
                 if _value_is_this_setting(
-                    keyword.value, knob, callable_node, dynamic_parameters, source
+                    keyword.value,
+                    knob,
+                    callable_node,
+                    dynamic_parameters,
+                    source,
+                    selected_only=selected_only,
                 ):
                     return True
     return False
@@ -15735,6 +15804,8 @@ def route_refusal_diagnosis(
     lines: Sequence[int],
     source: StaticSourceEvidence,
     siblings: Sequence[str] = (),
+    *,
+    numeric_route_refused: bool = False,
 ) -> str:
     """Which condition of the accepted route this read could not confirm.
 
@@ -15745,11 +15816,40 @@ def route_refusal_diagnosis(
     that rule is the difference between two days and ten minutes.
 
     Every branch is computed from the predicates the credit path itself
-    applies - `_knob_selections` is shared with both of them - so this can
+    applies - `_knob_selections` and
+    `_knob_reaches_its_named_request_argument` are shared with it - so this can
     report a condition that was really tested rather than a guess assembled
     beside the decision. The order is the order of the accepted route, and the
     first unconfirmed condition is the one reported: later ones cannot be
     judged once an earlier one has failed.
+
+    What that principle costs when it is not followed, since this function is
+    where it was not: the numeric route's two conditions had no branch here,
+    so the catch-all beneath spoke for them and handed a correctly written
+    agent the rule its author had already satisfied. A rule that can refuse a
+    customer's agent needs a branch here and a home in the guidance; the
+    selected-callable condition had neither and lived only in a comment.
+
+    WHICH ROUTE was being diagnosed is the other half of that, and leaving it
+    implicit reintroduced the same harm on the other path. This function
+    serves two callers: a setting with options, refused by the TABLE route,
+    and a range, refused by the NUMERIC one. The numeric route's branches
+    below infer from "the predicate is true once this condition is relaxed"
+    that the relaxed condition is what failed - which holds only where the
+    unrelaxed predicate is already known false. The numeric caller guarantees
+    that, because it reaches this function only in the `else` of that same
+    predicate; the categorical caller never consults the numeric route at all,
+    so for a setting with options the unrelaxed predicate can be TRUE while
+    the setting is refused for indexing no declared table. Keyed on the
+    predicate alone, `model=config["model"]` - the most ordinary agent in the
+    guide - was told its setting reaches a helper's parameter, over a file
+    with no helper in it, and handed back the line its author had written.
+    `numeric_route_refused` is that precondition, named rather than assumed:
+    the caller states it has applied the numeric route and been refused, and
+    only then do those branches speak.
+
+    The residual: the branches below name a condition, not a line. Where a
+    file holds several calls this cannot say which one it judged.
     """
     declared = _declared_module_names(source)
     reachable = _module_names_a_subscript_can_reach(source)
@@ -15822,6 +15922,66 @@ def route_refusal_diagnosis(
                 "the FIRST such read in the callable is followed and this one "
                 "is not it. Stop passing the mapping around bare, or move this "
                 "read to the top of the function"
+            )
+        # The numeric route's own two conditions, each asked of the predicate
+        # the credit path applies with that one condition relaxed, and each
+        # before the catch-all beneath. Without them the catch-all spoke for
+        # both: an agent that forwards `config["temperature"]` into a helper
+        # whose body sends `temperature=temperature` was told the route is
+        # "the value passed straight to the request argument named for it",
+        # which is what its author wrote. Advice describing the customer's own
+        # code produces no correction and no bug report.
+        # Guarded on the caller having applied that route and been refused,
+        # never on the predicate alone: a setting with options reaches this
+        # function from the table route, where the numeric predicate can be
+        # true over a setting refused for indexing nothing.
+        in_a_helper = numeric_route_refused and (
+            _knob_reaches_its_named_request_argument(knob, source, selected_only=False)
+        )
+        result_not_returned = numeric_route_refused and (
+            _knob_reaches_its_named_request_argument(
+                knob, source, require_returned_result=False
+            )
+        )
+        if in_a_helper:
+            return (
+                "this setting does reach a request argument of its own name, "
+                "but the argument is a parameter of a helper rather than of "
+                "the selected callable, and this read does not follow what "
+                "the call site passes: `_send(0.2, question)` into `def "
+                "_send(temperature, ...)` is the same shape and sends a "
+                "constant. Two spellings are followed - read the setting out "
+                "of the mapping in the selected callable itself, or forward "
+                "the whole mapping and read it in the helper"
+            )
+        if result_not_returned:
+            return (
+                "a call on the provider client names this setting, but the "
+                "callable does not return that call's result, so this read "
+                "does not take it for the request: every method on the client "
+                "satisfies the receiver check, and returning the result is "
+                "what separates the request from a telemetry or logging line "
+                "beside it. Name the setting on the call whose result the "
+                "callable returns"
+            )
+        # Both at once, and said so. Each single-condition branch above holds
+        # the OTHER condition strict, so a helper that logs the setting
+        # without returning that call's result satisfies neither and used to
+        # fall to whichever branch relaxed enough to catch it - naming one
+        # condition, whose repair lands on the other, still refused. A reader
+        # who fixes one of two and is refused again learns that this card
+        # cannot be worked through.
+        if numeric_route_refused and _knob_reaches_its_named_request_argument(
+            knob, source, selected_only=False, require_returned_result=False
+        ):
+            return (
+                "this setting is named as a request argument of its own name, "
+                "but on a call that fails both remaining conditions at once: "
+                "the argument is a parameter of a helper rather than of the "
+                "selected callable, AND the callable does not return that "
+                "call's result, so the call is not read as the request. Both "
+                "have to hold - read the setting in the callable whose result "
+                "is returned, or forward the whole mapping and read it there"
             )
         return (
             "nothing on the selected call path uses this setting to index a "
@@ -16485,7 +16645,16 @@ def discovered_knob_from_entry(
                 "the cited executable source shows the declared bounds, but "
                 "this deliberately narrow static read could not follow the "
                 "setting to the request on the selected agent path: "
-                + route_refusal_diagnosis(name, checked_lines, source, siblings)
+                + route_refusal_diagnosis(
+                    name,
+                    checked_lines,
+                    source,
+                    siblings,
+                    # This branch is the `else` of the numeric route's own
+                    # credit check above, so its conditions are the ones this
+                    # setting really failed.
+                    numeric_route_refused=True,
+                )
                 + "; no source defect is inferred - the setting may well "
                 "change the request - and the enhanced run can settle this "
                 "dimension",
