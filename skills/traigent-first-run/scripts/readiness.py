@@ -3654,7 +3654,11 @@ def top_up_offer(
     """
     available = effective_n if available_rows is None else available_rows
     if available >= WALKTHROUGH_DATASET_ROWS:
-        if effective_n < WIRING_CHECK_EXAMPLES and available > effective_n:
+        # Any file at or past the walkthrough's size with rows it cannot
+        # compare on is told to review those rows, not that it holds the size:
+        # a 40-row file with 15 labelled rows used to fall through to "" here
+        # and the ceiling then said the file already held the 28 rows.
+        if effective_n < WALKTHROUGH_DATASET_ROWS and available > effective_n:
             return (
                 f" Review or label the {available - effective_n} existing row(s) "
                 "that are not comparable before generating anything; the file "
@@ -3686,9 +3690,10 @@ def top_up_offer(
 def walkthrough_size_sentence() -> str:
     """The sentence a size ceiling ends on when there is nothing to offer.
 
-    Written once, because the doc workers quote it: it replaces the top-up
-    offer exactly where `top_up_offer` returns nothing, which is a file
-    holding at least the rows this guide builds for a first run.
+    Written once so the card and its tests read one string. It replaces the
+    top-up offer exactly where `top_up_offer` returns nothing, which is a file
+    whose comparable rows already reach the size this guide builds for a
+    first run; `power_ceiling` checks that count before using it.
     """
     return (
         f" The file already holds the {WALKTHROUGH_DATASET_ROWS} rows this guide "
@@ -3977,16 +3982,27 @@ def power_ceiling(
             # measure it. "Paired uncertainty from completed paired outcomes"
             # is the method, and the method belongs in the reference the
             # assistant reads - a card is glanced at, not studied.
-            f"{effective_n} comparable examples is a small comparison set, so "
-            "a small difference between configurations may be chance rather "
+            # Not "a small comparison set": at 18 comparable rows this is the
+            # size the guide builds, and the sentence has to say what the
+            # count can do rather than what it is not.
+            f"{effective_n} comparable examples resolve only coarse differences, "
+            "so a small difference between configurations may be chance rather "
             "than a real improvement."
-            # With nothing to offer - the file already holds the size this
-            # walkthrough builds - the ceiling used to end on the finding
-            # alone, and read as the size being wrong. It is not: the ceiling
-            # is what a set this size can honestly claim, and this run is not
-            # asking for rows. The sentence is the one SKILL.md's size rule
-            # points at, so the size is named as intended on the card itself.
-            + (offer or walkthrough_size_sentence()),
+            # With nothing to offer - the comparable rows already reach the
+            # size this walkthrough builds - the ceiling used to end on the
+            # finding alone, and read as the size being wrong. It is not: the
+            # ceiling is what a set this size can honestly claim, and this run
+            # is not asking for rows. Gated on the comparable count and not on
+            # the offer being empty, so a file with rows to review is never
+            # told it holds the size.
+            + (
+                offer
+                or (
+                    walkthrough_size_sentence()
+                    if comparable >= WALKTHROUGH_DATASET_ROWS
+                    else ""
+                )
+            ),
             # The run is worth making - it just cannot claim a small win.
             blocks=False,
             # The same expression as its sibling above, deliberately: one
@@ -8643,11 +8659,17 @@ def render_card(
     return "\n".join(lines)
 
 
-def render_markdown(score: ReadinessScore, timestamp: str | None = None) -> str:
+def render_markdown(
+    score: ReadinessScore,
+    timestamp: str | None = None,
+    delta: dict[str, Any] | None = None,
+) -> str:
     """Render the durable report.
 
     The timestamp is caller-supplied and never read from the clock, so this
-    module stays reproducible across the harness's two passes.
+    module stays reproducible across the harness's two passes. `delta` is
+    `score_delta`'s result when the run was asked to compare, and the report
+    then ends on the same two lines the card does.
     """
     lines = ["# Traigent optimization readiness", ""]
     if timestamp:
@@ -8866,21 +8888,17 @@ def render_markdown(score: ReadinessScore, timestamp: str | None = None) -> str:
         # instead - so leaving it in the scrollback would re-open the seam that
         # fix closed, one input over.
         lines.extend(["## A settings route this read can follow", ""])
+        # The parts, and not the worked file, for the reason the card gives:
+        # an agent written against one provider and two named models reads as
+        # the shape to rebuild into. The worked example and the entry that
+        # cites it stay in references/component-creation.md, fenced as code
+        # and carrying the hedge beside them.
         lines.extend(
             [
                 "Printed because naming what failed does not say what would "
-                "pass. It is one accepted shape and not the only one, so read "
-                "it for its parts rather than for its names.",
-                "",
-                "```python",
-                *ACCEPTED_ROUTE_AGENT.splitlines(),
-                "```",
-                "",
-                'And the entry that cites it, inside the document\'s "knobs" map:',
-                "",
-                "```json",
-                *json.dumps(ACCEPTED_ROUTE_KNOB, indent=2).splitlines(),
-                "```",
+                "pass. Many shapes carry these parts; the worked agent and the "
+                "entry that cites it are in references/component-creation.md, "
+                "and are one accepted shape rather than the only one.",
                 "",
                 f"{len(ACCEPTED_ROUTE_PARTS)} parts make a route readable, "
                 "and this check wants them all:",
@@ -8896,6 +8914,11 @@ def render_markdown(score: ReadinessScore, timestamp: str | None = None) -> str:
         for gap in score.gaps:
             lines.append(f"- {gap}")
         lines.append("")
+    # The same two closing lines as the card, so the durable copy names the
+    # next thing to do and, under --previous, what moved.
+    lines.append(f"Action: {score.recommended_action}")
+    if delta is not None:
+        lines.append(delta["line"])
     return "\n".join(lines)
 
 
@@ -8914,26 +8937,45 @@ def render_markdown(score: ReadinessScore, timestamp: str | None = None) -> str:
 _STATUS_SEVERITY = {"FAIL": 3, "WARN": 2, "SKIP": 1, "PASS": 0}
 
 
-def _metrics_by_check(records: Sequence[dict[str, Any]]) -> dict[str, dict[str, Any]]:
-    merged: dict[str, dict[str, Any]] = {}
+def _worst_record_by_check(
+    records: Sequence[dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    """The record that decides each check: worst status, first on a tie."""
+    worst: dict[str, dict[str, Any]] = {}
     for record in records:
-        if isinstance(record, dict) and "check" in record:
-            merged.setdefault(record["check"], {}).update(record.get("metrics") or {})
+        if not isinstance(record, dict) or "check" not in record:
+            continue
+        held = worst.get(record["check"])
+        if held is None or _STATUS_SEVERITY.get(
+            record.get("status", ""), -1
+        ) > _STATUS_SEVERITY.get(held.get("status", ""), -1):
+            worst[record["check"]] = record
+    return worst
+
+
+def _metrics_by_check(records: Sequence[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    # The worst record's metrics are the metrics, and the other records only
+    # fill keys it lacks: a metric read together with a FAIL must be the one
+    # that FAIL was computed from, not whichever record came last.
+    worst = _worst_record_by_check(records)
+    merged = {
+        check: dict(record.get("metrics") or {}) for check, record in worst.items()
+    }
+    for record in records:
+        if not isinstance(record, dict) or "check" not in record:
+            continue
+        if record is worst[record["check"]]:
+            continue
+        for key, value in (record.get("metrics") or {}).items():
+            merged[record["check"]].setdefault(key, value)
     return merged
 
 
 def _status_by_check(records: Sequence[dict[str, Any]]) -> dict[str, str]:
-    statuses: dict[str, str] = {}
-    for record in records:
-        if not isinstance(record, dict) or "check" not in record:
-            continue
-        status = record.get("status", "")
-        held = statuses.get(record["check"])
-        if held is None or _STATUS_SEVERITY.get(status, -1) > _STATUS_SEVERITY.get(
-            held, -1
-        ):
-            statuses[record["check"]] = status
-    return statuses
+    return {
+        check: record.get("status", "")
+        for check, record in _worst_record_by_check(records).items()
+    }
 
 
 def _answer_dominance_status(statuses: dict[str, str]) -> str | None:
@@ -9166,6 +9208,11 @@ def _failed(statuses: dict[str, str], check: str) -> bool:
     return status == "FAIL"
 
 
+# The order the delta line names the pillars in: the order they weigh, which is
+# the order `DEFAULT_WEIGHTS` is written in and the order the flags take.
+PILLAR_ORDER = tuple(DEFAULT_WEIGHTS)
+
+
 class PreviousScoreInputError(ValueError):
     """A --previous document this run cannot compare itself against.
 
@@ -9223,12 +9270,15 @@ def previous_score_from_document(document: Any, reference: str) -> PreviousScore
             f"{where}: 'pillars' must be the list of name/score objects this "
             "script prints"
         )
-    read = {pillar["name"]: pillar["score"] for pillar in pillars}
-    if sorted(read) != sorted(PILLAR_ORDER):
+    names = [pillar["name"] for pillar in pillars]
+    # Each pillar exactly once: a repeated name used to be read last-wins, so
+    # a document naming `dataset` twice compared against whichever came second.
+    if len(names) != len(PILLAR_ORDER) or sorted(names) != sorted(PILLAR_ORDER):
         raise PreviousScoreInputError(
-            f"{where}: 'pillars' names {sorted(read)}, and a score names "
-            f"{sorted(PILLAR_ORDER)}"
+            f"{where}: 'pillars' names {names}, and a score names each of "
+            f"{list(PILLAR_ORDER)} exactly once"
         )
+    read = {pillar["name"]: pillar["score"] for pillar in pillars}
     caps = document.get("caps")
     if not isinstance(caps, list) or not all(
         isinstance(cap, dict) and isinstance(cap.get("condition"), str) for cap in caps
@@ -9240,11 +9290,6 @@ def previous_score_from_document(document: Any, reference: str) -> PreviousScore
     return PreviousScore(
         overall=overall, pillars=read, caps=tuple(cap["condition"] for cap in caps)
     )
-
-
-# The order the delta line names the pillars in: the order they weigh, which is
-# also the order the flags and the weights are written in.
-PILLAR_ORDER = ("dataset", "evaluation", "agent")
 
 
 def score_delta(previous: PreviousScore, score: ReadinessScore) -> dict[str, Any]:
@@ -17747,10 +17792,13 @@ def run(argv: Sequence[str] | None = None) -> int:
     if assumption is not None:
         score = replace(score, provenance_assumption=assumption)
 
-    if args.report:
-        Path(args.report).write_text(render_markdown(score, args.report_timestamp))
-
+    # Before the report is written, so the report carries it too.
     delta = score_delta(previous, score) if previous is not None else None
+    if args.report:
+        Path(args.report).write_text(
+            render_markdown(score, args.report_timestamp, delta)
+        )
+
     if args.json:
         payload = asdict(score)
         if delta is not None:

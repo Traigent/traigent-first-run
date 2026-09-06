@@ -10610,9 +10610,10 @@ class TheCardSpeaksTheUsersLanguageTests(unittest.TestCase):
     def test_the_card_closing_line_is_inside_the_scan(self) -> None:
         """Named on its own, because it is the line that proved the gap.
 
-        `render_card` appends it unconditionally, so if any line is read by
-        every customer it is this one - and the declaration-side scan could not
-        see it.
+        `render_card` appends the estimate sentence unconditionally, one line
+        above the closing `Action:` line, so if any sentence is read by every
+        customer it is this one - and the declaration-side scan could not see
+        it.
         """
         scanned = "\n".join(
             " ".join(text.split())
@@ -16815,17 +16816,17 @@ class TheRefusedRouteIsShownAnAcceptedOneTests(unittest.TestCase):
         return report.split(f"```{language}\n", 1)[1].split("```", 1)[0]
 
     def test_the_block_a_reader_copies_is_one_this_reader_credits(self) -> None:
-        """Parsed out of the RENDERED block, not compared to the constants.
+        """The worked example the reference carries, scored by the real reader.
 
-        A pin that asserts the constants appear in the output cannot see a
-        renderer that drops a line, reflows the code, or indents it into
-        something that no longer parses. So this takes the two fenced blocks
-        back out of the durable report, parses them as the file and the
-        document they claim to be, and scores THAT through the real reader.
+        Neither the card nor the report prints it any more (32f: a fourteen
+        line agent against one provider and two named models read as the
+        shape to rebuild into), and `tests/test_skill_package.py` pins the
+        reference's fenced block to these constants. So the constants are what
+        a reader copies, and they are parsed as the file and the document
+        they claim to be and scored through the real reader.
         """
-        report = self._report(self.REFUSED_AGENT, self.REFUSED_KNOB)
-        agent = self._fenced(report, "python")
-        entry = json.loads(self._fenced(report, "json"))
+        agent = MODULE.ACCEPTED_ROUTE_AGENT
+        entry = json.loads(json.dumps(MODULE.ACCEPTED_ROUTE_KNOB))
         ast.parse(agent)
         facts = self._score_printed_agent(agent, entry)
         self.assertTrue(facts.discovered[0].credited)
@@ -16865,10 +16866,15 @@ class TheRefusedRouteIsShownAnAcceptedOneTests(unittest.TestCase):
         """
         report = self._report(self.REFUSED_AGENT, self.REFUSED_KNOB)
         self.assertIn("## A settings route this read can follow", report)
+        # The parts and the pointer; the worked agent on neither surface
+        # (32f), for the reason the card gives.
+        self.assertIn("references/component-creation.md", report)
         for line in MODULE.ACCEPTED_ROUTE_AGENT.splitlines():
             if line.strip():
                 with self.subTest(line=line):
-                    self.assertIn(line, report)
+                    self.assertNotIn(line, report)
+        self.assertNotIn("gpt-4o", report)
+        self.assertNotIn("```", report)
         for part in MODULE.ACCEPTED_ROUTE_PARTS:
             with self.subTest(part=part):
                 self.assertIn(part, report)
@@ -21836,6 +21842,56 @@ class TheWalkthroughSizeNamesItselfTests(unittest.TestCase):
         self.assertTrue(below.asks)
         self.assertEqual(MODULE.recommended_action([below]), MODULE.ADD_EXAMPLES)
 
+    def test_rows_to_review_are_never_told_the_file_holds_the_size(self) -> None:
+        """P2-1: 40 rows with 15 labelled is not a file at the walkthrough size.
+
+        `top_up_offer` returned nothing here - the file has 28 or more rows
+        and the comparable count is past the wiring-check band - and the
+        ceiling fell through to "the file already holds the 28 rows". It
+        holds 40, 15 of which can be compared on; the sentence is the one
+        about reviewing the other 25.
+        """
+        cap = MODULE.power_ceiling(15, 15, available_rows=40)
+        self.assertEqual(cap.condition, "dataset-coarse-resolution")
+        self.assertNotIn("already holds the 28 rows", cap.reason)
+        self.assertIn(
+            "Review or label the 25 existing row(s) that are not comparable "
+            "before generating anything; the file already sits at this "
+            "walkthrough's bounded size.",
+            cap.reason,
+        )
+        self.assertFalse(cap.asks)
+        _pillar, caps = MODULE.score_dataset(
+            MODULE.DatasetFacts(exists=True, rows=40, labelled_rows=15)
+        )
+        scored = next(
+            cap for cap in caps if cap.condition == "dataset-coarse-resolution"
+        )
+        self.assertNotIn("already holds the 28 rows", scored.reason)
+        self.assertIn("Review or label the 25 existing row(s)", scored.reason)
+        # And the walkthrough sentence needs the comparable count, not only an
+        # empty offer: 29 comparable rows in a 40-row file do hold the size.
+        self.assertIn(
+            "already holds the 28 rows",
+            MODULE.power_ceiling(29, 29, available_rows=40).reason,
+        )
+
+    def test_the_guides_own_size_is_not_called_small(self) -> None:
+        """28d: the ceiling's opening names what 18 rows resolve, not a size."""
+        cap = MODULE.power_ceiling(
+            MODULE.WALKTHROUGH_TUNING_ROWS, MODULE.WALKTHROUGH_DATASET_ROWS
+        )
+        self.assertTrue(
+            cap.reason.startswith(
+                "18 comparable examples resolve only coarse differences, so a "
+                "small difference between configurations may be chance rather "
+                "than a real improvement."
+            ),
+            cap.reason,
+        )
+        self.assertNotIn("small comparison set", cap.reason)
+        self.assertEqual(cap.ceiling, MODULE.COARSE_RESOLUTION_CEILING)
+
     def test_the_size_band_names_the_walkthrough_and_keeps_its_points(self) -> None:
         at_size, at_evidence = MODULE.size_points(MODULE.WALKTHROUGH_TUNING_ROWS)
         below, below_evidence = MODULE.size_points(MODULE.WALKTHROUGH_TUNING_ROWS - 1)
@@ -21944,6 +22000,57 @@ class ThePreviousScoreAndTheActionLineTests(unittest.TestCase):
         # And a run that never asked sees no delta key at all.
         self.assertNotIn("delta", json.loads(before))
 
+    def test_the_report_ends_on_the_action_and_the_delta_too(self) -> None:
+        """P3-4: the durable copy carries the card's two closing lines."""
+        _code, before, _ = self._run(["--preflight", str(self.preflight), "--json"])
+        previous = self.root / "previous.json"
+        previous.write_text(before)
+        report = self.root / "report.md"
+        argv = [
+            "--preflight",
+            str(self.preflight),
+            "--evaluator-method",
+            "exact",
+            "--task-kind",
+            "closed-label",
+            "--report",
+            str(report),
+        ]
+        code, card, err = self._run(
+            [*argv, "--previous", str(previous), "--color", "never", "--ascii"]
+        )
+        self.assertEqual(code, 0, err)
+        card_lines = self._lines(card)
+        report_lines = self._lines(report.read_text())
+        self.assertTrue(card_lines[-2].startswith("Action: "))
+        self.assertTrue(card_lines[-1].startswith("changed: evaluation "))
+        self.assertEqual(report_lines[-2:], card_lines[-2:])
+        # Without --previous the report ends on the action alone.
+        code, card, err = self._run([*argv, "--color", "never", "--ascii"])
+        self.assertEqual(code, 0, err)
+        report_lines = self._lines(report.read_text())
+        self.assertEqual(report_lines[-1], self._lines(card)[-1])
+        self.assertTrue(report_lines[-1].startswith("Action: "))
+        self.assertFalse(report_lines[-2].startswith("changed: "))
+
+    def test_a_pillar_named_twice_is_refused(self) -> None:
+        """P3-6: a repeated name was read last-wins; each is required once."""
+        _code, before, _ = self._run(["--preflight", str(self.preflight), "--json"])
+        document = json.loads(before)
+        dataset = next(p for p in document["pillars"] if p["name"] == "dataset")
+        document["pillars"].append(dict(dataset, score=dataset["score"] + 1))
+        path = self.root / "twice.json"
+        path.write_text(json.dumps(document))
+        code, _out, err = self._run(
+            ["--preflight", str(self.preflight), "--previous", str(path)]
+        )
+        self.assertEqual(code, 2)
+        self.assertIn("--previous", err)
+        self.assertIn("exactly once", err)
+        # `--json` sorts keys, so the pillars arrive alphabetically; the
+        # repeated name is what the refusal has to show.
+        self.assertIn("'agent', 'dataset', 'evaluation', 'dataset'", err)
+
     def test_previous_is_refused_where_it_cannot_be_compared(self) -> None:
         code, _out, err = self._run(
             [
@@ -22040,6 +22147,28 @@ class UnguardedInputShapesAreInputErrorsTests(unittest.TestCase):
                     MODULE._metrics_by_check(ordered)["dataset-ids"],
                     {"duplicate_ids": 2, "rows_without_id": 1},
                 )
+
+    def test_a_metric_read_beside_a_status_is_the_one_that_status_was_computed_from(
+        self,
+    ) -> None:
+        """P3-7: worst-status metrics win a shared key; the rest fill gaps."""
+        records = [
+            {"check": "c", "status": "WARN", "metrics": {"a": 1, "b": 1}},
+            {"check": "c", "status": "FAIL", "metrics": {"a": 2}},
+            {"check": "c", "status": "PASS", "metrics": {"a": 3, "d": 4}},
+        ]
+        for ordered in (records, list(reversed(records))):
+            with self.subTest(first=ordered[0]["status"]):
+                self.assertEqual(MODULE._status_by_check(ordered)["c"], "FAIL")
+                self.assertEqual(
+                    MODULE._metrics_by_check(ordered)["c"], {"a": 2, "b": 1, "d": 4}
+                )
+        # Two records of one status: the first decides, as it always did.
+        tie = [
+            {"check": "c", "status": "WARN", "metrics": {"a": 1}},
+            {"check": "c", "status": "WARN", "metrics": {"a": 9, "z": 0}},
+        ]
+        self.assertEqual(MODULE._metrics_by_check(tie)["c"], {"a": 1, "z": 0})
 
 
 class TheCommandLineDocumentsItsExitCodesTests(unittest.TestCase):

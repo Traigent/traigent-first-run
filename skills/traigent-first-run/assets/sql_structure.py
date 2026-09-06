@@ -139,7 +139,8 @@ score ``1.0``, as ``line N: problem`` over ``fix: remedy``, naming the row's
 id and what stopped the reader. A gold answer that fails its own self-match
 scores ``0.0`` against every candidate, including a perfect one, so the check
 belongs before any paid run. Exit ``0`` when every row matches itself, ``1``
-when a row is listed, ``2`` when the file or a line of it is not JSONL.
+when a row is listed, ``2`` when the file, or a line of it, is not JSONL or
+the file holds no rows.
 ``--expected-field`` and ``--id-field`` name the fields, with the defaults
 ``preflight.py`` uses.
 
@@ -1707,7 +1708,8 @@ def _main(argv: list[str] | None = None) -> int:
             "exit codes:\n"
             "  0  every row's expected SQL scores 1.0 against itself\n"
             "  1  at least one row does not; each is listed above with a fix\n"
-            "  2  the file, or a line in it, could not be read as JSONL"
+            "  2  the file, or a line in it, could not be read as JSONL, or it\n"
+            "     holds no rows"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -1771,6 +1773,18 @@ def _main(argv: list[str] | None = None) -> int:
             )
             unreadable += 1
             continue
+        if not isinstance(expected, str):
+            # `structural_match` would read `str()` of it and score the
+            # spelling of a dict or a null, which is not the row's defect.
+            findings.append(
+                (
+                    label,
+                    f"expected SQL is {type(expected).__name__}, not a string",
+                    "store the SQL as a string under that field",
+                )
+            )
+            unreadable += 1
+            continue
         # The self-match is the check, stated as what a paid run would see:
         # a gold answer that does not score 1.0 against itself scores 0.0
         # against every candidate. The reason is read separately, because
@@ -1789,6 +1803,10 @@ def _main(argv: list[str] | None = None) -> int:
             )
         )
 
+    if rows == 0 and not malformed:
+        # An empty file is not a file every row of which matches itself.
+        print(f"{args.dataset}: no JSON rows", file=sys.stderr)
+        return 2
     if findings:
         print(
             f"{len(findings)} of {rows} rows would score 0.0 against every "

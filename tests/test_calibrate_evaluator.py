@@ -4387,6 +4387,68 @@ class AChildThatWritesPastTheCaptureIsTheEvaluatorsDefectTests(unittest.TestCase
         self.assertNotIn("internal error", process.stderr)
         self.assertNotIn("Traceback", process.stderr)
 
+    def test_bytes_no_codec_reads_are_still_the_evaluators_defect(self) -> None:
+        """P2-3: a non-UTF-8 write used to raise in the decode, before the guard."""
+        with tempfile.TemporaryDirectory() as directory:
+            scorer = Path(directory) / "binary_scorer.py"
+            scorer.write_text(
+                "import os\n"
+                "\n"
+                'os.write(1, b"\\xff\\xfe stray\\n")\n'
+                "\n"
+                "\n"
+                "def score(output, expected, input_data=None, metadata=None):\n"
+                "    return float(set(output) == set(expected))\n"
+            )
+            process = subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPT),
+                    "--scorer",
+                    f"{scorer}:score",
+                    "--good",
+                    '["a", "b"]',
+                    "--equivalent-good",
+                    '["b", "a"]',
+                    "--partial",
+                    '["a"]',
+                    "--bad",
+                    '["z"]',
+                    "--expected",
+                    '["a", "b"]',
+                    "--json",
+                    "--allow-execution",
+                ],
+                capture_output=True,
+                text=True,
+                errors="backslashreplace",
+            )
+        self.assertEqual(process.returncode, 1, process.stderr)
+        self.assertIn("is not JSON", process.stderr)
+        self.assertIn("stray", process.stderr)
+        self.assertIn("\\\\xff", process.stderr)
+        self.assertNotIn("internal error", process.stderr)
+        self.assertNotIn("UnicodeDecodeError", process.stderr)
+
+    def test_an_empty_reply_is_named_as_a_closed_stdout(self) -> None:
+        """P3-5: nothing arriving is not a stray write in front of the reply."""
+        module = importlib.util.module_from_spec(
+            importlib.util.spec_from_file_location("calibrate_for_empty", SCRIPT)
+        )
+        module.__spec__.loader.exec_module(module)
+        for stdout in ("", "   \n"):
+            with self.subTest(stdout=repr(stdout)):
+                try:
+                    json.loads(stdout)
+                except json.JSONDecodeError as error:
+                    message = module.invalid_worker_stdout_message(
+                        "evaluator calibration", stdout, error
+                    )
+                self.assertIn("printed nothing", message)
+                self.assertIn("closed or redirected", message)
+                self.assertNotIn("What arrived", message)
+                self.assertNotIn("file descriptor 1", message)
+
     def test_a_long_reply_is_excerpted_and_measured(self) -> None:
         module = importlib.util.module_from_spec(
             importlib.util.spec_from_file_location("calibrate_for_excerpt", SCRIPT)

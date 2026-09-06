@@ -553,11 +553,19 @@ def parse_env_file(path: Path) -> dict[str, str | None]:
     return values
 
 
-def read_env(path: Path) -> tuple[dict[str, str | None], dict[str, str | None]]:
-    """Mirror python-dotenv's default precedence: process environment wins."""
+def read_env(
+    path: Path,
+) -> tuple[dict[str, str | None], dict[str, str | None], dict[str, str | None]]:
+    """Mirror python-dotenv's default precedence: process environment wins.
+
+    Three views, because the merged one cannot say where a value came from:
+    the effective environment, the file's own values, and the process's own
+    values. A check that has to name the source reads the last two.
+    """
     file_values = parse_env_file(path)
+    process_values: dict[str, str | None] = dict(os.environ)
     effective = dict(file_values)
-    effective.update(os.environ)
+    effective.update(process_values)
     source = (
         f"{path} + process environment" if path.exists() else "process environment only"
     )
@@ -568,7 +576,7 @@ def read_env(path: Path) -> tuple[dict[str, str | None], dict[str, str | None]]:
             WARN,
             f"{path} not found; create a minimal file before paid work",
         )
-    return effective, file_values
+    return effective, file_values, process_values
 
 
 def check_env_permissions(path: Path) -> None:
@@ -835,7 +843,9 @@ def check_keys(env: dict[str, str | None]) -> None:
 
 
 def check_cost_settings(
-    env: dict[str, str | None], file_values: dict[str, str | None]
+    env: dict[str, str | None],
+    file_values: dict[str, str | None],
+    process_values: dict[str, str | None],
 ) -> None:
     # The first-run launcher overwrites this legacy SDK variable from the three
     # approved first-run figures before it imports the SDK.  It never carries
@@ -883,8 +893,27 @@ def check_cost_settings(
         )
 
     approved_in_file = file_values.get("TRAIGENT_COST_APPROVED")
-    approved_effective = env.get("TRAIGENT_COST_APPROVED")
-    if key_present(approved_in_file) and approved_in_file.strip().lower() in {
+    approved_in_process = process_values.get("TRAIGENT_COST_APPROVED")
+    # The process view and the file view, read apart. The merged `env` cannot
+    # say where a value came from, and the warning used to read "active in
+    # the process" for a value that was only ever in .env - so the reader was
+    # sent to unset a variable no shell had set - while a process value equal
+    # to the file's was taken for the file's and never warned at all.
+    if key_present(approved_in_process):
+        emit(
+            "cost-approved",
+            WARN,
+            "TRAIGENT_COST_APPROVED is set in the process environment; confirm "
+            "this is the approved paid process before any paid call, and unset "
+            "it in the shell that launched this check otherwise"
+            + (
+                ". The .env copy of it is inventory only and does not authorize "
+                "a first-run paid process"
+                if key_present(approved_in_file)
+                else ""
+            ),
+        )
+    elif key_present(approved_in_file) and approved_in_file.strip().lower() in {
         "1",
         "true",
         "yes",
@@ -893,32 +922,18 @@ def check_cost_settings(
             "cost-approved",
             SKIP,
             "TRAIGENT_COST_APPROVED is preserved in .env; it does not authorize a "
-            "first-run paid process",
+            "first-run paid process, and nothing in the process environment "
+            "sets it",
         )
-    elif key_present(approved_effective):
-        # `env` is the file with the process laid over it, so a value here
-        # came from one of the two, and the sentence has to say which: the
-        # warning used to read "active in the process" for a value that was
-        # only ever in .env, and the reader was sent to unset a variable that
-        # no shell had set. A value equal to the file's is the file's - the
-        # process may repeat it, but unsetting the process leaves it in place.
-        if key_present(approved_in_file) and approved_effective == approved_in_file:
-            emit(
-                "cost-approved",
-                SKIP,
-                f"TRAIGENT_COST_APPROVED={approved_in_file.strip()!r} is preserved "
-                "in .env and is not an approval value; it does not authorize a "
-                "first-run paid process, and nothing in the process environment "
-                "sets it",
-            )
-        else:
-            emit(
-                "cost-approved",
-                WARN,
-                "TRAIGENT_COST_APPROVED is set in the process environment, not by "
-                ".env; confirm this is the approved paid process before any paid "
-                "call, and unset it in the shell that launched this check otherwise",
-            )
+    elif key_present(approved_in_file):
+        emit(
+            "cost-approved",
+            SKIP,
+            f"TRAIGENT_COST_APPROVED={approved_in_file.strip()!r} is preserved "
+            "in .env and is not an approval value; it does not authorize a "
+            "first-run paid process, and nothing in the process environment "
+            "sets it",
+        )
 
     # Both names, because the SDK resolves its backend origin from either and
     # prefers them over the stored/default route. Naming one left the other as
@@ -4095,13 +4110,13 @@ def run() -> int:
     RESULTS.clear()
     args = parse_args()
     env_path = Path(args.env)
-    env, file_values = read_env(env_path)
+    env, file_values, process_values = read_env(env_path)
     check_env_permissions(env_path)
     check_python()
     check_sdk(defer_missing=args.defer_missing_sdk)
     check_existing_traigent_use(Path(args.project_root))
     check_keys(env)
-    check_cost_settings(env, file_values)
+    check_cost_settings(env, file_values, process_values)
 
     models = [model.strip() for model in args.models.split(",") if model.strip()]
     check_models(models)

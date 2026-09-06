@@ -1826,6 +1826,48 @@ class CommandLine(unittest.TestCase):
             ],
         )
 
+    def test_an_expected_value_that_is_not_a_string_is_named_by_type(self) -> None:
+        """F1: the spelling of a dict or a null is not the row's SQL."""
+        path = self.write(
+            "gold.jsonl",
+            _jsonl(
+                [
+                    {"id": "n", "output": None},
+                    {"id": "d", "output": {"sql": self.GOOD}},
+                    {"id": "l", "output": [self.GOOD]},
+                    {"id": "i", "output": 7},
+                    {"id": "ok", "output": self.GOOD},
+                ]
+            ),
+        )
+        code, out, err = _run_main(path)
+        self.assertEqual(code, 1, (out, err))
+        self.assertEqual(
+            out.splitlines(),
+            [
+                f"4 of 5 rows would score 0.0 against every candidate in {path}:",
+                "  line 1, id 'n': expected SQL is NoneType, not a string",
+                "    fix: store the SQL as a string under that field",
+                "  line 2, id 'd': expected SQL is dict, not a string",
+                "    fix: store the SQL as a string under that field",
+                "  line 3, id 'l': expected SQL is list, not a string",
+                "    fix: store the SQL as a string under that field",
+                "  line 4, id 'i': expected SQL is int, not a string",
+                "    fix: store the SQL as a string under that field",
+            ],
+        )
+        self.assertEqual(err, "")
+
+    def test_a_file_with_no_rows_is_not_a_file_that_matches_itself(self) -> None:
+        """F2: zero rows exits 2 and says so, never "every one of 0 rows"."""
+        for text in ("", "\n\n   \n"):
+            with self.subTest(text=repr(text)):
+                path = self.write("gold.jsonl", text)
+                code, out, err = _run_main(path)
+                self.assertEqual(code, 2, (out, err))
+                self.assertEqual(out, "")
+                self.assertEqual(err, f"{path}: no JSON rows\n")
+
     def test_the_file_runs_as_a_script(self) -> None:
         path = self.write(
             "gold.jsonl", _jsonl([{"id": "q9", "output": "SELECT 'unterminated"}])

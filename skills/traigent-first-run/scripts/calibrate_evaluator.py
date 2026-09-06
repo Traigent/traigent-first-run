@@ -998,6 +998,16 @@ def invalid_worker_stdout_message(
     phase: str, stdout: str, error: json.JSONDecodeError
 ) -> str:
     """Say that a worker's reply was not JSON, and show what it was."""
+    if not stdout.strip():
+        # Nothing arrived at all, which is not a stray write: the worker's
+        # stdout was closed or redirected before its reply, by the scorer or
+        # by something it imports.
+        return (
+            f"Evaluator calibration failed: the {phase} process printed "
+            "nothing, so no result was read. Its standard output was closed or "
+            "redirected before the worker could reply - by the scorer, or by "
+            "something it imports. Remove that redirection and re-run."
+        )
     excerpt = stdout[:WORKER_STDOUT_EXCERPT_CHARS]
     suffix = (
         f" (first {WORKER_STDOUT_EXCERPT_CHARS} of {len(stdout)} characters shown)"
@@ -1461,6 +1471,10 @@ def run_supplemental_attempt(
             [sys.executable, str(Path(__file__).resolve()), "--_worker"],
             input=json.dumps(request),
             text=True,
+            # A child that writes bytes no codec reads is the evaluator's
+            # defect, and the guard on its reply has to see them: without this
+            # the decode raised before that guard and the run exited 3.
+            errors="backslashreplace",
             capture_output=True,
             timeout=remaining_seconds,
             env=environment,
@@ -1557,6 +1571,10 @@ def run_seam_batch(
             [sys.executable, str(Path(__file__).resolve()), "--_worker"],
             input=json.dumps(request),
             text=True,
+            # A child that writes bytes no codec reads is the evaluator's
+            # defect, and the guard on its reply has to see them: without this
+            # the decode raised before that guard and the run exited 3.
+            errors="backslashreplace",
             capture_output=True,
             timeout=remaining_seconds,
             env=environment,
@@ -1829,6 +1847,7 @@ def run() -> int:
                     }
                 ),
                 text=True,
+                errors="backslashreplace",
                 capture_output=True,
                 timeout=max(
                     0.0,
@@ -1882,6 +1901,10 @@ def run() -> int:
             [sys.executable, str(Path(__file__).resolve()), "--_worker"],
             input=json.dumps(authored_request),
             text=True,
+            # A child that writes bytes no codec reads is the evaluator's
+            # defect, and the guard on its reply has to see them: without this
+            # the decode raised before that guard and the run exited 3.
+            errors="backslashreplace",
             capture_output=True,
             timeout=max(0.0, calibration_deadline - time.monotonic()),
             env=worker_environment,

@@ -71,7 +71,7 @@ class StaticPreflightTests(unittest.TestCase):
             with mock.patch.dict(
                 os.environ, {"TRAIGENT_RUN_COST_LIMIT": "7.00"}, clear=False
             ):
-                effective, file_values = MODULE.read_env(env_path)
+                effective, file_values, process_values = MODULE.read_env(env_path)
             self.assertEqual(effective["TRAIGENT_RUN_COST_LIMIT"], "7.00")
             self.assertEqual(file_values["TRAIGENT_RUN_COST_LIMIT"], "2.00")
 
@@ -85,7 +85,7 @@ class StaticPreflightTests(unittest.TestCase):
         the approved figures it is launched with, so a reader told the SDK
         default governs is being told the walkthrough's ceiling does not.
         """
-        MODULE.check_cost_settings({}, {})
+        MODULE.check_cost_settings({}, {}, {})
         cost_cap = next(
             result for result in MODULE.RESULTS if result.check == "cost-cap"
         )
@@ -105,7 +105,7 @@ class StaticPreflightTests(unittest.TestCase):
         ):
             with self.subTest(name=name):
                 MODULE.RESULTS.clear()
-                MODULE.check_cost_settings({}, {name: "500.00"})
+                MODULE.check_cost_settings({}, {name: "500.00"}, {})
                 result = next(
                     item
                     for item in MODULE.RESULTS
@@ -124,8 +124,8 @@ class StaticPreflightTests(unittest.TestCase):
             env_path = Path(directory) / ".env"
             env_path.write_text("TRAIGENT_RUN_COST_LIMIT=not-a-number\n")
             with mock.patch.dict(os.environ, {}, clear=True):
-                effective, file_values = MODULE.read_env(env_path)
-                MODULE.check_cost_settings(effective, file_values)
+                effective, file_values, process_values = MODULE.read_env(env_path)
+                MODULE.check_cost_settings(effective, file_values, process_values)
         self.assertFalse(
             any(
                 item.check == "cost-cap" and item.status == MODULE.FAIL
@@ -146,15 +146,15 @@ class StaticPreflightTests(unittest.TestCase):
             with mock.patch.dict(
                 os.environ, {"TRAIGENT_RUN_COST_LIMIT": "3.75"}, clear=True
             ):
-                effective, file_values = MODULE.read_env(env_path)
-                MODULE.check_cost_settings(effective, file_values)
+                effective, file_values, process_values = MODULE.read_env(env_path)
+                MODULE.check_cost_settings(effective, file_values, process_values)
         active_cap = next(item for item in MODULE.RESULTS if item.check == "cost-cap")
         self.assertEqual(active_cap.status, MODULE.SKIP)
         self.assertIn("inventory only", active_cap.detail)
         self.assertNotIn("$3.75", active_cap.detail)
 
         MODULE.RESULTS.clear()
-        MODULE.check_cost_settings({}, {})
+        MODULE.check_cost_settings({}, {}, {})
         self.assertEqual(
             [item for item in MODULE.RESULTS if item.check == "cost-figures-in-file"],
             [],
@@ -669,7 +669,7 @@ class StaticPreflightTests(unittest.TestCase):
         ):
             with self.subTest(present=sorted(present)):
                 MODULE.RESULTS.clear()
-                MODULE.check_cost_settings(dict(present), {})
+                MODULE.check_cost_settings(dict(present), {}, dict(present))
                 result = next(
                     item for item in MODULE.RESULTS if item.check == "backend-url"
                 )
@@ -679,7 +679,7 @@ class StaticPreflightTests(unittest.TestCase):
                 self.assertIn("connected destination at its approval", result.detail)
 
         MODULE.RESULTS.clear()
-        MODULE.check_cost_settings({}, {})
+        MODULE.check_cost_settings({}, {}, {})
         self.assertEqual(
             [item for item in MODULE.RESULTS if item.check == "backend-url"],
             [],
@@ -5482,7 +5482,14 @@ class OneRecordPerCheckTests(unittest.TestCase):
 
 
 class TheCostApprovedWarningNamesItsSourceTests(unittest.TestCase):
-    """Finding 32: a value that lives in .env is not one to unset in a shell."""
+    """Finding 32: the process view and the file view, read apart.
+
+    `read_env` overlays the process on the file, so the merged view cannot say
+    where a value came from: file=1 with process=1 read as the file's and
+    never warned, and file=0 with process=1 warned "not by .env" although
+    .env set it. The process value is passed on its own, and any value there
+    is the warning, before the file is looked at.
+    """
 
     def setUp(self) -> None:
         MODULE.RESULTS.clear()
@@ -5492,7 +5499,7 @@ class TheCostApprovedWarningNamesItsSourceTests(unittest.TestCase):
 
     def test_a_value_only_in_the_file_is_inventory_and_says_so(self) -> None:
         MODULE.check_cost_settings(
-            {"TRAIGENT_COST_APPROVED": "0"}, {"TRAIGENT_COST_APPROVED": "0"}
+            {"TRAIGENT_COST_APPROVED": "0"}, {"TRAIGENT_COST_APPROVED": "0"}, {}
         )
         record = self._record()
         self.assertEqual(record.status, MODULE.SKIP)
@@ -5500,38 +5507,59 @@ class TheCostApprovedWarningNamesItsSourceTests(unittest.TestCase):
         self.assertIn("nothing in the process environment sets it", record.detail)
         self.assertNotIn("confirm this is the approved paid process", record.detail)
 
-    def test_a_value_set_by_the_process_is_the_warning_and_names_the_shell(
+    def test_any_value_in_the_process_is_the_warning_whatever_the_file_says(
         self,
     ) -> None:
-        for file_values in ({}, {"TRAIGENT_COST_APPROVED": "0"}):
+        for file_values in (
+            {},
+            {"TRAIGENT_COST_APPROVED": "0"},
+            {"TRAIGENT_COST_APPROVED": "1"},
+        ):
             with self.subTest(file_values=file_values):
                 MODULE.RESULTS.clear()
-                MODULE.check_cost_settings({"TRAIGENT_COST_APPROVED": "1"}, file_values)
+                MODULE.check_cost_settings(
+                    {"TRAIGENT_COST_APPROVED": "1"},
+                    file_values,
+                    {"TRAIGENT_COST_APPROVED": "1"},
+                )
                 record = self._record()
                 self.assertEqual(record.status, MODULE.WARN)
-                self.assertIn(
-                    "set in the process environment, not by .env", record.detail
-                )
+                self.assertIn("set in the process environment", record.detail)
                 self.assertIn("unset it in the shell", record.detail)
+                self.assertNotIn("not by .env", record.detail)
+                if file_values:
+                    self.assertIn(".env copy of it is inventory only", record.detail)
+                else:
+                    self.assertNotIn(".env copy", record.detail)
 
     def test_an_approval_value_in_the_file_is_still_inventory(self) -> None:
         MODULE.check_cost_settings(
-            {"TRAIGENT_COST_APPROVED": "true"}, {"TRAIGENT_COST_APPROVED": "true"}
+            {"TRAIGENT_COST_APPROVED": "true"}, {"TRAIGENT_COST_APPROVED": "true"}, {}
         )
         record = self._record()
         self.assertEqual(record.status, MODULE.SKIP)
         self.assertIn("does not authorize", record.detail)
+        self.assertIn("nothing in the process environment sets it", record.detail)
 
-    def test_through_the_real_merge_a_file_value_never_warns(self) -> None:
+    def test_through_the_real_merge_the_source_decides(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             env_path = Path(directory) / ".env"
-            env_path.write_text("TRAIGENT_COST_APPROVED=0\n")
+            env_path.write_text("TRAIGENT_COST_APPROVED=1\n")
             with mock.patch.dict(os.environ, {}, clear=True):
-                effective, file_values = MODULE.read_env(env_path)
-                MODULE.check_cost_settings(effective, file_values)
-        record = self._record()
-        self.assertEqual(record.status, MODULE.SKIP)
-        self.assertIn("preserved in .env", record.detail)
+                effective, file_values, process_values = MODULE.read_env(env_path)
+                self.assertNotIn("TRAIGENT_COST_APPROVED", process_values)
+                MODULE.check_cost_settings(effective, file_values, process_values)
+            self.assertEqual(self._record().status, MODULE.SKIP)
+            MODULE.RESULTS.clear()
+            with mock.patch.dict(
+                os.environ, {"TRAIGENT_COST_APPROVED": "1"}, clear=True
+            ):
+                effective, file_values, process_values = MODULE.read_env(env_path)
+                MODULE.check_cost_settings(effective, file_values, process_values)
+            record = self._record()
+        self.assertEqual(record.status, MODULE.WARN)
+        self.assertIn("set in the process environment", record.detail)
+        self.assertIn(".env copy of it is inventory only", record.detail)
 
 
 class AStaleComparatorCopyIsNamedAndReCopiedTests(unittest.TestCase):
