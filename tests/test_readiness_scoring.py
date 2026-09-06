@@ -22475,9 +22475,17 @@ class OneAliasDecisionServesBothReadersTests(unittest.TestCase):
 
     Both directions, because a widening that only added credit would be worse
     than the refusal it replaces. An alias this read cannot settle - rebound,
-    bound inside a branch, reachable from a nested scope - and an alias that
-    escapes into a call, an attribute, a second hop, or a request argument all
-    still refuse.
+    bound inside a branch that goes on to continue, reachable from a nested
+    scope - and an alias that escapes into a call, an attribute, a second hop,
+    or a request argument all still refuse.
+
+    The last row of #387's bisection table is here too, as
+    traigent-first-run#444: the binding written INSIDE the branch that raises.
+    It is settled for a stronger reason than a direct statement is - the block
+    does not fall through, so the binding dominates every path that continues -
+    and it is in the same tables as every other spelling rather than in a table
+    of its own, because "which line did the author put it on" is precisely the
+    rule this class exists to keep out of the score.
     """
 
     AGENT = """\
@@ -22557,6 +22565,23 @@ def run(config, question):
             "    chosen = model\n"
             "    if MODEL_CREDENTIALS[chosen] not in supplied:\n"
             '        raise ValueError("missing credential")\n'
+        ),
+        "bound inside the branch that raises, and read in the message": (
+            "    if MODEL_CREDENTIALS[model] not in supplied:\n"
+            "        needed = MODEL_CREDENTIALS[model]\n"
+            '        raise ValueError(f"missing {needed}")\n'
+        ),
+        "bound inside the branch that raises, and never read": (
+            "    if MODEL_CREDENTIALS[model] not in supplied:\n"
+            "        needed = MODEL_CREDENTIALS[model]\n"
+            '        raise ValueError("missing credential")\n'
+        ),
+        "bound inside an `elif` branch that raises": (
+            "    if not supplied:\n"
+            '        raise ValueError("no credentials")\n'
+            "    elif MODEL_CREDENTIALS[model] not in supplied:\n"
+            "        needed = MODEL_CREDENTIALS[model]\n"
+            '        raise ValueError(f"missing {needed}")\n'
         ),
     }
 
@@ -23108,6 +23133,199 @@ def run(cfg, question):
         pillar, _caps, _rows = MODULE.score_agent(facts)
         space = next(sub for sub in pillar.subscores if sub.name == "search-space")
         return "possible settings model" in space.evidence
+
+
+class ABranchThatRaisesSettlesTheBindingItMakesTests(unittest.TestCase):
+    """The unsafe half of traigent-first-run#444, asked of the rule itself.
+
+    The widening rests on ONE claim: a binding written in a block that then
+    raises dominates every path that continues, so a read after the block
+    finds the name unbound rather than a value, and the sole-binding rule
+    already means nothing else could have bound it. That claim is false for
+    every block that can hand control on with the binding made, and each way it
+    can is a row here. Behaviour alone cannot pin them - a `for`, `try`, `with`
+    or `match` anywhere in the selected callable is refused by the path-shape
+    rule long before this predicate is consulted, so a scored fixture would go
+    green whatever this answered. The predicate is therefore asked directly,
+    which is the only place the difference is visible.
+    """
+
+    HEAD = "def run(model, supplied, rows):\n"
+
+    def _binding(self, body: str) -> tuple[ast.AST, ast.AST, object]:
+        source = self.HEAD + body
+        compile(source, "agent.py", "exec", dont_inherit=True)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "agent.py").write_text(source, encoding="utf-8")
+            evidence = MODULE.static_source_evidence(
+                "agent.py", root, root / "agent.py", "run"
+            )
+        owner = evidence.selected_callable
+        binding = next(
+            node
+            for node in ast.walk(owner)
+            if isinstance(node, ast.Assign)
+            and isinstance(node.targets[0], ast.Name)
+            and node.targets[0].id == "needed"
+        )
+        return binding, owner, evidence
+
+    def _cannot_continue(self, body: str) -> bool:
+        binding, owner, evidence = self._binding(body)
+        return MODULE._binding_block_cannot_continue(binding, owner, evidence)
+
+    def _settles(self, body: str) -> bool:
+        binding, owner, evidence = self._binding(body)
+        return MODULE._settled_local_binding(binding, owner, evidence) == "needed"
+
+    def test_the_branch_that_raises_is_settled(self) -> None:
+        """The shape the issue is about, and the two it must not be read as."""
+        self.assertTrue(
+            self._cannot_continue(
+                "    if model not in supplied:\n"
+                "        needed = model\n"
+                '        raise ValueError(f"missing {needed}")\n'
+            )
+        )
+        self.assertTrue(
+            self._cannot_continue(
+                "    if not supplied:\n"
+                '        raise ValueError("none")\n'
+                "    elif model not in supplied:\n"
+                "        needed = model\n"
+                '        raise ValueError(f"missing {needed}")\n'
+            )
+        )
+
+    def test_a_block_that_can_hand_control_on_is_not_settled(self) -> None:
+        """Every way the block can continue with the name bound.
+
+        `return`, `break` and `continue` all leave the block before the raise
+        with the binding made; `yield` hands control to the caller, which can
+        simply not resume the generator. A `try` or a `with` between the block
+        and the owner swallows the exception instead - the `with` through an
+        `__exit__` that returns true, which reads as innocent and is the one a
+        list of statement kinds would have missed.
+        """
+        for label, body in (
+            (
+                "no raise at all",
+                "    if model not in supplied:\n"
+                "        needed = model\n"
+                "        print(needed)\n",
+            ),
+            (
+                "the raise comes first",
+                "    if model not in supplied:\n"
+                '        raise ValueError("missing")\n'
+                "        needed = model\n",
+            ),
+            (
+                "a return before the raise",
+                "    if model not in supplied:\n"
+                "        needed = model\n"
+                "        if supplied:\n"
+                "            return needed\n"
+                '        raise ValueError("missing")\n',
+            ),
+            (
+                "a break before the raise",
+                "    for row in rows:\n"
+                "        needed = model\n"
+                "        if row:\n"
+                "            break\n"
+                '        raise ValueError("missing")\n',
+            ),
+            (
+                "a continue before the raise",
+                "    for row in rows:\n"
+                "        needed = model\n"
+                "        if row:\n"
+                "            continue\n"
+                '        raise ValueError("missing")\n',
+            ),
+            (
+                "a yield before the raise",
+                "    if model not in supplied:\n"
+                "        needed = model\n"
+                "        yield needed\n"
+                '        raise ValueError("missing")\n',
+            ),
+            (
+                "a try that can swallow the raise",
+                "    try:\n"
+                "        if model not in supplied:\n"
+                "            needed = model\n"
+                '            raise ValueError("missing")\n'
+                "    except ValueError:\n"
+                "        pass\n",
+            ),
+            (
+                "a with that can swallow the raise",
+                "    with suppress(ValueError):\n"
+                "        if model not in supplied:\n"
+                "            needed = model\n"
+                '            raise ValueError("missing")\n',
+            ),
+            (
+                "a raise deeper in, not at the block's own level",
+                "    if model not in supplied:\n"
+                "        needed = model\n"
+                "        if supplied:\n"
+                '            raise ValueError("missing")\n',
+            ),
+        ):
+            with self.subTest(block=label):
+                self.assertFalse(self._cannot_continue(body), label)
+                self.assertFalse(self._settles(body), label)
+
+    def test_the_owners_own_body_is_settled_but_not_by_this_rule(self) -> None:
+        """A direct statement stays a direct statement, raise or no raise.
+
+        Reading the owner's body as a block that cannot continue would widen
+        the READS half for a placement whose refusal is pinned by
+        `OneAliasDecisionServesBothReadersTests`. That residual is a separate
+        decision from this one and is not reopened here.
+        """
+        body = "    needed = model\n" '    raise ValueError(f"missing {needed}")\n'
+        self.assertFalse(self._cannot_continue(body))
+        self.assertTrue(self._settles(body))
+
+    def test_a_read_outside_the_raising_block_is_not_credited_its_value(self) -> None:
+        """The region half, which is `_local_alias_initializer`'s own.
+
+        A read written after the guard is textually after the binding and can
+        never execute with the name bound - the block raised. Crediting it
+        would hand a setting to a call that only ever raises `NameError`, which
+        is the "knob the run cannot vary" error this check refuses in the first
+        place, arrived at from the other side.
+        """
+        body = (
+            "    if model not in supplied:\n"
+            "        needed = model\n"
+            '        raise ValueError(f"missing {needed}")\n'
+            "    return needed\n"
+        )
+        _binding, owner, evidence = self._binding(body)
+        inside, outside = sorted(
+            (
+                node
+                for node in ast.walk(owner)
+                if isinstance(node, ast.Name)
+                and node.id == "needed"
+                and isinstance(node.ctx, ast.Load)
+            ),
+            key=lambda node: node.lineno,
+        )
+        self.assertIsNotNone(
+            MODULE._local_alias_initializer(inside, owner, evidence),
+            "the read inside the raising block lost its value",
+        )
+        self.assertIsNone(
+            MODULE._local_alias_initializer(outside, owner, evidence),
+            "a read that can only be a NameError was credited a value",
+        )
 
 
 class TheWalkthroughSizeNamesItselfTests(unittest.TestCase):
