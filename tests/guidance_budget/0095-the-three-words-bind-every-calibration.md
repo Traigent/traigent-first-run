@@ -11,10 +11,10 @@ total-measured: 498_266
 document-ceiling: 137_550
 document-measured: 136_303
 
-Twenty-two bytes over two documents, and neither adds a rule: both correct a sentence that had
+Twenty-three bytes over two documents, and neither adds a rule: both correct a sentence that had
 stopped being true.
 
-Eighteen of them are in `references/run-safety.md`. Its deterministic-calibration paragraph opened
+Twenty of them are in `references/run-safety.md`. Its deterministic-calibration paragraph opened
 "Before environment setup, run only a non-executing evaluator whose complete call path is
 local-only, side-effect-free, and standard-library-only", which reads as a precondition satisfied
 once on the way in. The state that exposes the gap is a calibration that finished and did not pass:
@@ -50,7 +50,7 @@ raises `evaluator-unvalidated` and recommends completing the calibration this gu
 project; with it, the containment review. So the sentence says what the flag is FOR: "it moves no
 number, and it is the only route where preflight finds no engine". The flag's own `--help`, which
 carried the identical false claim, is reworded beside it so the two homes cannot drift apart, and
-twenty-one of the bytes are paid back three words later, where "records why no in-process route
+twenty of the bytes are paid back three words later, where "records why no in-process route
 replaces the containment review" becomes "replaces it".
 
 No ceiling moves. Both figures rise and stay under the ceilings 0094 left standing, restated here

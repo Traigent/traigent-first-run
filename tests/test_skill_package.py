@@ -5715,14 +5715,23 @@ class SkillPackageTests(unittest.TestCase):
             "none of it follows from anything their evaluator did",
             "opens their database",
             # And that the other arm is charged, which is the half of the
-            # outcome the disclosure would otherwise leave out.
+            # outcome the disclosure would otherwise leave out - said in the
+            # two walk states it actually covers. It read "a declaration about
+            # a file this run never read", which is true of one of them and
+            # false of the one `SKILL.md` names as the flag's population:
+            # preflight walks the file and finds no engine, and the same
+            # document says twenty lines above that a walk which finds none
+            # has still read the file.
             "where only the flag says so, the charge stands",
+            "the walk either read the file and found no engine in it",
+            "or never ran over it at all",
             # And the route that is theirs to take.
             "run that evaluator against\ntheir own database".replace("\n", " "),
             "known-good and known-bad answers",
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, section)
+        self.assertNotIn("a file this run never read", section)
         # The mandate is not restated here, and the reference does not grow a
         # second copy of the flow.
         skill = " ".join(SKILL.read_text().casefold().split())

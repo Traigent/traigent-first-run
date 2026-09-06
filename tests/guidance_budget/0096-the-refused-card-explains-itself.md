@@ -6,13 +6,13 @@ follows-total-measured: 498_266
 follows-document-measured: 136_303
 resident-ceiling: 106_500
 resident-measured: 106_371
-total-ceiling: 499_900
-total-measured: 499_816
+total-ceiling: 500_100
+total-measured: 499_994
 document-ceiling: 137_550
 document-measured: 136_303
 
-**This raises the TOTAL ceiling to 499_900, on the owner's instruction, and it is the only ceiling
-that moves.** It buys 1_550 bytes in `references/run-safety.md`, the document that owns the
+**This raises the TOTAL ceiling to 500_100, on the owner's instruction, and it is the only ceiling
+that moves.** It buys 1_728 bytes in `references/run-safety.md`, the document that owns the
 execution-evaluator stage.
 
 What was missing was not a rule but a disclosure. A project whose evaluator reaches a code or SQL
@@ -42,19 +42,20 @@ not.
 Why a ceiling rather than a prune: there was no honest prune of this size available. The three
 budgets stood at 129 resident, 34 total and 1_247 document bytes of headroom, and the alternative to
 raising was compressing a customer-facing explanation until it stopped being actionable - which is
-the failure this disclosure exists to fix. Thirty-four bytes did come back in the same passage,
+the failure this disclosure exists to fix. Twenty-nine bytes did come back in the same passage,
 where the preceding paragraph's "the readiness card says why" was a forward pointer to what is now
 the next sentence.
 
 **The size is the measurement, not a convention.** An earlier draft of this entry took the ledger's
-median TOTAL raise - 1_400 over 80 prior raises - which was 238 bytes more than the prose needed at
+median TOTAL raise - 1_400 over 80 prior raises - which was 239 bytes more than the prose needed at
 the time. Sizing by precedent is defensible for a raise nobody has measured yet; this one is
 measured, and the leftover would have served no one, since the paragraph below refuses to offer it
-to a sibling. So the ceiling is the measured total rounded up to the next hundred: 499_816 becomes
-499_900, and the 84 bytes left are slack for a wording correction on this branch rather than a
-budget for the next.
+to a sibling. So the ceiling is the measured total rounded up to the next hundred, plus one hundred
+where that would leave less than a line of prose: 499_994 becomes 500_100. The 106 bytes left are
+slack for a wording correction on this branch - this entry has been re-measured three times, twice
+because a correction moved the figure - rather than a budget for the next.
 
-That 84 is not room for the next branch, and neither was the 239 it replaces. A cross-branch audit
+That 106 is not room for the next branch, and neither was the 239 the first draft took. A cross-branch audit
 measured all three budgets simultaneously under their own typical-raise thresholds, which this
 ledger has no precedent for; the next guidance sentence anyone writes should expect to raise a
 ceiling deliberately, measured on the merged tree rather than on one branch. Sizing TOTAL for that

@@ -12875,7 +12875,8 @@ class TheWitnessDecidesTheScopeGateNotTheDeclarationTests(unittest.TestCase):
             self.assertIn("evaluator-execution scope gate refused it", line)
         self.assertIn("no points are deducted for it", witnessed_line)
         self.assertIn(
-            "it costs points because this run could not read the file itself",
+            "it costs points because no preflight report for your evaluator "
+            "reached this score",
             declared_line,
         )
         self.assertFalse(self._calibration_subscore(witnessed).withheld)
@@ -12929,7 +12930,9 @@ class TheWitnessDecidesTheScopeGateNotTheDeclarationTests(unittest.TestCase):
                 # phrase across both is what let a route clause be appended
                 # to a sentence that already carried one.
                 self.assertRegex(
-                    evidence, r"containment review|hand the evaluator to --preflight"
+                    evidence,
+                    r"containment review|preflight\.py --evaluator|"
+                    r"establish the evaluator as the ceiling describes",
                 )
                 cap = next(
                     c
@@ -13076,8 +13079,8 @@ class TheWitnessDecidesTheScopeGateNotTheDeclarationTests(unittest.TestCase):
         # written beside.
         self.assertTrue(
             evidence.endswith(
-                "no points are deducted for it - this card may not read what "
-                "that calibration measured"
+                "no points are deducted for it - this card may not read a "
+                "calibration this guide does not permit"
             )
         )
         self.assertNotIn("was not the one to make that measurement", evidence)
@@ -13279,69 +13282,88 @@ class TheWitnessDecidesTheScopeGateNotTheDeclarationTests(unittest.TestCase):
             next(p for p in deferred.pillars if p.name == "evaluation").score,
         )
 
-    def test_no_calibration_line_contradicts_its_own_first_half(self) -> None:
-        """The class, swept, rather than the two instances that were found.
-
-        This seam has now produced the same defect twice: a consequence
-        appended to a sentence chosen by a different predicate, so the two
-        halves are true only where the predicates happen to agree. Round one
-        found a shared tail pointing a refused run at the calibration the gate
-        forbids. Round two found "this run was not the one to make that
-        measurement" landing on two arms whose own first half says a
-        calibration WAS taken - one of them live, and pinned verbatim by a
-        test written in the same commit.
-
-        Patching the instances is what produced the second one, so this checks
-        the PROPERTY over every state that reaches the line: whichever half
-        speaks about a calibration happening, the other half may not contradict
-        it. A new arm inherits the check by existing rather than by someone
-        remembering to add it.
-        """
-        payload = dict(
+    # Preflight's engine read, in the three states the module forbids
+    # collapsing, crossed with every calibration payload shape and both
+    # settings of the declaration. `False` is the state this seam's third
+    # defect lived in and the state the first version of this sweep could not
+    # reach, because its fixture never set the field.
+    WALK_STATES = {"proved": True, "read it, found nothing": False, "never ran": None}
+    PAYLOAD_STATES = {
+        "no calibration": {},
+        "a passing calibration": dict(
             calibration_present=True,
             calibration_supplied=True,
             calibration_complete=True,
             calibration_passed=True,
             checks=(_CALIBRATION_CASE, _CALIBRATION_CASE),
             probe_scores=((1.0, 0.0), (1.0, 0.0)),
-        )
-        witness = dict(executes_candidate=True, execution_witness=self.WITNESS)
-        states = {
-            "witness, calibration taken": {**payload, **witness},
-            "witness, never asked": witness,
-            "declared only": dict(calibration_scope_refused=True),
-            "declared, payload anyway": {**payload, "calibration_scope_refused": True},
-            "witness, timed out": {
-                **witness,
-                "calibration_present": True,
-                "calibration_supplied": True,
-                "timed_out": True,
-            },
-            "witness, calibration reported nothing": {
-                **witness,
-                "calibration_supplied": True,
-            },
-            "no refusal at all": {},
-            "plain timeout": {"calibration_supplied": True, "timed_out": True},
-        }
-        # Phrases that assert a calibration happened, and phrases that assert
-        # none did. No line may carry one of each.
+        ),
+        "a calibration that timed out": dict(
+            calibration_present=True, calibration_supplied=True, timed_out=True
+        ),
+        "a calibration with nothing in it": dict(calibration_supplied=True),
+    }
+
+    def _every_refused_state(self):
+        """The whole product, yielded as (label, score, facts)."""
+        for walk_name, walk in self.WALK_STATES.items():
+            for payload_name, payload in self.PAYLOAD_STATES.items():
+                for flag in (True, False):
+                    facts = MODULE.EvaluationFacts(
+                        **self._executing(
+                            **payload,
+                            executes_candidate=walk,
+                            execution_witness=self.WITNESS if walk else None,
+                            calibration_scope_refused=flag,
+                        )
+                    )
+                    yield (
+                        f"walk {walk_name}, {payload_name}, flag={flag}",
+                        self._score(facts),
+                        facts,
+                    )
+
+    def _evaluation_lines(self, score) -> list[str]:
+        pillar = next(p for p in score.pillars if p.name == "evaluation")
+        return [sub.evidence for sub in pillar.subscores]
+
+    def test_no_calibration_line_contradicts_its_own_first_half(self) -> None:
+        """The class, swept, rather than the instances that were found.
+
+        This seam has produced the same defect three times: a sentence written
+        beside the fact that decides it, and drifting from it. Round one found
+        a shared tail pointing a refused run at the calibration the gate
+        forbids. Round two found "this run was not the one to make that
+        measurement" landing on arms whose own first half says a calibration
+        WAS taken. Round three found the charged arm telling a customer "this
+        run could not read the file itself" two lines above the task-fit line
+        reporting what reading their file had found - and this sweep did not
+        catch it, because its fixtures never set `executes_candidate=False`,
+        which is precisely the collapse `evaluator_execution_from_preflight`
+        forbids by name.
+
+        So the sweep runs the whole product now - three walk states, four
+        payload shapes, both settings of the declaration - and three tests
+        check three properties over it. Patching instances is what produced
+        the third one; a new arm inherits these by existing.
+        """
         happened = (
             "a calibration was taken",
             "calibration ran",
             "calibration reported",
-            "may not read what that calibration measured",
+            "may not read a calibration",
+            # The credited line, from the states in the product where nothing
+            # is refused: they are swept too, and this property is theirs.
+            "calibration case(s)",
         )
         did_not = (
             "never asked for a calibration",
             "was not the one to make that measurement",
             "no calibration result was provided",
         )
-        for label, extra in states.items():
+        for label, score, _facts in self._every_refused_state():
             with self.subTest(state=label):
-                line = self._calibration_subscore(
-                    self._score(MODULE.EvaluationFacts(**self._executing(**extra)))
-                ).evidence
+                line = self._calibration_subscore(score).evidence
                 said_happened = [p for p in happened if p in line]
                 said_not = [p for p in did_not if p in line]
                 self.assertFalse(
@@ -13352,6 +13374,75 @@ class TheWitnessDecidesTheScopeGateNotTheDeclarationTests(unittest.TestCase):
                 # And it says one of the two, so a line that drifts into
                 # saying neither does not pass by being silent.
                 self.assertTrue(said_happened or said_not, line)
+
+    def test_no_line_claims_the_file_was_unread_when_the_walk_read_it(self) -> None:
+        """The property the third defect broke, checked against the FACT.
+
+        Two sub-scores of one pillar were describing the same file: the
+        calibration line said this run could not read it, and the task-fit
+        line two lines below reported what reading it had found. The false
+        half was the justification for the only deduction on the card.
+
+        Asserted against `executes_candidate` rather than by comparing the two
+        sentences, because the fact is what both are supposed to be about. A
+        walk that ran - `True` or `False` - means the file was read, and no
+        line in the pillar may say otherwise. The `None` state is skipped
+        rather than inverted, so this cannot pass by banning the sentence
+        outright instead of tying it to the fact; the assertion below pins
+        that it is still said where it is true.
+        """
+        unread_claims = (
+            "could not read the file",
+            "no preflight report for your evaluator reached this score",
+            "this run never read",
+        )
+        said_where_true = False
+        for label, score, facts in self._every_refused_state():
+            with self.subTest(state=label):
+                claimed = [
+                    (phrase, line)
+                    for line in self._evaluation_lines(score)
+                    for phrase in unread_claims
+                    if phrase in line
+                ]
+                if facts.executes_candidate is None:
+                    said_where_true = said_where_true or bool(claimed)
+                    continue
+                self.assertFalse(
+                    claimed,
+                    "a walk ran over this evaluator, so no line may say the "
+                    f"file went unread: {claimed}",
+                )
+        self.assertTrue(
+            said_where_true,
+            "no state says the file was unread, so this test is banning a "
+            "sentence rather than tying it to the fact that licenses it",
+        )
+
+    def test_no_line_points_at_a_ceiling_the_card_does_not_carry(self) -> None:
+        """A route the reader cannot follow is the first defect, restated.
+
+        Round one fixed "the containment review named in the ceiling" on a
+        card whose only cap was a timeout. Round three found the same shape on
+        the arm rewritten in between, because the guard lived on one branch
+        and the new sentence was written on the other. Checked over the
+        product rather than over the two branches anyone happened to look at.
+        """
+        for label, score, _facts in self._every_refused_state():
+            with self.subTest(state=label):
+                conditions = {cap.condition for cap in score.caps}
+                for line in self._evaluation_lines(score):
+                    if "ceiling" not in line:
+                        continue
+                    # Only the refusal ceiling describes a route out; a
+                    # timeout ceiling says the run did not finish, and
+                    # nothing else.
+                    self.assertIn(
+                        "evaluator-calibration-refused",
+                        conditions,
+                        f"{label}: a line names the ceiling and the card "
+                        f"carries {sorted(conditions)}: {line}",
+                    )
 
     def test_a_calibration_that_failed_still_convicts(self) -> None:
         """The one direction this refusal may fail in.
