@@ -644,6 +644,30 @@ METHOD_PROFILES: dict[str, dict[str, Any]] = {
         "cost": 1.0,
         "fits": ("code-sql",),
     },
+    # #449. Every method above scores an answer against an expected answer,
+    # and the guide's own selection table offers a row none of them can
+    # express: "Tool/action workflow, final-state or side-effect check". A
+    # customer whose evaluator scores which tools were used had no true word
+    # to type, and the guidance's instruction for that state - declare
+    # nothing - cost the withheld task-fit check, so an untrue `exact` scored
+    # the pillar 100 where honesty scored 69. The vocabulary was the defect:
+    # the score charged for withholding an answer to a question it offered no
+    # true answer to.
+    #
+    # 1.0 on both dials is the accurate placement, not a courtesy. A check
+    # that reads a recorded trace or a final state and compares it with the
+    # expected one calls no model and varies between runs no more than
+    # `schema` or `set-f1` does. Any lower placement would leave the
+    # inversion live one indirection out, because the honest word would still
+    # be beaten by a mislabel; the invariant this method exists to establish
+    # is that nothing a customer can type outscores the true declaration for
+    # the same evaluator, and reaching the ceiling is how a declaration
+    # nothing can verify reaches it honestly.
+    "final-state": {
+        "reproducibility": 1.0,
+        "cost": 1.0,
+        "fits": ("tool-workflow",),
+    },
     "routing": {
         "reproducibility": 1.0,
         "cost": 1.0,
@@ -694,6 +718,13 @@ TASK_KINDS = (
     "routing",
     "short-answer",
     "structured",
+    # The kind the selection table already offered and this vocabulary did
+    # not: what the agent produces is a run of tools or actions, and what is
+    # scored is the trace or the state it left rather than a sentence to
+    # compare. Added with `final-state` above, because a method and the kind
+    # it fits are one decision - a kind no method fits is a declaration that
+    # can only lose points.
+    "tool-workflow",
 )
 
 # Why a method that does not fit this output kind does not fit it.
@@ -783,6 +814,11 @@ METHOD_MISMATCH_REASONS: dict[str, str] = {
         "{kind} answer that is not a query parses as nothing and is scored as "
         "wrong however right it is"
     ),
+    "final-state": (
+        "reads the tools an answer used and the state it left behind, never "
+        "the answer itself, so a {kind} answer is scored on how it was "
+        "produced rather than on what it says"
+    ),
 }
 DETERMINISTIC_METHODS = {
     "exact",
@@ -794,6 +830,7 @@ DETERMINISTIC_METHODS = {
     "routing",
     "fuzzy",
     "sql-structure",
+    "final-state",
 }
 CALIBRATION_REQUIRED_CHECKS = frozenset({"good_passes", "bad_fails", "non_constant"})
 
@@ -842,6 +879,15 @@ METHOD_EXECUTES_CANDIDATE: dict[str, bool | None] = {
     "llm-judge-rubric": False,
     "composite": None,
     "sql-structure": False,
+    # Undetermined, for the reason `composite` is. A final-state check may
+    # read a trace the agent already wrote, or replay the workflow in an
+    # isolated environment; the word settles neither, and this score cannot
+    # see which. `False` would be a claim the method does not make, and
+    # `True` would withhold the credit from the one declaration this method
+    # was added to let a customer make honestly - reinstating the inversion
+    # under a new word. Preflight's witness still refuses a file it catches
+    # reaching an engine, whichever word was typed over it.
+    "final-state": None,
 }
 
 # Which methods a PROVEN whole-value comparison supports.
@@ -892,6 +938,13 @@ METHOD_COMPARISON_SUPPORT: dict[str, frozenset[str]] = {
     # structures does not support `exact` or any other word above, and a file
     # proven to be a text comparison does not support this one.
     "sql-structure": frozenset({"sql-structure"}),
+    # Neither, and for the reason `set-f1` and `schema` support neither: a
+    # file proven to compare two answers as whole values is not reading a
+    # tool trace, whichever word was typed over it. This is what keeps the
+    # new word from being one step further out than the arms already reach -
+    # an established comparison refutes `final-state` exactly as it refutes
+    # every other non-comparison method.
+    "final-state": frozenset(),
 }
 
 # The methods whose credit requires the file to have ESTABLISHED the
@@ -902,7 +955,7 @@ METHOD_COMPARISON_SUPPORT: dict[str, frozenset[str]] = {
 # read alone, would have credited that claim on the word. `METHOD_COMPARISON
 # _SUPPORT` refutes from proof: it fires only where a shape was settled, so a
 # file the walk could not account for refutes nothing and keeps full credit.
-# That asymmetry is right for the twelve methods it was written for, whose
+# That asymmetry is right for the thirteen methods it now covers, whose
 # claim is about the OUTPUT kind and not about the file. It is wrong for this
 # one, where "the walk could not account for the file" and "the file does not
 # do this" are the same answer to the customer, and the didn't-find-it branch

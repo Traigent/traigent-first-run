@@ -2291,6 +2291,31 @@ def preflight_constant(name: str) -> object:
     raise AssertionError(f"preflight.py defines no module-level {name}")
 
 
+def flag_choices(script: Path, flag: str) -> str | None:
+    """The NAME a script wires an argparse flag's `choices` to, or None.
+
+    Two shared vocabularies are compared by parsing a constant out of each
+    script, and a comparison of two constants proves nothing about the flag
+    unless the flag really reads one of them: a script that kept its
+    enumeration and took the value as a free string would pass the comparison
+    while accepting anything. So each of those tests also asks this what the
+    flag is wired to, and a literal list written at the call site answers
+    None.
+    """
+    for node in ast.walk(ast.parse(script.read_text())):
+        if not isinstance(node, ast.Call):
+            continue
+        if not any(
+            isinstance(argument, ast.Constant) and argument.value == flag
+            for argument in node.args
+        ):
+            continue
+        for keyword in node.keywords:
+            if keyword.arg == "choices" and isinstance(keyword.value, ast.Name):
+                return keyword.value.id
+    return None
+
+
 def guide_constant(path: Path, name: str) -> object:
     """Read one constant out of the code a reference publishes.
 
@@ -3231,6 +3256,26 @@ class SkillPackageTests(unittest.TestCase):
         # comparison that does not canonicalize scores a correct query with a
         # different alias 0.0 on `equivalent_good`.
         self.assertIn("canonical form", row)
+
+        # The same half-route, on the row the scorer's vocabulary reached
+        # last. This table offered a tool or action workflow while neither
+        # flag could spell one, so the guidance's own answer for a method that
+        # does not exist - declare nothing - scored the evaluation pillar 69
+        # against 100 for an `exact` that was untrue of the file
+        # (traigent-first-run#449). Adding the word to the scorer closes that
+        # only if the row an assistant actually reads names it; unnamed, the
+        # route ends at a description again and the run declares nothing.
+        workflow = next(
+            line
+            for line in rows.splitlines()
+            if line.startswith("| Tool/action workflow |")
+        )
+        self.assertIn("`--evaluator-method final-state`", workflow)
+        self.assertIn(
+            "final-state",
+            READINESS.METHOD_PROFILES,
+            "the row names a method the scorer would refuse",
+        )
 
     def test_the_canonical_comparison_states_what_it_cannot_reach(self) -> None:
         """Naming the method is half a route; its edge is the other half.
@@ -9361,25 +9406,14 @@ class SkillPackageTests(unittest.TestCase):
         # And both really wire the flag TO that constant, so this compares two
         # live vocabularies rather than one live and one dead. A substring
         # search for the flag name is satisfied by a comment mentioning it.
-        def task_kind_choices(script: Path) -> str | None:
-            for node in ast.walk(ast.parse(script.read_text())):
-                if not isinstance(node, ast.Call):
-                    continue
-                if not any(
-                    isinstance(argument, ast.Constant)
-                    and argument.value == "--task-kind"
-                    for argument in node.args
-                ):
-                    continue
-                for keyword in node.keywords:
-                    if keyword.arg == "choices" and isinstance(keyword.value, ast.Name):
-                        return keyword.value.id
-            return None
-
+        # `flag_choices` is the module-level form of the walk this test used to
+        # carry inline; the evaluator-method vocabulary needs the same question
+        # asked of it, and two spellings of one AST walk is one of them free to
+        # stop matching what argparse does.
         for script in ("readiness.py", "calibrate_evaluator.py"):
             with self.subTest(script=script):
                 self.assertEqual(
-                    task_kind_choices(scripts / script),
+                    flag_choices(scripts / script, "--task-kind"),
                     "TASK_KINDS",
                     "--task-kind must take its choices from the constant this "
                     "test compares, or the comparison guards nothing",
@@ -11587,6 +11621,31 @@ class SkillPackageTests(unittest.TestCase):
         self.assertEqual(
             preflight_constant("REFERENCE_FREE_METHODS"),
             set(READINESS.REFERENCE_FREE_METHODS),
+        )
+        # And the whole vocabulary, not only the reference-free corner of it.
+        #
+        # One script took the flag as a closed enumeration and the other as a
+        # free string, so a misspelt method was refused by the scorer and
+        # silently accepted by preflight - where it fell out of
+        # REFERENCE_FREE_METHODS and turned a reference-free run into one
+        # demanding expected outputs, reported as a complaint about the data
+        # (traigent-first-run#449). The guide passes one run-scoped value to
+        # both, so one vocabulary is what it has to be.
+        #
+        # Ordered tuples, for the reason the task-kind test compares ordered
+        # tuples: argparse prints choices in order in its own refusal, and two
+        # orders is the same drift one step less visible.
+        self.assertEqual(
+            preflight_constant("EVALUATOR_METHODS"),
+            tuple(sorted(READINESS.METHOD_PROFILES)),
+            "preflight and the scorer no longer accept the same evaluation "
+            "methods; the guide hands one value to both",
+        )
+        self.assertEqual(
+            flag_choices(SKILL_ROOT / "scripts" / "preflight.py", "--evaluator-method"),
+            "EVALUATOR_METHODS",
+            "--evaluator-method must take its choices from the constant this "
+            "test compares, or the comparison guards nothing",
         )
         for phrase in (
             "resolved evaluator method as run-scoped validation state",

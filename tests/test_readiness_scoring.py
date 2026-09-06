@@ -20641,7 +20641,7 @@ class TaskFitIsMeasuredOnThePairNotOnEitherFieldTests(unittest.TestCase):
     ) -> None:
         """#414. The unknown case has to fail closed, and this is where.
 
-        The twelve older methods say what output kind they suit, so a file
+        The thirteen other methods say what output kind they suit, so a file
         nobody could classify refutes none of them. A method whose whole
         content is a claim about the comparison the file performs is the other
         case: "the walk could not account for this file" and "this file does
@@ -23507,3 +23507,230 @@ class TheCommandLineDocumentsItsExitCodesTests(unittest.TestCase):
                 self.assertIn(f"\n  {code}  ", text)
         self.assertIn("BLOCKED score still exits 0", text)
         self.assertIn("--strict", text)
+
+
+class TheHonestDeclarationIsNeverOutscoredTests(unittest.TestCase):
+    """traigent-first-run#449, pinned as an inequality rather than as numbers.
+
+    An evaluator that scores which tools an answer used had no true word in
+    either vocabulary, and the guide's own selection table offers exactly that
+    row. The guidance's instruction for a state no method fits is to declare
+    nothing, and declaring nothing kept the withheld task-fit check in the
+    denominator: over one unchanged tool-usage evaluator the evaluation pillar
+    read 69 for silence, 90 for `composite` + `structured` and 100 for `exact`
+    + `structured`, which is untrue of that file. At the default weights that
+    is about eleven overall points for answering honestly, and the refutation
+    arms that catch a false declaration cannot fire here, because every one of
+    them needs a comparison shape preflight cannot establish for a file that
+    reads a trace.
+
+    The fix is vocabulary: `final-state` over `tool-workflow` is the true
+    declaration, and it earns what a deterministic ruler that suits the output
+    earns. The property below is what must survive, and it is written over the
+    tables rather than over that pair, because a later method or task kind
+    added with a fatter profile would reopen the same defect under a new word
+    while a test naming four declarations stayed green.
+
+    The inequality is `>=`, not `>`. Nothing here can read a tool trace out of
+    a file, so a mislabel cannot be detected and cannot be charged for; what
+    the fix removes is the REWARD for it. A declaration that ties the honest
+    one buys the customer nothing, and that is the whole of what this score
+    can honestly promise.
+    """
+
+    # The evidence every declaration below is measured over: one complete,
+    # passing calibration of one tool-usage evaluator, with a clean spread and
+    # nothing established about the file. It is held fixed so the only thing
+    # varying across the sweep is the pair of words the customer typed.
+    CHECKS = ({"good_passes": True, "bad_fails": True, "non_constant": True},)
+
+    def pillar(self, method, kind, **extra):
+        facts = MODULE.EvaluationFacts(
+            present=True,
+            method=method,
+            task_kind=kind,
+            calibration_present=True,
+            calibration_supplied=True,
+            calibration_complete=True,
+            calibration_passed=True,
+            checks=self.CHECKS,
+            probe_scores=((1.0, 0.0),),
+            origin="brought",
+            **extra,
+        )
+        score, _caps = MODULE.score_evaluation(facts)
+        return score.score
+
+    def fit(self, method, kind, **extra):
+        """The task-fit sub-score alone, for the arms that refuse a word."""
+        facts = MODULE.EvaluationFacts(
+            present=True, method=method, task_kind=kind, **extra
+        )
+        pillar, _caps = MODULE.score_evaluation(facts)
+        return next(sub for sub in pillar.subscores if sub.name == "task-fit")
+
+    def test_the_true_declaration_exists_in_both_vocabularies(self) -> None:
+        """Expressible first: an inequality over words nobody can type is empty.
+
+        Both halves, because task fit is a property of the pair and a kind no
+        method fits can only lose points. Checked against the tables the flags
+        actually take their choices from.
+        """
+        self.assertIn("tool-workflow", MODULE.TASK_KINDS)
+        fitting = {
+            name
+            for name, profile in MODULE.METHOD_PROFILES.items()
+            if "tool-workflow" in profile["fits"]
+        }
+        self.assertTrue(fitting, "no method suits a tool or action workflow")
+        self.assertIn("final-state", fitting)
+
+    def test_no_declaration_outscores_the_honest_one(self) -> None:
+        """The property, swept over every pair the two flags can spell.
+
+        This is the repository's "deleting a credential check may never score
+        better" shape, applied to a declaration: for ONE evaluator, the true
+        words must be worth at least as much as any other words. Swept over
+        `METHOD_PROFILES` x `TASK_KINDS` so a sixteenth method or an eleventh
+        kind is judged by the property rather than by whoever remembers this
+        file.
+
+        What it can actually catch is worth saying, because the sweep looks
+        wider than it is. The honest pair sits at the pillar ceiling, so no
+        profile added later can climb PAST it; every way this goes red is the
+        honest side falling - `final-state` joining
+        `METHOD_REQUIRES_PROVEN_COMPARISON`, its execution claim turning
+        `True`, its dials being trimmed, or the kind losing its only fitting
+        method. Those are the four edits that would reopen #449, and each of
+        them is a one-line change somebody would otherwise make against a
+        table rather than against the property.
+
+        Both evidence states a tool-workflow evaluator actually reaches are
+        swept. `comparison_shape` stays None throughout, and that is the
+        point rather than a gap: a file settled as a whole-value comparison is
+        not the evaluator this property is about, and the arms that refuse the
+        new word over one are asserted separately below.
+        """
+        for read in (None, False):
+            honest = self.pillar(
+                "final-state", "tool-workflow", executes_candidate=read
+            )
+            for method in sorted(MODULE.METHOD_PROFILES):
+                for kind in MODULE.TASK_KINDS:
+                    with self.subTest(method=method, kind=kind, executes=read):
+                        self.assertLessEqual(
+                            self.pillar(method, kind, executes_candidate=read),
+                            honest,
+                            f"{method} + {kind} pays more than the truth about "
+                            "a tool-workflow evaluator, so this score is again "
+                            "buying a mislabel",
+                        )
+
+    def test_the_untrue_declaration_that_used_to_pay_no_longer_does(self) -> None:
+        """The two readings from the report, held against the honest one.
+
+        Named rather than left to the sweep because they are the measurement
+        the issue was filed on, and a sweep that silently stopped covering
+        them would still pass.
+        """
+        honest = self.pillar("final-state", "tool-workflow")
+        self.assertEqual(honest, self.pillar("exact", "structured"))
+        self.assertGreater(honest, self.pillar("composite", "structured"))
+        self.assertGreater(honest, self.pillar(None, None))
+
+    def test_declaring_nothing_is_no_longer_the_best_honest_answer(self) -> None:
+        """The inversion itself, in the direction a customer feels it.
+
+        Silence still costs its withheld check, and must: `SubScore.withheld`
+        exists so that not answering a question this run asks can never beat
+        answering it. What changed is that the question now HAS a true answer
+        for this evaluator, so the customer is no longer charged for the
+        vocabulary's gap.
+        """
+        silent = self.pillar(None, None)
+        self.assertGreater(self.pillar("final-state", "tool-workflow"), silent)
+        withheld = [
+            sub
+            for sub in MODULE.score_evaluation(
+                MODULE.EvaluationFacts(
+                    present=True,
+                    calibration_present=True,
+                    calibration_supplied=True,
+                    calibration_complete=True,
+                    calibration_passed=True,
+                    checks=self.CHECKS,
+                    probe_scores=((1.0, 0.0),),
+                    origin="brought",
+                )
+            )[0].subscores
+            if sub.withheld
+        ]
+        self.assertEqual([sub.name for sub in withheld], ["task-fit"])
+
+    def test_the_new_word_is_refused_exactly_where_the_old_ones_are(self) -> None:
+        """The mislabel does not move one step out with the vocabulary.
+
+        Nothing can verify a tool-workflow claim, which is true of `set-f1`,
+        `schema` and `embedding` too. What keeps that from being a free pass
+        is that the arms which refuse a declaration from PROOF read this
+        method exactly as they read those: a file established as a whole-value
+        comparison is not reading a trace, and a file witnessed reaching an
+        engine ends the guide whichever word was typed over it.
+        """
+        witness = "casefold, strip applied before the comparison (line 6)"
+        for shape in sorted(MODULE.COMPARISON_SHAPE_DESCRIPTIONS):
+            with self.subTest(shape=shape):
+                # The task-fit sub-score, not the pillar total. Two profiles
+                # that happen to share their dials would make a pillar
+                # comparison pass for a reason this test is not about, and
+                # would fail it the day either one moved.
+                refused = self.fit(
+                    "final-state",
+                    "tool-workflow",
+                    comparison_shape=shape,
+                    comparison_witness=witness,
+                    executes_candidate=False,
+                )
+                self.assertEqual(refused.value, MODULE.TASK_FIT_UNFIT_CREDIT)
+                self.assertEqual(
+                    refused.value,
+                    self.fit(
+                        "set-f1",
+                        "structured",
+                        comparison_shape=shape,
+                        comparison_witness=witness,
+                        executes_candidate=False,
+                    ).value,
+                )
+        engine = "cursor.execute(candidate) (line 12)"
+        refused = MODULE.score_evaluation(
+            MODULE.EvaluationFacts(
+                present=True,
+                method="final-state",
+                task_kind="tool-workflow",
+                executes_candidate=True,
+                execution_witness=engine,
+            )
+        )[0]
+        fit = next(sub for sub in refused.subscores if sub.name == "task-fit")
+        self.assertEqual(fit.value, MODULE.TASK_FIT_UNFIT_CREDIT)
+        self.assertIn(engine, fit.evidence)
+
+    def test_the_new_method_is_not_held_to_a_proof_it_can_never_have(
+        self,
+    ) -> None:
+        """Why `final-state` is not in `METHOD_REQUIRES_PROVEN_COMPARISON`.
+
+        `sql-structure` belongs there because the walk CAN establish the
+        comparison it claims, so demanding the proof costs an honest customer
+        nothing. No read in this package can establish that a file reads a
+        tool trace, so the same demand would make the true word unpayable and
+        put the inversion straight back under a new spelling. The membership
+        is asserted rather than left implicit, because it is the one line that
+        would silently undo this fix.
+        """
+        self.assertIn("final-state", MODULE.METHOD_PROFILES)
+        self.assertNotIn("final-state", MODULE.METHOD_REQUIRES_PROVEN_COMPARISON)
+        for method in sorted(MODULE.METHOD_REQUIRES_PROVEN_COMPARISON):
+            with self.subTest(method=method):
+                self.assertTrue(MODULE.METHOD_COMPARISON_SUPPORT[method])
