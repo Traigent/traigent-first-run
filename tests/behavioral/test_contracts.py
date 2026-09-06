@@ -271,13 +271,21 @@ class BehavioralContractUnitTests(unittest.TestCase):
         # across both scripts, so passing it to the score alone would obey the
         # letter of the flag and break the pairing the rule is about.
         #
-        # `--evaluator` rides with it. It is honest about a file these fixtures
-        # ship and it moves no card among them - the evaluation pillar is
+        # `--evaluator` rides with it, and its warrant is NOT the mandate set
+        # above - it is `preflight.py`'s own help for that flag, "pass this
+        # whenever an evaluator file was found, even if --evaluator-method is
+        # omitted". `SKILL.md:258-260` names the flag more narrowly, for the
+        # file whose method cannot be honestly declared, so a reader who took
+        # the derived set as this line's authority would be reading a rule that
+        # is not there. Asserted here rather than in its own test because it is
+        # the other half of the same argv, and the comment is what separates
+        # the two warrants.
+        #
+        # It moves no card among these fixtures: the evaluation pillar is
         # already at 100 once the method and kind are declared, so there is no
-        # withheld credit for the static shape read to release. It is passed
-        # because the guide says to pass it wherever an evaluator file was
-        # found, and a fixture whose card would move is what it would take to
-        # pin it from the outside; there is none here and one is not invented.
+        # withheld credit for the static shape read to release. A fixture whose
+        # card would move is what it would take to pin it from the outside;
+        # there is none here and one is not invented.
         preflight_block = self.uncommented(
             source,
             "argv = [sys.executable, str(harness.PREFLIGHT)",
@@ -285,6 +293,45 @@ class BehavioralContractUnitTests(unittest.TestCase):
         )
         self.assertIn('"--evaluator-method"', preflight_block)
         self.assertIn('"--evaluator"', preflight_block)
+
+    def test_the_scenarios_scored_without_the_mandated_argv_are_the_declared_ones(
+        self,
+    ) -> None:
+        """The residual's extent, pinned so it cannot grow in silence.
+
+        `harness.score_command` scores the container scenarios with none of the
+        flags the guide mandates, and two of the four are in violation rather
+        than permitted - which `score_command`'s own docstring records, with the
+        deltas, because fixing them re-decides what those scenarios demonstrate
+        and that is the owner's call.
+
+        What must not happen meanwhile is a NEW scenario joining that path
+        without anybody noticing, which is exactly how the four became four. So
+        the uncovered set is declared here: add a scenario and this reds until
+        the scenario is either scored the way the guide says or written down as
+        another exception.
+        """
+        self.assertEqual(
+            {path.name for path in SCENARIOS.iterdir() if path.is_dir()},
+            {
+                "zero-anchor",
+                "stub-agent-no-anchor",
+                "partial-missing-dataset",
+                "weak-invalid",
+            },
+        )
+        residual = harness.score_command.__doc__ or ""
+        self.assertIn("RESIDUAL", residual)
+        for scenario in ("zero-anchor", "stub-agent-no-anchor"):
+            with self.subTest(permitted=scenario):
+                self.assertIn(scenario, residual)
+        for scenario in ("partial-missing-dataset", "weak-invalid"):
+            with self.subTest(in_violation=scenario):
+                self.assertIn(scenario, residual)
+        # And the fact that makes it a decision rather than a tidy-up: the
+        # asserted band of the invalid-evaluator scenario is held by the
+        # withholding.
+        self.assertIn("NOT READY to PARTIAL", residual)
 
     def test_the_clean_cases_band_names_the_gate_that_holds_it(self) -> None:
         """`clean-proceed` reads WORKABLE at 91, and 91 is an EXCELLENT number.

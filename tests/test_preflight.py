@@ -4494,6 +4494,66 @@ def score(*, output, expected, input_data, metadata):
     canonical = matched["canonical"].to_list()
     return float(bool(canonical) and canonical[0] == str(expected).strip())
 '''
+LOCAL_HELPER_NAMED_SQL = '''"""Normalise both answers through a local helper, and compare.
+
+Imports nothing at all - the purest non-executing comparator this guide serves.
+The helper is called `sql` because the task is text-to-SQL and that is what an
+author names it.
+"""
+
+
+def sql(text):
+    return " ".join(str(text).split()).casefold().rstrip(";")
+
+
+def score(*, output, expected, input_data, metadata):
+    del input_data, metadata
+    return float(sql(output) == sql(expected))
+'''
+LOCAL_HELPER_NAMED_READ_DATABASE = '''"""A project's own lookup table, loaded by a function of its own name."""
+
+import json
+from pathlib import Path
+
+
+def read_database(name):
+    return json.loads(Path(__file__).with_name(name).read_text())
+
+
+ALIASES = read_database("aliases.json")
+
+
+def score(*, output, expected, input_data, metadata):
+    del input_data, metadata
+    return float(ALIASES.get(str(output), str(output)) == str(expected))
+'''
+PROJECT_HELPER_IMPORTED_AS_SQL = '''"""The same normaliser, kept in the project's own module."""
+
+from project.text import sql
+
+
+def score(*, output, expected, input_data, metadata):
+    del input_data, metadata
+    return float(sql(output) == sql(expected))
+'''
+RENDER_THROUGH_A_PROJECT_HELPER = '''"""Canonicalise through the project's own parser, then compare the renderings.
+
+Nothing here imports a renderer by name - the parsing lives one module away, in
+the customer's own package, which is where a project that grew past one file
+puts it.
+"""
+
+from project.canon import parse_statement
+
+
+def score(*, output, expected, input_data, metadata):
+    del input_data
+    dialect = (metadata or {}).get("dialect", "ansi")
+    return float(
+        parse_statement(str(output)).sql(dialect)
+        == parse_statement(str(expected)).sql(dialect)
+    )
+'''
 NON_EXECUTING_EVALUATORS = {
     "callable object": CALLABLE_OBJECT_COMPARISON,
     "match statement dispatch": MATCH_DISPATCH_COMPARISON,
@@ -4510,6 +4570,10 @@ NON_EXECUTING_EVALUATORS = {
     "sqlglot render comparison": SQLGLOT_RENDER_COMPARISON,
     "sqlglot render through a local": SQLGLOT_RENDER_VIA_LOCAL,
     "data-frame reference table": POLARS_FRAME_COMPARISON,
+    "local helper named sql": LOCAL_HELPER_NAMED_SQL,
+    "local helper named read_database": LOCAL_HELPER_NAMED_READ_DATABASE,
+    "project helper imported as sql": PROJECT_HELPER_IMPORTED_AS_SQL,
+    "render through a project helper": RENDER_THROUGH_A_PROJECT_HELPER,
 }
 
 SQLITE_ROUNDTRIP = '''"""Run both queries against a fixture database and compare rows."""
@@ -4698,7 +4762,6 @@ EXECUTING_EVALUATORS = {
     "spark session": PYSPARK_SESSION_SQL,
     "ibis backend": IBIS_BACKEND_SQL,
     "data-frame sql surface": POLARS_FRAME_SQL,
-    "handed-in connection asked with .sql()": HANDED_IN_CONNECTION_SQL,
     "remote read with no driver import": POLARS_REMOTE_READ,
     "statement under a keyword": POLARS_KEYWORD_SQL,
 }
@@ -4832,31 +4895,38 @@ class TheEvaluatorCallPathIsReadOutOfItsOwnTreeTests(unittest.TestCase):
             ("calls .sql() (line 2)",),
         )
 
-    def test_a_file_that_renders_sql_is_not_read_as_one_that_runs_it(
+    def test_sql_is_read_as_an_engine_only_in_a_file_that_shows_one(
         self,
     ) -> None:
         """The false-refusal direction on the one name no standard pins.
 
-        `Expression.sql(dialect=None, **opts)` takes the DIALECT first and
-        positionally, so `parsed.sql(dialect)` - a canonicalising comparator
-        reading its dialect off the row instead of typing it - is
-        indistinguishable from `connection.sql(query)` by the argument alone.
-        An earlier revision of this rule tried exactly that and hard-refused
-        the file: the calibration gate exits 2 and tells a customer whose
-        program opens no connection to go and design containment.
+        `.sql()` is an ordinary method name with two readings in exactly this
+        domain, and the call site cannot tell them apart: `Expression.sql()`
+        RENDERS a parse tree back to a string and connects to nothing, and its
+        first positional parameter is the DIALECT, so `parsed.sql(dialect)` and
+        `connection.sql(query)` are the same three tokens. Naming the receiver
+        decides nothing either - `parsed` and `connection` are both local names,
+        and following the assignment moves the question one line, to a parser
+        that lives in the customer's own package.
 
-        So the file decides first. Both spellings stay clean here, including
-        the one that binds the tree to a local name and would defeat any rule
-        reading the receiver chain.
+        So the file decides. Where nothing in the file shows an engine, `.sql()`
+        claims nothing, and a comparator that canonicalises through a project
+        helper - the shape this guide asks a text-to-SQL customer for - is left
+        alone. The cost of getting this wrong is not a smaller number: the
+        calibration gate stops the run and sends the customer to a manual
+        containment review for a program that opens no connection.
         """
         for name, source in (
-            ("inline", SQLGLOT_RENDER_COMPARISON),
-            ("through a local", SQLGLOT_RENDER_VIA_LOCAL),
+            ("inline render", SQLGLOT_RENDER_COMPARISON),
+            ("render through a local", SQLGLOT_RENDER_VIA_LOCAL),
+            ("parser in the project's own package", RENDER_THROUGH_A_PROJECT_HELPER),
         ):
             with self.subTest(shape=name):
                 self.assertEqual(self.witnesses(source), ())
-        # Every spelling of the import, because the suppression is keyed on the
-        # module and a customer writes it several ways.
+        # No import at all, so nothing in the file reads `.sql()` as an engine.
+        self.assertEqual(self.witnesses("parsed.sql(dialect)\n"), ())
+        # And a renderer named in the file keeps it clean even where an engine
+        # is also present, because the reading is ambiguous there too.
         for line in (
             "import sqlglot",
             "import sqlglot.expressions",
@@ -4867,39 +4937,101 @@ class TheEvaluatorCallPathIsReadOutOfItsOwnTreeTests(unittest.TestCase):
             "import sqlparse",
         ):
             with self.subTest(imported=line):
-                self.assertEqual(self.witnesses(f"{line}\nparsed.sql(dialect)\n"), ())
+                self.assertEqual(
+                    self.witnesses(f"import polars as pl\n{line}\nparsed.sql(d)\n"), ()
+                )
 
-    def test_sql_is_a_witness_when_a_file_that_renders_nothing_submits_one(
+    def test_sql_is_a_witness_where_the_file_shows_an_engine_and_hands_one_over(
         self,
     ) -> None:
         """And the true-positive direction, which is what the rule is for.
 
-        With no renderer in the file there is no second reading of `.sql()` to
-        respect, so what remains is whether anything was handed over. The
-        keyword rows are not decoration: `read_database` and `.sql()` both
+        The keyword rows are not decoration: `read_database` and `.sql()` both
         document a `query=` spelling, and a rule reading only `call.args` let
         every one of them through.
         """
         for source in (
-            "connection.sql(output)\n",
-            "session.sql(f'select * from ({output})')\n",
-            "connection.sql(*queries)\n",
-            "frame.sql(query=output)\n",
-            "session.sql(sqlQuery=output)\n",
-            "pl.read_database_uri(output, uri)\n",
-            "pl.read_database(query=output, connection=conn)\n",
-            "read_database_uri(output, uri)\n",
+            "import duckdb\nconnection.sql(output)\n",
+            "import pyspark.sql\nsession.sql(f'select * from ({output})')\n",
+            "import ibis\nconnection.sql(*queries)\n",
+            "import polars as pl\nframe.sql(query=output)\n",
+            "import pyspark.sql\nsession.sql(sqlQuery=output)\n",
+            "import polars as pl\npl.read_database_uri(output, uri)\n",
+            "import polars as pl\npl.read_database(query=output, connection=conn)\n",
         ):
             with self.subTest(source=source):
                 self.assertTrue(self.witnesses(source), source)
-        # Handed nothing, so it submitted nothing - and a renderer beside
-        # `read_database` changes nothing about what `read_database` does,
-        # because that name has no rendering reading to be confused with.
-        self.assertEqual(self.witnesses("parsed.sql()\n"), ())
-        self.assertEqual(self.witnesses("parsed.sql(dialect='duckdb')\n"), ())
+        # Handed nothing, so it submitted nothing, even in an engine's own
+        # file - the import is a witness on its own account and the call adds
+        # none, which is what these assert.
+        for tail in ("parsed.sql()", "parsed.sql(dialect='duckdb')"):
+            with self.subTest(call=tail):
+                self.assertEqual(self.witnesses(f"import polars as pl\n{tail}\n"), ())
+                self.assertEqual(
+                    self.witnesses(f"import duckdb\n{tail}\n"),
+                    ("imports duckdb (line 1)",),
+                )
+
+    def test_the_one_shape_this_rule_gives_up_is_the_one_it_says_it_does(
+        self,
+    ) -> None:
+        """The residual, pinned so it stays the size the comment claims.
+
+        A file that imports nothing at all and asks a connection handed in with
+        the row is not read as reaching an engine through `.sql()`. That is a
+        CLAIM given up rather than a false one made, which is the direction this
+        walk is allowed to fail in - and the `.execute()` spelling of the very
+        same arrangement is still caught, which is what bounds it.
+        """
+        self.assertEqual(self.witnesses(HANDED_IN_CONNECTION_SQL), ())
+        self.assertTrue(self.witnesses(HANDED_IN_CURSOR))
+        # One import of the library whose connection it is puts it back.
+        self.assertTrue(
+            self.witnesses("import duckdb\n" + HANDED_IN_CONNECTION_SQL),
+        )
+
+    def test_a_bare_call_is_read_from_what_the_file_bound_to_that_name(
+        self,
+    ) -> None:
+        """The class an English word in a call-name table lets through.
+
+        `sql`, `read_database` and `read_database_uri` are ordinary words, and
+        an earlier revision matched them on a bare call as well as on an
+        attribute so that `from polars import read_database_uri` was still seen
+        after the module half declined to list `polars`. What it also saw was
+        `def sql(text): ...` - a local normaliser in an evaluator that imports
+        nothing at all, reported as reaching a SQL engine.
+
+        That is the most expensive false positive this walk can produce. The
+        calibration gate refuses on a witness, the card says the evaluator runs
+        the answer, and the scorer it says it about runs nothing whatever.
+
+        A bare name is whatever this file bound to it, so the binding decides,
+        and the binding is in the tree. An `as` alias is followed, and the
+        witness names the library's function rather than the local spelling.
+        """
+        for name, source in (
+            ("local def", LOCAL_HELPER_NAMED_SQL),
+            ("local def, database-shaped name", LOCAL_HELPER_NAMED_READ_DATABASE),
+            ("the project's own module", PROJECT_HELPER_IMPORTED_AS_SQL),
+        ):
+            with self.subTest(bound_by=name):
+                self.assertEqual(self.witnesses(source), ())
+        # A relative import is the customer's own package, exactly as it is for
+        # `from . import duckdb` in the module walk above.
+        self.assertEqual(self.witnesses("from . import sql\nsql(output)\n"), ())
+        # And the row the bare-name arm exists for, both spellings.
         self.assertEqual(
-            self.witnesses("import sqlglot\npl.read_database_uri(output, uri)\n"),
-            ("calls .read_database_uri() (line 2)",),
+            self.witnesses(
+                "from polars import read_database_uri\nread_database_uri(output, uri)\n"
+            ),
+            ("calls read_database_uri() (line 2)",),
+        )
+        self.assertEqual(
+            self.witnesses(
+                "from polars import read_database_uri as fetch\nfetch(output, uri)\n"
+            ),
+            ("calls read_database_uri() (line 2)",),
         )
 
     def test_the_process_family_is_matched_and_ordinary_os_members_are_not(

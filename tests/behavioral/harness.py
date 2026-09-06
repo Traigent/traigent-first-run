@@ -895,9 +895,14 @@ def score_command(
     declares `evaluator-absent` in its opening card, and declaring the method
     moves its asserted `opening_score` from 0 to 8; `weak-invalid` ships one
     the scenario is named for calling the wrong ruler, and declaring `exact`
-    over it moves its asserted band from NOT READY to PARTIAL. Both would
-    change what those scenarios demonstrate, which is the owner's call and not
-    this helper's (traigent-first-run#407).
+    over it moves its asserted band from NOT READY to PARTIAL - 20 to 32 here,
+    and measured at 39 on the seven-branch merge, where the other pillars move
+    with it. Both would change what those scenarios demonstrate, which is the
+    owner's call and not this helper's (traigent-first-run#407).
+
+    So the asserted `opening_band` of the invalid-evaluator scenario is held by
+    the withholding rather than by the invalid evaluator. That is the sentence
+    to read before deciding this residual is tidy-up.
     """
     argv = [sys.executable, str(READINESS), "--preflight", "-"]
     if calibration is not None:
