@@ -8607,9 +8607,10 @@ class TheCountFreePayloadHasOneReadingTests(unittest.TestCase):
     `declares_no_provenance`, `COUNTERFACTUAL_SOURCE`, the `if not counted:`
     ladder and the `else` branch of `provenance_assumption` existed for a
     preflight JSON written before the row counts did. `emit_dataset_provenance`
-    emits all three counts together for every dataset with a row in it, and
-    this repository has published nothing that could have been written before
-    that - so the machinery guarded a payload that has never existed.
+    emits all three counts together for every dataset with a row in it, so a
+    payload arriving without them is truncated rather than merely old - which
+    the adapter refuses at the boundary. The machinery scored around an input
+    that should never be scored at all.
     """
 
     def test_the_removed_machinery_is_gone_rather_than_relocated(self) -> None:

@@ -19,6 +19,7 @@ import re
 import stat
 import sys
 import traceback
+import urllib.parse
 from collections import Counter
 from dataclasses import asdict, dataclass
 from fractions import Fraction
@@ -26,6 +27,18 @@ from importlib.metadata import PackageNotFoundError, files, version
 from pathlib import Path
 from typing import Any, Iterable, Sequence
 
+# What each status is for, stated once because the file answers it in eighty
+# places: preflight MEASURES AND PUBLISHES, `readiness.py` PRICES, and
+# preflight's exit code - which only FAIL moves - gates just what makes the
+# measurement impossible. An unreadable file, a field that is not there. A
+# defect in the customer's rows that was measured exactly is published here and
+# priced there; refusing it twice, once by exit code and once by cap, gives the
+# two surfaces the standing to contradict each other over one file, which is
+# what #410 was.
+#
+# Two checks still price provenance at the gate - `dataset-outputs` and
+# `dataset-difficulty`, both `FAIL if synthetic else WARN`. They are declared
+# exceptions, not the rule, and they are tracked in #438; do not copy them.
 PASS, FAIL, WARN, SKIP = "PASS", "FAIL", "WARN", "SKIP"
 SUPPORTED_PYTHON_MIN = (3, 11)
 SUPPORTED_PYTHON_MAX = (3, 14)
@@ -339,7 +352,14 @@ DOMINANCE_EXCESS_THRESHOLD = Fraction(1, 3)
 # caller still reports SKIP.
 DOMINANT_OUTCOME_SHARE = Fraction(9, 10)
 MAX_REPORTED_DATASET_ERRORS = 5
-MAX_REPORTED_DATASET_IDS = 10
+# How many members of one dataset finding are printed before the sentence
+# truncates. It was `MAX_REPORTED_DATASET_IDS` when the only list it bounded
+# was colliding ids; it now bounds four - colliding ids, the source lines of
+# rows with no stable id, the groups repeating an input, and the near-duplicate
+# pairs - and none of the last three is an id. Every list it bounds leads with
+# its own total and says "(first N shown)" when it truncates, so the ceiling is
+# a display limit and never a limit on what was measured.
+MAX_REPORTED_DATASET_FINDINGS = 10
 # Enough witnesses to show the reader the shape of the call path without
 # turning one check line into a listing. The first is the one to look at; the
 # verdict does not depend on how many there are.
@@ -383,7 +403,85 @@ VENDOR_KEYS = {
     "Cohere": ("COHERE_API_KEY", "CO_API_KEY"),
     "HuggingFace": ("HF_TOKEN", "HUGGINGFACE_API_KEY"),
 }
-BEDROCK_KEYS = ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_REGION")
+AWS_REGION_NAME = "AWS_REGION"
+BEDROCK_KEYS = ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", AWS_REGION_NAME)
+
+# Both names, because the SDK resolves its backend origin from either and
+# prefers them over the stored/default route. Named once and read three times -
+# by `traigent-key`, which says which host the key it just judged will be
+# presented to, by `backend-url`, which decides whether that destination needs
+# an approval before a paid run is recorded there, and by the shadow check,
+# which asks whether the shell and .env named different ones.
+BACKEND_URL_NAMES = ("TRAIGENT_BACKEND_URL", "TRAIGENT_API_URL")
+
+# The shadow check reads two kinds of name and must not treat them alike.
+#
+# A SECRET is reported by fingerprint and never printed. A ROUTE value decides
+# where a signed request goes, and printing it IS the finding: "my shell says
+# us-east-1 and my .env says eu-west-1" is the reader's whole question, and a
+# pair of hashes refuses to answer it while buying no protection - there are
+# about thirty public AWS regions, so the digest is reversible by anyone who
+# cares. The same argument puts the backend URLs in the route set: a `.env`
+# asking for dev while the shell exports prod is the "dev key against prod
+# host" case #426 was filed about, and a check that answers it with PASS is the
+# check failing at its own job.
+#
+# Route values are still passed through `route_display` before printing, which
+# drops any userinfo, path or query a URL might be carrying.
+SECRET_ENV_NAMES: tuple[str, ...] = (
+    "TRAIGENT_API_KEY",
+    *sorted({name for names in VENDOR_KEYS.values() for name in names}),
+    *(name for name in BEDROCK_KEYS if name != AWS_REGION_NAME),
+)
+ROUTE_ENV_NAMES: tuple[str, ...] = (AWS_REGION_NAME, *BACKEND_URL_NAMES)
+SHADOW_SCANNED_ENV_NAMES: tuple[str, ...] = (*SECRET_ENV_NAMES, *ROUTE_ENV_NAMES)
+
+# The one-liner a reader runs to get a fingerprint of their own to compare
+# against. Printed with the finding, because a fingerprint whose counterpart
+# cannot be computed is only comparable between the two halves of one line -
+# and that gap is exactly what would later tempt someone to "improve"
+# `value_fingerprint` into a readable prefix of the key.
+FINGERPRINT_RECIPE = 'printf %s "$NAME" | sha256sum | cut -c1-8'
+
+
+def value_fingerprint(value: str) -> str:
+    """Name a secret without printing it.
+
+    Eight hex characters of sha256 over the stripped value. One-way by
+    construction: it must never become a prefix, suffix or any other substring
+    of the value, because a preflight report is pasted into chat logs and issue
+    threads and this is the only thing standing between a live key and one of
+    them. `tests/test_preflight.py` asserts that property directly rather than
+    asserting that one fixture string is absent, since a truncation would pass
+    the second test and fail the first.
+
+    What it buys the reader is a comparison: the two halves of one finding, and
+    a value of their own computed with `FINGERPRINT_RECIPE`, which is printed
+    beside the finding so the comparison is actually available to them.
+    """
+    return hashlib.sha256(value.strip().encode("utf-8")).hexdigest()[:8]
+
+
+def route_display(value: str) -> str:
+    """A route value in the clear, minus anything credential-shaped.
+
+    Route values are printed because naming them is the finding. A URL,
+    however, can carry a token in its userinfo or its query string, so only the
+    part that answers "which host am I reaching" survives: scheme, host, port.
+    A value that is not a URL - a region name - is printed as it stands.
+
+    The sibling `backend-url` check names the VARIABLE and never its value;
+    this is the one place a route value is printed, and it is printed reduced.
+    """
+    stripped = value.strip()
+    parsed = urllib.parse.urlsplit(stripped)
+    if not parsed.scheme or not parsed.netloc:
+        return stripped
+    try:
+        host, port = parsed.hostname, parsed.port
+    except ValueError:  # a malformed port; the host is not trustworthy either
+        return f"{parsed.scheme}://(unparseable host)"
+    return f"{parsed.scheme}://{host or ''}" + (f":{port}" if port else "")
 
 
 @dataclass(frozen=True)
@@ -782,7 +880,119 @@ def check_existing_traigent_use(root: Path) -> None:
     )
 
 
-def check_keys(env: dict[str, str | None]) -> None:
+def check_shadowed_credentials(
+    file_values: dict[str, str | None],
+    process_values: dict[str, str | None],
+) -> None:
+    """Name a credential the shell and .env set to different values.
+
+    `load_dotenv` never overrides an existing process variable, so an inherited
+    `TRAIGENT_API_KEY` - from a parent shell, an agent harness, or a profile
+    exported months ago - wins silently over the one the customer just pasted
+    into `.env`. The observed failure is a 401 on the first paid probe with a
+    correct key sitting in the file, and nothing in the report pointed at the
+    cause: both values are shaped `uk_`, so the shape check cannot separate
+    them, and the merged environment cannot say where either came from.
+
+    This is the general case of the comparison `check_cost_settings` already
+    does for `TRAIGENT_COST_APPROVED`, run over every route credential instead
+    of one flag. `read_env` computes the two source views precisely so a check
+    can ask this question.
+
+    WARN, not FAIL. A disagreement is not proof the shell's value is the dead
+    one - it is a normal state for anyone who works on two projects - and
+    preflight's exit code gates only what makes a measurement impossible. The
+    harm here is invisibility, and one loud line removes it.
+
+    One record either way, carrying the names and the two sides as metrics, so
+    a reader is never asked to infer "then nothing was shadowed" from the
+    absence of a line. A secret is reported by fingerprint and never printed; a
+    route value is printed, reduced by `route_display`, because naming it is
+    what the finding is for.
+    """
+    shadowed = [
+        name
+        for name in SHADOW_SCANNED_ENV_NAMES
+        if key_present(file_values.get(name))
+        and key_present(process_values.get(name))
+        and file_values[name].strip() != process_values[name].strip()
+    ]
+    secrets = [name for name in shadowed if name in SECRET_ENV_NAMES]
+    fingerprints = {
+        name: {
+            "process": value_fingerprint(process_values[name]),
+            "file": value_fingerprint(file_values[name]),
+        }
+        for name in secrets
+    }
+    routes = {
+        name: {
+            "process": route_display(process_values[name]),
+            "file": route_display(file_values[name]),
+        }
+        for name in shadowed
+        if name not in SECRET_ENV_NAMES
+    }
+    metrics = {
+        "shadowed_variables": shadowed,
+        "fingerprints": fingerprints,
+        "route_values": routes,
+    }
+    if not shadowed:
+        emit(
+            "env-shadowed-key",
+            PASS,
+            "no credential or route name is set to different values in the "
+            "shell and .env",
+            metrics,
+        )
+        return
+    described = "; ".join(
+        (
+            f"{name} is sha256:{fingerprints[name]['process']} in the process "
+            f"and sha256:{fingerprints[name]['file']} in .env"
+            if name in fingerprints
+            else f"{name} is {routes[name]['process']} in the process and "
+            f"{routes[name]['file']} in .env"
+        )
+        for name in shadowed
+    )
+    # Every shadowed name in the unset, not just the first. A reader who runs
+    # the printed command verbatim - which is what these lines are for - and
+    # gets back only the first name clears one 401 and meets the next as an
+    # unexplained provider error, with the report already claiming the problem
+    # was solved.
+    unset = " ".join(f"-u {name}" for name in shadowed)
+    recipe = (
+        f". Compute a fingerprint of your own to compare with: `{FINGERPRINT_RECIPE}`"
+        if fingerprints
+        else ""
+    )
+    emit(
+        "env-shadowed-key",
+        WARN,
+        f"{len(shadowed)} name(s) disagree between the shell and .env, and the "
+        f"shell wins: {described}. python-dotenv does not override a value the "
+        "process already carries, so the .env value is inert - a 401 here is "
+        f"the shell's key, not the one you pasted. To use the file's values, "
+        f"launch the command with `env {unset} <command>`, or pass "
+        "`override=True` to `load_dotenv` in your own loader (not in this "
+        "guide's launcher, which pins it off on purpose); to use the shell's, "
+        "delete the .env lines so the two cannot drift apart again" + recipe,
+        metrics,
+    )
+
+
+def check_keys(
+    env: dict[str, str | None],
+    file_values: dict[str, str | None],
+    process_values: dict[str, str | None],
+) -> None:
+    # The two source views are required rather than defaulted, on the same
+    # rule `_row_count` states in readiness.py: a default here would let a
+    # caller that forgot to thread them through report "nothing is shadowed"
+    # instead of failing, and silence would again be the best-scoring input.
+    check_shadowed_credentials(file_values, process_values)
     available = [
         vendor
         for vendor, names in VENDOR_KEYS.items()
@@ -829,14 +1039,46 @@ def check_keys(env: dict[str, str | None]) -> None:
             PASS,
             "not configured yet; required only for connected execution",
         )
-    elif not traigent_key.strip().startswith("uk_"):
-        emit(
-            "traigent-key",
-            WARN,
-            "portal keys normally begin with uk_; verify the local paste",
-        )
     else:
-        emit("traigent-key", PASS, "portal key shape looks plausible")
+        # Which key, and against which host. The shape test alone cannot tell
+        # two `uk_` keys apart, so a reader holding a portal page and a shell
+        # they did not open had no way to say whether the value about to be
+        # sent is the one they pasted; the fingerprint gives them the
+        # comparison, and the origin says where it is going, because a valid
+        # key against the wrong backend fails in the same 401 as a dead one.
+        # `backend-url` still owns the APPROVAL question about an override -
+        # this clause only names the destination beside the credential.
+        #
+        # The default host is named rather than described, because "the SDK's
+        # default backend origin" does not let a reader see they are pointed at
+        # prod, which is half of what the ask was for. It is not free-floating:
+        # `tests/test_offline_socket_contract.py` asserts that the SDK's own
+        # default route dials `portal.traigent.ai`, so that test is what holds
+        # this sentence and the SDK equal, and it is the thing to change if the
+        # default ever moves. An override is reduced by `route_display` first:
+        # this is the only place preflight prints an environment value, and a
+        # backend URL can carry a token in its userinfo or query.
+        override = next(
+            (env[name] for name in BACKEND_URL_NAMES if key_present(env.get(name))),
+            None,
+        )
+        destination = (
+            f"{route_display(override)} (overridden)"
+            if override is not None
+            else "portal.traigent.ai, the SDK's default backend origin"
+        )
+        identity = (
+            f"; sha256:{value_fingerprint(traigent_key)}, to be sent to {destination}"
+        )
+        if not traigent_key.strip().startswith("uk_"):
+            emit(
+                "traigent-key",
+                WARN,
+                "portal keys normally begin with uk_; verify the local paste"
+                + identity,
+            )
+        else:
+            emit("traigent-key", PASS, "portal key shape looks plausible" + identity)
 
     openrouter_key = env.get("OPENROUTER_API_KEY")
     if key_present(openrouter_key) and not openrouter_key.strip().startswith("sk-or-"):
@@ -940,12 +1182,10 @@ def check_cost_settings(
     # prefers them over the stored/default route. Naming one left the other as
     # an unreported way to point a paid, portal-tracked run somewhere the user
     # did not approve - and a connected run that reaches an unexpected backend
-    # still looks connected.
-    overridden = [
-        name
-        for name in ("TRAIGENT_BACKEND_URL", "TRAIGENT_API_URL")
-        if key_present(env.get(name))
-    ]
+    # still looks connected. `BACKEND_URL_NAMES` rather than the pair spelled
+    # out again: `traigent-key` reads the same pair to name the destination its
+    # key will be sent to, and two spellings are two things that can drift.
+    overridden = [name for name in BACKEND_URL_NAMES if key_present(env.get(name))]
     if overridden:
         names = " and ".join(overridden)
         # The baseline forces the SDK backend-offline and drops the Traigent key
@@ -2458,17 +2698,17 @@ def emit_dataset_id_findings(
         # and no total, so a file with thirty collisions and a file with ten
         # printed the same line and a reader had no way to tell the list was
         # partial.
-        shown_ids = duplicate_ids[:MAX_REPORTED_DATASET_IDS]
+        shown_ids = duplicate_ids[:MAX_REPORTED_DATASET_FINDINGS]
         id_suffix = (
             ""
             if len(duplicate_ids) <= len(shown_ids)
-            else f" (first {MAX_REPORTED_DATASET_IDS} shown)"
+            else f" (first {MAX_REPORTED_DATASET_FINDINGS} shown)"
         )
         findings.append(f"{len(duplicate_ids)} duplicate ids: {shown_ids}{id_suffix}")
         status = FAIL
     if missing_records:
         missing_lines = [line_number for line_number, _row in missing_records]
-        shown_lines = missing_lines[:MAX_REPORTED_DATASET_IDS]
+        shown_lines = missing_lines[:MAX_REPORTED_DATASET_FINDINGS]
         location = (
             f"source line {shown_lines[0]}"
             if len(missing_lines) == 1
@@ -2477,7 +2717,7 @@ def emit_dataset_id_findings(
         suffix = (
             ""
             if len(missing_lines) <= len(shown_lines)
-            else f" (first {MAX_REPORTED_DATASET_IDS} shown)"
+            else f" (first {MAX_REPORTED_DATASET_FINDINGS} shown)"
         )
         noun = "row" if len(missing_lines) == 1 else "rows"
         verb = "has" if len(missing_lines) == 1 else "have"
@@ -3550,17 +3790,40 @@ def check_dataset(
         # The count leads and the truncation says so, on the sibling sentence's
         # own shape (`emit_dataset_id_findings`). Ten groups were printed with
         # no ellipsis and no total, so thirty repeats and ten repeats produced
-        # the same line. `MAX_REPORTED_DATASET_IDS` rather than a second literal
-        # ten, because one number spelled twice is one number that can drift.
-        shown_duplicates = exact_duplicates[:MAX_REPORTED_DATASET_IDS]
+        # the same line. `MAX_REPORTED_DATASET_FINDINGS` rather than a second
+        # literal ten, because one number spelled twice is one that can drift.
+        shown_duplicates = exact_duplicates[:MAX_REPORTED_DATASET_FINDINGS]
         duplicate_suffix = (
             ""
             if len(exact_duplicates) <= len(shown_duplicates)
-            else f" (first {MAX_REPORTED_DATASET_IDS} shown)"
+            else f" (first {MAX_REPORTED_DATASET_FINDINGS} shown)"
         )
+        # WARN whoever wrote the rows, on the rule stated beside `PASS/FAIL/
+        # WARN/SKIP` at the top of this file. Repeated inputs make nothing
+        # unmeasurable: they are measured exactly, published in
+        # `duplicate_metrics`, and priced on the card, which caps the run and
+        # offers "continue on the examples that differ".
+        #
+        # `FAIL if synthetic` made the exit code turn on PROVENANCE rather than
+        # on repetition, so the same fourteen rows exited 1 as `synthetic` and
+        # 0 as `production-log` while the card - which reads only whether a
+        # detector fired, not how loudly - printed the identical page for both.
+        # The customer was refused by one surface and told to continue by the
+        # other, over the same file. Provenance is already priced once, by
+        # `dataset-fully-synthetic` at a 65 cap; charging it again inside the
+        # repetition finding is the double-count `DIVERSITY_CHECKS` exists to
+        # prevent. The same repeats are the same defect whoever wrote the rows.
+        # The construct survives in `dataset-outputs` and `dataset-difficulty`
+        # below, tracked in #438.
+        #
+        # This check grades the CUSTOMER'S file. Whether this guide's own
+        # generated walkthrough corpus needs a gate before it ships is a
+        # question about this repository's material, under its own check name -
+        # #439 is where that decision is, and nothing here performs that job
+        # today.
         emit(
             "dataset-duplicates",
-            FAIL if synthetic else WARN,
+            WARN,
             f"{len(exact_duplicates)} exact/normalized duplicate inputs at rows "
             f"{shown_duplicates}{duplicate_suffix}",
             duplicate_metrics,
@@ -3587,6 +3850,23 @@ def check_dataset(
     # row's runs at a time (`near_duplicate_index_size`), so the refusal costs the
     # tokenization and no allocation the check could have died on.
     index_runs = near_duplicate_index_size(row["input"] for row in rows)
+
+    # The same facts as data, on every arm of this check. The sentence below
+    # carries the pair count and stops at ten pairs, so a scorer that wanted to
+    # know how many this file holds would have to parse prose that is
+    # deliberately truncated - the defect `duplicate_metrics` above was written
+    # to remove, and the gap `readiness.py` records itself as stuck with ("the
+    # near finding carries no count of its own").
+    #
+    # A SKIP publishes `None` rather than 0, explicitly: the scan did not run,
+    # which is not the same statement as "it ran and found none", and a 0 here
+    # would let a reader score a dataset that was never compared as clean.
+    def near_metrics(pairs: int | None, complete: bool) -> dict[str, Any]:
+        return {
+            "near_duplicate_pairs": pairs,
+            "near_duplicate_scan_complete": complete,
+        }
+
     if index_runs > MAX_NEAR_DUPLICATE_SHINGLES:
         # The second way this check can decline to run, and it must not be
         # mistakable for the first. The work SKIP below means "too many
@@ -3607,6 +3887,7 @@ def check_dataset(
             "not run. This is a size limit and not a repetition one, so "
             "de-duplicating will not clear it - scan a sample of the rows, or "
             "split the dataset, if you need this answered",
+            near_metrics(None, False),
         )
     else:
         near_pairs, near_complete = near_duplicate_pairs(
@@ -3621,19 +3902,41 @@ def check_dataset(
                 if near_complete
                 else "; the scan stopped early, so there may be more"
             )
+            # The last of the four repetition lists to lead with its total and
+            # own up to its truncation. It printed a bare `[:10]` - a literal
+            # ten, no count, no ellipsis - so a file with forty pairs and a file
+            # with ten printed the same sentence, which is the harm the sibling
+            # lists were fixed for. The two truncations are kept apart on
+            # purpose: "(first N shown)" is this sentence declining to print the
+            # rest of what it found, while "the scan stopped early" is the scan
+            # declining to look. A reader who conflates them de-duplicates a
+            # file that was never fully compared.
+            shown_pairs = near_pairs[:MAX_REPORTED_DATASET_FINDINGS]
+            pair_suffix = (
+                ""
+                if len(near_pairs) <= len(shown_pairs)
+                else f" (first {MAX_REPORTED_DATASET_FINDINGS} shown)"
+            )
             emit(
                 "dataset-near-duplicates",
-                FAIL if synthetic else WARN,
-                f"input pairs at least {threshold_percent} similar (shared runs "
-                f"of {NEAR_DUPLICATE_SHINGLE} consecutive words over total runs, "
-                "so the same words in a different order are not a repeat), "
-                f"identical rows included: {near_pairs[:10]}{more}",
+                # WARN whoever wrote the rows, for the reason stated in full
+                # beside `dataset-duplicates` above: preflight measures and
+                # publishes, readiness prices, and provenance is priced once by
+                # `dataset-fully-synthetic` rather than again here.
+                WARN,
+                f"{len(near_pairs)} input pairs at least {threshold_percent} "
+                f"similar (shared runs of {NEAR_DUPLICATE_SHINGLE} consecutive "
+                "words over total runs, so the same words in a different order "
+                "are not a repeat), identical rows included: "
+                f"{shown_pairs}{pair_suffix}{more}",
+                near_metrics(len(near_pairs), near_complete),
             )
         elif near_complete:
             emit(
                 "dataset-near-duplicates",
                 PASS,
                 f"no input pair reaches {threshold_percent} similarity",
+                near_metrics(0, True),
             )
         else:
             # Found nothing AND did not finish, which is not the same statement
@@ -3673,6 +3976,7 @@ def check_dataset(
                 "rows make each of those comparisons dearer, but length alone "
                 "does not reach this budget. De-duplicate the obvious repeats, "
                 "or scan a sample, if you need this answered",
+                near_metrics(None, False),
             )
 
     unlabelled = [row for row in rows if not dataset_row_is_labelled(row)]
@@ -4248,7 +4552,7 @@ def run() -> int:
     check_python()
     check_sdk(defer_missing=args.defer_missing_sdk)
     check_existing_traigent_use(Path(args.project_root))
-    check_keys(env)
+    check_keys(env, file_values, process_values)
     check_cost_settings(env, file_values, process_values)
 
     models = [model.strip() for model in args.models.split(",") if model.strip()]
