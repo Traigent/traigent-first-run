@@ -32586,6 +32586,17 @@ class TheAcceptedRouteIsReadableBeforeItIsRefusedTests(unittest.TestCase):
             "do not build a mapping whose keys and values are the same numbers",
             reference,
         )
+        # And the condition on the parameter spelling, which lived only in a
+        # code comment. An author who read this paragraph and wrote
+        # `temperature=temperature` in a helper was following the document and
+        # was refused by a rule the document did not state - the mirror of the
+        # rule-stated-twice defect this guide names, and it produced a refusal
+        # telling a correct agent to do what it had already done.
+        self.assertIn(
+            "`temperature=temperature` in the selected callable alone - a "
+            "helper parameter says nothing about its caller",
+            reference,
+        )
 
 
 if __name__ == "__main__":
