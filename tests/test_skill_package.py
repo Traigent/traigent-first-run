@@ -16935,16 +16935,23 @@ class SkillPackageTests(unittest.TestCase):
             "answers has entered",
             normalized,
         )
-        self.assertIn("A partial read names its count and releases nothing", normalized)
-        # And the two sentences beside it, which are what stop this rule
-        # contradicting "Say how much you read" below it: the opening pass
-        # above the subset size names a count and releases nothing by design
-        # rather than by failing, and the release is taken on the reviewer's
-        # word only for the READING - readiness now matches every entry to a row
-        # preflight read, and an `in_run` claim to the declared split, so the
-        # forged review that used to release the hold is refused
-        # (traigent-first-run#391).
-        self.assertIn("The hold comes off at the section-4 re-score", normalized)
+        # What lifts it is a SAMPLE, and the two sentences that say so are
+        # pinned together because separating them is how the old pair failed.
+        # Coverage of the graded rows was what released this hold, which no
+        # corpus above the drawn subset could ever supply, so the hold was
+        # unliftable on the guide's own worked example and the reference
+        # promised a release at the section-4 re-score that the predicate
+        # refused (traigent-first-run#441). The owner's replacement is five
+        # rows and a stated assumption, so the size is pinned beside the word
+        # that stops a release reading as a clearance.
+        self.assertIn(
+            "five entries marked `in_run` where the split is drawn", normalized
+        )
+        self.assertIn("released as a sample and never as a clearance", normalized)
+        # And the release is taken on the reviewer's word only for the READING -
+        # readiness matches every entry to a row preflight read, and an `in_run`
+        # claim to the declared split, so the forged review that used to release
+        # the hold is refused (traigent-first-run#391).
         self.assertIn(
             "Readiness matches every entry to a row preflight read", normalized
         )
@@ -17019,6 +17026,95 @@ class SkillPackageTests(unittest.TestCase):
         self.assertLess(gate, instruction)
         self.assertLess(instruction, creation)
         self.assertIn("no generated row competes with it yet", skill)
+
+    def test_the_sample_is_disclosed_before_the_run_and_again_after_it(self) -> None:
+        """What was tested and what was assumed, in the two places it is useful.
+
+        The hold now comes off on five rows (traigent-first-run#441), so the
+        difference between what this run established and what it assumed is
+        the customer's to know rather than ours to keep. The owner asked for it
+        twice: at the preparation stage as something to know going in, and in
+        the summary as something to act on afterwards. Both are mandates, so
+        both live in the flow, and neither restates the wording - that belongs
+        to the reference that owns the stage, and this pins that the flow sends
+        the reader there rather than growing a second copy of it.
+        """
+        skill = " ".join(SKILL.read_text().split())
+        dataset = " ".join(
+            (SKILL_ROOT / "references" / "evaluation-and-dataset.md")
+            .read_text()
+            .split()
+        )
+        gate = skill.index("#### Opening readiness gate")
+        prep = skill.index("It is a five-row sample and never the whole key")
+        close = skill.index("say what would make this production ready")
+        self.assertLess(gate, prep)
+        self.assertLess(prep, close)
+        self.assertIn("never handed to the user", skill)
+        self.assertIn("say it again at the close", skill)
+        # The words themselves, once, where the stage lives.
+        self.assertIn("Say what you sampled and what you assumed", dataset)
+        self.assertIn(
+            "the rest of the dataset is assumed sound rather than shown to be",
+            dataset,
+        )
+        self.assertIn(
+            "if the answers were not put together carefully by a person", dataset
+        )
+        # And the self-certification the owner accepted rather than gating: a
+        # sample taken through material this run wrote is this run checking its
+        # own work, and a reader must not take it for an outside check.
+        self.assertIn("this run checking its own work", dataset)
+        # The flow points; it does not re-say. A second copy of the sentence in
+        # SKILL.md is the defect class CLAUDE.md names, not emphasis.
+        for owned_by_the_reference in (
+            "Say what you sampled and what you assumed",
+            "assumed sound rather than shown to be",
+        ):
+            with self.subTest(sentence=owned_by_the_reference):
+                self.assertNotIn(owned_by_the_reference, skill)
+
+    def test_the_close_says_what_production_ready_takes_and_what_this_run_gave(
+        self,
+    ) -> None:
+        """traigent-first-run#439: no gate, and a paragraph instead of one.
+
+        The owner refused a check over a generated corpus and refused the
+        framing the issue was filed under with it. What a generated corpus
+        needs is not a blocker but a statement the customer can act on: every
+        generated pillar - dataset, evaluation method, AGENT, which the close
+        named nowhere - made real or checked by a person. And it may not be
+        sold as worthless, because it is not: a real first run, results in the
+        portal, next steps, the shape of easy against hard, and a split held
+        out of the search. Both halves are pinned because either alone is the
+        dishonest version of this paragraph.
+        """
+        safety = " ".join(
+            (SKILL_ROOT / "references" / "run-safety.md").read_text().split()
+        )
+        skill = " ".join(SKILL.read_text().split())
+        self.assertIn(
+            "the dataset, the evaluation method, the agent - has to be made real "
+            "or checked by a person",
+            safety,
+        )
+        for worth in ("results in the portal", "held out of the search"):
+            with self.subTest(value=worth):
+                self.assertIn(worth, safety)
+        self.assertIn("not a full-power run and must not be described as one", safety)
+        self.assertIn(
+            "not a run that established nothing, and must not be described as "
+            "that either",
+            safety,
+        )
+        # The flow orders it and names its home; the paragraph is not repeated
+        # there, and the close still reaches it before the extras.
+        self.assertIn("say what would make this production ready", skill)
+        self.assertIn("references/run-safety.md` carries", skill)
+        self.assertLess(
+            skill.index("say what would make this production ready"),
+            skill.index("these are available whenever the user wants them"),
+        )
 
     def test_opening_dataset_sequence_records_both_unmapped_and_absent_states(
         self,
@@ -23295,6 +23391,34 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
             (
                 "for untracked cost, call it an execution stop target",
                 "when any cost is untracked, that target is a conservative control",
+            ),
+        ),
+        (
+            # #441. Two sentences in one reference described two populations
+            # and the predicate implemented one of them: the row-review section
+            # promised a release at the section-4 re-score of the drawn rows,
+            # while its own subset rule says every readiness score runs on the
+            # whole dataset. So the release compared rows reviewed against rows
+            # graded, and on any corpus above the drawn subset - the guide's own
+            # 4,812-row worked example included - the two could never meet and
+            # the hold never lifted.
+            #
+            # The owner replaced the premise rather than picking a population:
+            # the assistant samples five rows and judges them against the
+            # evaluation method, the rest is assumed to hold, and the assumption
+            # is disclosed rather than hidden. Both retired spellings are banned
+            # here because each one is a whole-population claim that would make
+            # the hold unliftable again, and neither is visible in the diff that
+            # reintroduces it.
+            "how much of the answer key a release of the top-band hold asks for",
+            (
+                "five entries marked `in_run` where the split is drawn",
+                "released as a sample and never as a clearance",
+            ),
+            (
+                "covering the rows the run reads is what releases that hold",
+                "a partial read names its count and releases nothing",
+                "the hold comes off at the section-4 re-score",
             ),
         ),
         (

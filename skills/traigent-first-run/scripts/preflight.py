@@ -4286,10 +4286,13 @@ def check_dataset(
         # prevent. The same repeats are the same defect whoever wrote the rows.
         #
         # This check grades the CUSTOMER'S file. Whether this guide's own
-        # generated walkthrough corpus needs a gate before it ships is a
-        # question about this repository's material, under its own check name -
-        # #439 is where that decision is, and nothing here performs that job
-        # today.
+        # generated walkthrough corpus needs a gate before it ships was #439's
+        # question, and the answer is no: a generated corpus is warned about,
+        # priced on the card, and let through, here and everywhere else. So no
+        # check under any name performs that job, by decision rather than by
+        # omission. What replaces it is a sentence in the close - every
+        # generated pillar made real or checked by a person is what makes a run
+        # production ready - which `references/run-safety.md` owns.
         emit(
             "dataset-duplicates",
             WARN,

@@ -305,6 +305,33 @@ MIN_CONFIDENCE_FOR_TOP_BANDS = 0.75
 # plenty. A gate on the band is not a number on that scale at all: it reads
 # the verdict each run was about to reach, which is the thing being refused.
 ANSWER_KEY_BAND_CEILING = "WORKABLE"
+# How much of the answer key has to be looked at before the hold above comes
+# off: a SAMPLE, and a small one.
+#
+# The hold used to ask for coverage of everything the run is graded on, and on
+# any corpus larger than the drawn subset that was unsatisfiable - the review
+# covers the 28 rows drawn while the score reads all 4,812, so the hold never
+# lifted, including on this guide's own worked example
+# (traigent-first-run#441). The repair is not a different denominator. It is
+# that a full input-versus-expected comparison is REFUSED here rather than
+# skipped: for a retrieval system whose input is a PDF and whose expected
+# output is a paragraph, reading every row is not work to put a customer, or
+# this run, through during onboarding.
+#
+# So the read is a sample and the card says so. Five rows because the check is
+# looking for the failure this hold exists to catch - a corpus whose expected
+# answers do not answer their own questions, which is a property of how the
+# file was assembled rather than of one row - and a defect of that shape shows
+# up in the first handful or not at all. What five rows cannot do is bound the
+# rate of a scattered defect, and nothing here claims they can: `answers_read`
+# means "somebody looked, at these rows, and they held", never "the answers are
+# verified". `row_review_evidence` prints that difference beside the number,
+# and the assumption it leaves standing is the customer's to close.
+#
+# A sample below the whole file also removes the last incentive to claim a read
+# nobody did. The old rule asked for thousands of verdicts to lift one band;
+# this asks for five, so an honest five is cheaper than a fabricated thousand.
+ANSWER_KEY_SAMPLE_ROWS = 5
 
 # Vendored from the installed SDK's canonical presets
 # (traigent/config_generator/presets/range_presets.py, read at 0.23.0). The
@@ -5422,17 +5449,18 @@ def graded_rows(facts: DatasetFacts) -> int | None:
     `None` when no split has been declared, which is the ordinary opening
     state on one undivided file.
 
-    NOT the drawn subset, and `references/evaluation-and-dataset.md` promises
-    that it is: it says the hold "lifts at the section-4 re-score of the drawn
-    rows", while rule 1 of its own subset section says every readiness score
-    runs on the WHOLE dataset. Both cannot hold. On a 4,812-row corpus the
-    re-score reads 4,812 declared split rows and the review covers the 28 rows
-    drawn, so `answer_key_read`'s `reviewed_in_run >= graded` never clears and
-    the top two bands stay held whatever anyone reads. The predicate, this
-    function and that sentence all arrived together in traigent-first-run#382
-    and none of them has moved since; closing it means deciding which
-    population the floor is about, which is that issue's decision and not this
-    one's. Recorded here because this is the function the answer turns on.
+    NOT the drawn subset, and it no longer needs to be. This used to be the
+    threshold a review had to MATCH, and a threshold this population sets is
+    one no review of a large corpus can reach: on a 4,812-row file the re-score
+    reads 4,812 declared split rows while the review covers the 28 drawn, so
+    the hold never lifted, on this guide's own worked example included
+    (traigent-first-run#441). The owner's decision on that issue replaced the
+    denominator rather than choosing one: the read is a sample of
+    `ANSWER_KEY_SAMPLE_ROWS` rows, and this number now says only where those
+    rows have to come from. Kept, and kept exact, because that is still a real
+    question - a sample drawn from rows the run never opens establishes nothing
+    about the comparison - and because `row_review_evidence` prints it as the
+    denominator a customer reads.
     """
     if facts.tuning_labelled_rows is None or facts.holdout_labelled_rows is None:
         return None
@@ -5504,13 +5532,16 @@ def answer_key_read(facts: DatasetFacts, review: RowReview) -> bool:
         return True
     if not review.supplied:
         return False
-    # Two honest coverage claims, and which one applies is decided by the
-    # review rather than chosen here. A review that declared `in_run` on every
-    # entry has named the rows the search is graded against, and covering those
-    # is the whole of what this floor asks - that is what makes the floor
-    # liftable on a corpus far larger than anyone will read end to end. A
-    # review that did not is a read of the file, and then the file is the
-    # population it has to cover.
+    # Two honest populations to sample FROM, and which one applies is decided
+    # by the review rather than chosen here. A review that declared `in_run` on
+    # every entry has named the rows the search is graded against, and the
+    # sample is drawn from those. A review that did not is a read of the file,
+    # and the file is what it sampled.
+    #
+    # Neither is a coverage claim any more. `ANSWER_KEY_SAMPLE_ROWS` bounds
+    # what is asked for, and the population only decides where the rows came
+    # from - which still matters, because five rows the run never opens say
+    # nothing about the comparison it is about to make.
     graded = graded_rows(facts)
     # A graded population of zero is not a threshold every review clears, which
     # is what `reviewed_in_run >= 0` made it (traigent-first-run#395). Reaching
@@ -5535,26 +5566,49 @@ def answer_key_read(facts: DatasetFacts, review: RowReview) -> bool:
     # could act on it.
     if graded is not None and graded <= 0:
         return False
+    # A sample, capped by the population it is drawn from: a file with three
+    # reviewable rows cannot supply five, and asking it for five would restore
+    # the unsatisfiable hold at the other end of the scale.
     if review.reviewed_in_run is not None and graded is not None:
-        return review.reviewed_in_run >= graded
-    return review.reviewed >= provided
+        return review.reviewed_in_run >= min(ANSWER_KEY_SAMPLE_ROWS, graded)
+    return review.reviewed >= min(ANSWER_KEY_SAMPLE_ROWS, provided)
 
 
-def row_review_evidence(review: RowReview, facts: DatasetFacts) -> str:
-    """Say what the read covered and what it found, in the line that costs nothing.
+def row_review_evidence(
+    review: RowReview,
+    facts: DatasetFacts,
+    evaluator_origin: str | None = None,
+) -> str:
+    """Say what was sampled, what it found, and what it left assumed.
 
     A clean pass has to be able to say something, or the check is invisible
     whenever it works. It says it here rather than in points, because points
     would be the assistant crediting its own opinion - and every count in the
     sentence is a coverage claim, so the sentence names the rows read against
     the rows there are. The score reads the whole dataset, not a subset, and a
-    review of 28 rows out of 4,812 says exactly that instead of implying the
+    review of 5 rows out of 4,812 says exactly that instead of implying the
     dataset was cleared.
+
+    THE WORD IS "SAMPLED", and it is the whole point of the sentence
+    (traigent-first-run#441). What this run performs is a read of
+    `ANSWER_KEY_SAMPLE_ROWS` rows; what a customer will take from a card that
+    says "read" beside a released hold is that their answers were checked. The
+    closing clause states the assumption in the same breath as the finding,
+    because a reader who has to infer it will not: the rows that were looked at
+    held, and the rest are assumed to be like them.
+
+    And where this run wrote the method those rows were judged against, the
+    line says so. The sample is then this run checking its own work - which the
+    owner accepted rather than adding a human step to onboarding, and an
+    accepted limit that nobody is told about is indistinguishable from one
+    nobody noticed. `evaluator-generated`'s ceiling already prices the method;
+    what it does not say is that the one behavioural read on the card was taken
+    through it.
     """
     if not review.supplied:
         return ""
     provided = provided_rows(facts)
-    line = f"the coding assistant read {review.reviewed} of {provided} provided rows"
+    line = f"the coding assistant sampled {review.reviewed} of {provided} provided rows"
     # And what those rows COVER, where the review said which rows the run
     # reads. Without this clause the card printed "read 60 of 4812 provided
     # rows" beside a top band, because the sentence counts the file and the
@@ -5569,7 +5623,7 @@ def row_review_evidence(review: RowReview, facts: DatasetFacts) -> str:
     # cap is the place that says so (traigent-first-run#395).
     if review.reviewed_in_run is not None and graded:
         line += (
-            f", covering {review.reviewed_in_run} of the {graded} rows this "
+            f", {review.reviewed_in_run} of them from the {graded} rows this "
             "run is graded on"
         )
     if review.unsound == 1:
@@ -5582,6 +5636,12 @@ def row_review_evidence(review: RowReview, facts: DatasetFacts) -> str:
         line += f", {review.unsure} undecided"
     if facts.synthesised_rows:
         line += f"; {facts.synthesised_rows} generated rows not reviewed"
+    # Last, so it is the clause the sentence ends on, and unconditional: a
+    # sample that found nothing is exactly the state a reader is most likely to
+    # round up to "checked".
+    line += "; a sample, so the answers are assumed sound rather than verified"
+    if evaluator_origin == "generated":
+        line += " - and this run wrote the evaluation method they were judged against"
     return line
 
 
@@ -6092,6 +6152,7 @@ def score_dataset(
     facts: DatasetFacts,
     evaluator_method: str | None = None,
     review: RowReview | None = None,
+    evaluator_origin: str | None = None,
 ) -> tuple[Pillar, list[Cap]]:
     caps: list[Cap] = []
     subs: list[SubScore] = []
@@ -6196,7 +6257,7 @@ def score_dataset(
     # no value and no maximum, so a review that finds nothing leaves this
     # pillar byte-for-byte where an unreviewed run leaves it apart from this
     # clause.
-    review_clause = row_review_evidence(review, facts)
+    review_clause = row_review_evidence(review, facts, evaluator_origin)
 
     def with_review(evidence: str) -> str:
         return f"{evidence}; {review_clause}" if review_clause else evidence
@@ -8963,7 +9024,15 @@ def score_run(
     has no review still scores what an unreviewed run scores.
     """
     dataset_pillar, dataset_caps = score_dataset(
-        dataset_facts, evaluation_facts.method, review
+        dataset_facts,
+        evaluation_facts.method,
+        review,
+        # Read here rather than inside the dataset pillar, because whose
+        # evaluation method it is belongs to the evaluation facts and the
+        # sentence that needs it belongs to the dataset line. Passing the one
+        # field is narrower than handing the dataset pillar the other pillar's
+        # facts, which is how a pillar starts scoring what it does not own.
+        evaluation_facts.origin,
     )
     evaluation_pillar, evaluation_caps = score_evaluation(evaluation_facts)
     agent_pillar, agent_caps, knobs = score_agent(agent_facts)
@@ -9728,7 +9797,7 @@ def render_card(
         # the read and the evaluation reference owns its shape; what belongs
         # here is what is missing and what would supply it.
         lines.append(
-            f"  {palette.dim}No read covering the expected answers this run is "
+            f"  {palette.dim}No read of the expected answers this run is "
             f"graded against has reached this score, so the comparison is not "
             f"graded above {score.band} whatever it scores. This hold is not a "
             f"cap and does not stop the run: what it holds is the verdict, not "
@@ -9739,8 +9808,8 @@ def render_card(
                 if nothing_else_pending
                 else ""
             )
-            + f" A row-by-row read of each input beside its expected answer, "
-            f"covering the rows the run is graded on, is what lifts it."
+            + f" A read of a small sample of the rows the run is graded on - "
+            f"each input beside its expected answer - is what lifts it."
             f"{palette.reset}"
         )
     lines.append(
