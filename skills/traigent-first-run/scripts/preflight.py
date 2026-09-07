@@ -653,11 +653,56 @@ def key_present(value: str | None) -> bool:
     return bool(stripped) and not stripped.startswith("#")
 
 
+#: How many `.env` line numbers one folded `env-file` finding prints before the
+#: sentence truncates. Separate from `MAX_REPORTED_DATASET_FINDINGS`, which
+#: says in its own comment which four dataset lists it bounds and is not about
+#: this file. The convention is shared, not the number: the count leads, and
+#: the sentence says when the list is partial, so this is a display limit and
+#: never a limit on what was measured - the line numbers travel in full in the
+#: metrics.
+MAX_REPORTED_ENV_FILE_LINES = 10
+
+
+def env_line_clause(lines: list[int], singular: str, plural: str) -> str:
+    """One `.env` finding as `<total> line(s) at <where> <verb phrase>`."""
+    if not lines:
+        return ""
+    if len(lines) == 1:
+        return f"1 line at source line {lines[0]} {singular}"
+    shown = lines[:MAX_REPORTED_ENV_FILE_LINES]
+    suffix = (
+        ""
+        if len(lines) <= len(shown)
+        else f" (first {MAX_REPORTED_ENV_FILE_LINES} shown)"
+    )
+    return f"{len(lines)} lines at source lines {shown}{suffix} {plural}"
+
+
 def parse_env_file(path: Path) -> dict[str, str | None]:
-    """Parse the small KEY=VALUE subset used by the first-run environment."""
+    """Parse the small KEY=VALUE subset used by the first-run environment.
+
+    Every line this parser cannot read is collected and reported in ONE
+    `env-file` record after the walk. Emitting inside the loop made a second
+    unreadable line raise `DuplicateCheckName`, which `main` reports as exit 3
+    with no records at all - so an `.env` with two stray lines cost the
+    customer the entire report rather than earning them a warning about two
+    lines. That file is the one thing this guide asks a first-run customer to
+    write by hand, and two stray lines is an ordinary way to write one: a
+    pasted note without a `#`, a wrapped value, two bare `export FOO`.
+
+    So this is a parser that also RECORDS, and `read_env` is its one caller
+    for that reason: a second call in the same run would record `env-file` a
+    second time, which is the defect this function was just fixed for.
+    """
     values: dict[str, str | None] = {}
     if not path.exists():
         return values
+    # Two populations, kept apart, because they are two different mistakes and
+    # a reader fixing them does two different things: a line with no `=` at all
+    # is prose where a setting was expected, while a line whose key is not a
+    # legal variable name is a setting spelled wrong.
+    unparsed_lines: list[int] = []
+    invalid_name_lines: list[int] = []
     for line_number, raw_line in enumerate(path.read_text().splitlines(), 1):
         line = raw_line.strip()
         if not line or line.startswith("#"):
@@ -665,20 +710,12 @@ def parse_env_file(path: Path) -> dict[str, str | None]:
         if line.startswith("export "):
             line = line.removeprefix("export ").lstrip()
         if "=" not in line:
-            emit(
-                "env-file",
-                WARN,
-                f"{path}:{line_number} is not KEY=VALUE and was ignored.",
-            )
+            unparsed_lines.append(line_number)
             continue
         key, raw_value = line.split("=", 1)
         key = key.strip()
         if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
-            emit(
-                "env-file",
-                WARN,
-                f"{path}:{line_number} has an invalid environment variable name.",
-            )
+            invalid_name_lines.append(line_number)
             continue
         value = raw_value.strip()
         if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
@@ -686,6 +723,41 @@ def parse_env_file(path: Path) -> dict[str, str | None]:
         elif " #" in value:
             value = value.split(" #", 1)[0].rstrip()
         values[key] = value
+    findings = [
+        clause
+        for lines, singular, plural in (
+            (
+                unparsed_lines,
+                "is not KEY=VALUE and was ignored",
+                "are not KEY=VALUE and were ignored",
+            ),
+            (
+                invalid_name_lines,
+                "has an invalid environment variable name and was ignored",
+                "have an invalid environment variable name and were ignored",
+            ),
+        )
+        if (clause := env_line_clause(lines, singular, plural))
+    ]
+    if findings:
+        emit(
+            "env-file",
+            WARN,
+            f"{path}: " + "; ".join(findings),
+            # The same facts as data, on `emit`'s own rule that a wording
+            # change must never alter a score, and in full: the sentence
+            # truncates for a reader, the metrics do not, so nothing measured
+            # is lost to the display ceiling. Uncapped for the reason the id
+            # digests beside `dataset-ids` are - a consumer asking whether a
+            # line it was told about is a line of this file needs every one -
+            # and the population is bounded by an `.env`, which is the smallest
+            # file this run reads.
+            {
+                "ignored_lines": len(unparsed_lines) + len(invalid_name_lines),
+                "unparsed_lines": unparsed_lines,
+                "invalid_name_lines": invalid_name_lines,
+            },
+        )
     return values
 
 
@@ -1252,7 +1324,16 @@ def check_models(models: list[str]) -> None:
         )
         return
 
-    for model in models:
+    # One record per DISTINCT model, because the check names below are built
+    # from the model id: `--models "gpt-4o,gpt-4o"` emitted `model-format:gpt-4o`
+    # twice, which the registry refuses and `main` reports as exit 3 with no
+    # records at all. A repeated id is not a finding about the customer's setup
+    # - the second copy asks the identical question of the identical id and
+    # gets the identical answer - so it is folded here rather than reported,
+    # and nothing measured is lost. Deduplicated in the CHECK and not where the
+    # command line is parsed, so the invariant holds for every caller rather
+    # than for one of them.
+    for model in dict.fromkeys(models):
         if not re.fullmatch(r"[A-Za-z0-9._:/-]+", model):
             emit(
                 f"model-format:{model}",
