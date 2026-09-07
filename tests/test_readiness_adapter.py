@@ -328,6 +328,17 @@ class ReadinessAdapterReplayTests(unittest.TestCase):
         # One home for the cross-version refusal, and it is `--previous`'s own
         # help, which carried it before this paragraph existed.
         self.assertIn("Refused when the earlier output was written by a", help_text)
+        # And where the remedy comes from, which schema 4 changed
+        # (traigent-first-run#396). Every value of `recommended_action` used to
+        # be some cap's, so a consumer could look up the ceiling behind the slug
+        # it was given; a run may now owe something that caps nothing, and one
+        # that goes looking in `caps` finds nothing and cannot tell that from a
+        # cap it does not know.
+        self.assertIn("'open_asks'", help_text)
+        self.assertIn(
+            "'recommended_action' names one remedy and it is not always a cap's",
+            help_text,
+        )
         self.assertEqual(help_text.count("refuses a payload from another version"), 0)
 
     def test_task_kind_cli_is_closed_and_distinguishes_code_from_sql(self) -> None:
@@ -5137,6 +5148,150 @@ class RepeatedRowsAreCappedOnTheirOwnAccountTests(unittest.TestCase):
         )
 
 
+class AMissingIdIsPricedFromTheCountNotTheStatusTests(unittest.TestCase):
+    """The finding must reach the card whatever severity preflight printed.
+
+    Driven from REAL preflight output, which is the whole point of the class:
+    the sibling below hand-forges its `dataset-ids` record, and every other
+    test of this ceiling does too, so when #438 relaxed the missing-id arm from
+    FAIL to WARN the entire blocking line vanished off the card and not one
+    test in this repository went red. The payload the suite was scoring was one
+    this repository's own `preflight.py` could no longer produce.
+
+    What was lost, measured on twelve generated rows with no `id`: the card's
+    `FIX BEFORE PAID RUN` section lost the sentence saying the rows cannot be
+    named, the "things to be cleared" count fell from 3 to 2, and nothing else
+    changed. There was no cap, no mark and no sentence anywhere - the finding
+    survived only as a preflight WARN line the card does not read. The guide's
+    own remedy for it ("add stable ids in a working copy before excluding rows
+    or selecting a bounded subset") and the row-review membership set are both
+    keyed on those ids, so the card had gone silent about a prerequisite it
+    depends on.
+
+    The cause was a price collected off a SEVERITY this module does not own.
+    `preflight.py` states the division at the top of itself - preflight
+    measures and publishes, this module prices - and reading the count off the
+    status made the price a hostage to how loudly preflight said it. The counts
+    are read off the metric now, the way `shared_families` and
+    `placeholder_rows` beside them already are.
+    """
+
+    @staticmethod
+    def _generated_rows_without_id() -> list[dict]:
+        return [
+            {
+                "input": f"scenario {index} unique_token_{index}",
+                "output": f"answer {index % 4}",
+                "difficulty": ["easy", "medium", "hard", "very-hard"][index % 4],
+                "source": "synthetic",
+            }
+            for index in range(12)
+        ]
+
+    def test_the_blocking_ceiling_survives_the_warn(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            dataset = _write_jsonl(
+                Path(directory), "eval.jsonl", self._generated_rows_without_id()
+            )
+            records = _preflight_records(dataset)
+            score = _score(dataset)
+        # The premise: preflight WARNs. If a later change makes this FAIL again
+        # the test still passes, and it should - what is asserted is that the
+        # price does not depend on which of the two it is.
+        ids = next(record for record in records if record["check"] == "dataset-ids")
+        self.assertEqual(ids["status"], "WARN")
+        self.assertEqual(ids["metrics"]["generated_rows_without_id"], 12)
+
+        cap = _cap(score, "dataset-integrity-fail")
+        self.assertEqual(cap["ceiling"], MODULE.DATASET_INTEGRITY_CEILING)
+        self.assertIn("12 generated rows carry no stable id", cap["reason"])
+        self.assertIn("nothing to name them by", cap["reason"])
+
+    def test_the_card_still_prints_the_line(self) -> None:
+        """Asserted on the rendered card, not only on the JSON.
+
+        The regression was visible to a customer as a missing sentence, so the
+        sentence is what this reads. A cap that exists in the payload and does
+        not reach the page is the same silence from where they are sitting.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            dataset = _write_jsonl(
+                Path(directory), "eval.jsonl", self._generated_rows_without_id()
+            )
+            card = _readiness_records(
+                _preflight_records(dataset), (), "--color", "never", "--ascii"
+            )
+        self.assertIn("FIX BEFORE PAID RUN", card)
+        self.assertIn("12 generated rows carry no stable id", card)
+
+    def test_a_collision_under_a_warn_still_reaches_the_ceiling(self) -> None:
+        """The other count, which the tree cannot currently reach on its own.
+
+        `score_dataset` raises the ceiling from `duplicate_ids` as well as from
+        `generated_rows_without_id`, and only the second of those was covered:
+        dropping `or facts.duplicate_ids` left the whole suite green. Colliding
+        ids still FAIL in this preflight, so the clause is unreachable from a
+        payload this repository writes - which is exactly the population it
+        exists for. A third-party or older payload carrying a real collision
+        under a non-FAIL status must still be priced, on the same argument that
+        put the counts ahead of the status in the first place: the price is not
+        the pricer's to skip because somebody else chose a quiet severity.
+
+        Hand-forged deliberately, and it is the one shape in this class that
+        has to be. The sibling tests below score real preflight output; this
+        one describes a payload the current preflight cannot emit, so building
+        it by hand is the only way to reach the arm at all.
+        """
+        rows = [
+            {
+                "id": f"row-{index:03d}",
+                "input": f"question {index} about the billing system and its rules",
+                "output": f"answer-{index % 4}",
+                "source": "production-log",
+            }
+            for index in range(40)
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            records = _preflight_records(
+                _write_jsonl(Path(directory), "eval.jsonl", rows)
+            )
+        for record in records:
+            if record["check"] == "dataset-ids":
+                record["status"] = "WARN"
+                record["metrics"] = {
+                    "duplicate_ids": 3,
+                    "rows_without_id": 0,
+                    "generated_rows_without_id": 0,
+                    "row_id_digests": [],
+                    "run_row_id_digests": [],
+                }
+        score = _score_records(records)
+        cap = _cap(score, "dataset-integrity-fail")
+        self.assertEqual(cap["ceiling"], MODULE.DATASET_INTEGRITY_CEILING)
+        self.assertIn("3 ids are used by more than one row", cap["reason"])
+
+    def test_a_clean_corpus_is_not_capped_by_this(self) -> None:
+        """The false-red direction, because the trigger moved off a status.
+
+        Reading the counts on every arm means a PASSing `dataset-ids` now
+        reaches the same expression. Its counts are zero, so nothing fires -
+        asserted rather than assumed, since a cap that blocks a paid run is the
+        wrong place to find out.
+        """
+        rows = self._generated_rows_without_id()
+        for index, row in enumerate(rows):
+            row["id"] = f"walkthrough-{index}"
+        with tempfile.TemporaryDirectory() as directory:
+            dataset = _write_jsonl(Path(directory), "eval.jsonl", rows)
+            records = _preflight_records(dataset)
+            score = _score(dataset)
+        ids = next(record for record in records if record["check"] == "dataset-ids")
+        self.assertEqual(ids["status"], "PASS")
+        self.assertNotIn(
+            "dataset-integrity-fail", [cap["condition"] for cap in score["caps"]]
+        )
+
+
 class AFailingIdCheckAlwaysReachesItsCeilingTests(unittest.TestCase):
     """The ceiling was raised from a count, so a zero count dropped it.
 
@@ -5950,7 +6105,16 @@ class TheWalkthroughSizeReachesTheCardTests(unittest.TestCase):
         )
         return rows
 
-    def test_the_card_names_the_size_and_routes_to_proceed(self) -> None:
+    def test_the_card_names_the_size_and_the_ceiling_recommends_nothing(self) -> None:
+        """The size cap at the offer limit names no remedy, and never did.
+
+        Renamed from `..._and_routes_to_proceed`: the assertion that carried
+        that name was reading a second fact through this one. `proceed` was the
+        action because this cap asks nothing AND nothing else on the card did,
+        and the second half stopped being true when the unread answer key
+        started routing its own remedy (traigent-first-run#396). What this test
+        is about is the ceiling, so it now asserts what the ceiling does.
+        """
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             dataset = _write_jsonl(root, "eval.jsonl", self._walkthrough_rows())
@@ -5981,12 +6145,29 @@ class TheWalkthroughSizeReachesTheCardTests(unittest.TestCase):
             cap["reason"],
         )
         self.assertNotIn("This run can write", cap["reason"])
-        self.assertEqual(score["recommended_action"], "proceed")
+        # The ceiling still recommends nothing, which is what this test is
+        # about: a size cap at or beyond the offer limit names no remedy, so
+        # `add-examples` is not what a customer holding 28 rows is told to do.
+        self.assertNotEqual(score["recommended_action"], MODULE.ADD_EXAMPLES)
+        # What routes instead is the run's own outstanding ask. Nobody has read
+        # this dataset's expected answers, so the band is held - and until
+        # traigent-first-run#396 that held card read `proceed`, telling a
+        # consumer there was nothing to do about the one thing holding the
+        # verdict. The remedy is no cap's: `caps` carries one entry and it is
+        # the advisory ceiling above, which asks nothing.
+        self.assertTrue(score["band_limited_by_unread_answers"])
+        self.assertEqual(score["recommended_action"], "review-answer-key")
+        self.assertEqual(
+            [ask["condition"] for ask in score["open_asks"]],
+            [MODULE.ANSWER_KEY_UNREAD],
+        )
         self.assertIn("no top-up is offered", card)
         self.assertIn(
             "18 examples - at or above the 18 this walkthrough tunes on", card
         )
-        self.assertEqual(card.rstrip("\n").splitlines()[-1], "Action: proceed")
+        self.assertEqual(
+            card.rstrip("\n").splitlines()[-1], "Action: review-answer-key"
+        )
 
 
 class ARowReviewIsMatchedToTheRowsPreflightReadTests(unittest.TestCase):

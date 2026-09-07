@@ -236,7 +236,23 @@ def render_text(plan: ReadinessPlan) -> str:
 # The band key is the second half of the same answer. Held at WORKABLE, an 83
 # reads identically to a run that scored 83 and earned WORKABLE, and a consumer
 # on 2 has no key to ask which it is looking at.
-SCHEMA_VERSION = 3
+#
+# 4: `recommended_action` stops emitting `proceed` over a held band, and the
+# remedy it names no longer has to come from `caps`.
+#
+# Additive in keys - `open_asks` is new and nothing was removed or renamed -
+# and, like 3, not additive in MEANING, which is what decides it. Two readings a
+# schema-3 consumer held are now wrong. It read `proceed` for a run whose band
+# was explicitly held and routed it to "start the paid run"; it now reads
+# `review-answer-key`. And it read `recommended_action` as a remedy it could
+# always find in `caps` - every value came from one - so a 3 consumer that
+# looked up the ceiling behind the slug to decide how much to care will not find
+# this one and cannot tell "no such cap" from "a cap I do not know".
+#
+# The version is what lets it tell a payload where the remedy may name an ask
+# that caps nothing from one where every remedy is a ceiling, exactly the
+# distinction 2 and 3 were bumped for.
+SCHEMA_VERSION = 4
 DEFAULT_WEIGHTS = {"dataset": 40.0, "evaluation": 35.0, "agent": 25.0}
 # Read each entry as "score BELOW this number is that band" - these are
 # exclusive upper bounds, not the score a band requires. The last entry is an
@@ -1348,7 +1364,67 @@ ACTION_FOR_CONDITION: dict[str, str] = {
     # rows on their own authority - see `repeated_input_routes`.
     "dataset-repeated-rows": "review-repeats",
 }
-ACTION_KINDS = frozenset({PROCEED, *ACTION_FOR_CONDITION.values()})
+# The asks that are not caps, and the second table `recommended_action` reads.
+#
+# THE CLASS, not the one condition in it. A cap is a ceiling on the SCORE, and
+# every remedy this payload routed was reachable only through one. That left a
+# state with no machine-readable remedy at all: the run is fine, nothing is
+# capped, and something is still owed before the verdict means what it says.
+# The answer-key hold is the first member - `overall == weighted_average` is
+# asserted in its own test, so it costs the score nothing and holds the BAND -
+# and it will not be the last. A hold on a claim, a disclosure the run owes, an
+# input the customer alone can confirm: none of them is a ceiling, and inventing
+# one to carry them would put a false entry in `caps` to fix a silence here
+# (traigent-first-run#396).
+#
+# SEPARATE FROM `ACTION_FOR_CONDITION`, and the separation is enforced rather
+# than observed. That table's keys are exactly `CAP_CEILING`'s - a test asserts
+# the two sets are equal - so a condition that caps nothing cannot be added
+# there without either a ceiling nobody chose or the invariant going. Keeping
+# them apart is also what makes an id answerable: a condition names a cap or an
+# ask, never both, and a reader of either table knows which shape it is holding.
+#
+# THE REMEDIES ARE NOT NEW WORDS. `review-answer-key` is what
+# `ACTION_FOR_CONDITION` already routes for a generated or unsound answer key -
+# the same instruction, "somebody has to read the expected answers before this
+# number means anything" - so a consumer already routing it needs nothing new
+# to route this, and the guard that reads the remedy table keeps working. A
+# future ask may need an instruction nothing else means, which is why the values
+# join `ACTION_KINDS` rather than being constrained to the other table's; what
+# is refused is a second spelling of an instruction that exists.
+#
+# INSERTION ORDER IS PRECEDENCE. Several of these can be outstanding at once and
+# `recommended_action` returns one, so the order they are written in is the
+# order they are done in - declared here, where the class is decided, rather
+# than derived at the call site from a field a future ask might not have.
+# snake_case, and the one place this module spells a condition that way.
+#
+# The product-wide naming pass (2026-09) requires a name to match what the
+# customer already meets in the SDK and the portal, and `recommended_action` is
+# the field it names as carrying four value spaces at once. The three that are
+# not this package's are snake_case: the SDK validates a per-example
+# `recommended_action` against `review_label`, `clarify_expected_output`,
+# `increase_repetitions`, `replace_or_rewrite`, `keep_as_hard_case` and
+# `inspect_evaluator`, and the portal renders that column. This is the only new
+# value this change introduces into any of those spaces, so it is spelled the
+# way the spaces it joins are spelled, and the schema bump that carries it is
+# the moment a consumer re-reads the contract anyway.
+#
+# THE COST, RECORDED RATHER THAN GLOSSED. Every other condition id in this
+# module is kebab-case - `dataset-absent`, `evaluator-invalid`, thirty of them -
+# and `open_asks[].condition` sits in the same payload as `caps[].condition`. So
+# this is one snake_case id among kebab-case siblings, which is a second
+# spelling inside one payload rather than the end of one. It is spelled this way
+# because the alignment decision is the owner's and this value is new enough to
+# carry it; the id space either follows or this one goes back, and that is a
+# decision to take with both payloads in front of you rather than here.
+ANSWER_KEY_UNREAD = "answer_key_unread"
+ACTION_FOR_ASK: dict[str, str] = {
+    ANSWER_KEY_UNREAD: "review-answer-key",
+}
+ACTION_KINDS = frozenset(
+    {PROCEED, *ACTION_FOR_CONDITION.values(), *ACTION_FOR_ASK.values()}
+)
 
 # What each route ASKS THE USER FOR - a different question from how far the
 # ceiling lets the score rise, and the question that decides whether the run
@@ -2431,6 +2507,113 @@ class Cap:
             )
 
 
+@dataclass(frozen=True)
+class Ask:
+    """Something this run owes that no ceiling carries.
+
+    `Cap.asks` says a CEILING also puts a question; this is the question with
+    no ceiling behind it. It carries no `ceiling`, no `blocks` and no `asks`
+    flag, and the absences are the definition rather than fields nobody got
+    round to: an entry here caps nothing, stops nothing, and is not optional -
+    every member of `ACTION_FOR_ASK` is outstanding work or it would not be
+    constructed.
+
+    So `status` is untouched, `overall` is untouched, and the only field that
+    moves is `recommended_action`, which is the whole of what
+    traigent-first-run#396 reports: a run whose band is held read `proceed`,
+    and a consumer routing that field was told there was nothing to do about
+    the one thing standing between the run and its strongest verdict.
+
+    `reason` is the sentence for a machine-readable artifact, on the same terms
+    as `Cap.reason` - a payload that names a condition and no account of it
+    sends every consumer back to this module's source to find out what it
+    means.
+    """
+
+    condition: str
+    reason: str
+    # Derived, never passed, for the reason `Cap.action_kind` is: the table is
+    # the only place a remedy is decided, so a condition cannot acquire two.
+    action_kind: str = field(init=False)
+
+    def __post_init__(self) -> None:
+        # Fails closed, like the cap guards above it and for the same reason: a
+        # new ask cannot ship without a remedy, and it raises in the author's
+        # own test run rather than emitting an ask no consumer can act on.
+        try:
+            kind = ACTION_FOR_ASK[self.condition]
+        except KeyError:
+            raise ValueError(
+                f"ask {self.condition!r} has no entry in ACTION_FOR_ASK; every "
+                "ask names a remedy and its place in the order they are done "
+                "in, so add one there rather than emitting a question a "
+                "consumer cannot act on"
+            ) from None
+        # An ask that recommends `proceed` is a contradiction in one field: the
+        # last arm of `recommended_action` already returns `proceed` when
+        # nothing is outstanding, so an ask mapped to it would be an
+        # outstanding item asking for nothing - and it would displace a real
+        # remedy from a cap it sorts ahead of nothing.
+        if kind == PROCEED:
+            raise ValueError(
+                f"ask {self.condition!r} is routed to {PROCEED!r}; an ask is "
+                "outstanding work, and a remedy saying there is none describes "
+                "a question that is not being put"
+            )
+        # And the one cap remedy an ask may not borrow, which is a coupling
+        # rather than a preference. `repeated_input_routes` gates its top-up
+        # route on `recommended_action == ADD_EXAMPLES`, deliberately reading
+        # that field instead of the offer's own conditions - so the slug is not
+        # only a remedy here, it is the signal that a SIZE CAP computed a
+        # bounded offer. An ask returning it would set that gate with no cap and
+        # no offer behind it, and the card would print a top-up this run never
+        # computed: an offer made on the customer's behalf, which is the exact
+        # substitution `Cap.asks` was added to refuse.
+        #
+        # Refused where the remedy is decided rather than argued at the reader
+        # in `repeated_input_routes`, because the ordering that docstring can
+        # see - an ask sorts after every cap - does not constrain this direction
+        # at all. Lift it by decoupling that gate from the slug first.
+        if kind == ADD_EXAMPLES:
+            raise ValueError(
+                f"ask {self.condition!r} is routed to {ADD_EXAMPLES!r}; that "
+                "remedy also signals that a size cap computed a bounded top-up "
+                "offer, and an ask carries no offer - so the card would print "
+                "one this run never computed"
+            )
+        object.__setattr__(self, "action_kind", kind)
+        # And the field the guard above never looked at, on the footing
+        # `Cap.reason` was given after `Cap(cond, 50, None)` constructed: the
+        # reason reaches a payload and a report, where `None` renders as the
+        # word "None" beside a condition id and reads as a finding.
+        if not isinstance(self.reason, str) or not self.reason.strip():
+            raise ValueError(
+                f"ask {self.condition!r} carries no reason; the payload names "
+                "the condition and a consumer has nowhere else to read what it "
+                "means, so an empty one is a finding with no account of itself"
+            )
+
+
+def ask_order(ask: "Ask") -> int:
+    """Where one ask sorts against the others, from the table's own order.
+
+    Read off `ACTION_FOR_ASK` rather than a field on the ask, so the precedence
+    is decided once where the class is decided. `cap_order` does the same job
+    for ceilings against `CAP_SEVERITY_ORDER`.
+    """
+    return tuple(ACTION_FOR_ASK).index(ask.condition)
+
+
+# The first member of that class, built once because one condition produces it.
+ANSWER_KEY_UNREAD_ASK = Ask(
+    condition=ANSWER_KEY_UNREAD,
+    reason=(
+        "no read covering the expected answers this run is graded against has "
+        "reached this score, so the top bands are held until one does"
+    ),
+)
+
+
 # What each check is called on the card.
 #
 # The keys are this module's own vocabulary and stay that way in `--json`,
@@ -2789,6 +2972,17 @@ class ReadinessScore:
     # "was the behavioural question about the answer key ever asked", carried
     # as its own key because no other field in this payload answers it.
     band_limited_by_unread_answers: bool = False
+    # What this run owes that no ceiling carries, in the order it is to be done.
+    #
+    # `caps` answers "what is limiting the score" and answered nothing else, so
+    # a run with no cap and something still outstanding had one field saying
+    # `proceed` and one prose sentence saying otherwise. This is the second
+    # source `recommended_action` reads, and the general answer rather than a
+    # flag for the one condition that exposed it - see `ACTION_FOR_ASK`.
+    #
+    # Empty for the ordinary run, which is why it defaults: a consumer that
+    # never meets an outstanding non-cap ask sees `[]` and can ignore the key.
+    open_asks: tuple[Ask, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -2896,8 +3090,14 @@ class DatasetFacts:
     # file, and the same file with its ids renumbered, are both scored. Source:
     # tests/test_readiness_adapter.py#RepeatedRowsAreCappedOnTheirOwnAccountTests.
     integrity_failed: bool = False
-    # Id values used by more than one row, and rows carrying no stable id: the
-    # two ways `dataset-ids` FAILs, as counts rather than as one boolean.
+    # Id values used by more than one row, and generated rows carrying no
+    # stable id: the two findings this check makes, as counts rather than as
+    # one boolean.
+    #
+    # They were "the two ways `dataset-ids` FAILs" until #438. Only a collision
+    # FAILs now - a missing id is the same defect whoever wrote the row, so it
+    # WARNs - and BOTH still price here, because this module reads them off the
+    # metric rather than off the status.
     #
     # `None` means preflight published no such count, which for a FAILing check
     # is a payload older than the metric. The adapter refuses that rather than
@@ -2905,11 +3105,17 @@ class DatasetFacts:
     # `dataset-integrity` guards beside it - reading a missing count as zero
     # would restore the wrong reason for exactly the files that have the defect.
     duplicate_ids: int | None = None
-    # The generated rows with no id, which is the half that decides the status:
-    # a collected row missing an id is a WARN and caps nothing, a generated one
-    # is what makes `dataset-ids` FAIL. The wider count of rows missing an id is
-    # deliberately not the one carried here - a reason built from it would name
-    # rows the check did not object to.
+    # The generated rows with no id. This decided preflight's STATUS until
+    # #438 removed that escalation; it decides nothing there now and prices
+    # here, which is the division of labour `preflight.py` states at the top of
+    # itself. A non-zero count raises the same ceiling it always did, on a WARN.
+    #
+    # The wider count of rows missing an id is deliberately not the one carried
+    # here - a reason built from it would name rows the check did not object
+    # to. That leaves a COLLECTED corpus with no ids unpriced, which is
+    # unchanged by #438 and is the state this repository has always been in;
+    # whether it should also be priced is a question for whoever asks it, and
+    # this comment is where they will start.
     generated_rows_without_id: int | None = None
     # THAT `dataset-ids` FAILED, carried apart from WHY it failed.
     #
@@ -2924,6 +3130,12 @@ class DatasetFacts:
     # which is the whole reason this is a separate fact: the cap is raised from
     # the failure, and a failure this score cannot explain fails loud instead of
     # falling through to no cap.
+    #
+    # It is one of the ceiling's conditions and no longer the only one: the
+    # counts raise it too, since #438 left a real, exactly-counted finding
+    # sitting under a WARN. Both directions are needed and neither subsumes the
+    # other - the boolean catches a failure with no count, the counts catch a
+    # finding with no failure.
     id_check_failed: bool = False
     # The row ids preflight read, as truncated digests, and the subset of them
     # on the tuning or held-out side. Membership sets, not counts: they are the
@@ -6135,7 +6347,20 @@ def score_dataset(
     # stops a paid run - a check that answers a semantic question from a surface
     # signal, with its "didn't find it" arm counting as a pass, which is the
     # class this repository has shipped most often.
-    if facts.integrity_failed or facts.id_check_failed:
+    # `id_check_failed` STAYS in this disjunction beside the counts rather
+    # than being replaced by them. It records THAT the check failed, and a
+    # payload that FAILs with every count at zero must still reach the loud
+    # refusal below instead of scoring as clean - which is the hole the boolean
+    # was added to close. What the counts add is the other direction: a finding
+    # that is real and exactly counted still prices, whatever severity preflight
+    # chose to print it at. Since #438 that is the ordinary case, not the exotic
+    # one - a generated corpus with no stable id WARNs.
+    if (
+        facts.integrity_failed
+        or facts.id_check_failed
+        or facts.duplicate_ids
+        or facts.generated_rows_without_id
+    ):
         reason = dataset_integrity_reason(facts)
         if reason is None:
             # Fail loud rather than silently drop the ceiling. Unreachable from
@@ -6166,8 +6391,10 @@ def dataset_integrity_reason(facts: DatasetFacts) -> str | None:
 
     THREE FINDINGS SHARE THIS CEILING and the reason used to name only the
     first. Rows that could not be read as data is the structural one; ids that
-    collide and rows carrying no stable id are the two ways `dataset-ids` FAILs,
-    and both were folded into the same boolean. Measured on a 90-row file whose
+    collide and generated rows carrying no stable id are the two `dataset-ids`
+    makes, and both were folded into the same boolean. (Since #438 only the
+    collision FAILs; both still reach this ceiling, because the caller tests
+    the counts and not the status.) Measured on a 90-row file whose
     30 exact repeats copied their ids: every row parsed, every row carried an
     answer, `dataset-shape` PASSed "90 valid JSONL rows", the card printed
     "90/90 rows carry an expected output" - and the blocking cap two lines below
@@ -8071,7 +8298,9 @@ def collect_gaps(
     return tuple(text for _weight, _rank, text in gaps)
 
 
-def recommended_action(ordered_caps: Sequence[Cap]) -> str:
+def recommended_action(
+    ordered_caps: Sequence[Cap], open_asks: Sequence[Ask] = ()
+) -> str:
     """The one remedy to do first, from caps already sorted by ceiling.
 
     A blocking cap displaces `proceed` first: the run is waiting on it, so
@@ -8089,9 +8318,26 @@ def recommended_action(ordered_caps: Sequence[Cap]) -> str:
     `status` stays OK, the run is worth making, and the question is what to do
     before it rather than instead of it.
 
+    An ask that is not a cap displaces it third, and last. Nothing here is
+    capped, so the two loops above have nothing to read, and the run still owes
+    something: `open_asks` is where that lives and `ACTION_FOR_ASK` decides the
+    order within it. It sorts after both cap arms because a ceiling standing on
+    the score is doing something to the number this ask is not
+    (traigent-first-run#396).
+
     An advisory ceiling that asks nothing still recommends nothing. A bounded
     top-up may ask before a run without blocking it; a ceiling at or beyond the
     offer limit names no remedy.
+
+    THE ARMS ARE ORDERED, NOT DISJOINT, and the distinction is worth stating
+    because a fourth arm makes it easy to assume otherwise. A run can hold a
+    blocking cap, an asking cap and an outstanding ask at once - the answer-key
+    hold coexists with `dataset-coarse-resolution` on an ordinary card, which
+    the card's own regression sweep walks. What makes the answer single-valued
+    is the precedence below, not a claim that only one arm can be true; and the
+    last arm is total, because `proceed` needs no condition. So the guarantee is
+    exactly: every state returns one slug, and adding an arm can only change the
+    answer for a state where every arm above it was silent.
     """
     for cap in ordered_caps:
         if cap.blocks:
@@ -8099,7 +8345,28 @@ def recommended_action(ordered_caps: Sequence[Cap]) -> str:
     for cap in ordered_caps:
         if cap.asks:
             return cap.action_kind
+    for ask in sorted(open_asks, key=ask_order):
+        return ask.action_kind
     return PROCEED
+
+
+def nothing_pending_beyond(score: "ReadinessScore", condition: str) -> bool:
+    """Whether one named ask is the only thing outstanding on this card.
+
+    The card and the durable report each carry a reassurance beside the
+    answer-key hold - nothing else is capped, and this read is all that is being
+    asked - and each used to compute it as "no cap, and `recommended_action` is
+    `proceed`". That reading was correct only while a non-cap ask could not
+    route: once the hold names its own remedy, `recommended_action` is never
+    `proceed` on the card that prints this sentence, so the test either side of
+    it goes quietly false and a true sentence stops being printed.
+
+    Read as "beyond this one" rather than re-derived from the action, so the
+    sentence keeps saying what it always said while the field beneath it says
+    more than it used to. One home for the predicate, because the two surfaces
+    stating it differently is how they drift.
+    """
+    return not score.caps and {ask.condition for ask in score.open_asks} <= {condition}
 
 
 def aggregate(
@@ -8162,13 +8429,19 @@ def aggregate(
     # path a customer reaches is `score_run`, which computes it from the facts
     # and the review.
     band, held_for_answers = hold_band_for_unread_answers(band, answers_read)
+    # The ask exists exactly while the hold is costing something, which is the
+    # flag above rather than `answers_read` on its own. A run scoring under the
+    # ceiling has unread answers too, and nothing is held there - so there is no
+    # verdict to lift and no ask to put, and routing one would hand a remedy to
+    # a card whose band the read would not move.
+    open_asks = (ANSWER_KEY_UNREAD_ASK,) if held_for_answers else ()
     return ReadinessScore(
         schema_version=SCHEMA_VERSION,
         overall=overall,
         weighted_average=weighted_average,
         band=band,
         status="BLOCKED" if any(cap.blocks for cap in ordered_caps) else "OK",
-        recommended_action=recommended_action(ordered_caps),
+        recommended_action=recommended_action(ordered_caps, open_asks),
         confidence=round(confidence, 2),
         band_limited_by_confidence=limited,
         weights=dict(sorted(weights.items())),
@@ -8181,6 +8454,7 @@ def aggregate(
         agent_route_unverified=agent_route_unverified,
         agent_unfollowed_settings=tuple(agent_unfollowed_settings),
         band_limited_by_unread_answers=held_for_answers,
+        open_asks=open_asks,
     )
 
 
@@ -8540,9 +8814,23 @@ def repeated_input_routes(finding: RepeatedInputs, *, offers_top_up: bool) -> li
     appears only while that offer is live. `offers_top_up` is
     `recommended_action == ADD_EXAMPLES`, which is STRICTER than "the offer has
     room": that field returns the first BLOCKING cap's remedy, then the first
-    ASKING one in ceiling order, so a blocker or any lower-ceiling asking cap
-    displaces the size remedy and this route is dropped while the offer is still
-    live. The reachable case is a project whose answer key was generated: the
+    ASKING one in ceiling order, then any outstanding non-cap ask, so a blocker
+    or any lower-ceiling asking cap displaces the size remedy and this route is
+    dropped while the offer is still live.
+
+    The third arm cannot PUT this route back, and the reason is a guard rather
+    than an ordering. An ask sorts after every cap, so it cannot displace a size
+    cap that asks - but that says nothing about the direction that would break
+    this block, which is an ask RETURNING `add-examples` while no size cap
+    exists at all. `offers_top_up` would then be true with no offer behind it,
+    and route A would print a top-up this run never computed - the inverse of
+    the substitution `Cap.asks` exists to refuse, and a silent break of "THE
+    MARK NEVER CONTRADICTS `recommended_action`" below. `ACTION_FOR_ASK` refuses
+    that remedy at construction, so the guarantee is enforced where the remedy
+    is decided rather than inferred here from a table that happens not to
+    contain it today.
+
+    The reachable case is a project whose answer key was generated: the
     offer is live, `dataset-coarse-resolution` asks at
     `COARSE_RESOLUTION_CEILING`, nothing blocks, and `review-answer-key` asks
     at the lower `GENERATED_ANSWER_KEY_CEILING`, so it wins the ordering and
@@ -8932,26 +9220,23 @@ def render_card(
         # Asserting the value of a field the payload already carries, four
         # lines from where the card prints that field's consequence, is the
         # defect class this branch exists to remove.
-        nothing_else_pending = not score.caps and score.recommended_action == PROCEED
+        nothing_else_pending = nothing_pending_beyond(score, ANSWER_KEY_UNREAD)
         # Beside the confidence sentence and never instead of it: two different
         # gaps hold this band, only one of them is about the answer key, and a
         # reader told about the wrong one goes and closes the wrong gap.
         #
-        # It carries the remedy in words because no cap carries it. Nothing
-        # here is capped - every measurement stands - so `recommended_action`
-        # has nothing to route, and the one sentence that says what would lift
-        # this band has to say it here or nowhere.
+        # It carries the remedy in words, and now the payload carries it too.
+        # Nothing here is capped - every measurement stands - so `caps` had
+        # nothing to route and this sentence was the whole of what the run
+        # said about the hold. `open_asks` is the other half
+        # (traigent-first-run#396): the remedy is a slug for a machine, this is
+        # the account for the person holding the card, and neither is a second
+        # spelling of the other.
         #
-        # The `proceed` clause is words on purpose, and the alternatives were
-        # weighed rather than skipped (traigent-first-run#396). A cap would
-        # route a remedy and reopen the argument recorded above
-        # `ANSWER_KEY_BAND_CEILING` about why no ceiling can express this hold;
-        # a payload field for asks that are not caps is a schema decision that
-        # belongs with the contract nothing documents yet
-        # (traigent-first-run#401). Neither is needed to stop the card reading
-        # as a contradiction: the band and the next step answer different
-        # questions, exactly as the band and the block already do, and saying
-        # so costs one sentence.
+        # A cap was the alternative and stays refused, for the reason recorded
+        # above `ANSWER_KEY_BAND_CEILING`: a ceiling is a number on the score
+        # and this hold is a verdict on the band, so a ceiling invented to route
+        # it would put an entry in `caps` that caps nothing.
         #
         # In words, and not by naming the flag that carries the read. No line
         # this card renders names an argument today - the only customer-facing
@@ -8966,8 +9251,8 @@ def render_card(
             f"cap and does not stop the run: what it holds is the verdict, not "
             f"the work."
             + (
-                " Nothing else here is capped and nothing is being asked of "
-                "you before the run."
+                " Nothing else here is capped, and this read is the only thing "
+                "being asked of you."
                 if nothing_else_pending
                 else ""
             )
@@ -9049,9 +9334,9 @@ def render_markdown(
                     f"{score.band}. This hold is not a cap and does not stop "
                     "the run: what it holds is the verdict, not the work."
                     + (
-                        " Nothing else is capped and nothing is being asked of "
-                        "you before the run."
-                        if not score.caps and score.recommended_action == PROCEED
+                        " Nothing else is capped, and this read is the only "
+                        "thing being asked of you."
+                        if nothing_pending_beyond(score, ANSWER_KEY_UNREAD)
                         else ""
                     )
                     + " A row-by-row read of each input beside its expected "
@@ -10084,15 +10369,18 @@ def dataset_facts_from_preflight(records: Sequence[dict[str, Any]]) -> DatasetFa
     # The third guard of the same shape, and it is here for the reason the two
     # above it are: preflight found something, this scorer needs the arithmetic
     # of it, and a payload carrying the finding without the numbers is one
-    # written by an older preflight. `dataset-ids` FAILs for two unrelated
-    # reasons - ids that collide, and generated rows carrying none - and the cap
-    # it feeds has to say which. Reading a missing count as zero would print
+    # written by an older preflight. `dataset-ids` makes two unrelated findings
+    # - ids that collide, and generated rows carrying none - and the cap it
+    # feeds has to say which. Reading a missing count as zero would print
     # neither reason, which is the state this whole branch is being changed to
     # remove.
     #
-    # Only when the check FAILED. On a PASS or a WARN nothing is capped, so an
-    # older payload's silence costs nothing and refusing it would strand runs
-    # over a number that could not have changed an outcome.
+    # This REFUSAL is only for the FAIL, which since #438 means a collision.
+    # The counts are read on every arm (see `duplicate_ids` below), because a
+    # WARN can cap too; what is scoped here is the loud rejection of a payload
+    # that claims a failure it cannot account for. An older payload that WARNs
+    # and carries no count scores as it did, because refusing it would strand a
+    # run over a number that could not have changed an outcome.
     ids_metrics = metrics.get("dataset-ids", {})
     if _failed(statuses, "dataset-ids"):
         if "duplicate_ids" not in ids_metrics:
@@ -10294,27 +10582,38 @@ def dataset_facts_from_preflight(records: Sequence[dict[str, Any]]) -> DatasetFa
         integrity_failed=structurally_failed,
         # Carried whether or not a count explains it - see `id_check_failed`.
         id_check_failed=_failed(statuses, "dataset-ids"),
-        # Read only where the check FAILED, so a WARN about missing ids on a
-        # collected corpus - which does not cap - cannot put a count into a
-        # reason nothing prints. `_row_count` refuses a value that is not a
-        # count rather than comparing it to zero and hoping.
-        duplicate_ids=(
-            _row_count(
-                ids_metrics.get("duplicate_ids"),
-                "duplicate_ids",
-                check="dataset-ids",
-            )
-            if _failed(statuses, "dataset-ids")
-            else None
+        # READ FROM THE METRIC AND NOT FROM THE STATUS, the way
+        # `shared_families` and `placeholder_rows` beside it already are, and
+        # this is the second time that rule has had to be applied here.
+        #
+        # These were read only where `dataset-ids` FAILED. That was true of the
+        # payload at the time and stopped being true the moment #438 relaxed
+        # the missing-id arm to WARN: the count was still published, still
+        # exact, and no longer reachable, so a generated corpus with no stable
+        # id lost its whole blocking line off the card and nothing anywhere
+        # said so. Preflight measures and publishes, THIS module prices - and a
+        # price that is only collected when preflight happens to shout is a
+        # price coupled to a severity this module does not own.
+        #
+        # `required=False` off the FAIL path, and the strict read kept on it.
+        # `dataset-ids` publishes both counts on every arm, PASS included, so
+        # for any payload the current preflight writes the value is simply
+        # there. An older payload that carries a WARN and no count scores as it
+        # did rather than being refused, because a count that could not have
+        # changed an outcome must not strand a run - which is the same
+        # reasoning as the FAIL-only guard above, applied to the arm that can
+        # now cap.
+        duplicate_ids=_row_count(
+            ids_metrics.get("duplicate_ids"),
+            "duplicate_ids",
+            required=_failed(statuses, "dataset-ids"),
+            check="dataset-ids",
         ),
-        generated_rows_without_id=(
-            _row_count(
-                ids_metrics.get("generated_rows_without_id"),
-                "generated_rows_without_id",
-                check="dataset-ids",
-            )
-            if _failed(statuses, "dataset-ids")
-            else None
+        generated_rows_without_id=_row_count(
+            ids_metrics.get("generated_rows_without_id"),
+            "generated_rows_without_id",
+            required=_failed(statuses, "dataset-ids"),
+            check="dataset-ids",
         ),
         # Same three-answer read as everything else off this payload:
         # `{"synthetic": "false"}` flipped the cap from "no row of this dataset
@@ -18738,7 +19037,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
             "emit machine-readable output. The scoring payload carries "
             f"'schema_version' (currently {SCHEMA_VERSION}), and a bump means a "
             "consumer of the older version can no longer read this payload "
-            "correctly - so check the field before branching on any value in it"
+            "correctly - so check the field before branching on any value in "
+            "it. 'recommended_action' names one remedy and it is not always a "
+            "cap's: a run may owe something that limits no score, and those "
+            "are in 'open_asks', so read the remedy from that field when no "
+            "entry in 'caps' carries it"
         ),
     )
     return parser.parse_args(argv)

@@ -1060,7 +1060,15 @@ class StaticPreflightTests(unittest.TestCase):
         self.assertIn("2 rows at source lines [11, 12]", ids[0].detail)
         self.assertIn("add stable ids in a working copy", ids[0].detail)
 
-    def test_generated_row_without_id_fails_inside_a_mixed_dataset(self) -> None:
+    def test_generated_row_without_id_warns_inside_a_mixed_dataset(self) -> None:
+        """Re-pinned by #438: a missing id reads the same whoever wrote the row.
+
+        This pinned the escalation to FAIL on generated provenance, which was
+        the fourth spelling of the construct #438 removed. The sentence it
+        checks is unchanged - the generated count still travels in it - and
+        only the status moves, because the exit code no longer turns on where
+        a row came from.
+        """
         rows = [
             {
                 "id": f"real-{index}",
@@ -1082,7 +1090,7 @@ class StaticPreflightTests(unittest.TestCase):
             dataset.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
             MODULE.check_dataset(dataset)
         ids = next(result for result in MODULE.RESULTS if result.check == "dataset-ids")
-        self.assertEqual(ids.status, MODULE.FAIL)
+        self.assertEqual(ids.status, MODULE.WARN)
         self.assertIn("1 row at source line 10 has no stable id", ids.detail)
         self.assertIn("1 generated row requires an id", ids.detail)
 
@@ -2075,6 +2083,168 @@ class StaticPreflightTests(unittest.TestCase):
                 for result in MODULE.RESULTS
             )
         )
+
+    def test_a_provenance_fact_is_not_priced_at_the_exit_code(self) -> None:
+        """#438: WARN whoever wrote the rows, at every site that priced it.
+
+        `dataset-outputs` and `dataset-difficulty` are the two sites #438
+        names. They were not the last two: the missing-bands arm and
+        `dataset-ids` spelled the same decision without the words
+        `FAIL if synthetic`, which is why a grep for the construct reported
+        the file clean while two of them were live. This fixture carries ids
+        and tags every row easy, so it reaches two of the four - the two #438
+        names - and the two sibling tests below carry the missing-bands arm and
+        `dataset-ids`. The id-less one asserts the two provenances AGREE rather
+        than asserting a constant, so the next author who reaches for this
+        construct fails on the inconsistency itself.
+
+        Nothing downstream can see the difference at either consumer of these
+        two names: `DIVERSITY_CHECKS` tests `status in ("FAIL", "WARN")`, and
+        `_answer_dominance_status` treats only a PASS on `dataset-outputs` as
+        its witness. That is NOT a property of `readiness.py` as a whole -
+        `_failed()` tests `status == "FAIL"` exactly, and `dataset-ids` is one
+        of the two names it is called with, which is why the fourth site was
+        the one where the distinction actually bit. Every fact is still
+        published; the card prices them.
+        """
+        rows = [
+            {
+                "id": f"walkthrough-{index}",
+                "input": f"scenario {index} unique_token_{index}",
+                "output": "same",
+                "difficulty": "easy",
+                "source": "synthetic",
+            }
+            for index in range(12)
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            dataset = Path(directory) / "eval.jsonl"
+            dataset.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+            MODULE.check_dataset(dataset)
+        checks = {result.check: result for result in MODULE.RESULTS}
+        self.assertEqual(checks["dataset-outputs"].status, MODULE.WARN)
+        self.assertIn(
+            "every expected output is identical", checks["dataset-outputs"].detail
+        )
+        self.assertEqual(checks["dataset-difficulty"].status, MODULE.WARN)
+        # And no FAILing check, so the exit code does not turn on who wrote
+        # these rows. Asserted over the dataset checks, which is the scope
+        # `check_dataset` covers - `check_keys` and `check_models` are not
+        # reached from here and are not claimed.
+        self.assertEqual(
+            [result.check for result in MODULE.RESULTS if result.status == MODULE.FAIL],
+            [],
+        )
+
+    def test_an_id_less_corpus_reads_the_same_whoever_wrote_the_row(self) -> None:
+        """The fourth site, and the one no grep for the construct could find.
+
+        `dataset-ids` escalated a missing id to FAIL when the row declared
+        generated provenance, spelled as `if generated_missing: status = FAIL`
+        rather than `FAIL if synthetic else WARN`. Twelve id-less rows,
+        identical in every other respect, exited 1 as `synthetic` and 0 as
+        `production-log` - #438's harm exactly, landing precisely where this
+        guide's own generated rows land, since a row this guide writes carries
+        generated provenance by construction.
+
+        A missing id is the same defect whoever wrote the row, so both
+        provenances now WARN, and the generated count stays in the sentence
+        and in `generated_rows_without_id` so nothing is lost from the
+        finding. Asserted as an equality between the two runs rather than as
+        two constants: that is the form that fails on the inconsistency
+        itself.
+        """
+
+        def statuses(source: str) -> dict[str, str]:
+            MODULE.RESULTS.clear()
+            rows = [
+                {
+                    "input": f"scenario {index} unique_token_{index}",
+                    "output": f"answer {index % 4}",
+                    "difficulty": ["easy", "medium", "hard", "very-hard"][index % 4],
+                    "source": source,
+                }
+                for index in range(12)
+            ]
+            with tempfile.TemporaryDirectory() as directory:
+                dataset = Path(directory) / "eval.jsonl"
+                dataset.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+                MODULE.check_dataset(dataset)
+            return {result.check: result.status for result in MODULE.RESULTS}
+
+        generated = statuses("synthetic")
+        collected = statuses("production-log")
+        self.assertEqual(generated["dataset-ids"], collected["dataset-ids"])
+        self.assertEqual(generated["dataset-ids"], MODULE.WARN)
+        # The property in full: provenance moves no check to FAIL, so it moves
+        # the exit code nowhere. Compared as two sets rather than asserted as
+        # one constant, which is the form that reds on the inconsistency
+        # itself.
+        #
+        # Checks that still READ provenance are deliberately not enumerated
+        # here. A list of them is a completeness claim maintained by hand
+        # beside a property maintained by execution, and the first draft of
+        # this comment named two where the same commit's own comment in
+        # `preflight.py` named a third. The assertion below is the claim: no
+        # check reaches FAIL on provenance. Which ones differ at WARN is a
+        # different question and is not one a comment should answer.
+        self.assertEqual(
+            {check for check, status in generated.items() if status == MODULE.FAIL},
+            {check for check, status in collected.items() if status == MODULE.FAIL},
+        )
+        self.assertEqual(
+            [check for check, status in generated.items() if status == MODULE.FAIL],
+            [],
+        )
+
+    def test_a_missing_id_still_counts_the_generated_rows(self) -> None:
+        """Relaxing the status must not cost the finding its detail.
+
+        The count of generated rows without an id is what a consumer needs to
+        say how much of the gap is in rows this guide itself wrote, so it
+        stays in the sentence and in the metrics now that it decides nothing.
+        """
+        rows = [
+            {
+                "input": f"scenario {index} unique_token_{index}",
+                "output": f"answer {index % 4}",
+                "difficulty": ["easy", "medium", "hard", "very-hard"][index % 4],
+                "source": "synthetic",
+            }
+            for index in range(12)
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            dataset = Path(directory) / "eval.jsonl"
+            dataset.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+            MODULE.check_dataset(dataset)
+        ids = next(result for result in MODULE.RESULTS if result.check == "dataset-ids")
+        self.assertEqual(ids.status, MODULE.WARN)
+        self.assertIn("12 generated rows require an id", ids.detail)
+        self.assertEqual(ids.metrics["generated_rows_without_id"], 12)
+
+    def test_a_synthetic_corpus_missing_bands_warns_rather_than_fails(self) -> None:
+        """The other half of #438: the missing-bands arm fired only when
+        synthetic, so the same absent bands were a FAIL for generated rows and
+        a WARN - or nothing - for collected ones."""
+        rows = [
+            {
+                "id": f"walkthrough-{index}",
+                "input": f"scenario {index} unique_token_{index}",
+                "output": f"answer {index % 4}",
+                "difficulty": "easy" if index % 2 else "medium",
+                "source": "synthetic",
+            }
+            for index in range(12)
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            dataset = Path(directory) / "eval.jsonl"
+            dataset.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+            MODULE.check_dataset(dataset)
+        difficulty = next(
+            result for result in MODULE.RESULTS if result.check == "dataset-difficulty"
+        )
+        self.assertEqual(difficulty.status, MODULE.WARN)
+        self.assertIn("missing difficulty bands", difficulty.detail)
 
     def test_dominant_expected_output_warns_about_hidden_failures(self) -> None:
         rows = [
@@ -4700,12 +4870,18 @@ class ATruncatedListSaysThatItIsTruncatedTests(unittest.TestCase):
     def test_a_generated_row_with_no_id_is_counted_apart_from_the_rest(
         self,
     ) -> None:
-        """The two ways this check FAILs, kept as two numbers.
+        """The two populations, kept as two numbers.
 
-        A collected row missing an id WARNs and caps nothing; a generated one
-        FAILs. A reason built from the wider count would name rows the check did
-        not object to, so both counts are published and only the narrower one
-        describes the failure.
+        A reason built from the wider count would name rows the check did not
+        object to, so both counts are published and the narrower one stays
+        available to whoever needs to say how much of the gap is in generated
+        rows.
+
+        This read "the two ways this check FAILs" while the narrower count
+        escalated a missing id to FAIL on generated provenance. #438 removed
+        that escalation - a missing id is the same defect whoever wrote the
+        row - so the counts are still two and the status is one WARN. What the
+        test guards is unchanged: the two populations must not be conflated.
         """
         rows = [
             {
@@ -4738,7 +4914,7 @@ class ATruncatedListSaysThatItIsTruncatedTests(unittest.TestCase):
         result = next(
             result for result in MODULE.RESULTS if result.check == "dataset-ids"
         )
-        self.assertEqual(result.status, MODULE.FAIL)
+        self.assertEqual(result.status, MODULE.WARN)
         self.assertEqual(result.metrics["rows_without_id"], 2)
         self.assertEqual(result.metrics["generated_rows_without_id"], 1)
         self.assertEqual(result.metrics["duplicate_ids"], 0)
@@ -6395,6 +6571,56 @@ class OneRecordPerCheckTests(unittest.TestCase):
         self.assertIn("no LLM provider credential names are present", records[0].detail)
         self.assertIn("Bedrock is not counted", records[0].detail)
 
+    def test_an_all_easy_synthetic_corpus_is_one_difficulty_record(self) -> None:
+        """#440: the crash that discarded a whole run's records.
+
+        A `source: synthetic` corpus whose difficulty tags are all `easy`
+        emitted `dataset-difficulty` twice - once from the all-easy arm and
+        again from the synthetic missing-bands arm, since all-easy IS missing
+        three bands. The registry refused the second, `main` reported that as
+        exit 3 with no records at all, and the customer lost every finding the
+        run had already made - including the ones nothing to do with
+        difficulty. That corpus is an ordinary one here: a generated
+        walkthrough dataset is synthetic by construction and a small first-run
+        one is often uniformly easy.
+        """
+        rows = [
+            {
+                "id": f"walkthrough-{index}",
+                "input": f"scenario {index} unique_token_{index}",
+                "output": f"answer {index % 4}",
+                "difficulty": "easy",
+                "source": "synthetic",
+            }
+            for index in range(12)
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            dataset = Path(directory) / "eval.jsonl"
+            dataset.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+            returned = MODULE.check_dataset(dataset)
+        self.assertEqual(len(returned or []), 12)
+        difficulty = [
+            result for result in MODULE.RESULTS if result.check == "dataset-difficulty"
+        ]
+        self.assertEqual(len(difficulty), 1)
+        # One record carrying BOTH observations: the ceiling effect, and the
+        # bands that are not there.
+        self.assertIn("are easy", difficulty[0].detail)
+        self.assertIn("ceiling effect", difficulty[0].detail)
+        self.assertIn("missing bands", difficulty[0].detail)
+        self.assertIn("very-hard", difficulty[0].detail)
+        # And as data, not only as prose: `emit`'s own docstring is that a
+        # wording change must never alter a score.
+        self.assertEqual(difficulty[0].metrics["bands"], ["easy"])
+        self.assertEqual(
+            difficulty[0].metrics["missing_bands"], ["hard", "medium", "very-hard"]
+        )
+        self.assertEqual(
+            len({result.check for result in MODULE.RESULTS}),
+            len(MODULE.RESULTS),
+            [result.check for result in MODULE.RESULTS],
+        )
+
     def test_missing_and_colliding_ids_are_one_record_that_fails(self) -> None:
         rows = [
             {
@@ -6628,32 +6854,6 @@ ENV_LINE_SHAPES = (
     "QUOTED='a b' # trailing",
 )
 
-#: The one `(source, difficulty pattern)` pair this enumeration does NOT
-#: assert over, and why. A `source: synthetic` corpus tagged entirely `easy`
-#: records `dataset-difficulty` twice on trunk today - the third instance of
-#: this class, reported as #440 and fixed on the open branch for #442, which
-#: owns those lines. Excluded here rather than fixed twice: two branches
-#: rewriting the same arms is a conflict, not a second fix.
-#:
-#: The pairs are excused for ONE check name and nothing else - see
-#: `DATASET_DUPLICATE_OWNED_ELSEWHERE`. A second name recording twice BEFORE
-#: `dataset-difficulty` on the same shape still reds; one recorded after it
-#: does not, because `emit` raises on the first collision and nothing past it
-#: runs. So this is a hole the width of a known defect and the tail behind it,
-#: not the width of a corpus.
-#:
-#: **It retires itself.** The walk asserts that every pair listed here STILL
-#: raises: when #442 lands and this shape stops recording twice, the
-#: enumeration fails and says to delete both names. That is deliberate, and
-#: the red is the point - an exemption whose reason has gone is a false green,
-#: and this repository has been bitten by correct-at-the-time notes that
-#: outlived their reason. Whichever branch lands second pays one two-line
-#: deletion, and the failure message says exactly which lines.
-DATASET_SHAPES_OWNED_ELSEWHERE = frozenset({("synthetic", "all-easy")})
-#: The one check name the shapes above may record twice, spelled out so the
-#: exemption cannot cover a defect nobody has seen.
-DATASET_DUPLICATE_OWNED_ELSEWHERE = "dataset-difficulty"
-
 #: `--models` entries, including the repeat that raised and two spellings of
 #: an id this check refuses.
 MODEL_SHAPES = (
@@ -6694,10 +6894,19 @@ class NoInputMakesOneCheckSpeakTwiceTests(unittest.TestCase):
     `check_evaluator`, `check_sdk`, or `check_existing_traigent_use`, none of
     which take a customer-controlled list. And it is a test of the check
     surface, not of the registry: the registry keeps its own test above.
-    Finally, one dataset shape may still record `dataset-difficulty` twice -
-    named and explained at `DATASET_SHAPES_OWNED_ELSEWHERE`, because a
-    different open branch owns the arms that would fix it - and that exemption
-    is for that one name, not for the shape.
+    It carried one exemption when it was written. `("synthetic", "all-easy")`
+    was excused for `dataset-difficulty`, because the branch for #442 owned
+    the arms that would fix it and two branches rewriting the same arms is a
+    conflict rather than a second fix. That exemption RETIRED ITSELF exactly
+    as it was built to: the walk asserted every excused shape still raised, so
+    the day #442 made the shape record once, this test went red naming the
+    lines to delete, and they were deleted in the same change. Every shape
+    this walk enumerates is now asserted on the same terms.
+
+    Kept as a paragraph because the mechanism is the point and outlived the
+    hole: an exemption that cannot outlive its reason is the answer to the
+    correct-at-the-time note, which is the defect class this whole file keeps
+    finding. The next exemption should be built the same way.
     """
 
     def setUp(self) -> None:
@@ -6764,7 +6973,6 @@ class NoInputMakesOneCheckSpeakTwiceTests(unittest.TestCase):
             "untagged": (None, None, None, None),
         }
         id_patterns = ("unique", "duplicate", "missing", "duplicate-and-missing")
-        still_owned_elsewhere: set[tuple[str, str]] = set()
         with tempfile.TemporaryDirectory() as directory:
             dataset = Path(directory) / "eval.jsonl"
             for source, bands, ids, identical in itertools.product(
@@ -6793,43 +7001,8 @@ class NoInputMakesOneCheckSpeakTwiceTests(unittest.TestCase):
                 dataset.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
                 MODULE.RESULTS.clear()
                 combination = (source, bands, ids, identical)
-                if (source, bands) in DATASET_SHAPES_OWNED_ELSEWHERE:
-                    # Still asserted over, and only the one known name
-                    # excused: the shape may raise on
-                    # `DATASET_DUPLICATE_OWNED_ELSEWHERE` while another branch
-                    # owns that fix, and must otherwise obey the property like
-                    # every other shape. Whether it raised is RECORDED, and
-                    # checked against the exemption below - that is what makes
-                    # the exemption retire itself rather than sit here green
-                    # once its reason is gone.
-                    try:
-                        MODULE.check_dataset(dataset)
-                    except MODULE.DuplicateCheckName as raised:
-                        self.assertIn(
-                            f"{DATASET_DUPLICATE_OWNED_ELSEWHERE!r}",
-                            str(raised),
-                            combination,
-                        )
-                        still_owned_elsewhere.add((source, bands))
-                        continue
-                    self.assert_one_record_per_check(combination)
-                    continue
                 MODULE.check_dataset(dataset)
                 self.assert_one_record_per_check(combination)
-        # The exemption's expiry date, executed. Every excused shape must still
-        # be a shape that raises: one that has stopped is a hole with no defect
-        # under it any more, and a hole nothing complains about is how a
-        # correct-at-the-time note becomes a false green. Failing here is the
-        # only notice anyone gets, so it says what to do.
-        self.assertEqual(
-            still_owned_elsewhere,
-            set(DATASET_SHAPES_OWNED_ELSEWHERE),
-            "this exemption is obsolete: the shapes named above no longer "
-            f"record {DATASET_DUPLICATE_OWNED_ELSEWHERE!r} twice, so delete "
-            "DATASET_SHAPES_OWNED_ELSEWHERE, DATASET_DUPLICATE_OWNED_ELSEWHERE "
-            "and the arm in this walk that reads them, leaving the plain "
-            "assertion for every shape",
-        )
 
     def test_two_unreadable_env_lines_are_one_record_that_names_both(self) -> None:
         """#447: folding must not cost the customer the second finding.
