@@ -3248,6 +3248,28 @@ def _shows_a_sql_engine(tree: ast.Module) -> bool:
     return False
 
 
+def _shows_a_sql_surface(tree: ast.Module) -> bool:
+    """Whether this file imports a data-frame SQL surface.
+
+    A renderer import can make an otherwise generic ``.sql(...)`` call
+    ambiguous, but it cannot establish that a second ``.sql(...)`` call in a
+    file that imports an executable data-frame SQL surface is also rendering.
+    The static walk does not have receiver types. In that specific mixed file,
+    preserving the no-execution boundary is more important than granting a
+    calibration credit that could execute candidate SQL.
+    """
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            names = [alias.name for alias in node.names]
+        elif isinstance(node, ast.ImportFrom) and node.level == 0:
+            names = [node.module or ""]
+        else:
+            continue
+        if any(name.partition(".")[0] in _SQL_SURFACE_MODULE_NAMES for name in names):
+            return True
+    return False
+
+
 def _execution_call_description(
     call: ast.Call,
     reads_as_an_engine: bool = False,
@@ -3294,10 +3316,11 @@ def candidate_execution_witnesses(tree: ast.Module) -> tuple[str, ...]:
     witnesses: list[tuple[int, str]] = []
     # Asked once, of the whole module, because it is a question about the file
     # rather than about any call in it.
-    # A file shows an engine, and does not show a renderer that would make the
-    # same method name mean something else.
-    reads_as_an_engine = _shows_a_sql_engine(tree) and not (
-        _renders_sql_without_running_it(tree)
+    # A renderer makes a generic `.sql()` ambiguous. An explicit data-frame
+    # SQL surface is different: its presence leaves no static proof that a
+    # receiver is the renderer, so the candidate-SQL boundary wins.
+    reads_as_an_engine = _shows_a_sql_engine(tree) and (
+        not _renders_sql_without_running_it(tree) or _shows_a_sql_surface(tree)
     )
     statement_readers = _imported_statement_readers(tree)
     for node in ast.walk(tree):

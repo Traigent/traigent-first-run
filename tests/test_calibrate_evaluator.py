@@ -4121,6 +4121,34 @@ class ExecutionScopeGateTests(unittest.TestCase):
         self.assertIn("imports pyspark.sql", process.stderr)
         self.assertIn("calls .sql()", process.stderr)
 
+    def test_a_renderer_import_does_not_clear_a_polars_execution_path(self) -> None:
+        """A mixed evaluator is refused before either dependency can import.
+
+        A renderer can normalize expected SQL in the same file that Polars
+        submits candidate SQL. The scope gate cannot infer the receiver type
+        from an attribute call, so it must refuse this route before the
+        evaluator's imports or its candidate execution can happen.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            marker = Path(directory) / "mixed.marker"
+            scorer = self.write(
+                directory,
+                "mixed_sql_scorer.py",
+                "import pathlib\n"
+                f"pathlib.Path({str(marker)!r}).write_text('ran')\n"
+                "import polars as pl\n"
+                "import sqlglot\n\n\n"
+                "FRAME = pl.DataFrame({'value': [1]})\n\n\n"
+                "def score(*, output, expected, input_data, metadata):\n"
+                "    del expected, input_data, metadata, sqlglot\n"
+                "    return float(FRAME.sql(str(output)).height > 0)\n",
+            )
+            process = self.calibrate(scorer, "score", "--task-kind", "code-sql")
+        self.assertEqual(process.returncode, 2, process.stdout)
+        self.assertFalse(marker.exists(), process.stderr)
+        self.assertIn("mixed_sql_scorer.py", process.stderr)
+        self.assertIn("calls .sql()", process.stderr)
+
     def test_the_reply_transform_is_read_too(self) -> None:
         """The file nothing had ever looked at, and the reason it matters.
 
