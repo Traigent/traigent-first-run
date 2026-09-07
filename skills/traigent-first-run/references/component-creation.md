@@ -578,7 +578,7 @@ stub answers a question nobody put. **Control flow** is whether the agent ends a
 ends trivially, a loop with a bound can be recorded, and a loop with neither is one input costing an
 unbounded number of calls. **Tools**
 is whether each declared tool can be found. A partly reachable list earns only the reachable share
-of this check. `"used": false` earns nothing here; prompt,
+of this check. `"used": false` earns no credit for this check; prompt,
 output-contract, control-flow, and config-space checks remain, with dataset/evaluation in separate
 pillars. Memory/context and provider connectivity are not scored here; run safety handles the latter.
 
