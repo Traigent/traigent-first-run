@@ -23598,50 +23598,97 @@ class TheHonestDeclarationIsNeverOutscoredTests(unittest.TestCase):
         self.assertTrue(fitting, "no method suits a tool or action workflow")
         self.assertIn("final-state", fitting)
 
+    # The one settled shape this property is not asserted over, named here
+    # because the sweep below derives its own axis and has to say what it is
+    # deliberately leaving out rather than simply not reaching it.
+    #
+    # `derived_comparison_shape` returns this only for a file that imports the
+    # guide's own bundled SQL comparator and delegates both answers to it, so
+    # a file settled as `sql-structure` is a query comparator whatever was
+    # typed over it and `final-state` is not the true declaration for it.
+    # `test_the_new_word_is_still_refused_from_proof` asserts that state
+    # instead.
+    SHAPES_THIS_PROPERTY_EXCLUDES = frozenset({"sql-structure"})
+
     def test_no_declaration_outscores_the_honest_one(self) -> None:
         """The property, swept over every pair the two flags can spell.
 
         This is the repository's "deleting a credential check may never score
-        better" shape, applied to a declaration: for ONE evaluator, the true
-        words must be worth at least as much as any other words. Swept over
-        `METHOD_PROFILES` x `TASK_KINDS` so a sixteenth method or an eleventh
-        kind is judged by the property rather than by whoever remembers this
-        file.
+        better" shape, applied to a declaration: for ONE evaluator, over one
+        fixed body of evidence, the true words must be worth at least as much
+        as any other words.
 
-        What it can actually catch is worth saying, because the sweep looks
-        wider than it is. The honest pair sits at the pillar ceiling, so no
-        profile added later can climb PAST it; every way this goes red is the
-        honest side falling - `final-state` joining
+        **What the sweep judges, exactly.** Every CHALLENGER a later author
+        can spell: the `METHOD_PROFILES` x `TASK_KINDS` product is derived, so
+        a sixteenth method or an eleventh kind is measured against this
+        property the moment it exists. The HONEST side is the one pair below,
+        written out, and it cannot be derived - which is worth stating plainly
+        because an earlier revision of this docstring claimed the whole thing
+        was derived and it is not. Whether a declaration is TRUE of a file is
+        a fact about that file, and no table here holds it. A sixteenth method
+        that is itself the honest declaration for a new kind - `final-state`
+        was exactly that - therefore needs its own pair added to this test, and
+        nothing in the suite can notice that it was not.
+
+        The obvious derivation was tried and is wrong: "every kind with one
+        fitting method has that method as its honest declaration, so sweep
+        those pairs" fails today on `extraction` and `numeric`, whose sole
+        methods hold empty `METHOD_COMPARISON_SUPPORT` sets and are therefore
+        refuted under a settled whole-value shape - correctly, because a file
+        proven to compare two whole answers is not scoring overlap or reading
+        numbers. The pairs that belong here are the ones whose honest
+        evaluator the walk CAN settle, and that is a judgement about
+        evaluators rather than a fact in a table.
+
+        **What it can catch, then.** The honest pair sits at the pillar
+        ceiling, so nothing added later can climb PAST it; every way this goes
+        red is the honest side falling - `final-state` joining
         `METHOD_REQUIRES_PROVEN_COMPARISON`, its execution claim turning
         `True`, its dials being trimmed, its `METHOD_COMPARISON_SUPPORT` entry
-        narrowing, or the kind losing its only fitting method. Those are the
-        five edits that would reopen #449, and each of them is a one-line
-        change somebody would otherwise make against a table rather than
-        against the property. The fourth is on that list because it was made:
-        this method shipped for review with an empty support set.
+        narrowing, a new provable comparison shape it does not support, or the
+        kind losing its only fitting method. Those are the six edits that
+        would reopen #449 for THIS pair, and each is a one-line change
+        somebody would otherwise make against a table. Two of the six are on
+        that list because they were made: this method shipped for review with
+        an empty support set, and the revision that fixed it swept a
+        hand-written list of shapes.
 
-        Every comparison shape a tool-workflow evaluator can be settled as is
-        swept, and that is the dimension this test shipped without. It fixed
-        `comparison_shape` at None and said so as a fact - "a file settled as
-        a whole-value comparison is not the evaluator this property is about"
-        - which is false of the plainest evaluator the guide's row describes,
-        so the sweep was green over exactly the state where the property was
-        broken. A test that excludes a state by assertion cannot be the thing
-        that catches the assertion being wrong.
-
-        `sql-structure` is the one settled shape left out, and it is left out
-        by an assertion about it rather than by silence: a file resolved to
-        compare two parsed queries is a query comparator, so `final-state` is
-        not the true declaration over it and the property does not apply.
-        `test_the_new_word_is_still_refused_from_proof` covers that state.
+        **Why the shape axis is derived and not listed.** It shipped as a
+        fixed `None`, defended in this docstring as a fact - "a file settled
+        as a whole-value comparison is not the evaluator this property is
+        about" - which is false of the plainest evaluator the guide's row
+        describes, so the sweep was green over exactly the state where the
+        property was broken. The repair replaced that with three shapes typed
+        out by hand, which is the same defect one move out: complete only
+        while somebody remembers to widen it, and a fourth provable shape
+        reopens the inversion with this test green. So the axis is read off
+        `COMPARISON_SHAPE_DESCRIPTIONS` and the exclusion is asserted against
+        it. A fifth shape now fails HERE, naming this property, rather than
+        somewhere else naming a table.
         """
-        witnesses = {
-            None: None,
-            "exact": "the answers are compared as written (line 6)",
-            "normalized-exact": "casefold, strip applied before it (line 6)",
-        }
+        swept = set(MODULE.COMPARISON_SHAPE_DESCRIPTIONS) - (
+            self.SHAPES_THIS_PROPERTY_EXCLUDES
+        )
+        self.assertEqual(
+            swept | self.SHAPES_THIS_PROPERTY_EXCLUDES,
+            set(MODULE.COMPARISON_SHAPE_DESCRIPTIONS),
+            "a provable comparison shape exists that this property neither "
+            "sweeps nor excludes on purpose",
+        )
+        self.assertTrue(
+            self.SHAPES_THIS_PROPERTY_EXCLUDES
+            <= set(MODULE.COMPARISON_SHAPE_DESCRIPTIONS),
+            "this property excludes a shape the walk can no longer establish; "
+            "the exclusion outlived what it was carved out for",
+        )
+        # None is not a shape and is not in that table: it is the state where
+        # the walk settled nothing, which every file starts in.
+        states = [(None, None)] + [
+            (shape, f"the walk settled this file as {shape} (line 6)")
+            for shape in sorted(swept)
+        ]
         for read in (None, False):
-            for shape, witness in sorted(witnesses.items(), key=lambda x: str(x[0])):
+            for shape, witness in states:
                 state = {
                     "executes_candidate": read,
                     "comparison_shape": shape,

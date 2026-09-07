@@ -887,6 +887,17 @@ METHOD_EXECUTES_CANDIDATE: dict[str, bool | None] = {
     # was added to let a customer make honestly - reinstating the inversion
     # under a new word. Preflight's witness still refuses a file it catches
     # reaching an engine, whichever word was typed over it.
+    #
+    # What `None` does NOT say, and must not be read as saying: that a replay
+    # is detected or bounded anywhere. The witness is keyed on code and SQL
+    # engines and on process attributes, so an evaluator that replays the
+    # workflow through the customer's own module is invisible to it - and
+    # `calibrate_evaluator.py` will run that evaluator against the authored
+    # probes, performing those side effects, before the customer approves any
+    # spend. That exposure predates this method and is the same for
+    # `composite` or a bare adapter; it is tracked as
+    # traigent-first-run#460 and belongs to the containment gate in
+    # `references/run-safety.md`, not to this table.
     "final-state": None,
 }
 
