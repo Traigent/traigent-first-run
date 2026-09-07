@@ -2896,8 +2896,14 @@ class DatasetFacts:
     # file, and the same file with its ids renumbered, are both scored. Source:
     # tests/test_readiness_adapter.py#RepeatedRowsAreCappedOnTheirOwnAccountTests.
     integrity_failed: bool = False
-    # Id values used by more than one row, and rows carrying no stable id: the
-    # two ways `dataset-ids` FAILs, as counts rather than as one boolean.
+    # Id values used by more than one row, and generated rows carrying no
+    # stable id: the two findings this check makes, as counts rather than as
+    # one boolean.
+    #
+    # They were "the two ways `dataset-ids` FAILs" until #438. Only a collision
+    # FAILs now - a missing id is the same defect whoever wrote the row, so it
+    # WARNs - and BOTH still price here, because this module reads them off the
+    # metric rather than off the status.
     #
     # `None` means preflight published no such count, which for a FAILing check
     # is a payload older than the metric. The adapter refuses that rather than
@@ -2905,11 +2911,17 @@ class DatasetFacts:
     # `dataset-integrity` guards beside it - reading a missing count as zero
     # would restore the wrong reason for exactly the files that have the defect.
     duplicate_ids: int | None = None
-    # The generated rows with no id, which is the half that decides the status:
-    # a collected row missing an id is a WARN and caps nothing, a generated one
-    # is what makes `dataset-ids` FAIL. The wider count of rows missing an id is
-    # deliberately not the one carried here - a reason built from it would name
-    # rows the check did not object to.
+    # The generated rows with no id. This decided preflight's STATUS until
+    # #438 removed that escalation; it decides nothing there now and prices
+    # here, which is the division of labour `preflight.py` states at the top of
+    # itself. A non-zero count raises the same ceiling it always did, on a WARN.
+    #
+    # The wider count of rows missing an id is deliberately not the one carried
+    # here - a reason built from it would name rows the check did not object
+    # to. That leaves a COLLECTED corpus with no ids unpriced, which is
+    # unchanged by #438 and is the state this repository has always been in;
+    # whether it should also be priced is a question for whoever asks it, and
+    # this comment is where they will start.
     generated_rows_without_id: int | None = None
     # THAT `dataset-ids` FAILED, carried apart from WHY it failed.
     #
@@ -2924,6 +2936,12 @@ class DatasetFacts:
     # which is the whole reason this is a separate fact: the cap is raised from
     # the failure, and a failure this score cannot explain fails loud instead of
     # falling through to no cap.
+    #
+    # It is one of the ceiling's conditions and no longer the only one: the
+    # counts raise it too, since #438 left a real, exactly-counted finding
+    # sitting under a WARN. Both directions are needed and neither subsumes the
+    # other - the boolean catches a failure with no count, the counts catch a
+    # finding with no failure.
     id_check_failed: bool = False
     # The row ids preflight read, as truncated digests, and the subset of them
     # on the tuning or held-out side. Membership sets, not counts: they are the
@@ -6118,7 +6136,20 @@ def score_dataset(
     # stops a paid run - a check that answers a semantic question from a surface
     # signal, with its "didn't find it" arm counting as a pass, which is the
     # class this repository has shipped most often.
-    if facts.integrity_failed or facts.id_check_failed:
+    # `id_check_failed` STAYS in this disjunction beside the counts rather
+    # than being replaced by them. It records THAT the check failed, and a
+    # payload that FAILs with every count at zero must still reach the loud
+    # refusal below instead of scoring as clean - which is the hole the boolean
+    # was added to close. What the counts add is the other direction: a finding
+    # that is real and exactly counted still prices, whatever severity preflight
+    # chose to print it at. Since #438 that is the ordinary case, not the exotic
+    # one - a generated corpus with no stable id WARNs.
+    if (
+        facts.integrity_failed
+        or facts.id_check_failed
+        or facts.duplicate_ids
+        or facts.generated_rows_without_id
+    ):
         reason = dataset_integrity_reason(facts)
         if reason is None:
             # Fail loud rather than silently drop the ceiling. Unreachable from
@@ -6149,8 +6180,10 @@ def dataset_integrity_reason(facts: DatasetFacts) -> str | None:
 
     THREE FINDINGS SHARE THIS CEILING and the reason used to name only the
     first. Rows that could not be read as data is the structural one; ids that
-    collide and rows carrying no stable id are the two ways `dataset-ids` FAILs,
-    and both were folded into the same boolean. Measured on a 90-row file whose
+    collide and generated rows carrying no stable id are the two `dataset-ids`
+    makes, and both were folded into the same boolean. (Since #438 only the
+    collision FAILs; both still reach this ceiling, because the caller tests
+    the counts and not the status.) Measured on a 90-row file whose
     30 exact repeats copied their ids: every row parsed, every row carried an
     answer, `dataset-shape` PASSed "90 valid JSONL rows", the card printed
     "90/90 rows carry an expected output" - and the blocking cap two lines below
@@ -10063,15 +10096,18 @@ def dataset_facts_from_preflight(records: Sequence[dict[str, Any]]) -> DatasetFa
     # The third guard of the same shape, and it is here for the reason the two
     # above it are: preflight found something, this scorer needs the arithmetic
     # of it, and a payload carrying the finding without the numbers is one
-    # written by an older preflight. `dataset-ids` FAILs for two unrelated
-    # reasons - ids that collide, and generated rows carrying none - and the cap
-    # it feeds has to say which. Reading a missing count as zero would print
+    # written by an older preflight. `dataset-ids` makes two unrelated findings
+    # - ids that collide, and generated rows carrying none - and the cap it
+    # feeds has to say which. Reading a missing count as zero would print
     # neither reason, which is the state this whole branch is being changed to
     # remove.
     #
-    # Only when the check FAILED. On a PASS or a WARN nothing is capped, so an
-    # older payload's silence costs nothing and refusing it would strand runs
-    # over a number that could not have changed an outcome.
+    # This REFUSAL is only for the FAIL, which since #438 means a collision.
+    # The counts are read on every arm (see `duplicate_ids` below), because a
+    # WARN can cap too; what is scoped here is the loud rejection of a payload
+    # that claims a failure it cannot account for. An older payload that WARNs
+    # and carries no count scores as it did, because refusing it would strand a
+    # run over a number that could not have changed an outcome.
     ids_metrics = metrics.get("dataset-ids", {})
     if _failed(statuses, "dataset-ids"):
         if "duplicate_ids" not in ids_metrics:
@@ -10273,27 +10309,38 @@ def dataset_facts_from_preflight(records: Sequence[dict[str, Any]]) -> DatasetFa
         integrity_failed=structurally_failed,
         # Carried whether or not a count explains it - see `id_check_failed`.
         id_check_failed=_failed(statuses, "dataset-ids"),
-        # Read only where the check FAILED, so a WARN about missing ids on a
-        # collected corpus - which does not cap - cannot put a count into a
-        # reason nothing prints. `_row_count` refuses a value that is not a
-        # count rather than comparing it to zero and hoping.
-        duplicate_ids=(
-            _row_count(
-                ids_metrics.get("duplicate_ids"),
-                "duplicate_ids",
-                check="dataset-ids",
-            )
-            if _failed(statuses, "dataset-ids")
-            else None
+        # READ FROM THE METRIC AND NOT FROM THE STATUS, the way
+        # `shared_families` and `placeholder_rows` beside it already are, and
+        # this is the second time that rule has had to be applied here.
+        #
+        # These were read only where `dataset-ids` FAILED. That was true of the
+        # payload at the time and stopped being true the moment #438 relaxed
+        # the missing-id arm to WARN: the count was still published, still
+        # exact, and no longer reachable, so a generated corpus with no stable
+        # id lost its whole blocking line off the card and nothing anywhere
+        # said so. Preflight measures and publishes, THIS module prices - and a
+        # price that is only collected when preflight happens to shout is a
+        # price coupled to a severity this module does not own.
+        #
+        # `required=False` off the FAIL path, and the strict read kept on it.
+        # `dataset-ids` publishes both counts on every arm, PASS included, so
+        # for any payload the current preflight writes the value is simply
+        # there. An older payload that carries a WARN and no count scores as it
+        # did rather than being refused, because a count that could not have
+        # changed an outcome must not strand a run - which is the same
+        # reasoning as the FAIL-only guard above, applied to the arm that can
+        # now cap.
+        duplicate_ids=_row_count(
+            ids_metrics.get("duplicate_ids"),
+            "duplicate_ids",
+            required=_failed(statuses, "dataset-ids"),
+            check="dataset-ids",
         ),
-        generated_rows_without_id=(
-            _row_count(
-                ids_metrics.get("generated_rows_without_id"),
-                "generated_rows_without_id",
-                check="dataset-ids",
-            )
-            if _failed(statuses, "dataset-ids")
-            else None
+        generated_rows_without_id=_row_count(
+            ids_metrics.get("generated_rows_without_id"),
+            "generated_rows_without_id",
+            required=_failed(statuses, "dataset-ids"),
+            check="dataset-ids",
         ),
         # Same three-answer read as everything else off this payload:
         # `{"synthetic": "false"}` flipped the cap from "no row of this dataset
