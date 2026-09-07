@@ -13444,6 +13444,165 @@ class TheWitnessDecidesTheScopeGateNotTheDeclarationTests(unittest.TestCase):
                         f"carries {sorted(conditions)}: {line}",
                     )
 
+    def test_the_refusal_line_reports_the_run_that_produced_it(self) -> None:
+        """The record against the RUN - the check three phrase guards were not.
+
+        The three sweeps beside this one compare text to text: lists of the
+        wordings already found wrong. A reviewer reintroduced all three of
+        this seam's prior defects as synonym rewrites and every one passed a
+        green suite, because a ban-list cannot see a paraphrase and a fourth
+        correct hand-written rule is still a hand-written rule.
+
+        This asks the run instead. `calibration_refusal_consequence` returns
+        the claims its sentence makes as data, and every one of them is a
+        statement about facts this test already has: whether a calibration
+        happened, whether preflight's walk ran over the file at all, whether
+        the refusal ceiling is on the card, and whether the check is charged.
+        A new arm cannot exist without declaring what it asserts, and what it
+        asserts is measured against the run rather than against anyone's
+        vocabulary.
+
+        The charge is the half the suite missed entirely. Every earlier test
+        of the declared arm went through a helper that leaves
+        `executes_candidate` at `None`, so the `walk is False` arm - the one
+        `SKILL.md` calls "the only route where preflight finds no engine", the
+        state a customer who obeys the guide lands in - had no `withheld`
+        assertion anywhere. Flipping its charge moved the evaluation pillar 28
+        points with every test green.
+        """
+        for label, score, facts in self._every_refused_state():
+            with self.subTest(state=label):
+                # The product includes states nothing refuses - no flag and no
+                # witness - which the sibling sweeps cover and this record does
+                # not describe. Derived from the same two inputs the module
+                # reads, not from the words on the line.
+                if not (
+                    facts.calibration_scope_refused or facts.executes_candidate is True
+                ):
+                    continue
+                sub = self._calibration_subscore(score)
+                engaged = bool(
+                    facts.calibration_present
+                    or facts.calibration_supplied
+                    or facts.timed_out is True
+                    or facts.checks
+                )
+                refusal = MODULE.calibration_refusal_consequence(
+                    walk=facts.executes_candidate,
+                    calibration_taken=engaged,
+                    ceiling_printed="evaluator-calibration-refused"
+                    in {cap.condition for cap in score.caps},
+                )
+                self.assertEqual(
+                    refusal.calibration_happened,
+                    engaged,
+                    "the line says a calibration happened and the run says "
+                    "otherwise, or the reverse",
+                )
+                self.assertEqual(
+                    refusal.file_was_read,
+                    facts.executes_candidate is not None,
+                    "the line and the run disagree about whether preflight "
+                    "read the evaluator",
+                )
+                self.assertEqual(
+                    refusal.charged,
+                    facts.executes_candidate is not True,
+                    "only a walk that found the engine retires the charge",
+                )
+                self.assertEqual(
+                    sub.withheld,
+                    refusal.charged,
+                    f"{label}: the line says "
+                    f"{'it costs points' if refusal.charged else 'nothing is deducted'}"
+                    f" and the sub-score is withheld={sub.withheld}",
+                )
+                self.assertIn(refusal.text, sub.evidence)
+
+    def test_the_refusal_line_is_the_composition_of_its_own_claims(self) -> None:
+        """The text against its own record, which a paraphrase cannot pass.
+
+        The claims above are checked against the run; this checks that the
+        words are the words those claims name. Both halves are needed and
+        neither is sufficient: a record that matches the run can still be
+        rendered as a sentence saying something else, and that is exactly what
+        the synonym rewrites did - "your evaluator file was never opened for
+        this score" printed under a record whose `file_was_read` was True.
+
+        `composed()` rebuilds the line from `CALIBRATION_REFUSAL_CORE` and
+        `CALIBRATION_REFUSAL_ROUTE` using nothing but the claims, so rewording
+        a clause in place stops it matching, whatever the new words are. The
+        only way to change what a customer reads is to change the clause the
+        claims point at - one table entry, checked below against the claim it
+        is filed under.
+        """
+        for walk in (True, False, None):
+            for taken in (True, False):
+                for printed in (True, False):
+                    with self.subTest(walk=walk, taken=taken, ceiling=printed):
+                        refusal = MODULE.calibration_refusal_consequence(
+                            walk=walk, calibration_taken=taken, ceiling_printed=printed
+                        )
+                        self.assertEqual(refusal.text, refusal.composed())
+                        self.assertEqual(refusal.names_ceiling, printed)
+                        route = MODULE.CALIBRATION_REFUSAL_ROUTE[refusal.core_key]
+                        self.assertEqual(route in refusal.text, printed)
+
+    def test_every_clause_agrees_with_the_claim_it_is_filed_under(self) -> None:
+        """The one place wording is still policed, and it is a table.
+
+        Iterating the tables rather than the rendered lines is what keeps this
+        from becoming a fourth ban-list: a clause added tomorrow is checked by
+        existing, under the key its author filed it under, and the obligation
+        is "say what your key says" rather than "avoid these nine phrasings".
+
+        Only the polarity is checked - charged or not, read or not - because
+        that is what the key asserts and all this can honestly hold prose to.
+        """
+        for key, clause in MODULE.CALIBRATION_REFUSAL_CORE.items():
+            charged, happened, read = key
+            with self.subTest(clause=clause[:50]):
+                # Whether a calibration happened, which is the claim round
+                # two's defect got wrong: a clause filed under "one was taken"
+                # said none had reached this score at all. The two charged
+                # rows share one string across both settings, so this holds
+                # them to saying neither - which is correct of them, since
+                # what charges a run does not depend on whether a calibration
+                # ran.
+                if happened:
+                    for denial in (
+                        "no calibration reached",
+                        "no calibration result",
+                        "never asked for a calibration",
+                        "no calibration was",
+                    ):
+                        self.assertNotIn(denial, clause)
+                else:
+                    for assertion in (
+                        "may not read a calibration",
+                        "that calibration",
+                        "a calibration was taken",
+                    ):
+                        self.assertNotIn(assertion, clause)
+                if charged:
+                    self.assertIn("it costs points", clause)
+                    self.assertNotIn("no points are deducted", clause)
+                else:
+                    self.assertIn("no points are deducted", clause)
+                    self.assertNotIn("it costs points", clause)
+                if read:
+                    for unread in (
+                        "no preflight report",
+                        "never opened",
+                        "could not read",
+                        "never read",
+                        "went unread",
+                        "was not read",
+                    ):
+                        self.assertNotIn(unread, clause)
+                else:
+                    self.assertIn("no preflight report", clause)
+
     def test_a_calibration_that_failed_still_convicts(self) -> None:
         """The one direction this refusal may fail in.
 

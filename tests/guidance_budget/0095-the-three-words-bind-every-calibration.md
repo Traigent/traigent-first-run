@@ -44,7 +44,7 @@ load-bearing one, and `readiness.py` now derives that same state from preflight'
 with no flag passed at all, so the sentence denied a check the module performs.
 
 Replacing it with "preflight's witness reaches the same state without it" over-corrected: measured
-on an evaluator reaching its engine through a helper module - one of the two shapes the reference
+on an evaluator reaching its engine through a helper module - one of the three shapes the reference
 names as invisible to the walk - the states are not the same at all. Without the flag that card
 raises `evaluator-unvalidated` and recommends completing the calibration this guide forbids that
 project; with it, the containment review. So the sentence says what the flag is FOR: "it moves no

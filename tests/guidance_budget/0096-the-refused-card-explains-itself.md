@@ -6,13 +6,13 @@ follows-total-measured: 498_266
 follows-document-measured: 136_303
 resident-ceiling: 106_500
 resident-measured: 106_371
-total-ceiling: 500_100
-total-measured: 499_994
+total-ceiling: 500_000
+total-measured: 499_846
 document-ceiling: 137_550
 document-measured: 136_303
 
-**This raises the TOTAL ceiling to 500_100, on the owner's instruction, and it is the only ceiling
-that moves.** It buys 1_728 bytes in `references/run-safety.md`, the document that owns the
+**This raises the TOTAL ceiling to 500_000, on the owner's instruction, and it is the only ceiling
+that moves.** It buys 1_580 bytes in `references/run-safety.md`, the document that owns the
 execution-evaluator stage.
 
 What was missing was not a rule but a disclosure. A project whose evaluator reaches a code or SQL
@@ -51,12 +51,15 @@ median TOTAL raise - 1_400 over 80 prior raises - which was 239 bytes more than 
 the time. Sizing by precedent is defensible for a raise nobody has measured yet; this one is
 measured, and the leftover would have served no one, since the paragraph below refuses to offer it
 to a sibling. So the ceiling is the measured total rounded up to the next hundred, plus one hundred
-where that would leave less than a line of prose: 499_994 becomes 500_100. The 106 bytes left are
-slack for a wording correction on this branch - this entry has been re-measured three times, twice
-because a correction moved the figure - rather than a budget for the next.
+where that would leave less than a line of prose: 499_846 becomes 500_000, of which 153 are
+spendable, since the check is `assertLess`. That slack is for a wording correction on this branch -
+this entry has been re-measured four times, three of them because a review moved the prose - rather
+than a budget for the next.
 
-That 106 is not room for the next branch, and neither was the 239 the first draft took. A cross-branch audit
-measured all three budgets simultaneously under their own typical-raise thresholds, which this
-ledger has no precedent for; the next guidance sentence anyone writes should expect to raise a
-ceiling deliberately, measured on the merged tree rather than on one branch. Sizing TOTAL for that
-is a decision about the package, not about this paragraph, and it is left to the owner.
+It is not room for the next branch either, and neither was the 239 the first draft took. All three
+budgets sit under their own typical-raise thresholds at once - a state twenty prior entries were
+also in, 0094 among them at 132 / 57 / 1_247, so it is this ledger's ordinary condition rather than
+the novelty an earlier draft of this paragraph called it. What follows from it is unchanged and is
+the point: the next guidance sentence anyone writes should expect to raise a ceiling deliberately,
+measured on the merged tree rather than on one branch. Sizing TOTAL for that is a decision about
+the package, not about this paragraph, and it is left to the owner.

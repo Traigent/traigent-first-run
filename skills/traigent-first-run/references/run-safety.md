@@ -327,22 +327,20 @@ different proposition, and it is one this guide deliberately does not own. So th
 containment design and review above is still the whole of the route, and a project whose evaluator
 runs the candidate's answer stops here with its calibration evidence uncollected.
 
-Tell that customer what their card will do before they see it, because every part of it is a
-consequence of this decision rather than of their project. The evaluator is not calibrated, so the
-calibration check earns nothing and the probe spread is never measured; `readiness.py` raises
-`evaluator-calibration-refused`, which limits the readiness claim to 45 and asks for the
-containment review instead of for the calibration. Where preflight's walk is what established the
-engine, the unmade check is not counted against them either - the run that declined to make the
-measurement does not also charge for it - so the evaluation pillar reads what this run could
-actually establish. Where only the flag says so, the charge stands: the walk either read the file
-and found no engine in it, which settles nothing by the paragraph above, or never ran over it at
-all - and a declaration may bound a claim and may not lift a charge. Say which of the two it was,
-since only the second has a remedy in this run. None of it follows from anything their evaluator
-did: this guide declines to run it because doing so opens their database from inside a run that
-will not reach into it. The route forward is theirs and it is ordinary - run that evaluator against
-their own database, outside this guide, on known-good and known-bad answers, and confirm it
-separates them. What no run can do is claim the evaluator grades correctly until some run makes
-that check, and the ceiling is reporting exactly that.
+That customer's card is a consequence of this decision rather than of their project, in every part
+of it. The evaluator is not calibrated, so the calibration check earns nothing and the probe spread
+is never measured; `readiness.py` raises `evaluator-calibration-refused`, which limits the
+readiness claim to 45. Where preflight's walk is what established the engine, the unmade check is
+not counted against them either - the run that declined to make the measurement does not also
+charge for it - so the evaluation pillar reads what this run could actually establish. Where only
+the flag says so, the charge stands: the walk either read the file and found no engine in it, which
+settles nothing by the paragraph above, or never ran over it at all - and a declaration may bound a
+claim and may not lift a charge. Only the second has a remedy in this run. None of it follows from
+anything their evaluator did: this guide declines to run it because doing so opens their database
+from inside a run that will not reach into it. The route forward is theirs and it is ordinary - run
+that evaluator against their own database, outside this guide, on known-good and known-bad answers,
+and confirm it separates them. What no run can do is claim the evaluator grades correctly until
+some run makes that check, and the ceiling is reporting exactly that.
 
 ### Deterministic calibration and mock plumbing
 

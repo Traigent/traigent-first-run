@@ -2718,30 +2718,151 @@ def task_fit_declared_evidence(
     return f"{sentence} (declared, not established from the evaluator file)"
 
 
+# Every clause the refused-calibration line can be built from, filed under
+# what it CLAIMS rather than under the branch that happens to reach it.
+#
+# The table is the answer to this seam's fourth review, and to the three
+# before it. Each earlier fix moved a sentence closer to the fact that decides
+# it, and each was still prose written at a branch: a reviewer reintroduced
+# all three defects as synonym rewrites and every one passed a green suite,
+# because the guards were phrase lists naming the wordings already found. A
+# ban-list cannot see a paraphrase. What can is a line ASSEMBLED from clauses
+# whose claims are data, so the test compares the rendered line to the
+# composition of its own record and any inline rewording stops matching.
+#
+# `task_fit_unproven_execution_evidence` a few lines down is the same idea a
+# generation earlier - it takes `read_the_file` and cannot be written without
+# it - and this is that discipline with the claim kept as a value instead of
+# spent as an argument.
+#
+# Keyed by (charged, a calibration happened, the file was read). Two of the
+# rows repeat a clause under both settings of "happened": whether a
+# calibration ran does not change why a charged run is charged, and the table
+# says that by holding the same string rather than by leaving a gap somebody
+# has to reason about.
+CALIBRATION_REFUSAL_CORE: dict[tuple[bool, bool, bool], str] = {
+    (False, True, True): (
+        "no points are deducted for it - this card may not read a calibration "
+        "this guide does not permit"
+    ),
+    (False, False, True): (
+        "no points are deducted for it - this run was not the one to make "
+        "that measurement"
+    ),
+    (True, True, True): (
+        "it costs points because the walk over your evaluator found no engine "
+        "in it, so nothing here confirms the refusal"
+    ),
+    (True, False, True): (
+        "it costs points because the walk over your evaluator found no engine "
+        "in it, so nothing here confirms the refusal"
+    ),
+    (True, True, False): (
+        "it costs points because no preflight report for your evaluator "
+        "reached this score - run `preflight.py --evaluator` over it and pass "
+        "the report to `--preflight`"
+    ),
+    (True, False, False): (
+        "it costs points because no preflight report for your evaluator "
+        "reached this score - run `preflight.py --evaluator` over it and pass "
+        "the report to `--preflight`"
+    ),
+}
+# What follows the core clause when, and only when, the refusal ceiling is
+# actually printed on this card. Keyed by the same triple as the core, so the
+# route a line offers is decided by the same claims as the reason it gives -
+# a charged run is not sent to the containment review, which retires nothing
+# it is paying for.
+#
+# The `False` row answers the fourth review's other point about this arm: the
+# instruction above it - run preflight over the evaluator - has two possible
+# outcomes and only one of them retires the charge. A line that hands over an
+# action without saying which result changes anything is a promise for half
+# its readers, which is the same defect as promising a remedy that cannot be
+# reached, one notch weaker.
+CALIBRATION_REFUSAL_ROUTE: dict[tuple[bool, bool, bool], str] = {
+    (False, True, True): (
+        ", and the containment review named in the ceiling is where a run "
+        "that could make that check gets designed"
+    ),
+    (False, False, True): (
+        ", and the containment review named in the ceiling is where a run "
+        "that could make that check gets designed"
+    ),
+    (True, True, True): " - establish the evaluator as the ceiling describes",
+    (True, False, True): " - establish the evaluator as the ceiling describes",
+    (True, True, False): (
+        ": if that walk finds the engine this check stops costing points, and "
+        "if it finds none, establish the evaluator as the ceiling describes"
+    ),
+    (True, False, False): (
+        ": if that walk finds the engine this check stops costing points, and "
+        "if it finds none, establish the evaluator as the ceiling describes"
+    ),
+}
+
+
+@dataclass(frozen=True)
+class CalibrationRefusalLine:
+    """The refused-calibration consequence, and what it claims, as one value.
+
+    `text` is what the customer reads. The rest is the same sentence as data:
+    whether it charges, whether it says a calibration happened, whether it
+    says the file was read, and whether it points at the refusal ceiling.
+
+    Every one of those is checkable against the run that produced it -
+    `charged` against the sub-score's own `withheld`, `calibration_happened`
+    against `calibration_engaged`, `file_was_read` against whether preflight's
+    walk ran at all, `names_ceiling` against the caps on the card - which is
+    what the three prior guards could not do. They compared text to text, and
+    the class is text against fact.
+    """
+
+    text: str
+    charged: bool
+    calibration_happened: bool
+    file_was_read: bool
+    names_ceiling: bool
+
+    @property
+    def core_key(self) -> tuple[bool, bool, bool]:
+        return (self.charged, self.calibration_happened, self.file_was_read)
+
+    def composed(self) -> str:
+        """The text this record says it is, rebuilt from the tables.
+
+        A test asserting `text == composed()` is what a paraphrase cannot
+        pass: rewording a clause in place stops it matching the clause its own
+        claims name, whatever the new words are.
+        """
+        text = CALIBRATION_REFUSAL_CORE[self.core_key]
+        if self.names_ceiling:
+            text += CALIBRATION_REFUSAL_ROUTE[self.core_key]
+        return text
+
+
 def calibration_refusal_consequence(
     *, walk: bool | None, calibration_taken: bool, ceiling_printed: bool
-) -> tuple[str, bool]:
+) -> CalibrationRefusalLine:
     """What a refused calibration costs, and the sentence saying so - together.
 
-    Returns `(sentence, charged)`. The pair is the point: the caller cannot
-    print one and score the other, because there is nothing to pair up. This
-    seam has produced the same defect three times - a sentence written beside
-    the fact that decides it and drifting from it - and each fix moved the
-    sentence closer to its predicate without removing the way they part. They
-    are one value here, so a card that says "no points are deducted" and a
-    sub-score that keeps its weight cannot both be produced.
+    The return value carries the sentence, the charge and the claims as one
+    record, so a caller cannot print one and score another: there is nothing
+    to pair up. That was already true of `(text, charged)` in the plumbing and
+    was not true of the SUITE, which pinned the charge only on the arm a
+    helper happened to construct - flipping it on the arm `SKILL.md` calls the
+    flag's own population moved the evaluation pillar 28 points with every
+    test green.
 
     `walk` is preflight's engine read, PASSED THROUGH IN ITS THREE STATES
-    rather than as a boolean. That is the second half of the redesign and the
-    reason this takes an argument the old code had already collapsed:
-    `evaluator_execution_from_preflight` says of those states that "`False` is
-    a walk that settled nothing... and `None` is a file this run never opened.
-    Those last two are NOT the same answer and no caller may collapse them",
-    and the block that called this collapsed them into one boolean and then
-    wrote a sentence whose premise was the distinction it had just discarded.
-    A charged run whose walk RAN and found nothing was told "this run could
-    not read the file itself", two lines above a task-fit line reporting what
-    reading the file had found. There is no boolean to write that with now.
+    rather than as a boolean. `evaluator_execution_from_preflight` says of
+    those states that "`False` is a walk that settled nothing... and `None` is
+    a file this run never opened. Those last two are NOT the same answer and
+    no caller may collapse them", and the block that called this once
+    collapsed them into one boolean and then wrote a sentence whose premise
+    was the distinction it had discarded. A charged run whose walk RAN and
+    found nothing was told "this run could not read the file itself", two
+    lines above a task-fit line reporting what reading the file had found.
 
     * `True` - the walk found the engine, so this run established for itself
       that the measurement was not its to make. Not charged: `withheld` means
@@ -2756,41 +2877,16 @@ def calibration_refusal_consequence(
 
     The route clause follows the CEILING rather than the refusal, because a
     line that points at "the ceiling" on a card whose only cap is a timeout
-    points at nothing. The `preflight.py --evaluator` half is not a ceiling
-    reference and is printed either way; it names the script and the option
-    that takes an evaluator, since `--preflight` is this script's own option
-    and takes preflight's report.
+    points at nothing.
     """
-    if walk is True:
-        taken = (
-            "no points are deducted for it - this card may not read a "
-            "calibration this guide does not permit"
-            if calibration_taken
-            else "no points are deducted for it - this run was not the one to "
-            "make that measurement"
-        )
-        if ceiling_printed:
-            taken += (
-                ", and the containment review named in the ceiling is where a "
-                "run that could make that check gets designed"
-            )
-        return taken, False
-    if walk is False:
-        read_it = (
-            "it costs points because the walk over your evaluator found no "
-            "engine in it, so nothing here confirms the refusal"
-        )
-        if ceiling_printed:
-            read_it += " - establish the evaluator as the ceiling describes"
-        return read_it, True
-    unread = (
-        "it costs points because no preflight report for your evaluator "
-        "reached this score - run `preflight.py --evaluator` over it and pass "
-        "the report to `--preflight`"
+    claims = CalibrationRefusalLine(
+        text="",
+        charged=walk is not True,
+        calibration_happened=calibration_taken,
+        file_was_read=walk is not None,
+        names_ceiling=ceiling_printed,
     )
-    if ceiling_printed:
-        unread += ", or establish the evaluator as the ceiling describes"
-    return unread, True
+    return replace(claims, text=claims.composed())
 
 
 def task_fit_execution_scope_evidence(method: str, witness: str | None) -> str:
@@ -7026,11 +7122,12 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
         consequence = "it costs points until a complete calibration is measured"
         charged = True
         if calibration_credit_refused:
-            consequence, charged = calibration_refusal_consequence(
+            refusal = calibration_refusal_consequence(
                 walk=facts.executes_candidate,
                 calibration_taken=calibration_engaged,
                 ceiling_printed=calibration_refusal_capped,
             )
+            consequence, charged = refusal.text, refusal.charged
         subs.append(
             SubScore(
                 "calibration",

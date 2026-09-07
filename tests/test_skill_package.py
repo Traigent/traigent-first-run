@@ -5706,7 +5706,6 @@ class SkillPackageTests(unittest.TestCase):
             "the calibration check earns nothing and the probe spread is never measured",
             "`evaluator-calibration-refused`",
             "limits the readiness claim to 45",
-            "asks for the containment review instead of for the calibration",
             # That the refusal does not also charge for itself.
             "the unmade check is not counted against them either",
             # That it is not a verdict on their evaluator. The MANDATE to
@@ -5732,6 +5731,22 @@ class SkillPackageTests(unittest.TestCase):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, section)
         self.assertNotIn("a file this run never read", section)
+        # SKILL.md owns the routing clause and the imperatives. The reference
+        # states the consequence and the facts behind it; nine words of
+        # SKILL.md's own sentence had grown a second home here, and two
+        # instructions ("tell that customer...", "say which of the two...")
+        # were mandates living only in a reference.
+        self.assertIn(
+            "asks for the containment review instead of for the calibration",
+            " ".join(SKILL.read_text().casefold().split()),
+        )
+        for restated in (
+            "asks for the containment review instead of for the calibration",
+            "tell that customer",
+            "say which of the two",
+        ):
+            with self.subTest(restated=restated):
+                self.assertNotIn(restated, section)
         # The mandate is not restated here, and the reference does not grow a
         # second copy of the flow.
         skill = " ".join(SKILL.read_text().casefold().split())
@@ -23313,6 +23328,38 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, preflight)
 
+    def test_the_documents_quote_the_ceiling_constant_they_describe(self) -> None:
+        """The half `SHARED_VALUES` cannot reach: the module, not the corpus.
+
+        The entry above holds three documents to one number, which is the
+        doc-to-doc half. Its comment used to claim it closed the whole risk -
+        "moving either constant leaves two customer-facing documents wrong on
+        a green suite" - and it does not: the check reads only
+        `self.conversation()` and never imports the scorer, so setting both
+        ceilings to 40 leaves it green with every document still saying 45.
+
+        Read from the module here, so the documents are measured against the
+        thing they are describing rather than against each other.
+        """
+        stated = {
+            int(match)
+            for text in self.conversation().values()
+            for match in re.findall(r"readiness claim to (\d+)", text, re.IGNORECASE)
+        }
+        self.assertTrue(stated, "no document states the readiness ceiling")
+        self.assertEqual(
+            stated,
+            {READINESS.EVALUATOR_UNVALIDATED_CEILING},
+            "a document quotes a readiness ceiling the module does not set",
+        )
+        # The two caps share the number deliberately - see the comment beside
+        # `CALIBRATION_REFUSED_CEILING` - so a document naming either is right
+        # only while they agree.
+        self.assertEqual(
+            READINESS.CALIBRATION_REFUSED_CEILING,
+            READINESS.EVALUATOR_UNVALIDATED_CEILING,
+        )
+
     def test_no_decision_is_described_two_opposite_ways(self) -> None:
         joined = " ".join(self.conversation().values())
         for decision, agreed, contradicting in self.CONTRADICTIONS:
@@ -23470,13 +23517,13 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         # `\d+-\d+` would match nothing and quietly stop checking anything.
         ("the enhanced-run configuration ceiling", r"up to (\d+) configurations"),
         # The readiness ceiling the two unvalidated-evidence caps share.
-        # `SKILL.md` states it for `evaluator-unvalidated` and
-        # `references/run-safety.md` for `evaluator-calibration-refused`; the
-        # constants beside each other in `readiness.py` are deliberately
-        # equal, and the documents restate the number rather than the
-        # condition - so moving either constant leaves two customer-facing
-        # documents wrong on a green suite. Matched on the phrase both use,
-        # which is the phrase a third home would most likely be written in.
+        # `SKILL.md` states it for `evaluator-unvalidated`,
+        # `references/run-safety.md` for `evaluator-calibration-refused` and
+        # `README.md` for the reader who has installed nothing - three homes,
+        # so this entry is not vacuous. It holds the three DOCUMENTS to one
+        # number; what it cannot do is notice the constants moving under
+        # them, which is a different check and lives in
+        # `test_the_documents_quote_the_ceiling_constant_they_describe`.
         ("the unvalidated-evidence readiness ceiling", r"readiness claim to (\d+)"),
         # Spelled either way: the size is counted in configurations, and the
         # documents that still write "-row" for it are compared against the
