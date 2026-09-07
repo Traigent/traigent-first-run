@@ -3091,6 +3091,14 @@ class BuildSignal:
     evidence: str
     measured: bool = True
     applicable: bool = True
+    # `SubScore.withheld`, carried from the read that decided it rather than
+    # re-derived where the sub-score is built. `measured=False` reaches
+    # `build_subscores` from two different places - a check the read could not
+    # settle, and every check on the route that scores no declaration at all -
+    # and only the first keeps its weight. A rule written as "unmeasured build
+    # check" could not tell them apart and would charge the second, which is
+    # the route the customer's own run takes.
+    withheld: bool = False
     # Whether ANY source check ran against this claim, as distinct from whether
     # it passed. Two of the four checks can be refuted from the tree - a loop
     # node refutes "it ends", a name absent from the file refutes a declared
@@ -7481,11 +7489,15 @@ def build_subscores(facts: AgentFacts) -> list[SubScore]:
     the defect this module has now shipped in six places and refuses in
     `SubScore.withheld`.
 
-    A check the read could not settle is UNMEASURED and not withheld. That is
-    the other half of the same rule and the one #184 insists on: a signal you
-    cannot determine is reported as undetermined, never scored zero, because
-    zero says the agent lacks the thing and the read only says it could not
-    tell.
+    A check the read could not settle is UNMEASURED and withheld with it. The
+    two halves are separate: #184 governs what is REPORTED - a signal you
+    cannot determine is reported as undetermined, never as the agent lacking
+    the thing - and it is honoured, because the check stays unmeasured, still
+    lowers confidence, and still reads "not established by this read". The
+    weight is a different question, and leaving it out put the unrefutable
+    answer above the settled one. `build_signal_from_entry` decides that per
+    arm and this only carries the decision, because `measured=False` arrives
+    here from two routes and only one of them may be charged.
     """
     if facts.build is None:
         return [
@@ -7509,6 +7521,7 @@ def build_subscores(facts: AgentFacts) -> list[SubScore]:
             found[name].measured,
             found[name].evidence,
             applicable=found[name].applicable,
+            withheld=found[name].withheld,
         )
         for name, weight in AGENT_BUILD_CHECKS
     ]
@@ -17363,9 +17376,11 @@ def build_signal_from_entry(
     prompt" is a finding about somebody's code and has to be pointed at.
 
     `determined: false` is a first-class answer and the reason this reader is
-    not just a schema. A read that could not settle a check says so and the
-    check leaves the pillar - it is not scored zero, which would say the agent
-    lacks the thing rather than that we could not tell.
+    not just a schema. A read that could not settle a check says so, stays
+    UNMEASURED, and is reported as unchecked rather than as a finding that the
+    agent lacks the thing. What it no longer does is leave the denominator -
+    the arm below says why keeping the weight is what stops "I could not tell"
+    from outscoring "no".
 
     Where `source` is available, the pointing is checked rather than taken.
     `evidence` is prose and stays unparsed - `checked_source_lines` says why -
@@ -17406,7 +17421,7 @@ def build_signal_from_entry(
         if not isinstance(reason, str) or not reason.strip():
             raise AgentDiscoveryInputError(
                 f"build check {check!r} is undetermined and gives no reason; a "
-                "check that leaves the pillar has to say what stopped the read"
+                "check this read could not settle has to say what stopped it"
             )
         # Refused rather than ignored. This arm used to accept `source_lines`
         # of any shape at all - [99999], "not-a-list", [-5] - because it
@@ -17451,6 +17466,49 @@ def build_signal_from_entry(
             f"not established by this read - {reason.strip().rstrip('.')}. "
             f"{UNCHECKED_OBSERVATION}{evidence}",
             measured=False,
+            # LEVELLED, NOT CHARGED, and the arithmetic is why those are the
+            # same edit here. Renormalizing dropped this check's weight, so the
+            # pillar fell back to the mean of the others and an answer nothing
+            # can refute came out ABOVE an answer that was read and settled:
+            # `prompt: {determined: false}` scored 47 where
+            # `prompt: {present: false}` scored 44, and the same two to three
+            # points appeared on all four checks. Saying "I could not tell"
+            # paid better than saying "no" about one's own agent
+            # (traigent-first-run#456).
+            #
+            # Keeping the weight ties them instead of reversing them, because
+            # every one of these checks has a settled answer that earns exactly
+            # 0.0 of it - no prompt, nothing constraining the shape, a loop
+            # with no stop condition, no declared tool resolving. So the
+            # undetermined answer lands ON that floor rather than under it:
+            # capping it at the worst answer the check can settle and charging
+            # it the whole weight are the same number, and there is no third
+            # one to choose between.
+            #
+            # WHICH IS WHY #184's FLOOR IS NOT CROSSED. That decision is about
+            # what this score SAYS - an undetermined signal must never be
+            # reported as the agent lacking the thing - and nothing here says
+            # it: `measured` stays False, confidence still counts the check as
+            # unchecked, the card still marks it, and the sentence still reads
+            # "not established by this read". What stops is only that the gap
+            # in the evidence was worth more than the evidence.
+            #
+            # The four checks are asked of every run that found an agent -
+            # `agent_build_from_document` refuses a document that answers three
+            # - so an undetermined one is evidence this run WAS asked for and
+            # did not supply, which is the condition `SubScore.withheld`
+            # already charges for an undeclared `--task-kind` and for a build
+            # read that never arrived at all.
+            #
+            # NOT extended to `tools: {used: false}` below. That arm is
+            # unrefuted too, but its opposite is unrefuted in the same breath:
+            # a `used: true` naming an identifier that occurs once anywhere in
+            # the file passes and takes the full weight, so charging the
+            # negative alone would leave the honest tool-less agent as the only
+            # charged party and steepen the gradient toward claiming tools
+            # (traigent-first-run#451). `determined: false` has no such mirror:
+            # what it was beating is an ordinary settled answer.
+            withheld=True,
         )
 
     # An undetermined check returned above without one: a read that could not
@@ -17912,7 +17970,17 @@ def build_declarations_are_unmeasured(
     """
     if build is None:
         return None
-    return tuple(_observed_declaration(signal) for signal in build)
+    # Nothing scores here, so nothing is charged here either. `withheld` exists
+    # to stop an absent declaration outscoring a supplied one, and on this
+    # route no declaration earns anything for it to outscore - the four checks
+    # all leave the score and the pillar is the search space alone. The
+    # undetermined arm is the only one that arrives carrying `withheld`
+    # (`build_signal_from_entry`), so without this it would be the single build
+    # answer that moved the number on the route every customer run takes, and
+    # in the direction that punishes the honest one.
+    return tuple(
+        replace(_observed_declaration(signal), withheld=False) for signal in build
+    )
 
 
 def _observed_declaration(signal: BuildSignal) -> BuildSignal:

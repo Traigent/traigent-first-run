@@ -587,8 +587,8 @@ prompt is well written, whether a tool is the right tool, whether the objective 
 objective - those are opinions, and an opinion may lower a score and never raise one, so they are
 outside this document. Answer `{"determined": false, "reason": "...", "evidence": "..."}` where the
 read genuinely could not settle a check - a prompt assembled at runtime from somewhere this read
-cannot reach is the common case - and the check leaves the pillar rather than scoring zero against
-the agent.
+cannot reach is the common case - and the check keeps its weight and earns nothing, the same as
+an honest no.
 
 Two of the criteria this pillar is asked about are not here, and the card says so rather than
 letting four checks imply that six were looked at: whether the dataset and the evaluation method are
