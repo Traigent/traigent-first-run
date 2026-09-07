@@ -29,10 +29,9 @@ installation it may live elsewhere. Clone **beside** the user's project, never i
 The clone or installed directory that supplies this guide is **not automatically the project being
 optimized**. Before work, resolve the user-selected project's root and agent callable or command at
 run time; never substitute a path, agent, dataset, or result from this guide or the assistant's
-workspace, or a prior run. When the guide clone and that project are separate, use the
-chosen agent's project root for inspection, environments,
-`traigent-runs/`, tests, and every baseline or enhanced run. Do not create walkthrough artifacts
-for the guide clone or treat an old result beside the guide as a result for the user's agent.
+workspace, or a prior run. Where the guide clone and that project are separate, use the chosen
+agent's project root for inspection, environments, `traigent-runs/`, tests, and every baseline or
+enhanced run, and do not treat an old result beside the guide as a result for the user's agent.
 
 Before showing readiness, a baseline, or an optimization result, identify the target in one line:
 `Target project: <absolute path> · Agent: <absolute path>:<function or command>`. On a resumed
@@ -53,11 +52,11 @@ Use the bundled tools:
 - Compact internal run record: resolve `assets/run-plan.md` beneath that absolute skill directory.
 - Tested first-run SDK stack: resolve `assets/requirements-first-run.txt` there too.
 
-One file carries every credential this run keeps in a variable, including the Traigent key
-after the baseline. The skill's `references/run-safety.md` selects that file and owns every rule
-about it - which file, when and how it may be opened, and what may be written there. Follow it
-too for which address each account state gets, and the two 10-day windows: the access code, then
-portal access. This document states none of that a second time.
+One file carries every credential this run keeps in a variable, including the Traigent key after
+the baseline. The skill's `references/run-safety.md` selects that file and owns every rule about it
+- which file, when and how it may be opened, and what may be written there. Follow it too for which
+address each account state gets, and the two 10-day windows: the access code, then portal access. This document states
+none of that a second time.
 
 ## User-facing promise
 
@@ -65,53 +64,36 @@ Open with the five-stage journey under "Opening message" in
 [`skills/traigent-first-run/SKILL.md`](skills/traigent-first-run/SKILL.md), as written there.
 
 Proceed with read-only inspection after stating the plan. Do not make the user approve safe
-discovery. Stop only for:
-
-- A genuine choice between multiple agent candidates.
-- One task-intent question when nothing anchors the walkthrough.
-- Secrets that must be pasted into a preserved or newly created owner-only local `.env`.
-- Paid/provider calls or private-data egress.
-- Judgment-dependent changes to real expected answers or grading policy.
-- Destructive or production-affecting changes.
+discovery. Stop only for: a genuine choice between agent candidates, one task-intent question when
+nothing anchors the walkthrough, secrets pasted into a preserved or newly created owner-only local
+`.env`, paid/provider calls or private-data egress, judgment-dependent changes to real expected
+answers or grading policy, and destructive or production-affecting changes.
 
 Create the isolated first-run environment and minimal `.env` as separate actions. SKILL.md's
 "Action authorization" table states what a dependency install may do without another approval;
 `references/run-safety.md` owns the environment, failure, and pinned-requirements rules beneath it,
-and the run never edits your own dependency files. This document states neither rule a second
-time. Provider, connected Traigent, private-data, and all other external calls remain behind their
-stated approval gates.
+and the run never edits your own dependency files. This document states neither rule a second time.
+Provider, connected Traigent, private-data, and all other external calls remain behind their stated
+approval gates.
 
 ## Default run
 
 The default paid path uses two measurements with the same tuning data, evaluator, objectives, and
-agent call path:
+agent call path: a provider-paid **local fixed baseline**, preserving the user's configuration
+exactly, and then a zero-LLM portal probe and one **connected managed optimization** that contains
+every baseline value and tests up to 12 configurations from a materially larger space. SKILL.md's
+"Prepare the environment and finish free checks" and "Verify and report" sections own how each is
+prepared, what the user is shown and when they are asked; this document states none of that a
+second time. A completed baseline is uploaded without rerunning it only where the installed SDK
+exposes a public exact sync id. It discloses the enhanced winner's held-out score here, with a note
+saying how little ten examples can settle.
 
-1. A provider-paid **local fixed baseline**, preserving the user's configuration exactly. Only
-   when no baseline exists does the assistant prepare a credible twelve-configuration sweep.
-   SKILL.md's "Prepare the environment and finish free checks" section owns how the provider route
-   is resolved and when the user is asked about it. The user sees its best configuration, primary
-   tuning metric, cost, latency, trial/failure count, and a short note for each knob before any
-   Traigent account/key request.
-2. After that checkpoint, a zero-LLM portal probe and one **connected managed optimization** that
-   contains every baseline value, adds meaningful non-model settings by default, and tests up to 12
-   configurations from a materially larger search space.
-
-The assistant uploads the completed baseline without rerunning it only when the installed SDK
-exposes a public exact sync id; otherwise that result remains local. Then it shows the baseline
-result and the connected enhanced result side by side, with a verified portal link for every
-persisted run and an explicit `local-only` label for an unsynced baseline, and compares the best
-configs and their measured tuning behavior directly. It also discloses the enhanced winner's
-held-out score here, with a note saying how little ten examples can settle.
-Approve the provider-paid baseline first. After its result, preview and approve the connected
-optimization separately. The assistant chooses how many configurations it tests and which knobs it
-varies.
-
-Do not add an offline baseline rerun or a mandatory third optimization pass. Do not expand,
-shrink, or weaken a user-owned baseline to reach a configuration count; one configuration is
-correct when that is what the user actually defined. When the assistant prepares the walkthrough
-agent and its missing baseline, generate enough real controls for the twelve-configuration baseline
-and add further controls to the enhanced run. Another iteration is optional only after the result
-identifies a specific hypothesis.
+Do not expand, shrink, or weaken a user-owned baseline to reach a configuration count; one
+configuration is correct when that is what the user actually defined. Only when none exists does
+the assistant generate enough real controls for the twelve-configuration baseline, adding further
+controls to the enhanced run. Do not add an offline baseline rerun or a mandatory third
+optimization pass; another iteration is optional only after the result identifies a specific
+hypothesis.
 
 ## Result interpretation
 
@@ -123,11 +105,9 @@ Always report the component provenance:
 A substitute this run generated carries no mark: it is not a state their component is in. List it
 under `Walkthrough setup`, named in words.
 
-If anything is a substitute, say before the numbers that the result demonstrates the workflow and is not
-evidence of expected production performance. Any walkthrough-only substitute is still walkthrough
-evidence.
-
-Portal experiments - retention, links, the local-only label, and deletion - follow SKILL.md's
-"Verify and report" section; this document states none of it a second time.
+If anything is a substitute, say before the numbers that the result demonstrates the workflow and
+is not evidence of expected production performance. Any walkthrough-only substitute is still
+walkthrough evidence. Portal experiments - retention, links, the local-only label, and deletion -
+follow SKILL.md's "Verify and report" section; this document states none of it a second time.
 
 Only provide advanced learning links and lifecycle suggestions after the user has seen the result.

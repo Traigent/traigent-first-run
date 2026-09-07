@@ -325,23 +325,34 @@ interpreter means bounding it against every extension module, every constructor 
 handle it can reach, and that surface has no edge. A boundary the operating system enforces is a
 different proposition, and it is one this guide deliberately does not own. So the manual
 containment design and review above is still the whole of the route, and a project whose evaluator
-runs the candidate's answer stops here with its calibration evidence uncollected; the readiness
-card says why.
+runs the candidate's answer stops here with its calibration evidence uncollected.
+
+That customer's card is a consequence of this decision rather than of their project. The evaluator
+check is not made, so it earns nothing and the probe spread is never measured, and `readiness.py`
+raises `evaluator-calibration-refused`, which limits the readiness claim to 45. Whether the unmade
+check is also CHARGED depends on what preflight's walk found, and the card says which case a run is
+in: a walk that established the engine is not charged, and a run resting on the declaration alone
+is, because finding no engine settles nothing by the paragraph above. None of it follows from
+anything their evaluator did: the reason is the unbounded target above. The route out is the
+customer's own, stated on the card.
 
 ### Deterministic calibration and mock plumbing
 
 Deterministic calibration is a separate execution gate and always requires a recorded `sufficient`
-evidence-backed semantic-coverage verdict. Before environment setup, run only a non-executing
-evaluator whose complete call path is local-only, side-effect-free, and standard-library-only. The
-same three words bind anything else this stage imports, and a reply transform is the one other
-thing it does: reaching that function executes its module's top level, which for an agent file is
-commonly a provider client. A non-executing evaluator that needs a declared local dependency waits
-until that dependency is installed, and so does a transform whose module does - the flag waits with
-it rather than pulling an install into this stage. An execution evaluator has already ended this guide at the scope gate above. Run either
+evidence-backed semantic-coverage verdict. Before every calibration this stage performs, run only a
+non-executing evaluator whose complete call path is local-only, side-effect-free, and
+standard-library-only. The same three words bind anything else this stage imports, and a reply
+transform is the one other thing it does: reaching that function executes its module's top level,
+which for an agent file is commonly a provider client. A non-executing evaluator that needs a
+declared local dependency waits until that dependency is installed, and so does a transform whose
+module does - the flag waits with it rather than pulling an install into this stage. That deferred
+calibration is outside these three words and SKILL.md section 5 step 5 runs it: its path carries
+the installed dependency by construction, so the inspection that declared it is what binds it
+there. An execution evaluator has already ended this guide at the scope gate above. Run either
 before creating `.env` or requesting a provider key. A generic outside-review wait is not a gate;
 pause only when one unresolved product-grading ambiguity would materially change correctness or
-ranking. Do not execute an LLM judge or an uncertain or external evaluator without explicit approval
-in the stage where it runs, covering recipients, data, calls, runtime, and spend.
+ranking. Do not execute an LLM judge or an uncertain or external evaluator without explicit
+approval in the stage where it runs, covering recipients, data, calls, runtime, and spend.
 
 A Traigent mock run is a separate plumbing check:
 
