@@ -694,8 +694,8 @@ cleared: <caps> - continuing`; on the board, refresh only changed evidence, reta
 lines and add the new substitutes under walkthrough setup; show no second card.
 
 `readiness.py` emits these decisions as closed `action_kind` values and one
-`recommended_action`: the lowest-ceiling blocking remedy when a cap blocks, otherwise the
-lowest-ceiling asking one, otherwise an ask that caps nothing, otherwise `proceed`.
+`recommended_action`: the lowest-ceiling blocking remedy, otherwise the lowest-ceiling
+asking one, otherwise an ask that caps nothing, otherwise `proceed`.
 
 Route every active dataset cap to the branch this flow already defines, and present the reason
 rather than the condition id, in the user's language - machine vocabulary and condition ids stay
