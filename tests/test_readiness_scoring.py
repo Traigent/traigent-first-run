@@ -17693,8 +17693,18 @@ class TheAgentPillarReadsTheAgentTests(unittest.TestCase):
         # is the property that matters: having no tools is not a deduction.
         every_tool, every_checks = self._pillar(proven(_build_document()))
         self.assertAlmostEqual(pillar.score, every_tool.score, delta=3)
-        self.assertEqual(pillar.confidence, 1.0)
-        self.assertEqual(pillar.confidence, every_tool.confidence)
+        # CONFIDENCE IS NO LONGER EQUAL, and this line used to assert that it
+        # was - `pillar.confidence == 1.0`, the same fully-evidenced pillar as
+        # an agent whose two tools were both read and found. That equality was
+        # the defect (traigent-first-run#451): `used: false` is a self-report
+        # nothing in this module refutes, so the pillar it produced was not
+        # fully checked, and saying it was let the one unrefutable answer
+        # report better coverage than every answer this read can check. The
+        # points half of that test still holds above and is unchanged - having
+        # no tools is still neither charged nor paid. What is charged is the
+        # claim to have looked.
+        self.assertLess(pillar.confidence, every_tool.confidence)
+        self.assertGreaterEqual(pillar.confidence, MODULE.MIN_CONFIDENCE_FOR_TOP_BANDS)
         # And a declared tool nothing implements is charged, which is the one
         # thing "wired correctly" can be checked for by reading source.
         broken, broken_checks = self._pillar(
@@ -17720,6 +17730,150 @@ class TheAgentPillarReadsTheAgentTests(unittest.TestCase):
             "a partly unreachable declaration receives only proportional tool credit",
         )
         self.assertIn("not found behind the name", broken_checks["tools"].evidence)
+
+    # Every shape the `tools` check accepts, over one agent and one search
+    # space, so the comparison below is over DECLARATIONS and nothing else.
+    # `used: false` is the one this read cannot refute in either direction: the
+    # `used: true` arm raises on a declared name the file never mentions, and
+    # the negative arm has no counterpart, because telling a tool call from any
+    # other call needs a notion of tool-hood this module does not have. The
+    # honest answers are here at full credit, at half, and at none, because the
+    # inversion this pins is against the WEAK honest answer - a false "no
+    # tools" beating a true "one of my two tools is broken" is the shape that
+    # pays for the wrong declaration (traigent-first-run#451).
+    TOOL_DECLARATIONS = {
+        "unrefutable-none": {
+            "used": False,
+            "evidence": "agent.py: no tool list reaches the call",
+        },
+        "checked-both-resolve": {
+            "used": True,
+            "declared": ["search", "fetch"],
+            "unreachable": [],
+            "evidence": "agent.py:31 TOOLS lists both; both resolve here",
+        },
+        "checked-one-unreachable": {
+            "used": True,
+            "declared": ["search", "fetch"],
+            "unreachable": ["fetch"],
+            "evidence": "agent.py:31 fetch is declared and undefined",
+        },
+        "checked-none-resolve": {
+            "used": True,
+            "declared": ["search", "fetch"],
+            "unreachable": ["search", "fetch"],
+            "evidence": "agent.py:31 neither name resolves",
+        },
+        "undetermined": {
+            "determined": False,
+            "reason": "the tool table is assembled at runtime",
+            "evidence": "agent.py:31 load_tools(url) returns it",
+        },
+    }
+
+    def _tool_variants(self):
+        """One pillar per accepted `tools` answer, keyed by which answer it is."""
+        return {
+            name: self._pillar(
+                MODULE.replace(
+                    MODULE.agent_facts_from_config_space(
+                        {"knobs": {"model": ["fast", "slow"]}, "wired": ["model"]}
+                    ),
+                    build=_read(_build_document(tools=declaration)).build,
+                )
+            )
+            for name, declaration in self.TOOL_DECLARATIONS.items()
+        }
+
+    def test_an_unrefuted_no_tools_answer_may_not_outreport_a_checked_one(
+        self,
+    ) -> None:
+        """The inequality, over declarations, on the arm nothing refutes.
+
+        A `used: false` this read cannot check must not leave the card
+        better-evidenced than an answer it CAN check. It used to: the check
+        left the confidence denominator as well as the score's, so the pillar
+        read as fully observed on the strength of the sentence that excused it,
+        and the one answer no source can contradict was the only one that
+        bought a clean coverage line.
+
+        The score is deliberately NOT the thing pinned equal here. Charging
+        this check - full weight, no credit - would make declaring tools pay,
+        because `used: true` naming an identifier that appears anywhere in the
+        file is exactly as unrefuted and earns the full weight; the honest
+        tool-less agent would then be the only one charged, which is the same
+        defect mirrored. So the arm keeps the treatment this module already
+        gives a claim it cannot settle - out of the score, into the coverage -
+        and that equality is what the last two assertions state.
+        """
+        variants = self._tool_variants()
+        unrefutable, unrefutable_checks = variants["unrefutable-none"]
+        self.assertFalse(unrefutable_checks["tools"].measured)
+        for name in ("checked-both-resolve", "checked-one-unreachable"):
+            with self.subTest(against=name):
+                self.assertLess(
+                    unrefutable.confidence,
+                    variants[name][0].confidence,
+                    "an unrefuted declaration reports a better-checked pillar "
+                    "than an answer this read verified",
+                )
+        # And it is worth exactly what the honest "I could not tell" is worth,
+        # which is the settled treatment for a claim nothing here can settle
+        # (`test_a_check_the_read_could_not_settle_is_not_a_zero`). Two numbers,
+        # because a pillar total can hold while its confidence moves.
+        undetermined, _ = variants["undetermined"]
+        self.assertEqual(unrefutable.score, undetermined.score)
+        self.assertEqual(unrefutable.confidence, undetermined.confidence)
+
+    def test_the_card_counts_the_tools_check_nobody_checked(self) -> None:
+        """The same fact where a customer meets it, and it read the other way.
+
+        The headline count is the customer-visible half of that denominator: on
+        the declaration it excused, the pillar printed no coverage line at all,
+        so a card carrying an unchecked claim looked like a card on which every
+        question was answered.
+        """
+        pillar, _checks = self._tool_variants()["unrefutable-none"]
+        card = MODULE.render_card(
+            MODULE.aggregate(
+                [MODULE.Pillar("dataset", 98, 1.0, ()), pillar],
+                [],
+                (),
+                dict(MODULE.DEFAULT_WEIGHTS),
+            ),
+            palette=MODULE.Palette(),
+            unicode_ok=False,
+        )
+        self.assertIn("4 of 5 checks measured", card)
+
+    def test_no_tools_answer_moves_the_card_the_customer_is_shown(self) -> None:
+        """The route every run actually takes, where the arithmetic must tie.
+
+        `--agent-knobs` sends the whole build read through
+        `build_declarations_are_unmeasured`: none of these four checks is
+        independently verified, so none of them scores. What was left of the
+        `tools` asymmetry there was pure coverage - the excused check raised
+        the pillar's confidence above every card that answered the question -
+        and on this route the declaration must now move no number at all.
+        """
+        seen = {}
+        for name, declaration in self.TOOL_DECLARATIONS.items():
+            facts = MODULE.replace(
+                MODULE.agent_facts_from_config_space(
+                    {"knobs": {"model": ["fast", "slow"]}, "wired": ["model"]}
+                ),
+                build=_read(_build_document(tools=declaration)).build,
+            )
+            facts = MODULE.replace(
+                facts, build=MODULE.build_declarations_are_unmeasured(facts.build)
+            )
+            pillar, _checks = self._pillar(facts)
+            seen[name] = (pillar.score, pillar.confidence)
+        self.assertEqual(
+            len(set(seen.values())),
+            1,
+            f"an unverified tools declaration still moves the pillar: {seen}",
+        )
 
     def test_every_check_names_the_line_it_was_read_from(self) -> None:
         """#210's discipline, on the input that can raise a score.
@@ -18682,6 +18836,34 @@ class TheBuildHalfCitesTheAgentItReadTests(unittest.TestCase):
                 selected_agent_callable="selected",
             )
 
+    def _read_source(self, source: str, build: dict):
+        """`_score_source` without its defaults, for documents that answer.
+
+        `_score_source` fills in `source_lines` on every check, which an
+        undetermined check is refused, so it cannot build that arm at all. This
+        one takes the build half exactly as given.
+        """
+        document = {
+            "source": "agent.py",
+            "knobs": {
+                "model": {
+                    "values": ["a"],
+                    "source_lines": [1],
+                    "evidence": "MODEL reaches the call.",
+                }
+            },
+            "build": build,
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "agent.py").write_text(source)
+            return MODULE.agent_facts_from_discovery(
+                document,
+                source_root=root,
+                selected_agent=root / "agent.py",
+                selected_agent_callable="selected",
+            )
+
     def test_a_loop_the_tree_cannot_see_may_still_be_declared(self) -> None:
         """The regression an equality comparison introduced, in four shapes.
 
@@ -19137,8 +19319,11 @@ class TheBuildHalfCitesTheAgentItReadTests(unittest.TestCase):
                 self.assertIn("nothing here checks", rows[check])
                 self.assertNotIn("does not establish", rows[check])
         # `tools` above answers "no tools", which is not applicable rather than
-        # unverified, so it carries no observation to mark either way. The
-        # applicable case is the one that has to say it.
+        # unverified, so it carries no SCOPE clause: no derivation ran and
+        # there is none to state. It still carries the assistant's sentence,
+        # and so still says whose that is - asserted in
+        # `test_the_no_tools_arm_says_whose_sentence_it_is`. The applicable
+        # case below is the one that has a scope to state.
         used = self._score_source(
             "MODEL = ['a']\nTOOLS = ['search']\ndef selected(q):\n    return q\n",
             {
@@ -19378,6 +19563,167 @@ class TheBuildHalfCitesTheAgentItReadTests(unittest.TestCase):
                 self.assertNotIn("excluded from this score", rows[check])
                 self.assertNotIn("Read from", rows[check])
 
+    def test_the_no_tools_arm_says_whose_sentence_it_is(self) -> None:
+        """traigent-first-run#362, on the last arm that was still unmarked.
+
+        `tools: used=false` is the only SETTLED check that returns
+        `measured=False`, so it returns before `_observed_declaration` and used
+        to reach the card as "the agent declares no tools, so tool wiring does
+        not apply (other_agent.py:100-118 the tool table is empty for this
+        route)" - the author's sentence in this script's own voice, inside a
+        parenthesis that reads as this script's own aside. It is the arm a
+        simple agent most commonly lands on, so it is the arm the marking was
+        most needed on.
+
+        The clause before the marking stays this read's own, and says only what
+        this read established: that the DOCUMENT declares no tools, and that
+        tool wiring was therefore not checked. It used to say "the agent
+        declares no tools, so tool wiring does not apply", which adopted the
+        declaration as a finding about the customer's agent and reported the
+        question settled - over an agent that visibly calls two tools, both
+        halves were false and both were in this script's voice. Nothing here
+        refutes the declaration, and saying what was read needs no notion of
+        tool-hood to do it. What follows the marking is the assistant's,
+        exactly as on every other check.
+        """
+        prose = "other_agent.py:100-118 the tool table is empty for this route"
+        rows = self._observed(
+            "MODEL = ['a']\ndef selected(question):\n    return question\n",
+            {
+                "control-flow": {"loop": False, "bounded": True},
+                "tools": {"used": False, "evidence": prose},
+            },
+        )
+        # Written out rather than read off the module, so this asserts on the
+        # sentence a customer meets and not on the constant agreeing with
+        # itself.
+        marking = "Assistant observation, which nothing here checks: "
+        # "the document", not "the agent": what this read saw is a declaration,
+        # and nothing here checks it against the file. And "was not checked",
+        # not "does not apply": the question is open, not answered.
+        self.assertIn(
+            "the document declares no tools, so tool wiring was not checked here.",
+            rows["tools"],
+        )
+        self.assertNotIn("the agent declares no tools", rows["tools"])
+        self.assertNotIn("does not apply", rows["tools"])
+        self.assertIn(marking, rows["tools"])
+        self.assertIn(prose, rows["tools"])
+        # The read's own clause first, then the marking, then the prose. A
+        # marking that opened the line would hand this script's finding to the
+        # assistant as well.
+        self.assertLess(
+            rows["tools"].index("tool wiring"), rows["tools"].index(marking)
+        )
+        self.assertLess(rows["tools"].index(marking), rows["tools"].index(prose))
+        # Nothing was withheld on a check that does not apply, so nothing
+        # claims a withheld measurement - that sentence would read as a
+        # penalty for an agent that simply has no tools.
+        self.assertNotIn("excluded from this score", rows["tools"])
+        # #368's derived clause is unaffected and still stands beside it, and
+        # a full stop separates it from the sentence it is there to be weighed
+        # against. This is the only arm that carries both an unparenthesised
+        # authored sentence and a quote: the siblings get the boundary from the
+        # closing parenthesis around their prose, and the undetermined arm
+        # quotes nothing. Without it the two ran together as
+        # "... empty for this route Read from agent.py, 1: ...", blurring the
+        # one seam the marking exists to make legible.
+        self.assertIn("for this route. Read from agent.py, 1:", rows["tools"])
+        # And the author's own full stop is not doubled onto it, the same
+        # normalisation `reason` gets on the undetermined arm.
+        self.assertNotIn(
+            "..",
+            self._observed(
+                "MODEL = ['a']\ndef selected(question):\n    return question\n",
+                {
+                    "control-flow": {"loop": False, "bounded": True},
+                    "tools": {"used": False, "evidence": "No tool table is defined."},
+                },
+            )["tools"],
+        )
+
+    def test_every_build_arm_says_whose_sentence_it_is(self) -> None:
+        """The guard the last two fixes both needed, derived instead of listed.
+
+        Twice now an arm has reached the customer's card carrying the
+        assistant's prose and no marking, because the marking is composed at
+        each return site and nothing said which sites those are: #435 for
+        `determined: false`, this change for `tools: used=false`. A test that
+        names the arms it covers cannot catch the third, since the arm that
+        goes wrong is by definition the one nobody thought to name.
+
+        So the check set comes from `BUILD_CHECK_ANSWER` and the answers from
+        the boolean field it records for each check, plus the undetermined
+        answer every check can give. Every signal of every document that
+        composes must carry one of the two markings - the bare one, or the
+        scoped one the source-checked arms use. A fifth build check joins this
+        automatically; a fifth ARM under an existing check joins it as soon as
+        an answer reaches it, which is the case that was missed twice.
+
+        Not blind: with `readiness.py` at trunk this reports the `tools`
+        arm unmarked.
+        """
+        source = (
+            "MODEL = ['a']\nTOOLS = ['search']\n"
+            "def selected(q):\n    return search(q)\n"
+        )
+        # What each check needs beside its answer when the answer is "yes".
+        # Absent for a check that needs nothing; a new check that needs a
+        # companion field fails here loudly, which is the point - a new arm
+        # should have to be looked at rather than default to uncovered.
+        companions = {
+            "control-flow": {"bounded": True},
+            "tools": {"declared": ["search"], "unreachable": []},
+        }
+
+        def answered(check: str, value: bool) -> dict:
+            return {
+                MODULE.BUILD_CHECK_ANSWER[check]: value,
+                **(companions.get(check, {}) if value else {}),
+                "evidence": "other_agent.py:100-118 read from the previous run",
+                "source_lines": [4],
+            }
+
+        def unsettled() -> dict:
+            # No `source_lines`: an undetermined check is refused one, so this
+            # arm cannot be built the way the settled ones are.
+            return {
+                "determined": False,
+                "reason": "the call is assembled in a wrapper this read did not open",
+                "evidence": "other_agent.py:100-118 read from the previous run",
+            }
+
+        answers = {
+            check: (answered(check, True), answered(check, False), unsettled())
+            for check in MODULE.BUILD_CHECK_ANSWER
+        }
+        settled = {check: answered(check, True) for check in MODULE.BUILD_CHECK_ANSWER}
+        documents = [
+            (f"{check}={index}", settled | {check: spec})
+            for check, specs in answers.items()
+            for index, spec in enumerate(specs)
+        ]
+        documents.append(
+            ("every check unsettled", {check: unsettled() for check in settled})
+        )
+        # Derived, so this number moves with the module rather than pinning a
+        # count somebody has to remember to raise.
+        self.assertEqual(len(documents), 3 * len(MODULE.BUILD_CHECK_ANSWER) + 1)
+        unmarked = []
+        for varied, build in documents:
+            for signal in MODULE.build_declarations_are_unmeasured(
+                self._read_source(source, build).build
+            ):
+                if MODULE.UNCHECKED_OBSERVATION in signal.evidence:
+                    continue
+                # The other spelling, which only the source-checked arms use:
+                # they name the scope of what was checked inside the
+                # parentheses instead.
+                if "Assistant observation (" in signal.evidence:
+                    continue
+                unmarked.append((varied, signal.name, signal.evidence))
+        self.assertEqual(unmarked, [])
+
     def test_the_reason_does_not_bring_its_own_full_stop_to_the_card(self) -> None:
         """A separator this script adds, on prose it does not control.
 
@@ -19411,25 +19757,15 @@ class TheBuildHalfCitesTheAgentItReadTests(unittest.TestCase):
 
         The arm this issue was about lost the marking by being composed
         somewhere else, and a second literal is how that happens again. Both
-        the read and the render reach for the same name, and an unmeasured
-        build declaration is marked on every arm that carries authored prose.
+        the read and the render reach for the same name.
+
+        This test owns the SPELLING only. Which arms carry the phrase is
+        `test_every_build_arm_says_whose_sentence_it_is`, derived from the
+        module - a list written out here would be a third hand-maintained set
+        of arms, which is the shape that let two of them go unmarked.
         """
         source = inspect.getsource(MODULE)
         self.assertEqual(source.count('"Assistant observation, which nothing'), 1)
-        settled = self._observed(
-            "MODEL = ['a']\ndef selected(q):\n    return q\n",
-            {"control-flow": {"loop": False, "bounded": True}},
-        )
-        undetermined = {
-            signal.name: signal.evidence
-            for signal in MODULE.build_declarations_are_unmeasured(
-                self._read(self._undetermined()).build
-            )
-        }
-        for check in ("prompt", "output-contract"):
-            with self.subTest(check=check):
-                self.assertIn(MODULE.UNCHECKED_OBSERVATION, settled[check])
-                self.assertIn(MODULE.UNCHECKED_OBSERVATION, undetermined[check])
 
     def test_a_quoted_line_cannot_rewrite_the_card_around_it(self) -> None:
         """Customer source text crosses two renderers, so it is made safe first.
@@ -20641,7 +20977,7 @@ class TaskFitIsMeasuredOnThePairNotOnEitherFieldTests(unittest.TestCase):
     ) -> None:
         """#414. The unknown case has to fail closed, and this is where.
 
-        The twelve older methods say what output kind they suit, so a file
+        The thirteen other methods say what output kind they suit, so a file
         nobody could classify refutes none of them. A method whose whole
         content is a claim about the comparison the file performs is the other
         case: "the walk could not account for this file" and "this file does
@@ -20728,13 +21064,26 @@ class TaskFitIsMeasuredOnThePairNotOnEitherFieldTests(unittest.TestCase):
                 self.assertLessEqual(
                     shapes, {"exact", "normalized-exact", "sql-structure"}
                 )
-        # The three methods a whole-value equality can be, and no others.
+        # The four methods a whole-value equality can be, and no others.
+        #
+        # `routing` was the first entry here whose claim is about WHAT is
+        # compared rather than about the comparison discipline: a chosen route
+        # against the expected one is a whole-value equality however the
+        # labels are folded. `final-state` is the second, on the identical
+        # argument about a final state, and it was added to this set after a
+        # run showed that the plainest evaluator the guide's tool-workflow row
+        # describes - `return output == expected` over a final state - is
+        # settled by the walk as `exact`. Left out, the table refuted the true
+        # declaration and paid `exact` + `structured` 17 task-fit points more
+        # over the same file (traigent-first-run#449).
         supported = {
             method
             for method, shapes in MODULE.METHOD_COMPARISON_SUPPORT.items()
             if shapes & {"exact", "normalized-exact"}
         }
-        self.assertEqual(supported, {"exact", "normalized-exact", "routing"})
+        self.assertEqual(
+            supported, {"exact", "normalized-exact", "routing", "final-state"}
+        )
         # And the one a proven structural SQL comparison supports, which is
         # deliberately not one of those three: a file that reads both answers
         # as queries is not comparing them as whole values, so crediting
@@ -22475,9 +22824,17 @@ class OneAliasDecisionServesBothReadersTests(unittest.TestCase):
 
     Both directions, because a widening that only added credit would be worse
     than the refusal it replaces. An alias this read cannot settle - rebound,
-    bound inside a branch, reachable from a nested scope - and an alias that
-    escapes into a call, an attribute, a second hop, or a request argument all
-    still refuse.
+    bound inside a branch that goes on to continue, reachable from a nested
+    scope - and an alias that escapes into a call, an attribute, a second hop,
+    or a request argument all still refuse.
+
+    The last row of #387's bisection table is here too, as
+    traigent-first-run#444: the binding written INSIDE the branch that raises.
+    It is settled for a stronger reason than a direct statement is - the block
+    does not fall through, so the binding dominates every path that continues -
+    and it is in the same tables as every other spelling rather than in a table
+    of its own, because "which line did the author put it on" is precisely the
+    rule this class exists to keep out of the score.
     """
 
     AGENT = """\
@@ -22557,6 +22914,23 @@ def run(config, question):
             "    chosen = model\n"
             "    if MODEL_CREDENTIALS[chosen] not in supplied:\n"
             '        raise ValueError("missing credential")\n'
+        ),
+        "bound inside the branch that raises, and read in the message": (
+            "    if MODEL_CREDENTIALS[model] not in supplied:\n"
+            "        needed = MODEL_CREDENTIALS[model]\n"
+            '        raise ValueError(f"missing {needed}")\n'
+        ),
+        "bound inside the branch that raises, and never read": (
+            "    if MODEL_CREDENTIALS[model] not in supplied:\n"
+            "        needed = MODEL_CREDENTIALS[model]\n"
+            '        raise ValueError("missing credential")\n'
+        ),
+        "bound inside an `elif` branch that raises": (
+            "    if not supplied:\n"
+            '        raise ValueError("no credentials")\n'
+            "    elif MODEL_CREDENTIALS[model] not in supplied:\n"
+            "        needed = MODEL_CREDENTIALS[model]\n"
+            '        raise ValueError(f"missing {needed}")\n'
         ),
     }
 
@@ -23013,7 +23387,105 @@ def run(style, question):
                     mentioned.add(node.value)
         return mentioned
 
-    def test_the_three_alias_readers_ask_the_one_helper(self) -> None:
+    # Every entry point of the home, and every primitive that lives inside it.
+    # Kept as two names rather than as literals in the test body because the
+    # gap this guard had was a LIST that had not grown with the home: it
+    # forbade the two primitives that had leaked before, so a third could leak
+    # past a test written to stop exactly that.  Read from the module so a
+    # primitive added here without a decision shows up as an unlisted name.
+    HOME_ENTRY_POINTS = frozenset(
+        {
+            "_settled_local_binding",
+            "_settled_local_assignment",
+            "_settled_binding_cannot_reach_a_request",
+            "_settled_binding_is_read_after",
+        }
+    )
+    HOME_PRIMITIVES = (
+        "_sole_binding_node",
+        "_nested_scope_leaves_alone",
+        "_binding_block",
+        "_binding_block_cannot_continue",
+        "_settled_binding_region",
+    )
+
+    # The readers, written down so that BOTH directions of drift fail. The
+    # list is checked against one derived from the module by
+    # `test_the_reader_list_is_every_caller_of_the_home`, so adding a fifth
+    # reader without listing it and deleting an existing one are each a red -
+    # which the previous revision of this guard was not. It listed four names
+    # by hand beside a property maintained by execution, and it was already one
+    # short: `_selection_bound_to_an_unfollowed_local` has asked the home since
+    # the diagnosis was made to use the credit path's own predicates, and no
+    # test noticed.
+    HOME_READERS = (
+        "_table_alias_is_only_read",
+        "_reference_only_routes_a_request",
+        "_local_alias_initializer",
+        "_alias_reads_only_route_a_request",
+        "_selection_bound_to_an_unfollowed_local",
+    )
+
+    @staticmethod
+    def _module_level_functions() -> dict[str, ast.FunctionDef]:
+        """Every function defined at this module's top level, from its source."""
+        tree = ast.parse(SCRIPT.read_text(encoding="utf-8"))
+        return {
+            node.name: node for node in tree.body if isinstance(node, ast.FunctionDef)
+        }
+
+    @classmethod
+    def _derived_home_readers(cls) -> set[str]:
+        """Every function outside the home that reaches into it.
+
+        Derived, because a hand-kept list of readers is the same defect as a
+        hand-kept list of primitives one line up: it is a record of who asked
+        when somebody last looked. A caller is a reader if its body mentions
+        ANY name of the home - an entry point it may ask, or a primitive it may
+        not - so a reader that skips the entry points and re-derives from a
+        primitive is derived here too, and then fails the rule below rather
+        than escaping the scan that exists to catch it.
+        """
+        home = set(cls.HOME_ENTRY_POINTS) | set(cls.HOME_PRIMITIVES)
+        return {
+            name
+            for name, function in cls._module_level_functions().items()
+            if name not in home and cls._mentions_of(function) & home
+        }
+
+    @staticmethod
+    def _mentions_of(function: ast.FunctionDef) -> set[str]:
+        """`_names_mentioned` over a parsed definition rather than a live one."""
+        body = function.body[1:] if ast.get_docstring(function) else function.body
+        mentioned: set[str] = set()
+        for statement in body:
+            for node in ast.walk(statement):
+                if isinstance(node, ast.Name):
+                    mentioned.add(node.id)
+                elif isinstance(node, ast.Attribute):
+                    mentioned.add(node.attr)
+                elif isinstance(node, ast.Constant) and isinstance(node.value, str):
+                    mentioned.add(node.value)
+        return mentioned
+
+    def test_the_reader_list_is_every_caller_of_the_home(self) -> None:
+        """The guard's own coverage, which was maintained by hand.
+
+        Deleting a name from `HOME_READERS` used to leave the whole suite
+        green, so the check that stops the primitives leaking into a fourth
+        reader could be silently narrowed by editing its own list - a guard
+        whose coverage is kept by hand beside a property kept by execution,
+        which is the shape this pull request refused everywhere else. Equality
+        rather than containment, so a fifth reader that asks the home without
+        being listed fails too, and neither direction can be made invisible.
+        """
+        self.assertEqual(
+            set(self.HOME_READERS),
+            self._derived_home_readers(),
+            "the reader list and the module disagree about who asks the home",
+        )
+
+    def test_the_alias_readers_ask_the_one_helper(self) -> None:
         """One decision, one home - read from the parse, not from the text.
 
         Behaviour alone cannot catch the readers drifting apart again: a change
@@ -23027,26 +23499,66 @@ def run(style, question):
 
         `_local_alias_initializer` is in the list because it was the third home
         the review found, and the one whose copy of the conditions had already
-        drifted.
+        drifted. `_alias_reads_only_route_a_request` is the fourth, and it is
+        here because traigent-first-run#444's first revision reached past the
+        home for the placement fact its reads half needs, and this guard let it
+        through: the forbidden tuple named the two primitives that had leaked
+        BEFORE rather than the primitives the home has. A list of what went
+        wrong last time is not a rule, so both lists are now the home's, the
+        readers are checked against the module, and the fact is served by an
+        entry point.
         """
-        for reader in (
-            MODULE._table_alias_is_only_read,
-            MODULE._reference_only_routes_a_request,
-            MODULE._local_alias_initializer,
-        ):
-            with self.subTest(reader=reader.__name__):
-                mentioned = self._names_mentioned(reader)
-                # Two entry points, one home: `_settled_local_binding` judges a
-                # node, `_settled_local_assignment` finds one by name for a
-                # caller that starts from a read. The lookup primitive lives
-                # inside the home with them, which is what keeps it off this
-                # list for the third reader.
+        for name in self.HOME_READERS:
+            with self.subTest(reader=name):
+                mentioned = self._names_mentioned(getattr(MODULE, name))
+                # Four entry points, one home: `_settled_local_binding` judges
+                # a node, `_settled_local_assignment` finds one by name for a
+                # caller that starts from a read,
+                # `_settled_binding_cannot_reach_a_request` answers the
+                # placement question the reads half needs, and
+                # `_settled_binding_is_read_after` answers whether a read
+                # follows on a path that can run. The lookup and placement
+                # primitives live inside the home with them, which is what
+                # keeps them off this list for every reader.
                 self.assertTrue(
-                    mentioned & {"_settled_local_binding", "_settled_local_assignment"},
-                    f"{reader.__name__} does not ask the shared helper",
+                    mentioned & self.HOME_ENTRY_POINTS,
+                    f"{name} does not ask the shared helper",
                 )
-                for primitive in ("_sole_binding_node", "_nested_scope_leaves_alone"):
+                for primitive in self.HOME_PRIMITIVES:
                     self.assertNotIn(primitive, mentioned)
+
+    def test_the_guard_lists_every_primitive_the_home_has(self) -> None:
+        """The half the last revision of this guard was missing.
+
+        A forbidden tuple written from the primitives that had leaked is a
+        record, not a rule, and it is one name short the moment the home gains
+        a primitive - which is exactly how #444's first revision called
+        `_binding_block_cannot_continue` from a reader with this test green.
+        So the tuple is checked against the module rather than trusted: every
+        module-level name defined between the home's first primitive and its
+        last entry point is either an entry point readers may ask or a
+        primitive they may not, and a new one is neither until somebody says
+        which.
+        """
+        tree = ast.parse(SCRIPT.read_text(encoding="utf-8"))
+        defined = [
+            node.name
+            for node in tree.body
+            if isinstance(node, ast.FunctionDef)
+            and node.name.startswith(("_settled_", "_binding_block", "_sole_binding"))
+        ]
+        self.assertIn("_settled_local_binding", defined)
+        unclassified = [
+            name
+            for name in defined
+            if name not in self.HOME_ENTRY_POINTS and name not in self.HOME_PRIMITIVES
+        ]
+        self.assertEqual(
+            unclassified,
+            [],
+            "a name in the settled-binding home is neither an entry point "
+            "readers may ask nor a primitive they may not",
+        )
 
     def test_the_readers_agree_on_a_binding_they_all_see(self) -> None:
         """The half a name scan cannot reach: one-sided extra conditions.
@@ -23108,6 +23620,237 @@ def run(cfg, question):
         pillar, _caps, _rows = MODULE.score_agent(facts)
         space = next(sub for sub in pillar.subscores if sub.name == "search-space")
         return "possible settings model" in space.evidence
+
+
+class ABranchThatRaisesSettlesTheBindingItMakesTests(unittest.TestCase):
+    """The unsafe half of traigent-first-run#444, asked of the rule itself.
+
+    The widening rests on ONE claim: a binding written in a block that then
+    raises dominates every path that continues, so a read after the block
+    finds the name unbound rather than a value, and the sole-binding rule
+    already means nothing else could have bound it. That claim is false for
+    every block that can hand control on with the binding made, and each way it
+    can is a row here. Behaviour alone cannot pin them - a `for`, `try`, `with`
+    or `match` anywhere in the selected callable is refused by the path-shape
+    rule long before this predicate is consulted, so a scored fixture would go
+    green whatever this answered. The predicate is therefore asked directly,
+    which is the only place the difference is visible.
+    """
+
+    HEAD = "def run(model, supplied, rows):\n"
+
+    def _binding(self, body: str) -> tuple[ast.AST, ast.AST, object]:
+        source = self.HEAD + body
+        compile(source, "agent.py", "exec", dont_inherit=True)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "agent.py").write_text(source, encoding="utf-8")
+            evidence = MODULE.static_source_evidence(
+                "agent.py", root, root / "agent.py", "run"
+            )
+        owner = evidence.selected_callable
+        binding = next(
+            node
+            for node in ast.walk(owner)
+            if isinstance(node, ast.Assign)
+            and isinstance(node.targets[0], ast.Name)
+            and node.targets[0].id == "needed"
+        )
+        return binding, owner, evidence
+
+    def _cannot_continue(self, body: str) -> bool:
+        binding, owner, evidence = self._binding(body)
+        return MODULE._binding_block_cannot_continue(binding, owner, evidence)
+
+    def _settles(self, body: str) -> bool:
+        binding, owner, evidence = self._binding(body)
+        return MODULE._settled_local_binding(binding, owner, evidence) == "needed"
+
+    def test_the_branch_that_raises_is_settled(self) -> None:
+        """The shape the issue is about, and the two it must not be read as."""
+        self.assertTrue(
+            self._cannot_continue(
+                "    if model not in supplied:\n"
+                "        needed = model\n"
+                '        raise ValueError(f"missing {needed}")\n'
+            )
+        )
+        self.assertTrue(
+            self._cannot_continue(
+                "    if not supplied:\n"
+                '        raise ValueError("none")\n'
+                "    elif model not in supplied:\n"
+                "        needed = model\n"
+                '        raise ValueError(f"missing {needed}")\n'
+            )
+        )
+
+    def test_a_block_that_can_hand_control_on_is_not_settled(self) -> None:
+        """Every way the block can continue with the name bound.
+
+        `return`, `break` and `continue` all leave the block before the raise
+        with the binding made; `yield` hands control to the caller, which can
+        simply not resume the generator. A `try` or a `with` between the block
+        and the owner swallows the exception instead - the `with` through an
+        `__exit__` that returns true, which reads as innocent and is the one a
+        list of statement kinds would have missed.
+        """
+        for label, body in (
+            (
+                "no raise at all",
+                "    if model not in supplied:\n"
+                "        needed = model\n"
+                "        print(needed)\n",
+            ),
+            (
+                "the raise comes first",
+                "    if model not in supplied:\n"
+                '        raise ValueError("missing")\n'
+                "        needed = model\n",
+            ),
+            (
+                "a return before the raise",
+                "    if model not in supplied:\n"
+                "        needed = model\n"
+                "        if supplied:\n"
+                "            return needed\n"
+                '        raise ValueError("missing")\n',
+            ),
+            (
+                "a break before the raise",
+                "    for row in rows:\n"
+                "        needed = model\n"
+                "        if row:\n"
+                "            break\n"
+                '        raise ValueError("missing")\n',
+            ),
+            (
+                "a continue before the raise",
+                "    for row in rows:\n"
+                "        needed = model\n"
+                "        if row:\n"
+                "            continue\n"
+                '        raise ValueError("missing")\n',
+            ),
+            (
+                "a yield before the raise",
+                "    if model not in supplied:\n"
+                "        needed = model\n"
+                "        yield needed\n"
+                '        raise ValueError("missing")\n',
+            ),
+            (
+                "a try that can swallow the raise",
+                "    try:\n"
+                "        if model not in supplied:\n"
+                "            needed = model\n"
+                '            raise ValueError("missing")\n'
+                "    except ValueError:\n"
+                "        pass\n",
+            ),
+            (
+                "a with that can swallow the raise",
+                "    with suppress(ValueError):\n"
+                "        if model not in supplied:\n"
+                "            needed = model\n"
+                '            raise ValueError("missing")\n',
+            ),
+            (
+                "a raise deeper in, not at the block's own level",
+                "    if model not in supplied:\n"
+                "        needed = model\n"
+                "        if supplied:\n"
+                '            raise ValueError("missing")\n',
+            ),
+        ):
+            with self.subTest(block=label):
+                self.assertFalse(self._cannot_continue(body), label)
+                self.assertFalse(self._settles(body), label)
+
+    def test_the_owners_own_body_is_settled_but_not_by_this_rule(self) -> None:
+        """A direct statement stays a direct statement, raise or no raise.
+
+        Reading the owner's body as a block that cannot continue would widen
+        the READS half for a placement whose refusal is pinned by
+        `OneAliasDecisionServesBothReadersTests`. That residual is a separate
+        decision from this one and is not reopened here.
+        """
+        body = "    needed = model\n" '    raise ValueError(f"missing {needed}")\n'
+        self.assertFalse(self._cannot_continue(body))
+        self.assertTrue(self._settles(body))
+
+    def test_a_read_outside_the_raising_block_is_not_credited_its_value(self) -> None:
+        """The region half, which is `_local_alias_initializer`'s own.
+
+        A read the raising block does not contain can never execute with the
+        name bound. Crediting it would hand a setting to a call that only ever
+        raises `NameError`, which is the "knob the run cannot vary" error this
+        check refuses in the first place, arrived at from the other side.
+
+        THREE placements, not one, and the difference is the defect the first
+        revision of this pass shipped. It took the region from the binding's
+        PARENT STATEMENT, and an `ast.If` owns an `orelse` as well as a `body`,
+        so the `else` and `elif` arms - which the raising arm provably never
+        reaches - were inside the region and credited. The row written beside
+        that code picked the read after the whole `if`, which is outside the
+        parent statement too, so it passed against both the defect and its fix
+        and proved nothing about the arm. The region is the binding's own
+        BLOCK now, and all three placements are rows.
+        """
+        for label, body, credited_reads in (
+            (
+                "a read after the whole if",
+                "    if model not in supplied:\n"
+                "        needed = model\n"
+                '        raise ValueError(f"missing {needed}")\n'
+                "    return needed\n",
+                1,
+            ),
+            (
+                "a read in the else arm of the guard's own if",
+                "    if model not in supplied:\n"
+                "        needed = model\n"
+                '        raise ValueError(f"missing {needed}")\n'
+                "    else:\n"
+                "        return needed\n",
+                1,
+            ),
+            (
+                "a read in an elif arm beside the raising one",
+                "    if model not in supplied:\n"
+                "        needed = model\n"
+                '        raise ValueError(f"missing {needed}")\n'
+                "    elif supplied:\n"
+                "        return needed\n",
+                1,
+            ),
+        ):
+            with self.subTest(placement=label):
+                _binding, owner, evidence = self._binding(body)
+                reads = sorted(
+                    (
+                        node
+                        for node in ast.walk(owner)
+                        if isinstance(node, ast.Name)
+                        and node.id == "needed"
+                        and isinstance(node.ctx, ast.Load)
+                    ),
+                    key=lambda node: node.lineno,
+                )
+                followed = [
+                    read
+                    for read in reads
+                    if MODULE._local_alias_initializer(read, owner, evidence)
+                    is not None
+                ]
+                self.assertEqual(
+                    len(followed),
+                    credited_reads,
+                    f"{label}: a read that can only be a NameError was "
+                    f"credited a value, or the read inside the raising block "
+                    f"lost its own",
+                )
+                self.assertIs(followed[0], reads[0], label)
 
 
 class TheWalkthroughSizeNamesItselfTests(unittest.TestCase):
@@ -23507,3 +24250,337 @@ class TheCommandLineDocumentsItsExitCodesTests(unittest.TestCase):
                 self.assertIn(f"\n  {code}  ", text)
         self.assertIn("BLOCKED score still exits 0", text)
         self.assertIn("--strict", text)
+
+
+class TheHonestDeclarationIsNeverOutscoredTests(unittest.TestCase):
+    """traigent-first-run#449, pinned as an inequality rather than as numbers.
+
+    An evaluator that scores which tools an answer used had no true word in
+    either vocabulary, and the guide's own selection table offers exactly that
+    row. The guidance's instruction for a state no method fits is to declare
+    nothing, and declaring nothing kept the withheld task-fit check in the
+    denominator: over one unchanged tool-usage evaluator the evaluation pillar
+    read 69 for silence, 90 for `composite` + `structured` and 100 for `exact`
+    + `structured`, which is untrue of that file. At the default weights that
+    is about eleven overall points for answering honestly, and the refutation
+    arms that catch a false declaration cannot fire here, because every one of
+    them needs a comparison shape preflight cannot establish for a file that
+    reads a trace.
+
+    The fix is vocabulary: `final-state` over `tool-workflow` is the true
+    declaration, and it earns what a deterministic ruler that suits the output
+    earns. The property below is what must survive, and it is written over the
+    tables rather than over that pair, because a later method or task kind
+    added with a fatter profile would reopen the same defect under a new word
+    while a test naming four declarations stayed green.
+
+    The inequality is `>=`, not `>`. Nothing here can read a tool trace out of
+    a file, so a mislabel cannot be detected and cannot be charged for; what
+    the fix removes is the REWARD for it. A declaration that ties the honest
+    one buys the customer nothing, and that is the whole of what this score
+    can honestly promise.
+    """
+
+    # The evidence every declaration below is measured over: one complete,
+    # passing calibration of one tool-usage evaluator, with a clean spread and
+    # nothing established about the file. It is held fixed so the only thing
+    # varying across the sweep is the pair of words the customer typed.
+    CHECKS = ({"good_passes": True, "bad_fails": True, "non_constant": True},)
+
+    def pillar(self, method, kind, **extra):
+        facts = MODULE.EvaluationFacts(
+            present=True,
+            method=method,
+            task_kind=kind,
+            calibration_present=True,
+            calibration_supplied=True,
+            calibration_complete=True,
+            calibration_passed=True,
+            checks=self.CHECKS,
+            probe_scores=((1.0, 0.0),),
+            origin="brought",
+            **extra,
+        )
+        score, _caps = MODULE.score_evaluation(facts)
+        return score.score
+
+    def fit(self, method, kind, **extra):
+        """The task-fit sub-score alone, for the arms that refuse a word."""
+        facts = MODULE.EvaluationFacts(
+            present=True, method=method, task_kind=kind, **extra
+        )
+        pillar, _caps = MODULE.score_evaluation(facts)
+        return next(sub for sub in pillar.subscores if sub.name == "task-fit")
+
+    def test_the_true_declaration_exists_in_both_vocabularies(self) -> None:
+        """Expressible first: an inequality over words nobody can type is empty.
+
+        Both halves, because task fit is a property of the pair and a kind no
+        method fits can only lose points. Checked against the tables the flags
+        actually take their choices from.
+        """
+        self.assertIn("tool-workflow", MODULE.TASK_KINDS)
+        fitting = {
+            name
+            for name, profile in MODULE.METHOD_PROFILES.items()
+            if "tool-workflow" in profile["fits"]
+        }
+        self.assertTrue(fitting, "no method suits a tool or action workflow")
+        self.assertIn("final-state", fitting)
+
+    # The one settled shape this property is not asserted over, named here
+    # because the sweep below derives its own axis and has to say what it is
+    # deliberately leaving out rather than simply not reaching it.
+    #
+    # `derived_comparison_shape` returns this only for a file that imports the
+    # guide's own bundled SQL comparator and delegates both answers to it, so
+    # a file settled as `sql-structure` is a query comparator whatever was
+    # typed over it and `final-state` is not the true declaration for it.
+    # `test_the_new_word_is_still_refused_from_proof` asserts that state
+    # instead.
+    SHAPES_THIS_PROPERTY_EXCLUDES = frozenset({"sql-structure"})
+
+    def test_no_declaration_outscores_the_honest_one(self) -> None:
+        """The property, swept over every pair the two flags can spell.
+
+        This is the repository's "deleting a credential check may never score
+        better" shape, applied to a declaration: for ONE evaluator, over one
+        fixed body of evidence, the true words must be worth at least as much
+        as any other words.
+
+        **What the sweep judges, exactly.** Every CHALLENGER a later author
+        can spell: the `METHOD_PROFILES` x `TASK_KINDS` product is derived, so
+        a sixteenth method or an eleventh kind is measured against this
+        property the moment it exists. The HONEST side is the one pair below,
+        written out, and it cannot be derived - which is worth stating plainly
+        because an earlier revision of this docstring claimed the whole thing
+        was derived and it is not. Whether a declaration is TRUE of a file is
+        a fact about that file, and no table here holds it. A sixteenth method
+        that is itself the honest declaration for a new kind - `final-state`
+        was exactly that - therefore needs its own pair added to this test, and
+        nothing in the suite can notice that it was not.
+
+        The obvious derivation was tried and is wrong: "every kind with one
+        fitting method has that method as its honest declaration, so sweep
+        those pairs" fails today on `extraction` and `numeric`, whose sole
+        methods hold empty `METHOD_COMPARISON_SUPPORT` sets and are therefore
+        refuted under a settled whole-value shape - correctly, because a file
+        proven to compare two whole answers is not scoring overlap or reading
+        numbers. The pairs that belong here are the ones whose honest
+        evaluator the walk CAN settle, and that is a judgement about
+        evaluators rather than a fact in a table.
+
+        **What it can catch, then.** The honest pair sits at the pillar
+        ceiling, so nothing added later can climb PAST it; every way this goes
+        red is the honest side falling - `final-state` joining
+        `METHOD_REQUIRES_PROVEN_COMPARISON`, its execution claim turning
+        `True`, its dials being trimmed, its `METHOD_COMPARISON_SUPPORT` entry
+        narrowing, a new provable comparison shape it does not support, or the
+        kind losing its only fitting method. Those are the six edits that
+        would reopen #449 for THIS pair, and each is a one-line change
+        somebody would otherwise make against a table. Two of the six are on
+        that list because they were made: this method shipped for review with
+        an empty support set, and the revision that fixed it swept a
+        hand-written list of shapes.
+
+        **Why the shape axis is derived and not listed.** It shipped as a
+        fixed `None`, defended in this docstring as a fact - "a file settled
+        as a whole-value comparison is not the evaluator this property is
+        about" - which is false of the plainest evaluator the guide's row
+        describes, so the sweep was green over exactly the state where the
+        property was broken. The repair replaced that with three shapes typed
+        out by hand, which is the same defect one move out: complete only
+        while somebody remembers to widen it, and a fourth provable shape
+        reopens the inversion with this test green. So the axis is read off
+        `COMPARISON_SHAPE_DESCRIPTIONS` and the exclusion is asserted against
+        it. A fifth shape now fails HERE, naming this property, rather than
+        somewhere else naming a table.
+        """
+        swept = set(MODULE.COMPARISON_SHAPE_DESCRIPTIONS) - (
+            self.SHAPES_THIS_PROPERTY_EXCLUDES
+        )
+        self.assertEqual(
+            swept | self.SHAPES_THIS_PROPERTY_EXCLUDES,
+            set(MODULE.COMPARISON_SHAPE_DESCRIPTIONS),
+            "a provable comparison shape exists that this property neither "
+            "sweeps nor excludes on purpose",
+        )
+        self.assertTrue(
+            self.SHAPES_THIS_PROPERTY_EXCLUDES
+            <= set(MODULE.COMPARISON_SHAPE_DESCRIPTIONS),
+            "this property excludes a shape the walk can no longer establish; "
+            "the exclusion outlived what it was carved out for",
+        )
+        # None is not a shape and is not in that table: it is the state where
+        # the walk settled nothing, which every file starts in.
+        states = [(None, None)] + [
+            (shape, f"the walk settled this file as {shape} (line 6)")
+            for shape in sorted(swept)
+        ]
+        for read in (None, False):
+            for shape, witness in states:
+                state = {
+                    "executes_candidate": read,
+                    "comparison_shape": shape,
+                    "comparison_witness": witness,
+                }
+                honest = self.pillar("final-state", "tool-workflow", **state)
+                for method in sorted(MODULE.METHOD_PROFILES):
+                    for kind in MODULE.TASK_KINDS:
+                        with self.subTest(
+                            method=method, kind=kind, executes=read, shape=shape
+                        ):
+                            self.assertLessEqual(
+                                self.pillar(method, kind, **state),
+                                honest,
+                                f"{method} + {kind} pays more than the truth "
+                                "about a tool-workflow evaluator whose file "
+                                f"settled as {shape}, so this score is again "
+                                "buying a mislabel",
+                            )
+
+    def test_the_untrue_declaration_that_used_to_pay_no_longer_does(self) -> None:
+        """The two readings from the report, held against the honest one.
+
+        Named rather than left to the sweep because they are the measurement
+        the issue was filed on, and a sweep that silently stopped covering
+        them would still pass.
+        """
+        honest = self.pillar("final-state", "tool-workflow")
+        self.assertEqual(honest, self.pillar("exact", "structured"))
+        self.assertGreater(honest, self.pillar("composite", "structured"))
+        self.assertGreater(honest, self.pillar(None, None))
+
+    def test_declaring_nothing_is_no_longer_the_best_honest_answer(self) -> None:
+        """The inversion itself, in the direction a customer feels it.
+
+        Silence still costs its withheld check, and must: `SubScore.withheld`
+        exists so that not answering a question this run asks can never beat
+        answering it. What changed is that the question now HAS a true answer
+        for this evaluator, so the customer is no longer charged for the
+        vocabulary's gap.
+        """
+        silent = self.pillar(None, None)
+        self.assertGreater(self.pillar("final-state", "tool-workflow"), silent)
+        withheld = [
+            sub
+            for sub in MODULE.score_evaluation(
+                MODULE.EvaluationFacts(
+                    present=True,
+                    calibration_present=True,
+                    calibration_supplied=True,
+                    calibration_complete=True,
+                    calibration_passed=True,
+                    checks=self.CHECKS,
+                    probe_scores=((1.0, 0.0),),
+                    origin="brought",
+                )
+            )[0].subscores
+            if sub.withheld
+        ]
+        self.assertEqual([sub.name for sub in withheld], ["task-fit"])
+
+    def test_a_settled_whole_value_comparison_is_the_honest_declaration(
+        self,
+    ) -> None:
+        """The premise this class shipped with, corrected against a run.
+
+        The method arrived with an empty `METHOD_COMPARISON_SUPPORT`, argued
+        from "a file proven to compare two answers as whole values is not
+        reading a tool trace". The plainest evaluator the guide's own row
+        describes refutes that: `return output == expected` over a final state
+        is a whole-value comparison OF THE STATE, the walk settles it as
+        `exact`, and the empty set therefore refused the true declaration and
+        printed a card sentence calling a final-state check an exact one -
+        while `exact` + `structured` over the same file kept every point.
+
+        So the two whole-value shapes credit this method, for the reason they
+        credit `routing`: its claim is about what is compared, not about the
+        comparison discipline.
+        """
+        for shape, witness in (
+            ("exact", "the answers are compared as written (line 6)"),
+            ("normalized-exact", "casefold, strip applied before it (line 6)"),
+        ):
+            with self.subTest(shape=shape):
+                credited = self.fit(
+                    "final-state",
+                    "tool-workflow",
+                    comparison_shape=shape,
+                    comparison_witness=witness,
+                    executes_candidate=False,
+                )
+                self.assertEqual(credited.value, MODULE.TASK_FIT_WEIGHT)
+                self.assertEqual(
+                    credited.evidence, "final-state suits tool-workflow output"
+                )
+
+    def test_the_new_word_is_still_refused_from_proof(self) -> None:
+        """Widening the support set did not make the word unrefusable.
+
+        Two arms still reach it, and they are the two that refuse from
+        something the file established rather than from something the walk
+        failed to find. A parse of two queries is a query comparator whatever
+        was typed over it, and a file witnessed reaching an engine ends this
+        guide under any word.
+        """
+        structural = self.fit(
+            "final-state",
+            "tool-workflow",
+            comparison_shape="sql-structure",
+            comparison_witness="both answers parsed as SQL (line 6)",
+            executes_candidate=False,
+        )
+        self.assertEqual(structural.value, MODULE.TASK_FIT_UNFIT_CREDIT)
+        self.assertIn("rather than final-state", structural.evidence)
+        engine = "cursor.execute(candidate) (line 12)"
+        refused = MODULE.score_evaluation(
+            MODULE.EvaluationFacts(
+                present=True,
+                method="final-state",
+                task_kind="tool-workflow",
+                executes_candidate=True,
+                execution_witness=engine,
+            )
+        )[0]
+        fit = next(sub for sub in refused.subscores if sub.name == "task-fit")
+        self.assertEqual(fit.value, MODULE.TASK_FIT_UNFIT_CREDIT)
+        self.assertIn(engine, fit.evidence)
+
+    def test_the_reproducibility_sentence_says_what_this_method_is(self) -> None:
+        """`DETERMINISTIC_METHODS` decides a sentence, and nothing was reading it.
+
+        Membership there changes no number - the dials do that - so dropping
+        `final-state` from it leaves the whole package green while the card
+        starts telling a customer their local state comparison "can vary
+        between runs and may require paid calls". A sentence a customer reads
+        off their own evaluator is worth one assertion, and this is the only
+        one of the five tables whose entry a test was not already forcing.
+        """
+        pillar, _caps = MODULE.score_evaluation(
+            MODULE.EvaluationFacts(
+                present=True, method="final-state", task_kind="tool-workflow"
+            )
+        )
+        line = next(sub for sub in pillar.subscores if sub.name == "reproducibility")
+        self.assertEqual(line.evidence, "deterministic scoring rule")
+        self.assertIn("final-state", MODULE.DETERMINISTIC_METHODS)
+
+    def test_the_new_method_is_not_held_to_a_proof_it_can_never_have(
+        self,
+    ) -> None:
+        """Why `final-state` is not in `METHOD_REQUIRES_PROVEN_COMPARISON`.
+
+        `sql-structure` belongs there because the walk CAN establish the
+        comparison it claims, so demanding the proof costs an honest customer
+        nothing. No read in this package can establish that a file reads a
+        tool trace, so the same demand would make the true word unpayable and
+        put the inversion straight back under a new spelling. The membership
+        is asserted rather than left implicit, because it is the one line that
+        would silently undo this fix.
+        """
+        self.assertIn("final-state", MODULE.METHOD_PROFILES)
+        self.assertNotIn("final-state", MODULE.METHOD_REQUIRES_PROVEN_COMPARISON)
+        for method in sorted(MODULE.METHOD_REQUIRES_PROVEN_COMPARISON):
+            with self.subTest(method=method):
+                self.assertTrue(MODULE.METHOD_COMPARISON_SUPPORT[method])

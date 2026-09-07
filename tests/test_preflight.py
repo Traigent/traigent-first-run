@@ -4,6 +4,7 @@ import ast
 import contextlib
 import importlib.util
 import io
+import itertools
 import json
 import os
 import re
@@ -6816,3 +6817,367 @@ class TheCommandLineDocumentsItsExitCodesTests(unittest.TestCase):
                 self.assertIn(f"\n  {code}  ", process.stdout)
         self.assertIn("--strict", process.stdout)
         self.assertIn(MODULE.TRACEBACK_ENV, process.stdout)
+
+
+def duplicate_check_names(results: list) -> list[str]:
+    """Every check name that appears more than once, in first-seen order.
+
+    Read off `RESULTS` and not off whether `emit` raised, deliberately. The
+    registry is the guard and must stay one, but a property asserted as "no
+    exception escaped" would go green the moment somebody relaxed the guard -
+    which is the one edit this class exists to survive.
+    """
+    seen: set[str] = set()
+    duplicates: list[str] = []
+    for result in results:
+        if result.check in seen and result.check not in duplicates:
+            duplicates.append(result.check)
+        seen.add(result.check)
+    return duplicates
+
+
+#: `.env` lines this parser has to survive in any order and any multiplicity.
+#: Each is an ordinary way for a first-run customer to write the one file this
+#: guide asks them to write by hand, and the shapes that matter here are the
+#: ones the parser cannot read: two of them in one file is what raised.
+ENV_LINE_SHAPES = (
+    "",
+    "# a comment",
+    "FIRST_RUN_NOTE=kept",
+    "a pasted note without a hash",
+    "and the second line of that note",
+    "1BAD=x",
+    "BAD KEY=x",
+    "export FOO",
+    "export FOO=bar",
+    "=novalue",
+    "QUOTED='a b' # trailing",
+)
+
+#: The one `(source, difficulty pattern)` pair this enumeration does NOT
+#: assert over, and why. A `source: synthetic` corpus tagged entirely `easy`
+#: records `dataset-difficulty` twice on trunk today - the third instance of
+#: this class, reported as #440 and fixed on the open branch for #442, which
+#: owns those lines. Excluded here rather than fixed twice: two branches
+#: rewriting the same arms is a conflict, not a second fix.
+#:
+#: The pairs are excused for ONE check name and nothing else - see
+#: `DATASET_DUPLICATE_OWNED_ELSEWHERE`. A second name recording twice BEFORE
+#: `dataset-difficulty` on the same shape still reds; one recorded after it
+#: does not, because `emit` raises on the first collision and nothing past it
+#: runs. So this is a hole the width of a known defect and the tail behind it,
+#: not the width of a corpus.
+#:
+#: **It retires itself.** The walk asserts that every pair listed here STILL
+#: raises: when #442 lands and this shape stops recording twice, the
+#: enumeration fails and says to delete both names. That is deliberate, and
+#: the red is the point - an exemption whose reason has gone is a false green,
+#: and this repository has been bitten by correct-at-the-time notes that
+#: outlived their reason. Whichever branch lands second pays one two-line
+#: deletion, and the failure message says exactly which lines.
+DATASET_SHAPES_OWNED_ELSEWHERE = frozenset({("synthetic", "all-easy")})
+#: The one check name the shapes above may record twice, spelled out so the
+#: exemption cannot cover a defect nobody has seen.
+DATASET_DUPLICATE_OWNED_ELSEWHERE = "dataset-difficulty"
+
+#: `--models` entries, including the repeat that raised and two spellings of
+#: an id this check refuses.
+MODEL_SHAPES = (
+    "gpt-4o",
+    "openai/gpt-4o-mini",
+    "not a model id",
+    "also not a model id",
+)
+
+
+class NoInputMakesOneCheckSpeakTwiceTests(unittest.TestCase):
+    """#447: the mechanism, in place of a fifth remembered-bug test.
+
+    A check that records its name twice raises `DuplicateCheckName`, which
+    `main` reports as exit ``3`` with no records at all: the customer gets a
+    non-zero exit and an empty report instead of the finding, and loses every
+    other finding the run had already made with it. Five instances of that one
+    class have now been found - `dataset-ids`, `provider-credentials`,
+    `dataset-difficulty`, and the two here - and every one of them was found by
+    a person reading the file.
+
+    `OneRecordPerCheckTests` pins the first two and the registry; the two
+    found here are pinned below. This class pins the PROPERTY as well: over
+    enumerated input shapes, no check records its name twice. The sixth
+    instance does not have to be thought of first, only reached by one of these
+    enumerations.
+
+    What it cannot do is worth stating, because a property test that is read as
+    covering more than it does is worse than none. The enumerations are bounded
+    and hand-written, so a shape nobody listed is a shape nobody covers. The
+    `.env` walk drives `read_env` only, not `check_keys`,
+    `check_cost_settings`, or the shadowed-credential check, which read the
+    same file. The dataset walk writes no `split` field and passes no
+    `evaluator_method` or field overrides, so the split-declared, tuning-size,
+    holdout and outcome-field arms are never entered - `dataset-split` itself
+    IS recorded, on the arm that says no split was found, and only the three
+    arms that need a declared split are unreached. It proves no property of
+    `check_evaluator`, `check_sdk`, or `check_existing_traigent_use`, none of
+    which take a customer-controlled list. And it is a test of the check
+    surface, not of the registry: the registry keeps its own test above.
+    Finally, one dataset shape may still record `dataset-difficulty` twice -
+    named and explained at `DATASET_SHAPES_OWNED_ELSEWHERE`, because a
+    different open branch owns the arms that would fix it - and that exemption
+    is for that one name, not for the shape.
+    """
+
+    def setUp(self) -> None:
+        MODULE.RESULTS.clear()
+
+    def assert_one_record_per_check(self, description: object) -> None:
+        duplicates = duplicate_check_names(MODULE.RESULTS)
+        self.assertEqual(
+            duplicates,
+            [],
+            f"{duplicates} recorded twice on {description!r}",
+        )
+
+    def test_the_property_is_read_off_the_records_not_off_the_guard(self) -> None:
+        """The assertion above must red on a duplicate the guard did not stop.
+
+        Appended directly, bypassing `emit`, which is what a future author
+        loosening the registry would effectively do. The property still sees
+        it, so relaxing the guard cannot turn this class green.
+        """
+        MODULE.RESULTS.append(MODULE.Result("env-file", MODULE.WARN, "first"))
+        MODULE.RESULTS.append(MODULE.Result("env-file", MODULE.WARN, "second"))
+        self.assertEqual(duplicate_check_names(MODULE.RESULTS), ["env-file"])
+        with self.assertRaises(AssertionError):
+            self.assert_one_record_per_check("a hand-built duplicate")
+
+    def test_no_env_file_of_these_line_shapes_records_a_check_twice(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            env_path = Path(directory) / ".env"
+            for length in (1, 2, 3):
+                for lines in itertools.product(ENV_LINE_SHAPES, repeat=length):
+                    env_path.write_text("\n".join(lines) + "\n")
+                    MODULE.RESULTS.clear()
+                    MODULE.read_env(env_path)
+                    self.assert_one_record_per_check(lines)
+
+    def test_no_models_list_of_these_shapes_records_a_check_twice(self) -> None:
+        MODULE.check_models(["gpt-4o"])
+        if not any(r.check.startswith("model-format:") for r in MODULE.RESULTS):
+            self.skipTest(
+                "litellm is not importable, so check_models returns before the "
+                "loop this enumerates and the run would prove nothing"
+            )
+        for length in (1, 2, 3):
+            for models in itertools.product(MODEL_SHAPES, repeat=length):
+                MODULE.RESULTS.clear()
+                MODULE.check_models(list(models))
+                self.assert_one_record_per_check(models)
+
+    def test_no_dataset_of_these_row_shapes_records_a_check_twice(self) -> None:
+        """The three earlier instances all lived behind `check_dataset`.
+
+        Small beside this module's other corpora, and deliberately so: what is
+        enumerated is the handful of row properties the duplicated checks read
+        - provenance, the difficulty bands present, whether ids are unique,
+        missing, or both, and whether the expected outputs vary - crossed
+        rather than chosen one at a time. `dataset-difficulty` needed all-easy
+        AND synthetic together, which is why crossing them is the point.
+        """
+        difficulty_patterns = {
+            "all-easy": ("easy", "easy", "easy", "easy"),
+            "two-bands": ("easy", "medium", "easy", "medium"),
+            "all-four": ("easy", "medium", "hard", "very-hard"),
+            "untagged": (None, None, None, None),
+        }
+        id_patterns = ("unique", "duplicate", "missing", "duplicate-and-missing")
+        still_owned_elsewhere: set[tuple[str, str]] = set()
+        with tempfile.TemporaryDirectory() as directory:
+            dataset = Path(directory) / "eval.jsonl"
+            for source, bands, ids, identical in itertools.product(
+                ("synthetic", "production-log"),
+                difficulty_patterns,
+                id_patterns,
+                (True, False),
+            ):
+                rows = []
+                for index in range(12):
+                    row: dict = {
+                        "input": f"scenario {index} unique_token_{index}",
+                        "output": "same" if identical else f"answer {index % 4}",
+                        "source": source,
+                    }
+                    difficulty = difficulty_patterns[bands][index % 4]
+                    if difficulty is not None:
+                        row["difficulty"] = difficulty
+                    if ids == "unique":
+                        row["id"] = f"row-{index}"
+                    elif ids == "duplicate":
+                        row["id"] = f"row-{index % 6}"
+                    elif ids == "duplicate-and-missing" and index % 2:
+                        row["id"] = f"row-{index % 4}"
+                    rows.append(row)
+                dataset.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+                MODULE.RESULTS.clear()
+                combination = (source, bands, ids, identical)
+                if (source, bands) in DATASET_SHAPES_OWNED_ELSEWHERE:
+                    # Still asserted over, and only the one known name
+                    # excused: the shape may raise on
+                    # `DATASET_DUPLICATE_OWNED_ELSEWHERE` while another branch
+                    # owns that fix, and must otherwise obey the property like
+                    # every other shape. Whether it raised is RECORDED, and
+                    # checked against the exemption below - that is what makes
+                    # the exemption retire itself rather than sit here green
+                    # once its reason is gone.
+                    try:
+                        MODULE.check_dataset(dataset)
+                    except MODULE.DuplicateCheckName as raised:
+                        self.assertIn(
+                            f"{DATASET_DUPLICATE_OWNED_ELSEWHERE!r}",
+                            str(raised),
+                            combination,
+                        )
+                        still_owned_elsewhere.add((source, bands))
+                        continue
+                    self.assert_one_record_per_check(combination)
+                    continue
+                MODULE.check_dataset(dataset)
+                self.assert_one_record_per_check(combination)
+        # The exemption's expiry date, executed. Every excused shape must still
+        # be a shape that raises: one that has stopped is a hole with no defect
+        # under it any more, and a hole nothing complains about is how a
+        # correct-at-the-time note becomes a false green. Failing here is the
+        # only notice anyone gets, so it says what to do.
+        self.assertEqual(
+            still_owned_elsewhere,
+            set(DATASET_SHAPES_OWNED_ELSEWHERE),
+            "this exemption is obsolete: the shapes named above no longer "
+            f"record {DATASET_DUPLICATE_OWNED_ELSEWHERE!r} twice, so delete "
+            "DATASET_SHAPES_OWNED_ELSEWHERE, DATASET_DUPLICATE_OWNED_ELSEWHERE "
+            "and the arm in this walk that reads them, leaving the plain "
+            "assertion for every shape",
+        )
+
+    def test_two_unreadable_env_lines_are_one_record_that_names_both(self) -> None:
+        """#447: folding must not cost the customer the second finding.
+
+        The record leads with the count of each population and names the source
+        lines, on the convention `dataset-ids` already writes, so an `.env`
+        with two stray lines reads as two rather than as one.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            env_path = Path(directory) / ".env"
+            env_path.write_text(
+                "this is a note without a hash\n"
+                "FIRST_RUN_NOTE=kept\n"
+                "another bad line here\n"
+                "1BAD=x\n"
+            )
+            values = MODULE.parse_env_file(env_path)
+        self.assertEqual(values, {"FIRST_RUN_NOTE": "kept"})
+        records = [r for r in MODULE.RESULTS if r.check == "env-file"]
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0].status, MODULE.WARN)
+        self.assertIn("2 lines at source lines [1, 3]", records[0].detail)
+        self.assertIn("are not KEY=VALUE and were ignored", records[0].detail)
+        self.assertIn("1 line at source line 4", records[0].detail)
+        self.assertIn("has an invalid environment variable name", records[0].detail)
+        self.assertEqual(records[0].metrics["ignored_lines"], 3)
+        self.assertEqual(records[0].metrics["unparsed_lines"], [1, 3])
+        self.assertEqual(records[0].metrics["invalid_name_lines"], [4])
+
+    def test_a_long_list_of_unreadable_lines_says_that_it_is_truncated(self) -> None:
+        """The display ceiling never narrows what was measured.
+
+        The sentence stops at `MAX_REPORTED_ENV_FILE_LINES` and says so; the
+        metrics carry every line number, so a consumer counting them counts the
+        file and not the ceiling.
+        """
+        count = MODULE.MAX_REPORTED_ENV_FILE_LINES + 5
+        with tempfile.TemporaryDirectory() as directory:
+            env_path = Path(directory) / ".env"
+            env_path.write_text("".join(f"note line {i}\n" for i in range(count)))
+            MODULE.parse_env_file(env_path)
+        record = next(r for r in MODULE.RESULTS if r.check == "env-file")
+        self.assertIn(f"{count} lines at source lines", record.detail)
+        self.assertIn(
+            f"(first {MODULE.MAX_REPORTED_ENV_FILE_LINES} shown)", record.detail
+        )
+        self.assertEqual(len(record.metrics["unparsed_lines"]), count)
+        self.assertEqual(record.metrics["ignored_lines"], count)
+
+    def test_one_unreadable_line_reads_as_one_line(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            env_path = Path(directory) / ".env"
+            env_path.write_text("a pasted note\nFIRST_RUN_NOTE=kept\n")
+            MODULE.parse_env_file(env_path)
+        record = next(r for r in MODULE.RESULTS if r.check == "env-file")
+        self.assertIn("1 line at source line 1 is not KEY=VALUE", record.detail)
+        self.assertNotIn("shown)", record.detail)
+
+    def test_a_readable_env_file_draws_no_finding(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            env_path = Path(directory) / ".env"
+            env_path.write_text("# note\nFIRST_RUN_NOTE=kept\n\n")
+            values = MODULE.parse_env_file(env_path)
+        self.assertEqual(values, {"FIRST_RUN_NOTE": "kept"})
+        self.assertEqual([r for r in MODULE.RESULTS if r.check == "env-file"], [])
+
+    def test_a_model_named_twice_is_checked_once(self) -> None:
+        """#447: `--models "gpt-4o,gpt-4o"` ended the run before it began.
+
+        The second copy asks the identical question of the identical id, so
+        folding it loses nothing - and the check still speaks for every
+        distinct id in the list.
+        """
+        MODULE.check_models(["gpt-4o", "gpt-4o", "openai/gpt-4o-mini", "gpt-4o"])
+        if not any(r.check.startswith("model-format:") for r in MODULE.RESULTS):
+            self.skipTest("litellm is not importable; the format loop is not reached")
+        self.assertEqual(duplicate_check_names(MODULE.RESULTS), [])
+        self.assertEqual(
+            [r.check for r in MODULE.RESULTS if r.check.startswith("model-format:")],
+            ["model-format:gpt-4o", "model-format:openai/gpt-4o-mini"],
+        )
+
+    def test_an_env_file_of_two_stray_lines_still_produces_a_report(self) -> None:
+        """The harm, end to end: exit ``3`` and an empty report, or a finding.
+
+        Run as a process, because the boundary in `main` is what converted the
+        raise into "No result was produced, so treat nothing as checked".
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            env_path = root / ".env"
+            env_path.write_text(
+                "a pasted note without a hash\n"
+                "FIRST_RUN_NOTE=kept\n"
+                "a second stray line\n"
+            )
+            env_path.chmod(0o600)
+            process = subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPT),
+                    "--env",
+                    str(env_path),
+                    "--project-root",
+                    str(root),
+                    "--models",
+                    "gpt-4o,gpt-4o",
+                    # As every other subprocess run of the script in this file
+                    # does: without it, a checkout that has not installed the
+                    # pinned stack FAILs `sdk-version`, and this test would go
+                    # red on an exit code that has nothing to do with `.env`.
+                    "--defer-missing-sdk",
+                    "--json",
+                ],
+                capture_output=True,
+                text=True,
+            )
+        self.assertEqual(process.returncode, 0, process.stdout + process.stderr)
+        records = json.loads(process.stdout)
+        self.assertEqual(
+            duplicate_check_names([MODULE.Result(**r) for r in records]), []
+        )
+        env_records = [r for r in records if r["check"] == "env-file"]
+        self.assertEqual(len(env_records), 1)
+        self.assertIn("2 lines at source lines [1, 3]", env_records[0]["detail"])
