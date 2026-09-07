@@ -4656,6 +4656,156 @@ class SkillPackageTests(unittest.TestCase):
         self.assertIn("inventory presence—not values", skill_text)
         self.assertIn("never rewrite a route merely to match a key", skill_text)
 
+    def test_the_probe_refusal_routes_to_the_record_instead_of_restating_it(
+        self,
+    ) -> None:
+        """#437, after four rounds of writing the explanation by hand.
+
+        Each round fixed the previous predicate and wrote a new one. Keyed on
+        `env-shadowed-key` carrying fingerprints: an off switch, because that
+        finding compares two sources and the key reaches the file after the
+        last preflight run. Keyed on the digest `traigent-key` prints: an
+        always-on switch, because the recorded digest is truncated and a full
+        one never equals it. Keyed on the record's status: false, because one
+        verdict covers fifteen scanned names, so a shadowed provider key made
+        the assistant announce an inherited portal key that was fine. Each was
+        correct on the day it was written and falsified by the next reader, and
+        the test never noticed, because the sentence was pinned as a string the
+        author rewrote in the same commit as the sentence.
+
+        So the sentence is gone. `env-shadowed-key` already computes which
+        names disagree, states the precedence, connects it to the 401 in the
+        customer's own words, and prints both remedies per name - it cannot be
+        wrong about which name, because it is the name list. The guidance now
+        does the one thing the record cannot do for itself: have it produced
+        again at the refusal, against the file the handoff actually wrote, and
+        read.
+
+        That makes the property checkable without pinning prose. The two sides
+        below are the paragraph and preflight's own declarations. The
+        paragraph must route - naming the script, its flag, and both records -
+        and must NOT restate: no scanned credential name, no verdict, no
+        remedy vocabulary. Those come from `SHADOW_SCANNED_ENV_NAMES` and the
+        status constants rather than from a list typed here, so a re-derivation
+        cannot be reworded past this check the way three pinned sentences were.
+        The other half asserts the record still carries what the paragraph
+        stopped saying, in the reproduction #437 was filed about.
+        """
+        text = RUN_SAFETY.read_text()
+        section = text.split("## Connected-run readiness", 1)[1].split("\n## ", 1)[0]
+        paragraph = next(
+            block for block in section.split("\n\n") if "env-shadowed-key" in block
+        )
+        flat = " ".join(paragraph.casefold().split())
+        for phrase in (
+            "re-run `preflight.py --env <handoff file>` before blaming the key",
+            "free and makes no call",
+            "report what `env-shadowed-key` says",
+            "prints its own remedies",
+            "confirm `env-file` names the file you meant",
+            "a path that was never read compared nothing",
+        ):
+            with self.subTest(routes=phrase):
+                diagnosis = document_states(flat, phrase)
+                self.assertIsNone(diagnosis, diagnosis)
+        # The half that cannot be reworded past. Anything the record decides
+        # is the record's to say, and every name here is read from the module.
+        for token in (
+            *PREFLIGHT.SHADOW_SCANNED_ENV_NAMES,
+            PREFLIGHT.WARN,
+            PREFLIGHT.PASS,
+            "env -u",
+            "override=true",
+            "sha256",
+            "fingerprint",
+        ):
+            with self.subTest(restates=token):
+                self.assertNotIn(
+                    token.casefold(),
+                    flat,
+                    "the paragraph is re-deriving something the record "
+                    "publishes; route to it instead - that re-derivation is "
+                    "what four review rounds each found wrong in a new way",
+                )
+        self.addCleanup(PREFLIGHT.RESULTS.clear)
+        shell = "uk_shadow_test_shell_placeholder"
+        pasted = "uk_shadow_test_dotenv_placeholder"
+        vendor_shell = "sk-shadow-test-shell-placeholder"
+        vendor_file = "sk-shadow-test-dotenv-placeholder"
+
+        def rerun(file_values: dict[str, str], process_values: dict[str, str]) -> Any:
+            """`preflight.py` as the paragraph has the assistant re-run it."""
+            PREFLIGHT.RESULTS.clear()
+            merged = {**file_values, **process_values}
+            PREFLIGHT.check_keys(merged, file_values, process_values)
+            return next(
+                item for item in PREFLIGHT.RESULTS if item.check == "env-shadowed-key"
+            )
+
+        portal = "TRAIGENT_API_KEY"
+        # #426 at the moment of the refusal: the supervisor's key is still
+        # exported and the file now holds the one the handoff pasted. What the
+        # customer reads is this record, so this is where #437's three asks are
+        # asserted - the precedence, the 401 connection, and both remedies.
+        filed = rerun({portal: pasted}, {portal: shell})
+        self.assertEqual(filed.status, PREFLIGHT.WARN)
+        for owed in (
+            "does not override a value the process already carries",
+            "a 401 here is the shell's key, not the one you pasted",
+            f"env -u {portal} <command>",
+            "`override=True` to `load_dotenv` in your own loader",
+            PREFLIGHT.FINGERPRINT_RECIPE,
+        ):
+            with self.subTest(record_says=owed):
+                self.assertIn(owed, filed.detail)
+        self.assertEqual(
+            filed.metrics["fingerprints"][portal]["process"],
+            PREFLIGHT.value_fingerprint(shell),
+        )
+        # And what the paragraph no longer has to get right: which name. The
+        # record names only what disagrees, in every shape, including the ones
+        # that made the previous four predicates false.
+        shapes = (
+            ("the key is only in the file", {portal: pasted}, {}, []),
+            ("both sources agree", {portal: pasted}, {portal: pasted}, []),
+            ("nothing is configured", {}, {}, []),
+            (
+                "only a provider key is shadowed",
+                {"OPENAI_API_KEY": vendor_file},
+                {"OPENAI_API_KEY": vendor_shell},
+                ["OPENAI_API_KEY"],
+            ),
+            (
+                "only a route is shadowed",
+                {"TRAIGENT_BACKEND_URL": "https://a.example"},
+                {"TRAIGENT_BACKEND_URL": "https://b.example"},
+                ["TRAIGENT_BACKEND_URL"],
+            ),
+            (
+                "the portal key and a provider key are shadowed",
+                {portal: pasted, "OPENAI_API_KEY": vendor_file},
+                {portal: shell, "OPENAI_API_KEY": vendor_shell},
+                [portal, "OPENAI_API_KEY"],
+            ),
+        )
+        for described, file_values, process_values, expected in shapes:
+            with self.subTest(shape=described):
+                record = rerun(file_values, process_values)
+                self.assertEqual(
+                    sorted(record.metrics["shadowed_variables"]), sorted(expected)
+                )
+                for name in PREFLIGHT.SHADOW_SCANNED_ENV_NAMES:
+                    if name not in expected:
+                        # Nothing the customer reads may name a credential this
+                        # shape did not shadow - the harm three rounds produced.
+                        self.assertNotIn(f"env -u {name}", record.detail)
+                for name in expected:
+                    if name in PREFLIGHT.SECRET_ENV_NAMES:
+                        self.assertEqual(
+                            record.metrics["fingerprints"][name]["process"],
+                            PREFLIGHT.value_fingerprint(process_values[name]),
+                        )
+
     def test_the_knob_selection_rule_matches_the_arithmetic_it_cites(self) -> None:
         """The guidance told the assistant to keep "a few" and stopped there.
 

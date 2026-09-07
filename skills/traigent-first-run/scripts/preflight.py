@@ -1014,6 +1014,24 @@ def check_shadowed_credentials(
     absence of a line. A secret is reported by fingerprint and never printed; a
     route value is printed, reduced by `route_display`, because naming it is
     what the finding is for.
+
+    Two shapes this PASS does not cover, and they matter more now that
+    `references/run-safety.md` routes a customer meeting a 401 straight to this
+    record. `key_present` treats "" and whitespace as absent, so both sides
+    must be non-empty before anything is called shadowed - while python-dotenv
+    skips a name that is in `os.environ` at all, including one bound to "" or
+    to "   ". An exported-but-empty credential therefore beats the file and
+    this check says nothing about it; the whitespace form is worse, because it
+    is truthy, so it survives a presence test and is presented to the provider
+    to be refused. The comparison below strips both sides for the same reason,
+    which also means a shell value differing from the file only by padding
+    reports clean and is still what gets sent.
+
+    Not fixed here because the fix is a change to what "present" means, which
+    reaches `check_keys`, `check_cost_settings` and the cost-approval flag
+    together and wants its own tests. Recorded here rather than only in a pull
+    request, because this docstring is what the next author reads before
+    deciding that a PASS from this function means nothing was shadowed.
     """
     shadowed = [
         name

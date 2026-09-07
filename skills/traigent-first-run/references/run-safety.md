@@ -38,10 +38,7 @@ sub-agents, which not every supported assistant provides.
 - Create and activate the named dedicated environment before installing. Confirm `sys.prefix`
   points inside it before `pip install`, or the install silently lands in global Python and the
   run cannot find `traigent`.
-- Create it with a supported interpreter, for example
-  `python3.13 -m venv .venv-traigent`. If creation, installation, or post-install preflight fails,
-  preserve the dedicated environment, report its absolute path and the concrete failure, and stop.
-  Recommend inspecting it first; remove and recreate it only on the user's explicit request.
+- Create it with a supported interpreter, for example `python3.13 -m venv .venv-traigent`.
 - Keep dependency installation as its own action class. It may proceed without another approval
   only inside that environment, from the exact packages and versions recorded for the top-level
   requirements plus their package-declared dependencies, as a package-artifact-only fetch/install
@@ -55,8 +52,6 @@ sub-agents, which not every supported assistant provides.
   `pip install traigent`: on an unsupported interpreter, package resolution can select the
   unrelated obsolete `0.0.1` release, which carries none of the optimizer and which the preflight
   refuses by name.
-- Before creating the environment or installing anything, run every available bundled component
-  check whose complete path needs only the Python standard library and local project files.
 - Verify installed packages and public signatures before generating SDK integration code.
   Dependency installation does not authorize importing or executing user/project modules.
 - Verify SDK capabilities from the installed version and CLI rather than hardcoding what installs
@@ -850,6 +845,12 @@ Prove the tracking path before connected spending, with a zero-LLM probe:
 3. If any rung fails, stop before any connected paid trial. Show a sanitized reason and stable
    status/request id when available. Preserve the useful diagnostic category, but remove secrets,
    prompts, examples, outputs, and personal data before showing or saving external error text.
+
+When the key does not authenticate, re-run `preflight.py --env <handoff file>` before blaming the
+key - it is free and makes no call - and report what `env-shadowed-key` says: it compares the shell
+against that file, names whatever disagrees, and prints its own remedies. Confirm `env-file` names
+the file you meant before reading either verdict; a clean line from a path that was never read
+compared nothing.
 
 This probe is general readiness, not a workaround for any single validation rule: the installed SDK
 owns the local pre-checks (config-in-space, numeric-type, `example_id` uniqueness) and the loud
