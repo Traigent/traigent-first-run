@@ -6854,32 +6854,6 @@ ENV_LINE_SHAPES = (
     "QUOTED='a b' # trailing",
 )
 
-#: The one `(source, difficulty pattern)` pair this enumeration does NOT
-#: assert over, and why. A `source: synthetic` corpus tagged entirely `easy`
-#: records `dataset-difficulty` twice on trunk today - the third instance of
-#: this class, reported as #440 and fixed on the open branch for #442, which
-#: owns those lines. Excluded here rather than fixed twice: two branches
-#: rewriting the same arms is a conflict, not a second fix.
-#:
-#: The pairs are excused for ONE check name and nothing else - see
-#: `DATASET_DUPLICATE_OWNED_ELSEWHERE`. A second name recording twice BEFORE
-#: `dataset-difficulty` on the same shape still reds; one recorded after it
-#: does not, because `emit` raises on the first collision and nothing past it
-#: runs. So this is a hole the width of a known defect and the tail behind it,
-#: not the width of a corpus.
-#:
-#: **It retires itself.** The walk asserts that every pair listed here STILL
-#: raises: when #442 lands and this shape stops recording twice, the
-#: enumeration fails and says to delete both names. That is deliberate, and
-#: the red is the point - an exemption whose reason has gone is a false green,
-#: and this repository has been bitten by correct-at-the-time notes that
-#: outlived their reason. Whichever branch lands second pays one two-line
-#: deletion, and the failure message says exactly which lines.
-DATASET_SHAPES_OWNED_ELSEWHERE = frozenset({("synthetic", "all-easy")})
-#: The one check name the shapes above may record twice, spelled out so the
-#: exemption cannot cover a defect nobody has seen.
-DATASET_DUPLICATE_OWNED_ELSEWHERE = "dataset-difficulty"
-
 #: `--models` entries, including the repeat that raised and two spellings of
 #: an id this check refuses.
 MODEL_SHAPES = (
@@ -6920,10 +6894,19 @@ class NoInputMakesOneCheckSpeakTwiceTests(unittest.TestCase):
     `check_evaluator`, `check_sdk`, or `check_existing_traigent_use`, none of
     which take a customer-controlled list. And it is a test of the check
     surface, not of the registry: the registry keeps its own test above.
-    Finally, one dataset shape may still record `dataset-difficulty` twice -
-    named and explained at `DATASET_SHAPES_OWNED_ELSEWHERE`, because a
-    different open branch owns the arms that would fix it - and that exemption
-    is for that one name, not for the shape.
+    It carried one exemption when it was written. `("synthetic", "all-easy")`
+    was excused for `dataset-difficulty`, because the branch for #442 owned
+    the arms that would fix it and two branches rewriting the same arms is a
+    conflict rather than a second fix. That exemption RETIRED ITSELF exactly
+    as it was built to: the walk asserted every excused shape still raised, so
+    the day #442 made the shape record once, this test went red naming the
+    lines to delete, and they were deleted in the same change. Every shape
+    this walk enumerates is now asserted on the same terms.
+
+    Kept as a paragraph because the mechanism is the point and outlived the
+    hole: an exemption that cannot outlive its reason is the answer to the
+    correct-at-the-time note, which is the defect class this whole file keeps
+    finding. The next exemption should be built the same way.
     """
 
     def setUp(self) -> None:
@@ -6990,7 +6973,6 @@ class NoInputMakesOneCheckSpeakTwiceTests(unittest.TestCase):
             "untagged": (None, None, None, None),
         }
         id_patterns = ("unique", "duplicate", "missing", "duplicate-and-missing")
-        still_owned_elsewhere: set[tuple[str, str]] = set()
         with tempfile.TemporaryDirectory() as directory:
             dataset = Path(directory) / "eval.jsonl"
             for source, bands, ids, identical in itertools.product(
@@ -7019,43 +7001,8 @@ class NoInputMakesOneCheckSpeakTwiceTests(unittest.TestCase):
                 dataset.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
                 MODULE.RESULTS.clear()
                 combination = (source, bands, ids, identical)
-                if (source, bands) in DATASET_SHAPES_OWNED_ELSEWHERE:
-                    # Still asserted over, and only the one known name
-                    # excused: the shape may raise on
-                    # `DATASET_DUPLICATE_OWNED_ELSEWHERE` while another branch
-                    # owns that fix, and must otherwise obey the property like
-                    # every other shape. Whether it raised is RECORDED, and
-                    # checked against the exemption below - that is what makes
-                    # the exemption retire itself rather than sit here green
-                    # once its reason is gone.
-                    try:
-                        MODULE.check_dataset(dataset)
-                    except MODULE.DuplicateCheckName as raised:
-                        self.assertIn(
-                            f"{DATASET_DUPLICATE_OWNED_ELSEWHERE!r}",
-                            str(raised),
-                            combination,
-                        )
-                        still_owned_elsewhere.add((source, bands))
-                        continue
-                    self.assert_one_record_per_check(combination)
-                    continue
                 MODULE.check_dataset(dataset)
                 self.assert_one_record_per_check(combination)
-        # The exemption's expiry date, executed. Every excused shape must still
-        # be a shape that raises: one that has stopped is a hole with no defect
-        # under it any more, and a hole nothing complains about is how a
-        # correct-at-the-time note becomes a false green. Failing here is the
-        # only notice anyone gets, so it says what to do.
-        self.assertEqual(
-            still_owned_elsewhere,
-            set(DATASET_SHAPES_OWNED_ELSEWHERE),
-            "this exemption is obsolete: the shapes named above no longer "
-            f"record {DATASET_DUPLICATE_OWNED_ELSEWHERE!r} twice, so delete "
-            "DATASET_SHAPES_OWNED_ELSEWHERE, DATASET_DUPLICATE_OWNED_ELSEWHERE "
-            "and the arm in this walk that reads them, leaving the plain "
-            "assertion for every shape",
-        )
 
     def test_two_unreadable_env_lines_are_one_record_that_names_both(self) -> None:
         """#447: folding must not cost the customer the second finding.
