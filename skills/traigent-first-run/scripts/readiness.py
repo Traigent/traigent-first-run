@@ -3090,7 +3090,16 @@ class BuildSignal:
     points: float
     evidence: str
     measured: bool = True
-    applicable: bool = True
+    # NO `applicable` HERE, and its absence is the rule rather than an
+    # omission. `SubScore` keeps that field, because a question can genuinely
+    # not arise; what a build DECLARATION may not do is answer it for itself.
+    # This dataclass carried `applicable` for exactly one arm - "the agent
+    # declares no tools" - which took the check out of the score denominator
+    # on a self-report nothing here refutes, and so paid better than admitting
+    # the read was blocked. Inapplicability has to be established, and no
+    # sentence in a document establishes it, so there is nothing left to set
+    # and the field would only be a way back in.
+    #
     # `SubScore.withheld`, carried from the read that decided it rather than
     # re-derived where the sub-score is built. `measured=False` reaches
     # `build_subscores` from two different places - a check the read could not
@@ -7520,7 +7529,6 @@ def build_subscores(facts: AgentFacts) -> list[SubScore]:
             weight,
             found[name].measured,
             found[name].evidence,
-            applicable=found[name].applicable,
             withheld=found[name].withheld,
         )
         for name, weight in AGENT_BUILD_CHECKS
@@ -17500,14 +17508,12 @@ def build_signal_from_entry(
             # already charges for an undeclared `--task-kind` and for a build
             # read that never arrived at all.
             #
-            # NOT extended to `tools: {used: false}` below. That arm is
-            # unrefuted too, but its opposite is unrefuted in the same breath:
-            # a `used: true` naming an identifier that occurs once anywhere in
-            # the file passes and takes the full weight, so charging the
-            # negative alone would leave the honest tool-less agent as the only
-            # charged party and steepen the gradient toward claiming tools
-            # (traigent-first-run#451). `determined: false` has no such mirror:
-            # what it was beating is an ordinary settled answer.
+            # EXTENDED TO `tools: {used: false}` BELOW, and it has to be. That
+            # arm is unrefuted in the same way, and charging this one alone put
+            # the two answers nothing can contradict four points apart - the
+            # claim above the admission. One treatment for both, or the
+            # inversion just moves; the arm below carries the rest of the
+            # reasoning and the objection it overrules.
             withheld=True,
         )
 
@@ -17605,15 +17611,65 @@ def build_signal_from_entry(
             f"input can cost an unbounded number of calls ({evidence})",
         )
     if not _build_flag(check, spec, "used"):
-        # Excluded rather than credited or charged. Only tool wiring is N/A;
-        # prompt, output-contract, control-flow, and search-space checks remain.
-        # Crediting no tools would pay for being simpler than the question.
+        # CHARGED, and it used to be EXCLUDED - `applicable=False`, out of the
+        # score denominator, so the pillar fell back to the mean of the other
+        # checks. That is the same treatment the undetermined arm above used to
+        # get, and it is wrong here for the same reason: inapplicability has to
+        # be ESTABLISHED before it may shrink a denominator, and nothing here
+        # establishes this one. `used` is a self-report; the `used: true` arm
+        # below raises on a declared name the file never mentions and this arm
+        # has no counterpart, because telling a tool call from any other call
+        # needs a notion of tool-hood this module does not have
+        # (traigent-first-run#451). So the question was asked, and the answer
+        # is a claim this read cannot check - which is what `SubScore.withheld`
+        # charges everywhere else.
+        #
+        # WHY IT COULD NOT STAY EXCLUDED ONCE THE ARM ABOVE WAS LEVELLED. With
+        # `determined: false` charged and this one free, the two answers no
+        # source can contradict stopped being worth the same: declaring no
+        # tools scored 47 where admitting the read was blocked scored 45, so
+        # the inversion #456 names moved one arm sideways instead of closing -
+        # a run that could not settle the check could buy the points back by
+        # asserting there was nothing to settle.
+        #
+        # THE RECORDED OBJECTION, WEIGHED AND SET ASIDE. Charging this arm was
+        # refused once, on the ground that a `used: true` naming an identifier
+        # that occurs anywhere in the file is exactly as unrefuted and takes
+        # the full weight, so the honest tool-less agent would be the only
+        # charged party. That was true while the undetermined arm was free; it
+        # is not now. Charged, this arm is one of four answers at the same
+        # floor - no tools, tools that do not resolve, and a read that could
+        # not settle it - and the only uncharged answer is the one making a
+        # claim this module does check, in the one direction it can. The
+        # gradient toward CLAIMING tools is not closed by that and is not
+        # claimed to be: a declared name that occurs once anywhere still earns
+        # full credit, which is #451's own residual and is filed separately.
+        #
+        # AND IT REVERSES AN OWNER DECISION, DELIBERATELY. "Having no tools is
+        # neither charged nor paid" was settled when the alternative was
+        # crediting simplicity; it is restated as "no tools is not PAID", and
+        # what is charged is the unchecked claim rather than the simplicity.
+        # The agent is still never told it lacks the thing: the check stays
+        # unmeasured, the card still marks it, and evidence coverage still
+        # counts it as unchecked. The pin that recorded the old reading is
+        # rewritten rather than deleted, in
+        # `test_an_agent_with_no_tools_is_charged_like_every_unchecked_claim`.
+        # AND THE SENTENCE HAD TO MOVE WITH THE FLAG. It read "the agent
+        # declares no tools, so tool wiring does not apply", which was this
+        # script's own voice asserting both halves: that the agent has no tools
+        # (the document's claim, not this read's finding) and that the check
+        # therefore drops out (no longer true - it keeps its weight). Left as
+        # it was, a customer would meet "does not apply" on a check that had
+        # just cost them points, which is the intra-document contradiction this
+        # repository keeps finding. Attribution and reachability are one fix
+        # here rather than two.
         return BuildSignal(
             check,
             0.0,
-            f"the agent declares no tools, so tool wiring does not apply ({evidence})",
+            "the document declares no tools, and nothing here can check that "
+            f"({evidence})",
             measured=False,
-            applicable=False,
+            withheld=True,
         )
     declared = _build_names(check, spec, "declared")
     if not declared:

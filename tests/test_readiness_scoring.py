@@ -26,6 +26,17 @@ assert SPEC.loader is not None
 sys.modules[SPEC.name] = MODULE
 SPEC.loader.exec_module(MODULE)
 
+#: Build checks the guide's own `--agent-knobs` example never measured, so the
+#: unverified route has no measurement to withhold on them and adds no framing.
+#:
+#: It is the `tools` check, because that example answers `used: false`. The two
+#: tests below used to select the same set with `if checks[name]["applicable"]`,
+#: which stopped meaning anything when that arm was charged instead of excluded
+#: (traigent-first-run#451/#456): it is applicable now, and still unmeasured.
+#: Named here so the reason is the arm's own state rather than a flag that
+#: happened to correlate with it.
+UNMEASURED_AT_THE_READ = frozenset({"tools"})
+
 
 class FakeStream:
     def __init__(self, *, tty: bool, encoding: str = "utf-8") -> None:
@@ -4398,7 +4409,7 @@ class CliTests(unittest.TestCase):
                 self.assertFalse(checks[name]["measured"])
                 self.assertFalse(checks[name]["withheld"])
                 self.assertEqual(checks[name]["value"], 0.0)
-                if checks[name]["applicable"]:
+                if name not in UNMEASURED_AT_THE_READ:
                     self.assertIn(
                         "not independently verified; excluded from this score",
                         checks[name]["evidence"],
@@ -4458,7 +4469,7 @@ class CliTests(unittest.TestCase):
         for name, _weight in MODULE.AGENT_BUILD_CHECKS:
             with self.subTest(check=name):
                 self.assertFalse(checks[name]["measured"])
-                if checks[name]["applicable"]:
+                if name not in UNMEASURED_AT_THE_READ:
                     self.assertIn(
                         "not independently verified; excluded from this score",
                         checks[name]["evidence"],
@@ -17783,10 +17794,17 @@ class TheAgentPillarReadsTheAgentTests(unittest.TestCase):
                 for label, (_p, value, _u) in answers.items()
                 if value.measured
             }
+            # NOT `and value.applicable`, which is how this property missed the
+            # defect it was written for. That filter took the one answer that
+            # declared itself inapplicable - "the agent declares no tools" -
+            # off BOTH sides of the inequality, so the sweep quantified over a
+            # set that excluded the answer which, once the undetermined arm was
+            # charged, beat the honest one by four points. An answer the read
+            # cannot refute belongs on this side whatever it says about itself.
             unrefutable = {
                 label: value
                 for label, (_p, value, _u) in answers.items()
-                if not value.measured and value.applicable
+                if not value.measured
             }
             self.assertTrue(settled, f"{check} has no shape this read settles")
             self.assertTrue(
@@ -17857,29 +17875,33 @@ class TheAgentPillarReadsTheAgentTests(unittest.TestCase):
             "inequality covers it",
         )
 
-    def test_only_the_no_tools_arm_stands_outside_the_inequality(self) -> None:
-        """The one exclusion, named rather than left to be inferred.
+    def test_no_build_answer_takes_itself_out_of_the_denominator(self) -> None:
+        """No shape of any check may answer "this does not apply to me".
 
-        `tools: {used: false}` is unrefutable too - nothing here decides that a
-        call is a TOOL call - and it is `applicable=False`, so it leaves the
-        score denominator and sits above an honest `used: true` whose tools do
-        not all resolve. That residual is #451's and is deliberately not closed
-        here: the positive arm is refuted by name presence alone, so a
-        `used: true` naming an identifier that occurs once anywhere in the file
-        is exactly as unrefuted and takes the full weight - charging the
-        negative alone would leave the honest tool-less agent as the only
-        charged party.
+        There used to be exactly one: `tools: {used: false}` returned
+        `applicable=False`, which is the only state `combine` lets shrink a
+        score denominator. It was reachable from a sentence in an
+        assistant-written document and refutable by nothing, so the strongest
+        claim on the check - the question does not arise - was also the one
+        this read could never test, and it paid the pillar's own mean while an
+        answer that admitted the read was blocked paid the floor.
 
-        Asserted rather than omitted, so a SECOND check learning to answer
-        "does not apply" has to come past this test and say why.
+        The field is gone from `BuildSignal` rather than merely unused, so this
+        asserts at the `SubScore` boundary where a future mapping could still
+        set it. Inapplicability stays a real state for the pillars that derive
+        it; what it may not be is DECLARED.
         """
-        inapplicable = {
+        declared_inapplicable = {
             (check, label)
             for check, _weight in MODULE.AGENT_BUILD_CHECKS
             for label, (_p, value, _u) in self._swept_answers(check).items()
             if not value.applicable
         }
-        self.assertEqual(inapplicable, {("tools", "none used")})
+        self.assertEqual(declared_inapplicable, set())
+        self.assertFalse(
+            hasattr(MODULE.BuildSignal("tools", 0.0, "e"), "applicable"),
+            "a build declaration can describe itself as inapplicable again",
+        )
 
     def test_no_build_answer_moves_a_number_on_the_unverified_route(self) -> None:
         """And the sweep says it of every shape, including the charged one.
@@ -17890,32 +17912,24 @@ class TheAgentPillarReadsTheAgentTests(unittest.TestCase):
         `withheld` out of the reader, so it is the one that would otherwise
         move this number - downwards, against the answer this module asks for.
 
-        Confidence is swept over the applicable shapes only. The `tools`
-        answer that says the question does not arise still reports a fuller
-        pillar than every other answer on this route, which is the confidence
-        half of #451 - open, measured on #454, and not this change's to move.
+        Confidence is swept over EVERY shape now, with no exception. It used
+        to allow one: the `tools` answer that said the question does not arise
+        left the confidence denominator too, so it alone reported a fuller
+        pillar than every answer this read can check. That was #451's
+        confidence half; the arm no longer declares itself inapplicable, so it
+        counts like the rest and the exception has nothing left to cover.
         """
         for check, _weight in MODULE.AGENT_BUILD_CHECKS:
             answers = self._swept_answers(check)
-            scores = {
-                unverified.score for _label, (_p, _v, unverified) in answers.items()
+            observed = {
+                (unverified.score, unverified.confidence)
+                for _label, (_p, _v, unverified) in answers.items()
             }
             self.assertEqual(
-                len(scores),
+                len(observed),
                 1,
-                f"a {check} answer moves the score on the route that measures "
-                f"none of them: {scores}",
-            )
-            confidences = {
-                unverified.confidence
-                for _label, (_p, value, unverified) in answers.items()
-                if value.applicable
-            }
-            self.assertEqual(
-                len(confidences),
-                1,
-                f"a {check} answer moves the evidence coverage on the route "
-                f"that measures none of them: {confidences}",
+                f"a {check} answer moves the card on the route that measures "
+                f"none of them: {observed}",
             )
 
     def test_a_read_that_never_happened_is_withheld_and_never_free(self) -> None:
@@ -17976,8 +17990,33 @@ class TheAgentPillarReadsTheAgentTests(unittest.TestCase):
         # needed for the top bands until the read actually happens.
         self.assertLess(silent.confidence, MODULE.MIN_CONFIDENCE_FOR_TOP_BANDS)
 
-    def test_an_agent_with_no_tools_is_neither_charged_nor_paid(self) -> None:
-        """The N/A case, which is not a zero and is not full marks either."""
+    def test_an_agent_with_no_tools_is_charged_like_every_unchecked_claim(
+        self,
+    ) -> None:
+        """AN OWNER DECISION IS REVERSED HERE, and the name says which.
+
+        This was `test_an_agent_with_no_tools_is_neither_charged_nor_paid`, and
+        it pinned "no tools" to score within 3 of an agent whose tools all
+        resolve. That was settled against the question "should being simple be
+        PAID?", where the answer is still no. The question now is different:
+        `used: false` is a self-report nothing in this module refutes, and once
+        the undetermined arm was charged (traigent-first-run#456) the unchecked
+        claim scored 47 against 45 for admitting the read was blocked - the
+        same inversion, one arm over. There is no third treatment: an
+        unrefutable answer either shrinks the denominator or keeps it, and only
+        one of those ties it with the answers this read can settle.
+
+        So the deduction now falls on the CLAIM, not on the simplicity. An
+        agent that genuinely has no tools scores 45 where it used to score 47,
+        and it is still never told it lacks anything: the check stays
+        unmeasured, the card still marks it, coverage still counts it as
+        unchecked. What it stops being is free.
+
+        Kept as one test with a new name rather than deleted, because the
+        decision it recorded is the one being re-taken, and a reader who
+        followed a comment or an issue here has to land on the reversal rather
+        than on a missing symbol.
+        """
 
         def proven(build):
             facts = MODULE.agent_facts_from_config_space(
@@ -17990,17 +18029,34 @@ class TheAgentPillarReadsTheAgentTests(unittest.TestCase):
         )
         pillar, checks = self._pillar(proven(none))
         self.assertFalse(checks["tools"].measured)
-        self.assertFalse(checks["tools"].withheld)
-        self.assertFalse(checks["tools"].applicable)
+        self.assertTrue(checks["tools"].withheld)
+        self.assertTrue(checks["tools"].applicable)
         self.assertEqual(checks["tools"].value, 0.0)
-        # Excluded, so the pillar renormalizes over the checks that apply. That
-        # is not the same number as an agent whose tools all resolve - the
-        # denominator moved - and it is close to it rather than below it, which
-        # is the property that matters: having no tools is not a deduction.
+        # Charged: the check keeps its weight and earns nothing, so the pillar
+        # is BELOW an agent whose tools all resolve rather than beside it. The
+        # three assertions this replaces said the opposite - within 3 points,
+        # confidence 1.0, and confidence equal to the fully-read agent's - and
+        # each was reachable from one unverifiable sentence in a document.
         every_tool, every_checks = self._pillar(proven(_build_document()))
-        self.assertAlmostEqual(pillar.score, every_tool.score, delta=3)
-        self.assertEqual(pillar.confidence, 1.0)
-        self.assertEqual(pillar.confidence, every_tool.confidence)
+        self.assertLess(pillar.score, every_tool.score)
+        self.assertLess(pillar.confidence, 1.0)
+        self.assertLess(pillar.confidence, every_tool.confidence)
+        # And it is charged exactly as much as an honest "I could not tell",
+        # which is the whole point of the reversal: neither answer can be
+        # checked, so neither may be worth more than the other.
+        undetermined, _ = self._pillar(
+            proven(
+                _build_document(
+                    tools={
+                        "determined": False,
+                        "reason": "the tool table is assembled at import time",
+                        "evidence": "agent.py:31 TOOLS is extended by a hook",
+                    }
+                )
+            )
+        )
+        self.assertEqual(pillar.score, undetermined.score)
+        self.assertEqual(pillar.confidence, undetermined.confidence)
         # And a declared tool nothing implements is charged, which is the one
         # thing "wired correctly" can be checked for by reading source.
         broken, broken_checks = self._pillar(
@@ -18517,9 +18573,16 @@ class OneFactIsOneRemediationLineTests(unittest.TestCase):
             }
         )
         absent = [gap for gap in score.gaps if "could not be measured" in gap]
-        self.assertEqual(len(absent), 1, absent)
+        # TWO, and it used to be one. The `tools` answer here is "no tools",
+        # which produced no remediation line at all while the check declared
+        # itself inapplicable. It is now an unchecked claim that keeps its
+        # weight, so a customer who is charged for it is told what was not
+        # checked - being charged silently is the state this list exists to
+        # prevent. The two lines still rest on different facts, which is what
+        # this test is about.
+        self.assertEqual(len(absent), 2, absent)
         self.assertTrue(any("fetched at runtime" in gap for gap in absent))
-        self.assertFalse(any("no tools" in gap for gap in score.gaps))
+        self.assertTrue(any("declares no tools" in gap for gap in absent))
 
     def test_the_durable_report_says_what_the_pillar_does_not_cover(self) -> None:
         """The card said it and the saved report did not.
