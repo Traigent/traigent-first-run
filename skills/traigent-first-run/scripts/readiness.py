@@ -644,6 +644,30 @@ METHOD_PROFILES: dict[str, dict[str, Any]] = {
         "cost": 1.0,
         "fits": ("code-sql",),
     },
+    # #449. Every method above scores an answer against an expected answer,
+    # and the guide's own selection table offers a row none of them can
+    # express: "Tool/action workflow, final-state or side-effect check". A
+    # customer whose evaluator scores which tools were used had no true word
+    # to type, and the guidance's instruction for that state - declare
+    # nothing - cost the withheld task-fit check, so an untrue `exact` scored
+    # the pillar 100 where honesty scored 69. The vocabulary was the defect:
+    # the score charged for withholding an answer to a question it offered no
+    # true answer to.
+    #
+    # 1.0 on both dials is the accurate placement, not a courtesy. A check
+    # that reads a recorded trace or a final state and compares it with the
+    # expected one calls no model and varies between runs no more than
+    # `schema` or `set-f1` does. Any lower placement would leave the
+    # inversion live one indirection out, because the honest word would still
+    # be beaten by a mislabel; the invariant this method exists to establish
+    # is that nothing a customer can type outscores the true declaration for
+    # the same evaluator, and reaching the ceiling is how a declaration
+    # nothing can verify reaches it honestly.
+    "final-state": {
+        "reproducibility": 1.0,
+        "cost": 1.0,
+        "fits": ("tool-workflow",),
+    },
     "routing": {
         "reproducibility": 1.0,
         "cost": 1.0,
@@ -694,6 +718,13 @@ TASK_KINDS = (
     "routing",
     "short-answer",
     "structured",
+    # The kind the selection table already offered and this vocabulary did
+    # not: what the agent produces is a run of tools or actions, and what is
+    # scored is the trace or the state it left rather than a sentence to
+    # compare. Added with `final-state` above, because a method and the kind
+    # it fits are one decision - a kind no method fits is a declaration that
+    # can only lose points.
+    "tool-workflow",
 )
 
 # Why a method that does not fit this output kind does not fit it.
@@ -783,6 +814,11 @@ METHOD_MISMATCH_REASONS: dict[str, str] = {
         "{kind} answer that is not a query parses as nothing and is scored as "
         "wrong however right it is"
     ),
+    "final-state": (
+        "reads the tools an answer used and the state it left behind, never "
+        "the answer itself, so a {kind} answer is scored on how it was "
+        "produced rather than on what it says"
+    ),
 }
 DETERMINISTIC_METHODS = {
     "exact",
@@ -794,6 +830,7 @@ DETERMINISTIC_METHODS = {
     "routing",
     "fuzzy",
     "sql-structure",
+    "final-state",
 }
 CALIBRATION_REQUIRED_CHECKS = frozenset({"good_passes", "bad_fails", "non_constant"})
 
@@ -842,6 +879,26 @@ METHOD_EXECUTES_CANDIDATE: dict[str, bool | None] = {
     "llm-judge-rubric": False,
     "composite": None,
     "sql-structure": False,
+    # Undetermined, for the reason `composite` is. A final-state check may
+    # read a trace the agent already wrote, or replay the workflow in an
+    # isolated environment; the word settles neither, and this score cannot
+    # see which. `False` would be a claim the method does not make, and
+    # `True` would withhold the credit from the one declaration this method
+    # was added to let a customer make honestly - reinstating the inversion
+    # under a new word. Preflight's witness still refuses a file it catches
+    # reaching an engine, whichever word was typed over it.
+    #
+    # What `None` does NOT say, and must not be read as saying: that a replay
+    # is detected or bounded anywhere. The witness is keyed on code and SQL
+    # engines and on process attributes, so an evaluator that replays the
+    # workflow through the customer's own module is invisible to it - and
+    # `calibrate_evaluator.py` will run that evaluator against the authored
+    # probes, performing those side effects, before the customer approves any
+    # spend. That exposure predates this method and is the same for
+    # `composite` or a bare adapter; it is tracked as
+    # traigent-first-run#460 and belongs to the containment gate in
+    # `references/run-safety.md`, not to this table.
+    "final-state": None,
 }
 
 # Which methods a PROVEN whole-value comparison supports.
@@ -892,6 +949,31 @@ METHOD_COMPARISON_SUPPORT: dict[str, frozenset[str]] = {
     # structures does not support `exact` or any other word above, and a file
     # proven to be a text comparison does not support this one.
     "sql-structure": frozenset({"sql-structure"}),
+    # Both whole-value shapes, for the reason `routing` takes both: this
+    # method's claim is about WHAT is being compared and not about the
+    # comparison discipline, and a final state compared with the expected
+    # final state is a whole-value equality whether or not it is normalised
+    # first.
+    #
+    # This entry read `frozenset()` when the method was added, on the premise
+    # that a file proven to compare two answers as whole values is not
+    # reading a tool trace. That premise is false for the plainest evaluator
+    # the guide's own row describes. `return output == expected` over a final
+    # state is settled by the static walk as `exact` - measured, with the
+    # witness "the answers are compared as written" - so the empty set
+    # refuted the true declaration and left `exact` + `structured` paying 17
+    # task-fit points more over the same file. That is #449 again, one word
+    # further out, which is exactly what the empty set was reasoned to
+    # prevent, and the card sentence it produced told a customer their
+    # final-state check was an exact check.
+    #
+    # What still refutes it is `sql-structure`, and that is the whole of what
+    # this read can honestly say: a file resolved to compare two parsed
+    # queries is a query comparator whatever was typed over it, while nothing
+    # here can separate a final state compared as written from any other
+    # whole value compared as written. So this row stops one wrong
+    # declaration and does not pretend to stop the other.
+    "final-state": frozenset({"exact", "normalized-exact"}),
 }
 
 # The methods whose credit requires the file to have ESTABLISHED the
@@ -902,7 +984,7 @@ METHOD_COMPARISON_SUPPORT: dict[str, frozenset[str]] = {
 # read alone, would have credited that claim on the word. `METHOD_COMPARISON
 # _SUPPORT` refutes from proof: it fires only where a shape was settled, so a
 # file the walk could not account for refutes nothing and keeps full credit.
-# That asymmetry is right for the twelve methods it was written for, whose
+# That asymmetry is right for the thirteen methods it now covers, whose
 # claim is about the OUTPUT kind and not about the file. It is wrong for this
 # one, where "the walk could not account for the file" and "the file does not
 # do this" are the same answer to the customer, and the didn't-find-it branch
@@ -989,7 +1071,72 @@ class SubScore:
     # marks it - what changes is only that it stops being free.
     withheld: bool = False
     # False means the question does not apply to this agent, rather than that
-    # the read failed. It belongs in neither confidence nor remediation.
+    # the read failed. It belongs in neither the score nor remediation: there
+    # is nothing here to be right or wrong about, so it earns nothing and is
+    # charged nothing, and a card that listed it as a gap would be asking for
+    # work no project has to do.
+    #
+    # IT IS STILL COUNTED AS UNCHECKED. `applicable=False` is reached from one
+    # place only - a build document answering `tools: used=false` - and that
+    # answer is a self-report nothing here refutes: the `used: true` arm raises
+    # on a declared name the selected file never mentions, and the negative arm
+    # has no counterpart, because deciding that a call is a TOOL call needs a
+    # notion of tool-hood this module does not have and does not invent
+    # (traigent-first-run#451). So the run has not established that the
+    # question does not apply; it has been told so. Leaving the check out of
+    # the confidence denominator as well let that telling raise the pillar's
+    # evidence coverage - a declaration nothing can check improving the card -
+    # which is the flattering direction this module refuses everywhere else
+    # (`SubScore.withheld`). Being unable to check a claim and the claim being
+    # inapplicable are different states, and only the second may shrink a
+    # denominator; the first is unchecked, and confidence is where unchecked is
+    # said. `combine` therefore counts every sub-score in `total_weight` and
+    # only the applicable ones in the score.
+    #
+    # SO "IT DROPS OUT OF THE DENOMINATOR" IS NO LONGER A WHOLE SENTENCE about
+    # this flag, and a note elsewhere that says it without saying which
+    # denominator is describing the behaviour this comment replaced. There are
+    # two, they now disagree, and the split is the point: the SCORE renormalises
+    # over the applicable checks, so an inapplicable one is neither charged nor
+    # paid; the CONFIDENCE divides by every check, so an inapplicable one is
+    # still reported as coverage nobody supplied. This is the home of that
+    # distinction - `combine` implements it, `render_card` prints it as the
+    # headline count, and any other statement of it is a copy that can drift.
+    #
+    # THE POINTS DENOMINATOR IS DELIBERATELY LEFT ALONE, and the reason is
+    # arithmetic rather than taste. Charging this check - full weight, no
+    # credit, the `withheld` treatment - would make declaring tools pay: a
+    # `used: true` naming one identifier that appears anywhere in the file is
+    # just as unrefuted as `used: false`, and it earns the full weight, so the
+    # honest tool-less agent would be the only one charged. Crediting it pays
+    # for being simpler than the question. Excluding it assigns the pillar's
+    # own mean, which is the same treatment `determined: false` already gets on
+    # every other check: out of the score, into the coverage. That is the
+    # settled answer for a claim this read cannot settle, and this arm now
+    # matches it.
+    #
+    # MATCHING IT INHERITS ITS RESIDUAL, and that is said here rather than left
+    # to be discovered. `determined: false` does not merely tie the honest
+    # negative, it beats it: one agent and one search space, varying a single
+    # build answer, `prompt: present=false` scores 44 at confidence 1.00 and
+    # `prompt: determined=false` scores 47 at 0.94, and the same 2-3 points
+    # appear on all four checks. The four are asked of every run that found an
+    # agent - `agent_build_from_document` refuses a document that answers three
+    # - so that is a check the run WAS asked for, which is the state
+    # `SubScore.withheld` above exists to charge. Charging it is a decision
+    # against #184's floor and not a patch, so it is filed rather than taken
+    # here (traigent-first-run#456). The two arms therefore share the treatment
+    # AND the residual; neither is settled by this comment.
+    #
+    # AND THE UNREFUTED ANSWER IS NOT THE ONLY ONE. The positive arm is refuted
+    # by name presence alone - `derived_source_names` collects identifiers,
+    # attributes, definitions and whole string constants - so a `used: true`
+    # declaring a name that occurs once as a key in an unrelated table is
+    # accepted, earns the full weight, stays measured, and keeps the pillar at
+    # 50/1.00 against 47/0.95 for the honest `used: false`. The gradient this
+    # module leaves therefore runs TOWARD claiming tools, which is the reason
+    # charging the negative arm would make it steeper rather than flatter, and
+    # the reason the arm above is left costing nothing but a coverage line.
     applicable: bool = True
 
 
@@ -3375,7 +3522,15 @@ def combine(name: str, subscores: Sequence[SubScore]) -> Pillar:
     """Renormalize over measured sub-scores and report the observed fraction."""
     applicable = [item for item in subscores if item.applicable]
     measured = [item for item in applicable if item.measured]
-    total_weight = sum(item.maximum for item in applicable)
+    # EVERY sub-score, including the ones that do not apply. Confidence is the
+    # share of this pillar that was actually observed, and a check excused by a
+    # declaration nothing here can refute was not observed - it was taken on
+    # the document's word. Dividing by the applicable weight alone let
+    # `tools: used=false` report a better-evidenced pillar than any answer this
+    # read can check, which is a declaration improving the card. See
+    # `SubScore.applicable` for why the score's denominator below stays as it
+    # is (traigent-first-run#451).
+    total_weight = sum(item.maximum for item in subscores)
     measured_weight = sum(item.maximum for item in measured)
     if not measured or measured_weight <= 0:
         return Pillar(
@@ -8508,13 +8663,22 @@ def render_card(
         # names what would lift it is unaffected. Only the sentence changes,
         # which is where this module already says the epistemic caveat belongs.
         #
-        # Counted over APPLICABLE checks only, both halves. A question that
-        # does not apply to this agent - tool wiring where it declares no
-        # tools - is `measured=False` too, so counting it would fire this on a
-        # fully measured pillar and report "4 of 5" about nothing missing.
-        # `combine` already renormalizes over the applicable ones; this is the
-        # same set, said out loud.
-        applicable_checks = [sub for sub in pillar.subscores if sub.applicable]
+        # Counted over EVERY check, both halves, which this line used to do
+        # over the applicable ones. The reasoning it carried was that tool
+        # wiring on an agent declaring no tools is nothing missing, so counting
+        # it would report "4 of 5" about a fully measured pillar. That reads
+        # the declaration as a fact. `used: false` is a self-report this module
+        # cannot refute (`SubScore.applicable`, traigent-first-run#451), so the
+        # tool wiring of that agent is precisely the check nobody here looked
+        # at, and "4 of 5" is what happened. Left as "5 of 5" it was the
+        # unrefuted declaration, and not the read, telling the customer their
+        # card was fully checked.
+        #
+        # This is the same set `combine` divides confidence by, still said out
+        # loud - the two moved together, because a count on the card that
+        # disagreed with the confidence behind it is one number contradicting
+        # the other on the same row.
+        coverage_checks = list(pillar.subscores)
         # Collected, then printed as one parenthesis. Two adjacent groups -
         # "(agent read)  (1 of 4 checks measured)" - read as two separate
         # remarks about the pillar when they are one description of it.
@@ -8547,17 +8711,15 @@ def render_card(
                 if score.agent_source_read
                 else "no agent source read"
             )
-        if any(not sub.measured for sub in applicable_checks):
+        if any(not sub.measured for sub in coverage_checks):
             # A renormalized score over half the checks is not the same claim as
             # a full one, and "(partly checked)" proved too quiet to carry that
             # next to a full bar and a round number: an uncalibrated evaluator
             # read as 100/100 with two of four checks observed. The count is
             # named instead, because "2 of 4 checks" is a fact the reader can
             # act on where an internal weight ratio is not.
-            measured = sum(1 for sub in applicable_checks if sub.measured)
-            suffix_parts.append(
-                f"{measured} of {len(applicable_checks)} checks measured"
-            )
+            measured = sum(1 for sub in coverage_checks if sub.measured)
+            suffix_parts.append(f"{measured} of {len(coverage_checks)} checks measured")
         if suffix_parts:
             headline_suffix += (
                 f"  {palette.dim}({'; '.join(suffix_parts)}){palette.reset}"
@@ -11914,6 +12076,164 @@ def _sole_binding_node(
     return binders[0] if len(binders) == 1 else None
 
 
+def _binding_block(
+    node: ast.AST, source: StaticSourceEvidence
+) -> tuple[ast.AST, ...] | None:
+    """The statement LIST this binding is written directly in.
+
+    The list, not the statement around it, and the difference is a defect this
+    home shipped with for one review cycle: `if ...: needed = TABLE[model];
+    raise ...` has a parent `ast.If` that also owns an `orelse`, and the `else`
+    arm is a place the binding provably never reaches. A region taken from the
+    parent statement therefore covered an arm whose every read is a runtime
+    `NameError`, which is the exact outcome `_settled_binding_is_read_after`
+    exists to refuse.
+
+    Found by review rather than by the test written beside it, because that
+    test picked the read AFTER the whole `if` - outside either arm - and the
+    two placements look the same from the parent statement and differ from the
+    block. So both are rows now.
+    """
+    parent = source.parents.get(id(node))
+    if parent is None:
+        return None
+    return next(
+        (
+            tuple(field)
+            for _name, field in ast.iter_fields(parent)
+            if isinstance(field, list) and any(item is node for item in field)
+        ),
+        None,
+    )
+
+
+def _binding_block_cannot_continue(
+    node: ast.AST, owner: ast.AST, source: StaticSourceEvidence
+) -> bool:
+    """Whether nothing that runs on past this binding's block can observe it.
+
+    The one shape a nested binding can be settled in, and it is settled for a
+    stronger reason than a direct statement is. A binding written in a block
+    that then RAISES dominates every read of the spelling that can execute:
+    the block does not fall through, so a read after it finds the name unbound
+    and raises `NameError` rather than a value, and the sole-binding rule
+    already means no other statement could have bound it. `needed =
+    TABLE[model]` inside the branch of a credential guard is the whole of what
+    this admits, and it is the seventh row of traigent-first-run#387's
+    bisection table - the last spelling of that guard which scored below its
+    own deletion.
+
+    That the block raises does a second job, and the reads half of the alias
+    rule leans on it: every read of such a binding is on a path that ends in
+    the raise, so no read of it can reach a request at all. See
+    `_alias_reads_only_route_a_request`, which stops enumerating for exactly
+    this placement rather than because the enumeration grew.
+
+    Established, and everything else refuses, because "bound in a branch" in
+    general is NOT this shape and crediting it would credit a binding the run
+    may simply not make:
+
+    * a raise at the top level of the block, strictly after the binding, so a
+      block that merely might raise deeper in is not this;
+    * nothing between the two that leaves the block with the name bound - a
+      `return`, `break`, `continue` or `yield` anywhere in those statements
+      hands control on with the binding made, which is the ordinary
+      branch-bound case wearing a raise;
+    * no `try` or `with` between the block and the owner, because either can
+      swallow the exception and carry on with the name bound - a `with` through
+      an `__exit__` that returns true, which reads as innocent and is not.
+
+    The owner's own body is deliberately NOT this shape even when it raises.
+    A binding there is already a direct statement and settled on its own terms;
+    reading it as non-continuing as well would silently widen the reads half
+    for a placement whose refusal is pinned, and that residual is a separate
+    decision from this one.
+    """
+    parent = source.parents.get(id(node))
+    if parent is None or parent is owner:
+        return False
+    block = _binding_block(node, source)
+    if block is None:
+        return False
+    following = block[next(i for i, item in enumerate(block) if item is node) + 1 :]
+    raised = next(
+        (
+            i
+            for i, statement in enumerate(following)
+            if isinstance(statement, ast.Raise)
+        ),
+        None,
+    )
+    if raised is None:
+        return False
+    escapes = (ast.Return, ast.Break, ast.Continue, ast.Yield, ast.YieldFrom)
+    if any(
+        isinstance(inner, escapes)
+        for statement in following[:raised]
+        for inner in ast.walk(statement)
+    ):
+        return False
+    swallows = (ast.Try, ast.With, ast.AsyncWith, *_TRY_STAR_NODES)
+    enclosing: ast.AST | None = parent
+    while enclosing is not owner:
+        if enclosing is None or isinstance(enclosing, swallows):
+            return False
+        enclosing = source.parents.get(id(enclosing))
+    return True
+
+
+def _settled_binding_region(
+    node: ast.AST, owner: ast.AST, source: StaticSourceEvidence
+) -> tuple[ast.AST, ...] | None:
+    """The statements outside which a settled binding has no live read.
+
+    Asked only of a binding `_settled_local_binding` has already settled, and
+    it is `_binding_block` for both answers rather than two rules. A direct
+    statement's block is the owner's own body, so every read in the callable is
+    inside it and the question a caller asks with this is trivially yes. A
+    binding `_binding_block_cannot_continue` admits has the raising block, and
+    that is the block and NOT the statement holding it: the `else` arm of the
+    same `if` is a sibling list the binding never reaches.
+
+    Here rather than at the caller for the reason the rest of this home is: a
+    reader that works the placement out for itself is one statement away from
+    re-deriving the conditions around it.
+    """
+    del owner
+    return _binding_block(node, source)
+
+
+def _settled_binding_is_read_after(
+    reference: ast.Name,
+    node: ast.Assign | ast.AnnAssign,
+    owner: ast.AST,
+    source: StaticSourceEvidence,
+) -> bool:
+    """Whether this read follows a settled binding on a path that can run.
+
+    Two halves of the same question. It must follow in the file, which is what
+    a reader checks by looking; and it must sit inside one of the statements
+    `_settled_binding_region` returns, which for a binding in a raising block
+    is that block and not the statement around it. Without the second, a read
+    written after the guard - or in the `else` arm of the guard's own `if` -
+    would be credited the value the guard bound, and neither read can ever
+    execute with the name bound. Crediting one credits a setting no run of the
+    agent ever varies, which is this check's own worse error arrived at from
+    the other side.
+    """
+    if reference.lineno <= (node.end_lineno or node.lineno):
+        return False
+    region = _settled_binding_region(node, owner, source)
+    if region is None:
+        return False
+    current: ast.AST | None = reference
+    while current is not None:
+        if any(statement is current for statement in region):
+            return True
+        current = source.parents.get(id(current))
+    return False
+
+
 def _settled_local_binding(
     node: ast.AST, owner: ast.AST, source: StaticSourceEvidence
 ) -> str | None:
@@ -11939,9 +12259,14 @@ def _settled_local_binding(
 
     * one plain assignment of one bare name, so tuple unpacking, `a = b = ...`,
       a loop target and a walrus are out;
-    * a direct statement of the owner's own body, because a binding nested in a
-      branch, loop or `try` holds a value no syntactic read can pin - the same
-      condition `_local_alias_initializer` puts on the assignment it reads;
+    * a direct statement of the owner's own body, or a binding in a block that
+      then raises, per `_binding_block_cannot_continue`. Any other binding
+      nested in a branch, loop or `try` holds a value no syntactic read can
+      pin, because the run may simply not make it; a block that raises makes
+      the binding dominate every path that continues, which is the same thing
+      a direct statement gives and is why the two share this condition rather
+      than being two rules. What each caller then does about the READS of such
+      a binding is its own half, as ever;
     * the only binding of that spelling in the scope, decided by
       `_sole_binding_node` over `_node_binds` rather than by counting `Name`
       stores, so a later `alias = something_else` disqualifies it;
@@ -11955,7 +12280,9 @@ def _settled_local_binding(
     if len(targets) != 1 or not isinstance(targets[0], ast.Name):
         return None
     alias = targets[0].id
-    if source.parents.get(id(node)) is not owner:
+    if source.parents.get(id(node)) is not owner and not (
+        _binding_block_cannot_continue(node, owner, source)
+    ):
         return None
     if _sole_binding_node(alias, owner) is not node:
         return None
@@ -11985,6 +12312,30 @@ def _settled_local_assignment(
     if not isinstance(node, (ast.Assign, ast.AnnAssign)):
         return None
     return node if _settled_local_binding(node, owner, source) == name else None
+
+
+def _settled_binding_cannot_reach_a_request(
+    name: str, owner: ast.AST, source: StaticSourceEvidence
+) -> bool:
+    """Whether every read of this settled local is on a path that raises.
+
+    The third entry point of this home, beside `_settled_local_binding` and
+    `_settled_local_assignment`, and it is here for the reason they are. The
+    reads half of the alias rule genuinely needs the placement fact - a binding
+    in a block that cannot continue has no read that reaches a request, which
+    is a stronger statement than its enumeration of control expressions makes -
+    and the first revision of this pass got it by calling
+    `_binding_block_cannot_continue` from the reader itself. That is a fourth
+    home for the placement question wearing a different name, which review
+    caught and the structural guard did not, because the guard listed the two
+    primitives that had leaked before rather than the primitives this home has.
+
+    So the fact is served from inside the home, the guard now forbids every
+    primitive here rather than the two it had met, and
+    `_alias_reads_only_route_a_request` joins the readers it checks.
+    """
+    node = _settled_local_assignment(name, owner, source)
+    return node is not None and _binding_block_cannot_continue(node, owner, source)
 
 
 def _plain_assignment_of(name: str, node: ast.AST) -> ast.Assign | ast.AnnAssign | None:
@@ -12166,8 +12517,10 @@ def _local_alias_initializer(
     READ rather than about the binding:
 
     * a parameter, which holds whatever the caller passed;
-    * a read that does not follow the assignment in the file, or an assignment
-      this module has already established as unreachable.
+    * a read that does not follow the assignment on a path that can run, per
+      `_settled_binding_is_read_after` - in the file, and inside the region the
+      binding settles, which differ only for a binding in a block that raises -
+      or an assignment this module has already established as unreachable.
 
     What is NOT refused is an ordinary read of the alias elsewhere - a guard
     on it, a derived label, an f-string, handing it to a helper. An earlier
@@ -12200,7 +12553,7 @@ def _local_alias_initializer(
         return None
     if not _is_statically_reachable(assignment, source):
         return None
-    if reference.lineno <= (assignment.end_lineno or assignment.lineno):
+    if not _settled_binding_is_read_after(reference, assignment, callable_node, source):
         return None
     return assignment.value
 
@@ -14444,7 +14797,35 @@ def _alias_reads_only_route_a_request(
     nothing reads cannot reach the request, so `needed = TABLE[model]` and then
     never using `needed` leaves the payload exactly where it was. Written down
     because the next reader would otherwise have to derive it from `all`.
+
+    One placement answers yes without the enumeration being consulted, asked of
+    `_settled_binding_cannot_reach_a_request` rather than worked out here, and
+    it is not a shortcut - it is a STRONGER argument than the enumeration
+    makes. When that placement holds, every read of the alias that can execute
+    is inside a block that ends in a `raise`, so this call returns no request
+    and no read of the alias can send, replace or mutate THE PAYLOAD OF A
+    REQUEST THIS CALL RETURNS. The enumeration below asks the weaker question
+    of a read on a path that DOES reach that request, and asking it here would
+    refuse `raise ValueError(f"missing {needed}")` - a read inside an error
+    message, which is the reads residual this function records - for a value
+    that provably never reaches one. That is the same argument
+    `_request_parameter_is_intact` already makes one input over for the
+    parameter itself, and this is the placement where it holds for an alias.
+
+    The property is stated over the request this call returns because that is
+    what it establishes, and the wider claim would be false. An expression
+    evaluated while raising can still make a call of ITS OWN - `raise
+    ValueError(client.create(model=needed))` really does send - and neither
+    reader follows one, so such a file scores as though the guard were honest.
+    Measured, and it is a false credit rather than a perverse incentive: it
+    scores what the honest guard scores, never more, so the inequality this
+    pass exists to establish is untouched. The bound is inherited from
+    `_request_parameter_is_intact`'s raise exemption rather than opened here,
+    and closing it is a decision about that exemption, not about this
+    placement.
     """
+    if _settled_binding_cannot_reach_a_request(alias, callable_node, source):
+        return True
     return all(
         _reference_only_routes_a_request(
             load, callable_node, source, follow_alias=False
@@ -14536,14 +14917,20 @@ def _reference_only_routes_a_request(
     reviewer found the second by measuring rather than by reading, which is
     what a residual note exists to prevent:
 
-    * the binding. One nested in a branch, loop or `try`, one the scope binds
-      twice, one a nested scope can reach, is not settled and refuses. The
-      branch-bound shape is real and is the seventh row of #387's own bisection
-      table: `needed = TABLE[model]` written inside an `if` body that raises.
+    * the binding. One the scope binds twice, one a nested scope can reach, one
+      nested in a branch, loop or `try` that goes on to CONTINUE, is not
+      settled and refuses. The branch that raises is no longer among them:
+      traigent-first-run#444 was the seventh row of #387's bisection table,
+      `needed = TABLE[model]` inside an `if` body that raises, and
+      `_binding_block_cannot_continue` settles it because such a binding
+      dominates every path that continues.
     * the reads. Anything the walk above does not terminate on refuses, and
       that is an enumeration, not a property: a read inside an error message,
       inside an arm of a conditional, or handed to any call, including one that
-      only formats. `raise ValueError(f"missing {needed}")` is the common one.
+      only formats. `raise ValueError(f"missing {needed}")` is the common one,
+      and it is still refused wherever the binding is a direct statement -
+      `_alias_reads_only_route_a_request` steps around the enumeration only for
+      the raising block, where no read reaches a request at all.
 
     Both are false refusals rather than wrong numbers, which is the direction
     this check fails in on purpose. What must NOT happen is the card describing
@@ -17611,63 +17998,108 @@ def build_signal_from_entry(
             f"input can cost an unbounded number of calls ({evidence})",
         )
     if not _build_flag(check, spec, "used"):
-        # CHARGED, and it used to be EXCLUDED - `applicable=False`, out of the
-        # score denominator, so the pillar fell back to the mean of the other
-        # checks. That is the same treatment the undetermined arm above used to
-        # get, and it is wrong here for the same reason: inapplicability has to
-        # be ESTABLISHED before it may shrink a denominator, and nothing here
-        # establishes this one. `used` is a self-report; the `used: true` arm
-        # below raises on a declared name the file never mentions and this arm
-        # has no counterpart, because telling a tool call from any other call
-        # needs a notion of tool-hood this module does not have
-        # (traigent-first-run#451). So the question was asked, and the answer
-        # is a claim this read cannot check - which is what `SubScore.withheld`
-        # charges everywhere else.
+        # CHARGED, and it used to be EXCLUDED - `applicable=False`, which took
+        # the check out of the score denominator so the pillar fell back to the
+        # mean of the others. Crediting no tools would still pay for being
+        # simpler than the question, and nothing here credits it; what changed
+        # is that excusing it paid too. Inapplicability has to be ESTABLISHED
+        # before it may shrink a denominator, and nothing here establishes this
+        # one - so the question was asked, the answer is a claim this read
+        # cannot check, and that is what `SubScore.withheld` charges everywhere
+        # else in this module.
         #
-        # WHY IT COULD NOT STAY EXCLUDED ONCE THE ARM ABOVE WAS LEVELLED. With
-        # `determined: false` charged and this one free, the two answers no
-        # source can contradict stopped being worth the same: declaring no
-        # tools scored 47 where admitting the read was blocked scored 45, so
-        # the inversion #456 names moved one arm sideways instead of closing -
-        # a run that could not settle the check could buy the points back by
-        # asserting there was nothing to settle.
+        # WHY IT COULD NOT STAY EXCLUDED ONCE THE UNDETERMINED ARM WAS
+        # LEVELLED. #456 charged `determined: false` on all four checks,
+        # because renormalizing let "I could not tell" outscore an answer this
+        # read had settled. With that arm charged and this one free, the two
+        # answers no source can contradict stopped being worth the same:
+        # declaring no tools scored 47 where admitting the read was blocked
+        # scored 45. The inversion moved one arm sideways instead of closing,
+        # and a run that could not settle the check could buy the points back
+        # by asserting there was nothing to settle.
         #
         # THE RECORDED OBJECTION, WEIGHED AND SET ASIDE. Charging this arm was
-        # refused once, on the ground that a `used: true` naming an identifier
-        # that occurs anywhere in the file is exactly as unrefuted and takes
-        # the full weight, so the honest tool-less agent would be the only
-        # charged party. That was true while the undetermined arm was free; it
-        # is not now. Charged, this arm is one of four answers at the same
+        # refused in #454, on the ground that a `used: true` naming an
+        # identifier that occurs anywhere in the file is exactly as unrefuted
+        # and takes the full weight, so the honest tool-less agent would be the
+        # only charged party. That held while the undetermined arm was free. It
+        # does not now: charged, this arm is one of several answers at the same
         # floor - no tools, tools that do not resolve, and a read that could
         # not settle it - and the only uncharged answer is the one making a
         # claim this module does check, in the one direction it can. The
-        # gradient toward CLAIMING tools is not closed by that and is not
-        # claimed to be: a declared name that occurs once anywhere still earns
-        # full credit, which is #451's own residual and is filed separately.
+        # gradient toward CLAIMING tools is not closed by this and is not
+        # claimed to be; that residual is #451's and is filed separately.
         #
         # AND IT REVERSES AN OWNER DECISION, DELIBERATELY. "Having no tools is
-        # neither charged nor paid" was settled when the alternative was
-        # crediting simplicity; it is restated as "no tools is not PAID", and
-        # what is charged is the unchecked claim rather than the simplicity.
-        # The agent is still never told it lacks the thing: the check stays
-        # unmeasured, the card still marks it, and evidence coverage still
-        # counts it as unchecked. The pin that recorded the old reading is
-        # rewritten rather than deleted, in
+        # neither charged nor paid" was settled when the alternative on the
+        # table was crediting simplicity, where the answer is still no. What is
+        # charged here is the unchecked CLAIM, not the simplicity, and the
+        # agent is still never told it lacks anything: the check stays
+        # unmeasured, the card still marks it, coverage still counts it as
+        # unchecked. The pin that recorded the old reading is rewritten rather
+        # than deleted, in
         # `test_an_agent_with_no_tools_is_charged_like_every_unchecked_claim`.
-        # AND THE SENTENCE HAD TO MOVE WITH THE FLAG. It read "the agent
-        # declares no tools, so tool wiring does not apply", which was this
-        # script's own voice asserting both halves: that the agent has no tools
-        # (the document's claim, not this read's finding) and that the check
-        # therefore drops out (no longer true - it keeps its weight). Left as
-        # it was, a customer would meet "does not apply" on a check that had
-        # just cost them points, which is the intra-document contradiction this
-        # repository keeps finding. Attribution and reachability are one fix
-        # here rather than two.
+        #
+        # MARKED HERE FOR THE SAME REASON THE UNDETERMINED ARM IS. This is the
+        # only settled check that returns `measured=False`, so it returns
+        # before `_observed_declaration` adds the framing, exactly as
+        # `determined: false` used to - and it reached the card as
+        # "tool wiring does not apply (other_agent.py:100-118 the tool table is
+        # empty for this route)", the author's sentence in this script's own
+        # voice inside an aside that reads as this script's own
+        # (traigent-first-run#362). Only the clause before the marking is this
+        # read's: that the document declares no tools, and what follows from
+        # that. The sentence after it is the assistant's, like every other
+        # `evidence`, and the same constant says so.
+        #
+        # WHICH IS WHY THE TWO ARMS ATTRIBUTE IN OPPOSITE ORDERS, and the next
+        # arm has to make the same choice. On `prompt` and `output-contract`
+        # the marking opens the line, so this script's summary sentence ("no
+        # prompt reached the model call") sits inside the attribution - it is a
+        # claim ABOUT THE AGENT, reached only through the assistant's
+        # declaration, so it is the assistant's to answer for. "The document
+        # declares no tools" is a claim ABOUT THE DOCUMENT - it is what the
+        # document says, read here - so it stays outside. Put a claim about the
+        # agent outside the marking and this script has adopted it.
+        #
+        # SO THE CLAUSE SAYS "THE DOCUMENT", AND SAYS "WAS NOT CHECKED". It
+        # used to say "the agent declares no tools, so tool wiring does not
+        # apply", which is the reasoning above contradicted by its own string
+        # twice over: "the agent" adopts the declaration this read never
+        # verified, and "does not apply" reports the question settled when
+        # nothing settled it. `used: false` is a self-reported boolean and
+        # nothing refutes it - the `used: true` arm below raises on a declared
+        # name the file never mentions, and this arm has no counterpart - so a
+        # carried-over `"used": false` over an agent that visibly calls two
+        # tools was printed here, in this script's own voice, as a finding
+        # about the customer's agent. Saying what was actually read costs no
+        # notion of tool-hood; refuting the declaration would need one, which
+        # this module does not attempt (traigent-first-run#451, and #454 for
+        # what an unrefuted answer may do to a CONFIDENCE denominator - stated
+        # there rather than restated here, because there is more than one
+        # denominator and `combine` is the one place that says what each does
+        # with an unmeasured check).
+        #
+        # No "excluded from this score" here, and that sentence is now the
+        # only reason the phrase would be wrong: this check IS withheld, so
+        # nothing about it is excluded from the score - it keeps its weight and
+        # earns nothing. The framing `_observed_declaration` adds belongs to a
+        # measurement being held back, and there is no measurement here to hold
+        # back; what the clause above already says is that the read did not
+        # check it, which is the honest half.
         return BuildSignal(
             check,
             0.0,
-            "the document declares no tools, and nothing here can check that "
-            f"({evidence})",
+            "the document declares no tools, so tool wiring was not checked here. "
+            # The prose's own full stop is dropped before this one is added,
+            # the same normalisation `reason` gets above and for the same
+            # reason: `evidence` is free prose, `cited_source_summary` appends
+            # " Read from ..." with no punctuation of its own, and without a
+            # stop here the assistant's sentence and the machine-derived quote
+            # run together - blurring the one boundary this line exists to
+            # make legible. The sibling arms get it from the closing
+            # parenthesis they wrap the prose in; this arm has none.
+            f"{UNCHECKED_OBSERVATION}{evidence.rstrip('.')}.",
             measured=False,
             withheld=True,
         )
@@ -18043,18 +18475,27 @@ def _observed_declaration(signal: BuildSignal) -> BuildSignal:
     """One rendered build declaration: the framing, the prose, the citation.
 
     The citation is appended to every signal that carries one, including the
-    ones that were already unmeasured - a check reporting that the agent
+    ones that were already unmeasured - a check reporting that the document
     declares no tools is still a claim about a line of somebody's file. The
     "not independently verified" framing is added only to the signals that
     would otherwise have scored, because that sentence is about a measurement
     being withheld and there is none to withhold on the others.
 
     `UNCHECKED_OBSERVATION` is the half that belongs on every arm, and the
-    already-unmeasured ones do not get it here: an undetermined check is built
-    carrying it (`build_signal_from_entry`), and a settled check that answers
-    "no tools" is this script's reading of a citation rather than an authored
-    claim about behaviour. Passing them through twice is what a second
-    application would do.
+    already-unmeasured ones do not get it here because they are built carrying
+    it in `build_signal_from_entry` - both the undetermined check and the
+    settled `tools` check that answers "no tools". A second application would
+    only print the phrase twice.
+
+    That exemption used to read differently, and the difference is the defect
+    it hid: it said the "no tools" line was this script's reading of a citation
+    rather than an authored claim, and so needed no marking. Only the clause
+    before the parenthesis was ever this script's. Inside it sat the check's
+    `evidence` verbatim - an assistant's sentence about somebody's code, like
+    every other `evidence` on this card - and a document carried over from
+    another agent put "the tool table is empty for this route" on the card in
+    this script's voice. Marking is composed at the read now, so a consumer of
+    `AgentFacts` that never renders through here still gets the attribution.
     """
     quoted = cited_source_summary(signal)
     if not signal.measured:
