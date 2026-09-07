@@ -18682,6 +18682,34 @@ class TheBuildHalfCitesTheAgentItReadTests(unittest.TestCase):
                 selected_agent_callable="selected",
             )
 
+    def _read_source(self, source: str, build: dict):
+        """`_score_source` without its defaults, for documents that answer.
+
+        `_score_source` fills in `source_lines` on every check, which an
+        undetermined check is refused, so it cannot build that arm at all. This
+        one takes the build half exactly as given.
+        """
+        document = {
+            "source": "agent.py",
+            "knobs": {
+                "model": {
+                    "values": ["a"],
+                    "source_lines": [1],
+                    "evidence": "MODEL reaches the call.",
+                }
+            },
+            "build": build,
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "agent.py").write_text(source)
+            return MODULE.agent_facts_from_discovery(
+                document,
+                source_root=root,
+                selected_agent=root / "agent.py",
+                selected_agent_callable="selected",
+            )
+
     def test_a_loop_the_tree_cannot_see_may_still_be_declared(self) -> None:
         """The regression an equality comparison introduced, in four shapes.
 
@@ -19137,8 +19165,11 @@ class TheBuildHalfCitesTheAgentItReadTests(unittest.TestCase):
                 self.assertIn("nothing here checks", rows[check])
                 self.assertNotIn("does not establish", rows[check])
         # `tools` above answers "no tools", which is not applicable rather than
-        # unverified, so it carries no observation to mark either way. The
-        # applicable case is the one that has to say it.
+        # unverified, so it carries no SCOPE clause: no derivation ran and
+        # there is none to state. It still carries the assistant's sentence,
+        # and so still says whose that is - asserted in
+        # `test_the_no_tools_arm_says_whose_sentence_it_is`. The applicable
+        # case below is the one that has a scope to state.
         used = self._score_source(
             "MODEL = ['a']\nTOOLS = ['search']\ndef selected(q):\n    return q\n",
             {
@@ -19378,6 +19409,167 @@ class TheBuildHalfCitesTheAgentItReadTests(unittest.TestCase):
                 self.assertNotIn("excluded from this score", rows[check])
                 self.assertNotIn("Read from", rows[check])
 
+    def test_the_no_tools_arm_says_whose_sentence_it_is(self) -> None:
+        """traigent-first-run#362, on the last arm that was still unmarked.
+
+        `tools: used=false` is the only SETTLED check that returns
+        `measured=False`, so it returns before `_observed_declaration` and used
+        to reach the card as "the agent declares no tools, so tool wiring does
+        not apply (other_agent.py:100-118 the tool table is empty for this
+        route)" - the author's sentence in this script's own voice, inside a
+        parenthesis that reads as this script's own aside. It is the arm a
+        simple agent most commonly lands on, so it is the arm the marking was
+        most needed on.
+
+        The clause before the marking stays this read's own, and says only what
+        this read established: that the DOCUMENT declares no tools, and that
+        tool wiring was therefore not checked. It used to say "the agent
+        declares no tools, so tool wiring does not apply", which adopted the
+        declaration as a finding about the customer's agent and reported the
+        question settled - over an agent that visibly calls two tools, both
+        halves were false and both were in this script's voice. Nothing here
+        refutes the declaration, and saying what was read needs no notion of
+        tool-hood to do it. What follows the marking is the assistant's,
+        exactly as on every other check.
+        """
+        prose = "other_agent.py:100-118 the tool table is empty for this route"
+        rows = self._observed(
+            "MODEL = ['a']\ndef selected(question):\n    return question\n",
+            {
+                "control-flow": {"loop": False, "bounded": True},
+                "tools": {"used": False, "evidence": prose},
+            },
+        )
+        # Written out rather than read off the module, so this asserts on the
+        # sentence a customer meets and not on the constant agreeing with
+        # itself.
+        marking = "Assistant observation, which nothing here checks: "
+        # "the document", not "the agent": what this read saw is a declaration,
+        # and nothing here checks it against the file. And "was not checked",
+        # not "does not apply": the question is open, not answered.
+        self.assertIn(
+            "the document declares no tools, so tool wiring was not checked here.",
+            rows["tools"],
+        )
+        self.assertNotIn("the agent declares no tools", rows["tools"])
+        self.assertNotIn("does not apply", rows["tools"])
+        self.assertIn(marking, rows["tools"])
+        self.assertIn(prose, rows["tools"])
+        # The read's own clause first, then the marking, then the prose. A
+        # marking that opened the line would hand this script's finding to the
+        # assistant as well.
+        self.assertLess(
+            rows["tools"].index("tool wiring"), rows["tools"].index(marking)
+        )
+        self.assertLess(rows["tools"].index(marking), rows["tools"].index(prose))
+        # Nothing was withheld on a check that does not apply, so nothing
+        # claims a withheld measurement - that sentence would read as a
+        # penalty for an agent that simply has no tools.
+        self.assertNotIn("excluded from this score", rows["tools"])
+        # #368's derived clause is unaffected and still stands beside it, and
+        # a full stop separates it from the sentence it is there to be weighed
+        # against. This is the only arm that carries both an unparenthesised
+        # authored sentence and a quote: the siblings get the boundary from the
+        # closing parenthesis around their prose, and the undetermined arm
+        # quotes nothing. Without it the two ran together as
+        # "... empty for this route Read from agent.py, 1: ...", blurring the
+        # one seam the marking exists to make legible.
+        self.assertIn("for this route. Read from agent.py, 1:", rows["tools"])
+        # And the author's own full stop is not doubled onto it, the same
+        # normalisation `reason` gets on the undetermined arm.
+        self.assertNotIn(
+            "..",
+            self._observed(
+                "MODEL = ['a']\ndef selected(question):\n    return question\n",
+                {
+                    "control-flow": {"loop": False, "bounded": True},
+                    "tools": {"used": False, "evidence": "No tool table is defined."},
+                },
+            )["tools"],
+        )
+
+    def test_every_build_arm_says_whose_sentence_it_is(self) -> None:
+        """The guard the last two fixes both needed, derived instead of listed.
+
+        Twice now an arm has reached the customer's card carrying the
+        assistant's prose and no marking, because the marking is composed at
+        each return site and nothing said which sites those are: #435 for
+        `determined: false`, this change for `tools: used=false`. A test that
+        names the arms it covers cannot catch the third, since the arm that
+        goes wrong is by definition the one nobody thought to name.
+
+        So the check set comes from `BUILD_CHECK_ANSWER` and the answers from
+        the boolean field it records for each check, plus the undetermined
+        answer every check can give. Every signal of every document that
+        composes must carry one of the two markings - the bare one, or the
+        scoped one the source-checked arms use. A fifth build check joins this
+        automatically; a fifth ARM under an existing check joins it as soon as
+        an answer reaches it, which is the case that was missed twice.
+
+        Not blind: with `readiness.py` at trunk this reports the `tools`
+        arm unmarked.
+        """
+        source = (
+            "MODEL = ['a']\nTOOLS = ['search']\n"
+            "def selected(q):\n    return search(q)\n"
+        )
+        # What each check needs beside its answer when the answer is "yes".
+        # Absent for a check that needs nothing; a new check that needs a
+        # companion field fails here loudly, which is the point - a new arm
+        # should have to be looked at rather than default to uncovered.
+        companions = {
+            "control-flow": {"bounded": True},
+            "tools": {"declared": ["search"], "unreachable": []},
+        }
+
+        def answered(check: str, value: bool) -> dict:
+            return {
+                MODULE.BUILD_CHECK_ANSWER[check]: value,
+                **(companions.get(check, {}) if value else {}),
+                "evidence": "other_agent.py:100-118 read from the previous run",
+                "source_lines": [4],
+            }
+
+        def unsettled() -> dict:
+            # No `source_lines`: an undetermined check is refused one, so this
+            # arm cannot be built the way the settled ones are.
+            return {
+                "determined": False,
+                "reason": "the call is assembled in a wrapper this read did not open",
+                "evidence": "other_agent.py:100-118 read from the previous run",
+            }
+
+        answers = {
+            check: (answered(check, True), answered(check, False), unsettled())
+            for check in MODULE.BUILD_CHECK_ANSWER
+        }
+        settled = {check: answered(check, True) for check in MODULE.BUILD_CHECK_ANSWER}
+        documents = [
+            (f"{check}={index}", settled | {check: spec})
+            for check, specs in answers.items()
+            for index, spec in enumerate(specs)
+        ]
+        documents.append(
+            ("every check unsettled", {check: unsettled() for check in settled})
+        )
+        # Derived, so this number moves with the module rather than pinning a
+        # count somebody has to remember to raise.
+        self.assertEqual(len(documents), 3 * len(MODULE.BUILD_CHECK_ANSWER) + 1)
+        unmarked = []
+        for varied, build in documents:
+            for signal in MODULE.build_declarations_are_unmeasured(
+                self._read_source(source, build).build
+            ):
+                if MODULE.UNCHECKED_OBSERVATION in signal.evidence:
+                    continue
+                # The other spelling, which only the source-checked arms use:
+                # they name the scope of what was checked inside the
+                # parentheses instead.
+                if "Assistant observation (" in signal.evidence:
+                    continue
+                unmarked.append((varied, signal.name, signal.evidence))
+        self.assertEqual(unmarked, [])
+
     def test_the_reason_does_not_bring_its_own_full_stop_to_the_card(self) -> None:
         """A separator this script adds, on prose it does not control.
 
@@ -19411,25 +19603,15 @@ class TheBuildHalfCitesTheAgentItReadTests(unittest.TestCase):
 
         The arm this issue was about lost the marking by being composed
         somewhere else, and a second literal is how that happens again. Both
-        the read and the render reach for the same name, and an unmeasured
-        build declaration is marked on every arm that carries authored prose.
+        the read and the render reach for the same name.
+
+        This test owns the SPELLING only. Which arms carry the phrase is
+        `test_every_build_arm_says_whose_sentence_it_is`, derived from the
+        module - a list written out here would be a third hand-maintained set
+        of arms, which is the shape that let two of them go unmarked.
         """
         source = inspect.getsource(MODULE)
         self.assertEqual(source.count('"Assistant observation, which nothing'), 1)
-        settled = self._observed(
-            "MODEL = ['a']\ndef selected(q):\n    return q\n",
-            {"control-flow": {"loop": False, "bounded": True}},
-        )
-        undetermined = {
-            signal.name: signal.evidence
-            for signal in MODULE.build_declarations_are_unmeasured(
-                self._read(self._undetermined()).build
-            )
-        }
-        for check in ("prompt", "output-contract"):
-            with self.subTest(check=check):
-                self.assertIn(MODULE.UNCHECKED_OBSERVATION, settled[check])
-                self.assertIn(MODULE.UNCHECKED_OBSERVATION, undetermined[check])
 
     def test_a_quoted_line_cannot_rewrite_the_card_around_it(self) -> None:
         """Customer source text crosses two renderers, so it is made safe first.

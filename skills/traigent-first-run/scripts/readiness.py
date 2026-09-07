@@ -17550,10 +17550,64 @@ def build_signal_from_entry(
         # Excluded rather than credited or charged. Only tool wiring is N/A;
         # prompt, output-contract, control-flow, and search-space checks remain.
         # Crediting no tools would pay for being simpler than the question.
+        #
+        # MARKED HERE FOR THE SAME REASON THE UNDETERMINED ARM IS. This is the
+        # only settled check that returns `measured=False`, so it returns
+        # before `_observed_declaration` adds the framing, exactly as
+        # `determined: false` used to - and it reached the card as
+        # "tool wiring does not apply (other_agent.py:100-118 the tool table is
+        # empty for this route)", the author's sentence in this script's own
+        # voice inside an aside that reads as this script's own
+        # (traigent-first-run#362). Only the clause before the marking is this
+        # read's: that the document declares no tools, and what follows from
+        # that. The sentence after it is the assistant's, like every other
+        # `evidence`, and the same constant says so.
+        #
+        # WHICH IS WHY THE TWO ARMS ATTRIBUTE IN OPPOSITE ORDERS, and the next
+        # arm has to make the same choice. On `prompt` and `output-contract`
+        # the marking opens the line, so this script's summary sentence ("no
+        # prompt reached the model call") sits inside the attribution - it is a
+        # claim ABOUT THE AGENT, reached only through the assistant's
+        # declaration, so it is the assistant's to answer for. "The document
+        # declares no tools" is a claim ABOUT THE DOCUMENT - it is what the
+        # document says, read here - so it stays outside. Put a claim about the
+        # agent outside the marking and this script has adopted it.
+        #
+        # SO THE CLAUSE SAYS "THE DOCUMENT", AND SAYS "WAS NOT CHECKED". It
+        # used to say "the agent declares no tools, so tool wiring does not
+        # apply", which is the reasoning above contradicted by its own string
+        # twice over: "the agent" adopts the declaration this read never
+        # verified, and "does not apply" reports the question settled when
+        # nothing settled it. `used: false` is a self-reported boolean and
+        # nothing refutes it - the `used: true` arm below raises on a declared
+        # name the file never mentions, and this arm has no counterpart - so a
+        # carried-over `"used": false` over an agent that visibly calls two
+        # tools was printed here, in this script's own voice, as a finding
+        # about the customer's agent. Saying what was actually read costs no
+        # notion of tool-hood; refuting the declaration would need one, which
+        # this module does not attempt (traigent-first-run#451, and #454 for
+        # what an unrefuted answer may do to a denominator - stated there
+        # rather than restated here, because there is more than one
+        # denominator and `combine` is the one place that says what each does
+        # with `applicable`).
+        #
+        # No "excluded from this score" here: nothing was withheld. A check
+        # with no measurement to withhold had none to exclude, and saying one
+        # was excluded would read as a penalty for an agent that simply has no
+        # tools.
         return BuildSignal(
             check,
             0.0,
-            f"the agent declares no tools, so tool wiring does not apply ({evidence})",
+            "the document declares no tools, so tool wiring was not checked here. "
+            # The prose's own full stop is dropped before this one is added,
+            # the same normalisation `reason` gets above and for the same
+            # reason: `evidence` is free prose, `cited_source_summary` appends
+            # " Read from ..." with no punctuation of its own, and without a
+            # stop here the assistant's sentence and the machine-derived quote
+            # run together - blurring the one boundary this line exists to
+            # make legible. The sibling arms get it from the closing
+            # parenthesis they wrap the prose in; this arm has none.
+            f"{UNCHECKED_OBSERVATION}{evidence.rstrip('.')}.",
             measured=False,
             applicable=False,
         )
@@ -17919,18 +17973,27 @@ def _observed_declaration(signal: BuildSignal) -> BuildSignal:
     """One rendered build declaration: the framing, the prose, the citation.
 
     The citation is appended to every signal that carries one, including the
-    ones that were already unmeasured - a check reporting that the agent
+    ones that were already unmeasured - a check reporting that the document
     declares no tools is still a claim about a line of somebody's file. The
     "not independently verified" framing is added only to the signals that
     would otherwise have scored, because that sentence is about a measurement
     being withheld and there is none to withhold on the others.
 
     `UNCHECKED_OBSERVATION` is the half that belongs on every arm, and the
-    already-unmeasured ones do not get it here: an undetermined check is built
-    carrying it (`build_signal_from_entry`), and a settled check that answers
-    "no tools" is this script's reading of a citation rather than an authored
-    claim about behaviour. Passing them through twice is what a second
-    application would do.
+    already-unmeasured ones do not get it here because they are built carrying
+    it in `build_signal_from_entry` - both the undetermined check and the
+    settled `tools` check that answers "no tools". A second application would
+    only print the phrase twice.
+
+    That exemption used to read differently, and the difference is the defect
+    it hid: it said the "no tools" line was this script's reading of a citation
+    rather than an authored claim, and so needed no marking. Only the clause
+    before the parenthesis was ever this script's. Inside it sat the check's
+    `evidence` verbatim - an assistant's sentence about somebody's code, like
+    every other `evidence` on this card - and a document carried over from
+    another agent put "the tool table is empty for this route" on the card in
+    this script's voice. Marking is composed at the read now, so a consumer of
+    `AgentFacts` that never renders through here still gets the attribution.
     """
     quoted = cited_source_summary(signal)
     if not signal.measured:
