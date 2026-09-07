@@ -26,6 +26,17 @@ sys.modules[SPEC.name] = MODULE
 SPEC.loader.exec_module(MODULE)
 
 
+#: The handoff file these unit calls stand in for.
+#:
+#: `check_shadowed_credentials` prints the path it compared, because its
+#: remedy tells a reader to edit that file and the handoff file is not always
+#: `.env` (`references/run-safety.md` lets the user name one). A literal here
+#: would make every assertion below agree with a hardcoded default again, so
+#: it is deliberately NOT `.env`: a test that passes with this name proves the
+#: value is threaded rather than assumed.
+ENV_PATH = Path("handoff.env")
+
+
 def quiet_env_file(directory: Path) -> Path:
     """An `.env` that raises no WARN of its own.
 
@@ -589,6 +600,7 @@ class StaticPreflightTests(unittest.TestCase):
             },
             {},
             {},
+            ENV_PATH,
         )
         result = next(
             item for item in MODULE.RESULTS if item.check == "provider-credentials"
@@ -615,7 +627,7 @@ class StaticPreflightTests(unittest.TestCase):
         telling somebody to halt.
         """
         MODULE.RESULTS.clear()
-        MODULE.check_keys({}, {}, {})
+        MODULE.check_keys({}, {}, {}, ENV_PATH)
         result = next(
             item for item in MODULE.RESULTS if item.check == "provider-credentials"
         )
@@ -4369,6 +4381,7 @@ class AShadowedCredentialIsNamedTests(unittest.TestCase):
             {"TRAIGENT_API_KEY": shell},
             {"TRAIGENT_API_KEY": dotenv},
             {"TRAIGENT_API_KEY": shell},
+            ENV_PATH,
         )
         record = self._record("env-shadowed-key")
         self.assertEqual(record.status, MODULE.WARN)
@@ -4451,6 +4464,7 @@ class AShadowedCredentialIsNamedTests(unittest.TestCase):
             {name: pair[0] for name, pair in secrets.items()},
             {name: pair[1] for name, pair in secrets.items()},
             {name: pair[0] for name, pair in secrets.items()},
+            ENV_PATH,
         )
         record = self._record("env-shadowed-key")
         self.assertEqual(record.status, MODULE.WARN)
@@ -4500,6 +4514,7 @@ class AShadowedCredentialIsNamedTests(unittest.TestCase):
             {"OPENROUTER_API_KEY": "sk-or-shell", "OPENAI_API_KEY": "sk-shell"},
             {"OPENROUTER_API_KEY": "sk-or-file", "OPENAI_API_KEY": "sk-file"},
             {"OPENROUTER_API_KEY": "sk-or-shell", "OPENAI_API_KEY": "sk-shell"},
+            ENV_PATH,
         )
         record = self._record("env-shadowed-key")
         self.assertEqual(
@@ -4522,7 +4537,10 @@ class AShadowedCredentialIsNamedTests(unittest.TestCase):
             with self.subTest(label):
                 MODULE.RESULTS.clear()
                 MODULE.check_keys(
-                    {"TRAIGENT_API_KEY": "uk_same"}, file_values, process_values
+                    {"TRAIGENT_API_KEY": "uk_same"},
+                    file_values,
+                    process_values,
+                    ENV_PATH,
                 )
                 record = self._record("env-shadowed-key")
                 self.assertEqual(record.status, MODULE.PASS)
@@ -4538,7 +4556,7 @@ class AShadowedCredentialIsNamedTests(unittest.TestCase):
         override needs approving.
         """
         key = "uk_local1234"
-        MODULE.check_keys({"TRAIGENT_API_KEY": key}, {}, {})
+        MODULE.check_keys({"TRAIGENT_API_KEY": key}, {}, {}, ENV_PATH)
         record = self._record("traigent-key")
         self.assertEqual(record.status, MODULE.PASS)
         self.assertIn(f"sha256:{MODULE.value_fingerprint(key)}", record.detail)
@@ -4552,6 +4570,7 @@ class AShadowedCredentialIsNamedTests(unittest.TestCase):
             },
             {},
             {},
+            ENV_PATH,
         )
         record = self._record("traigent-key")
         self.assertIn("https://example.invalid (overridden)", record.detail)
@@ -4575,11 +4594,12 @@ class AShadowedCredentialIsNamedTests(unittest.TestCase):
             {"AWS_REGION": "us-east-1"},
             {"AWS_REGION": "eu-west-1"},
             {"AWS_REGION": "us-east-1"},
+            ENV_PATH,
         )
         record = self._record("env-shadowed-key")
         self.assertEqual(record.status, MODULE.WARN)
         self.assertIn("AWS_REGION is us-east-1 in the process", record.detail)
-        self.assertIn("eu-west-1 in .env", record.detail)
+        self.assertIn(f"eu-west-1 in {ENV_PATH}", record.detail)
         self.assertNotIn("sha256:", record.detail)
         self.assertEqual(
             record.metrics["route_values"]["AWS_REGION"],
@@ -4600,6 +4620,7 @@ class AShadowedCredentialIsNamedTests(unittest.TestCase):
             {"TRAIGENT_BACKEND_URL": "https://prod.example.invalid"},
             {"TRAIGENT_BACKEND_URL": "https://dev.example.invalid/api?token=abcdef"},
             {"TRAIGENT_BACKEND_URL": "https://prod.example.invalid"},
+            ENV_PATH,
         )
         record = self._record("env-shadowed-key")
         self.assertEqual(record.status, MODULE.WARN)
@@ -4608,6 +4629,45 @@ class AShadowedCredentialIsNamedTests(unittest.TestCase):
         self.assertIn("https://dev.example.invalid", record.detail)
         for carried in ("token", "abcdef", "/api"):
             self.assertNotIn(carried, record.detail)
+
+    def test_the_finding_names_the_file_it_actually_compared(self) -> None:
+        """The remedy edits a file, so it has to be the file that was read.
+
+        Every sentence in this record used to say `.env` whatever `--env`
+        pointed at, while the handoff file is whichever local file the user
+        identified for the run. A customer told to "delete the .env lines" was
+        being sent to a path this run never opened - and where a stale `.env`
+        does sit beside the real one, to delete lines from the wrong file. It
+        reaches a customer because the guidance now routes an authentication
+        failure into this record.
+
+        Asserted as a property of the argument rather than against one name:
+        two different paths must produce two different sentences, and neither
+        may mention a file it was not given. A hardcoded default passes the
+        first path and fails the second.
+        """
+        shell, dotenv = self.PLACEHOLDER_SHELL_KEY, self.PLACEHOLDER_FILE_KEY
+        seen = []
+        for path in (Path("handoff.env"), Path("secrets/local.env")):
+            with self.subTest(env_path=path):
+                MODULE.RESULTS.clear()
+                MODULE.check_keys(
+                    {"TRAIGENT_API_KEY": shell},
+                    {"TRAIGENT_API_KEY": dotenv},
+                    {"TRAIGENT_API_KEY": shell},
+                    path,
+                )
+                detail = self._record("env-shadowed-key").detail
+                self.assertIn(f"in {path}", detail)
+                self.assertIn(f"delete the {path} lines", detail)
+                self.assertNotIn(".env lines", detail.replace(f"{path} lines", ""))
+                seen.append(detail)
+        self.assertNotEqual(*seen, "the path is not reaching the sentence")
+        # The PASS arm names it too: "nothing disagreed" is a claim about one
+        # file, and a reader who ran with the wrong `--env` needs to see which.
+        MODULE.RESULTS.clear()
+        MODULE.check_keys({}, {}, {}, Path("secrets/local.env"))
+        self.assertIn("secrets/local.env", self._record("env-shadowed-key").detail)
 
     def test_the_unset_remedy_names_every_shadowed_variable(self) -> None:
         """A customer runs the printed command verbatim; that is the point.
@@ -4628,6 +4688,7 @@ class AShadowedCredentialIsNamedTests(unittest.TestCase):
             {name: pair[0] for name, pair in shadowed.items()},
             {name: pair[1] for name, pair in shadowed.items()},
             {name: pair[0] for name, pair in shadowed.items()},
+            ENV_PATH,
         )
         record = self._record("env-shadowed-key")
         for name in shadowed:
@@ -6585,6 +6646,7 @@ class OneRecordPerCheckTests(unittest.TestCase):
             },
             {},
             {},
+            ENV_PATH,
         )
         records = [r for r in MODULE.RESULTS if r.check == "provider-credentials"]
         self.assertEqual(len(records), 1)
@@ -6595,7 +6657,7 @@ class OneRecordPerCheckTests(unittest.TestCase):
         self.assertIn("AWS credential chain", records[0].detail)
         # And with nothing else present, the absent-names warning carries it.
         MODULE.RESULTS.clear()
-        MODULE.check_keys({"AWS_REGION": "eu-west-1"}, {}, {})
+        MODULE.check_keys({"AWS_REGION": "eu-west-1"}, {}, {}, ENV_PATH)
         records = [r for r in MODULE.RESULTS if r.check == "provider-credentials"]
         self.assertEqual(len(records), 1)
         self.assertEqual(records[0].status, MODULE.WARN)

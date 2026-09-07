@@ -2015,33 +2015,69 @@ sys.modules[_PREFLIGHT_SPEC.name] = PREFLIGHT
 _PREFLIGHT_SPEC.loader.exec_module(PREFLIGHT)
 
 
-def always_emitted_preflight_checks() -> frozenset[str]:
-    """The checks `preflight.py` emits for a handoff file it could read.
+def _preflight_checks_in(folder: Path, *arguments: str) -> frozenset[str]:
+    """The check names one real `preflight.py --json` run emits.
 
-    Executed rather than read off the `emit(` sites, because reading them is
-    how `env-file` came to be named in guidance as the record that confirms
-    which file was used: it has three emit sites and all three are failures -
-    a missing path, an unparseable line, a bad variable name - so on the runs
-    the guidance is written for there is no such line at all. `env-source` is
-    emitted unconditionally and names what was read. The difference is
-    invisible in the source and obvious in the output, so this asks the
-    output.
+    A subprocess, and a deliberately empty environment. Two reasons, both
+    executed rather than assumed. Calling `read_env` and `check_keys` in
+    process covered four of the nine records a run actually prints, so a
+    sentence naming `env-permissions` - true, and emitted every time - was
+    refused as if it named a failure-only record. And both functions read
+    `os.environ`, so whatever the machine running the suite exports joins the
+    result: an `OPENROUTER_API_KEY` that does not start with `sk-or-` puts the
+    failure-only `openrouter-key` into the set, and naming it in guidance
+    would pass here and be wrong everywhere else.
+    """
+    completed = subprocess.run(
+        [sys.executable, str(_PREFLIGHT), "--json", *arguments],
+        cwd=folder,
+        capture_output=True,
+        text=True,
+        env={"PATH": os.environ.get("PATH", "")},
+        check=False,
+    )
+    payload = json.loads(completed.stdout)
+    records = payload["results"] if isinstance(payload, dict) else payload
+    return frozenset(record["check"] for record in records)
+
+
+def preflight_record_names() -> tuple[frozenset[str], frozenset[str]]:
+    """Every check name a run can print, and the subset a good run prints.
+
+    The pair is what lets guidance be judged instead of pinned: a name in the
+    first set is a preflight record, and a name in the first but not the
+    second is one a customer only ever sees when something went wrong. Telling
+    a reader to confirm such a line is telling them to read something that is
+    not there, which is what `env-file` was for five rounds.
+
+    Both halves are executed. A file the run can read gives the success set; a
+    path that does not exist adds the records only failure produces. The
+    universe is deliberately not "every `emit(` in the module": reading the
+    call sites is the habit that produced the defect.
     """
     with tempfile.TemporaryDirectory() as folder:
-        handoff = Path(folder) / "handoff.env"
+        root = Path(folder)
+        handoff = root / "handoff.env"
         handoff.write_text("TRAIGENT_API_KEY=uk_always_emitted_probe_placeholder\n")
-        before = list(PREFLIGHT.RESULTS)
-        PREFLIGHT.RESULTS.clear()
-        try:
-            effective, file_values, process_values = PREFLIGHT.read_env(handoff)
-            PREFLIGHT.check_keys(effective, file_values, process_values)
-            return frozenset(item.check for item in PREFLIGHT.RESULTS)
-        finally:
-            PREFLIGHT.RESULTS.clear()
-            PREFLIGHT.RESULTS.extend(before)
+        handoff.chmod(0o600)
+        (root / "agent.py").write_text(
+            "def run(question: str) -> str:\n    return question\n"
+        )
+        good = _preflight_checks_in(root, "--env", "handoff.env")
+        bad = _preflight_checks_in(root, "--env", "absent.env")
+    return frozenset(good | bad), frozenset(good)
 
 
-ALWAYS_EMITTED_PREFLIGHT_CHECKS = always_emitted_preflight_checks()
+PREFLIGHT_RECORD_NAMES, ALWAYS_EMITTED_PREFLIGHT_CHECKS = preflight_record_names()
+
+#: A backticked token in guidance shaped like a preflight check name.
+#:
+#: Hyphenated lowercase, which `env-source`, `env-shadowed-key`, `env-file`
+#: and `provider-credentials` are and which `preflight.py --env <handoff
+#: file>`, `override=True` and `process environment only` are not. Membership
+#: in `PREFLIGHT_RECORD_NAMES` decides whether a match is a record at all, so
+#: this pattern only has to be loose enough to catch every candidate.
+GUIDANCE_RECORD_PATTERN = re.compile(r"`([a-z]+(?:-[a-z]+)+)`")
 
 
 def quoted_prose(path: Path) -> str:
@@ -4753,17 +4789,45 @@ class SkillPackageTests(unittest.TestCase):
                 diagnosis = document_states(flat, phrase)
                 self.assertIsNone(diagnosis, diagnosis)
         # Every record this paragraph names has to be one preflight emits on a
-        # run that succeeded, which is the class of error the phrase above was.
-        for named in ("env-shadowed-key", "env-source"):
-            with self.subTest(emitted_on_success=named):
-                self.assertIn(named, flat)
-                self.assertIn(named, ALWAYS_EMITTED_PREFLIGHT_CHECKS)
+        # run that succeeded - and the names are read OUT OF the paragraph,
+        # not listed here. A list would only have said "these two are always
+        # emitted"; the property wanted is "everything this text sends a
+        # reader to exists when they look". The previous version listed them,
+        # so ADDING a sentence naming a failure-only record passed untouched,
+        # and adding a sentence is how all five earlier defects arrived.
+        named = {
+            token
+            for token in GUIDANCE_RECORD_PATTERN.findall(flat)
+            if token in PREFLIGHT_RECORD_NAMES
+        }
+        self.assertTrue(
+            named,
+            "the paragraph names no preflight record at all, so it routes "
+            "nowhere - or the token pattern stopped matching what it names",
+        )
+        for record in sorted(named):
+            with self.subTest(emitted_on_success=record):
+                self.assertIn(
+                    record,
+                    ALWAYS_EMITTED_PREFLIGHT_CHECKS,
+                    f"`{record}` is a preflight record that only a failed run "
+                    "prints, so a reader told to look at it on the run this "
+                    "paragraph is written for finds nothing there",
+                )
+        # And the two the routing depends on are present, so the check above
+        # cannot be satisfied by a paragraph that names no record and by the
+        # phrases alone.
+        for required in ("env-shadowed-key", "env-source"):
+            self.assertIn(required, named)
         # The half that cannot be reworded past. Anything the record decides
         # is the record's to say, and every name here is read from the module.
+        rederived = (
+            "the paragraph is re-deriving something the record publishes; "
+            "route to it instead - that re-derivation is what four review "
+            "rounds each found wrong in a new way"
+        )
         for token in (
             *PREFLIGHT.SHADOW_SCANNED_ENV_NAMES,
-            PREFLIGHT.WARN,
-            PREFLIGHT.PASS,
             "env -u",
             "override=true",
             "sha256",
@@ -4777,9 +4841,19 @@ class SkillPackageTests(unittest.TestCase):
                 # than satisfying it.
                 self.assertIsNone(
                     re.search(rf"\b{re.escape(token.casefold())}s?\b", flat),
-                    "the paragraph is re-deriving something the record "
-                    "publishes; route to it instead - that re-derivation is "
-                    "what four review rounds each found wrong in a new way",
+                    rederived,
+                )
+        for status in (PREFLIGHT.WARN, PREFLIGHT.PASS):
+            with self.subTest(restates=status):
+                # Case-sensitively, against the paragraph rather than the
+                # casefolded flattening, because these two are printed in
+                # capitals. Lowercased they are ordinary verbs: "warns when
+                # something disagrees" is prose about the check, not a branch
+                # keyed on its verdict, and refusing it taught routing around
+                # the gate rather than satisfying it.
+                self.assertIsNone(
+                    re.search(rf"\b{re.escape(status)}\b", paragraph),
+                    rederived,
                 )
         self.addCleanup(PREFLIGHT.RESULTS.clear)
         shell = "uk_shadow_test_shell_placeholder"
@@ -4791,7 +4865,12 @@ class SkillPackageTests(unittest.TestCase):
             """`preflight.py` as the paragraph has the assistant re-run it."""
             PREFLIGHT.RESULTS.clear()
             merged = {**file_values, **process_values}
-            PREFLIGHT.check_keys(merged, file_values, process_values)
+            # A path that is not `.env`: this record's remedy edits the file
+            # it compared, and the guidance sends the reader to the handoff
+            # file, which need not be that name.
+            PREFLIGHT.check_keys(
+                merged, file_values, process_values, Path("handoff.env")
+            )
             return next(
                 item for item in PREFLIGHT.RESULTS if item.check == "env-shadowed-key"
             )

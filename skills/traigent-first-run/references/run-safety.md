@@ -200,7 +200,7 @@ grant portal access, so a perfectly valid key is still refused once the period i
 its data, and its keys all survive that expiry; runs resume when the user buys a plan on the same
 account.
 
-That is a second key-shaped failure whose remedy is the opposite of the read-only one below. If a
+That is another key-shaped failure whose remedy is the opposite of the read-only one below. If a
 connected run is refused for account or plan reasons rather than authentication, stop and report it
 with the refusal the service actually returned. Never re-register, never create another key, and
 never switch to a different email address to collect a second access period - none of those restore
