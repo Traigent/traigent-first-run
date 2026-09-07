@@ -2070,14 +2070,44 @@ def preflight_record_names() -> tuple[frozenset[str], frozenset[str]]:
 
 PREFLIGHT_RECORD_NAMES, ALWAYS_EMITTED_PREFLIGHT_CHECKS = preflight_record_names()
 
-#: A backticked token in guidance shaped like a preflight check name.
-#:
-#: Hyphenated lowercase, which `env-source`, `env-shadowed-key`, `env-file`
-#: and `provider-credentials` are and which `preflight.py --env <handoff
-#: file>`, `override=True` and `process environment only` are not. Membership
-#: in `PREFLIGHT_RECORD_NAMES` decides whether a match is a record at all, so
-#: this pattern only has to be loose enough to catch every candidate.
-GUIDANCE_RECORD_PATTERN = re.compile(r"`([a-z]+(?:-[a-z]+)+)`")
+
+def preflight_records_named_in(text: str) -> frozenset[str]:
+    r"""Every preflight record `text` names, in whatever notation it is written.
+
+    Membership in `PREFLIGHT_RECORD_NAMES` is what decides whether a word is a
+    record, so membership does the finding: each name in that set is searched
+    for directly, casefolded. There is no shape to be loose enough about, which
+    is the whole point. The previous version matched ``r"`([a-z]+(?:-[a-z]+)+)`"``
+    under a comment saying it "only has to be loose enough to catch every
+    candidate" - and it was not. A review executed five escapes, each naming a
+    failure-only record and each passing green: the name unbackticked in prose,
+    in `*emphasis*`, in `"quotes"`, inside a longer code span, and with
+    punctuation inside the span. The last of those is the shape `SKILL.md`
+    already writes today (`` `sdk-version: PASS` ``), so the guard was blind to
+    the one alternative form this repository actually uses. A comment asserting
+    a pattern is complete is a habit, not a check: nothing failed when it
+    stopped being true, and the next author read it as a guarantee.
+
+    Deriving the search from the deciding set deletes the claim rather than
+    documenting around it. A name in the set is found however it is written; a
+    token outside it was never a record, so `preflight.py`, `override=True` and
+    `process environment only` stay out by construction rather than by a filter
+    applied after a shape test.
+
+    Anchored on `[0-9a-z-]` rather than on `\b`, because `-` is not a word
+    character and `\benv-file\b` therefore matches inside `my-env-file-name`; a
+    longer hyphenated word that merely contains a record name is a different
+    word. What that leaves out, stated rather than claimed away: a name spelled
+    with different punctuation between its parts - `env_file`, `env file` - is
+    not seen. Neither is a form this repository writes, and neither would be a
+    reference a reader could follow to a record.
+    """
+    flat = text.casefold()
+    return frozenset(
+        name
+        for name in PREFLIGHT_RECORD_NAMES
+        if re.search(rf"(?<![0-9a-z-]){re.escape(name)}(?![0-9a-z-])", flat)
+    )
 
 
 def quoted_prose(path: Path) -> str:
@@ -4755,6 +4785,13 @@ class SkillPackageTests(unittest.TestCase):
         cannot be reworded past this check the way three pinned sentences were.
         The other half asserts the record still carries what the paragraph
         stopped saying, in the reproduction #437 was filed about.
+
+        The two halves are read at different scopes, on purpose. Routing and
+        non-restatement are properties of the paragraph, so they are read from
+        it. Which records may be named is a property of the whole section, so
+        it is read from the section: `## Connected-run readiness` is written
+        for the run that connects, and a reader sent to a failure-only record
+        finds nothing there whichever paragraph of it sent them.
         """
         text = RUN_SAFETY.read_text()
         section = text.split("## Connected-run readiness", 1)[1].split("\n## ", 1)[0]
@@ -4788,22 +4825,37 @@ class SkillPackageTests(unittest.TestCase):
             with self.subTest(routes=phrase):
                 diagnosis = document_states(flat, phrase)
                 self.assertIsNone(diagnosis, diagnosis)
-        # Every record this paragraph names has to be one preflight emits on a
-        # run that succeeded - and the names are read OUT OF the paragraph,
-        # not listed here. A list would only have said "these two are always
-        # emitted"; the property wanted is "everything this text sends a
-        # reader to exists when they look". The previous version listed them,
-        # so ADDING a sentence naming a failure-only record passed untouched,
-        # and adding a sentence is how all five earlier defects arrived.
-        named = {
-            token
-            for token in GUIDANCE_RECORD_PATTERN.findall(flat)
-            if token in PREFLIGHT_RECORD_NAMES
-        }
+        # Every record this text names has to be one preflight emits on a run
+        # that succeeded - and the names are read OUT OF the text, not listed
+        # here. A list would only have said "these two are always emitted";
+        # the property wanted is "everything this text sends a reader to
+        # exists when they look". The version that listed them let ADDING a
+        # sentence naming a failure-only record pass untouched, and adding a
+        # sentence is how all five earlier defects arrived.
+        #
+        # Read over the whole SECTION, not over the selected paragraph. Scoped
+        # to the paragraph, the same motion one blank line over - adding a
+        # PARAGRAPH to this section naming a failure-only record - passed
+        # green, which is that defect displaced rather than closed. The
+        # paragraph selection stays for the routing phrases above, which
+        # genuinely are a property of that paragraph; where a record name may
+        # appear is a property of the document the reader is in.
+        #
+        # The section is the widest scope whose premise actually holds:
+        # `## Connected-run readiness` is written for the run that connects,
+        # so a record only a failed run prints is wrong anywhere in it. The
+        # whole document is not - `## Recovery` is written for the failed run,
+        # where naming `env-file` is the correct thing to do. Measured on this
+        # tree the document-wide scope passes too, but it would pass by
+        # accident, and the first correct Recovery sentence naming a
+        # failure-only record would red and teach the next author to delete
+        # this check rather than to fix the guidance.
+        named = preflight_records_named_in(section)
+        routed = preflight_records_named_in(paragraph)
         self.assertTrue(
-            named,
+            routed,
             "the paragraph names no preflight record at all, so it routes "
-            "nowhere - or the token pattern stopped matching what it names",
+            "nowhere - or the names stopped being read out of it",
         )
         for record in sorted(named):
             with self.subTest(emitted_on_success=record):
@@ -4812,13 +4864,13 @@ class SkillPackageTests(unittest.TestCase):
                     ALWAYS_EMITTED_PREFLIGHT_CHECKS,
                     f"`{record}` is a preflight record that only a failed run "
                     "prints, so a reader told to look at it on the run this "
-                    "paragraph is written for finds nothing there",
+                    "section is written for finds nothing there",
                 )
-        # And the two the routing depends on are present, so the check above
-        # cannot be satisfied by a paragraph that names no record and by the
-        # phrases alone.
+        # And the two the routing depends on are present in the paragraph
+        # itself, so the check above cannot be satisfied by a section that
+        # names no record and by the phrases alone.
         for required in ("env-shadowed-key", "env-source"):
-            self.assertIn(required, named)
+            self.assertIn(required, routed)
         # The half that cannot be reworded past. Anything the record decides
         # is the record's to say, and every name here is read from the module.
         rederived = (
