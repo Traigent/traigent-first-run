@@ -5703,7 +5703,7 @@ class SkillPackageTests(unittest.TestCase):
         )[0]
         for phrase in (
             # What the card does, in the words the card uses.
-            "the calibration check earns nothing and the probe spread is never measured",
+            "the evaluator check is not made, so it earns nothing",
             "`evaluator-calibration-refused`",
             "limits the readiness claim to 45",
             # That whether the check is CHARGED depends on the walk, which is
@@ -5721,7 +5721,10 @@ class SkillPackageTests(unittest.TestCase):
             # say so lives in `SKILL.md`'s cap-routing paragraph and may not
             # be restated here; what belongs here is the fact behind it.
             "none of it follows from anything their evaluator did",
-            "opens their database",
+            # The REASON is not restated here: this document argues the
+            # unbounded target four paragraphs above, and a disclosure that
+            # re-explains it is a second home inside one file.
+            "the reason is the unbounded target above",
             # And that the route out is theirs, pointed at rather than
             # restated: the card prints it, and a reference that repeats a
             # sentence the card already carries is a second home for it.

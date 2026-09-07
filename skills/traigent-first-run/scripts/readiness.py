@@ -2742,8 +2742,8 @@ def task_fit_declared_evidence(
 # has to reason about.
 CALIBRATION_REFUSAL_CORE: dict[tuple[bool, bool, bool], str] = {
     (False, True, True): (
-        "no points are deducted for it - this card may not read a calibration "
-        "this guide does not permit"
+        "no points are deducted for it - this card may not read an evaluator "
+        "check this guide does not permit"
     ),
     (False, False, True): (
         "no points are deducted for it - this run was not the one to make "
@@ -7043,14 +7043,13 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
                 # options refuse each other, and reachable by a direct caller,
                 # which is the shape this scorer exists to survive.
                 evidence = (
-                    "a calibration was taken for an evaluator this run proved "
+                    "the evaluator check was run on a file this run proved "
                     "reaches a code or SQL engine, which is the measurement "
                     "the evaluator-execution scope gate refuses, so it earns "
                     "no credit here"
                     if facts.executes_candidate is True
-                    else "a calibration was taken for an evaluator this run "
-                    "was told the scope gate refuses, so it earns no credit "
-                    "here"
+                    else "the evaluator check was run on a file this run was "
+                    "told the scope gate refuses, so it earns no credit here"
                 )
             else:
                 # "...and the weight stays because the evidence is absent
@@ -7499,18 +7498,18 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
             # check is one they cannot usefully disagree with.
             witness = f" ({facts.execution_witness})" if facts.execution_witness else ""
             body = (
-                "a calibration was taken for it that this guide's evaluator-"
-                f"execution scope gate does not permit{witness}, so this card "
-                "cannot read that result. This guide does not accept a "
-                "calibration that opens your database, which is why it will "
-                "not read that one."
+                "the evaluator check was run on it, which this guide's "
+                f"evaluator-execution scope gate does not permit{witness}, so "
+                "this card cannot read that result. This guide does not "
+                "accept a check that opens your database, which is why it "
+                "will not read that one."
             )
         else:
             body = (
-                "this run did not calibrate it because running it here is "
-                "outside the scope this guide permits. This run did not "
-                "execute your evaluator: doing so opens your database from "
-                "inside this guide, and it will not reach into it."
+                "this run did not run the evaluator check on it, because running it "
+                "here is outside the scope this guide permits. This run did "
+                "not execute your evaluator: doing so opens your database "
+                "from inside this guide, and it will not reach into it."
             )
         caps.append(
             Cap(

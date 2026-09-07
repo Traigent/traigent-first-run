@@ -328,15 +328,13 @@ containment design and review above is still the whole of the route, and a proje
 runs the candidate's answer stops here with its calibration evidence uncollected.
 
 That customer's card is a consequence of this decision rather than of their project. The evaluator
-is not calibrated, so the calibration check earns nothing and the probe spread is never measured,
-and `readiness.py` raises `evaluator-calibration-refused`, which limits the readiness claim to 45.
-Whether the unmade check is also CHARGED for depends on what preflight's walk found, and the card
-says which case a run is in and what would change it: a walk that established the engine is not
-charged, and a run resting on the declaration alone is, because finding no engine settles nothing
-by the paragraph above and a declaration may bound a claim and may not lift a charge. None of it
-follows from anything their evaluator did - this guide declines to run it because doing so opens
-their database from inside a run that will not reach into it - and the route out is the customer's
-own, stated on the card.
+check is not made, so it earns nothing and the probe spread is never measured, and `readiness.py`
+raises `evaluator-calibration-refused`, which limits the readiness claim to 45. Whether the unmade
+check is also CHARGED depends on what preflight's walk found, and the card says which case a run is
+in: a walk that established the engine is not charged, and a run resting on the declaration alone
+is, because finding no engine settles nothing by the paragraph above. None of it follows from
+anything their evaluator did: the reason is the unbounded target above. The route out is the
+customer's own, stated on the card.
 
 ### Deterministic calibration and mock plumbing
 
@@ -349,13 +347,12 @@ which for an agent file is commonly a provider client. A non-executing evaluator
 declared local dependency waits until that dependency is installed, and so does a transform whose
 module does - the flag waits with it rather than pulling an install into this stage. That deferred
 calibration is outside these three words and SKILL.md section 5 step 5 runs it: its path carries
-the installed dependency by construction, so what binds it there is the inspection that declared
-the dependency, not a standard library it no longer has. An execution evaluator has already ended
-this guide at the scope gate above. Run either before creating `.env` or requesting a provider key.
-A generic outside-review wait is not a gate; pause only when one unresolved product-grading
-ambiguity would materially change correctness or ranking. Do not execute an LLM judge or an
-uncertain or external evaluator without explicit approval in the stage where it
-runs, covering recipients, data, calls, runtime, and spend.
+the installed dependency by construction, so the inspection that declared it is what binds it
+there. An execution evaluator has already ended this guide at the scope gate above. Run either
+before creating `.env` or requesting a provider key. A generic outside-review wait is not a gate;
+pause only when one unresolved product-grading ambiguity would materially change correctness or
+ranking. Do not execute an LLM judge or an uncertain or external evaluator without explicit
+approval in the stage where it runs, covering recipients, data, calls, runtime, and spend.
 
 A Traigent mock run is a separate plumbing check:
 

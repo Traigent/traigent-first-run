@@ -12974,16 +12974,16 @@ class TheWitnessDecidesTheScopeGateNotTheDeclarationTests(unittest.TestCase):
         )
         self.assertIn(self.WITNESS, taken_cap.reason)
         self.assertIn("does not permit", taken_cap.reason)
-        self.assertIn("a calibration was taken", taken_cap.reason)
+        self.assertIn("the evaluator check was run", taken_cap.reason)
         self.assertIn(
-            "a calibration was taken", self._calibration_subscore(taken).evidence
+            "the evaluator check was run", self._calibration_subscore(taken).evidence
         )
 
         never_cap = next(
             c for c in never.caps if c.condition == "evaluator-calibration-refused"
         )
-        self.assertIn("did not calibrate it", never_cap.reason)
-        self.assertNotIn("a calibration was taken", never_cap.reason)
+        self.assertIn("did not run the evaluator check on it", never_cap.reason)
+        self.assertNotIn("the evaluator check was run", never_cap.reason)
         self.assertIn("never asked", self._calibration_subscore(never).evidence)
 
     def test_the_ceiling_the_line_points_at_is_on_the_card_with_no_method(
@@ -13079,8 +13079,8 @@ class TheWitnessDecidesTheScopeGateNotTheDeclarationTests(unittest.TestCase):
         # written beside.
         self.assertTrue(
             evidence.endswith(
-                "no points are deducted for it - this card may not read a "
-                "calibration this guide does not permit"
+                "no points are deducted for it - this card may not read an "
+                "evaluator check this guide does not permit"
             )
         )
         self.assertNotIn("was not the one to make that measurement", evidence)
@@ -13183,7 +13183,7 @@ class TheWitnessDecidesTheScopeGateNotTheDeclarationTests(unittest.TestCase):
             if c.condition == "evaluator-calibration-refused"
         ).reason
         self.assertNotIn("did not execute your evaluator", taken)
-        self.assertIn("does not accept a calibration that opens your database", taken)
+        self.assertIn("does not accept a check that opens your database", taken)
         for shared in (
             "not a judgement of your evaluator",
             "You can establish that yourself",
@@ -13349,9 +13349,10 @@ class TheWitnessDecidesTheScopeGateNotTheDeclarationTests(unittest.TestCase):
         """
         happened = (
             "a calibration was taken",
+            "the evaluator check was run",
             "calibration ran",
             "calibration reported",
-            "may not read a calibration",
+            "may not read an evaluator check",
             # The credited line, from the states in the product where nothing
             # is refused: they are swept too, and this property is theirs.
             "calibration case(s)",
@@ -13579,7 +13580,7 @@ class TheWitnessDecidesTheScopeGateNotTheDeclarationTests(unittest.TestCase):
                         self.assertNotIn(denial, clause)
                 else:
                     for assertion in (
-                        "may not read a calibration",
+                        "may not read an evaluator check",
                         "that calibration",
                         "a calibration was taken",
                     ):
