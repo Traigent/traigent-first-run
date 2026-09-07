@@ -24,7 +24,7 @@ Select the lowest-complexity method that measures the real task:
 | Sets or unordered collections | Order-insensitive set comparison |
 | Code or SQL | Composite (`--evaluator-method composite`): a parser gate, then comparison over canonical form - a markdown code fence, aliases, case and spacing resolved before matching |
 | A SQL SELECT statement | Structural comparison (`--evaluator-method sql-structure`): copy `assets/sql_structure.py` beside the evaluator, then `from sql_structure import structural_match` and `return structural_match(output, expected)` |
-| Tool/action workflow | Final-state or side-effect check in an isolated environment |
+| Tool/action workflow | Final-state or side-effect check (`--evaluator-method final-state`) in an isolated environment |
 | Retrieval/grounded answer | Citation/grounding checks plus semantic correctness |
 | Summary, explanation, writing, story | Rubric-based LLM judge, optionally preceded by deterministic gates |
 
@@ -69,7 +69,7 @@ kind; never infer it only from a filename, language, or benchmark family. If unr
 `calibrate_evaluator.py` takes that same resolved value under a narrower rule, stated here rather
 than beside it so one paragraph holds both destinations. It reads a task kind for one purpose - the
 seam probes below, which send a markdown code fence - so it is passed `--task-kind` on `code` and
-`code-sql` and given none on any of the other seven kinds. A run that resolves `numeric` therefore
+`code-sql` and given none on any of the other eight kinds. A run that resolves `numeric` therefore
 passes the flag to one script and not to the other, and both are correct.
 
 When building an evaluator:

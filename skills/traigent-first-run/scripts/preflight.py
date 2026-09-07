@@ -373,6 +373,43 @@ REFERENCE_FREE_METHODS = {
     "llm-judge-pairwise",
     "llm-judge-rubric",
 }
+# Every method `--evaluator-method` accepts, which is `readiness.py`'s profile
+# table read from here.
+#
+# The guide passes one run-scoped value to both scripts, and until now only one
+# of them checked it. A free string made a typo silent rather than refused:
+# `llm-judge-rubrik` is not in the set above, so the dataset check quietly
+# demanded expected outputs for a reference-free run, and the customer met a
+# refusal about their data rather than about their spelling. The same word then
+# exited 2 at the scorer, which is where the disagreement was noticed
+# (traigent-first-run#449).
+#
+# Repeated here rather than imported, the way `TASK_KINDS` and
+# `REFERENCE_FREE_METHODS` are: these scripts are installed as standalone
+# files and neither may import the other. `tests/test_skill_package.py` holds
+# this tuple equal to the scorer's profile table, so a method added to one and
+# not the other fails in the author's run rather than in a customer's.
+#
+# Ordered, because argparse prints choices in order in its own refusal, and two
+# scripts printing one vocabulary in two orders is the same drift one step less
+# visible.
+EVALUATOR_METHODS = (
+    "composite",
+    "embedding",
+    "exact",
+    "execution",
+    "final-state",
+    "fuzzy",
+    "llm-judge-pairwise",
+    "llm-judge-pointwise",
+    "llm-judge-rubric",
+    "normalized-exact",
+    "numeric-tolerance",
+    "routing",
+    "schema",
+    "set-f1",
+    "sql-structure",
+)
 COMMON_OUTCOME_FIELDS = (
     "label",
     "category",
@@ -4725,6 +4762,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--evaluator-method",
+        choices=EVALUATOR_METHODS,
         help=(
             "declared method; pointwise, pairwise, and rubric LLM judges allow "
             "input-only rows, while absent or other values require expected outputs"

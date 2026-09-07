@@ -469,6 +469,7 @@ TASK_KINDS = (
     "routing",
     "short-answer",
     "structured",
+    "tool-workflow",
 )
 
 
