@@ -327,20 +327,16 @@ different proposition, and it is one this guide deliberately does not own. So th
 containment design and review above is still the whole of the route, and a project whose evaluator
 runs the candidate's answer stops here with its calibration evidence uncollected.
 
-That customer's card is a consequence of this decision rather than of their project, in every part
-of it. The evaluator is not calibrated, so the calibration check earns nothing and the probe spread
-is never measured; `readiness.py` raises `evaluator-calibration-refused`, which limits the
-readiness claim to 45. Where preflight's walk is what established the engine, the unmade check is
-not counted against them either - the run that declined to make the measurement does not also
-charge for it - so the evaluation pillar reads what this run could actually establish. Where only
-the flag says so, the charge stands: the walk either read the file and found no engine in it, which
-settles nothing by the paragraph above, or never ran over it at all - and a declaration may bound a
-claim and may not lift a charge. Only the second has a remedy in this run. None of it follows from
-anything their evaluator did: this guide declines to run it because doing so opens their database
-from inside a run that will not reach into it. The route forward is theirs and it is ordinary - run
-that evaluator against their own database, outside this guide, on known-good and known-bad answers,
-and confirm it separates them. What no run can do is claim the evaluator grades correctly until
-some run makes that check, and the ceiling is reporting exactly that.
+That customer's card is a consequence of this decision rather than of their project. The evaluator
+is not calibrated, so the calibration check earns nothing and the probe spread is never measured,
+and `readiness.py` raises `evaluator-calibration-refused`, which limits the readiness claim to 45.
+Whether the unmade check is also CHARGED for depends on what preflight's walk found, and the card
+says which case a run is in and what would change it: a walk that established the engine is not
+charged, and a run resting on the declaration alone is, because finding no engine settles nothing
+by the paragraph above and a declaration may bound a claim and may not lift a charge. None of it
+follows from anything their evaluator did - this guide declines to run it because doing so opens
+their database from inside a run that will not reach into it - and the route out is the customer's
+own, stated on the card.
 
 ### Deterministic calibration and mock plumbing
 

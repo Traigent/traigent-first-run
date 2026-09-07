@@ -1,20 +1,20 @@
-# 0095 - the three words bind every calibration
+# 0100 - the three words bind every calibration
 
-follows: 0094
+follows: 0099
 follows-resident-measured: 106_368
-follows-total-measured: 498_243
+follows-total-measured: 498_278
 follows-document-measured: 136_303
 resident-ceiling: 106_500
 resident-measured: 106_371
-total-ceiling: 498_300
-total-measured: 498_266
+total-ceiling: 498_600
+total-measured: 498_538
 document-ceiling: 137_550
 document-measured: 136_303
 
-Twenty-three bytes over two documents, and neither adds a rule: both correct a sentence that had
+Two hundred and sixty bytes over two documents, and neither adds a rule: both correct a sentence that had
 stopped being true.
 
-Twenty of them are in `references/run-safety.md`. Its deterministic-calibration paragraph opened
+Most of them are in `references/run-safety.md`. Its deterministic-calibration paragraph opened
 "Before environment setup, run only a non-executing evaluator whose complete call path is
 local-only, side-effect-free, and standard-library-only", which reads as a precondition satisfied
 once on the way in. The state that exposes the gap is a calibration that finished and did not pass:
@@ -38,7 +38,7 @@ stage imports" two sentences later the antecedent it lost when "environment setu
 decision is recorded in `CONTRADICTIONS` rather than only in a local assertion, since it was settled
 twice in opposite directions.
 
-The other three are in `SKILL.md`, and they retire a claim this change made false. It said the
+Three are in `SKILL.md`, and they retire a claim this change made false. It said the
 scope-refusal flag "moves no number, because nothing here can check it". The second half was the
 load-bearing one, and `readiness.py` now derives that same state from preflight's engine witness
 with no flag passed at all, so the sentence denied a check the module performs.
@@ -53,8 +53,8 @@ carried the identical false claim, is reworded beside it so the two homes cannot
 twenty of the bytes are paid back three words later, where "records why no in-process route
 replaces the containment review" becomes "replaces it".
 
-No ceiling moves. Both figures rise and stay under the ceilings 0094 left standing, restated here
-unchanged: 106_371 resident and 498_266 total, measured on the tree this entry ships with. That
-leaves 34 bytes of total headroom, which is under the 1_400-byte median raise this ledger records:
-the next branch to write a guidance sentence should expect to raise the ceiling deliberately rather
-than to find room, and should measure the merge rather than its own branch.
+Re-pointed onto 0099 after a rebase; 0094 was the predecessor when this was written and two
+branches had forked off it. TOTAL rises 300 bytes to 498_600 against a measured 498_538. Resident
+and document do not move. Trunk left 22 bytes of TOTAL headroom, so even a correction of this size
+cannot be absorbed - which is the condition 0101 argues about at length and does not pretend to
+fix.

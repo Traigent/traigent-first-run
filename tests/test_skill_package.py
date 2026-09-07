@@ -5706,27 +5706,26 @@ class SkillPackageTests(unittest.TestCase):
             "the calibration check earns nothing and the probe spread is never measured",
             "`evaluator-calibration-refused`",
             "limits the readiness claim to 45",
-            # That the refusal does not also charge for itself.
-            "the unmade check is not counted against them either",
+            # That whether the check is CHARGED depends on the walk, which is
+            # the half a disclosure naming only the free outcome would leave
+            # out. Said in terms of what preflight found, because the earlier
+            # wording - "a declaration about a file this run never read" - was
+            # false of the state `SKILL.md` names as the flag's population:
+            # preflight walks the file and finds no engine, and this document
+            # says twenty lines above that a walk which finds none has still
+            # read the file.
+            "depends on what preflight's walk found",
+            "a walk that established the engine is not charged",
+            "finding no engine settles nothing",
             # That it is not a verdict on their evaluator. The MANDATE to
             # say so lives in `SKILL.md`'s cap-routing paragraph and may not
             # be restated here; what belongs here is the fact behind it.
             "none of it follows from anything their evaluator did",
             "opens their database",
-            # And that the other arm is charged, which is the half of the
-            # outcome the disclosure would otherwise leave out - said in the
-            # two walk states it actually covers. It read "a declaration about
-            # a file this run never read", which is true of one of them and
-            # false of the one `SKILL.md` names as the flag's population:
-            # preflight walks the file and finds no engine, and the same
-            # document says twenty lines above that a walk which finds none
-            # has still read the file.
-            "where only the flag says so, the charge stands",
-            "the walk either read the file and found no engine in it",
-            "or never ran over it at all",
-            # And the route that is theirs to take.
-            "run that evaluator against\ntheir own database".replace("\n", " "),
-            "known-good and known-bad answers",
+            # And that the route out is theirs, pointed at rather than
+            # restated: the card prints it, and a reference that repeats a
+            # sentence the card already carries is a second home for it.
+            "the route out is the customer's own, stated on the card",
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, section)
