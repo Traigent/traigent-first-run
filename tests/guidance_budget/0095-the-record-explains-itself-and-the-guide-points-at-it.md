@@ -6,14 +6,14 @@ follows-total-measured: 498_243
 follows-document-measured: 136_303
 resident-ceiling: 106_500
 resident-measured: 106_368
-total-ceiling: 498_269
-total-measured: 498_212
+total-ceiling: 498_273
+total-measured: 498_216
 document-ceiling: 137_550
 document-measured: 136_303
 
-This lowers the TOTAL ceiling by 31 bytes, which is a prune and not a raise, and it is the only
+This lowers the TOTAL ceiling by 27 bytes, which is a prune and not a raise, and it is the only
 ceiling that moves. Connected-run readiness gains a short instruction while the same reference loses
-two restatements, so the package is 31 bytes smaller than 0094 weighed, and a shrink cannot pass
+two restatements, so the package is 27 bytes smaller than 0094 weighed, and a shrink cannot pass
 under a number taken before it. The ceiling drops by exactly what was freed, leaving the 56 usable
 bytes 0094 left, so no branch measured against the old figure loses room.
 

@@ -1021,11 +1021,19 @@ def check_shadowed_credentials(
     must be non-empty before anything is called shadowed - while python-dotenv
     skips a name that is in `os.environ` at all, including one bound to "" or
     to "   ". An exported-but-empty credential therefore beats the file and
-    this check says nothing about it; the whitespace form is worse, because it
-    is truthy, so it survives a presence test and is presented to the provider
-    to be refused. The comparison below strips both sides for the same reason,
-    which also means a shell value differing from the file only by padding
-    reports clean and is still what gets sent.
+    this check says nothing about it; the whitespace form carries further,
+    because a check that does not strip reads it as a value and sends it. The
+    comparison below strips both sides for the same reason, which also means a
+    shell value differing from the file only by padding reports clean and is
+    still what gets sent.
+
+    The silence is not the whole of it. On both shapes `check_keys` reads the
+    merged environment, where the empty export won, so `traigent-key` reports
+    "not configured yet" over a handoff file that holds a key - and a customer
+    sent here by a 401 is looking at two clean lines and one false one. The
+    obvious next action, entering the key again, rewrites the file the export
+    is already beating. That loop is #426, which is why it is written down
+    here rather than left to be rediscovered.
 
     Not fixed here because the fix is a change to what "present" means, which
     reaches `check_keys`, `check_cost_settings` and the cost-approval flag

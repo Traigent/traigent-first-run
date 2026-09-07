@@ -2015,6 +2015,35 @@ sys.modules[_PREFLIGHT_SPEC.name] = PREFLIGHT
 _PREFLIGHT_SPEC.loader.exec_module(PREFLIGHT)
 
 
+def always_emitted_preflight_checks() -> frozenset[str]:
+    """The checks `preflight.py` emits for a handoff file it could read.
+
+    Executed rather than read off the `emit(` sites, because reading them is
+    how `env-file` came to be named in guidance as the record that confirms
+    which file was used: it has three emit sites and all three are failures -
+    a missing path, an unparseable line, a bad variable name - so on the runs
+    the guidance is written for there is no such line at all. `env-source` is
+    emitted unconditionally and names what was read. The difference is
+    invisible in the source and obvious in the output, so this asks the
+    output.
+    """
+    with tempfile.TemporaryDirectory() as folder:
+        handoff = Path(folder) / "handoff.env"
+        handoff.write_text("TRAIGENT_API_KEY=uk_always_emitted_probe_placeholder\n")
+        before = list(PREFLIGHT.RESULTS)
+        PREFLIGHT.RESULTS.clear()
+        try:
+            effective, file_values, process_values = PREFLIGHT.read_env(handoff)
+            PREFLIGHT.check_keys(effective, file_values, process_values)
+            return frozenset(item.check for item in PREFLIGHT.RESULTS)
+        finally:
+            PREFLIGHT.RESULTS.clear()
+            PREFLIGHT.RESULTS.extend(before)
+
+
+ALWAYS_EMITTED_PREFLIGHT_CHECKS = always_emitted_preflight_checks()
+
+
 def quoted_prose(path: Path) -> str:
     """The whole document, whitespace-normalized, with leading `>` dropped.
 
@@ -4694,7 +4723,16 @@ class SkillPackageTests(unittest.TestCase):
         text = RUN_SAFETY.read_text()
         section = text.split("## Connected-run readiness", 1)[1].split("\n## ", 1)[0]
         paragraph = next(
-            block for block in section.split("\n\n") if "env-shadowed-key" in block
+            (block for block in section.split("\n\n") if "env-shadowed-key" in block),
+            None,
+        )
+        # Diagnosed rather than raised. Deleting the paragraph is the most
+        # likely edit this guards against, and it used to arrive as a bare
+        # StopIteration while every other failure here names itself.
+        self.assertIsNotNone(
+            paragraph,
+            "no paragraph in `## Connected-run readiness` mentions "
+            "env-shadowed-key, so the refusal routes nowhere",
         )
         flat = " ".join(paragraph.casefold().split())
         for phrase in (
@@ -4702,12 +4740,24 @@ class SkillPackageTests(unittest.TestCase):
             "free and makes no call",
             "report what `env-shadowed-key` says",
             "prints its own remedies",
-            "confirm `env-file` names the file you meant",
-            "a path that was never read compared nothing",
+            # `env-source`, not `env-file`: the second is emitted only when the
+            # path is missing or a line will not parse, so on every successful
+            # run there is no such line to confirm - and it is silent for the
+            # shape the guard exists to catch, a path that exists and is the
+            # wrong file. `env-source` is emitted on every run and names what
+            # was actually read. Executed, not read off the emit sites.
+            "read `env-source` first",
+            "another name there is another file's verdict",
         ):
             with self.subTest(routes=phrase):
                 diagnosis = document_states(flat, phrase)
                 self.assertIsNone(diagnosis, diagnosis)
+        # Every record this paragraph names has to be one preflight emits on a
+        # run that succeeded, which is the class of error the phrase above was.
+        for named in ("env-shadowed-key", "env-source"):
+            with self.subTest(emitted_on_success=named):
+                self.assertIn(named, flat)
+                self.assertIn(named, ALWAYS_EMITTED_PREFLIGHT_CHECKS)
         # The half that cannot be reworded past. Anything the record decides
         # is the record's to say, and every name here is read from the module.
         for token in (
@@ -4720,9 +4770,13 @@ class SkillPackageTests(unittest.TestCase):
             "fingerprint",
         ):
             with self.subTest(restates=token):
-                self.assertNotIn(
-                    token.casefold(),
-                    flat,
+                # On word boundaries. As a bare substring this refused
+                # "passed", "passes", "warned" and "warning" - ordinary
+                # English - and accused the author of re-deriving the record
+                # while doing it, which teaches routing around the gate rather
+                # than satisfying it.
+                self.assertIsNone(
+                    re.search(rf"\b{re.escape(token.casefold())}s?\b", flat),
                     "the paragraph is re-deriving something the record "
                     "publishes; route to it instead - that re-derivation is "
                     "what four review rounds each found wrong in a new way",

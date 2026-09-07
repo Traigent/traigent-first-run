@@ -848,9 +848,9 @@ Prove the tracking path before connected spending, with a zero-LLM probe:
 
 When the key does not authenticate, re-run `preflight.py --env <handoff file>` before blaming the
 key - it is free and makes no call - and report what `env-shadowed-key` says: it compares the shell
-against that file, names whatever disagrees, and prints its own remedies. Confirm `env-file` names
-the file you meant before reading either verdict; a clean line from a path that was never read
-compared nothing.
+against that file, names whatever disagrees, and prints its own remedies. Read `env-source` first:
+it names the file compared, or `process environment only` if none was; another name there is
+another file's verdict.
 
 This probe is general readiness, not a workaround for any single validation rule: the installed SDK
 owns the local pre-checks (config-in-space, numeric-type, `example_id` uniqueness) and the loud
