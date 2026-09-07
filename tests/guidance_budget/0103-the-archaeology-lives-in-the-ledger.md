@@ -7,11 +7,14 @@ follows-document-measured: 136_303
 resident-ceiling: 106_500
 resident-measured: 106_386
 total-ceiling: 495_142
-total-measured: 495_138
+total-measured: 495_131
 document-ceiling: 135_492
-document-measured: 134_245
+document-measured: 134_261
 
-Nothing an assistant is told to do changes here. Eleven passages across three references recorded
+One retained instruction was false: the guide told customers to call every primary metric `accuracy`
+because the portal was claimed to read no other quality key. The portal accepts several metric names,
+and the SDK contract is a same-key contract, so both affected references now say to name the metric for
+what it measures and use that key consistently. Eleven passages across three references recorded
 how a rule was arrived at rather than how to obey it: two spend-door designs that lost, the
 exposure that committing money in front of a call closed, the parameter census behind refusing an
 unsizable retry keyword, the fractional counts behind rounding a retry figure up, what the old
@@ -28,9 +31,9 @@ somebody already finished, and what remained in the guide was the second copy. N
 suite reads any of the removed text; each of the three references was read from its first line to
 its last, not as a diff, before a byte came out of it.
 
-**This banks nothing, and that is the point.** Both moved ceilings come down by exactly what the
-deletions freed, 3_158 on the whole corpus and 2_058 on the largest document, so the gap under
-each is the gap 0102 measured and not one byte wider: four bytes of TOTAL, 1_247 on DOCUMENT.
+**This banks nothing, and that is the point.** Both moved ceilings come down by what the completed
+change freed, 3_165 on the whole corpus and 2_042 on the largest document, leaving eleven bytes of
+TOTAL headroom and 1_231 on DOCUMENT.
 A prune that lowered a ceiling by less than it freed would be a raise wearing this entry's
 clothes, weighed by nobody, and a later author would spend a number no reader here approved.
 RESIDENT is untouched by every cut, so its ceiling is restated exactly as 0102 left it and its

@@ -91,8 +91,8 @@ When building an evaluator:
 - Return a normalized score in `[0, 1]` from every metric helper.
 - Fail evaluator/runtime errors distinctly; do not let a crashed harness look like an incorrect
   agent answer.
-- Name the primary objective `accuracy`: the portal reads that one key for quality, and any
-  other name shows there as 0% (measured 2026-09-06).
+- Name the primary objective for the metric it measures; use that same key in the objective,
+  scorer, and result reading.
 - When the scorer reads row metadata, prove the SDK delivers it: the 0.26.0 loader nests an
   explicit `metadata` object one level down, so `metadata["db_id"]` reads `None`. Read both shapes.
 

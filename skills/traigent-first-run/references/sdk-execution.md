@@ -775,9 +775,9 @@ assert set(WIRED_KNOBS) == set(ENHANCED_SPACE), (
     "cannot skip a searched key"
 )
 
-# `accuracy` is the one key the portal reads for quality; any other name shows
-# there as 0% (measured 2026-09-06). The SDK parks its built-in exact match at
-# `exact_match_default` once a wired scorer claims the key.
+# `accuracy` is this exact-match walkthrough's objective. In a customer run,
+# use a meaningful metric name consistently in the objective, metric function,
+# result reading, and frontier; the portal is not an `accuracy`-only display.
 OBJECTIVES = ObjectiveSchema.from_objectives(
     [
         ObjectiveDefinition(name="accuracy", orientation="maximize", weight=1.0),
