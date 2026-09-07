@@ -5701,21 +5701,52 @@ class TheEvaluatorCallPathIsReadOutOfItsOwnTreeTests(unittest.TestCase):
                 self.assertEqual(self.witnesses(source), ())
         # No import at all, so nothing in the file reads `.sql()` as an engine.
         self.assertEqual(self.witnesses("parsed.sql(dialect)\n"), ())
-        # And a renderer named in the file keeps it clean even where an engine
-        # is also present, because the reading is ambiguous there too.
-        for line in (
-            "import sqlglot",
-            "import sqlglot.expressions",
-            "import sqlglot as glot",
-            "from sqlglot import parse_one",
-            "from sqlglot.expressions import Select",
-            "import sqlfluff",
-            "import sqlparse",
-        ):
-            with self.subTest(imported=line):
-                self.assertEqual(
-                    self.witnesses(f"import polars as pl\n{line}\nparsed.sql(d)\n"), ()
-                )
+        # A renderer named in the file does not prove that an arbitrary
+        # `.sql()` receiver is also a renderer when Polars is present. This
+        # one-directional walk deliberately refuses that ambiguous mixed file:
+        # manual containment is safer than executing candidate SQL.
+        self.assertEqual(
+            self.witnesses(
+                "import polars as pl\n"
+                "import sqlglot\n"
+                "parsed = sqlglot.parse_one('select 1')\n"
+                "parsed.sql(d)\n"
+            ),
+            ("calls .sql() (line 4)",),
+        )
+
+    def test_a_renderer_import_does_not_exonerate_a_polars_sql_call(self) -> None:
+        """A mixed evaluator must not execute candidate SQL during calibration.
+
+        A rendering library may normalize an expected query while Polars
+        evaluates the candidate query in the same module. File-level renderer
+        detection used to erase the Polars witness, treating the caller's
+        candidate SQL as safe to execute. Receiver types are unavailable to
+        this static walk, so the SQL-surface import makes the conservative
+        reading mandatory.
+        """
+        self.assertEqual(
+            self.witnesses(
+                "import polars as pl\n" "import sqlglot\n" "frame.sql(output)\n"
+            ),
+            ("calls .sql() (line 3)",),
+        )
+
+    def test_a_renderer_named_receiver_cannot_hide_a_later_polars_receiver(
+        self,
+    ) -> None:
+        """Reassignment must not turn a candidate-SQL path into a false clear."""
+        self.assertEqual(
+            self.witnesses(
+                "import polars as pl\n"
+                "import sqlglot\n"
+                "frame = pl.DataFrame({'value': [1]})\n"
+                "parsed = sqlglot.parse_one('select 1')\n"
+                "parsed = frame\n"
+                "parsed.sql(output)\n"
+            ),
+            ("calls .sql() (line 6)",),
+        )
 
     def test_sql_is_a_witness_where_the_file_shows_an_engine_and_hands_one_over(
         self,
