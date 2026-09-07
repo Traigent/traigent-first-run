@@ -1086,73 +1086,41 @@ class SubScore:
     # False`, so confidence still reports it as unchecked and the card still
     # marks it - what changes is only that it stops being free.
     withheld: bool = False
-    # False means the question does not apply to this agent, rather than that
+    # False means the question does not arise for this agent, rather than that
     # the read failed. It belongs in neither the score nor remediation: there
     # is nothing here to be right or wrong about, so it earns nothing and is
-    # charged nothing, and a card that listed it as a gap would be asking for
-    # work no project has to do.
+    # charged nothing.
     #
-    # IT IS STILL COUNTED AS UNCHECKED. `applicable=False` is reached from one
-    # place only - a build document answering `tools: used=false` - and that
-    # answer is a self-report nothing here refutes: the `used: true` arm raises
-    # on a declared name the selected file never mentions, and the negative arm
-    # has no counterpart, because deciding that a call is a TOOL call needs a
-    # notion of tool-hood this module does not have and does not invent
-    # (traigent-first-run#451). So the run has not established that the
-    # question does not apply; it has been told so. Leaving the check out of
-    # the confidence denominator as well let that telling raise the pillar's
-    # evidence coverage - a declaration nothing can check improving the card -
-    # which is the flattering direction this module refuses everywhere else
-    # (`SubScore.withheld`). Being unable to check a claim and the claim being
-    # inapplicable are different states, and only the second may shrink a
-    # denominator; the first is unchecked, and confidence is where unchecked is
-    # said. `combine` therefore counts every sub-score in `total_weight` and
-    # only the applicable ones in the score.
+    # NOTHING IN THIS REPOSITORY SETS IT FALSE, and that is the state to read
+    # the field in rather than a temporary gap. One arm did - a build document
+    # answering `tools: used=false` - and that arm now keeps its weight and
+    # earns nothing like every other claim this read cannot check
+    # (traigent-first-run#456). Inapplicability has to be ESTABLISHED before it
+    # may shrink a denominator, and no sentence in an assistant-written
+    # document establishes one, so `BuildSignal` carries no `applicable` at all
+    # and this field has no producer left. The reasoning for that reversal, the
+    # objection recorded against it and the residual it leaves live beside the
+    # arm it was taken on - `build_signal_from_entry`'s `tools` branch - rather
+    # than here, because that is where the next author changing it will stand.
     #
-    # SO "IT DROPS OUT OF THE DENOMINATOR" IS NO LONGER A WHOLE SENTENCE about
-    # this flag, and a note elsewhere that says it without saying which
-    # denominator is describing the behaviour this comment replaced. There are
-    # two, they now disagree, and the split is the point: the SCORE renormalises
-    # over the applicable checks, so an inapplicable one is neither charged nor
-    # paid; the CONFIDENCE divides by every check, so an inapplicable one is
-    # still reported as coverage nobody supplied. This is the home of that
-    # distinction - `combine` implements it, `render_card` prints it as the
-    # headline count, and any other statement of it is a copy that can drift.
+    # IT IS KEPT ANYWAY, as the boundary
+    # `test_no_build_answer_takes_itself_out_of_the_denominator` asserts at: a
+    # future mapping that starts declaring inapplicability fails there instead
+    # of quietly renormalizing a pillar. The price is that the three reads of
+    # it - `combine`'s filter and the two in the ranked-gap loop - are dead by
+    # construction today, and each of them says so where it stands, because a
+    # control nobody can trigger reads as a live one.
     #
-    # THE POINTS DENOMINATOR IS DELIBERATELY LEFT ALONE, and the reason is
-    # arithmetic rather than taste. Charging this check - full weight, no
-    # credit, the `withheld` treatment - would make declaring tools pay: a
-    # `used: true` naming one identifier that appears anywhere in the file is
-    # just as unrefuted as `used: false`, and it earns the full weight, so the
-    # honest tool-less agent would be the only one charged. Crediting it pays
-    # for being simpler than the question. Excluding it assigns the pillar's
-    # own mean, which is the same treatment `determined: false` already gets on
-    # every other check: out of the score, into the coverage. That is the
-    # settled answer for a claim this read cannot settle, and this arm now
-    # matches it.
-    #
-    # MATCHING IT INHERITS ITS RESIDUAL, and that is said here rather than left
-    # to be discovered. `determined: false` does not merely tie the honest
-    # negative, it beats it: one agent and one search space, varying a single
-    # build answer, `prompt: present=false` scores 44 at confidence 1.00 and
-    # `prompt: determined=false` scores 47 at 0.94, and the same 2-3 points
-    # appear on all four checks. The four are asked of every run that found an
-    # agent - `agent_build_from_document` refuses a document that answers three
-    # - so that is a check the run WAS asked for, which is the state
-    # `SubScore.withheld` above exists to charge. Charging it is a decision
-    # against #184's floor and not a patch, so it is filed rather than taken
-    # here (traigent-first-run#456). The two arms therefore share the treatment
-    # AND the residual; neither is settled by this comment.
-    #
-    # AND THE UNREFUTED ANSWER IS NOT THE ONLY ONE. The positive arm is refuted
-    # by name presence alone - `derived_source_names` collects identifiers,
-    # attributes, definitions and whole string constants - so a `used: true`
-    # declaring a name that occurs once as a key in an unrelated table is
-    # accepted, earns the full weight, stays measured, and keeps the pillar at
-    # 50/1.00 against 47/0.95 for the honest `used: false`. The gradient this
-    # module leaves therefore runs TOWARD claiming tools, which is the reason
-    # charging the negative arm would make it steeper rather than flatter, and
-    # the reason the arm above is left costing nothing but a coverage line.
+    # IT WOULD STILL BE COUNTED AS UNCHECKED if anything set it. Being unable
+    # to check a claim and the claim not arising are different states, and only
+    # the second may shrink a denominator; the first is unchecked, and
+    # confidence is where unchecked is said. So the two denominators split: the
+    # SCORE renormalises over the applicable checks, so an inapplicable one is
+    # neither charged nor paid; the CONFIDENCE divides by every check, so an
+    # inapplicable one is still reported as coverage nobody supplied. This is
+    # the home of that distinction - `combine` implements it, `render_card`
+    # prints it as the headline count, and any other statement of it is a copy
+    # that can drift.
     applicable: bool = True
 
 
@@ -3441,8 +3409,16 @@ class BuildSignal:
     `measured=False` is the honest answer for a signal a read could not settle,
     and it is not the same as zero. Zero says the agent does not have this;
     unmeasured says this read could not tell. README.md promises the second is
-    reported rather than scored, and `combine` keeps the promise by leaving an
-    unmeasured check out of the pillar and out of its confidence.
+    reported rather than scored, and an unmeasured check is out of this
+    pillar's confidence whatever else happens to it.
+
+    OUT OF THE SCORE ONLY WHILE NOBODY WAS ASKED FOR IT, which is the half that
+    changed. `withheld` below marks an unmeasured check the run WAS asked for
+    and did not supply, and `combine` keeps that one in the score denominator
+    earning nothing - otherwise the gap in the evidence is worth more than the
+    evidence. Both unrefutable `tools`/`determined` arms are withheld, so
+    "leaves the pillar" is no longer true of every unmeasured build check;
+    `combine` is the one place that says what each denominator does with one.
     """
 
     name: str
@@ -3461,11 +3437,12 @@ class BuildSignal:
     #
     # `SubScore.withheld`, carried from the read that decided it rather than
     # re-derived where the sub-score is built. `measured=False` reaches
-    # `build_subscores` from two different places - a check the read could not
-    # settle, and every check on the route that scores no declaration at all -
-    # and only the first keeps its weight. A rule written as "unmeasured build
-    # check" could not tell them apart and would charge the second, which is
-    # the route the customer's own run takes.
+    # `build_subscores` from three different places - a check the read could
+    # not settle, the settled `tools` answer that declares no tools, and every
+    # check on the route that scores no declaration at all - and only the first
+    # two keep their weight. A rule written as "unmeasured build check" could
+    # not tell them apart and would charge the third, which is the route the
+    # customer's own run takes.
     withheld: bool = False
     # Whether ANY source check ran against this claim, as distinct from whether
     # it passed. Two of the four checks can be refuted from the tree - a loop
@@ -3732,6 +3709,13 @@ def hold_band_for_unread_answers(band: str, answers_read: bool) -> tuple[str, bo
 
 def combine(name: str, subscores: Sequence[SubScore]) -> Pillar:
     """Renormalize over measured sub-scores and report the observed fraction."""
+    # DEAD TODAY, and named as dead rather than left reading live: nothing in
+    # this repository constructs a `SubScore` with `applicable=False`, so this
+    # filter copies the list and removes nothing. It is kept because it is the
+    # implementation of the score/confidence split `SubScore.applicable`
+    # describes, and deleting it would delete the only place that split is
+    # executed - but a reader must not take it for a distinction some pillar is
+    # currently drawing.
     applicable = [item for item in subscores if item.applicable]
     measured = [item for item in applicable if item.measured]
     # EVERY sub-score, including the ones that do not apply. Confidence is the
@@ -3740,8 +3724,9 @@ def combine(name: str, subscores: Sequence[SubScore]) -> Pillar:
     # the document's word. Dividing by the applicable weight alone let
     # `tools: used=false` report a better-evidenced pillar than any answer this
     # read can check, which is a declaration improving the card. See
-    # `SubScore.applicable` for why the score's denominator below stays as it
-    # is (traigent-first-run#451).
+    # `SubScore.applicable` for the split between this denominator and the
+    # score's below, and `SubScore.withheld` for what keeps an unmeasured check
+    # in the score's (traigent-first-run#451, #456).
     total_weight = sum(item.maximum for item in subscores)
     measured_weight = sum(item.maximum for item in measured)
     if not measured or measured_weight <= 0:
@@ -8261,6 +8246,13 @@ def collect_gaps(
         # partial credit line carries its own number and is genuinely distinct.
         shared: set[str] = set()
         for sub in pillar.subscores:
+            # DEAD TODAY, like `combine`'s filter and for the same reason:
+            # nothing sets `applicable=False`, so this never skips and the
+            # `other.applicable` conjunct below is always true. Both are kept
+            # as the remediation half of the rule `SubScore.applicable` states
+            # - a question that does not arise is not a gap - and both are
+            # marked so neither reads as a live exclusion somebody is relying
+            # on.
             if not sub.applicable:
                 continue
             if not sub.measured:
@@ -8956,11 +8948,11 @@ def render_card(
         # wiring on an agent declaring no tools is nothing missing, so counting
         # it would report "4 of 5" about a fully measured pillar. That reads
         # the declaration as a fact. `used: false` is a self-report this module
-        # cannot refute (`SubScore.applicable`, traigent-first-run#451), so the
-        # tool wiring of that agent is precisely the check nobody here looked
-        # at, and "4 of 5" is what happened. Left as "5 of 5" it was the
-        # unrefuted declaration, and not the read, telling the customer their
-        # card was fully checked.
+        # cannot refute (`build_signal_from_entry`'s `tools` arm,
+        # traigent-first-run#451), so the tool wiring of that agent is
+        # precisely the check nobody here looked at, and "4 of 5" is what
+        # happened. Left as "5 of 5" it was the unrefuted declaration, and not
+        # the read, telling the customer their card was fully checked.
         #
         # This is the same set `combine` divides confidence by, still said out
         # loud - the two moved together, because a count on the card that
@@ -18325,9 +18317,21 @@ def build_signal_from_entry(
         # does not now: charged, this arm is one of several answers at the same
         # floor - no tools, tools that do not resolve, and a read that could
         # not settle it - and the only uncharged answer is the one making a
-        # claim this module does check, in the one direction it can. The
-        # gradient toward CLAIMING tools is not closed by this and is not
-        # claimed to be; that residual is #451's and is filed separately.
+        # claim this module does check, in the one direction it can.
+        #
+        # AND THE OBJECTION'S RESIDUAL IS WIDER FOR IT, which is the half a
+        # reader is owed rather than left to measure. Charging this arm does
+        # not leave the gradient toward CLAIMING tools alone; it steepens it by
+        # exactly what it charges here. One agent, one search space, varying
+        # only this answer: a `used: true` whose declared names the file
+        # mentions earns the full weight and scores 77 at confidence 1.00,
+        # while the honest `used: false` scored 76 before this change and
+        # scores 72 after it - so the distance an author gains by claiming
+        # tools over admitting there are none goes from 1 point to 5. That is
+        # not closed here and is not closeable one arm at a time: it needs a
+        # decision about what this check does with a self-report it can only
+        # weakly refute, taken across all three arms together, which is #451's
+        # and is filed separately.
         #
         # AND IT REVERSES AN OWNER DECISION, DELIBERATELY. "Having no tools is
         # neither charged nor paid" was settled when the alternative on the
@@ -18760,11 +18764,12 @@ def build_declarations_are_unmeasured(
     # Nothing scores here, so nothing is charged here either. `withheld` exists
     # to stop an absent declaration outscoring a supplied one, and on this
     # route no declaration earns anything for it to outscore - the four checks
-    # all leave the score and the pillar is the search space alone. The
-    # undetermined arm is the only one that arrives carrying `withheld`
-    # (`build_signal_from_entry`), so without this it would be the single build
-    # answer that moved the number on the route every customer run takes, and
-    # in the direction that punishes the honest one.
+    # all leave the score and the pillar is the search space alone. Two arms
+    # arrive carrying `withheld` (`build_signal_from_entry`): the undetermined
+    # check, and the settled `tools` answer that declares no tools. Without
+    # this, those two would be the only build answers that moved the number on
+    # the route every customer run takes, and in the direction that punishes
+    # the honest one.
     return tuple(
         replace(_observed_declaration(signal), withheld=False) for signal in build
     )

@@ -18109,22 +18109,48 @@ class TheAgentPillarReadsTheAgentTests(unittest.TestCase):
     }
 
     def _swept_answers(self, check: str) -> dict[str, tuple[object, object, object]]:
-        """Each shape of one check, scored, with the arms it reached recorded.
+        """Each shape of one check, scored, with what the reader returned kept.
 
-        The arms are captured by wrapping `BuildSignal` and reading the line
-        the construction was reached from, which is what lets the coverage
-        assertion below say "an arm exists that this sweep does not judge"
-        rather than only "every shape written here behaves".
+        Two things are recorded beside the scores, and they judge different
+        failures.
+
+        `_arms_reached` is which `return` in `build_signal_from_entry` the run
+        came out of, taken from the READER's own frame rather than from the
+        frame that happened to construct the object. A `BuildSignal` built in a
+        helper, or by `replace`, still leaves the reader through one of its
+        returns, so an arm spelled any way at all is still counted - which the
+        earlier version, keyed on the source spelling of the call, was not: an
+        arm reached through a one-line helper was invisible to it and therefore
+        never had to appear in the table below.
+
+        `_signals_returned` is what the reader actually handed back, which is
+        where the invariant lives that no construction spelling can dodge: an
+        unmeasured build signal has to carry `withheld`, or it renormalizes out
+        of the pillar and an answer nothing can refute outscores one this read
+        settled.
         """
         answers = {}
         reached: set[int] = set()
+        returned: list[object] = []
         real = MODULE.BuildSignal
+        real_reader = MODULE.build_signal_from_entry
 
         def recording(*args, **kwargs):
-            reached.add(sys._getframe(1).f_lineno)
+            frame = sys._getframe(1)
+            while frame is not None:
+                if frame.f_code.co_name == "build_signal_from_entry":
+                    reached.add(frame.f_lineno)
+                    break
+                frame = frame.f_back
             return real(*args, **kwargs)
 
+        def reading(*args, **kwargs):
+            signal = real_reader(*args, **kwargs)
+            returned.append(signal)
+            return signal
+
         MODULE.BuildSignal = recording
+        MODULE.build_signal_from_entry = reading
         try:
             for label, spec in self.BUILD_ANSWER_SHAPES[check].items():
                 facts = _read(_build_document(**{check: dict(spec)}))
@@ -18138,7 +18164,9 @@ class TheAgentPillarReadsTheAgentTests(unittest.TestCase):
                 answers[label] = (pillar, checks[check], unverified)
         finally:
             MODULE.BuildSignal = real
+            MODULE.build_signal_from_entry = real_reader
         self._arms_reached = reached
+        self._signals_returned = returned
         return answers
 
     def test_no_build_answer_this_read_cannot_refute_outranks_one_it_can(
@@ -18209,15 +18237,58 @@ class TheAgentPillarReadsTheAgentTests(unittest.TestCase):
                         "this read can settle",
                     )
 
+    def test_an_unmeasured_build_answer_always_leaves_the_reader_withheld(
+        self,
+    ) -> None:
+        """The property the arms are actually judged by, asserted on the VALUE.
+
+        An unmeasured build signal that does not carry `withheld` renormalizes
+        out of the pillar, and an answer nothing can refute then outscores one
+        this read settled - the whole defect #456 opens with. This says so of
+        every `BuildSignal` the reader hands back, whatever built it: an inline
+        constructor, a helper, a `replace` of another signal. The coverage
+        guard below reads the source and can therefore be dodged by spelling
+        the construction differently; this one reads what came out, and cannot.
+
+        Deliberately NOT restricted to the two arms that carry `withheld`
+        today. The claim is about the class - unmeasured and asked for - and a
+        third arm inherits it without a line being added here.
+        """
+        for check, _weight in MODULE.AGENT_BUILD_CHECKS:
+            self._swept_answers(check)
+            self.assertTrue(
+                self._signals_returned, f"the {check} sweep read no build entry"
+            )
+            for signal in self._signals_returned:
+                with self.subTest(check=check, signal=signal.name):
+                    if signal.measured:
+                        continue
+                    self.assertTrue(
+                        signal.withheld,
+                        f"build_signal_from_entry returned an unmeasured "
+                        f"{signal.name!r} answer that is not withheld, so it "
+                        "leaves the score denominator and an answer this read "
+                        "cannot refute outscores one it settled",
+                    )
+
     def test_the_sweep_judges_every_answer_shape_the_reader_accepts(self) -> None:
-        """The guard that keeps the inequality above from going stale.
+        """The nudge that keeps the table above from going stale.
 
         A new arm in `build_signal_from_entry` is a new answer shape the
-        document may take, and the property is meant to judge it without a test
-        being written for it. That only holds while the sweep reaches every
-        arm, so the arms are counted from the source and compared with the ones
-        the sweep actually ran through. Adding an arm and not adding a shape
-        fails here, with the arm's own line number.
+        document may take, and the sweep only exercises the shapes written into
+        `BUILD_ANSWER_SHAPES`. So the reader's arms are counted from the source
+        and compared with the ones the sweep actually came out of; adding an
+        arm and not adding a shape fails here, with the arm's own line number,
+        and the fix is to add the shape.
+
+        NOT what judges a future arm - that is the value invariant above, and
+        the sweep inequality it feeds. This is a source read, and a source read
+        can always be out-spelled; the earlier version of it matched
+        `BuildSignal(...)` calls written inline inside the reader, so an arm
+        that returned a helper's result was not counted as an arm at all and
+        needed no shape. Arms are counted as RETURN statements now, and reached
+        arms are taken from the reader's own frame, so the two sides are about
+        the same thing however the object was built.
         """
         source = ast.parse(SCRIPT.read_text(encoding="utf-8"))
         reader = next(
@@ -18227,11 +18298,7 @@ class TheAgentPillarReadsTheAgentTests(unittest.TestCase):
             and node.name == "build_signal_from_entry"
         )
         arms = {
-            node.lineno
-            for node in ast.walk(reader)
-            if isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Name)
-            and node.func.id == "BuildSignal"
+            node.lineno for node in ast.walk(reader) if isinstance(node, ast.Return)
         }
         reached: set[int] = set()
         for check, _weight in MODULE.AGENT_BUILD_CHECKS:
@@ -18258,8 +18325,16 @@ class TheAgentPillarReadsTheAgentTests(unittest.TestCase):
 
         The field is gone from `BuildSignal` rather than merely unused, so this
         asserts at the `SubScore` boundary where a future mapping could still
-        set it. Inapplicability stays a real state for the pillars that derive
-        it; what it may not be is DECLARED.
+        set it.
+
+        NO PILLAR DERIVES IT EITHER, today: `SubScore.applicable` is never
+        False anywhere in this repository, and `combine`'s filter and the two
+        reads in the ranked-gap loop are dead by construction because of it.
+        The field is retained as this assertion's boundary rather than because
+        something currently sets it - so if a mapping ever starts declaring
+        inapplicability, it fails here rather than quietly renormalizing a
+        pillar. Inapplicability may stay a real state; what it may not be is
+        DECLARED by the document under test.
         """
         declared_inapplicable = {
             (check, label)
@@ -18278,9 +18353,10 @@ class TheAgentPillarReadsTheAgentTests(unittest.TestCase):
 
         `build_declarations_are_unmeasured` is the route the customer's own run
         takes: no build declaration is scored there, so none may be charged
-        there either. The undetermined arm is the only shape that carries
-        `withheld` out of the reader, so it is the one that would otherwise
-        move this number - downwards, against the answer this module asks for.
+        there either. Two shapes carry `withheld` out of the reader - the
+        undetermined check and the settled `tools` answer that declares no
+        tools - so those are the ones that would otherwise move this number,
+        downwards, against the answer this module asks for.
 
         Confidence is swept over EVERY shape now, with no exception. It used
         to allow one: the `tools` answer that said the question does not arise
@@ -18523,14 +18599,21 @@ class TheAgentPillarReadsTheAgentTests(unittest.TestCase):
         and the one answer no source can contradict was the only one that
         bought a clean coverage line.
 
-        The score is deliberately NOT the thing pinned equal here. Charging
-        this check - full weight, no credit - would make declaring tools pay,
-        because `used: true` naming an identifier that appears anywhere in the
-        file is exactly as unrefuted and earns the full weight; the honest
-        tool-less agent would then be the only one charged, which is the same
-        defect mirrored. So the arm keeps the treatment this module already
-        gives a claim it cannot settle - out of the score, into the coverage -
-        and that equality is what the last two assertions state.
+        THE SCORE IS PINNED ELSEWHERE, not left unpinned, and this docstring
+        used to say the opposite. It argued that charging the check would make
+        declaring tools pay - `used: true` naming an identifier that appears
+        anywhere in the file is exactly as unrefuted and earns the full weight
+        - so the arm should keep its exclusion from the score and be levelled
+        only in the coverage. That objection was recorded, weighed and set
+        aside once the undetermined arm was charged
+        (traigent-first-run#456): with that one charged and this one free the
+        two answers no source can contradict stopped being worth the same, and
+        the residual it names is the one beside the arm in
+        `build_signal_from_entry`, measured there. The check now keeps its
+        weight and earns nothing, and
+        `test_an_agent_with_no_tools_is_charged_like_every_unchecked_claim` is
+        where that is pinned. What stays here is the CONFIDENCE half, which is
+        #454's and is untouched by the charge.
         """
         variants = self._tool_variants()
         unrefutable, unrefutable_checks = variants["unrefutable-none"]
@@ -20350,9 +20433,13 @@ class TheBuildHalfCitesTheAgentItReadTests(unittest.TestCase):
             rows["tools"].index("tool wiring"), rows["tools"].index(marking)
         )
         self.assertLess(rows["tools"].index(marking), rows["tools"].index(prose))
-        # Nothing was withheld on a check that does not apply, so nothing
-        # claims a withheld measurement - that sentence would read as a
-        # penalty for an agent that simply has no tools.
+        # No MEASUREMENT was held back here, so the sentence that announces one
+        # is absent. The check itself IS withheld now - it keeps its weight and
+        # earns nothing, like every claim this read cannot check - but
+        # "excluded from this score" is `_observed_declaration`'s wording for a
+        # measurement that was taken and then set aside, and there was never a
+        # measurement on this arm to set aside. The clause above already says
+        # the honest thing: the read did not check it.
         self.assertNotIn("excluded from this score", rows["tools"])
         # #368's derived clause is unaffected and still stands beside it, and
         # a full stop separates it from the sentence it is there to be weighed

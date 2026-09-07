@@ -578,8 +578,8 @@ stub answers a question nobody put. **Control flow** is whether the agent ends a
 ends trivially, a loop with a bound can be recorded, and a loop with neither is one input costing an
 unbounded number of calls. **Tools**
 is whether each declared tool can be found. A partly reachable list earns only the reachable share
-of this check. `"used": false` earns no credit for this check; prompt,
-output-contract, control-flow, and config-space checks remain, with dataset/evaluation in separate
+of this check. `"used": false` keeps this check's weight and earns nothing, like every answer this
+read cannot check. Dataset and evaluation are scored in separate
 pillars. Memory/context and provider connectivity are not scored here; run safety handles the latter.
 
 None of the four is a judgment about how good the agent is, and none may become one. Whether a
