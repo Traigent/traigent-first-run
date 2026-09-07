@@ -17693,8 +17693,18 @@ class TheAgentPillarReadsTheAgentTests(unittest.TestCase):
         # is the property that matters: having no tools is not a deduction.
         every_tool, every_checks = self._pillar(proven(_build_document()))
         self.assertAlmostEqual(pillar.score, every_tool.score, delta=3)
-        self.assertEqual(pillar.confidence, 1.0)
-        self.assertEqual(pillar.confidence, every_tool.confidence)
+        # CONFIDENCE IS NO LONGER EQUAL, and this line used to assert that it
+        # was - `pillar.confidence == 1.0`, the same fully-evidenced pillar as
+        # an agent whose two tools were both read and found. That equality was
+        # the defect (traigent-first-run#451): `used: false` is a self-report
+        # nothing in this module refutes, so the pillar it produced was not
+        # fully checked, and saying it was let the one unrefutable answer
+        # report better coverage than every answer this read can check. The
+        # points half of that test still holds above and is unchanged - having
+        # no tools is still neither charged nor paid. What is charged is the
+        # claim to have looked.
+        self.assertLess(pillar.confidence, every_tool.confidence)
+        self.assertGreaterEqual(pillar.confidence, MODULE.MIN_CONFIDENCE_FOR_TOP_BANDS)
         # And a declared tool nothing implements is charged, which is the one
         # thing "wired correctly" can be checked for by reading source.
         broken, broken_checks = self._pillar(
@@ -17720,6 +17730,150 @@ class TheAgentPillarReadsTheAgentTests(unittest.TestCase):
             "a partly unreachable declaration receives only proportional tool credit",
         )
         self.assertIn("not found behind the name", broken_checks["tools"].evidence)
+
+    # Every shape the `tools` check accepts, over one agent and one search
+    # space, so the comparison below is over DECLARATIONS and nothing else.
+    # `used: false` is the one this read cannot refute in either direction: the
+    # `used: true` arm raises on a declared name the file never mentions, and
+    # the negative arm has no counterpart, because telling a tool call from any
+    # other call needs a notion of tool-hood this module does not have. The
+    # honest answers are here at full credit, at half, and at none, because the
+    # inversion this pins is against the WEAK honest answer - a false "no
+    # tools" beating a true "one of my two tools is broken" is the shape that
+    # pays for the wrong declaration (traigent-first-run#451).
+    TOOL_DECLARATIONS = {
+        "unrefutable-none": {
+            "used": False,
+            "evidence": "agent.py: no tool list reaches the call",
+        },
+        "checked-both-resolve": {
+            "used": True,
+            "declared": ["search", "fetch"],
+            "unreachable": [],
+            "evidence": "agent.py:31 TOOLS lists both; both resolve here",
+        },
+        "checked-one-unreachable": {
+            "used": True,
+            "declared": ["search", "fetch"],
+            "unreachable": ["fetch"],
+            "evidence": "agent.py:31 fetch is declared and undefined",
+        },
+        "checked-none-resolve": {
+            "used": True,
+            "declared": ["search", "fetch"],
+            "unreachable": ["search", "fetch"],
+            "evidence": "agent.py:31 neither name resolves",
+        },
+        "undetermined": {
+            "determined": False,
+            "reason": "the tool table is assembled at runtime",
+            "evidence": "agent.py:31 load_tools(url) returns it",
+        },
+    }
+
+    def _tool_variants(self):
+        """One pillar per accepted `tools` answer, keyed by which answer it is."""
+        return {
+            name: self._pillar(
+                MODULE.replace(
+                    MODULE.agent_facts_from_config_space(
+                        {"knobs": {"model": ["fast", "slow"]}, "wired": ["model"]}
+                    ),
+                    build=_read(_build_document(tools=declaration)).build,
+                )
+            )
+            for name, declaration in self.TOOL_DECLARATIONS.items()
+        }
+
+    def test_an_unrefuted_no_tools_answer_may_not_outreport_a_checked_one(
+        self,
+    ) -> None:
+        """The inequality, over declarations, on the arm nothing refutes.
+
+        A `used: false` this read cannot check must not leave the card
+        better-evidenced than an answer it CAN check. It used to: the check
+        left the confidence denominator as well as the score's, so the pillar
+        read as fully observed on the strength of the sentence that excused it,
+        and the one answer no source can contradict was the only one that
+        bought a clean coverage line.
+
+        The score is deliberately NOT the thing pinned equal here. Charging
+        this check - full weight, no credit - would make declaring tools pay,
+        because `used: true` naming an identifier that appears anywhere in the
+        file is exactly as unrefuted and earns the full weight; the honest
+        tool-less agent would then be the only one charged, which is the same
+        defect mirrored. So the arm keeps the treatment this module already
+        gives a claim it cannot settle - out of the score, into the coverage -
+        and that equality is what the last two assertions state.
+        """
+        variants = self._tool_variants()
+        unrefutable, unrefutable_checks = variants["unrefutable-none"]
+        self.assertFalse(unrefutable_checks["tools"].measured)
+        for name in ("checked-both-resolve", "checked-one-unreachable"):
+            with self.subTest(against=name):
+                self.assertLess(
+                    unrefutable.confidence,
+                    variants[name][0].confidence,
+                    "an unrefuted declaration reports a better-checked pillar "
+                    "than an answer this read verified",
+                )
+        # And it is worth exactly what the honest "I could not tell" is worth,
+        # which is the settled treatment for a claim nothing here can settle
+        # (`test_a_check_the_read_could_not_settle_is_not_a_zero`). Two numbers,
+        # because a pillar total can hold while its confidence moves.
+        undetermined, _ = variants["undetermined"]
+        self.assertEqual(unrefutable.score, undetermined.score)
+        self.assertEqual(unrefutable.confidence, undetermined.confidence)
+
+    def test_the_card_counts_the_tools_check_nobody_checked(self) -> None:
+        """The same fact where a customer meets it, and it read the other way.
+
+        The headline count is the customer-visible half of that denominator: on
+        the declaration it excused, the pillar printed no coverage line at all,
+        so a card carrying an unchecked claim looked like a card on which every
+        question was answered.
+        """
+        pillar, _checks = self._tool_variants()["unrefutable-none"]
+        card = MODULE.render_card(
+            MODULE.aggregate(
+                [MODULE.Pillar("dataset", 98, 1.0, ()), pillar],
+                [],
+                (),
+                dict(MODULE.DEFAULT_WEIGHTS),
+            ),
+            palette=MODULE.Palette(),
+            unicode_ok=False,
+        )
+        self.assertIn("4 of 5 checks measured", card)
+
+    def test_no_tools_answer_moves_the_card_the_customer_is_shown(self) -> None:
+        """The route every run actually takes, where the arithmetic must tie.
+
+        `--agent-knobs` sends the whole build read through
+        `build_declarations_are_unmeasured`: none of these four checks is
+        independently verified, so none of them scores. What was left of the
+        `tools` asymmetry there was pure coverage - the excused check raised
+        the pillar's confidence above every card that answered the question -
+        and on this route the declaration must now move no number at all.
+        """
+        seen = {}
+        for name, declaration in self.TOOL_DECLARATIONS.items():
+            facts = MODULE.replace(
+                MODULE.agent_facts_from_config_space(
+                    {"knobs": {"model": ["fast", "slow"]}, "wired": ["model"]}
+                ),
+                build=_read(_build_document(tools=declaration)).build,
+            )
+            facts = MODULE.replace(
+                facts, build=MODULE.build_declarations_are_unmeasured(facts.build)
+            )
+            pillar, _checks = self._pillar(facts)
+            seen[name] = (pillar.score, pillar.confidence)
+        self.assertEqual(
+            len(set(seen.values())),
+            1,
+            f"an unverified tools declaration still moves the pillar: {seen}",
+        )
 
     def test_every_check_names_the_line_it_was_read_from(self) -> None:
         """#210's discipline, on the input that can raise a score.
