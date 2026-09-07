@@ -12081,6 +12081,19 @@ class AnAskThatIsNotACapIsStillRoutedTests(unittest.TestCase):
             remedy, MODULE.ACTION_FOR_CONDITION["dataset-generated-answer-key"]
         )
         self.assertIn(remedy, MODULE.ACTION_KINDS)
+        # The two spellings, recorded so neither flips silently.
+        #
+        # The ask's own id is snake_case, on the product-wide naming decision
+        # that a name matches what the customer already meets in the SDK and
+        # the portal - where `recommended_action` is validated against
+        # `review_label` and five siblings. The REMEDY is kebab-case because it
+        # is not this change's to spell: `review-answer-key` is trunk's, bound
+        # to three cap conditions, named in `references/evaluation-and-dataset.md`
+        # and declared in the committed `asking-answer-key` outcome case, so
+        # aligning it here would rename a value three conditions that are not
+        # this change's already route.
+        self.assertEqual(MODULE.ANSWER_KEY_UNREAD, "answer_key_unread")
+        self.assertEqual(remedy, "review-answer-key")
 
     def test_no_id_names_both_a_cap_and_an_ask(self) -> None:
         """One id, one shape, so a reader of either table knows what it holds.

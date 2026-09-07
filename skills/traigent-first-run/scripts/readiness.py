@@ -1397,7 +1397,28 @@ ACTION_FOR_CONDITION: dict[str, str] = {
 # `recommended_action` returns one, so the order they are written in is the
 # order they are done in - declared here, where the class is decided, rather
 # than derived at the call site from a field a future ask might not have.
-ANSWER_KEY_UNREAD = "answer-key-unread"
+# snake_case, and the one place this module spells a condition that way.
+#
+# The product-wide naming pass (2026-09) requires a name to match what the
+# customer already meets in the SDK and the portal, and `recommended_action` is
+# the field it names as carrying four value spaces at once. The three that are
+# not this package's are snake_case: the SDK validates a per-example
+# `recommended_action` against `review_label`, `clarify_expected_output`,
+# `increase_repetitions`, `replace_or_rewrite`, `keep_as_hard_case` and
+# `inspect_evaluator`, and the portal renders that column. This is the only new
+# value this change introduces into any of those spaces, so it is spelled the
+# way the spaces it joins are spelled, and the schema bump that carries it is
+# the moment a consumer re-reads the contract anyway.
+#
+# THE COST, RECORDED RATHER THAN GLOSSED. Every other condition id in this
+# module is kebab-case - `dataset-absent`, `evaluator-invalid`, thirty of them -
+# and `open_asks[].condition` sits in the same payload as `caps[].condition`. So
+# this is one snake_case id among kebab-case siblings, which is a second
+# spelling inside one payload rather than the end of one. It is spelled this way
+# because the alignment decision is the owner's and this value is new enough to
+# carry it; the id space either follows or this one goes back, and that is a
+# decision to take with both payloads in front of you rather than here.
+ANSWER_KEY_UNREAD = "answer_key_unread"
 ACTION_FOR_ASK: dict[str, str] = {
     ANSWER_KEY_UNREAD: "review-answer-key",
 }
