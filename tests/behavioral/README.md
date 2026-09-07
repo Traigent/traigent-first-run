@@ -28,10 +28,18 @@ declaration, so a change that alters what a customer is told fails as a diff of 
 the thing that moved.
 
 There are four cases because the score's own output selection has four states, not because four
-felt like enough. `recommended_action` has exactly three arms - the first blocking cap, else the
-first asking cap, else `proceed` - and `status` is `BLOCKED` exactly when a blocking cap exists. The
-cases are one `clean`, one `blocked`, one `advisory` and one `asking`, which is every arm and both
-statuses.
+felt like enough. `recommended_action` has four arms - the first blocking cap, else the first asking
+cap, else the first outstanding ask that is no cap at all, else `proceed` - and `status` is
+`BLOCKED` exactly when a blocking cap exists. The cases are one `clean`, one `blocked`, one
+`advisory` and one `asking`, which is every arm and both statuses.
+
+A state name says which CAP SHAPE the case is in, and that is why `clean` still fits a case whose
+action is not `proceed`. `clean-proceed` carries no cap and is routed by its outstanding ask
+(traigent-first-run#396); the fall-through to `proceed` is reached by `advisory-bounded-claim`,
+whose ceilings neither block nor ask. Read the arm count off `ACTION_FOR_ASK` and
+`recommended_action` in `readiness.py` rather than off this paragraph: it is restated here, in
+`outcomes.py` and in `SKILL.md`, and nothing derives it, so this sentence is the copy most likely
+to be the stale one.
 
 **No generated artifact exists whose regeneration makes a real failure vanish.** The repository
 used to commit two - a hash lock over every behavior-bearing file, and a generated copy of the

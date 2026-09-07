@@ -328,6 +328,17 @@ class ReadinessAdapterReplayTests(unittest.TestCase):
         # One home for the cross-version refusal, and it is `--previous`'s own
         # help, which carried it before this paragraph existed.
         self.assertIn("Refused when the earlier output was written by a", help_text)
+        # And where the remedy comes from, which schema 4 changed
+        # (traigent-first-run#396). Every value of `recommended_action` used to
+        # be some cap's, so a consumer could look up the ceiling behind the slug
+        # it was given; a run may now owe something that caps nothing, and one
+        # that goes looking in `caps` finds nothing and cannot tell that from a
+        # cap it does not know.
+        self.assertIn("'open_asks'", help_text)
+        self.assertIn(
+            "'recommended_action' names one remedy and it is not always a cap's",
+            help_text,
+        )
         self.assertEqual(help_text.count("refuses a payload from another version"), 0)
 
     def test_task_kind_cli_is_closed_and_distinguishes_code_from_sql(self) -> None:
@@ -6094,7 +6105,16 @@ class TheWalkthroughSizeReachesTheCardTests(unittest.TestCase):
         )
         return rows
 
-    def test_the_card_names_the_size_and_routes_to_proceed(self) -> None:
+    def test_the_card_names_the_size_and_the_ceiling_recommends_nothing(self) -> None:
+        """The size cap at the offer limit names no remedy, and never did.
+
+        Renamed from `..._and_routes_to_proceed`: the assertion that carried
+        that name was reading a second fact through this one. `proceed` was the
+        action because this cap asks nothing AND nothing else on the card did,
+        and the second half stopped being true when the unread answer key
+        started routing its own remedy (traigent-first-run#396). What this test
+        is about is the ceiling, so it now asserts what the ceiling does.
+        """
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             dataset = _write_jsonl(root, "eval.jsonl", self._walkthrough_rows())
@@ -6125,12 +6145,29 @@ class TheWalkthroughSizeReachesTheCardTests(unittest.TestCase):
             cap["reason"],
         )
         self.assertNotIn("This run can write", cap["reason"])
-        self.assertEqual(score["recommended_action"], "proceed")
+        # The ceiling still recommends nothing, which is what this test is
+        # about: a size cap at or beyond the offer limit names no remedy, so
+        # `add-examples` is not what a customer holding 28 rows is told to do.
+        self.assertNotEqual(score["recommended_action"], MODULE.ADD_EXAMPLES)
+        # What routes instead is the run's own outstanding ask. Nobody has read
+        # this dataset's expected answers, so the band is held - and until
+        # traigent-first-run#396 that held card read `proceed`, telling a
+        # consumer there was nothing to do about the one thing holding the
+        # verdict. The remedy is no cap's: `caps` carries one entry and it is
+        # the advisory ceiling above, which asks nothing.
+        self.assertTrue(score["band_limited_by_unread_answers"])
+        self.assertEqual(score["recommended_action"], "review-answer-key")
+        self.assertEqual(
+            [ask["condition"] for ask in score["open_asks"]],
+            [MODULE.ANSWER_KEY_UNREAD],
+        )
         self.assertIn("no top-up is offered", card)
         self.assertIn(
             "18 examples - at or above the 18 this walkthrough tunes on", card
         )
-        self.assertEqual(card.rstrip("\n").splitlines()[-1], "Action: proceed")
+        self.assertEqual(
+            card.rstrip("\n").splitlines()[-1], "Action: review-answer-key"
+        )
 
 
 class ARowReviewIsMatchedToTheRowsPreflightReadTests(unittest.TestCase):

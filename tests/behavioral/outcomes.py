@@ -79,10 +79,17 @@ OPTIONAL_CASE_KEYS = {
     "task_kind",
 }
 # Every state the score's own output selection can be in. `recommended_action`
-# has exactly three arms - first blocking cap, else first asking cap, else
-# `proceed` - and `status` is BLOCKED exactly when a blocking cap exists. These
-# four cover every arm and both statuses, which is why they are the four and not
-# an arbitrary sample.
+# has four arms - first blocking cap, else first asking cap, else the first
+# outstanding ask that is no cap at all, else `proceed` - and `status` is
+# BLOCKED exactly when a blocking cap exists. These four cover every arm and
+# both statuses, which is why they are the four and not an arbitrary sample.
+#
+# The state names the CAP SHAPE the case is in, which is why `clean` still fits
+# a case whose action is not `proceed`. `clean-proceed` carries no cap and is
+# routed by its outstanding ask (traigent-first-run#396); the fall-through to
+# `proceed` is reached by `advisory-bounded-claim`, whose ceilings neither block
+# nor ask. A fifth case for the fourth arm would duplicate a whole project to
+# re-record a decision `clean-proceed` already makes.
 STATES = frozenset({"clean", "blocked", "advisory", "asking"})
 
 
