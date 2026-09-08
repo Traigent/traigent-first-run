@@ -1,13 +1,13 @@
-# 0103 - the archaeology lives in the ledger
+# 0104 - the archaeology lives in the ledger
 
-follows: 0102
-follows-resident-measured: 106_386
-follows-total-measured: 498_296
+follows: 0103
+follows-resident-measured: 105_460
+follows-total-measured: 498_291
 follows-document-measured: 136_303
-resident-ceiling: 106_500
-resident-measured: 106_386
-total-ceiling: 495_142
-total-measured: 495_131
+resident-ceiling: 105_600
+resident-measured: 105_460
+total-ceiling: 495_130
+total-measured: 495_126
 document-ceiling: 135_492
 document-measured: 134_261
 
@@ -31,16 +31,16 @@ somebody already finished, and what remained in the guide was the second copy. N
 suite reads any of the removed text; each of the three references was read from its first line to
 its last, not as a diff, before a byte came out of it.
 
-**This banks nothing, and that is the point.** Both moved ceilings come down by what the completed
-change freed, 3_165 on the whole corpus and 2_042 on the largest document, leaving eleven bytes of
-TOTAL headroom and 1_231 on DOCUMENT.
+**This banks nothing, and that is the point.** TOTAL falls by the completed change's 3_165 bytes,
+leaving the four bytes of headroom 0103 already had; DOCUMENT falls 2_058 bytes, 16 more than the
+largest document's 2_042-byte reduction, leaving 1_231 bytes of headroom.
 A prune that lowered a ceiling by less than it freed would be a raise wearing this entry's
 clothes, weighed by nobody, and a later author would spend a number no reader here approved.
-RESIDENT is untouched by every cut, so its ceiling is restated exactly as 0102 left it and its
-measurement is 0102's own.
+RESIDENT is untouched by every cut, so its ceiling is restated exactly as 0103 left it and its
+measurement is 0103's own.
 
-This entry was written against 0099 and re-pointed at 0102 after that entry landed on trunk, with
+This entry was written against 0099 and re-pointed at 0103 after that entry landed on trunk, with
 every figure taken again from the merged tree rather than carried across. The re-measurement is
-what the move is for: the three deleted paragraphs are in documents 0102 never touched, so the
+what the move is for: the three deleted paragraphs are in documents 0103 never touched, so the
 freed total is the same 3_158 either way, but a figure kept from the earlier tree would have
 described a corpus 18 bytes lighter than the one this ships with, and read as correct.
