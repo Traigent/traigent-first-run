@@ -2015,6 +2015,101 @@ sys.modules[_PREFLIGHT_SPEC.name] = PREFLIGHT
 _PREFLIGHT_SPEC.loader.exec_module(PREFLIGHT)
 
 
+def _preflight_checks_in(folder: Path, *arguments: str) -> frozenset[str]:
+    """The check names one real `preflight.py --json` run emits.
+
+    A subprocess, and a deliberately empty environment. Two reasons, both
+    executed rather than assumed. Calling `read_env` and `check_keys` in
+    process covered four of the nine records a run actually prints, so a
+    sentence naming `env-permissions` - true, and emitted every time - was
+    refused as if it named a failure-only record. And both functions read
+    `os.environ`, so whatever the machine running the suite exports joins the
+    result: an `OPENROUTER_API_KEY` that does not start with `sk-or-` puts the
+    failure-only `openrouter-key` into the set, and naming it in guidance
+    would pass here and be wrong everywhere else.
+    """
+    completed = subprocess.run(
+        [sys.executable, str(_PREFLIGHT), "--json", *arguments],
+        cwd=folder,
+        capture_output=True,
+        text=True,
+        env={"PATH": os.environ.get("PATH", "")},
+        check=False,
+    )
+    payload = json.loads(completed.stdout)
+    records = payload["results"] if isinstance(payload, dict) else payload
+    return frozenset(record["check"] for record in records)
+
+
+def preflight_record_names() -> tuple[frozenset[str], frozenset[str]]:
+    """Every check name a run can print, and the subset a good run prints.
+
+    The pair is what lets guidance be judged instead of pinned: a name in the
+    first set is a preflight record, and a name in the first but not the
+    second is one a customer only ever sees when something went wrong. Telling
+    a reader to confirm such a line is telling them to read something that is
+    not there, which is what `env-file` was for five rounds.
+
+    Both halves are executed. A file the run can read gives the success set; a
+    path that does not exist adds the records only failure produces. The
+    universe is deliberately not "every `emit(` in the module": reading the
+    call sites is the habit that produced the defect.
+    """
+    with tempfile.TemporaryDirectory() as folder:
+        root = Path(folder)
+        handoff = root / "handoff.env"
+        handoff.write_text("TRAIGENT_API_KEY=uk_always_emitted_probe_placeholder\n")
+        handoff.chmod(0o600)
+        (root / "agent.py").write_text(
+            "def run(question: str) -> str:\n    return question\n"
+        )
+        good = _preflight_checks_in(root, "--env", "handoff.env")
+        bad = _preflight_checks_in(root, "--env", "absent.env")
+    return frozenset(good | bad), frozenset(good)
+
+
+PREFLIGHT_RECORD_NAMES, ALWAYS_EMITTED_PREFLIGHT_CHECKS = preflight_record_names()
+
+
+def preflight_records_named_in(text: str) -> frozenset[str]:
+    r"""Every preflight record `text` names, in whatever notation it is written.
+
+    Membership in `PREFLIGHT_RECORD_NAMES` is what decides whether a word is a
+    record, so membership does the finding: each name in that set is searched
+    for directly, casefolded. There is no shape to be loose enough about, which
+    is the whole point. The previous version matched ``r"`([a-z]+(?:-[a-z]+)+)`"``
+    under a comment saying it "only has to be loose enough to catch every
+    candidate" - and it was not. A review executed five escapes, each naming a
+    failure-only record and each passing green: the name unbackticked in prose,
+    in `*emphasis*`, in `"quotes"`, inside a longer code span, and with
+    punctuation inside the span. The last of those is the shape `SKILL.md`
+    already writes today (`` `sdk-version: PASS` ``), so the guard was blind to
+    the one alternative form this repository actually uses. A comment asserting
+    a pattern is complete is a habit, not a check: nothing failed when it
+    stopped being true, and the next author read it as a guarantee.
+
+    Deriving the search from the deciding set deletes the claim rather than
+    documenting around it. A name in the set is found however it is written; a
+    token outside it was never a record, so `preflight.py`, `override=True` and
+    `process environment only` stay out by construction rather than by a filter
+    applied after a shape test.
+
+    Anchored on `[0-9a-z-]` rather than on `\b`, because `-` is not a word
+    character and `\benv-file\b` therefore matches inside `my-env-file-name`; a
+    longer hyphenated word that merely contains a record name is a different
+    word. What that leaves out, stated rather than claimed away: a name spelled
+    with different punctuation between its parts - `env_file`, `env file` - is
+    not seen. Neither is a form this repository writes, and neither would be a
+    reference a reader could follow to a record.
+    """
+    flat = text.casefold()
+    return frozenset(
+        name
+        for name in PREFLIGHT_RECORD_NAMES
+        if re.search(rf"(?<![0-9a-z-]){re.escape(name)}(?![0-9a-z-])", flat)
+    )
+
+
 def quoted_prose(path: Path) -> str:
     """The whole document, whitespace-normalized, with leading `>` dropped.
 
@@ -4655,6 +4750,246 @@ class SkillPackageTests(unittest.TestCase):
         self.assertIn("resolve the route from the selected agent", skill_text)
         self.assertIn("inventory presence—not values", skill_text)
         self.assertIn("never rewrite a route merely to match a key", skill_text)
+
+    def test_the_probe_refusal_routes_to_the_record_instead_of_restating_it(
+        self,
+    ) -> None:
+        """#437, after four rounds of writing the explanation by hand.
+
+        Each round fixed the previous predicate and wrote a new one. Keyed on
+        `env-shadowed-key` carrying fingerprints: an off switch, because that
+        finding compares two sources and the key reaches the file after the
+        last preflight run. Keyed on the digest `traigent-key` prints: an
+        always-on switch, because the recorded digest is truncated and a full
+        one never equals it. Keyed on the record's status: false, because one
+        verdict covers fifteen scanned names, so a shadowed provider key made
+        the assistant announce an inherited portal key that was fine. Each was
+        correct on the day it was written and falsified by the next reader, and
+        the test never noticed, because the sentence was pinned as a string the
+        author rewrote in the same commit as the sentence.
+
+        So the sentence is gone. `env-shadowed-key` already computes which
+        names disagree, states the precedence, connects it to the 401 in the
+        customer's own words, and prints both remedies per name - it cannot be
+        wrong about which name, because it is the name list. The guidance now
+        does the one thing the record cannot do for itself: have it produced
+        again at the refusal, against the file the handoff actually wrote, and
+        read.
+
+        That makes the property checkable without pinning prose. The two sides
+        below are the paragraph and preflight's own declarations. The
+        paragraph must route - naming the script, its flag, and both records -
+        and must NOT restate: no scanned credential name, no verdict, no
+        remedy vocabulary. Those come from `SHADOW_SCANNED_ENV_NAMES` and the
+        status constants rather than from a list typed here, so a re-derivation
+        cannot be reworded past this check the way three pinned sentences were.
+        The other half asserts the record still carries what the paragraph
+        stopped saying, in the reproduction #437 was filed about.
+
+        The two halves are read at different scopes, on purpose. Routing and
+        non-restatement are properties of the paragraph, so they are read from
+        it. Which records may be named is a property of the whole section, so
+        it is read from the section: `## Connected-run readiness` is written
+        for the run that connects, and a reader sent to a failure-only record
+        finds nothing there whichever paragraph of it sent them.
+        """
+        text = RUN_SAFETY.read_text()
+        section = text.split("## Connected-run readiness", 1)[1].split("\n## ", 1)[0]
+        paragraph = next(
+            (block for block in section.split("\n\n") if "env-shadowed-key" in block),
+            None,
+        )
+        # Diagnosed rather than raised. Deleting the paragraph is the most
+        # likely edit this guards against, and it used to arrive as a bare
+        # StopIteration while every other failure here names itself.
+        self.assertIsNotNone(
+            paragraph,
+            "no paragraph in `## Connected-run readiness` mentions "
+            "env-shadowed-key, so the refusal routes nowhere",
+        )
+        flat = " ".join(paragraph.casefold().split())
+        for phrase in (
+            "re-run `preflight.py --env <handoff file>` before blaming the key",
+            "free and makes no call",
+            "report what `env-shadowed-key` says",
+            "prints its own remedies",
+            # `env-source`, not `env-file`: the second is emitted only when the
+            # path is missing or a line will not parse, so on every successful
+            # run there is no such line to confirm - and it is silent for the
+            # shape the guard exists to catch, a path that exists and is the
+            # wrong file. `env-source` is emitted on every run and names what
+            # was actually read. Executed, not read off the emit sites.
+            "read `env-source` first",
+            "another name there is another file's verdict",
+        ):
+            with self.subTest(routes=phrase):
+                diagnosis = document_states(flat, phrase)
+                self.assertIsNone(diagnosis, diagnosis)
+        # Every record this text names has to be one preflight emits on a run
+        # that succeeded - and the names are read OUT OF the text, not listed
+        # here. A list would only have said "these two are always emitted";
+        # the property wanted is "everything this text sends a reader to
+        # exists when they look". The version that listed them let ADDING a
+        # sentence naming a failure-only record pass untouched, and adding a
+        # sentence is how all five earlier defects arrived.
+        #
+        # Read over the whole SECTION, not over the selected paragraph. Scoped
+        # to the paragraph, the same motion one blank line over - adding a
+        # PARAGRAPH to this section naming a failure-only record - passed
+        # green, which is that defect displaced rather than closed. The
+        # paragraph selection stays for the routing phrases above, which
+        # genuinely are a property of that paragraph; where a record name may
+        # appear is a property of the document the reader is in.
+        #
+        # The section is the widest scope whose premise actually holds:
+        # `## Connected-run readiness` is written for the run that connects,
+        # so a record only a failed run prints is wrong anywhere in it. The
+        # whole document is not - `## Recovery` is written for the failed run,
+        # where naming `env-file` is the correct thing to do. Measured on this
+        # tree the document-wide scope passes too, but it would pass by
+        # accident, and the first correct Recovery sentence naming a
+        # failure-only record would red and teach the next author to delete
+        # this check rather than to fix the guidance.
+        named = preflight_records_named_in(section)
+        routed = preflight_records_named_in(paragraph)
+        self.assertTrue(
+            routed,
+            "the paragraph names no preflight record at all, so it routes "
+            "nowhere - or the names stopped being read out of it",
+        )
+        for record in sorted(named):
+            with self.subTest(emitted_on_success=record):
+                self.assertIn(
+                    record,
+                    ALWAYS_EMITTED_PREFLIGHT_CHECKS,
+                    f"`{record}` is a preflight record that only a failed run "
+                    "prints, so a reader told to look at it on the run this "
+                    "section is written for finds nothing there",
+                )
+        # And the two the routing depends on are present in the paragraph
+        # itself, so the check above cannot be satisfied by a section that
+        # names no record and by the phrases alone.
+        for required in ("env-shadowed-key", "env-source"):
+            self.assertIn(required, routed)
+        # The half that cannot be reworded past. Anything the record decides
+        # is the record's to say, and every name here is read from the module.
+        rederived = (
+            "the paragraph is re-deriving something the record publishes; "
+            "route to it instead - that re-derivation is what four review "
+            "rounds each found wrong in a new way"
+        )
+        for token in (
+            *PREFLIGHT.SHADOW_SCANNED_ENV_NAMES,
+            "env -u",
+            "override=true",
+            "sha256",
+            "fingerprint",
+        ):
+            with self.subTest(restates=token):
+                # On word boundaries. As a bare substring this refused
+                # "passed", "passes", "warned" and "warning" - ordinary
+                # English - and accused the author of re-deriving the record
+                # while doing it, which teaches routing around the gate rather
+                # than satisfying it.
+                self.assertIsNone(
+                    re.search(rf"\b{re.escape(token.casefold())}s?\b", flat),
+                    rederived,
+                )
+        for status in (PREFLIGHT.WARN, PREFLIGHT.PASS):
+            with self.subTest(restates=status):
+                # Case-sensitively, against the paragraph rather than the
+                # casefolded flattening, because these two are printed in
+                # capitals. Lowercased they are ordinary verbs: "warns when
+                # something disagrees" is prose about the check, not a branch
+                # keyed on its verdict, and refusing it taught routing around
+                # the gate rather than satisfying it.
+                self.assertIsNone(
+                    re.search(rf"\b{re.escape(status)}\b", paragraph),
+                    rederived,
+                )
+        self.addCleanup(PREFLIGHT.RESULTS.clear)
+        shell = "uk_shadow_test_shell_placeholder"
+        pasted = "uk_shadow_test_dotenv_placeholder"
+        vendor_shell = "sk-shadow-test-shell-placeholder"
+        vendor_file = "sk-shadow-test-dotenv-placeholder"
+
+        def rerun(file_values: dict[str, str], process_values: dict[str, str]) -> Any:
+            """`preflight.py` as the paragraph has the assistant re-run it."""
+            PREFLIGHT.RESULTS.clear()
+            merged = {**file_values, **process_values}
+            # A path that is not `.env`: this record's remedy edits the file
+            # it compared, and the guidance sends the reader to the handoff
+            # file, which need not be that name.
+            PREFLIGHT.check_keys(
+                merged, file_values, process_values, Path("handoff.env")
+            )
+            return next(
+                item for item in PREFLIGHT.RESULTS if item.check == "env-shadowed-key"
+            )
+
+        portal = "TRAIGENT_API_KEY"
+        # #426 at the moment of the refusal: the supervisor's key is still
+        # exported and the file now holds the one the handoff pasted. What the
+        # customer reads is this record, so this is where #437's three asks are
+        # asserted - the precedence, the 401 connection, and both remedies.
+        filed = rerun({portal: pasted}, {portal: shell})
+        self.assertEqual(filed.status, PREFLIGHT.WARN)
+        for owed in (
+            "does not override a value the process already carries",
+            "a 401 here is the shell's key, not the one you pasted",
+            f"env -u {portal} <command>",
+            "`override=True` to `load_dotenv` in your own loader",
+            PREFLIGHT.FINGERPRINT_RECIPE,
+        ):
+            with self.subTest(record_says=owed):
+                self.assertIn(owed, filed.detail)
+        self.assertEqual(
+            filed.metrics["fingerprints"][portal]["process"],
+            PREFLIGHT.value_fingerprint(shell),
+        )
+        # And what the paragraph no longer has to get right: which name. The
+        # record names only what disagrees, in every shape, including the ones
+        # that made the previous four predicates false.
+        shapes = (
+            ("the key is only in the file", {portal: pasted}, {}, []),
+            ("both sources agree", {portal: pasted}, {portal: pasted}, []),
+            ("nothing is configured", {}, {}, []),
+            (
+                "only a provider key is shadowed",
+                {"OPENAI_API_KEY": vendor_file},
+                {"OPENAI_API_KEY": vendor_shell},
+                ["OPENAI_API_KEY"],
+            ),
+            (
+                "only a route is shadowed",
+                {"TRAIGENT_BACKEND_URL": "https://a.example"},
+                {"TRAIGENT_BACKEND_URL": "https://b.example"},
+                ["TRAIGENT_BACKEND_URL"],
+            ),
+            (
+                "the portal key and a provider key are shadowed",
+                {portal: pasted, "OPENAI_API_KEY": vendor_file},
+                {portal: shell, "OPENAI_API_KEY": vendor_shell},
+                [portal, "OPENAI_API_KEY"],
+            ),
+        )
+        for described, file_values, process_values, expected in shapes:
+            with self.subTest(shape=described):
+                record = rerun(file_values, process_values)
+                self.assertEqual(
+                    sorted(record.metrics["shadowed_variables"]), sorted(expected)
+                )
+                for name in PREFLIGHT.SHADOW_SCANNED_ENV_NAMES:
+                    if name not in expected:
+                        # Nothing the customer reads may name a credential this
+                        # shape did not shadow - the harm three rounds produced.
+                        self.assertNotIn(f"env -u {name}", record.detail)
+                for name in expected:
+                    if name in PREFLIGHT.SECRET_ENV_NAMES:
+                        self.assertEqual(
+                            record.metrics["fingerprints"][name]["process"],
+                            PREFLIGHT.value_fingerprint(process_values[name]),
+                        )
 
     def test_the_knob_selection_rule_matches_the_arithmetic_it_cites(self) -> None:
         """The guidance told the assistant to keep "a few" and stopped there.

@@ -988,6 +988,7 @@ def check_existing_traigent_use(root: Path) -> None:
 def check_shadowed_credentials(
     file_values: dict[str, str | None],
     process_values: dict[str, str | None],
+    env_path: Path,
 ) -> None:
     """Name a credential the shell and .env set to different values.
 
@@ -1014,6 +1015,17 @@ def check_shadowed_credentials(
     absence of a line. A secret is reported by fingerprint and never printed; a
     route value is printed, reduced by `route_display`, because naming it is
     what the finding is for.
+
+    A present-but-blank process name is also a mask: python-dotenv keeps it
+    instead of loading the non-empty handoff-file value.  It is reported with
+    the same remedy, but never fingerprinted or printed as a secret.
+
+    `env_path` is required for the same reason the two views are: this finding
+    tells a reader to edit the file it compared, and it used to say `.env`
+    whatever `--env` pointed at. The handoff file is whichever local file the
+    user identified for the run, so a customer following the remedy verbatim
+    was sent to a path this run never read - and, where a stale `.env` happens
+    to exist beside it, told to delete lines from the wrong file.
     """
     shadowed = [
         name
@@ -1022,6 +1034,19 @@ def check_shadowed_credentials(
         and key_present(process_values.get(name))
         and file_values[name].strip() != process_values[name].strip()
     ]
+    # `load_dotenv(override=False)` considers the process name occupied even
+    # when its value is blank.  Treat that as masking rather than absence: a
+    # file key that cannot be loaded is exactly the 401 diagnosis this record
+    # exists to make, and reporting PASS would send the reader into a repaste
+    # loop while preserving the empty export.
+    blank_masks = [
+        name
+        for name in SHADOW_SCANNED_ENV_NAMES
+        if key_present(file_values.get(name))
+        and name in process_values
+        and not key_present(process_values.get(name))
+    ]
+    masked = [*shadowed, *blank_masks]
     secrets = [name for name in shadowed if name in SECRET_ENV_NAMES]
     fingerprints = {
         name: {
@@ -1039,35 +1064,50 @@ def check_shadowed_credentials(
         if name not in SECRET_ENV_NAMES
     }
     metrics = {
-        "shadowed_variables": shadowed,
+        "shadowed_variables": masked,
+        "blank_process_masks": blank_masks,
         "fingerprints": fingerprints,
         "route_values": routes,
     }
-    if not shadowed:
+    if not masked:
         emit(
             "env-shadowed-key",
             PASS,
-            "no credential or route name is set to different values in the "
-            "shell and .env",
+            "no credential or route name is masking a different value in the "
+            f"shell and {env_path}",
             metrics,
         )
         return
     described = "; ".join(
         (
             f"{name} is sha256:{fingerprints[name]['process']} in the process "
-            f"and sha256:{fingerprints[name]['file']} in .env"
+            f"and sha256:{fingerprints[name]['file']} in {env_path}"
             if name in fingerprints
             else f"{name} is {routes[name]['process']} in the process and "
-            f"{routes[name]['file']} in .env"
+            f"{routes[name]['file']} in {env_path}"
         )
         for name in shadowed
     )
+    if blank_masks:
+        described = "; ".join(
+            filter(
+                None,
+                [
+                    described,
+                    *(
+                        f"{name} is blank or whitespace in the process and has "
+                        f"a value in {env_path}"
+                        for name in blank_masks
+                    ),
+                ],
+            )
+        )
     # Every shadowed name in the unset, not just the first. A reader who runs
     # the printed command verbatim - which is what these lines are for - and
     # gets back only the first name clears one 401 and meets the next as an
     # unexplained provider error, with the report already claiming the problem
     # was solved.
-    unset = " ".join(f"-u {name}" for name in shadowed)
+    unset = " ".join(f"-u {name}" for name in masked)
     recipe = (
         f". Compute a fingerprint of your own to compare with: `{FINGERPRINT_RECIPE}`"
         if fingerprints
@@ -1076,14 +1116,14 @@ def check_shadowed_credentials(
     emit(
         "env-shadowed-key",
         WARN,
-        f"{len(shadowed)} name(s) disagree between the shell and .env, and the "
-        f"shell wins: {described}. python-dotenv does not override a value the "
-        "process already carries, so the .env value is inert - a 401 here is "
-        f"the shell's key, not the one you pasted. To use the file's values, "
-        f"launch the command with `env {unset} <command>`, or pass "
+        f"{len(masked)} name(s) mask a value in {env_path}, and the shell wins: "
+        f"{described}. python-dotenv does not override a value "
+        f"the process already carries, so the {env_path} value is inert - a 401 "
+        "here is the shell's key, not the one you pasted. To use the file's "
+        f"values, launch the command with `env {unset} <command>`, or pass "
         "`override=True` to `load_dotenv` in your own loader (not in this "
-        "guide's launcher, which pins it off on purpose); to use the shell's, "
-        "delete the .env lines so the two cannot drift apart again" + recipe,
+        f"guide's launcher, which pins it off on purpose); to use the shell's, "
+        f"delete the {env_path} lines so the two cannot drift apart again" + recipe,
         metrics,
     )
 
@@ -1092,12 +1132,13 @@ def check_keys(
     env: dict[str, str | None],
     file_values: dict[str, str | None],
     process_values: dict[str, str | None],
+    env_path: Path,
 ) -> None:
     # The two source views are required rather than defaulted, on the same
     # rule `_row_count` states in readiness.py: a default here would let a
     # caller that forgot to thread them through report "nothing is shadowed"
     # instead of failing, and silence would again be the best-scoring input.
-    check_shadowed_credentials(file_values, process_values)
+    check_shadowed_credentials(file_values, process_values, env_path)
     available = [
         vendor
         for vendor, names in VENDOR_KEYS.items()
@@ -5025,7 +5066,7 @@ def run() -> int:
     check_python()
     check_sdk(defer_missing=args.defer_missing_sdk)
     check_existing_traigent_use(Path(args.project_root))
-    check_keys(env, file_values, process_values)
+    check_keys(env, file_values, process_values, env_path)
     check_cost_settings(env, file_values, process_values)
 
     models = [model.strip() for model in args.models.split(",") if model.strip()]
