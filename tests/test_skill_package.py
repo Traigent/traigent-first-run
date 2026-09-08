@@ -17074,6 +17074,48 @@ class SkillPackageTests(unittest.TestCase):
             with self.subTest(sentence=owned_by_the_reference):
                 self.assertNotIn(owned_by_the_reference, skill)
 
+    def test_the_close_says_what_production_ready_takes_and_what_this_run_gave(
+        self,
+    ) -> None:
+        """traigent-first-run#439: no gate, and a paragraph instead of one.
+
+        The owner refused a check over a generated corpus and refused the
+        framing the issue was filed under with it. What a generated corpus
+        needs is not a blocker but a statement the customer can act on: every
+        generated pillar - dataset, evaluation method, AGENT, which the close
+        named nowhere - made real or checked by a person. And it may not be
+        sold as worthless, because it is not: a real first run, results in the
+        portal, next steps, the shape of easy against hard, and a split held
+        out of the search. Both halves are pinned because either alone is the
+        dishonest version of this paragraph.
+        """
+        safety = " ".join(
+            (SKILL_ROOT / "references" / "run-safety.md").read_text().split()
+        )
+        skill = " ".join(SKILL.read_text().split())
+        self.assertIn(
+            "the dataset, the evaluation method, the agent - has to be made real "
+            "or checked by a person",
+            safety,
+        )
+        for worth in ("results in the portal", "held out of the search"):
+            with self.subTest(value=worth):
+                self.assertIn(worth, safety)
+        self.assertIn("not a full-power run and must not be described as one", safety)
+        self.assertIn(
+            "not a run that established nothing, and must not be described as "
+            "that either",
+            safety,
+        )
+        # The flow orders it and names its home; the paragraph is not repeated
+        # there, and the close still reaches it before the extras.
+        self.assertIn("say what would make this production ready", skill)
+        self.assertIn("references/run-safety.md` carries", skill)
+        self.assertLess(
+            skill.index("say what would make this production ready"),
+            skill.index("these are available whenever the user wants them"),
+        )
+
     def test_opening_dataset_sequence_records_both_unmapped_and_absent_states(
         self,
     ) -> None:

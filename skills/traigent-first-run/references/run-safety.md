@@ -1124,6 +1124,17 @@ where an easy-looking task is the likeliest thing a walkthrough dataset produces
 If any component is synthetic, put the limitation before the score. A synthetic Pareto frontier
 can look identical to a production one.
 
+Then say what would make it production ready, as one paragraph rather than a warning. Every pillar
+this run generated - the dataset, the evaluation method, the agent - has to be made real or checked
+by a person before a number taken over it describes production, and the answer key was sampled on
+the terms "Say what you sampled and what you assumed" in `references/evaluation-and-dataset.md`
+sets out. Say what the run was worth anyway, because it was worth something and a customer who hears only the
+limitation will not know it: they have a real first run - results in the portal, a summary naming
+what to do next, a feel for how their easy and hard questions differ, and a set held out of the
+search, which is the habit every honest comparison after this one rests on. It is not a full-power
+run and must not be described as one; it is also not a run that established nothing, and must not
+be described as that either.
+
 ### Run-scope statement
 
 The close states the run's own bounds so its numbers are read at the scale they were measured at.
