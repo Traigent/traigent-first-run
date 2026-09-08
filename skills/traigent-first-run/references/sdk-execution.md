@@ -637,8 +637,7 @@ def require_current_route_credential() -> None:
     if key_names and not any(
         os.environ.get(name, "").strip().partition("#")[0] for name in key_names
     ):
-        # One name reads as one name. "none of OPENAI_API_KEY is set" was
-        # grammatical nonsense at exactly the moment the reader is stuck.
+        # One name reads as one name.
         missing = (
             f"but {key_names[0]} is not set. Add that credential"
             if len(key_names) == 1
@@ -776,9 +775,9 @@ assert set(WIRED_KNOBS) == set(ENHANCED_SPACE), (
     "cannot skip a searched key"
 )
 
-# `accuracy` is the one key the portal reads for quality; any other name shows
-# there as 0% (measured 2026-09-06). The SDK parks its built-in exact match at
-# `exact_match_default` once a wired scorer claims the key.
+# `accuracy` is this exact-match walkthrough's objective. In a customer run,
+# use a meaningful metric name consistently in the objective, metric function,
+# result reading, and frontier; the portal is not an `accuracy`-only display.
 OBJECTIVES = ObjectiveSchema.from_objectives(
     [
         ObjectiveDefinition(name="accuracy", orientation="maximize", weight=1.0),
@@ -836,9 +835,7 @@ def provider_reported_cost(response) -> float | None:
     # supports - openai, anthropic, gemini, mistral and cohere - the two
     # readings below it return None on every call, so a door that consulted
     # only those was not a ledger at all: it debited the flat unpriced rate
-    # every time and became a call counter. Measured end to end, that counter
-    # reported a run at its approved ceiling when the true spend was a
-    # twentieth of it, and refused a held-out pass that fitted many times over.
+    # every time and became a call counter.
     # Normalised once rather than guarded at the first reading alone: the
     # header reading below reaches the same object, and raised on a non-mapping.
     hidden = getattr(response, "_hidden_params", None)
@@ -1112,15 +1109,9 @@ def record_call_spend(cost: float | None) -> None:
 # The test is the NAME rather than a list of the knobs known today, because
 # such a list is what failed here: `retry_policy` sat outside one, litellm
 # honoured it on plain `completion` all the same, and a rate-limited call
-# reserved for 1 request placed 6. Measured on the pinned litellm 1.93.0: of
-# the 214 entries in its own `all_litellm_params`, eight carry `retry`,
-# `retries` or `fallback`; three are the ones priced here; `retry_policy`
-# placed 6 requests against a reservation of 1 and `context_window_fallback_dict`
-# placed 2 against 1; of the last three, two are read only by the router, and
-# `retry_strategy` changes the wait between attempts and not their number -
-# refused all the same, because the rule is the name. So the default is
-# closed, and a knob a later release adds is refused before it spends rather
-# than priced at one after it has.
+# reserved for 1 request placed 6. So the default is closed, and a knob a
+# later release adds is refused before it spends rather than priced at one
+# after it has.
 PRICED_REQUEST_KNOBS: frozenset[str] = frozenset(
     {"num_retries", "max_retries", "fallbacks"}
 )
@@ -1153,9 +1144,7 @@ def worst_case_requests(kwargs: dict) -> int:
     a round - one over the chain from a process-wide one, one per leg from a
     caller's. It is rounded UP rather than truncated, because litellm hands the
     figure to `tenacity.stop_after_attempt`, which stops at the first attempt
-    number that reaches it: a process-wide `1.5` placed 3 requests where
-    truncation reserved 2, `2.5` placed 4 against 3, and `4.2` placed 6 against
-    5. Whole counts are unmoved by either.
+    number that reaches it. Whole counts are unmoved by either.
 
     The pin is what makes any of this countable, and that is its remaining
     merit: an absent `max_retries` is the provider client's own default, which
@@ -1234,21 +1223,6 @@ def reserve_call_spend(args: tuple, kwargs: dict) -> int:
     neighbour reading the same remaining. A reservation closes all three at
     once, because what is committed is what the invocation may cost rather than
     what one attempt of it did.
-
-    Committing before the call is also what closed the concurrency exposure,
-    and it rather than the lock is what did it: the window between deciding and
-    spending used to contain a whole provider round trip. The lock closes what
-    is left of that window by making the read and the reservation one step, and
-    it is released before the call rather than held across it.
-
-    Two alternatives lost, and both look better than they measure. Deducting
-    `1 + the retry count` on the failure path leaves the success path alone,
-    and the success path is where a billed attempt hides behind a retry that
-    answered. Counting at litellm's own HTTP hook would have covered retries,
-    fallbacks and the non-chat entry points together, and that hook is
-    consulted by the OpenAI-family client alone: a counting transport saw the
-    request on an `openai/` route and none of the requests on Anthropic,
-    Gemini or OpenRouter.
 
     What it does not buy is stated with it. On the failure path the reservation
     stands for every BILLABLE failure, which is exact against every
@@ -1495,8 +1469,7 @@ if not getattr(litellm, "_first_run_ledgered", False):
     litellm.completion = ledgered(litellm.completion)
     litellm.acompletion = ledgered_async(litellm.acompletion)
     # Inside this guard rather than beside it: a second execution registered a
-    # second handler, measured as two ledger lines out, the second reporting
-    # $0.0000 from its own blind namespace.
+    # second handler, and a second ledger line nobody was writing to.
     atexit.register(report_run_spend)
     # On the module, not in this file's namespace: a second execution of this
     # wrapper in one process would otherwise wrap again and debit every call
@@ -1537,9 +1510,7 @@ def place_call(request: dict) -> tuple[str, float | None]:
     this caller and every other one. What is left is what only a caller wanting a
     MEASUREMENT needs - the two checks below turn a canned or truncated
     response into a failed trial rather than a scored one - which is why this
-    is still worth calling and no longer worth requiring. Its `what` label went
-    with the refusal: the door names the model instead, because it answers to
-    callers this file never wrote and holds no label from them.
+    is still worth calling and no longer worth requiring.
 
     The cost is read off the response rather than off the end of the ledger. It
     is a pure read of the same object the settlement read, so the two cannot
