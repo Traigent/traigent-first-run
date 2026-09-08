@@ -1,15 +1,15 @@
 # 0106 - the no-tools clause says what changed
 
-follows: 0102
-follows-resident-measured: 106_386
-follows-total-measured: 498_296
-follows-document-measured: 136_303
-resident-ceiling: 106_500
-resident-measured: 106_386
-total-ceiling: 498_294
-total-measured: 498_290
-document-ceiling: 137_550
-document-measured: 136_303
+follows: 0104
+follows-resident-measured: 105_460
+follows-total-measured: 495_126
+follows-document-measured: 134_261
+resident-ceiling: 105_600
+resident-measured: 105_460
+total-ceiling: 495_124
+total-measured: 495_120
+document-ceiling: 135_492
+document-measured: 134_261
 
 An earlier revision of this branch restated `component-creation.md`'s tools clause at exactly its
 old length and claimed that as a virtue. It was not one. `"used": false` had earned no credit
@@ -31,14 +31,10 @@ other two pillars are scored elsewhere - survives as its own short sentence.
 out to cost less than saying the inaccurate one, because dropping the four-item enumeration paid
 for the longer verb phrase and then some. A freed byte that stays under an unchanged ceiling is a
 raise nobody weighed, banked for a future author who will read it as room somebody decided to give
-them, so the ceiling moves to 498_294 and the usable gap stays where 0102 left it, at 3 bytes under
-a strict comparison. RESIDENT and DOCUMENT are untouched: the edit is inside a reference file, and
+them, so the ceiling moves to 495_124 and the usable gap stays at the four bytes 0104 left it.
+RESIDENT and DOCUMENT are untouched: the edit is inside a reference file, and
 that reference is not the largest one.
 
-This entry exists only because the tree it ships with no longer matches 0102's figures. It binds to
-0102 because that is the newest entry present in this branch, and the branches queued alongside it
-number theirs 0103 and 0105 while a prune branch is still unnumbered - so whichever of us integrates
-last re-points this file at the tail that then exists, restates the four `follows-` bindings from
-that entry's own recorded figures, and re-measures the corpus rather than carrying these numbers
-across. A figure measured on a predecessor that has since been overtaken is stale by construction,
-and refusing that is the whole job of the binding fields above.
+This entry is measured on the tree it ships with and follows 0104, the merged ledger tail. Its four
+`follows-` bindings are that entry's recorded figures; the remeasurement above prevents a number
+from describing a predecessor rather than the package this change actually delivers.
