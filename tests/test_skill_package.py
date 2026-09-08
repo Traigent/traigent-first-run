@@ -2084,12 +2084,17 @@ PREFLIGHT_RECORD_NAMES, ALWAYS_EMITTED_PREFLIGHT_CHECKS = preflight_record_names
 #:
 #: Empty entries are not kept. A document with no failure-facing section simply
 #: does not appear, so this maps only what an author actually decided.
+#: Keyed by path relative to the repository root, never by basename. Two
+#: documents in this corpus may share a name - `references/` and `assets/` are
+#: both globbed into `assistant_facing_documents()` - and a basename key would
+#: hand one document's exemption to the other for free. Nothing collides today;
+#: the point is that nothing can.
 FAILURE_FACING_SECTIONS: dict[str, frozenset[str]] = {
     # Written for the run that broke: "Portal persistence `failed`", "SDK or
     # optimizer exception mid-run", "Timeout with zero trials". A record only a
     # failed run prints is exactly what a reader standing here has in front of
     # them.
-    "run-safety.md": frozenset({"## Recovery"}),
+    "skills/traigent-first-run/references/run-safety.md": frozenset({"## Recovery"}),
 }
 
 
@@ -2102,21 +2107,39 @@ def checkable_guidance_sections() -> list[tuple[Path, str, str]]:
     `##` heading is yielded under `(preamble)`, because a reader standing in it
     is standing somewhere and the guard's premise holds there too.
 
-    Split on the heading rather than on `"\n## "` so the first heading in a
-    file is a heading and not a preamble, and so the title travels with the
-    body: a failure that cannot say WHICH section names the record sends the
-    author back to search the document for it.
+    The title travels with the body on purpose: a failure that cannot say WHICH
+    section names a record sends the author back to search the document for it.
+
+    A `## ` inside a fenced block is NOT a heading, and this walks the lines
+    tracking fences rather than splitting on a regex for that reason. A regex
+    split is correct on this corpus today - nothing here writes one - and its
+    failure mode is the one this whole guard was rewritten to remove: a fenced
+    `## Recovery` in the one document that has an exemption would silently
+    exempt everything under it, which is a green nobody chose. Getting that
+    right costs four lines and removes the case rather than betting it stays
+    hypothetical.
     """
     sections: list[tuple[Path, str, str]] = []
     for document in assistant_facing_documents():
-        exempt = FAILURE_FACING_SECTIONS.get(document.name, frozenset())
+        relative = document.relative_to(ROOT).as_posix()
+        exempt = FAILURE_FACING_SECTIONS.get(relative, frozenset())
         title = "(preamble)"
-        for part in re.split(r"(?m)^(## .*)$", document.read_text()):
-            if part.startswith("## "):
-                title = part.strip()
-                continue
+        body: list[str] = []
+        fenced = False
+
+        def close(title: str, body: list[str]) -> None:
             if title not in exempt:
-                sections.append((document, title, part))
+                sections.append((document, title, "\n".join(body)))
+
+        for line in document.read_text().splitlines():
+            if line.startswith("```"):
+                fenced = not fenced
+            if not fenced and line.startswith("## "):
+                close(title, body)
+                title, body = line.strip(), []
+                continue
+            body.append(line)
+        close(title, body)
     return sections
 
 
