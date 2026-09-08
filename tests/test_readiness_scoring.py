@@ -26,6 +26,17 @@ assert SPEC.loader is not None
 sys.modules[SPEC.name] = MODULE
 SPEC.loader.exec_module(MODULE)
 
+#: Build checks the guide's own `--agent-knobs` example never measured, so the
+#: unverified route has no measurement to withhold on them and adds no framing.
+#:
+#: It is the `tools` check, because that example answers `used: false`. The two
+#: tests below used to select the same set with `if checks[name]["applicable"]`,
+#: which stopped meaning anything when that arm was charged instead of excluded
+#: (traigent-first-run#451/#456): it is applicable now, and still unmeasured.
+#: Named here so the reason is the arm's own state rather than a flag that
+#: happened to correlate with it.
+UNMEASURED_AT_THE_READ = frozenset({"tools"})
+
 
 class FakeStream:
     def __init__(self, *, tty: bool, encoding: str = "utf-8") -> None:
@@ -4398,7 +4409,7 @@ class CliTests(unittest.TestCase):
                 self.assertFalse(checks[name]["measured"])
                 self.assertFalse(checks[name]["withheld"])
                 self.assertEqual(checks[name]["value"], 0.0)
-                if checks[name]["applicable"]:
+                if name not in UNMEASURED_AT_THE_READ:
                     self.assertIn(
                         "not independently verified; excluded from this score",
                         checks[name]["evidence"],
@@ -4458,7 +4469,7 @@ class CliTests(unittest.TestCase):
         for name, _weight in MODULE.AGENT_BUILD_CHECKS:
             with self.subTest(check=name):
                 self.assertFalse(checks[name]["measured"])
-                if checks[name]["applicable"]:
+                if name not in UNMEASURED_AT_THE_READ:
                     self.assertIn(
                         "not independently verified; excluded from this score",
                         checks[name]["evidence"],
@@ -18921,11 +18932,21 @@ class TheAgentPillarReadsTheAgentTests(unittest.TestCase):
         self.assertEqual(thin.pillars[0].confidence, 1.0)
 
     def test_a_check_the_read_could_not_settle_is_not_a_zero(self) -> None:
-        """README.md's promise, on the input most likely to break it.
+        """#184's promise, on the input most likely to break it.
 
-        "A check this tool could not compute is marked unmeasured and excluded
-        rather than scored zero." A prompt assembled at runtime is the ordinary
-        case, and scoring it zero would say the agent has no prompt.
+        A prompt assembled at runtime is the ordinary case, and REPORTING it as
+        a zero would say the agent has no prompt. Nothing here reports that:
+        the check stays unmeasured, confidence falls, the card marks it, and
+        the sentence says the read did not establish it.
+
+        THE POINTS HALF OF THIS TEST WAS THE DEFECT AND IS REPLACED. It
+        asserted `withheld` was False and that the undetermined answer scored
+        STRICTLY BETTER than an agent that genuinely has no prompt - 47 against
+        44, and the same two to three points on all four checks. That is an
+        agent being paid for being unable to answer a question about itself,
+        and pinning it made it the settled behaviour rather than an oversight
+        (traigent-first-run#456). It now ties, which is where the sibling pin
+        one method down already puts a read that never happened at all.
         """
         undetermined = _build_document(
             prompt={
@@ -18936,13 +18957,13 @@ class TheAgentPillarReadsTheAgentTests(unittest.TestCase):
         )
         pillar, checks = self._pillar(_read(undetermined))
         self.assertFalse(checks["prompt"].measured)
-        self.assertFalse(checks["prompt"].withheld)
+        self.assertTrue(checks["prompt"].withheld)
         self.assertIn("not established by this read", checks["prompt"].evidence)
         self.assertIn("fetched at runtime", checks["prompt"].evidence)
-        # Excluded, so it lowers confidence and not the score, and it scores
-        # strictly better than an agent that genuinely has no prompt.
+        # Unmeasured, so it lowers confidence: the pillar says how much of it
+        # was actually observed, and this check was not.
         self.assertLess(pillar.confidence, 1.0)
-        answered, _ = self._pillar(
+        answered, answered_checks = self._pillar(
             _read(
                 _build_document(
                     prompt={
@@ -18952,7 +18973,18 @@ class TheAgentPillarReadsTheAgentTests(unittest.TestCase):
                 )
             )
         )
-        self.assertGreater(pillar.score, answered.score)
+        # Levelled, not charged. The check keeps its weight and earns nothing,
+        # which is exactly what the settled "no prompt" answer earns, so the
+        # two land on the same number - the undetermined answer sits ON the
+        # floor of what this check can settle rather than under it. Charging it
+        # further would price a blocked read below an agent that really has no
+        # prompt, which is the half of #184 that stays.
+        self.assertEqual(answered_checks["prompt"].value, 0.0)
+        self.assertEqual(pillar.score, answered.score)
+        # And the difference between them is still visible, in the half that
+        # says how much was seen rather than in the half that says what was
+        # found.
+        self.assertGreater(answered.confidence, pillar.confidence)
 
     def test_determined_is_a_strict_boolean(self) -> None:
         for malformed in ("false", None, 0):
@@ -18969,6 +19001,370 @@ class TheAgentPillarReadsTheAgentTests(unittest.TestCase):
                             }
                         )
                     )
+
+    # Every shape `build_signal_from_entry` accepts, per check, written the way
+    # a document writes them. The sweep below derives what each one IS from the
+    # sub-score the module produces for it - settled, unrefutable, or not
+    # applicable - rather than from how it is labelled here, so a shape that
+    # changes class fails the property instead of quietly moving group.
+    BUILD_ANSWER_SHAPES: dict[str, dict[str, dict[str, object]]] = {
+        "prompt": {
+            "present, three worked examples": {
+                "present": True,
+                "few_shot": 3,
+                "evidence": "agent.py:9-31 SYSTEM carries three worked examples",
+            },
+            "present, none": {
+                "present": True,
+                "few_shot": 0,
+                "evidence": "agent.py:9 one instruction line",
+            },
+            "absent": {
+                "present": False,
+                "evidence": "agent.py:20 the call is made with the question alone",
+            },
+            "undetermined": {
+                "determined": False,
+                "reason": "the prompt is fetched at runtime",
+                "evidence": "agent.py:12 load_prompt(url) returns it",
+            },
+        },
+        "output-contract": {
+            "present": {
+                "present": True,
+                "evidence": "agent.py:40 json.loads(reply) parses the answer",
+            },
+            "absent": {
+                "present": False,
+                "evidence": "agent.py:40 the raw reply is returned",
+            },
+            "undetermined": {
+                "determined": False,
+                "reason": "the shape is decided by a downstream service",
+                "evidence": "agent.py:40 the reply is handed on unread",
+            },
+        },
+        "control-flow": {
+            "no loop": {
+                "loop": False,
+                "evidence": "agent.py:44 one call per input",
+            },
+            "loop with a stop condition": {
+                "loop": True,
+                "bounded": True,
+                "evidence": "agent.py:44 for _ in range(MAX_STEPS)",
+            },
+            "loop with none": {
+                "loop": True,
+                "bounded": False,
+                "evidence": "agent.py:44 a loop with no exit this read found",
+            },
+            "undetermined": {
+                "determined": False,
+                "reason": "the stop condition is held by the caller",
+                "evidence": "agent.py:44 the loop is driven from outside",
+            },
+        },
+        "tools": {
+            "declared, all reachable": {
+                "used": True,
+                "declared": ["search", "fetch"],
+                "unreachable": [],
+                "evidence": "agent.py:31 TOOLS lists both; both resolve here",
+            },
+            "declared, one unreachable": {
+                "used": True,
+                "declared": ["search", "fetch"],
+                "unreachable": ["fetch"],
+                "evidence": "agent.py:31 TOOLS lists both; fetch has no body",
+            },
+            "declared, none reachable": {
+                "used": True,
+                "declared": ["search", "fetch"],
+                "unreachable": ["search", "fetch"],
+                "evidence": "agent.py:31 TOOLS lists both; neither has a body",
+            },
+            "none used": {
+                "used": False,
+                "evidence": "agent.py:31 no tool table reaches the call",
+            },
+            "undetermined": {
+                "determined": False,
+                "reason": "the tool table is assembled at import time",
+                "evidence": "agent.py:31 TOOLS is extended by a plugin hook",
+            },
+        },
+    }
+
+    def _swept_answers(self, check: str) -> dict[str, tuple[object, object, object]]:
+        """Each shape of one check, scored, with what the reader returned kept.
+
+        Two things are recorded beside the scores, and they judge different
+        failures.
+
+        `_arms_reached` is which `return` in `build_signal_from_entry` the run
+        came out of, taken from the READER's own frame rather than from the
+        frame that happened to construct the object. A `BuildSignal` built in a
+        helper, or by `replace`, still leaves the reader through one of its
+        returns, so an arm spelled any way at all is still counted - which the
+        earlier version, keyed on the source spelling of the call, was not: an
+        arm reached through a one-line helper was invisible to it and therefore
+        never had to appear in the table below.
+
+        `_signals_returned` is what the reader actually handed back, which is
+        where the invariant lives that no construction spelling can dodge: an
+        unmeasured build signal has to carry `withheld`, or it renormalizes out
+        of the pillar and an answer nothing can refute outscores one this read
+        settled.
+        """
+        answers = {}
+        reached: set[int] = set()
+        returned: list[object] = []
+        real = MODULE.BuildSignal
+        real_reader = MODULE.build_signal_from_entry
+
+        def recording(*args, **kwargs):
+            frame = sys._getframe(1)
+            while frame is not None:
+                if frame.f_code.co_name == "build_signal_from_entry":
+                    reached.add(frame.f_lineno)
+                    break
+                frame = frame.f_back
+            return real(*args, **kwargs)
+
+        def reading(*args, **kwargs):
+            signal = real_reader(*args, **kwargs)
+            returned.append(signal)
+            return signal
+
+        MODULE.BuildSignal = recording
+        MODULE.build_signal_from_entry = reading
+        try:
+            for label, spec in self.BUILD_ANSWER_SHAPES[check].items():
+                facts = _read(_build_document(**{check: dict(spec)}))
+                pillar, checks = self._pillar(facts)
+                unverified, _ = self._pillar(
+                    MODULE.replace(
+                        facts,
+                        build=MODULE.build_declarations_are_unmeasured(facts.build),
+                    )
+                )
+                answers[label] = (pillar, checks[check], unverified)
+        finally:
+            MODULE.BuildSignal = real
+            MODULE.build_signal_from_entry = real_reader
+        self._arms_reached = reached
+        self._signals_returned = returned
+        return answers
+
+    def test_no_build_answer_this_read_cannot_refute_outranks_one_it_can(
+        self,
+    ) -> None:
+        """The property, swept over the shapes rather than over four numbers.
+
+        For ONE document and ONE check: an answer this read cannot refute may
+        not score or rank better than an answer it settled. It is written as a
+        sweep because the failure it guards is not any particular pair - it is
+        an arm being added, or re-weighted, in a way that pays for being
+        unanswerable, and a table of expected numbers would pass that as long
+        as the numbers were updated with it.
+
+        The two sides are derived from what the module returns, not asserted
+        here: SETTLED is `measured`, and UNREFUTABLE is a check that stayed
+        unmeasured while still applying to this agent.
+        """
+        for check, _weight in MODULE.AGENT_BUILD_CHECKS:
+            answers = self._swept_answers(check)
+            settled = {
+                label: value
+                for label, (_p, value, _u) in answers.items()
+                if value.measured
+            }
+            # NOT `and value.applicable`, which is how this property missed the
+            # defect it was written for. That filter took the one answer that
+            # declared itself inapplicable - "the agent declares no tools" -
+            # off BOTH sides of the inequality, so the sweep quantified over a
+            # set that excluded the answer which, once the undetermined arm was
+            # charged, beat the honest one by four points. An answer the read
+            # cannot refute belongs on this side whatever it says about itself.
+            unrefutable = {
+                label: value
+                for label, (_p, value, _u) in answers.items()
+                if not value.measured
+            }
+            self.assertTrue(settled, f"{check} has no shape this read settles")
+            self.assertTrue(
+                unrefutable, f"{check} has no shape this read cannot settle"
+            )
+            floor = min(answers[label][0].score for label in settled)
+            for label in unrefutable:
+                pillar = answers[label][0]
+                with self.subTest(check=check, answer=label):
+                    for other in settled:
+                        self.assertLessEqual(
+                            pillar.score,
+                            answers[other][0].score,
+                            f"{check} {label!r} outscores {other!r}, which this "
+                            "read actually settled",
+                        )
+                        self.assertLessEqual(
+                            pillar.confidence,
+                            answers[other][0].confidence,
+                            f"{check} {label!r} is better evidenced than "
+                            f"{other!r}, which this read actually settled",
+                        )
+                    # LEVELLED, and the equality is the half that says so: the
+                    # unrefutable answer lands ON the floor of what the check
+                    # can settle, not under it. Under it would price a blocked
+                    # read below an agent that really lacks the thing, which is
+                    # what #184 refuses.
+                    self.assertEqual(
+                        pillar.score,
+                        floor,
+                        f"{check} {label!r} is charged past the worst answer "
+                        "this read can settle",
+                    )
+
+    def test_an_unmeasured_build_answer_always_leaves_the_reader_withheld(
+        self,
+    ) -> None:
+        """The property the arms are actually judged by, asserted on the VALUE.
+
+        An unmeasured build signal that does not carry `withheld` renormalizes
+        out of the pillar, and an answer nothing can refute then outscores one
+        this read settled - the whole defect #456 opens with. This says so of
+        every `BuildSignal` the reader hands back, whatever built it: an inline
+        constructor, a helper, a `replace` of another signal. The coverage
+        guard below reads the source and can therefore be dodged by spelling
+        the construction differently; this one reads what came out, and cannot.
+
+        Deliberately NOT restricted to the two arms that carry `withheld`
+        today. The claim is about the class - unmeasured and asked for - and a
+        third arm inherits it without a line being added here.
+        """
+        for check, _weight in MODULE.AGENT_BUILD_CHECKS:
+            self._swept_answers(check)
+            self.assertTrue(
+                self._signals_returned, f"the {check} sweep read no build entry"
+            )
+            for signal in self._signals_returned:
+                with self.subTest(check=check, signal=signal.name):
+                    if signal.measured:
+                        continue
+                    self.assertTrue(
+                        signal.withheld,
+                        f"build_signal_from_entry returned an unmeasured "
+                        f"{signal.name!r} answer that is not withheld, so it "
+                        "leaves the score denominator and an answer this read "
+                        "cannot refute outscores one it settled",
+                    )
+
+    def test_the_sweep_judges_every_answer_shape_the_reader_accepts(self) -> None:
+        """The nudge that keeps the table above from going stale.
+
+        A new arm in `build_signal_from_entry` is a new answer shape the
+        document may take, and the sweep only exercises the shapes written into
+        `BUILD_ANSWER_SHAPES`. So the reader's arms are counted from the source
+        and compared with the ones the sweep actually came out of; adding an
+        arm and not adding a shape fails here, with the arm's own line number,
+        and the fix is to add the shape.
+
+        NOT what judges a future arm - that is the value invariant above, and
+        the sweep inequality it feeds. This is a source read, and a source read
+        can always be out-spelled; the earlier version of it matched
+        `BuildSignal(...)` calls written inline inside the reader, so an arm
+        that returned a helper's result was not counted as an arm at all and
+        needed no shape. Arms are counted as RETURN statements now, and reached
+        arms are taken from the reader's own frame, so the two sides are about
+        the same thing however the object was built.
+        """
+        source = ast.parse(SCRIPT.read_text(encoding="utf-8"))
+        reader = next(
+            node
+            for node in ast.walk(source)
+            if isinstance(node, ast.FunctionDef)
+            and node.name == "build_signal_from_entry"
+        )
+        arms = {
+            node.lineno for node in ast.walk(reader) if isinstance(node, ast.Return)
+        }
+        reached: set[int] = set()
+        for check, _weight in MODULE.AGENT_BUILD_CHECKS:
+            self._swept_answers(check)
+            reached |= self._arms_reached
+        missing = sorted(arms - reached)
+        self.assertFalse(
+            missing,
+            "build_signal_from_entry returns an answer shape no sweep judges, "
+            f"at line(s) {missing}; add it to BUILD_ANSWER_SHAPES so the "
+            "inequality covers it",
+        )
+
+    def test_no_build_answer_takes_itself_out_of_the_denominator(self) -> None:
+        """No shape of any check may answer "this does not apply to me".
+
+        There used to be exactly one: `tools: {used: false}` returned
+        `applicable=False`, which is the only state `combine` lets shrink a
+        score denominator. It was reachable from a sentence in an
+        assistant-written document and refutable by nothing, so the strongest
+        claim on the check - the question does not arise - was also the one
+        this read could never test, and it paid the pillar's own mean while an
+        answer that admitted the read was blocked paid the floor.
+
+        The field is gone from `BuildSignal` rather than merely unused, so this
+        asserts at the `SubScore` boundary where a future mapping could still
+        set it.
+
+        NO PILLAR DERIVES IT EITHER, today: `SubScore.applicable` is never
+        False anywhere in this repository, and `combine`'s filter and the two
+        reads in the ranked-gap loop are dead by construction because of it.
+        The field is retained as this assertion's boundary rather than because
+        something currently sets it - so if a mapping ever starts declaring
+        inapplicability, it fails here rather than quietly renormalizing a
+        pillar. Inapplicability may stay a real state; what it may not be is
+        DECLARED by the document under test.
+        """
+        declared_inapplicable = {
+            (check, label)
+            for check, _weight in MODULE.AGENT_BUILD_CHECKS
+            for label, (_p, value, _u) in self._swept_answers(check).items()
+            if not value.applicable
+        }
+        self.assertEqual(declared_inapplicable, set())
+        self.assertFalse(
+            hasattr(MODULE.BuildSignal("tools", 0.0, "e"), "applicable"),
+            "a build declaration can describe itself as inapplicable again",
+        )
+
+    def test_no_build_answer_moves_a_number_on_the_unverified_route(self) -> None:
+        """And the sweep says it of every shape, including the charged one.
+
+        `build_declarations_are_unmeasured` is the route the customer's own run
+        takes: no build declaration is scored there, so none may be charged
+        there either. Two shapes carry `withheld` out of the reader - the
+        undetermined check and the settled `tools` answer that declares no
+        tools - so those are the ones that would otherwise move this number,
+        downwards, against the answer this module asks for.
+
+        Confidence is swept over EVERY shape now, with no exception. It used
+        to allow one: the `tools` answer that said the question does not arise
+        left the confidence denominator too, so it alone reported a fuller
+        pillar than every answer this read can check. That was #451's
+        confidence half; the arm no longer declares itself inapplicable, so it
+        counts like the rest and the exception has nothing left to cover.
+        """
+        for check, _weight in MODULE.AGENT_BUILD_CHECKS:
+            answers = self._swept_answers(check)
+            observed = {
+                (unverified.score, unverified.confidence)
+                for _label, (_p, _v, unverified) in answers.items()
+            }
+            self.assertEqual(
+                len(observed),
+                1,
+                f"a {check} answer moves the card on the route that measures "
+                f"none of them: {observed}",
+            )
 
     def test_a_read_that_never_happened_is_withheld_and_never_free(self) -> None:
         """The rule this repository has broken in six places.
@@ -19028,8 +19424,33 @@ class TheAgentPillarReadsTheAgentTests(unittest.TestCase):
         # needed for the top bands until the read actually happens.
         self.assertLess(silent.confidence, MODULE.MIN_CONFIDENCE_FOR_TOP_BANDS)
 
-    def test_an_agent_with_no_tools_is_neither_charged_nor_paid(self) -> None:
-        """The N/A case, which is not a zero and is not full marks either."""
+    def test_an_agent_with_no_tools_is_charged_like_every_unchecked_claim(
+        self,
+    ) -> None:
+        """AN OWNER DECISION IS REVERSED HERE, and the name says which.
+
+        This was `test_an_agent_with_no_tools_is_neither_charged_nor_paid`, and
+        it pinned "no tools" to score within 3 of an agent whose tools all
+        resolve. That was settled against the question "should being simple be
+        PAID?", where the answer is still no. The question now is different:
+        `used: false` is a self-report nothing in this module refutes, and once
+        the undetermined arm was charged (traigent-first-run#456) the unchecked
+        claim scored 47 against 45 for admitting the read was blocked - the
+        same inversion, one arm over. There is no third treatment: an
+        unrefutable answer either shrinks the denominator or keeps it, and only
+        one of those ties it with the answers this read can settle.
+
+        So the deduction now falls on the CLAIM, not on the simplicity. An
+        agent that genuinely has no tools scores 45 where it used to score 47,
+        and it is still never told it lacks anything: the check stays
+        unmeasured, the card still marks it, coverage still counts it as
+        unchecked. What it stops being is free.
+
+        Kept as one test with a new name rather than deleted, because the
+        decision it recorded is the one being re-taken, and a reader who
+        followed a comment or an issue here has to land on the reversal rather
+        than on a missing symbol.
+        """
 
         def proven(build):
             facts = MODULE.agent_facts_from_config_space(
@@ -19042,26 +19463,37 @@ class TheAgentPillarReadsTheAgentTests(unittest.TestCase):
         )
         pillar, checks = self._pillar(proven(none))
         self.assertFalse(checks["tools"].measured)
-        self.assertFalse(checks["tools"].withheld)
-        self.assertFalse(checks["tools"].applicable)
+        self.assertTrue(checks["tools"].withheld)
+        self.assertTrue(checks["tools"].applicable)
         self.assertEqual(checks["tools"].value, 0.0)
-        # Excluded, so the pillar renormalizes over the checks that apply. That
-        # is not the same number as an agent whose tools all resolve - the
-        # denominator moved - and it is close to it rather than below it, which
-        # is the property that matters: having no tools is not a deduction.
+        # Charged: the check keeps its weight and earns nothing, so the pillar
+        # is BELOW an agent whose tools all resolve rather than beside it. The
+        # three assertions this replaces said the opposite - within 3 points,
+        # confidence 1.0, and confidence equal to the fully-read agent's - and
+        # each was reachable from one unverifiable sentence in a document.
         every_tool, every_checks = self._pillar(proven(_build_document()))
-        self.assertAlmostEqual(pillar.score, every_tool.score, delta=3)
-        # CONFIDENCE IS NO LONGER EQUAL, and this line used to assert that it
-        # was - `pillar.confidence == 1.0`, the same fully-evidenced pillar as
-        # an agent whose two tools were both read and found. That equality was
-        # the defect (traigent-first-run#451): `used: false` is a self-report
-        # nothing in this module refutes, so the pillar it produced was not
-        # fully checked, and saying it was let the one unrefutable answer
-        # report better coverage than every answer this read can check. The
-        # points half of that test still holds above and is unchanged - having
-        # no tools is still neither charged nor paid. What is charged is the
-        # claim to have looked.
+        self.assertLess(pillar.score, every_tool.score)
+        self.assertLess(pillar.confidence, 1.0)
         self.assertLess(pillar.confidence, every_tool.confidence)
+        # And it is charged exactly as much as an honest "I could not tell",
+        # which is the whole point of the reversal: neither answer can be
+        # checked, so neither may be worth more than the other.
+        undetermined, _ = self._pillar(
+            proven(
+                _build_document(
+                    tools={
+                        "determined": False,
+                        "reason": "the tool table is assembled at import time",
+                        "evidence": "agent.py:31 TOOLS is extended by a hook",
+                    }
+                )
+            )
+        )
+        self.assertEqual(pillar.score, undetermined.score)
+        self.assertEqual(pillar.confidence, undetermined.confidence)
+        # Kept from #454, which reached this line first: a charged pillar
+        # is still above the confidence the top bands ask for, so the
+        # charge does not smuggle in a band cap.
         self.assertGreaterEqual(pillar.confidence, MODULE.MIN_CONFIDENCE_FOR_TOP_BANDS)
         # And a declared tool nothing implements is charged, which is the one
         # thing "wired correctly" can be checked for by reading source.
@@ -19155,14 +19587,21 @@ class TheAgentPillarReadsTheAgentTests(unittest.TestCase):
         and the one answer no source can contradict was the only one that
         bought a clean coverage line.
 
-        The score is deliberately NOT the thing pinned equal here. Charging
-        this check - full weight, no credit - would make declaring tools pay,
-        because `used: true` naming an identifier that appears anywhere in the
-        file is exactly as unrefuted and earns the full weight; the honest
-        tool-less agent would then be the only one charged, which is the same
-        defect mirrored. So the arm keeps the treatment this module already
-        gives a claim it cannot settle - out of the score, into the coverage -
-        and that equality is what the last two assertions state.
+        THE SCORE IS PINNED ELSEWHERE, not left unpinned, and this docstring
+        used to say the opposite. It argued that charging the check would make
+        declaring tools pay - `used: true` naming an identifier that appears
+        anywhere in the file is exactly as unrefuted and earns the full weight
+        - so the arm should keep its exclusion from the score and be levelled
+        only in the coverage. That objection was recorded, weighed and set
+        aside once the undetermined arm was charged
+        (traigent-first-run#456): with that one charged and this one free the
+        two answers no source can contradict stopped being worth the same, and
+        the residual it names is the one beside the arm in
+        `build_signal_from_entry`, measured there. The check now keeps its
+        weight and earns nothing, and
+        `test_an_agent_with_no_tools_is_charged_like_every_unchecked_claim` is
+        where that is pinned. What stays here is the CONFIDENCE half, which is
+        #454's and is untouched by the charge.
         """
         variants = self._tool_variants()
         unrefutable, unrefutable_checks = variants["unrefutable-none"]
@@ -19248,7 +19687,8 @@ class TheAgentPillarReadsTheAgentTests(unittest.TestCase):
                     _read(_build_document(**{check: spec}))
                 self.assertIn("carries no evidence", str(caught.exception))
         # An undetermined check has to say what stopped the read, for the same
-        # reason: it leaves the pillar, and a silent exit is unauditable.
+        # reason: it is the one answer nothing else here can check, and a
+        # silent one is unauditable.
         with self.assertRaises(MODULE.AgentDiscoveryInputError) as caught:
             _read(
                 _build_document(prompt={"determined": False, "evidence": "agent.py:12"})
@@ -19722,9 +20162,16 @@ class OneFactIsOneRemediationLineTests(unittest.TestCase):
             }
         )
         absent = [gap for gap in score.gaps if "could not be measured" in gap]
-        self.assertEqual(len(absent), 1, absent)
+        # TWO, and it used to be one. The `tools` answer here is "no tools",
+        # which produced no remediation line at all while the check declared
+        # itself inapplicable. It is now an unchecked claim that keeps its
+        # weight, so a customer who is charged for it is told what was not
+        # checked - being charged silently is the state this list exists to
+        # prevent. The two lines still rest on different facts, which is what
+        # this test is about.
+        self.assertEqual(len(absent), 2, absent)
         self.assertTrue(any("fetched at runtime" in gap for gap in absent))
-        self.assertFalse(any("no tools" in gap for gap in score.gaps))
+        self.assertTrue(any("declares no tools" in gap for gap in absent))
 
     def test_the_durable_report_says_what_the_pillar_does_not_cover(self) -> None:
         """The card said it and the saved report did not.
@@ -20974,9 +21421,13 @@ class TheBuildHalfCitesTheAgentItReadTests(unittest.TestCase):
             rows["tools"].index("tool wiring"), rows["tools"].index(marking)
         )
         self.assertLess(rows["tools"].index(marking), rows["tools"].index(prose))
-        # Nothing was withheld on a check that does not apply, so nothing
-        # claims a withheld measurement - that sentence would read as a
-        # penalty for an agent that simply has no tools.
+        # No MEASUREMENT was held back here, so the sentence that announces one
+        # is absent. The check itself IS withheld now - it keeps its weight and
+        # earns nothing, like every claim this read cannot check - but
+        # "excluded from this score" is `_observed_declaration`'s wording for a
+        # measurement that was taken and then set aside, and there was never a
+        # measurement on this arm to set aside. The clause above already says
+        # the honest thing: the read did not check it.
         self.assertNotIn("excluded from this score", rows["tools"])
         # #368's derived clause is unaffected and still stands beside it, and
         # a full stop separates it from the sentence it is there to be weighed

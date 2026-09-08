@@ -570,8 +570,8 @@ stub answers a question nobody put. **Control flow** is whether the agent ends a
 ends trivially, a loop with a bound can be recorded, and a loop with neither is one input costing an
 unbounded number of calls. **Tools**
 is whether each declared tool can be found. A partly reachable list earns only the reachable share
-of this check. `"used": false` removes only this wiring check; prompt,
-output-contract, control-flow, and config-space checks remain, with dataset/evaluation in separate
+of this check. `"used": false` keeps this check's weight and earns nothing, like every answer this
+read cannot check. Dataset and evaluation are scored in separate
 pillars. Memory/context and provider connectivity are not scored here; run safety handles the latter.
 
 None of the four is a judgment about how good the agent is, and none may become one. Whether a
@@ -579,8 +579,8 @@ prompt is well written, whether a tool is the right tool, whether the objective 
 objective - those are opinions, and an opinion may lower a score and never raise one, so they are
 outside this document. Answer `{"determined": false, "reason": "...", "evidence": "..."}` where the
 read genuinely could not settle a check - a prompt assembled at runtime from somewhere this read
-cannot reach is the common case - and the check leaves the pillar rather than scoring zero against
-the agent.
+cannot reach is the common case - and the check keeps its weight and earns nothing, the same as
+an honest no.
 
 Two of the criteria this pillar is asked about are not here, and the card says so rather than
 letting four checks imply that six were looked at: whether the dataset and the evaluation method are
