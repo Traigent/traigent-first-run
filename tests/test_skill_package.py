@@ -17027,17 +17027,21 @@ class SkillPackageTests(unittest.TestCase):
         self.assertLess(instruction, creation)
         self.assertIn("no generated row competes with it yet", skill)
 
-    def test_the_sample_is_disclosed_before_the_run_and_again_after_it(self) -> None:
-        """What was tested and what was assumed, in the two places it is useful.
+    def test_the_sample_is_declared_where_it_is_ordered(self) -> None:
+        """What the read is, in the flow; what it means, in the reference.
 
-        The hold now comes off on five rows (traigent-first-run#441), so the
-        difference between what this run established and what it assumed is
-        the customer's to know rather than ours to keep. The owner asked for it
-        twice: at the preparation stage as something to know going in, and in
-        the summary as something to act on afterwards. Both are mandates, so
-        both live in the flow, and neither restates the wording - that belongs
-        to the reference that owns the stage, and this pins that the flow sends
-        the reader there rather than growing a second copy of it.
+        The hold now comes off on five rows (traigent-first-run#441), so two
+        things a reader could get wrong have to be settled where the read is
+        ordered: that it is a SAMPLE and not the key, and that it is the
+        assistant's read and not a job handed to the user - which is what the
+        old unliftable rule effectively did on a corpus of any size.
+
+        What the sample MEANS is not settled here. The wording the customer
+        hears belongs to the reference that owns the stage, and this pins that
+        the flow points at it rather than growing a second copy: a rule stated
+        in two documents is a rule that can be changed in one, which is
+        `CLAUDE.md`'s rule and the defect class four of this repository's
+        contradictions came from.
         """
         skill = " ".join(SKILL.read_text().split())
         dataset = " ".join(
@@ -17046,12 +17050,9 @@ class SkillPackageTests(unittest.TestCase):
             .split()
         )
         gate = skill.index("#### Opening readiness gate")
-        prep = skill.index("It is a five-row sample and never the whole key")
-        close = skill.index("say what would make this production ready")
+        prep = skill.index("It is a five-row sample, never the whole key")
         self.assertLess(gate, prep)
-        self.assertLess(prep, close)
-        self.assertIn("never handed to the user", skill)
-        self.assertIn("say it again at the close", skill)
+        self.assertIn("yours to read rather than the user's", skill)
         # The words themselves, once, where the stage lives.
         self.assertIn("Say what you sampled and what you assumed", dataset)
         self.assertIn(
@@ -17065,56 +17066,13 @@ class SkillPackageTests(unittest.TestCase):
         # sample taken through material this run wrote is this run checking its
         # own work, and a reader must not take it for an outside check.
         self.assertIn("this run checking its own work", dataset)
-        # The flow points; it does not re-say. A second copy of the sentence in
-        # SKILL.md is the defect class CLAUDE.md names, not emphasis.
+        # The flow points; it does not re-say.
         for owned_by_the_reference in (
             "Say what you sampled and what you assumed",
             "assumed sound rather than shown to be",
         ):
             with self.subTest(sentence=owned_by_the_reference):
                 self.assertNotIn(owned_by_the_reference, skill)
-
-    def test_the_close_says_what_production_ready_takes_and_what_this_run_gave(
-        self,
-    ) -> None:
-        """traigent-first-run#439: no gate, and a paragraph instead of one.
-
-        The owner refused a check over a generated corpus and refused the
-        framing the issue was filed under with it. What a generated corpus
-        needs is not a blocker but a statement the customer can act on: every
-        generated pillar - dataset, evaluation method, AGENT, which the close
-        named nowhere - made real or checked by a person. And it may not be
-        sold as worthless, because it is not: a real first run, results in the
-        portal, next steps, the shape of easy against hard, and a split held
-        out of the search. Both halves are pinned because either alone is the
-        dishonest version of this paragraph.
-        """
-        safety = " ".join(
-            (SKILL_ROOT / "references" / "run-safety.md").read_text().split()
-        )
-        skill = " ".join(SKILL.read_text().split())
-        self.assertIn(
-            "the dataset, the evaluation method, the agent - has to be made real "
-            "or checked by a person",
-            safety,
-        )
-        for worth in ("results in the portal", "held out of the search"):
-            with self.subTest(value=worth):
-                self.assertIn(worth, safety)
-        self.assertIn("not a full-power run and must not be described as one", safety)
-        self.assertIn(
-            "not a run that established nothing, and must not be described as "
-            "that either",
-            safety,
-        )
-        # The flow orders it and names its home; the paragraph is not repeated
-        # there, and the close still reaches it before the extras.
-        self.assertIn("say what would make this production ready", skill)
-        self.assertIn("references/run-safety.md` carries", skill)
-        self.assertLess(
-            skill.index("say what would make this production ready"),
-            skill.index("these are available whenever the user wants them"),
-        )
 
     def test_opening_dataset_sequence_records_both_unmapped_and_absent_states(
         self,

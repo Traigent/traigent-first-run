@@ -333,6 +333,47 @@ ANSWER_KEY_BAND_CEILING = "WORKABLE"
 # this asks for five, so an honest five is cheaper than a fabricated thousand.
 ANSWER_KEY_SAMPLE_ROWS = 5
 
+
+def answer_key_hold_paragraph(band: str, nothing_else_pending: bool) -> str:
+    """The whole held-band paragraph, in one home, for both renderers.
+
+    The card and the durable report each carried their own hand-written copy of
+    this paragraph, and this change rewrote one of them. What shipped for a
+    while said, on the card, that a read of a small sample lifts the hold, and
+    said in the durable artifact the customer keeps that "a row-by-row read
+    ... covering the rows the run is graded on" lifts it - the exact predicate
+    traigent-first-run#441 is filed about, telling the reader the hold is
+    unliftable four lines under a card telling them it is not.
+
+    Consolidating only the sentence that lifts it would have been half a fix.
+    The two lead-ins were independently worded as well - "so the comparison is
+    not graded above X whatever it scores" against "so no score carries this
+    comparison above X" - agreeing on the day they were written and pinned by
+    nothing. The paragraph is the unit a reader actually reads, so it is the
+    unit that has one home.
+
+    Both arguments are parameters rather than read from a score here, because
+    each is a claim about the surface: `band` is the only genuinely per-score
+    part, and the trailing all-clear is per-card. Neither renderer decides
+    either, so neither can quietly answer it differently - which is how this
+    paragraph came to say two things in the first place.
+    """
+    return (
+        "No read of the expected answers this run is graded against has "
+        f"reached this score, so no score carries this comparison above {band}. "
+        "This hold is not a cap and does not stop the run: what it holds is the "
+        "verdict, not the work."
+        + (
+            " Nothing else here is capped, and this read is the only thing "
+            "being asked of you."
+            if nothing_else_pending
+            else ""
+        )
+        + " A read of a small sample of the rows the run is graded on - each "
+        "input beside its expected answer - is what lifts it."
+    )
+
+
 # Vendored from the installed SDK's canonical presets
 # (traigent/config_generator/presets/range_presets.py, read at 0.23.0). The
 # scorer runs before any install, so it cannot import them: this is the first
@@ -9797,20 +9838,9 @@ def render_card(
         # the read and the evaluation reference owns its shape; what belongs
         # here is what is missing and what would supply it.
         lines.append(
-            f"  {palette.dim}No read of the expected answers this run is "
-            f"graded against has reached this score, so the comparison is not "
-            f"graded above {score.band} whatever it scores. This hold is not a "
-            f"cap and does not stop the run: what it holds is the verdict, not "
-            f"the work."
-            + (
-                " Nothing else here is capped, and this read is the only thing "
-                "being asked of you."
-                if nothing_else_pending
-                else ""
-            )
-            + f" A read of a small sample of the rows the run is graded on - "
-            f"each input beside its expected answer - is what lifts it."
-            f"{palette.reset}"
+            f"  {palette.dim}"
+            + answer_key_hold_paragraph(score.band, nothing_else_pending)
+            + f"{palette.reset}"
         )
     lines.append(
         f"  {palette.dim}Local pre-run planning estimate, not a probability or "
@@ -9880,20 +9910,12 @@ def render_markdown(
             # one hold that no cap row below explains.
             *(
                 [
-                    "**The band is held here.** No read covering the expected "
-                    "answers this run is graded against has reached this "
-                    "score, so no score carries this comparison above "
-                    f"{score.band}. This hold is not a cap and does not stop "
-                    "the run: what it holds is the verdict, not the work."
-                    + (
-                        " Nothing else is capped, and this read is the only "
-                        "thing being asked of you."
-                        if nothing_pending_beyond(score, ANSWER_KEY_UNREAD)
-                        else ""
-                    )
-                    + " A row-by-row read of each input beside its expected "
-                    "answer, covering the rows the run is graded on, is what "
-                    "lifts it.",
+                    "**The band is held here.** "
+                    + answer_key_hold_paragraph(
+                        score.band,
+                        # The card's own argument, not a second reading of it.
+                        nothing_pending_beyond(score, ANSWER_KEY_UNREAD),
+                    ),
                     "",
                 ]
                 if score.band_limited_by_unread_answers

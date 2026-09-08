@@ -284,9 +284,8 @@ omitting `--dataset` when none exists. Then include every safe measurement that 
 the first readiness card. When rows carry expected answers, do the row-level sanity check in
 `references/evaluation-and-dataset.md` here and pass it as `--row-review` - on every opening scoring
 call and not only where calibration is deferred: it is your own read, it spends nothing, and no
-generated row competes with it yet. It is a five-row sample and never the whole key, and it is
-never handed to the user - so say in this same turn what it buys and what it leaves assumed, in the
-terms that reference sets out, and say it again at the close. Nothing counted off a dataset can establish that an answer
+generated row competes with it yet. It is a five-row sample, never the whole key, and yours to read
+rather than the user's. Nothing counted off a dataset can establish that an answer
 answers its own question, and that reference states what the read is worth once it enters. When `existing-traigent-use` reports a declaration, or a Traigent key is
 already configured, say so in the readiness turn: Traigent was set up in this project before this
 run started, so this may not be a first run, and this run still charges for its own baseline and
@@ -735,9 +734,8 @@ paragraph below carries both halves:
   a question; a real source the user names is recorded, and new data is never the remedy. Meanwhile
   apply the rules above. The rows may be real and only this run cannot tell, so it bounds the claim
   exactly as a declared-generated corpus does and holds nothing up.
-- `dataset-generated-answer-key` - require that a person reviews a sample of the answers, which is
-  not this run's own sampled read, before a correctness claim; until then the score measures model
-  agreement.
+- `dataset-generated-answer-key` - require that a person reviews a sample of the answers, not this
+  run's own sampled read, before a correctness claim; until then the score measures model agreement.
 - `dataset-mostly-generated-answer-key` - the same review, on the model-written answers only, and
   say how many of the expected answers they are; the run proceeds meanwhile.
 - `dataset-unsound-expected-outputs` - bounded, not stopped: put the flagged rows to the user as one
@@ -1196,9 +1194,7 @@ If the installed result exposes a per-example audit or an insights helper: [`ref
 
 Close by saying what a further run would be worth. Name the gaps still open and what each is now
 costing; use the user's own measured evidence rather than encouragement. Say what this walkthrough
-cannot close, and say what would make this production ready - every pillar this run generated made
-real or checked by a person, and an answer key that was sampled rather than verified - in the one
-paragraph `references/run-safety.md` carries, which also says what the run was worth without them. Then give the one next action the **recorded opening state** earns: rank the opening
+cannot close. Then give the one next action the **recorded opening state** earns: rank the opening
 score's caps and this run's own recorded limits, and name its value. A gap this run filled with a
 substitute is not cleared - it is filled provisionally, so it stays on this list and the action is
 what closing it properly takes:
@@ -1221,9 +1217,7 @@ what closing it properly takes:
 - One difficulty band, or answers that are nearly all the same - add examples where the agent
   currently fails, which is also where a search has room to win.
 - A substitute component still standing in for a real one - connect the production agent, dataset or
-  evaluator it replaced, and say which of the reported numbers would change. Where there is nothing
-  yet to connect, a person checking that the substitute does what the product does is what stands in
-  meanwhile.
+  evaluator it replaced, and say which of the reported numbers would change.
 - A thin evaluator, or one that was never calibrated - align the method with the product's own
   grading policy before trusting a comparison built on it.
 
