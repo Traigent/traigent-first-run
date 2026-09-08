@@ -1758,17 +1758,25 @@ CALIBRATION_REFUSED_CEILING = 45
 # state, which is the rule recorded above `CAP_SEVERITY_ORDER`, and "we had a
 # good reason" is not a property of the state.
 #
-# It is worth saying what this deliberately does NOT fix. A project whose
-# scorer executes candidate-generated SQL is held here by obeying the scope
-# gate and scores far higher by running the calibration anyway, because the
-# calibration sub-score and the probe spread are only earned by a probe that
-# ran. That gap is an honest statement about evidence: the second run really
-# did establish something the first did not. What is wrong is that this
-# package offers no safe route to that evidence, so the only way to earn it is
-# to break the rule - and a route is a change to `calibrate_evaluator.py`, not
-# a number here. Raising this ceiling to close the gap would buy the incentive
-# back by having the card claim what no probe established, which is the defect
-# this whole branch exists to remove. Filed as traigent-first-run#392.
+# It is worth saying what this does and does not fix, because the incentive it
+# was filed against was real and is now closed only as far as the walk can see.
+#
+# A project whose scorer executes candidate-generated SQL used to be held here
+# by obeying the scope gate and to score forty points higher - 85/STRONG, no
+# cap, `proceed` - by running the calibration anyway, because the calibration
+# sub-score and the probe spread were earned by any probe that ran. Where
+# preflight's walk found the witness, that is over: `score_evaluation` refuses
+# both credits on the measured fact and raises this condition instead, so the
+# card pays nothing for the forbidden run and says why.
+#
+# The ceiling did not move, and moving it was never the fix. Raising it would
+# have had the card claim what no probe established, which is the defect this
+# whole branch exists to remove; refusing the credit takes the reward away
+# without inventing evidence. What is still not fixed is the shape the walk
+# cannot see - an engine behind a helper module, or a hand-written payload for
+# a file preflight never opened - and the absence of any safe route to the
+# evidence, which is a change to `calibrate_evaluator.py` and not a number
+# here. traigent-first-run#392 stays open for that remainder.
 AGENT_NO_VARYING_KNOBS_CEILING = 45
 # Equal to the timeout for the same reason: nothing is broken, and the run
 # compares nothing. An optimization with one configuration is a single
@@ -2678,6 +2686,177 @@ def task_fit_declared_evidence(
     return f"{sentence} (declared, not established from the evaluator file)"
 
 
+# Every clause the refused-calibration line can be built from, filed under
+# what it CLAIMS rather than under the branch that happens to reach it.
+#
+# The table is the answer to this seam's fourth review, and to the three
+# before it. Each earlier fix moved a sentence closer to the fact that decides
+# it, and each was still prose written at a branch: a reviewer reintroduced
+# all three defects as synonym rewrites and every one passed a green suite,
+# because the guards were phrase lists naming the wordings already found. A
+# ban-list cannot see a paraphrase. What can is a line ASSEMBLED from clauses
+# whose claims are data, so the test compares the rendered line to the
+# composition of its own record and any inline rewording stops matching.
+#
+# `task_fit_unproven_execution_evidence` a few lines down is the same idea a
+# generation earlier - it takes `read_the_file` and cannot be written without
+# it - and this is that discipline with the claim kept as a value instead of
+# spent as an argument.
+#
+# Keyed by (charged, a calibration happened, the file was read). Two of the
+# rows repeat a clause under both settings of "happened": whether a
+# calibration ran does not change why a charged run is charged, and the table
+# says that by holding the same string rather than by leaving a gap somebody
+# has to reason about.
+CALIBRATION_REFUSAL_CORE: dict[tuple[bool, bool, bool], str] = {
+    (False, True, True): (
+        "no points are deducted for it - this card may not read an evaluator "
+        "check this guide does not permit"
+    ),
+    (False, False, True): (
+        "no points are deducted for it - this run was not the one to make "
+        "that measurement"
+    ),
+    (True, True, True): (
+        "it costs points because the walk over your evaluator found no engine "
+        "in it, so nothing here confirms the refusal"
+    ),
+    (True, False, True): (
+        "it costs points because the walk over your evaluator found no engine "
+        "in it, so nothing here confirms the refusal"
+    ),
+    (True, True, False): (
+        "it costs points because no preflight report for your evaluator "
+        "reached this score - run `preflight.py --evaluator` over it and pass "
+        "the report to `--preflight`"
+    ),
+    (True, False, False): (
+        "it costs points because no preflight report for your evaluator "
+        "reached this score - run `preflight.py --evaluator` over it and pass "
+        "the report to `--preflight`"
+    ),
+}
+# What follows the core clause when, and only when, the refusal ceiling is
+# actually printed on this card. Keyed by the same triple as the core, so the
+# route a line offers is decided by the same claims as the reason it gives -
+# a charged run is not sent to the containment review, which retires nothing
+# it is paying for.
+#
+# The `False` row answers the fourth review's other point about this arm: the
+# instruction above it - run preflight over the evaluator - has two possible
+# outcomes and only one of them retires the charge. A line that hands over an
+# action without saying which result changes anything is a promise for half
+# its readers, which is the same defect as promising a remedy that cannot be
+# reached, one notch weaker.
+CALIBRATION_REFUSAL_ROUTE: dict[tuple[bool, bool, bool], str] = {
+    (False, True, True): (
+        ", and the containment review named in the ceiling is where a run "
+        "that could make that check gets designed"
+    ),
+    (False, False, True): (
+        ", and the containment review named in the ceiling is where a run "
+        "that could make that check gets designed"
+    ),
+    (True, True, True): " - establish the evaluator as the ceiling describes",
+    (True, False, True): " - establish the evaluator as the ceiling describes",
+    (True, True, False): (
+        ": if that walk finds the engine this check stops costing points, and "
+        "if it finds none, establish the evaluator as the ceiling describes"
+    ),
+    (True, False, False): (
+        ": if that walk finds the engine this check stops costing points, and "
+        "if it finds none, establish the evaluator as the ceiling describes"
+    ),
+}
+
+
+@dataclass(frozen=True)
+class CalibrationRefusalLine:
+    """The refused-calibration consequence, and what it claims, as one value.
+
+    `text` is what the customer reads. The rest is the same sentence as data:
+    whether it charges, whether it says a calibration happened, whether it
+    says the file was read, and whether it points at the refusal ceiling.
+
+    Every one of those is checkable against the run that produced it -
+    `charged` against the sub-score's own `withheld`, `calibration_happened`
+    against `calibration_engaged`, `file_was_read` against whether preflight's
+    walk ran at all, `names_ceiling` against the caps on the card - which is
+    what the three prior guards could not do. They compared text to text, and
+    the class is text against fact.
+    """
+
+    text: str
+    charged: bool
+    calibration_happened: bool
+    file_was_read: bool
+    names_ceiling: bool
+
+    @property
+    def core_key(self) -> tuple[bool, bool, bool]:
+        return (self.charged, self.calibration_happened, self.file_was_read)
+
+    def composed(self) -> str:
+        """The text this record says it is, rebuilt from the tables.
+
+        A test asserting `text == composed()` is what a paraphrase cannot
+        pass: rewording a clause in place stops it matching the clause its own
+        claims name, whatever the new words are.
+        """
+        text = CALIBRATION_REFUSAL_CORE[self.core_key]
+        if self.names_ceiling:
+            text += CALIBRATION_REFUSAL_ROUTE[self.core_key]
+        return text
+
+
+def calibration_refusal_consequence(
+    *, walk: bool | None, calibration_taken: bool, ceiling_printed: bool
+) -> CalibrationRefusalLine:
+    """What a refused calibration costs, and the sentence saying so - together.
+
+    The return value carries the sentence, the charge and the claims as one
+    record, so a caller cannot print one and score another: there is nothing
+    to pair up. That was already true of `(text, charged)` in the plumbing and
+    was not true of the SUITE, which pinned the charge only on the arm a
+    helper happened to construct - flipping it on the arm `SKILL.md` calls the
+    flag's own population moved the evaluation pillar 28 points with every
+    test green.
+
+    `walk` is preflight's engine read, PASSED THROUGH IN ITS THREE STATES
+    rather than as a boolean. `evaluator_execution_from_preflight` says of
+    those states that "`False` is a walk that settled nothing... and `None` is
+    a file this run never opened. Those last two are NOT the same answer and
+    no caller may collapse them", and the block that called this once
+    collapsed them into one boolean and then wrote a sentence whose premise
+    was the distinction it had discarded. A charged run whose walk RAN and
+    found nothing was told "this run could not read the file itself", two
+    lines above a task-fit line reporting what reading the file had found.
+
+    * `True` - the walk found the engine, so this run established for itself
+      that the measurement was not its to make. Not charged: `withheld` means
+      the run was asked and did not answer, and this one was forbidden.
+    * `False` - the walk read the file and found no engine. Charged, and the
+      reason is not that nobody looked: looking is what happened and it
+      settled nothing, so the declaration stands unconfirmed. Finding none
+      establishes nothing (`references/run-safety.md`), which is exactly why
+      it cannot lift a charge.
+    * `None` - no walk ran. Charged, and here the file genuinely was not read,
+      so the remedy is to have it read.
+
+    The route clause follows the CEILING rather than the refusal, because a
+    line that points at "the ceiling" on a card whose only cap is a timeout
+    points at nothing.
+    """
+    claims = CalibrationRefusalLine(
+        text="",
+        charged=walk is not True,
+        calibration_happened=calibration_taken,
+        file_was_read=walk is not None,
+        names_ceiling=ceiling_printed,
+    )
+    return replace(claims, text=claims.composed())
+
+
 def task_fit_execution_scope_evidence(method: str, witness: str | None) -> str:
     """The card's sentence for a file whose own tree reaches an engine.
 
@@ -3276,6 +3455,12 @@ class EvaluationFacts:
     # Read in one direction, exactly as `derived_control_flow_loop` is. `True`
     # refutes; the other two settle nothing and are never reported as an
     # all-clear (traigent-first-run#380).
+    #
+    # Two arms read it, and they are the same reading twice. Task fit refuses
+    # the declared method a scorer that runs the answer cannot honestly claim;
+    # the calibration arm refuses the credit a calibration this guide does not
+    # permit would otherwise buy. Both refuse on a witness and neither clears
+    # on its absence.
     executes_candidate: bool | None = None
     # The first witness, verbatim, for the card. A refusal a customer cannot
     # check is one they cannot usefully disagree with, so the line that takes
@@ -3293,11 +3478,13 @@ class EvaluationFacts:
     # Whether the run declared that SKILL.md's evaluator-execution scope gate
     # is what stopped calibration, rather than a step nobody took.
     #
-    # DECLARED, never measured, and it moves no number for that reason. There
-    # is nothing here to measure: whether a scorer's complete path executes
+    # DECLARED, never measured, and it moves no number for that reason.
+    # Nothing here can CONFIRM it: whether a scorer's complete path executes
     # candidate-generated code or SQL is settled by the inspection SKILL.md
-    # already mandates, and no property of a scoring function this module can
-    # read answers it. A declaration that lowered a ceiling would be fine; one
+    # already mandates, and preflight's walk answers it in one direction only
+    # - a witness proves execution and finding none proves nothing, so no
+    # reading of the file can establish that this flag was warranted. A
+    # declaration that lowered a ceiling would be fine; one
     # that RAISED a score would make claiming a refusal cheaper than doing the
     # work, which is the rule this package applies to every other unverified
     # input - a judgement may withhold a claim and may not manufacture one.
@@ -3305,13 +3492,55 @@ class EvaluationFacts:
     # So it changes the condition, the sentence and the remedy, and leaves the
     # ceiling, the sub-scores and the pillar exactly where they were.
     #
-    # Two things this does not reach, both filed rather than guessed at. A run
-    # that takes the forbidden path and declares nothing is indistinguishable
-    # from a compliant one, and whether this state should stop the run at all
-    # is a question `references/run-safety.md` answers differently from the cap
-    # it raises: traigent-first-run#393. And the `calibration` sub-score is
-    # still marked withheld for a run that was refused rather than asked:
-    # traigent-first-run#394.
+    # It is no longer the only way into that state, and that is the point.
+    # `score_evaluation` derives the refusal from this flag OR from
+    # `executes_candidate is True`, so a run that takes the forbidden path and
+    # declares nothing is distinguishable from a compliant one wherever
+    # preflight's walk found the witness. The flag survives for the runs the
+    # walk cannot see - an engine behind a helper module, a connection handed
+    # in with the row - and it still moves no number on its own.
+    #
+    # Three things that still do not reach, all filed rather than guessed at.
+    #
+    # A forbidden path the walk finds no witness for remains indistinguishable
+    # from a compliant one, which is the residue `traigent-first-run#416` owns
+    # and the reason nothing here is ever reported as an all-clear.
+    #
+    # Whether this state should STOP the run at all is still answered one way
+    # by `references/run-safety.md`, which ends the guide, and another by the
+    # cap it raises, which carries `blocks=False` and reports `status: OK`:
+    # traigent-first-run#393 part 2, untouched here because settling it is a
+    # choice between a new terminal status and a blocking cap, and that is the
+    # owner's to make.
+    #
+    # And traigent-first-run#394 - the `calibration` sub-score marked withheld
+    # for a run that was refused rather than asked - is now HALF closed, on
+    # the arm this flag is not.
+    #
+    # The owner settled it: the refusal stays, because not reaching into the
+    # customer's database is the point of it, and the card stops charging for
+    # the check it refused. So `score_evaluation` renormalizes that check away
+    # wherever preflight's walk established the engine, and keeps the 45
+    # ceiling, which is the half that is true - nothing there established that
+    # the evaluator ranks the task.
+    #
+    # THIS flag is the arm that still pays, and the asymmetry is the rule
+    # rather than an oversight. #394's objection was that a declaration must
+    # not lift a pillar; a witness is not a declaration, so it no longer
+    # covers the witness arm, and what retired the objection there is that
+    # evidence retires a charge and a claim does not. Nothing retires it here:
+    # this is a customer's word about a file this run never read, and
+    # retiring a deduction is raising a number. Measured through
+    # tests/test_readiness_scoring.py's
+    # `TheWitnessDecidesTheScopeGateNotTheDeclarationTests`: the witnessed arm
+    # reads 59 against this arm's 31 on the evaluation pillar, and the overall
+    # is 45 on both because the ceiling binds either way - so the difference
+    # is what this score can say it knows, never what a run can buy.
+    #
+    # The half that stays open is the population, not the rule: an engine
+    # behind a helper module leaves the walk nothing to find, so those
+    # projects pay a charge no rerun lifts. The card says so rather than
+    # promising them the evidence is coming.
     calibration_scope_refused: bool = False
 
 
@@ -6595,7 +6824,87 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
     # binary.
     disqualifying = observed_failure or established
 
-    if disqualifying and facts.checks:
+    # Whether this run was permitted to calibrate this evaluator at all, and
+    # the ONE place that question is answered. Two inputs reach it, and the
+    # asymmetry between them is why both belong here rather than the flag
+    # alone (traigent-first-run#392, #393, #394).
+    #
+    # `calibration_scope_refused` is the run's own declaration that SKILL.md's
+    # evaluator-execution scope gate stopped it. `executes_candidate is True`
+    # is preflight's WITNESS: the walk found a construct that establishes the
+    # call path to a code or SQL engine, so the gate would refuse this
+    # evaluator whether or not anybody typed the flag. A witness is positive
+    # evidence and may raise a state; a declaration may bound a claim and may
+    # never raise one - the rule this module applies to every unverified
+    # input, and the reason the flag alone was never enough here.
+    #
+    # Reading only the flag left three things wrong at once, every figure
+    # below taken from tests/test_readiness_scoring.py's
+    # `TheWitnessDecidesTheScopeGateNotTheDeclarationTests`, which executes
+    # each of them: a run that calibrated an evaluator the walk had PROVED
+    # reaches an engine scored 85/STRONG with no cap and
+    # `recommended_action: proceed`, 40 points above the run that obeyed the
+    # gate; the same witness with no flag raised `evaluator-unvalidated` and
+    # recommended `complete-calibration`, which is the step the guide forbids,
+    # to the one project it is forbidden for; and the refused state itself
+    # rested on a word nothing checked.
+    #
+    # `False` and `None` change nothing here, and that is the same one-way
+    # reading `run-safety.md` states for the walk itself: a walk that found no
+    # witness settled nothing about a helper module, a connection handed in
+    # with the row, or a name bound while the process runs. A run this
+    # predicate does not catch is one it had no grounds to catch, never one it
+    # cleared - so the incentive survives for the shapes the walk cannot see,
+    # which is `traigent-first-run#416`'s residue and not this seam's.
+    execution_scope_refused = (
+        facts.calibration_scope_refused or facts.executes_candidate is True
+    )
+    # ...and therefore whether calibration credit is refused.
+    #
+    # `not observed_failure` is the one direction this is allowed to fail in.
+    # A calibration performed outside the scope this guide permits may not BUY
+    # anything with what it measured; it may still convict. Suppressing the
+    # conviction too would score an evaluator proved defective as merely
+    # unmeasured - leniency bought by breaking the rule, which is the exact
+    # inversion the refusal exists to prevent.
+    calibration_credit_refused = execution_scope_refused and not observed_failure
+    # ...and whether a ceiling SAYS so on the card, which is a second question
+    # and has to be answered in the same place as the first.
+    #
+    # The sentence beside the sub-score names the containment review "in the
+    # ceiling", so it is only true where that ceiling is emitted. Deciding the
+    # sentence from `calibration_credit_refused` and the cap from a longer
+    # condition put the two one guard apart, and a run with a witness, a
+    # calibration taken anyway and no `--evaluator-method` was handed the
+    # sentence with no such ceiling on the card - which is the defect this
+    # seam exists to remove, one predicate over. So one value decides both.
+    #
+    # `facts.timed_out is not True` is the only thing that stops it. That run
+    # already carries `evaluator-timeout` at the same 45, and a second ceiling
+    # would say the same number twice while the timeout is the more specific
+    # account of what happened; the sentence below drops its route clause
+    # there rather than naming a ceiling nobody printed.
+    #
+    # A declared method is NOT required, and dropping it is the substantive
+    # half of this. `--evaluator-method` is optional, and its absence says
+    # nothing about whether this run may calibrate: an evaluator preflight
+    # proved reaches an engine is out of scope under whatever was, or was not,
+    # typed over it. Requiring it let an anonymous method reach
+    # `recommended_action: proceed` with no ceiling at all over a calibration
+    # this card had just refused to read.
+    calibration_refusal_capped = (
+        calibration_credit_refused and facts.timed_out is not True
+    )
+    # There is deliberately no third boolean here for "the refusal rests on
+    # evidence". There was one, and it was the generator of this seam's
+    # recurring defect: it collapsed preflight's three-state read into two
+    # states, and every sentence written from it was one fact short of the
+    # state it described. `calibration_refusal_consequence` takes
+    # `facts.executes_candidate` in all three states and returns the sentence
+    # and the charge together, so neither the collapse nor the drift between
+    # them can be written here.
+
+    if disqualifying and facts.checks and not calibration_credit_refused:
         gating_failed = [
             index
             for index, checks in enumerate(facts.checks)
@@ -6700,8 +7009,62 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
         # This module already draws the distinction correctly a hundred lines
         # away - "spread is unverified, not absent". This was the one place it
         # did not.
+        #
         if facts.timed_out is True:
             evidence = "calibration ran but did not finish"
+        elif calibration_credit_refused:
+            # Ahead of every arm that reads the payload, because what this
+            # branch decides is whether the payload may be read for credit at
+            # all. An arm below saying "calibration ran but reported no
+            # checks" over a run whose calibration this guide does not permit
+            # would describe the shortfall of a measurement rather than the
+            # fact that it was not this run's to take.
+            #
+            # BEHIND the timeout arm, though, and that order is the fix rather
+            # than a preference. A run that timed out is the one state where
+            # this arm would have replaced a fact the card needs: the timeout
+            # ceiling sits beside it and "calibration ran but did not finish"
+            # is what explains it. Both sentences are true of that run, and
+            # the more specific one is the one the reader cannot reconstruct
+            # from the caps. The tail below still says the refusal, so nothing
+            # about the scope is lost by yielding the sentence.
+            #
+            # `value` and `measured` are identical to every other arm here,
+            # so neither the declaration nor a calibration taken anyway buys a
+            # point: nothing in this branch can make a card claim the
+            # evaluator works. `withheld` is the one field that moves, and it
+            # moves only where the walk found the engine - see the argument on
+            # the `withheld` argument below, and `calibration_scope_refused`
+            # on `EvaluationFacts` for the half of traigent-first-run#394 that
+            # stays open.
+            if calibration_engaged:
+                # "an evaluator this run proved reaches a code or SQL engine"
+                # is a claim about a walk, so only the arm that has one may
+                # make it. A flag-only run with a calibration payload printed
+                # it with no witness anywhere - CLI-unreachable, since the two
+                # options refuse each other, and reachable by a direct caller,
+                # which is the shape this scorer exists to survive.
+                evidence = (
+                    "the evaluator check was run on a file this run proved "
+                    "reaches a code or SQL engine, which is the measurement "
+                    "the evaluator-execution scope gate refuses, so it earns "
+                    "no credit here"
+                    if facts.executes_candidate is True
+                    else "the evaluator check was run on a file this run was "
+                    "told the scope gate refuses, so it earns no credit here"
+                )
+            else:
+                # "...and the weight stays because the evidence is absent
+                # either way" used to close this sentence, from when both arms
+                # were charged. It is now decided below and differs between
+                # them, so a clause asserting it here contradicted the
+                # consequence on the witnessed arm - the same defect as the
+                # shared tail this seam already removed, one clause earlier.
+                # What it costs is said once, in the half that knows.
+                evidence = (
+                    "this run was never asked for a calibration - the "
+                    "evaluator-execution scope gate refused it"
+                )
         elif defects := [
             reason
             for checks in facts.checks
@@ -6724,46 +7087,48 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
             evidence = "calibration reported a case this score could not read"
         elif facts.calibration_supplied:
             evidence = "calibration ran but reported no checks"
-        elif facts.calibration_scope_refused:
-            # The arm below says "no calibration result was PROVIDED", which is
-            # this module's own sentence for a run that was asked and did not
-            # answer - `SubScore.withheld` in prose. A run the evaluator-
-            # execution scope gate refused was never asked; it was forbidden,
-            # and printing the asked-and-refused sentence over it made the card
-            # charge that run with a silence it did not choose. It sat directly
-            # above the cap that says this check must not be run here, so the
-            # two lines of one card disagreed about what had happened.
-            #
-            # ONLY THE SENTENCE MOVES. `value`, `maximum`, `measured` and
-            # `withheld` are all identical to the arm below, so the pillar
-            # stays exactly where it was and the declaration still buys
-            # nothing - which is the rule this whole seam is held to, and the
-            # reason clearing `withheld` here was rejected: it would renormalize
-            # the check out of the denominator and lift the pillar on the
-            # strength of a flag nothing verifies, making a claimed refusal
-            # cheaper than doing the work. What the run needs is not a higher
-            # number for evidence it lacks; it is a way to get the evidence, and
-            # this package does not have one. `references/run-safety.md` records
-            # why an in-process route is not it, and sends that work to the
-            # containment review instead. So the sentence names what happened
-            # and the cap names the review; neither pretends there is a step
-            # here that would produce the missing probe.
-            # The whole sentence is built in the one arm that owns this state,
-            # rather than as a tail appended after the chain. An earlier draft
-            # keyed that tail on `facts.calibration_scope_refused` outside the
-            # branch, so it also attached to the arms above and could print
-            # "calibration ran but reported no checks" and "was never asked" in
-            # one sentence. The CLI refuses that pair today, so it was latent
-            # rather than live - but the guard sits thousands of lines away in
-            # another function, and a sentence that stays true only because a
-            # distant refusal stays in place is one flag away from being wrong.
-            evidence = (
-                "this run was never asked for a calibration - the evaluator-"
-                "execution scope gate refused it, and the weight stays because "
-                "the evidence is absent either way"
-            )
         else:
             evidence = "no calibration result was provided to this score"
+        # The consequence, decided from the state rather than appended to
+        # every arm, because the default names a step one of these states may
+        # not take.
+        #
+        # "Until a complete calibration is measured" is the right instruction
+        # for a run that simply has not calibrated yet, and is an instruction
+        # to break the rule for a run the scope gate refused - the same class
+        # of statement `REVIEW_EVALUATOR_CONTAINMENT` exists to keep off this
+        # card (traigent-first-run#394). It is decided here, beside the
+        # sentence and after every arm, so that "whatever is appended to every
+        # arm has to be true of every arm" is a property of one expression
+        # rather than a rule someone has to remember: a state that changes the
+        # evidence and not the consequence, or the reverse, is visible in this
+        # block instead of being spread across the chain.
+        #
+        # And the route clause is conditional on the ceiling being PRINTED,
+        # not on the refusal being true. Naming "the containment review in the
+        # ceiling" on a card whose only ceiling is `evaluator-timeout`, or
+        # which carries no ceiling at all, is a pointer to something the
+        # reader cannot find.
+        # The consequence, and whether this check is charged, from one call.
+        #
+        # "Until a complete calibration is measured" is the right instruction
+        # for a run that simply has not calibrated yet, and is an instruction
+        # to break the rule for a run the scope gate refused - the same class
+        # of statement `REVIEW_EVALUATOR_CONTAINMENT` exists to keep off this
+        # card (traigent-first-run#394). Everything the refused states say is
+        # decided in `calibration_refusal_consequence`, which is handed the
+        # facts and returns the sentence beside the deduction it describes:
+        # this block can no longer print one and score the other, and there is
+        # no free text at a branch for a fourth fact to go missing from.
+        consequence = "it costs points until a complete calibration is measured"
+        charged = True
+        if calibration_credit_refused:
+            refusal = calibration_refusal_consequence(
+                walk=facts.executes_candidate,
+                calibration_taken=calibration_engaged,
+                ceiling_printed=calibration_refusal_capped,
+            )
+            consequence, charged = refusal.text, refusal.charged
         subs.append(
             SubScore(
                 "calibration",
@@ -6780,14 +7145,48 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
                 # line is a deduction - so the card was read as charging for a
                 # measurement the run had not reached yet. Neither line is
                 # allowed to be silent about which it is any more.
-                f"{evidence}; it costs points until a complete calibration is "
-                "measured",
+                f"{evidence}; {consequence}",
                 # The score describes the evidence connected to this run, not
                 # everything that may exist elsewhere. A complete calibration
                 # result earns these points; one that was not found or passed
                 # in does not. Keeping the check in the denominator makes the
                 # readiness gap visible without claiming the evaluator failed.
-                withheld=True,
+                #
+                # Except where this run PROVED the measurement was not its to
+                # make, which is the one state that is not a silence at all.
+                # `withheld` means, in this module's own words, that the run
+                # was asked for the evidence and did not give it. A project
+                # whose evaluator preflight walked and found reaching an
+                # engine was not asked and could not have answered: the guide
+                # declines to run that scorer against the customer's database,
+                # and billing them forty points for a decision made on their
+                # behalf, about an evaluator nothing here says is wrong, is
+                # the accusation the owner ruled this card must stop making.
+                # Renormalized, not credited - the check leaves the
+                # denominator and earns nothing, so no card claims this
+                # evaluator distinguishes answers. Measured through
+                # tests/test_readiness_scoring.py's
+                # `TheWitnessDecidesTheScopeGateNotTheDeclarationTests`, which
+                # executes both readings: the evaluation pillar reads 59
+                # rather than 31, and the overall is 45 either way because
+                # `evaluator-calibration-refused` binds it.
+                #
+                # The DECLARED arm keeps its weight, and the asymmetry is the
+                # rule rather than an oversight. `--calibration-scope-refused`
+                # is a customer's word about a file this run never read, and a
+                # declaration may bound a claim and may never raise one - the
+                # rule this module applies to every unverified input, and the
+                # one this whole seam exists to enforce. Retiring a deduction
+                # is raising a number. So the charge is retired by evidence
+                # and only by evidence, and the way a project gets it retired
+                # is the thing SKILL.md already asks of them: hand the
+                # evaluator to preflight and let the walk read it.
+                #
+                # Where that walk can see nothing - an engine behind a helper
+                # module - the charge stands and cannot be lifted by running
+                # anything, which is honest about what this score knows and is
+                # the half of traigent-first-run#394 that stays open.
+                withheld=charged,
             )
         )
 
@@ -6946,7 +7345,13 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
             )
         )
 
-    if established and facts.probe_scores:
+    # `not calibration_credit_refused` for the same reason the calibration
+    # sub-score above carries it: probe spread is read straight out of the
+    # calibration payload, so crediting it would hand back through the second
+    # check exactly what the first one refused - 15 points, and a green tick
+    # on "separates good answers from bad" measured by a run this guide does
+    # not permit.
+    if established and not calibration_credit_refused and facts.probe_scores:
         spreads = [max(case) - min(case) for case in facts.probe_scores if case]
         widest = max(spreads) if spreads else 0.0
         subs.append(
@@ -6972,7 +7377,16 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
         # sibling `?` that does deduct, and said nothing either way. A line
         # shown at a stage where it cannot yet be measured has to say what it is
         # costing, and here the honest answer is nothing.
-        spread_withheld = bool(established)
+        #
+        # A third state, and it needs its own sentence for the reason the
+        # second one did. "Not yet measured ... this is measured at
+        # calibration, later in the run" tells a project whose calibration
+        # this guide refuses to wait for a step that is never coming, and
+        # "calibration completed without reporting" is not true of it either.
+        # What is honest is that the measurement is out of scope and costs
+        # nothing here, because the calibration line above already charges the
+        # absence once.
+        spread_withheld = bool(established) and not calibration_credit_refused
         subs.append(
             SubScore(
                 "probe-spread",
@@ -6980,13 +7394,19 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
                 15.0,
                 False,
                 (
-                    "calibration completed without reporting how far apart it "
-                    "scores a right and a wrong answer; it costs points until "
-                    "those scores are reported"
-                    if spread_withheld
-                    else "not yet measured how far apart it scores a right and "
-                    "a wrong answer - this is measured at calibration, later in "
-                    "the run, and no points are deducted for it here"
+                    "not measured here - the calibration that would measure it "
+                    "is outside the scope this guide permits, and no points "
+                    "are deducted for it here"
+                    if calibration_credit_refused
+                    else (
+                        "calibration completed without reporting how far apart it "
+                        "scores a right and a wrong answer; it costs points until "
+                        "those scores are reported"
+                        if spread_withheld
+                        else "not yet measured how far apart it scores a right and "
+                        "a wrong answer - this is measured at calibration, later in "
+                        "the run, and no points are deducted for it here"
+                    )
                 ),
                 withheld=spread_withheld,
             )
@@ -7013,11 +7433,19 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
         and not established
         and not disqualifying
         and facts.timed_out is not True
-        # The run said the scope gate refused this evaluator, so the sentence
-        # below - "complete calibration" - is an instruction to do what
-        # SKILL.md forbids. The condition after this one says the true thing
-        # instead, at the same ceiling.
-        and not facts.calibration_scope_refused
+        # The scope gate refused this evaluator - the run said so, or
+        # preflight's walk proved it - so the sentence below, "complete
+        # calibration", is an instruction to do what SKILL.md forbids. The
+        # condition after this one says the true thing instead, at the same
+        # ceiling.
+        #
+        # Reading the witness here and not only the flag is what stops the
+        # forbidden remedy being handed to the one project it is forbidden
+        # for. A run whose evaluator preflight proved reaches an engine, and
+        # whose assistant simply did not pass the flag, was told to
+        # `complete-calibration` - and a remedy that depends on somebody
+        # remembering a flag is not a gate.
+        and not execution_scope_refused
     ):
         caps.append(
             Cap(
@@ -7038,26 +7466,89 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
                 asks=True,
             )
         )
-    if (
-        facts.method is not None
-        and facts.calibration_scope_refused
-        and not established
-        and not disqualifying
-        and facts.timed_out is not True
-    ):
+    # The derived predicate rather than the declaration, so this cap fires
+    # wherever the credit was refused - including the case a complete
+    # calibration WAS supplied for an evaluator preflight proved reaches an
+    # engine, where `established` is True and every condition above would have
+    # let the card report a clean 85/STRONG on evidence it may not accept.
+    # It stays mutually exclusive with `evaluator-unvalidated` above, which is
+    # what `CAP_SEVERITY_ORDER` records about the pair: the two conditions
+    # read the same predicate in opposite directions. It also stays clear of
+    # `evaluator-invalid`, because a calibration that observed a failure
+    # convicts and is never credit-refused, and of `evaluator-timeout`, which
+    # `calibration_refusal_capped` yields to.
+    if calibration_refusal_capped:
+        # The opening names what is connected, and it may not assert a
+        # declaration that was never made: `--evaluator-method` is optional,
+        # and this ceiling is about a calibration this run may not take rather
+        # than about a method somebody typed.
+        declared = (
+            f"An evaluator method ({facts.method}) was declared, and "
+            if facts.method is not None
+            else "An evaluator is connected, and "
+        )
+        if calibration_engaged:
+            # Said apart from the arm below, because the two runs did
+            # different things and only one of them can be told that nothing
+            # about its evaluator has been established. A complete calibration
+            # ran here; what is true is that this card may not read what it
+            # measured, and saying "nothing has been established either" over
+            # a passing result would be two sentences of one card disagreeing
+            # about the same run.
+            #
+            # The witness rides along because a refusal a customer cannot
+            # check is one they cannot usefully disagree with.
+            witness = f" ({facts.execution_witness})" if facts.execution_witness else ""
+            body = (
+                "the evaluator check was run on it, which this guide's "
+                f"evaluator-execution scope gate does not permit{witness}, so "
+                "this card cannot read that result. This guide does not "
+                "accept a check that opens your database, which is why it "
+                "will not read that one."
+            )
+        else:
+            body = (
+                "this run did not run the evaluator check on it, because running it "
+                "here is outside the scope this guide permits. This run did "
+                "not execute your evaluator: doing so opens your database "
+                "from inside this guide, and it will not reach into it."
+            )
         caps.append(
             Cap(
                 "evaluator-calibration-refused",
                 CALIBRATION_REFUSED_CEILING,
-                f"An evaluator method ({facts.method}) was declared, and this "
-                "run did not calibrate it because running it here is outside "
-                "the scope this guide permits. Nothing about the evaluator is "
-                "known to be wrong, and nothing about it has been established "
-                "either, so this card cannot claim that it distinguishes "
-                "answers. The ceiling is about the missing evidence and is not "
-                "a finding against your project. Settle it through the "
-                "separate containment review rather than by running this "
-                "check here.",
+                # The order is the message: what we did, why, that it is not
+                # about them, and what they can do next.
+                #
+                # This line reads to a customer who did nothing wrong and is
+                # holding a lower number than the run beside them. Every
+                # earlier draft explained CONTAINMENT - true, and an
+                # explanation of our machinery rather than of their
+                # situation - and closed on "settle it through the separate
+                # containment review", which is a process this guide does not
+                # run and they cannot start from the card. So the reason now
+                # says the plain fact first - and each arm says its OWN
+                # plain fact, because "this run did not execute your
+                # evaluator" is false of the run that calibrated anyway and
+                # true of the run that obeyed. Then the reason in their terms
+                # (it opens your database, and this guide will not reach into
+                # it), and then the one thing they can actually do, which is
+                # the check itself, against their own database, where they own
+                # the blast radius.
+                #
+                # The ceiling sentence stays and stays last. It is the true
+                # part - nothing here established that this evaluator ranks
+                # the task - and it is what the band is reporting; what
+                # changed is that it no longer arrives as the whole message.
+                declared + body + " That is a limit of this run and not a "
+                "judgement of your evaluator, which may well be sound. You can "
+                "establish that yourself, outside this guide, by running it "
+                "against your own database on answers you already know are "
+                "right and wrong, and confirming it separates them; the "
+                "containment review is where the boundary for doing that here "
+                "gets designed. Until "
+                "some run makes that check, no card can claim this evaluator "
+                "grades correctly, which is what the ceiling reports.",
                 blocks=False,
                 # ASKS, on the same argument the condition above it carries:
                 # there is genuinely something for a person to settle, it
@@ -9660,7 +10151,7 @@ def evaluator_execution_from_preflight(
 ) -> tuple[bool | None, str | None]:
     """Read preflight's engine/process walk over the evaluator, if one ran.
 
-    Returns `(executes, first witness)`. `executes` is `True` when the walk
+    Returns `(executes, the witness to print)`. `executes` is `True` when the walk
     found a construct that establishes the call path, `False` when it ran and
     found none, and `None` when no walk ran at all - no evaluator was handed
     to preflight, or the payload predates the field. Those last two are NOT
@@ -9671,24 +10162,56 @@ def evaluator_execution_from_preflight(
     A deliberately separate reader rather than two more return values on
     `evaluator_shape_from_preflight`. That function answers "is a file there,
     and is it Python", which every scoring path needs; this one answers a
-    question only the task-fit arms ask, and widening the shared tuple would
-    have made every existing caller carry a fact it does not use.
+    question only the evaluator-execution arms ask - task fit, and the
+    calibration credit beside it - and widening the shared tuple would have
+    made every existing caller carry a fact it does not use.
 
     Read the same three-state way as `parses` beside it: `reported_bool`, so
     `"true"`, `1` or `{}` land on "no honest reading" rather than on a
     verdict. The witness is taken only when it is a non-empty string in a
     list, because it is printed on a customer's card verbatim.
+
+    WHICH witness is a decision, and it stopped being free the moment this
+    string started carrying a 45 ceiling. preflight orders its witnesses by
+    LINE (`candidate_execution_witnesses`), which is the right order for
+    "what should I look at first" and the wrong one for "why was I refused":
+    over the canonical text-to-SQL scorer it reports `imports sqlite3 (line
+    1)`, `calls .execute() (line 6)`, `calls .execute() (line 7)`, and taking
+    the first put "you import sqlite3" on a card that caps the run at 45 and
+    sends the customer to a containment review, while the construct that
+    actually establishes the call path sat unquoted in the same record. A
+    refusal a customer cannot check is one they cannot usefully disagree
+    with; one they can check and would be right to argue with is worse.
+
+    So a call outranks an import, and line order decides between calls.
+    `calls ` is preflight's own prefix for every construct that reaches the
+    engine (`_execution_call_description`) rather than merely names it, and
+    the pair is pinned end to end by
+    `TheStrongestWitnessIsTheOneThePrintedRefusalCitesTests`, which feeds real
+    `candidate_execution_witnesses` output through this reader - so a change
+    to that vocabulary goes red here instead of quietly reverting the choice.
+    Nothing about the VERDICT moves: `executes` is preflight's, the walk is
+    unchanged, and a payload with only import witnesses still refuses on the
+    import it found.
     """
     shape = _metrics_by_check(records).get("evaluator-shape")
     if not shape:
         return None, None
     executes = reported_bool(shape.get("executes"))
     witnesses = shape.get("execution_witnesses")
-    witness = None
-    if isinstance(witnesses, list) and witnesses:
-        first = witnesses[0]
-        if isinstance(first, str) and first.strip():
-            witness = first.strip()
+    readable = (
+        [
+            witness.strip()
+            for witness in witnesses
+            if isinstance(witness, str) and witness.strip()
+        ]
+        if isinstance(witnesses, list)
+        else []
+    )
+    witness = next(
+        (found for found in readable if found.startswith("calls ")),
+        readable[0] if readable else None,
+    )
     return executes, witness
 
 
@@ -18952,9 +19475,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
             "declare that this run did not calibrate because the evaluator-"
             "execution scope gate refused it, rather than because the step was "
             "skipped. Changes the condition, the sentence and the remedy on the "
-            "card, and no number: it is a declaration nothing here can check, "
-            "so it may bound a claim and may not earn credit. Refused beside "
-            "--calibration, which says the opposite"
+            "card, and no number: it is a declaration this score cannot verify "
+            "on its own, so it may bound a claim and may not earn credit. Not "
+            "the only route to that state - where --preflight witnessed an "
+            "engine the card reaches it with no declaration at all. Refused "
+            "beside --calibration, which says the opposite"
         ),
     )
     parser.add_argument(

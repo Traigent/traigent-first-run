@@ -91,8 +91,8 @@ When building an evaluator:
 - Return a normalized score in `[0, 1]` from every metric helper.
 - Fail evaluator/runtime errors distinctly; do not let a crashed harness look like an incorrect
   agent answer.
-- Name the primary objective `accuracy`: the portal reads that one key for quality, and any
-  other name shows there as 0% (measured 2026-09-06).
+- Name the primary objective for the metric it measures; use that same key in the objective,
+  scorer, and result reading.
 - When the scorer reads row metadata, prove the SDK delivers it: the 0.26.0 loader nests an
   explicit `metadata` object one level down, so `metadata["db_id"]` reads `None`. Read both shapes.
 
@@ -579,9 +579,7 @@ The last two share a ceiling and a remedy, and differ only in how much of the ke
 bounds the run and never stops it: the review is what to do first rather than instead, and neither
 waits for it. When most of the expected answers are a model's, the review covers
 those answers only; when *all* of them are, a sample of the whole key, because nothing left in it
-was written by anything but the kind of thing the run is scoring. The rung exists because with one
-rung the cap turned on the last row: a dataset with every answer generated was capped at 74 and the
-same dataset with one human-written answer scored 94 and Excellent.
+was written by anything but the kind of thing the run is scoring.
 
 A ceiling is not a deduction: the pre-cap average stays in the output, and the number simply cannot
 claim more than the data supports. Whether the run also waits is the remedy's answer, not the

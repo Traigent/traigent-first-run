@@ -174,10 +174,9 @@ inside the choices turns a path into a third decision. No customer-facing senten
 standing path line.
 
 Three things that sentence has to carry, because a reader supplies each of them wrongly otherwise.
-Name the substitute in WORDS. There is no mark for it, deliberately: a glyph is read for what it
-depicts, this one was drawn as tools and read as "repaired" - the one thing it never means - and
-renaming it only moved the guess. The words were always required beside it, so they carry it now. Say what the run will actually read: "your rows" is heard as all of them, and above 100
-usable rows the paid run takes a bounded sample, so name the count this project will really use.
+Name the substitute in WORDS. There is no mark for it, deliberately. Say what the run will
+actually read: "your rows" is heard as all of them, and above 100 usable rows the paid run takes a
+bounded sample, so name the count this project will really use.
 And say that the first run is bounded whichever route they pick - a customer choosing to pause and
 fix their own components is buying a better-grounded result, not a bigger one, and letting them
 believe otherwise sells the pause on a promise this walkthrough does not make.
@@ -193,10 +192,9 @@ offered without saying which one it is asks them to spend on an unlabelled resul
 The build route carries the recommendation, and carries it visibly. Two routes with nothing marked
 is a menu, and this guide already holds that a menu offered instead of a recommendation is the same
 as no recommendation - the same reason the dataset reference marks its repair route. It is also the
-rule about silence, applied one section over: state it, so silence never has to be interpreted. A
-blinded run reaching an unmarked pair added "(recommended)" itself, which is what an unstated
-default looks like from the outside. Recommend the build route because pausing is always available
-and needs no push, while the run stopping is the outcome the walkthrough exists to avoid - and
+rule about silence, applied one section over: state it, so silence never has to be interpreted.
+Recommend the build route because pausing is always available and needs no push, while the run
+stopping is the outcome the walkthrough exists to avoid - and
 because the sentence beside it already says what the result will not be able to claim, so the
 recommendation cannot oversell.
 
@@ -212,9 +210,8 @@ was one they shared. State the choice as the property rather than as the finding
 whichever finding the card raised, the route that clears it is the one marked, and the route that
 leaves it standing is still offered, unmarked. The mark moves; it is never withheld from the set.
 Withholding it hands back an unmarked pair in the one state where an invented mark does the most
-harm, and the section above records what a blinded run does with one. The rule above is
-unchanged underneath this one: pausing is never the marked route, and this only narrows which of
-the continuing ones is. The baseline spend approval is this same rule at a later stage, and
+harm. The rule above is unchanged underneath this one: pausing is never the marked route, and
+this only narrows which of the continuing ones is. The baseline spend approval is this same rule at a later stage, and
 `references/run-safety.md` applies it there by name rather than stating a second one for a reader
 to reconcile with this.
 
@@ -321,12 +318,7 @@ is the default for a user with nothing to anchor on, not a list of what this gui
 "Classification" and "extraction" are how this document names the shape; they are never how the
 customer is offered it. SKILL.md's intent gate owns that wording - the job in their own words, and
 a recommendation that names what in their material picked it - and it binds every option written
-from this default. The run that bought that rule offered, to a project holding one plain text note,
-"pull the metric, the time range, and the grouping out of a plain-English data request" - three
-practice words in one line, to a reader who has none of them and no way to tell which of the three
-choices is nearest their work. The resident gate keeps the rule and the option to copy; the run it
-came from is recorded here, because a worked failure is read once and the rule is applied on every
-run.
+from this default.
 
 Do not create a story-writing or summarization walkthrough with exact-string grading.
 
