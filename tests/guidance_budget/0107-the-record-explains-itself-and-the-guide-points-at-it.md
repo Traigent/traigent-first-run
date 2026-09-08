@@ -1,15 +1,15 @@
-# 0103 - the record explains itself and the guide points at it
+# 0107 - the record explains itself and the guide points at it
 
-follows: 0102
-follows-resident-measured: 106_386
-follows-total-measured: 498_296
-follows-document-measured: 136_303
-resident-ceiling: 106_500
-resident-measured: 106_386
-total-ceiling: 498_272
-total-measured: 498_268
-document-ceiling: 137_550
-document-measured: 136_303
+follows: 0106
+follows-resident-measured: 105_460
+follows-total-measured: 495_120
+follows-document-measured: 134_261
+resident-ceiling: 105_600
+resident-measured: 105_460
+total-ceiling: 495_096
+total-measured: 495_092
+document-ceiling: 135_492
+document-measured: 134_261
 
 This lowers the TOTAL ceiling by 28 bytes, which is a prune and not a raise, and it is the only
 ceiling that moves. Connected-run readiness gains a short instruction while the same reference loses
