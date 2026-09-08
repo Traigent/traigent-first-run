@@ -4723,18 +4723,33 @@ def check_dataset(
                 tuning_metrics,
             )
 
+    # `overlapping_inputs` is published on both arms that ASKED the question,
+    # and on neither of the two below that could not - a tuning-only corpus and
+    # one with no declared split have no held-out side to overlap, so the count
+    # is absent there rather than zero. Three states, the way every other count
+    # this file publishes carries three (traigent-first-run#457).
+    #
+    # It exists because `readiness.py` was reading this finding off the STATUS.
+    # Severity is a preflight-layer decision and pricing is a readiness-layer
+    # one, and a price collected off `status == "FAIL"` couples them: relaxing
+    # this arm to WARN - the same pressure that relaxed `dataset-ids`' arm in
+    # #438, which silently deleted an entire blocking line from the customer's
+    # card - would have taken `dataset-tune-holdout-overlap` with it and no
+    # test would have gone red. The count is the measurement; the status is a
+    # judgement about it, and only one of the two is this module's to own.
     if overlap:
         emit(
             "dataset-split",
             FAIL,
             f"{len(overlap)} inputs overlap the tuning and held-out splits",
+            {"kind": "tuning-and-holdout", "overlapping_inputs": len(overlap)},
         )
     elif tune_inputs and holdout_inputs:
         emit(
             "dataset-split",
             PASS,
             "tuning and held-out inputs are disjoint",
-            {"kind": "tuning-and-holdout"},
+            {"kind": "tuning-and-holdout", "overlapping_inputs": 0},
         )
         # A second question about the SAME two sets `dataset-split` just
         # compared, and a second record rather than a widened detail because
