@@ -4546,6 +4546,22 @@ class AShadowedCredentialIsNamedTests(unittest.TestCase):
                 self.assertEqual(record.status, MODULE.PASS)
                 self.assertEqual(record.metrics["shadowed_variables"], [])
 
+    def test_blank_process_key_masks_a_handoff_file_key(self) -> None:
+        """An empty export still prevents python-dotenv from loading the file."""
+        file_key = self.PLACEHOLDER_FILE_KEY
+        MODULE.check_keys(
+            {"TRAIGENT_API_KEY": ""},
+            {"TRAIGENT_API_KEY": file_key},
+            {"TRAIGENT_API_KEY": ""},
+            ENV_PATH,
+        )
+        record = self._record("env-shadowed-key")
+        self.assertEqual(record.status, MODULE.WARN)
+        self.assertEqual(record.metrics["shadowed_variables"], ["TRAIGENT_API_KEY"])
+        self.assertEqual(record.metrics["blank_process_masks"], ["TRAIGENT_API_KEY"])
+        self.assertIn("blank or whitespace", record.detail)
+        self.assertIn("env -u TRAIGENT_API_KEY <command>", record.detail)
+
     def test_the_key_line_names_the_value_and_the_host_it_reaches(self) -> None:
         """Ask 2: a dev key against a prod host fails as a 401 too.
 

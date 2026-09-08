@@ -1016,31 +1016,9 @@ def check_shadowed_credentials(
     route value is printed, reduced by `route_display`, because naming it is
     what the finding is for.
 
-    Two shapes this PASS does not cover, and they matter more now that
-    `references/run-safety.md` routes a customer meeting a 401 straight to this
-    record. `key_present` treats "" and whitespace as absent, so both sides
-    must be non-empty before anything is called shadowed - while python-dotenv
-    skips a name that is in `os.environ` at all, including one bound to "" or
-    to "   ". An exported-but-empty credential therefore beats the file and
-    this check says nothing about it; the whitespace form carries further,
-    because a check that does not strip reads it as a value and sends it. The
-    comparison below strips both sides for the same reason, which also means a
-    shell value differing from the file only by padding reports clean and is
-    still what gets sent.
-
-    The silence is not the whole of it. On both shapes `check_keys` reads the
-    merged environment, where the empty export won, so `traigent-key` reports
-    "not configured yet" over a handoff file that holds a key - and a customer
-    sent here by a 401 is looking at two clean lines and one false one. The
-    obvious next action, entering the key again, rewrites the file the export
-    is already beating. That loop is #426, which is why it is written down
-    here rather than left to be rediscovered.
-
-    Not fixed here because the fix is a change to what "present" means, which
-    reaches `check_keys`, `check_cost_settings` and the cost-approval flag
-    together and wants its own tests. Recorded here rather than only in a pull
-    request, because this docstring is what the next author reads before
-    deciding that a PASS from this function means nothing was shadowed.
+    A present-but-blank process name is also a mask: python-dotenv keeps it
+    instead of loading the non-empty handoff-file value.  It is reported with
+    the same remedy, but never fingerprinted or printed as a secret.
 
     `env_path` is required for the same reason the two views are: this finding
     tells a reader to edit the file it compared, and it used to say `.env`
@@ -1056,6 +1034,19 @@ def check_shadowed_credentials(
         and key_present(process_values.get(name))
         and file_values[name].strip() != process_values[name].strip()
     ]
+    # `load_dotenv(override=False)` considers the process name occupied even
+    # when its value is blank.  Treat that as masking rather than absence: a
+    # file key that cannot be loaded is exactly the 401 diagnosis this record
+    # exists to make, and reporting PASS would send the reader into a repaste
+    # loop while preserving the empty export.
+    blank_masks = [
+        name
+        for name in SHADOW_SCANNED_ENV_NAMES
+        if key_present(file_values.get(name))
+        and name in process_values
+        and not key_present(process_values.get(name))
+    ]
+    masked = [*shadowed, *blank_masks]
     secrets = [name for name in shadowed if name in SECRET_ENV_NAMES]
     fingerprints = {
         name: {
@@ -1073,15 +1064,16 @@ def check_shadowed_credentials(
         if name not in SECRET_ENV_NAMES
     }
     metrics = {
-        "shadowed_variables": shadowed,
+        "shadowed_variables": masked,
+        "blank_process_masks": blank_masks,
         "fingerprints": fingerprints,
         "route_values": routes,
     }
-    if not shadowed:
+    if not masked:
         emit(
             "env-shadowed-key",
             PASS,
-            "no credential or route name is set to different values in the "
+            "no credential or route name is masking a different value in the "
             f"shell and {env_path}",
             metrics,
         )
@@ -1096,12 +1088,26 @@ def check_shadowed_credentials(
         )
         for name in shadowed
     )
+    if blank_masks:
+        described = "; ".join(
+            filter(
+                None,
+                [
+                    described,
+                    *(
+                        f"{name} is blank or whitespace in the process and has "
+                        f"a value in {env_path}"
+                        for name in blank_masks
+                    ),
+                ],
+            )
+        )
     # Every shadowed name in the unset, not just the first. A reader who runs
     # the printed command verbatim - which is what these lines are for - and
     # gets back only the first name clears one 401 and meets the next as an
     # unexplained provider error, with the report already claiming the problem
     # was solved.
-    unset = " ".join(f"-u {name}" for name in shadowed)
+    unset = " ".join(f"-u {name}" for name in masked)
     recipe = (
         f". Compute a fingerprint of your own to compare with: `{FINGERPRINT_RECIPE}`"
         if fingerprints
@@ -1110,8 +1116,8 @@ def check_shadowed_credentials(
     emit(
         "env-shadowed-key",
         WARN,
-        f"{len(shadowed)} name(s) disagree between the shell and {env_path}, and "
-        f"the shell wins: {described}. python-dotenv does not override a value "
+        f"{len(masked)} name(s) mask a value in {env_path}, and the shell wins: "
+        f"{described}. python-dotenv does not override a value "
         f"the process already carries, so the {env_path} value is inert - a 401 "
         "here is the shell's key, not the one you pasted. To use the file's "
         f"values, launch the command with `env {unset} <command>`, or pass "
