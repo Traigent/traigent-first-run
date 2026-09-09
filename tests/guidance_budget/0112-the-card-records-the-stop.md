@@ -1,12 +1,12 @@
 # 0112 - the card records the stop
 
 follows: 0111
-follows-resident-measured: 106_041
-follows-total-measured: 499_587
-resident-ceiling: 106_205
-resident-measured: 106_201
-total-ceiling: 499_751
-total-measured: 499_747
+follows-resident-measured: 106_025
+follows-total-measured: 499_571
+resident-ceiling: 106_189
+resident-measured: 106_185
+total-ceiling: 499_735
+total-measured: 499_731
 
 A hundred and sixty bytes, all of them in the flow document, and what they buy is one sentence that
 keeps two documents from answering the same question differently. The safety reference already ends
