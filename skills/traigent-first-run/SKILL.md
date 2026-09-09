@@ -1194,7 +1194,9 @@ If the installed result exposes a per-example audit or an insights helper: [`ref
 
 Close by saying what a further run would be worth. Name the gaps still open and what each is now
 costing; use the user's own measured evidence rather than encouragement. Say what this walkthrough
-cannot close. Then give the one next action the **recorded opening state** earns: rank the opening
+cannot close, and say what would make this production ready - every pillar this run generated made
+real or checked by a person, and an answer key read rather than verified - in the one
+paragraph `references/run-safety.md` carries, which also says what the run was worth without them. Then give the one next action the **recorded opening state** earns: rank the opening
 score's caps and this run's own recorded limits, and name its value. A gap this run filled with a
 substitute is not cleared - it is filled provisionally, so it stays on this list and the action is
 what closing it properly takes:
@@ -1217,7 +1219,9 @@ what closing it properly takes:
 - One difficulty band, or answers that are nearly all the same - add examples where the agent
   currently fails, which is also where a search has room to win.
 - A substitute component still standing in for a real one - connect the production agent, dataset or
-  evaluator it replaced, and say which of the reported numbers would change.
+  evaluator it replaced, and say which of the reported numbers would change. Where there is nothing
+  yet to connect, a person checking that the substitute does what the product does is what stands in
+  meanwhile.
 - A thin evaluator, or one that was never calibrated - align the method with the product's own
   grading policy before trusting a comparison built on it.
 
