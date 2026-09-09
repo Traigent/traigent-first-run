@@ -765,10 +765,11 @@ component on purpose, the run continues, and what the ceiling refuses is the cla
 when that gate establishes eligibility, or keep the ceiling and name the concrete deferral. It is
 an evidence boundary, not a repair finding.
 `evaluator-calibration-refused` is that same evidence boundary reached by the scope gate rather than
-by a step nobody took, and it routes to the manual-containment route in
-`references/run-safety.md`, never to running the check here. Say that the ceiling is about missing
-evidence and not a finding against their evaluator, and never present the unsafe route as the way
-to lift it.
+by a step nobody took, and it blocks where `evaluator-unvalidated` does not: the scope gate ends this
+run, so the card records the stop rather than reporting that the paid run may start. It routes to the
+manual-containment route in `references/run-safety.md`, never to running the check here. Say that the
+ceiling is about missing evidence and not a finding against their evaluator, and never present the
+unsafe route as the way to lift it.
 `evaluator-timeout` is neither a repair to route nor the invalid-evaluator
 paragraph: calibration ran and did not finish, which establishes nothing about this evaluator and
 does not make it invalid - slow and broken look identical from here. Settle it while gaps are still
