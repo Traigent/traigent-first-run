@@ -1,13 +1,13 @@
 # 0110 - say what was fitted to what
 
 follows: 0109
-follows-resident-measured: 106_016
-follows-total-measured: 497_825
+follows-resident-measured: 106_000
+follows-total-measured: 497_809
 follows-document-measured: 134_261
-resident-ceiling: 106_045
-resident-measured: 106_041
-total-ceiling: 499_581
-total-measured: 499_577
+resident-ceiling: 106_029
+resident-measured: 106_025
+total-ceiling: 499_565
+total-measured: 499_561
 document-ceiling: 135_492
 document-measured: 134_261
 

@@ -1,11 +1,11 @@
 # 0111 - the SDK already has a word for it
 
 follows: 0110
-follows-total-measured: 499_577
-total-ceiling: 499_591
-total-measured: 499_587
+follows-total-measured: 499_561
+total-ceiling: 499_575
+total-measured: 499_571
 
-Six bytes, and they buy a customer one vocabulary instead of two. The selection table offers a row
+Ten bytes, and they buy a customer one vocabulary instead of two. The selection table offers a row
 for an agent whose output is a run of tools, and until now the value typed under that row was spelled
 `final-state` while the product had shipped `state_transition` for the identical idea since its
 verifier kinds were defined. Nobody reading the SDK first would guess ours, and nobody reading ours
