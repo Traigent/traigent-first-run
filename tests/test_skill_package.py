@@ -2071,6 +2071,88 @@ def preflight_record_names() -> tuple[frozenset[str], frozenset[str]]:
 PREFLIGHT_RECORD_NAMES, ALWAYS_EMITTED_PREFLIGHT_CHECKS = preflight_record_names()
 
 
+#: The sections written for a run that already failed, by document.
+#:
+#: A failure-only preflight record is the right thing to name here and the
+#: wrong thing to name anywhere else, so this is the exemption list for
+#: `checkable_guidance_sections` below. It names the EXEMPTION rather than the
+#: coverage on purpose (traigent-first-run#464): the two scopes this replaces
+#: named the one region that was checked, so a sentence written one region over
+#: was green by default and the class was closed twice by moving the boundary.
+#: Naming the exemption inverts that - a section nobody has classified is
+#: checked, and exempting one is an edit a reviewer sees.
+#:
+#: Empty entries are not kept. A document with no failure-facing section simply
+#: does not appear, so this maps only what an author actually decided.
+#: Keyed by path relative to the repository root, never by basename. Two
+#: documents in this corpus may share a name - `references/` and `assets/` are
+#: both globbed into `assistant_facing_documents()` - and a basename key would
+#: hand one document's exemption to the other for free. Nothing collides today;
+#: the point is that nothing can.
+FAILURE_FACING_SECTIONS: dict[str, frozenset[str]] = {
+    # Written for the run that broke: "Portal persistence `failed`", "SDK or
+    # optimizer exception mid-run", "Timeout with zero trials". A record only a
+    # failed run prints is exactly what a reader standing here has in front of
+    # them.
+    "skills/traigent-first-run/references/run-safety.md": frozenset({"## Recovery"}),
+}
+
+
+def checkable_guidance_sections() -> list[tuple[Path, str, str]]:
+    """Every `##` section a reader reaches on a run that did not fail.
+
+    Yields `(document, section title, body)` over
+    `assistant_facing_documents()`, minus the sections a document declares
+    failure-facing in `FAILURE_FACING_SECTIONS`. Text above a document's first
+    `##` heading is yielded under `(preamble)`, because a reader standing in it
+    is standing somewhere and the guard's premise holds there too.
+
+    The title travels with the body on purpose: a failure that cannot say WHICH
+    section names a record sends the author back to search the document for it.
+
+    A `## ` inside a fenced block is NOT a heading, and this walks the lines
+    tracking fences rather than splitting on a regex for that reason. A regex
+    split is correct on this corpus today - nothing here writes one - and its
+    failure mode is the one this whole guard was rewritten to remove: a fenced
+    `## Recovery` in the one document that has an exemption would silently
+    exempt everything under it, which is a green nobody chose. Getting that
+    right costs four lines and removes the case rather than betting it stays
+    hypothetical.
+
+    What a fence does NOT do is take its contents out of the record scan, and
+    that is a decision rather than an oversight. A routing sentence is prose
+    and a fence usually holds a command or a sample, so scanning both costs a
+    false red on the day someone quotes a failure-only record inside an example
+    block outside `## Recovery` - and buys that no routing instruction can
+    escape by being written inside one. The cheaper error is the one that
+    fails loudly; the remedy for the example is to reword it or to record the
+    section, and this sentence exists so the next author reads that as a choice
+    somebody made.
+    """
+    sections: list[tuple[Path, str, str]] = []
+    for document in assistant_facing_documents():
+        relative = document.relative_to(ROOT).as_posix()
+        exempt = FAILURE_FACING_SECTIONS.get(relative, frozenset())
+        title = "(preamble)"
+        body: list[str] = []
+        fenced = False
+
+        def close(title: str, body: list[str]) -> None:
+            if title not in exempt:
+                sections.append((document, title, "\n".join(body)))
+
+        for line in document.read_text().splitlines():
+            if line.startswith("```"):
+                fenced = not fenced
+            if not fenced and line.startswith("## "):
+                close(title, body)
+                title, body = line.strip(), []
+                continue
+            body.append(line)
+        close(title, body)
+    return sections
+
+
 def preflight_records_named_in(text: str) -> frozenset[str]:
     r"""Every preflight record `text` names, in whatever notation it is written.
 
@@ -4788,10 +4870,10 @@ class SkillPackageTests(unittest.TestCase):
 
         The two halves are read at different scopes, on purpose. Routing and
         non-restatement are properties of the paragraph, so they are read from
-        it. Which records may be named is a property of the whole section, so
-        it is read from the section: `## Connected-run readiness` is written
-        for the run that connects, and a reader sent to a failure-only record
-        finds nothing there whichever paragraph of it sent them.
+        it. Which records may be named is a property of every place a reader
+        stands, so it is read from the whole assistant-facing corpus minus the
+        sections written for a run that already failed - see
+        `FAILURE_FACING_SECTIONS` and traigent-first-run#464.
         """
         text = RUN_SAFETY.read_text()
         section = text.split("## Connected-run readiness", 1)[1].split("\n## ", 1)[0]
@@ -4841,31 +4923,45 @@ class SkillPackageTests(unittest.TestCase):
         # genuinely are a property of that paragraph; where a record name may
         # appear is a property of the document the reader is in.
         #
-        # The section is the widest scope whose premise actually holds:
-        # `## Connected-run readiness` is written for the run that connects,
-        # so a record only a failed run prints is wrong anywhere in it. The
-        # whole document is not - `## Recovery` is written for the failed run,
-        # where naming `env-file` is the correct thing to do. Measured on this
-        # tree the document-wide scope passes too, but it would pass by
-        # accident, and the first correct Recovery sentence naming a
-        # failure-only record would red and teach the next author to delete
-        # this check rather than to fix the guidance.
-        named = preflight_records_named_in(section)
+        # Not a region, and that is the re-decision traigent-first-run#464
+        # asked for rather than a third widening. The check was scoped first to
+        # the paragraph and then to the section, and each scope was escaped by
+        # writing the same sentence one unit out: a paragraph escaped the
+        # paragraph, a section escaped the section. Both had the same shape -
+        # they NAMED THE ONE PLACE THAT IS CHECKED, so everywhere else was
+        # green by default, and #464 executed that: the failure-only `env-file`
+        # sentence appended to `## Approval and budgets`, `## Environment and
+        # privacy` or `## Post-run verification` passed untouched. The first of
+        # those is where `SKILL.md` dispatches a provider 401, which is the
+        # arrival this whole guard exists for.
+        #
+        # So the default is inverted. Every assistant-facing document is
+        # checked, and the exemption is named instead of the coverage: a
+        # section written for a run that already failed is where naming a
+        # failure-only record is the correct thing to do, and it says so in
+        # `FAILURE_FACING_SECTIONS` where a reviewer sees it. A section written
+        # after this one is covered on the day it is written rather than on the
+        # day somebody remembers to widen a split.
+        for document, section_title, body in checkable_guidance_sections():
+            for record in sorted(preflight_records_named_in(body)):
+                with self.subTest(document=document.name, section=section_title):
+                    self.assertIn(
+                        record,
+                        ALWAYS_EMITTED_PREFLIGHT_CHECKS,
+                        f"`{record}` is a preflight record that only a failed "
+                        f"run prints, and `{document.name}` names it under "
+                        f"`{section_title}`, which is written for a run that "
+                        "connected - so a reader sent there finds nothing. "
+                        "Either route to a record every run emits, or record "
+                        "the section in FAILURE_FACING_SECTIONS if it is "
+                        "written for the failed run.",
+                    )
         routed = preflight_records_named_in(paragraph)
         self.assertTrue(
             routed,
             "the paragraph names no preflight record at all, so it routes "
             "nowhere - or the names stopped being read out of it",
         )
-        for record in sorted(named):
-            with self.subTest(emitted_on_success=record):
-                self.assertIn(
-                    record,
-                    ALWAYS_EMITTED_PREFLIGHT_CHECKS,
-                    f"`{record}` is a preflight record that only a failed run "
-                    "prints, so a reader told to look at it on the run this "
-                    "section is written for finds nothing there",
-                )
         # And the two the routing depends on are present in the paragraph
         # itself, so the check above cannot be satisfied by a section that
         # names no record and by the phrases alone.

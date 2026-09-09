@@ -32,15 +32,20 @@ higher number: the interpreter bullet no longer repeats the stop-and-preserve re
 in full, and the ordering clause telling an assistant to run free component checks first goes back
 to being the flow document's alone, where it is written twice over already.
 
-THE NUMBER AND THE PREDECESSOR WERE BOTH TAKEN AGAIN, and this is the third trunk this entry has
-been measured on. It was written as 0100 following 0099 at 498_278; 0102 then landed, spending 18 of
-the 21 bytes 0099 left and moving RESIDENT to 106_386, so both the number and every `follows-*`
-figure went stale without a byte of this change moving. The figures above were re-measured on
-`e77d2e3c` with the suite's own `assistant_facing_documents()` and `guidance_budget_measured()` -
-498_296 there, 498_268 here - so the 28 bytes this frees are the same 28 on top of 0102's addition,
-which they can be because 0102 edits a SKILL.md sentence about `recommended_action` and this edits
-`references/run-safety.md` and the two do not touch. The ceiling follows the same arithmetic it did
-before: 0102's 498_300 less the 28 handed back is 498_272, and 498_272 - 498_268 - 1 is the same 3
-usable bytes 0102 left. A prune that lowered the ceiling by less than it freed would be a raise
-wearing a prune's clothes; a prune that carried a figure from `78753f88` would be describing a
-package that no longer exists.
+THE NUMBER AND THE PREDECESSOR WERE BOTH TAKEN AGAIN, and this is the fourth trunk this entry has
+been weighed on. It was drafted as 0100 behind 0099 at 498_278; 0102 arrived and spent almost
+everything 0099 had left, then 0103, 0104 and 0106 arrived and the prune ahead of them took the
+whole package down by roughly three thousand bytes. Not one of those movements was caused by
+anything in this branch, and each of them falsified every figure in this header while the change
+underneath stayed byte-for-byte what it was. That is the property worth writing down: an entry's
+arithmetic belongs to the tree it will land on, never to the tree it was composed on, and this one
+has been re-taken once per intervening landing rather than argued forward.
+
+The figures above were measured on `633cff17` with the suite's own `assistant_facing_documents()`
+and `guidance_budget_measured()`. 0106 weighed 495_120 under a 495_124 ceiling; this change hands
+back 28 bytes, so 495_092 under 495_096, and the four bytes of headroom the budget note prints are
+the same four 0106 left rather than four this entry granted itself. The ceiling comes down by
+exactly what was freed and not by less, because a prune that lowers its ceiling by less than it
+removes is a raise wearing a prune's clothes - and a prune still carrying the 498_272 this
+paragraph named while it followed 0102 would be describing, precisely and confidently, a package
+that no longer exists.
