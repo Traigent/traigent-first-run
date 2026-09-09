@@ -6645,14 +6645,93 @@ class OneRecordPerCheckTests(unittest.TestCase):
 
     def setUp(self) -> None:
         MODULE.RESULTS.clear()
+        MODULE.EMISSION_FAULTS.clear()
 
     def test_the_registry_refuses_a_check_recorded_twice(self) -> None:
+        """Refused, and the refusal costs the record and nothing else.
+
+        The first record stands, which is the half that always mattered: a
+        reader keyed by name may not be handed the later of two, because that
+        is how a FAIL and the ceiling it feeds went missing.
+        """
         MODULE.emit("dataset-ids", MODULE.FAIL, "first")
-        with self.assertRaises(MODULE.DuplicateCheckName) as refused:
+        with contextlib.redirect_stderr(io.StringIO()):
             MODULE.emit("dataset-ids", MODULE.WARN, "second")
-        self.assertIn("'dataset-ids'", str(refused.exception))
         self.assertEqual(len(MODULE.RESULTS), 1)
         self.assertEqual(MODULE.RESULTS[0].status, MODULE.FAIL)
+        self.assertEqual(MODULE.RESULTS[0].detail, "first")
+
+    def test_the_refused_record_is_kept_and_printed_in_full(self) -> None:
+        """Nothing is lost, which is what made costing the record the answer.
+
+        The objection to dropping the second record was that its finding goes
+        with it. It does not have to: the whole record is on stderr as the
+        fault is taken, so a developer sees it and a run log capturing stderr
+        keeps it (traigent-first-run#458).
+        """
+        errors = io.StringIO()
+        MODULE.emit("dataset-ids", MODULE.FAIL, "first")
+        with contextlib.redirect_stderr(errors):
+            MODULE.emit("dataset-ids", MODULE.WARN, "second", {"rows": 4})
+        self.assertEqual(len(MODULE.EMISSION_FAULTS), 1)
+        fault = MODULE.EMISSION_FAULTS[0]
+        self.assertEqual(fault.check, "dataset-ids")
+        self.assertEqual(fault.status, MODULE.WARN)
+        self.assertEqual(fault.detail, "second")
+        self.assertEqual(fault.metrics, {"rows": 4})
+        printed = errors.getvalue()
+        self.assertIn("'dataset-ids'", printed)
+        self.assertIn("internal error", printed)
+        self.assertIn("defect in the check rather than in your project", printed)
+        # The dropped finding itself, not merely a note that one was dropped.
+        self.assertIn("second", printed)
+        self.assertIn("'rows': 4", printed)
+
+    def test_a_run_that_lost_a_record_still_reports_and_says_our_fault(
+        self,
+    ) -> None:
+        """The blast radius, end to end, and the status that names whose it is.
+
+        The report renders and the machine-readable payload the readiness step
+        consumes is present rather than absent - that is the whole change. The
+        exit is `INTERNAL_ERROR_EXIT` and never `1`, so a caller can tell
+        "we broke" from "your project has a problem", which are different
+        things to do next.
+        """
+        self.assertNotEqual(MODULE.INTERNAL_ERROR_EXIT, 1)
+        with tempfile.TemporaryDirectory() as directory:
+            env_path = Path(directory) / ".env"
+            env_path.write_text("OPENAI_API_KEY=placeholder\n")
+            out, errors = io.StringIO(), io.StringIO()
+            argv = [
+                "preflight.py",
+                "--env",
+                str(env_path),
+                "--project-root",
+                directory,
+                "--models",
+                "gpt-4o",
+                "--json",
+            ]
+            original = MODULE.emit
+
+            def emit_twice(check, status, detail, metrics=None):
+                original(check, status, detail, metrics)
+                if check == "python-version":
+                    original(check, MODULE.WARN, "the shape this issue is about")
+
+            with mock.patch.object(sys, "argv", argv), mock.patch.object(
+                MODULE, "emit", emit_twice
+            ), contextlib.redirect_stdout(out), contextlib.redirect_stderr(errors):
+                status = MODULE.run()
+        self.assertEqual(status, MODULE.INTERNAL_ERROR_EXIT)
+        # Present rather than absent, and complete apart from the one record.
+        payload = json.loads(out.getvalue())
+        names = [record["check"] for record in payload]
+        self.assertIn("python-version", names)
+        self.assertEqual(names.count("python-version"), 1)
+        self.assertGreater(len(names), 1)
+        self.assertIn("record(s) were refused by the check registry", errors.getvalue())
 
     def test_a_partial_bedrock_triple_is_one_warning_on_the_inventory(self) -> None:
         MODULE.check_keys(
@@ -6976,13 +7055,14 @@ MODEL_SHAPES = (
 class NoInputMakesOneCheckSpeakTwiceTests(unittest.TestCase):
     """#447: the mechanism, in place of a fifth remembered-bug test.
 
-    A check that records its name twice raises `DuplicateCheckName`, which
-    `main` reports as exit ``3`` with no records at all: the customer gets a
-    non-zero exit and an empty report instead of the finding, and loses every
-    other finding the run had already made with it. Five instances of that one
-    class have now been found - `dataset-ids`, `provider-credentials`,
-    `dataset-difficulty`, and the two here - and every one of them was found by
-    a person reading the file.
+    A check that records its name twice is refused by the registry: the second
+    record is dropped, the run exits ``INTERNAL_ERROR_EXIT``, and the customer
+    reads every other finding. Five instances of that one class have now been
+    found - `dataset-ids`, `provider-credentials`, `dataset-difficulty`, and
+    the two here - and every one of them was found by a person reading the
+    file. Each still costs the customer the finding the duplicate carried,
+    which is why the property below matters exactly as much as it did when the
+    same mistake cost them the whole report (traigent-first-run#458).
 
     `OneRecordPerCheckTests` pins the first two and the registry; the two
     found here are pinned below. This class pins the PROPERTY as well: over
@@ -7020,8 +7100,28 @@ class NoInputMakesOneCheckSpeakTwiceTests(unittest.TestCase):
 
     def setUp(self) -> None:
         MODULE.RESULTS.clear()
+        MODULE.EMISSION_FAULTS.clear()
 
     def assert_one_record_per_check(self, description: object) -> None:
+        """Two questions, because since #458 the records alone cannot answer.
+
+        `emit` no longer raises on a duplicate; it drops the second record and
+        keeps the fault. So `RESULTS` is now unique by construction on every
+        input, and reading only it would make this whole class vacuous - green
+        for the same reason a broken run is green. The faults are where a
+        duplicate emission is visible now, and they are asserted first.
+
+        The records are still read as well, and deliberately: they catch a
+        duplicate that reached the list without passing the guard, which is
+        what a future author loosening the registry would produce.
+        """
+        faults = [fault.check for fault in MODULE.EMISSION_FAULTS]
+        self.assertEqual(
+            faults,
+            [],
+            f"{faults} emitted twice on {description!r}; the second record was "
+            "dropped, so the customer loses that finding",
+        )
         duplicates = duplicate_check_names(MODULE.RESULTS)
         self.assertEqual(
             duplicates,
@@ -7041,6 +7141,21 @@ class NoInputMakesOneCheckSpeakTwiceTests(unittest.TestCase):
         self.assertEqual(duplicate_check_names(MODULE.RESULTS), ["env-file"])
         with self.assertRaises(AssertionError):
             self.assert_one_record_per_check("a hand-built duplicate")
+
+    def test_the_property_is_also_read_off_the_faults(self) -> None:
+        """And it must red on a duplicate the guard DID stop.
+
+        This is the direction #458 opened. A second emission under one name is
+        now absorbed - `RESULTS` stays unique and nothing raises - so a class
+        asserting only over the records would report that no check speaks
+        twice on precisely the input where one just did.
+        """
+        MODULE.emit("env-file", MODULE.WARN, "first")
+        with contextlib.redirect_stderr(io.StringIO()):
+            MODULE.emit("env-file", MODULE.WARN, "second")
+        self.assertEqual(duplicate_check_names(MODULE.RESULTS), [])
+        with self.assertRaises(AssertionError):
+            self.assert_one_record_per_check("an absorbed duplicate")
 
     def test_no_env_file_of_these_line_shapes_records_a_check_twice(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

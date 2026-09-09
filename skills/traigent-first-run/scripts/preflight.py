@@ -538,7 +538,62 @@ class DuplicateCheckName(RuntimeError):
     WARN the FAIL vanished, and the ceiling it feeds with it. Each check now
     folds its findings into one record, and the registry refuses a second one
     so the next such pair fails here, loudly, rather than in a reader.
+
+    RECORDED RATHER THAN RAISED since traigent-first-run#458, and the change is
+    to the blast radius alone. Raising cost the whole run: `main` caught it,
+    reported exit 3, and printed nothing, so a customer whose corpus happened
+    to reach one of these shapes got no report at all rather than a report with
+    one record missing - and the machine-readable payload the readiness step
+    consumes was absent rather than partial. Five instances of the authoring
+    mistake have been found so far and the guard that hunts them cannot exhaust
+    the class, so the sixth is a matter of when; what it costs is what this
+    decides. The registry itself is NOT loosened - two records under one name
+    is still our defect, still refused, still reported, and still exits
+    non-zero. What changes is that the other findings survive it.
     """
+
+
+@dataclass(frozen=True)
+class EmissionFault:
+    """A record the registry refused, kept so that nothing is silently lost.
+
+    The one cost of costing the record rather than the report is that the
+    refused finding does not reach the card. It does not have to vanish with
+    it: the whole record is printed to stderr as this fault is recorded, where
+    a developer sees it and a run log that captures stderr keeps it, and the
+    exit status says a defect of ours happened in a run that still reported.
+
+    Not appended under a suffixed name, which was the other way to lose
+    nothing. A name no consumer knows is not a record a consumer can read, and
+    every reader of this payload keys on the check name.
+    """
+
+    check: str
+    status: str
+    detail: str
+    metrics: dict[str, Any] | None
+
+
+#: Every record this run's registry refused. Cleared with `RESULTS`.
+EMISSION_FAULTS: list[EmissionFault] = []
+
+
+def duplicate_emission_report(fault: EmissionFault) -> str:
+    """What a refused record says to stderr, in our name rather than theirs.
+
+    It carries the whole record, because the point of recording the fault
+    instead of raising is that the finding is not lost, and a fault line
+    naming only the check would lose it a second way.
+    """
+    return (
+        f"preflight.py: internal error - check {fault.check!r} was recorded "
+        "twice in one run, and a check with two findings folds them into one "
+        "record. This is a defect in the check rather than in your project. "
+        "The second record is dropped and every other finding is reported "
+        "normally; the dropped record read: "
+        f"{fault.status} {fault.detail}"
+        + (f" {fault.metrics!r}" if fault.metrics else "")
+    )
 
 
 def emit(
@@ -551,10 +606,13 @@ def emit(
     the sentence - a wording change should never alter a score.
     """
     if any(result.check == check for result in RESULTS):
-        raise DuplicateCheckName(
-            f"check {check!r} was recorded twice in one run; a check with two "
-            "findings folds them into one record"
-        )
+        # The record is dropped and the run continues. See `DuplicateCheckName`
+        # for why the blast radius is one record rather than the whole report,
+        # and `EmissionFault` for where the dropped finding goes instead.
+        fault = EmissionFault(check, status, detail, metrics)
+        EMISSION_FAULTS.append(fault)
+        print(duplicate_emission_report(fault), file=sys.stderr)
+        return
     RESULTS.append(Result(check, status, detail, metrics))
 
 
@@ -679,12 +737,13 @@ def parse_env_file(path: Path) -> dict[str, str | None]:
 
     Every line this parser cannot read is collected and reported in ONE
     `env-file` record after the walk. Emitting inside the loop made a second
-    unreadable line raise `DuplicateCheckName`, which `main` reports as exit 3
-    with no records at all - so an `.env` with two stray lines cost the
-    customer the entire report rather than earning them a warning about two
-    lines. That file is the one thing this guide asks a first-run customer to
-    write by hand, and two stray lines is an ordinary way to write one: a
-    pasted note without a `#`, a wrapped value, two bare `export FOO`.
+    unreadable line trip the registry, which used to cost the customer the
+    entire report and now costs the second warning and an exit saying we broke
+    (`DuplicateCheckName`) - either way they get less than the warning about
+    two lines they should have got. That file is the one thing this guide asks
+    a first-run customer to write by hand, and two stray lines is an ordinary
+    way to write one: a pasted note without a `#`, a wrapped value, two bare
+    `export FOO`.
 
     So this is a parser that also RECORDS, and `read_env` is its one caller
     for that reason: a second call in the same run would record `env-file` a
@@ -1363,8 +1422,9 @@ def check_models(models: list[str]) -> None:
 
     # One record per DISTINCT model, because the check names below are built
     # from the model id: `--models "gpt-4o,gpt-4o"` emitted `model-format:gpt-4o`
-    # twice, which the registry refuses and `main` reports as exit 3 with no
-    # records at all. A repeated id is not a finding about the customer's setup
+    # twice, which the registry refuses: the second record is dropped and the
+    # run exits saying a record was lost. A repeated id is not a finding about
+    # the customer's setup
     # - the second copy asks the identical question of the identical id and
     # gets the identical answer - so it is folded here rather than reported,
     # and nothing measured is lost. Deduplicated in the CHECK and not where the
@@ -4843,10 +4903,10 @@ def check_dataset(
     # ONE `dataset-difficulty` record per run, which is what the arms below are
     # arranged to guarantee. An all-easy SYNTHETIC corpus is both the ceiling
     # finding and the missing-bands finding, and emitting both raised
-    # `DuplicateCheckName` - which `main` reports as exit 3 with no records at
-    # all, so a customer whose generated corpus was uniformly easy lost every
-    # finding this run had already made instead of reading one about difficulty
-    # (#440). A generated walkthrough corpus is synthetic by construction and a
+    # `DuplicateCheckName` - which cost a customer whose generated corpus was
+    # uniformly easy every finding this run had already made, instead of one
+    # about difficulty (#440); it now costs the difficulty record alone, which
+    # is still the finding they came for. A generated walkthrough corpus is synthetic by construction and a
     # small first-run one is often uniformly easy, so that is an ordinary file
     # here, not an exotic one. The all-easy arm owns the case and carries both
     # observations in its single record.
@@ -5061,7 +5121,14 @@ def run() -> int:
     # One run, one registry. `emit` refuses a check name recorded twice, so a
     # second run in the same interpreter (the test suite's, never a shell's)
     # starts from an empty list rather than from the previous run's records.
+    #
+    # This is also why a re-check never collides: a customer who fixes
+    # something and scores again is a new run with a fresh registry, so the
+    # refusal below is only ever about one run emitting one name twice, which
+    # is never legitimate. No update-in-place semantics are needed and none
+    # are added (traigent-first-run#458).
     RESULTS.clear()
+    EMISSION_FAULTS.clear()
     args = parse_args()
     env_path = Path(args.env)
     env, file_values, process_values = read_env(env_path)
@@ -5107,6 +5174,21 @@ def run() -> int:
             f"{counts[FAIL]} fail, {counts[SKIP]} skipped"
         )
 
+    # Our defect outranks a finding about their project, and the two statuses
+    # stay apart so a caller can tell them apart: `1` is this run refusing the
+    # customer's material, `INTERNAL_ERROR_EXIT` is this run reporting that it
+    # broke. Returned AFTER the report is printed, which is the whole of
+    # traigent-first-run#458 - the findings reach the card, and the status
+    # still says a record was lost getting them there.
+    if EMISSION_FAULTS:
+        print(
+            f"preflight.py: {len(EMISSION_FAULTS)} record(s) were refused by "
+            "the check registry and are not in the report above; each is "
+            "printed in full earlier on this stream. Every other finding is "
+            f"reported. Re-run with {TRACEBACK_ENV}=1 and report the output.",
+            file=sys.stderr,
+        )
+        return INTERNAL_ERROR_EXIT
     if any(result.status == FAIL for result in RESULTS):
         return 1
     if args.strict and any(result.status == WARN for result in RESULTS):
