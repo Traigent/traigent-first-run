@@ -297,6 +297,22 @@ Inspect all three columns first, then follow exactly one row:
 
 Never generate components independently and attempt to glue them together afterward.
 
+**Where a row says to build the dataset from the agent, its prompt is a source and not only a
+reading.** The two rows above that build a dataset around a real agent send you to its real inputs
+and failure modes, and the place a working agent most often already carries real input/expected-
+output pairs is the worked examples in its own prompt - pairs its author believed were correct,
+written in the product's own vocabulary, for the product's own task. The run has already opened that
+file to answer the build checks, so seeding from material the customer actually wrote costs nothing
+and is strictly better evidence than inventing rows. Rows seeded that way are still the customer's:
+they carry collected provenance where the example is theirs, and the generated ceiling prices only
+what this run invented around them.
+
+Two bounds on that. Examples inside prose have no syntactic marker, so recognising them is the
+assistant's reading rather than a parse, and a row taken from one is recorded by id like every other
+row this run writes or repairs. And where a dataset already exists, this says nothing about whether
+the prompt's examples agree with it - a prompt teaching one output shape over a dataset whose
+expected answers use another is a real and quiet defect, and it is not settled here.
+
 And build each one to the TASK, never to the artefact it was derived from. The matrix makes the trio
 coherent; this is what keeps coherent from becoming circular. An evaluation method built from a
 dataset has to score the product's idea of a right answer, so it holds for inputs and expected
