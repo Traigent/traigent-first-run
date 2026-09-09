@@ -583,6 +583,7 @@ provider key, and before any SDK-specific check.
 
 **Read next.** Required: [`references/evaluation-and-dataset.md` § Mandatory calibration](references/evaluation-and-dataset.md#mandatory-calibration).
 If the resolved evaluator call path executes or imports candidate output: [`references/run-safety.md` § Static and mock validation](references/run-safety.md#static-and-mock-validation).
+If the evaluator replays the customer's own workflow: [`references/run-safety.md` § A replay that changes the customer's world asks first](references/run-safety.md#a-replay-that-changes-the-customers-world-asks-first).
 If calibration reaches its timeout: [`references/evaluation-and-dataset.md` § When calibration runs long](references/evaluation-and-dataset.md#when-calibration-runs-long).
 If a check reports that the dataset or evaluator cannot separate configurations: [`references/evaluation-and-dataset.md` § Quality diagnosis and repair choice](references/evaluation-and-dataset.md#quality-diagnosis-and-repair-choice).
 If the agent and the evaluator have to be validated against each other before optimization: [`references/component-creation.md` § Compatibility contract](references/component-creation.md#compatibility-contract).
