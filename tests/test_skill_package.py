@@ -16935,17 +16935,21 @@ class SkillPackageTests(unittest.TestCase):
             "answers has entered",
             normalized,
         )
-        # What lifts it is a SAMPLE, and the two sentences that say so are
-        # pinned together because separating them is how the old pair failed.
-        # Coverage of the graded rows was what released this hold, which no
-        # corpus above the drawn subset could ever supply, so the hold was
-        # unliftable on the guide's own worked example and the reference
-        # promised a release at the section-4 re-score that the predicate
-        # refused (traigent-first-run#441). The owner's replacement is five
-        # rows and a stated assumption, so the size is pinned beside the word
-        # that stops a release reading as a clearance.
+        # What lifts it is a read of THE ROWS THE COMPARISON RUNS ON, and the
+        # two sentences that say so are pinned together because separating them
+        # is how the old pair failed. Coverage of the declared split was what
+        # released this hold, which no corpus above the drawn subset could ever
+        # supply, so the hold was unliftable on the guide's own worked example
+        # and the reference promised a release at the section-4 re-score that
+        # the predicate refused (traigent-first-run#441). The owner's
+        # replacement narrows the population to the bounded draw instead of
+        # shrinking the threshold, so the cap is pinned beside the word that
+        # stops a release reading as a clearance on the arm that is still a
+        # sample.
         self.assertIn(
-            "five entries marked `in_run` where the split is drawn", normalized
+            "every entry marked `in_run` where the split is drawn, capped at "
+            "the drawn 28",
+            normalized,
         )
         self.assertIn("released as a sample and never as a clearance", normalized)
         # And the release is taken on the reviewer's word only for the READING -
@@ -17030,13 +17034,14 @@ class SkillPackageTests(unittest.TestCase):
     def test_the_sample_is_declared_where_it_is_ordered(self) -> None:
         """What the read is, in the flow; what it means, in the reference.
 
-        The hold now comes off on five rows (traigent-first-run#441), so two
-        things a reader could get wrong have to be settled where the read is
-        ordered: that it is a SAMPLE and not the key, and that it is the
+        The hold now comes off on the rows the comparison runs on, and on five
+        brought rows only while no split is settled (traigent-first-run#441),
+        so two things a reader could get wrong have to be settled where the
+        read is ordered: which population it covers, and that it is the
         assistant's read and not a job handed to the user - which is what the
         old unliftable rule effectively did on a corpus of any size.
 
-        What the sample MEANS is not settled here. The wording the customer
+        What the read MEANS is not settled here. The wording the customer
         hears belongs to the reference that owns the stage, and this pins that
         the flow points at it rather than growing a second copy: a rule stated
         in two documents is a rule that can be changed in one, which is
@@ -17050,7 +17055,7 @@ class SkillPackageTests(unittest.TestCase):
             .split()
         )
         gate = skill.index("#### Opening readiness gate")
-        prep = skill.index("It is a five-row sample, never the whole key")
+        prep = skill.index("The graded rows, or five brought ones where no split is")
         self.assertLess(gate, prep)
         self.assertIn("yours to read rather than the user's", skill)
         # The words themselves, once, where the stage lives.

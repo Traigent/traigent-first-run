@@ -11583,8 +11583,9 @@ class TheTopBandsNeedAReadOfTheAnswersTests(unittest.TestCase):
         its declared split: covering the split was what this floor used to ask
         for, and on this corpus the split IS the 4,812 rows, so the ask was
         unsatisfiable and the hold never lifted (traigent-first-run#441). What
-        it asks for now is a sample of `ANSWER_KEY_SAMPLE_ROWS` rows drawn from
-        the rows the run is graded on, which is deliverable at any size.
+        it asks for now is the rows the comparison actually runs on, which a
+        bounded first run caps at `ANSWER_KEY_DRAWN_ROWS` - deliverable at any
+        size, and coverage rather than a sample of what the search will read.
         """
         large = dict(
             rows=4812,
@@ -11593,9 +11594,9 @@ class TheTopBandsNeedAReadOfTheAnswersTests(unittest.TestCase):
             collected_rows=4812,
             distinct_rows=4812,
         )
-        sample = MODULE.ANSWER_KEY_SAMPLE_ROWS
+        drawn = MODULE.ANSWER_KEY_DRAWN_ROWS
         lifted = _healthy_score(
-            _review(reviewed=sample, reviewed_in_run=sample, unsound_in_run=0), **large
+            _review(reviewed=drawn, reviewed_in_run=drawn, unsound_in_run=0), **large
         )
         self.assertFalse(lifted.band_limited_by_unread_answers)
         self.assertGreaterEqual(MODULE.BAND_ORDER.index(lifted.band), self._strong())
@@ -11608,13 +11609,62 @@ class TheTopBandsNeedAReadOfTheAnswersTests(unittest.TestCase):
                 _review(reviewed=60, reviewed_in_run=60, unsound_in_run=0), **large
             ).band_limited_by_unread_answers
         )
+        # And the draw is a floor on this arm rather than a suggestion. A read
+        # that named a handful of the graded rows used to be enough because the
+        # threshold was the five-row sample; the whole point of the owner's
+        # decision is that the comparison is small enough to read whole, so a
+        # read short of it holds the band exactly as an unread key does.
+        self.assertTrue(
+            _healthy_score(
+                _review(
+                    reviewed=drawn - 1, reviewed_in_run=drawn - 1, unsound_in_run=0
+                ),
+                **large,
+            ).band_limited_by_unread_answers
+        )
         # And a read that never says which rows it covered is a sample of the
-        # FILE rather than of the graded rows, which is the honest opening
-        # state before a subset is drawn and releases the hold on the same
-        # terms: the population decides where the rows came from, and the
-        # sample size decides whether enough of them were looked at.
-        undeclared = _healthy_score(_review(reviewed=sample), **large)
+        # FILE rather than a reading of the graded rows, which is the honest
+        # opening state before a subset is drawn. It releases the hold on the
+        # smaller sample, because there is no drawn population to cover yet.
+        undeclared = _healthy_score(
+            _review(reviewed=MODULE.ANSWER_KEY_SAMPLE_ROWS), **large
+        )
         self.assertFalse(undeclared.band_limited_by_unread_answers)
+
+    def test_the_evidence_line_says_coverage_where_it_covered_the_comparison(
+        self,
+    ) -> None:
+        """The clause the sentence ends on is derived, never fixed.
+
+        A read that covered every row the comparison runs on has not sampled
+        that comparison, and telling the customer it did understates their own
+        evidence in the one sentence they are most likely to quote. A read that
+        did not is a sample and has to keep saying so, because a clean sample
+        is exactly the state a reader rounds up to "checked". One number
+        decides which clause prints, so the two can never disagree
+        (traigent-first-run#441).
+        """
+        covered = _routing_corpus(
+            rows=28,
+            labelled_rows=28,
+            answerable_rows=28,
+            collected_rows=28,
+            distinct_rows=28,
+            tuning_rows=18,
+            holdout_rows=10,
+            tuning_labelled_rows=18,
+            holdout_labelled_rows=10,
+        )
+        whole = MODULE.row_review_evidence(
+            _review(reviewed=28, reviewed_in_run=28), covered
+        )
+        self.assertIn("that is every row this run is graded on", whole)
+        self.assertNotIn("a sample, so the answers are assumed sound", whole)
+        part = MODULE.row_review_evidence(
+            _review(reviewed=12, reviewed_in_run=12), covered
+        )
+        self.assertIn("a sample, so the answers are assumed sound", part)
+        self.assertNotIn("that is every row this run is graded on", part)
 
     def test_a_read_below_the_sample_lifts_nothing(self) -> None:
         """A sample is a floor, and one row under it is not a smaller sample.

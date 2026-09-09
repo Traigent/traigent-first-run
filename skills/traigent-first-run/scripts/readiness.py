@@ -306,31 +306,48 @@ MIN_CONFIDENCE_FOR_TOP_BANDS = 0.75
 # the verdict each run was about to reach, which is the thing being refused.
 ANSWER_KEY_BAND_CEILING = "WORKABLE"
 # How much of the answer key has to be looked at before the hold above comes
-# off: a SAMPLE, and a small one.
+# off. Two numbers, because the run knows two different things at the two
+# moments it asks.
 #
-# The hold used to ask for coverage of everything the run is graded on, and on
-# any corpus larger than the drawn subset that was unsatisfiable - the review
+# The hold used to ask for coverage of everything the SCORE reads, and on any
+# corpus larger than the drawn subset that was unsatisfiable - the review
 # covers the 28 rows drawn while the score reads all 4,812, so the hold never
 # lifted, including on this guide's own worked example
-# (traigent-first-run#441). The repair is not a different denominator. It is
-# that a full input-versus-expected comparison is REFUSED here rather than
-# skipped: for a retrieval system whose input is a PDF and whose expected
-# output is a paragraph, reading every row is not work to put a customer, or
-# this run, through during onboarding.
+# (traigent-first-run#441). What was wrong there is the population, not the
+# ambition: the score reads the file, the comparison runs on the rows drawn out
+# of it, and only the second is what an answer-key read is about.
 #
-# So the read is a sample and the card says so. Five rows because the check is
-# looking for the failure this hold exists to catch - a corpus whose expected
-# answers do not answer their own questions, which is a property of how the
-# file was assembled rather than of one row - and a defect of that shape shows
-# up in the first handful or not at all. What five rows cannot do is bound the
-# rate of a scattered defect, and nothing here claims they can: `answers_read`
-# means "somebody looked, at these rows, and they held", never "the answers are
-# verified". `row_review_evidence` prints that difference beside the number,
-# and the assumption it leaves standing is the customer's to close.
+# So where the split is settled the read covers THE ROWS THE RUN IS GRADED ON,
+# capped by what a bounded first run draws - 18 tuning rows and the held-out
+# ten. That is not a sample of the comparison; it is all of it, and it removes
+# the "assume the rest holds" caveat for every row the search actually opens.
+# Reading 28 costs this run nothing next to reading five, and it buys a claim
+# that is exact rather than probabilistic.
 #
-# A sample below the whole file also removes the last incentive to claim a read
-# nobody did. The old rule asked for thousands of verdicts to lift one band;
-# this asks for five, so an honest five is cheaper than a fabricated thousand.
+# The cap is vendored rather than read from preflight, and the reason is
+# timing rather than convenience. `preflight.py` reads the combined,
+# split-labelled file - which is what "Score the dataset, not the subset"
+# requires it to read - and no subset has been drawn when it does, so its
+# `dataset-first-run-rows` record proposes a draw rather than reporting one.
+# There is no published count of drawn rows for this to defer to.
+ANSWER_KEY_DRAWN_ROWS = 28
+# And where no split is settled there are no drawn rows to cover, so the read
+# is a SAMPLE of what the customer brought, and a small one.
+#
+# Five rows because the check is looking for the failure this hold exists to
+# catch - a corpus whose expected answers do not answer their own questions,
+# which is a property of how the file was assembled rather than of one row -
+# and a defect of that shape shows up in the first handful or not at all. What
+# five rows cannot do is bound the rate of a scattered defect, and nothing here
+# claims they can: on this arm `answers_read` means "somebody looked, at these
+# rows, and they held", never "the answers are verified".
+# `row_review_evidence` prints that difference beside the number, and the
+# assumption it leaves standing is the customer's to close.
+#
+# A full input-versus-expected comparison of the whole file stays REFUSED
+# rather than skipped, on both arms: for a retrieval system whose input is a
+# PDF and whose expected output is a paragraph, reading every row is not work
+# to put a customer, or this run, through during onboarding.
 ANSWER_KEY_SAMPLE_ROWS = 5
 
 
@@ -369,8 +386,9 @@ def answer_key_hold_paragraph(band: str, nothing_else_pending: bool) -> str:
             if nothing_else_pending
             else ""
         )
-        + " A read of a small sample of the rows the run is graded on - each "
-        "input beside its expected answer - is what lifts it."
+        + " A read of the rows the run is graded on - each input beside its "
+        "expected answer, all of them where the split is settled and a small "
+        "sample of what you brought where it is not - is what lifts it."
     )
 
 
@@ -5496,12 +5514,13 @@ def graded_rows(facts: DatasetFacts) -> int | None:
     reads 4,812 declared split rows while the review covers the 28 drawn, so
     the hold never lifted, on this guide's own worked example included
     (traigent-first-run#441). The owner's decision on that issue replaced the
-    denominator rather than choosing one: the read is a sample of
-    `ANSWER_KEY_SAMPLE_ROWS` rows, and this number now says only where those
-    rows have to come from. Kept, and kept exact, because that is still a real
-    question - a sample drawn from rows the run never opens establishes nothing
-    about the comparison - and because `row_review_evidence` prints it as the
-    denominator a customer reads.
+    population rather than choosing between the two repairs offered: the read
+    covers the rows the comparison runs on, which on a large corpus is the
+    bounded draw and never the file. So this number is the ceiling on that
+    coverage rather than the threshold itself - `ANSWER_KEY_DRAWN_ROWS` caps
+    it - and it stays exact because it is also the denominator
+    `row_review_evidence` prints, and because a read of rows the run never
+    opens establishes nothing about the comparison.
     """
     if facts.tuning_labelled_rows is None or facts.holdout_labelled_rows is None:
         return None
@@ -5573,16 +5592,19 @@ def answer_key_read(facts: DatasetFacts, review: RowReview) -> bool:
         return True
     if not review.supplied:
         return False
-    # Two honest populations to sample FROM, and which one applies is decided
-    # by the review rather than chosen here. A review that declared `in_run` on
-    # every entry has named the rows the search is graded against, and the
-    # sample is drawn from those. A review that did not is a read of the file,
-    # and the file is what it sampled.
+    # Two honest populations, and which one applies is decided by the review
+    # rather than chosen here. A review that declared `in_run` on every entry
+    # has named the rows the search is graded against, and those are the rows
+    # to cover. A review that did not is a read of the file, and the file is
+    # what it sampled.
     #
-    # Neither is a coverage claim any more. `ANSWER_KEY_SAMPLE_ROWS` bounds
-    # what is asked for, and the population only decides where the rows came
-    # from - which still matters, because five rows the run never opens say
-    # nothing about the comparison it is about to make.
+    # Only the first is a coverage claim, and the difference is the whole of
+    # what the two arms mean. Where the split is settled the read is asked for
+    # every row the comparison runs on, capped at the bounded draw, so a clean
+    # result says the rows the search opens held. Where it is not, nothing has
+    # been drawn to cover and `ANSWER_KEY_SAMPLE_ROWS` bounds what is asked of
+    # the file instead - the population still matters there, because rows the
+    # run never opens say nothing about the comparison it is about to make.
     graded = graded_rows(facts)
     # A graded population of zero is not a threshold every review clears, which
     # is what `reviewed_in_run >= 0` made it (traigent-first-run#395). Reaching
@@ -5607,11 +5629,12 @@ def answer_key_read(facts: DatasetFacts, review: RowReview) -> bool:
     # could act on it.
     if graded is not None and graded <= 0:
         return False
-    # A sample, capped by the population it is drawn from: a file with three
-    # reviewable rows cannot supply five, and asking it for five would restore
-    # the unsatisfiable hold at the other end of the scale.
+    # Both thresholds are capped by the population they are asked of: a split
+    # of three graded rows cannot supply 28, and a file with three reviewable
+    # rows cannot supply five. Asking either for more than it holds is how the
+    # unsatisfiable hold looked from the other end of the scale.
     if review.reviewed_in_run is not None and graded is not None:
-        return review.reviewed_in_run >= min(ANSWER_KEY_SAMPLE_ROWS, graded)
+        return review.reviewed_in_run >= min(ANSWER_KEY_DRAWN_ROWS, graded)
     return review.reviewed >= min(ANSWER_KEY_SAMPLE_ROWS, provided)
 
 
@@ -5630,13 +5653,15 @@ def row_review_evidence(
     review of 5 rows out of 4,812 says exactly that instead of implying the
     dataset was cleared.
 
-    THE WORD IS "SAMPLED", and it is the whole point of the sentence
-    (traigent-first-run#441). What this run performs is a read of
-    `ANSWER_KEY_SAMPLE_ROWS` rows; what a customer will take from a card that
-    says "read" beside a released hold is that their answers were checked. The
-    closing clause states the assumption in the same breath as the finding,
-    because a reader who has to infer it will not: the rows that were looked at
-    held, and the rest are assumed to be like them.
+    THE CLOSING CLAUSE IS THE POINT OF THE SENTENCE, and it is derived rather
+    than fixed (traigent-first-run#441). What a customer will take from a card
+    that says "read" beside a released hold is that their answers were checked,
+    so the difference between the two things this read can be has to be printed
+    rather than inferred. Where the review covered every row the comparison
+    runs on, nothing about that comparison is assumed and the clause says so;
+    where it did not, the rows that were looked at held and the rest are
+    assumed to be like them. The number decides which clause is printed, so the
+    two can never disagree.
 
     And where this run wrote the method those rows were judged against, the
     line says so. The sample is then this run checking its own work - which the
@@ -5677,10 +5702,22 @@ def row_review_evidence(
         line += f", {review.unsure} undecided"
     if facts.synthesised_rows:
         line += f"; {facts.synthesised_rows} generated rows not reviewed"
-    # Last, so it is the clause the sentence ends on, and unconditional: a
-    # sample that found nothing is exactly the state a reader is most likely to
-    # round up to "checked".
-    line += "; a sample, so the answers are assumed sound rather than verified"
+    # Last, so it is the clause the sentence ends on, and never omitted: a
+    # read that found nothing is exactly the state a reader is most likely to
+    # round up to "checked". Which of the two it is comes off the counts, so a
+    # run that covered the comparison is not told it sampled it, and a run that
+    # sampled is never told otherwise.
+    if (
+        graded
+        and review.reviewed_in_run is not None
+        and review.reviewed_in_run >= graded
+    ):
+        line += (
+            "; that is every row this run is graded on, so nothing about the "
+            "comparison is assumed - the rest of your file was not read"
+        )
+    else:
+        line += "; a sample, so the answers are assumed sound rather than verified"
     if evaluator_origin == "generated":
         line += " - and this run wrote the evaluation method they were judged against"
     return line

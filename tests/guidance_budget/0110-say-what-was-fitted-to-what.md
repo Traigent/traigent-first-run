@@ -1,17 +1,17 @@
 # 0110 - say what was fitted to what
 
 follows: 0109
-follows-resident-measured: 106_001
-follows-total-measured: 497_838
+follows-resident-measured: 106_016
+follows-total-measured: 497_825
 follows-document-measured: 134_261
-resident-ceiling: 106_030
-resident-measured: 106_026
-total-ceiling: 499_594
-total-measured: 499_590
+resident-ceiling: 106_045
+resident-measured: 106_041
+total-ceiling: 499_581
+total-measured: 499_577
 document-ceiling: 135_492
 document-measured: 134_261
 
-Twenty-five bytes of RESIDENT against a recorded median of 500, and 1_748 of TOTAL against 1_342.
+Twenty-five bytes of RESIDENT against a recorded median of 500, and 1_752 of TOTAL against 1_342.
 The split between them is the point rather than an accident: the flow document gains three words
 naming a third thing the close owes, and the depth behind those words is bought in the budget a
 reader pays once. The twenty-five buy the only part that has to be carried every turn, which is that
