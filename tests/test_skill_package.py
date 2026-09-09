@@ -17217,7 +17217,48 @@ class SkillPackageTests(unittest.TestCase):
         # The flow orders it and names its home; the paragraph is not repeated
         # there, and the close still reaches it before the extras.
         self.assertIn("say what would make this production ready", skill)
-        self.assertIn("references/run-safety.md` carries", skill)
+        self.assertIn("references/run-safety.md` sets out", skill)
+        # The third thing the close owes, and the one no provenance field can
+        # say: which pillars were built around which (traigent-first-run#469).
+        self.assertIn("what this run\nbuilt around what", SKILL.read_text())
+        for disclosed in (
+            "scores that dataset better than it scores anything else",
+            "they agree by construction",
+            "a ruler drawn around their data is optimistic about their data",
+            # The smaller residual in the same place: a repair the customer
+            # never hears about outside a provenance field.
+            "their dataset had problems and this run changed some of it",
+        ):
+            with self.subTest(disclosure=disclosed):
+                self.assertIn(disclosed, safety)
+        # Disclosure, not a second deduction. The provenance ceilings already
+        # price the generated material once.
+        self.assertIn("charging twice for one fact", safety)
+        # And the other half of the same decision, at the other end of the run:
+        # the disclosure says what happened, this stops it happening tighter
+        # than it has to. Both directions, because the matrix builds either
+        # component from the other depending on which one the customer brought.
+        creation = " ".join(
+            (SKILL_ROOT / "references" / "component-creation.md").read_text().split()
+        )
+        self.assertIn("build each one to the TASK, never to the artefact", creation)
+        for direction in (
+            # evaluator derived from a dataset
+            "holds for inputs and expected outputs this dataset does not contain",
+            "rather than recognising these particular answers",
+            # dataset derived from an evaluator
+            "has to exercise the real task that evaluator scores",
+            "not only the shapes it happens to handle",
+        ):
+            with self.subTest(derivation=direction):
+                self.assertIn(direction, creation)
+        # It sits with the matrix that creates the risk, not in a section of
+        # its own: the rule is a counterweight to "never generate components
+        # independently", and a reader meets it where they choose a row.
+        self.assertLess(
+            creation.index("Never generate components independently"),
+            creation.index("build each one to the TASK"),
+        )
         self.assertLess(
             skill.index("say what would make this production ready"),
             skill.index("these are available whenever the user wants them"),

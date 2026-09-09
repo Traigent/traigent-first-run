@@ -1135,6 +1135,17 @@ search, which is the habit every honest comparison after this one rests on. It i
 run and must not be described as one; it is also not a run that established nothing, and must not
 be described as that either.
 
+Name what this run built around what, because that is the part a provenance field cannot say. An
+evaluation method written around a dataset scores that dataset better than it scores anything else,
+and the run then reports a number produced by that method over that data; where both were written
+here, they agree by construction. The held-out split does not cover this - it protects against the
+search overfitting, and both of its sides are graded by the same ruler. So say, plainly and without
+provenance vocabulary, which pillars were built around which, and that a ruler drawn around their
+data is optimistic about their data. Where this run repaired rows the review found unsound, say that
+too, with the count: their dataset had problems and this run changed some of it. Neither is a
+deduction - the generated-provenance ceilings already price the material once, and charging twice
+for one fact would be a second ceiling nobody decided on.
+
 ### Run-scope statement
 
 The close states the run's own bounds so its numbers are read at the scale they were measured at.
