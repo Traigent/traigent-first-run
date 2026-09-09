@@ -7049,9 +7049,17 @@ class SkillPackageTests(unittest.TestCase):
         # walkthrough paragraph no longer restates the tuning count or the band
         # composition and points at the construction rule instead, which is the
         # one home the rule above already is.
+        #
+        # Six to five is the same shape one document over. `SKILL.md`'s pricing
+        # stage restated "18 questions by default" while it was the stage that
+        # SELECTED the subset; it no longer selects one - section 4 draws it
+        # (traigent-first-run#473) - so the sentence that named the size went
+        # with the sentence that used it. What the flow still owes is the
+        # price, and pricing needs the rows the draw brought rather than the
+        # question cap that bounded it.
         self.assertEqual(
             len(statements),
-            6,
+            5,
             f"the walkthrough row count is now stated {len(statements)} times "
             f"({statements}); one home is better, but a new one must be welded "
             "here and a removed one accounted for",
@@ -14491,7 +14499,15 @@ class SkillPackageTests(unittest.TestCase):
                 self.assertIn(phrase, run_plan)
 
     def test_the_held_out_draw_has_one_timing_per_source(self) -> None:
-        """Three passages gave the timing three ways; one sentence owns it now."""
+        """Three passages gave the timing three ways; one sentence owns it now.
+
+        The two sources now reach the same moment (traigent-first-run#473), so
+        what this pins is one sentence saying so rather than two timings kept
+        in step. The brought corpus used to draw immediately before the paid
+        comparison, which designed the evaluator over rows that were relabelled
+        held-out afterwards; the phrase that named that timing is refused here
+        so it cannot come back as a helpful clarification.
+        """
         dataset = " ".join(
             (SKILL_ROOT / "references" / "evaluation-and-dataset.md")
             .read_text()
@@ -14503,12 +14519,24 @@ class SkillPackageTests(unittest.TestCase):
             "when they are drawn follows the source, in two cases",
             "a dataset this run generates, tops up, or splits itself reserves the "
             "held-out split when its working copy is written",
-            "draws the ten from that split with the tuning subset, immediately before "
-            "the paid comparison",
+            "in two cases that now reach the same moment",
+            "as soon as its own working copy is settled",
+            "not at the opening card",
             "a hold on the band, not a third timing of the draw",
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, owner)
+        # The old INSTRUCTION, refused by its own words rather than by the
+        # phrase inside them: "immediately before the paid comparison" still
+        # appears in this section, correctly, in the sentence explaining what
+        # the collapse replaced. A guard that cannot tell an instruction from
+        # its own history refuses the history, which is the half worth keeping.
+        self.assertNotIn(
+            "draws the ten from that split with the tuning subset, immediately "
+            "before the paid comparison",
+            owner,
+            "the timing this change removed is back as an instruction",
+        )
         subset = dataset.split("## first-run subset for a large dataset", 1)[1]
         self.assertIn(
             '"held-out set and claims" below owns when each source draws', subset
@@ -17030,6 +17058,47 @@ class SkillPackageTests(unittest.TestCase):
         self.assertLess(gate, instruction)
         self.assertLess(instruction, creation)
         self.assertIn("no generated row competes with it yet", skill)
+
+    def test_the_scoring_input_is_the_combined_file_and_the_rule_says_so(
+        self,
+    ) -> None:
+        """The protection the earlier draw traded away, pinned as prose.
+
+        Rule 1 used to be kept by arithmetic. The subset was drawn immediately
+        before the paid comparison, so at every scoring gate there was no
+        subset in existence to score by mistake, and nobody had to remember
+        anything. Moving the draw to the moment the dataset settles buys
+        blindness - the evaluator is no longer designed while looking at rows
+        that are relabelled held-out afterwards - and it costs exactly that
+        structural guarantee (traigent-first-run#473).
+
+        What replaces it is a sentence, which is the trade this repository is
+        most suspicious of, so the sentence is pinned rather than trusted: the
+        combined split-labelled file stays the input to preflight and readiness,
+        and the drawn subset files are never that input at any stage. A test
+        cannot make an assistant read it. What it can do is refuse a later edit
+        that quietly drops it, which is how a rule kept by prose actually dies.
+        """
+        dataset = " ".join(
+            (SKILL_ROOT / "references" / "evaluation-and-dataset.md")
+            .read_text()
+            .split()
+        )
+        self.assertIn(
+            "the combined, split-labelled file stays the input to preflight "
+            "and readiness",
+            dataset,
+        )
+        self.assertIn(
+            "The drawn subset files are never that input, at any stage", dataset
+        )
+        # And the trade itself is recorded where the rule is, so the next
+        # author reads why the sentence is load-bearing before editing it.
+        self.assertIn("trades a structural guarantee for a sentence", dataset)
+        # One timing, not two: the moment the working copy settles, and
+        # explicitly not the opening card, where nothing is repaired yet.
+        self.assertIn("as soon as its own working copy is settled", dataset)
+        self.assertIn("Not at the opening card", dataset)
 
     def test_the_sample_is_declared_where_it_is_ordered(self) -> None:
         """What the read is, in the flow; what it means, in the reference.
@@ -32122,13 +32191,18 @@ class TheBoundedDrawSpendsOnDifferentRowsTests(unittest.TestCase):
         name here, because nothing else in this file reads SKILL.md for one.
         """
         skill = self.normalized(SKILL.read_text())
-        self.assertIn("distinct by input across the whole draw", skill)
-        self.assertIn("18 questions by default", skill)
+        # What the flow still owes is the PRICE, and only the price. It no
+        # longer restates the draw's parameters, because it no longer performs
+        # the draw: section 4 does (traigent-first-run#473), and a flow that
+        # repeats a reference's numbers is a second place they can be changed.
+        # Every stale spelling below is still refused, which is what actually
+        # guarded the defect this test was written for.
         self.assertIn(
             "estimate runtime and spend from the rows those questions bring, "
             "never from the full row count",
             skill,
         )
+        self.assertIn("this stage prices it and never draws it", skill)
         for stale in (
             "estimate runtime and spend from that subset, not from the full row count",
             "the tuning split's distinct inputs or a band's own rows run short",
