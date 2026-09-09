@@ -307,30 +307,9 @@ MIN_CONFIDENCE_FOR_TOP_BANDS = 0.75
 ANSWER_KEY_BAND_CEILING = "WORKABLE"
 # How much of the answer key has to be looked at before the hold above comes
 # off. Two numbers, because the run knows two different things at the two
-# moments it asks.
+# moments it asks. The first is `ANSWER_KEY_DRAWN_ROWS`, which is derived
+# beside the split it is made of rather than written here.
 #
-# The hold used to ask for coverage of everything the SCORE reads, and on any
-# corpus larger than the drawn subset that was unsatisfiable - the review
-# covers the 28 rows drawn while the score reads all 4,812, so the hold never
-# lifted, including on this guide's own worked example
-# (traigent-first-run#441). What was wrong there is the population, not the
-# ambition: the score reads the file, the comparison runs on the rows drawn out
-# of it, and only the second is what an answer-key read is about.
-#
-# So where the split is settled the read covers THE ROWS THE RUN IS GRADED ON,
-# capped by what a bounded first run draws - 18 tuning rows and the held-out
-# ten. That is not a sample of the comparison; it is all of it, and it removes
-# the "assume the rest holds" caveat for every row the search actually opens.
-# Reading 28 costs this run nothing next to reading five, and it buys a claim
-# that is exact rather than probabilistic.
-#
-# The cap is vendored rather than read from preflight, and the reason is
-# timing rather than convenience. `preflight.py` reads the combined,
-# split-labelled file - which is what "Score the dataset, not the subset"
-# requires it to read - and no subset has been drawn when it does, so its
-# `dataset-first-run-rows` record proposes a draw rather than reporting one.
-# There is no published count of drawn rows for this to defer to.
-ANSWER_KEY_DRAWN_ROWS = 28
 # And where no split is settled there are no drawn rows to cover, so the read
 # is a SAMPLE of what the customer brought, and a small one.
 #
@@ -4365,6 +4344,34 @@ COARSE_RESOLUTION_EXAMPLES = 30
 WALKTHROUGH_TUNING_ROWS = 18
 WALKTHROUGH_HOLDOUT_ROWS = 10
 WALKTHROUGH_DATASET_ROWS = WALKTHROUGH_TUNING_ROWS + WALKTHROUGH_HOLDOUT_ROWS
+
+# What an answer-key read has to cover where the split is settled, and it is
+# the same 28 above rather than a second one.
+#
+# The hold used to ask for coverage of everything the SCORE reads, and on any
+# corpus larger than the drawn subset that was unsatisfiable - the review
+# covers the rows drawn while the score reads all 4,812, so the hold never
+# lifted, including on this guide's own worked example
+# (traigent-first-run#441). What was wrong there is the population, not the
+# ambition: the score reads the file, the comparison runs on the rows drawn out
+# of it, and only the second is what an answer-key read is about. So where the
+# split is settled the read covers THE ROWS THE RUN IS GRADED ON, capped by
+# what a bounded first run draws. That is not a sample of the comparison; it is
+# all of it.
+#
+# DERIVED, and it was not. This was a literal `28` four thousand lines up,
+# outside the weld the comment above describes: the guide could restate its
+# split, the test would move these two numbers with it, and the answer-key
+# floor would have gone on asking for a size nothing draws - silently, because
+# nothing compared them. Deriving it is the smallest thing that makes that
+# drift unreachable rather than merely unlikely, and it needs no new test.
+#
+# Rows and not questions, which is the one place this number is approximate.
+# The subset rule caps the tuning draw in QUESTIONS, and a multi-reference
+# corpus brings more rows than questions - so on that shape the comparison runs
+# on more rows than this asks a reader to cover, and the evidence line says
+# "a sample" there rather than claiming coverage it does not have.
+ANSWER_KEY_DRAWN_ROWS = WALKTHROUGH_DATASET_ROWS
 
 
 def top_up_offer(
