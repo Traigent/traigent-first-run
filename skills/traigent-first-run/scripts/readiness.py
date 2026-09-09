@@ -3767,6 +3767,15 @@ class BuildSignal:
     # sentence in a document establishes it, so there is nothing left to set
     # and the field would only be a way back in.
     #
+    # traigent-first-run#461 asks for that arm to stop being charged, and this
+    # branch does NOT do it. The decided table's third row - no tools declared,
+    # no deduction - needs this field back, and the guard that would have to be
+    # reversed for it (`test_no_build_answer_this_read_cannot_refute_outranks_
+    # one_it_can`) was written with that exact argument in front of it and
+    # refuses it in as many words. Which of the two governs is the owner's, so
+    # what lands here is the half that needs neither: the credit side, where a
+    # declared tool now has to be REACHED rather than merely present.
+    #
     # `SubScore.withheld`, carried from the read that decided it rather than
     # re-derived where the sub-score is built. `measured=False` reaches
     # `build_subscores` from three different places - a check the read could
@@ -13974,6 +13983,60 @@ def derived_source_names(source: StaticSourceEvidence) -> frozenset[str]:
     return frozenset(names)
 
 
+def names_reached_from_selected_callable(
+    source: StaticSourceEvidence,
+) -> frozenset[str]:
+    """Every name the selected callable reaches, one hop through the module.
+
+    The stronger acceptance test traigent-first-run#461 names, and it is
+    deliberately the only thing that changed about how a declared tool earns
+    credit. `derived_source_names` reads the WHOLE file, which is right for the
+    refutation it feeds - a name the file never mentions cannot be a tool this
+    agent declares - and far too weak to pay for: a key in an unrelated lookup
+    table earned the check's full weight at full confidence, so the cheapest
+    way to raise the agent pillar was to declare a tool whose name happens to
+    appear somewhere.
+
+    ONE HOP, and the hop is the point. A tool is ordinarily named in a
+    module-level table and used inside the callable, so a walk of the callable
+    alone would refuse `TOOLS = ["search"]` referenced as `TOOLS` - an ordinary
+    agent, refused for being written normally. So the callable's own names are
+    collected first, and then any module-level assignment whose target is one of
+    them contributes its own names too. A second hop is not taken: each one
+    widens what counts as reached, and the whole value of this is that it is
+    narrower than the file.
+
+    NOT a definition of tool-hood, which this module still does not have and
+    still refuses to invent. Reachability is a question the tree answers about a
+    NAME; whether the thing behind that name is a tool, a helper or a constant
+    is a question about meaning, and a rule that guessed would be wrong for
+    ordinary agents in both directions. So this is used exactly as
+    `derived_source_names` is - to lower credit, never to establish one - and a
+    name it does reach is no more proven to be a tool than it was before.
+    """
+    reached: set[str] = set()
+    for node in ast.walk(source.selected_callable):
+        if isinstance(node, ast.Name):
+            reached.add(node.id)
+        elif isinstance(node, ast.Attribute):
+            reached.add(node.attr)
+        elif isinstance(node, ast.Constant) and isinstance(node.value, str):
+            reached.add(node.value)
+    for node in source.tree.body:
+        if not isinstance(node, (ast.Assign, ast.AnnAssign)):
+            continue
+        if not set(_assignment_names(node)) & reached:
+            continue
+        for inner in ast.walk(node):
+            if isinstance(inner, ast.Name):
+                reached.add(inner.id)
+            elif isinstance(inner, ast.Attribute):
+                reached.add(inner.attr)
+            elif isinstance(inner, ast.Constant) and isinstance(inner.value, str):
+                reached.add(inner.value)
+    return frozenset(reached)
+
+
 def _lexical_owner(node: ast.AST, source: StaticSourceEvidence) -> ast.AST:
     """Return the module/function/class scope that owns ``node``."""
     child = node
@@ -19119,6 +19182,21 @@ def build_signal_from_entry(
                 "selected source"
             )
     unreachable = _build_names(check, spec, "unreachable")
+    # And what the SOURCE says is unreachable, which is the half a declaration
+    # cannot supply (traigent-first-run#461). A declared name that the selected
+    # callable never reaches - not directly, and not through a module-level
+    # table the callable names - has not been shown to be wired into this
+    # agent, so it earns nothing even where the document calls it reachable.
+    #
+    # UNION, deliberately: this may only ever ADD to what does not resolve, so
+    # a derivation that is wrong about a name can cost credit and can never
+    # create it. That is the same one-way discipline `derived_source_names`
+    # carries above, applied to the direction that pays.
+    if source is not None:
+        unreachable = sorted(
+            set(unreachable)
+            | (set(declared) - names_reached_from_selected_callable(source))
+        )
     stray = sorted(set(unreachable) - set(declared))
     if stray:
         raise AgentDiscoveryInputError(
