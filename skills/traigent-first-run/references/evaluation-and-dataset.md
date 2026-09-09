@@ -743,17 +743,18 @@ rewards whichever configuration gets it wrong, and on a ten-row held-out set one
 answer moves the reported number by ten points, which is larger than the gaps configurations are
 ranked by.
 
-So read a sample of the rows - five, drawn at random from the rows the run is graded on once those
-are settled, and from the rows the user brought while they are not - and answer one question about
-each: **is this expected output a sensible answer to this input, under the method that will grade
-it?** Answer `yes`, `no`, or `unsure`, with the row id and one sentence.
+So read the rows the run is graded on once those are settled - all of them, which a bounded first
+run caps at its tuning draw and the held-out ten - and, while they are not, five rows drawn at
+random from what the user brought. Answer one question about each: **is this expected output a
+sensible answer to this input, under the method that will grade it?** Answer `yes`, `no`, or
+`unsure`, with the row id and one sentence.
 
-Five, and not the file. A full input-versus-expected comparison is refused here rather than
-skipped: for a retrieval task whose input is a PDF and whose expected output is a paragraph, it is
-not work to put a customer through before their first run, and the defect this check exists to
-catch - an answer key whose answers do not belong to their own questions - shows up in the first
-handful or not at all. What five rows cannot do is measure how often it happens, so the run says
-that plainly instead of letting a clean sample read as a clean dataset.
+The rows the comparison runs on, not the file behind them. A full comparison of a large corpus is
+refused here rather than skipped: for a retrieval task whose input is a PDF and whose expected
+output is a paragraph, it is not work to put a customer through first. What the run is graded on is
+small enough to read whole, and reading it whole is what lets the card speak about the comparison
+exactly. A sample of the file cannot measure how often a defect occurs, so where the read is a
+sample the run says so rather than letting it read as a clean dataset.
 
 When the rows carry no stable id - which `preflight.py`'s `dataset-ids` check reports as a warning
 on exactly this dataset - use the 1-based source line as `line-<n>`, and say in the conversation
@@ -825,10 +826,10 @@ proceeds; a clean pass adds no points and no credit of any kind to the score. Wh
 is leave a sentence in the readiness evidence line, which costs zero score and names who did the
 checking, and release one hold: the top two bands are held at `WORKABLE` however high the score
 until some read of the answers has entered, because a run that never looked is not a run that
-looked and found nothing. The sample is what releases it: five entries marked `in_run` where the
-split is drawn, five provided rows where it is not, and fewer only where the file holds fewer. It
-is released as a sample and never as a clearance - what it establishes is that the answers held
-wherever anyone looked, and the card says so in those words. Readiness matches every entry
+looked and found nothing. The read is what releases it: every entry marked `in_run` where the split
+is drawn, capped at the drawn 28, and five provided rows where it is not - fewer only where the
+population holds fewer. Where it was released on a sample it is released as a sample and never as a
+clearance, and the card says so in those words. Readiness matches every entry
 to a row preflight read, and an `in_run` claim to the split, so an id naming nothing is refused. It
 matches on hashed ids: obfuscation, not secrecy. Having read the row you name stays your word, and
 a review of rows you did not read is a false statement to the customer. Say that the band is held and
@@ -890,14 +891,13 @@ counting as an answer anyone observed.
 Say what you sampled and what you assumed. Readiness scores the whole dataset and never a subset,
 so the evidence line reports the rows sampled against the rows the user brought, and the number
 stays exactly as honest about that whatever the sample found. Give the user the rest of it in their
-own words: this run checked a few of their expected answers against the method that will grade
-them, those answers looked right, and from there the rest of the dataset is assumed sound rather
-than shown to be - so if the answers were not put together carefully by a person, that is worth
-their own look. Where this run wrote the dataset or the evaluation method, say that too: the sample
-was taken through material this run produced, which is this run checking its own work and is why
-the ceiling on it stands however clean the sample was. Above the first-run subset size, sample
-again from the drawn rows at the section-4 re-score, because those are the rows the comparison
-actually runs on.
+own words: this run checked their expected answers against the method that will grade them, those
+answers looked right, and the rest of the dataset is assumed sound rather than shown to be - so if the
+answers were not put together carefully by a person, that is worth their own look. Where this run
+wrote the dataset or the evaluation method, say that too: the read was taken through material this
+run produced, which is this run checking its own work and is why the ceiling on it stands however
+clean it came back. Above the first-run subset size, read the drawn rows in full at the section-4
+re-score.
 
 
 ### Choosing rows when difficulty is not labelled
@@ -1044,7 +1044,7 @@ the rest of the run. When they are drawn follows the source, in two cases: a dat
 generates, tops up, or splits itself reserves the held-out split when its working copy is written,
 before any component design, calibration, or optimization touches it; a dataset above the first-run subset size draws the ten from that split with the
 tuning subset, immediately before the paid comparison. The row-review hold on such a corpus lifts on
-a sample of the drawn rows, at the opening gate where a split was already settled and at the
+a read of the drawn rows in full, at the opening gate where a split was already settled and at the
 section-4 re-score where it was not; that is a hold on the band, not a third timing of the draw.
 That composition holds wherever the rows come from, because the rule governs the split this run
 reserves, not where the data originated. A project that already
