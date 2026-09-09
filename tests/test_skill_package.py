@@ -17055,9 +17055,15 @@ class SkillPackageTests(unittest.TestCase):
             .split()
         )
         gate = skill.index("#### Opening readiness gate")
-        prep = skill.index("The graded rows, or five brought ones where no split is")
+        prep = skill.index("Read the graded rows, or five brought ones")
         self.assertLess(gate, prep)
-        self.assertIn("yours to read rather than the user's", skill)
+        # Both halves of what the flow settles, in one sentence: which
+        # population is read, and whose read it is. The instruction is an
+        # imperative like every other in this document - an earlier revision
+        # left it as a noun phrase with no verb, which passed every check here
+        # and read as a fragment to the one audience this file has.
+        self.assertIn("no split is settled", skill)
+        self.assertIn("it is yours, not the user's", skill)
         # The words themselves, once, where the stage lives.
         self.assertIn("Say what you sampled and what you assumed", dataset)
         self.assertIn(
