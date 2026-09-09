@@ -748,7 +748,7 @@ METHOD_PROFILES: dict[str, dict[str, Any]] = {
     },
     # #449. Every method above scores an answer against an expected answer,
     # and the guide's own selection table offers a row none of them can
-    # express: "Tool/action workflow, final-state or side-effect check". A
+    # express: "Tool/action workflow, state-transition or side-effect check". A
     # customer whose evaluator scores which tools were used had no true word
     # to type, and the guidance's instruction for that state - declare
     # nothing - cost the withheld task-fit check, so an untrue `exact` scored
@@ -765,10 +765,10 @@ METHOD_PROFILES: dict[str, dict[str, Any]] = {
     # is that nothing a customer can type outscores the true declaration for
     # the same evaluator, and reaching the ceiling is how a declaration
     # nothing can verify reaches it honestly.
-    "final-state": {
+    "state-transition": {
         "reproducibility": 1.0,
         "cost": 1.0,
-        "fits": ("tool-workflow",),
+        "fits": ("tool",),
     },
     "routing": {
         "reproducibility": 1.0,
@@ -823,10 +823,10 @@ TASK_KINDS = (
     # The kind the selection table already offered and this vocabulary did
     # not: what the agent produces is a run of tools or actions, and what is
     # scored is the trace or the state it left rather than a sentence to
-    # compare. Added with `final-state` above, because a method and the kind
+    # compare. Added with `state-transition` above, because a method and the kind
     # it fits are one decision - a kind no method fits is a declaration that
     # can only lose points.
-    "tool-workflow",
+    "tool",
 )
 
 # Why a method that does not fit this output kind does not fit it.
@@ -916,7 +916,7 @@ METHOD_MISMATCH_REASONS: dict[str, str] = {
         "{kind} answer that is not a query parses as nothing and is scored as "
         "wrong however right it is"
     ),
-    "final-state": (
+    "state-transition": (
         "reads the tools an answer used and the state it left behind, never "
         "the answer itself, so a {kind} answer is scored on how it was "
         "produced rather than on what it says"
@@ -932,7 +932,7 @@ DETERMINISTIC_METHODS = {
     "routing",
     "fuzzy",
     "sql-structure",
-    "final-state",
+    "state-transition",
 }
 CALIBRATION_REQUIRED_CHECKS = frozenset({"good_passes", "bad_fails", "non_constant"})
 
@@ -981,7 +981,7 @@ METHOD_EXECUTES_CANDIDATE: dict[str, bool | None] = {
     "llm-judge-rubric": False,
     "composite": None,
     "sql-structure": False,
-    # Undetermined, for the reason `composite` is. A final-state check may
+    # Undetermined, for the reason `composite` is. A state-transition check may
     # read a trace the agent already wrote, or replay the workflow in an
     # isolated environment; the word settles neither, and this score cannot
     # see which. `False` would be a claim the method does not make, and
@@ -1000,7 +1000,7 @@ METHOD_EXECUTES_CANDIDATE: dict[str, bool | None] = {
     # `composite` or a bare adapter; it is tracked as
     # traigent-first-run#460 and belongs to the containment gate in
     # `references/run-safety.md`, not to this table.
-    "final-state": None,
+    "state-transition": None,
 }
 
 # Which methods a PROVEN whole-value comparison supports.
@@ -1067,7 +1067,7 @@ METHOD_COMPARISON_SUPPORT: dict[str, frozenset[str]] = {
     # task-fit points more over the same file. That is #449 again, one word
     # further out, which is exactly what the empty set was reasoned to
     # prevent, and the card sentence it produced told a customer their
-    # final-state check was an exact check.
+    # state-transition check was an exact check.
     #
     # What still refutes it is `sql-structure`, and that is the whole of what
     # this read can honestly say: a file resolved to compare two parsed
@@ -1075,7 +1075,7 @@ METHOD_COMPARISON_SUPPORT: dict[str, frozenset[str]] = {
     # here can separate a final state compared as written from any other
     # whole value compared as written. So this row stops one wrong
     # declaration and does not pretend to stop the other.
-    "final-state": frozenset({"exact", "normalized-exact"}),
+    "state-transition": frozenset({"exact", "normalized-exact"}),
 }
 
 # The methods whose credit requires the file to have ESTABLISHED the

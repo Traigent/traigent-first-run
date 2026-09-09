@@ -24,7 +24,7 @@ Select the lowest-complexity method that measures the real task:
 | Sets or unordered collections | Order-insensitive set comparison |
 | Code or SQL | Composite (`--evaluator-method composite`): a parser gate, then comparison over canonical form - a markdown code fence, aliases, case and spacing resolved before matching |
 | A SQL SELECT statement | Structural comparison (`--evaluator-method sql-structure`): copy `assets/sql_structure.py` beside the evaluator, then `from sql_structure import structural_match` and `return structural_match(output, expected)` |
-| Tool/action workflow | Final-state or side-effect check (`--evaluator-method final-state`) in an isolated environment |
+| Tool/action workflow | State-transition or side-effect check (`--evaluator-method state-transition`) in an isolated environment |
 | Retrieval/grounded answer | Citation/grounding checks plus semantic correctness |
 | Summary, explanation, writing, story | Rubric-based LLM judge, optionally preceded by deterministic gates |
 

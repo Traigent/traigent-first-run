@@ -394,7 +394,6 @@ EVALUATOR_METHODS = (
     "embedding",
     "exact",
     "execution",
-    "final-state",
     "fuzzy",
     "llm-judge-pairwise",
     "llm-judge-pointwise",
@@ -405,6 +404,7 @@ EVALUATOR_METHODS = (
     "schema",
     "set-f1",
     "sql-structure",
+    "state-transition",
 )
 COMMON_OUTCOME_FIELDS = (
     "label",
