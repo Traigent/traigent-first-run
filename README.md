@@ -174,6 +174,12 @@ card names which pillar is thin - `EVALUATION 69/100 (2 of 4 checks measured)` -
 `--evaluator-method` is what fills that one in: without it neither the reproducibility check nor
 the task-fit check can run, and there the pillar's confidence of 0.55 is what holds 89 at Workable.
 
+Thin measurement is one of two things that hold a band, and the second is a different statement. The
+top two bands say the run stands behind the comparison, so they are also held while nobody has read
+the expected answers the run is graded against - which no count taken off the file can establish.
+Neither hold is a cap: neither lowers the number and neither stops the run. The card names which one
+is in force.
+
 No settings document exists before the search, so the agent pillar is read from the selected
 agent's own code instead - which parameters it may already vary, each against a checked relative
 source line under the local project root. Static parsing rejects comments, docstrings, TODOs, and
@@ -223,7 +229,7 @@ evidence-gathering action first. `LIMITED TO 89` means the paid comparison can p
 bounds what the result may claim; it names the number so "why is this 89" has an answer on the
 same line.
 
-Between those two there is a third, and it is the only one that needs anything from you. Some
+Between those two there is a third, and it is the only kind of CAP that needs anything from you. Some
 conditions do not hold the run up and still leave a person something to agree with before the
 number means what it looks like - an answer key a model wrote end to end, rows whose expected
 answer does not appear to match their own input. A dataset that never says where its rows came
@@ -231,6 +237,12 @@ from is read as generated, because nothing here can check it, and that assumptio
 approval rather than asked. Each of the first two is put to you once, with the material to judge it on and a straight pair of exits - at the point the
 finding is made where that is still free to act on, otherwise inside the approval before the first
 paid call - and the approval shows you what you answered either way, and never asks it twice.
+
+A ceiling is not the only thing that can ask. The unread-answer-key hold above caps nothing and
+still leaves something to do, so the card carries it in `open_asks` beside an empty `caps` list and
+recommends it in the same field a cap's remedy would use. It is put to you where the card is
+explained rather than at the approval to spend, and the recommendation there is to continue: it
+bounds nothing, and reading a whole answer key is not what a first run asks of anyone.
 
 Generated data and a small comparison set land on neither of those. A walkthrough dataset is what
 this guide writes for a user who has none, and a handful of rows is a wiring check - both are runs
