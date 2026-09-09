@@ -5,14 +5,14 @@ follows-resident-measured: 105_460
 follows-total-measured: 495_092
 follows-document-measured: 134_261
 resident-ceiling: 105_600
-resident-measured: 105_597
-total-ceiling: 496_499
-total-measured: 496_482
+resident-measured: 105_593
+total-ceiling: 496_482
+total-measured: 496_478
 document-ceiling: 135_492
 document-measured: 134_261
 
-One budget moves. TOTAL goes up by 1_390, which is about one median raise as this directory measures
-its own history, and RESIDENT stays inside the ceiling 0107 left standing - 105_597 under an
+One budget moves. TOTAL goes up by 1_386, which is about one median raise as this directory measures
+its own history, and RESIDENT stays inside the ceiling 0107 left standing - 105_593 under an
 unchanged 105_600. That split is the whole shape of what this change was allowed to cost. RESIDENT
 is loaded on the first turn and carried to the last, so a byte there is paid on every turn of every
 run; a byte in a reference is paid once, by whoever followed a pointer to it. An earlier revision of

@@ -1,18 +1,18 @@
 # 0109 - what production ready takes, and what the run was worth anyway
 
 follows: 0108
-follows-resident-measured: 105_597
-follows-total-measured: 496_482
+follows-resident-measured: 105_593
+follows-total-measured: 496_478
 follows-document-measured: 134_261
-resident-ceiling: 106_020
-resident-measured: 106_016
-total-ceiling: 497_829
-total-measured: 497_825
+resident-ceiling: 106_004
+resident-measured: 106_000
+total-ceiling: 497_813
+total-measured: 497_809
 document-ceiling: 135_492
 document-measured: 134_261
 
-Both budgets move, by roughly a median each: RESIDENT by 419 against a recorded median of 500 over
-49 raises, TOTAL by 1_343 against 1_342 over 81. That symmetry is not a coincidence and it is the
+Both budgets move, by roughly a median each: RESIDENT by 407 against a recorded median of 500 over
+49 raises, TOTAL by 1_331 against 1_342 over 81. That symmetry is not a coincidence and it is the
 argument for the split that produced this entry. 0108 carried this paragraph once, and the pair of
 them together was 545 bytes over RESIDENT and 2_886 over TOTAL - a single number nobody could weigh,
 because two unrelated decisions were adding into it and neither could be judged on what it was worth.

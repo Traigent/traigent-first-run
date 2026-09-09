@@ -284,8 +284,8 @@ omitting `--dataset` when none exists. Then include every safe measurement that 
 the first readiness card. When rows carry expected answers, do the row-level sanity check in
 `references/evaluation-and-dataset.md` here and pass it as `--row-review` - on every opening scoring
 call and not only where calibration is deferred: it is your own read, it spends nothing, and no
-generated row competes with it yet. The graded rows, or five brought ones where no split is
-settled; yours to read rather than the user's. Nothing counted off a dataset can establish that an answer
+generated row competes with it yet. Read the graded rows, or five brought ones where no split
+is settled; it is yours, not the user's. Nothing counted off a dataset can establish that an answer
 answers its own question, and that reference states what the read is worth once it enters. When `existing-traigent-use` reports a declaration, or a Traigent key is
 already configured, say so in the readiness turn: Traigent was set up in this project before this
 run started, so this may not be a first run, and this run still charges for its own baseline and
@@ -1195,7 +1195,7 @@ If the installed result exposes a per-example audit or an insights helper: [`ref
 Close by saying what a further run would be worth. Name the gaps still open and what each is now
 costing; use the user's own measured evidence rather than encouragement. Say what this walkthrough
 cannot close, and say what would make this production ready - every pillar this run generated made
-real or checked by a person, an answer key that was sampled rather than verified, and what this run
+real or checked by a person, an answer key read rather than verified, and what this run
 built around what - on the terms `references/run-safety.md` sets out, which also say what the run
 was worth without them. Then give the one next action the **recorded opening state** earns: rank the opening
 score's caps and this run's own recorded limits, and name its value. A gap this run filled with a
