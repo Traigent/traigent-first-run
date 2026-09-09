@@ -2,10 +2,10 @@
 
 follows: 0118
 follows-total-measured: 507_716
-total-ceiling: 508_467
-total-measured: 508_463
+total-ceiling: 508_540
+total-measured: 508_536
 
-Seven hundred and forty-seven bytes, and they exist because a change to a script changed a rule two
+820 bytes, and they exist because a change to a script changed a rule two
 documents state. Tool credit used to turn on a name being present anywhere in the selected file;
 it now turns on the selected callable reaching that name. The scripts moved and the two places that
 tell a coding agent what to write, and a customer what was checked, did not - so the guide went on
@@ -26,10 +26,12 @@ a module-level assignment the callable itself names. Stated with its limit attac
 limit is what stops the next author widening it: the walk settles the reachability of a NAME and
 never what the thing behind it is, so a name it reaches is no more proven to be a tool than before.
 
-The glossary pays for two smaller things in the customer's own words. It described that check as
+The glossary pays for three smaller things in the customer's own words. It described that check as
 finding a tool "behind its name", which is the old boundary; and twice it named accuracy as the
 thing an optimization maximises, which is the default the objective work removed - in the one file
-that fixes what words a coding agent says out loud. One sentence in that same entry is deliberately
-left as it stands: it promises that an agent calling no tools is not scored on this, the code keeps
-the weight in the denominator, and which of the two moves is the owner's open decision rather than
-a wording fix.
+that fixes what words a coding agent says out loud. And a sentence in that same entry promised that an agent
+calling no tools is not scored on this - true of the card, and misleading, because it singles out
+one of four checks none of which is scored there. Executing the scorer settled it: three documents
+differing only in the tools answer produce the same number on every line. So the entry now says the
+honest thing once, for all four, with the module's own reason - they are this run's read of the
+customer's agent, so they are reported and never added to the number.

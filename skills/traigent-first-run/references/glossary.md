@@ -230,10 +230,11 @@ The lines under each pillar on the card
                                  with neither can spend an unbounded number of
                                  calls on a single input.
     tools it declares, and can reach - whether every tool the agent lists is
-                                 reached by the code that runs. An agent that
-                                 calls no tools is not scored on this, because
-                                 there is nothing here to be right or wrong
-                                 about.
+                                 reached by the code that runs.
+    None of those four is scored, and that is why an agent with no tools is not
+    marked down for having none. They are this run's own read of your agent, so
+    they are reported beside the number and never added to it; what the pillar
+    counts here is the search space alone.
     The card also names this pillar's other two checks: whether your dataset
     and your evaluation method are wired into the agent. This run builds that
     integration and verifies it later against the installed SDK, so the
