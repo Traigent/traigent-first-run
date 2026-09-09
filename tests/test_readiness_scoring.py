@@ -7484,13 +7484,13 @@ _TIED_PAIRS_WITH_NO_WITNESS: dict[tuple[str, str], str] = {
         "reading of one function rather than a proof over every input, which "
         "is why this pair is recorded here instead of pinned."
     ),
-    ("evaluator-unvalidated", "evaluator-calibration-refused"): (
-        "`score_evaluation` branches on one derived predicate - the declared "
-        "`calibration_scope_refused` OR preflight's `executes_candidate` "
-        "witness: when it is false it emits `evaluator-unvalidated`, and when "
-        "it is true it emits `evaluator-calibration-refused`. The two read the "
-        "same predicate in opposite directions and are mutually exclusive, so "
-        "no one payload carries both."
+    ("evaluator-timeout", "evaluator-calibration-refused"): (
+        "`calibration_refusal_capped` yields to a timeout: it is the refusal "
+        "predicate AND `timed_out is not True`, so a run whose calibration "
+        "did not finish raises the timeout and never the refusal. The pair "
+        "arrived at this tie when the refusal began to block "
+        "(traigent-first-run#393) - before that the two sat in different "
+        "queues and the rank was settled before it was consulted."
     ),
 }
 
@@ -12594,10 +12594,18 @@ class ADeferredCalibrationSaysSoInTheFieldConsumersReadTests(unittest.TestCase):
         self.assertIn("not a judgement of your evaluator", cap.reason)
         self.assertIn("You can establish that yourself", cap.reason)
         self.assertNotIn("Complete calibration", cap.reason)
-        # It bounds and does not stop, exactly as the deferral it mirrors.
-        self.assertFalse(cap.blocks)
-        self.assertTrue(cap.asks)
-        self.assertEqual(refused.status, "OK")
+        # It STOPS, which is where it parts company with the deferral it
+        # otherwise mirrors (traigent-first-run#393). `run-safety.md` ends the
+        # guide for this shape - "nothing in this guide opens it, at any stage,
+        # under any flag" - so a card answering OK described a run the
+        # guidance had already stopped, and the payload was the half that was
+        # understating.
+        self.assertTrue(cap.blocks)
+        # And it no longer asks: a blocking condition routes its remedy through
+        # `recommended_action`, which the assertion above already reads, so
+        # setting both would say the run carries on and does not at once.
+        self.assertFalse(cap.asks)
+        self.assertEqual(refused.status, "BLOCKED")
 
     def test_the_declaration_changes_the_ask_and_never_the_number(self) -> None:
         """An unverified declaration may bound a claim; it may not earn credit.

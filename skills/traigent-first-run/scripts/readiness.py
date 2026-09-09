@@ -1634,11 +1634,28 @@ ROUTE_CATEGORY: dict[str, str] = {
     "evaluator-unresolved": DIAGNOSTIC,
     "evaluator-invalid": CREATION_OR_REPAIR,
     "evaluator-unvalidated": CLAIM_SCOPING,
-    # Scopes, exactly as the condition above it does and for the same reason:
-    # the run proceeds, the evaluator is not asserted to be defective, and what
-    # is bounded is the claim. A diagnostic route would stop the run, and
-    # SKILL.md permits this deferral rather than halting on it.
-    "evaluator-calibration-refused": CLAIM_SCOPING,
+    # NOT the category above it, and the two are worth reading side by side
+    # because they share a ceiling and were classified alike until
+    # traigent-first-run#393.
+    #
+    # `evaluator-unvalidated` is a deferral SKILL.md permits: the check has not
+    # been made yet, it can be made later in this run, and what is bounded
+    # meanwhile is the claim. This condition is the same missing evidence
+    # reached by a rule that ENDED the run. `references/run-safety.md` is
+    # literal about it - "nothing in this guide opens it, at any stage, under
+    # any flag", and the guide stops "before calibration, environment setup,
+    # credentials, provider calls, or paid work". A card reporting OK for that
+    # shape was describing a run the guidance had already stopped, which is the
+    # one arrangement "one decision, one home" rules out.
+    #
+    # DIAGNOSTIC rather than CREATION_OR_REPAIR, and the distinction is the
+    # whole point of that third category. Nothing here is broken and nothing is
+    # asked to be mended: the evaluator may be entirely sound, and what is owed
+    # is a look at it - the containment review, or the customer's own run
+    # against their own database - rather than a change to it. Telling someone
+    # whose evaluator is fine to repair it is exactly the defect the third
+    # category exists to remove.
+    "evaluator-calibration-refused": DIAGNOSTIC,
     "evaluator-timeout": CREATION_OR_REPAIR,
     # Conditional, and classified the same way `dataset-below-measurable-size`
     # above already is: by what the result IS, not by whether the run waits.
@@ -7688,13 +7705,31 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
                 "gets designed. Until "
                 "some run makes that check, no card can claim this evaluator "
                 "grades correctly, which is what the ceiling reports.",
-                blocks=False,
-                # ASKS, on the same argument the condition above it carries:
-                # there is genuinely something for a person to settle, it
-                # changes the answer, and `recommended_action` returning
-                # `proceed` would say there is nothing to do about the one
-                # check that is outstanding.
-                asks=True,
+                # BLOCKS, because the guide has already stopped
+                # (traigent-first-run#393). `references/run-safety.md` ends the
+                # run for this shape before calibration, credentials, provider
+                # calls and paid work; the card used to answer OK and say the
+                # paid run may start, so the two documents a customer follows
+                # disagreed about a state they arrive in by following them. The
+                # card blocking does not create that cost - it records it, and
+                # refusing to record it is what made the artifact lie.
+                #
+                # On BOTH arms, declared and witnessed. An earlier draft split
+                # them, blocking only where the walk saw the engine, so that
+                # declaring a refusal stayed cheap. It was withdrawn twice
+                # over: nobody falsely declares their own evaluator dangerous,
+                # so there is nothing to game, and the honest run has already
+                # stopped by mandate whether or not this card says so. The run
+                # that declares nothing and calibrates anyway is uncovered
+                # either way, is `calibrate_evaluator.py`'s refusal to catch
+                # where it can, and is not made worse here.
+                blocks=True,
+                # And it no longer ASKS. `asks` exists for the run that
+                # proceeds and still owes the user an answer first; a blocking
+                # condition already routes its remedy through
+                # `recommended_action`, so setting both would say the run
+                # carries on and does not in one payload.
+                asks=False,
             )
         )
     return combine("evaluation", subs), caps
