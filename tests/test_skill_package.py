@@ -17110,7 +17110,23 @@ class SkillPackageTests(unittest.TestCase):
         # The flow orders it and names its home; the paragraph is not repeated
         # there, and the close still reaches it before the extras.
         self.assertIn("say what would make this production ready", skill)
-        self.assertIn("references/run-safety.md` carries", skill)
+        self.assertIn("references/run-safety.md` sets out", skill)
+        # The third thing the close owes, and the one no provenance field can
+        # say: which pillars were built around which (traigent-first-run#469).
+        self.assertIn("what this run\nbuilt around what", SKILL.read_text())
+        for disclosed in (
+            "scores that dataset better than it scores anything else",
+            "they agree by construction",
+            "a ruler drawn around their data is optimistic about their data",
+            # The smaller residual in the same place: a repair the customer
+            # never hears about outside a provenance field.
+            "their dataset had problems and this run changed some of it",
+        ):
+            with self.subTest(disclosure=disclosed):
+                self.assertIn(disclosed, safety)
+        # Disclosure, not a second deduction. The provenance ceilings already
+        # price the generated material once.
+        self.assertIn("charging twice for one fact", safety)
         self.assertLess(
             skill.index("say what would make this production ready"),
             skill.index("these are available whenever the user wants them"),
