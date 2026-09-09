@@ -6697,6 +6697,12 @@ class OneRecordPerCheckTests(unittest.TestCase):
         exit is `INTERNAL_ERROR_EXIT` and never `1`, so a caller can tell
         "we broke" from "your project has a problem", which are different
         things to do next.
+
+        BOTH OUTPUT MODES, because the report is rendered by two branches and
+        an assertion about one of them proves nothing about the other. The
+        readiness step reads `--json`, so that is the mode an implementer
+        writes the test for; the mode a person runs by hand is the one that
+        could drop the report with nobody looking.
         """
         self.assertNotEqual(MODULE.INTERNAL_ERROR_EXIT, 1)
         with tempfile.TemporaryDirectory() as directory:
@@ -6731,6 +6737,31 @@ class OneRecordPerCheckTests(unittest.TestCase):
         self.assertIn("python-version", names)
         self.assertEqual(names.count("python-version"), 1)
         self.assertGreater(len(names), 1)
+        self.assertIn("record(s) were refused by the check registry", errors.getvalue())
+
+        # And the same run without `--json`: a different rendering branch,
+        # reached by a different reader.
+        MODULE.RESULTS.clear()
+        MODULE.EMISSION_FAULTS.clear()
+        with tempfile.TemporaryDirectory() as directory:
+            env_path = Path(directory) / ".env"
+            env_path.write_text("OPENAI_API_KEY=placeholder\n")
+            out, errors = io.StringIO(), io.StringIO()
+            argv = [
+                "preflight.py",
+                "--env",
+                str(env_path),
+                "--project-root",
+                directory,
+                "--models",
+                "gpt-4o",
+            ]
+            with mock.patch.object(sys, "argv", argv), mock.patch.object(
+                MODULE, "emit", emit_twice
+            ), contextlib.redirect_stdout(out), contextlib.redirect_stderr(errors):
+                status = MODULE.run()
+        self.assertEqual(status, MODULE.INTERNAL_ERROR_EXIT)
+        self.assertIn("python-version", out.getvalue())
         self.assertIn("record(s) were refused by the check registry", errors.getvalue())
 
     def test_a_partial_bedrock_triple_is_one_warning_on_the_inventory(self) -> None:

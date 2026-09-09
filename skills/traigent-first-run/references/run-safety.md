@@ -324,8 +324,9 @@ runs the candidate's answer stops here with its calibration evidence uncollected
 
 That customer's card is a consequence of this decision rather than of their project. The evaluator
 check is not made, so it earns nothing and the probe spread is never measured, and `readiness.py`
-raises `evaluator-calibration-refused`, which limits the readiness claim to 45. Whether the unmade
-check is also CHARGED depends on what preflight's walk found, and the card says which case a run is
+raises `evaluator-calibration-refused`, which blocks and limits the readiness claim to 45, so the
+card carries the stop this section has already made.
+Whether the unmade check is also CHARGED depends on what preflight's walk found, and the card says which case a run is
 in: a walk that established the engine is not charged, and a run resting on the declaration alone
 is, because finding no engine settles nothing by the paragraph above. None of it follows from
 anything their evaluator did: the reason is the unbounded target above. The route out is the
