@@ -307,30 +307,9 @@ MIN_CONFIDENCE_FOR_TOP_BANDS = 0.75
 ANSWER_KEY_BAND_CEILING = "WORKABLE"
 # How much of the answer key has to be looked at before the hold above comes
 # off. Two numbers, because the run knows two different things at the two
-# moments it asks.
+# moments it asks. The first is `ANSWER_KEY_DRAWN_ROWS`, which is derived
+# beside the split it is made of rather than written here.
 #
-# The hold used to ask for coverage of everything the SCORE reads, and on any
-# corpus larger than the drawn subset that was unsatisfiable - the review
-# covers the 28 rows drawn while the score reads all 4,812, so the hold never
-# lifted, including on this guide's own worked example
-# (traigent-first-run#441). What was wrong there is the population, not the
-# ambition: the score reads the file, the comparison runs on the rows drawn out
-# of it, and only the second is what an answer-key read is about.
-#
-# So where the split is settled the read covers THE ROWS THE RUN IS GRADED ON,
-# capped by what a bounded first run draws - 18 tuning rows and the held-out
-# ten. That is not a sample of the comparison; it is all of it, and it removes
-# the "assume the rest holds" caveat for every row the search actually opens.
-# Reading 28 costs this run nothing next to reading five, and it buys a claim
-# that is exact rather than probabilistic.
-#
-# The cap is vendored rather than read from preflight, and the reason is
-# timing rather than convenience. `preflight.py` reads the combined,
-# split-labelled file - which is what "Score the dataset, not the subset"
-# requires it to read - and no subset has been drawn when it does, so its
-# `dataset-first-run-rows` record proposes a draw rather than reporting one.
-# There is no published count of drawn rows for this to defer to.
-ANSWER_KEY_DRAWN_ROWS = 28
 # And where no split is settled there are no drawn rows to cover, so the read
 # is a SAMPLE of what the customer brought, and a small one.
 #
@@ -3767,6 +3746,15 @@ class BuildSignal:
     # sentence in a document establishes it, so there is nothing left to set
     # and the field would only be a way back in.
     #
+    # traigent-first-run#461 asks for that arm to stop being charged, and this
+    # branch does NOT do it. The decided table's third row - no tools declared,
+    # no deduction - needs this field back, and the guard that would have to be
+    # reversed for it (`test_no_build_answer_this_read_cannot_refute_outranks_
+    # one_it_can`) was written with that exact argument in front of it and
+    # refuses it in as many words. Which of the two governs is the owner's, so
+    # what lands here is the half that needs neither: the credit side, where a
+    # declared tool now has to be REACHED rather than merely present.
+    #
     # `SubScore.withheld`, carried from the read that decided it rather than
     # re-derived where the sub-score is built. `measured=False` reaches
     # `build_subscores` from three different places - a check the read could
@@ -4356,6 +4344,34 @@ COARSE_RESOLUTION_EXAMPLES = 30
 WALKTHROUGH_TUNING_ROWS = 18
 WALKTHROUGH_HOLDOUT_ROWS = 10
 WALKTHROUGH_DATASET_ROWS = WALKTHROUGH_TUNING_ROWS + WALKTHROUGH_HOLDOUT_ROWS
+
+# What an answer-key read has to cover where the split is settled, and it is
+# the same 28 above rather than a second one.
+#
+# The hold used to ask for coverage of everything the SCORE reads, and on any
+# corpus larger than the drawn subset that was unsatisfiable - the review
+# covers the rows drawn while the score reads all 4,812, so the hold never
+# lifted, including on this guide's own worked example
+# (traigent-first-run#441). What was wrong there is the population, not the
+# ambition: the score reads the file, the comparison runs on the rows drawn out
+# of it, and only the second is what an answer-key read is about. So where the
+# split is settled the read covers THE ROWS THE RUN IS GRADED ON, capped by
+# what a bounded first run draws. That is not a sample of the comparison; it is
+# all of it.
+#
+# DERIVED, and it was not. This was a literal `28` four thousand lines up,
+# outside the weld the comment above describes: the guide could restate its
+# split, the test would move these two numbers with it, and the answer-key
+# floor would have gone on asking for a size nothing draws - silently, because
+# nothing compared them. Deriving it is the smallest thing that makes that
+# drift unreachable rather than merely unlikely, and it needs no new test.
+#
+# Rows and not questions, which is the one place this number is approximate.
+# The subset rule caps the tuning draw in QUESTIONS, and a multi-reference
+# corpus brings more rows than questions - so on that shape the comparison runs
+# on more rows than this asks a reader to cover, and the evidence line says
+# "a sample" there rather than claiming coverage it does not have.
+ANSWER_KEY_DRAWN_ROWS = WALKTHROUGH_DATASET_ROWS
 
 
 def top_up_offer(
@@ -14005,6 +14021,60 @@ def derived_source_names(source: StaticSourceEvidence) -> frozenset[str]:
     return frozenset(names)
 
 
+def names_reached_from_selected_callable(
+    source: StaticSourceEvidence,
+) -> frozenset[str]:
+    """Every name the selected callable reaches, one hop through the module.
+
+    The stronger acceptance test traigent-first-run#461 names, and it is
+    deliberately the only thing that changed about how a declared tool earns
+    credit. `derived_source_names` reads the WHOLE file, which is right for the
+    refutation it feeds - a name the file never mentions cannot be a tool this
+    agent declares - and far too weak to pay for: a key in an unrelated lookup
+    table earned the check's full weight at full confidence, so the cheapest
+    way to raise the agent pillar was to declare a tool whose name happens to
+    appear somewhere.
+
+    ONE HOP, and the hop is the point. A tool is ordinarily named in a
+    module-level table and used inside the callable, so a walk of the callable
+    alone would refuse `TOOLS = ["search"]` referenced as `TOOLS` - an ordinary
+    agent, refused for being written normally. So the callable's own names are
+    collected first, and then any module-level assignment whose target is one of
+    them contributes its own names too. A second hop is not taken: each one
+    widens what counts as reached, and the whole value of this is that it is
+    narrower than the file.
+
+    NOT a definition of tool-hood, which this module still does not have and
+    still refuses to invent. Reachability is a question the tree answers about a
+    NAME; whether the thing behind that name is a tool, a helper or a constant
+    is a question about meaning, and a rule that guessed would be wrong for
+    ordinary agents in both directions. So this is used exactly as
+    `derived_source_names` is - to lower credit, never to establish one - and a
+    name it does reach is no more proven to be a tool than it was before.
+    """
+    reached: set[str] = set()
+    for node in ast.walk(source.selected_callable):
+        if isinstance(node, ast.Name):
+            reached.add(node.id)
+        elif isinstance(node, ast.Attribute):
+            reached.add(node.attr)
+        elif isinstance(node, ast.Constant) and isinstance(node.value, str):
+            reached.add(node.value)
+    for node in source.tree.body:
+        if not isinstance(node, (ast.Assign, ast.AnnAssign)):
+            continue
+        if not set(_assignment_names(node)) & reached:
+            continue
+        for inner in ast.walk(node):
+            if isinstance(inner, ast.Name):
+                reached.add(inner.id)
+            elif isinstance(inner, ast.Attribute):
+                reached.add(inner.attr)
+            elif isinstance(inner, ast.Constant) and isinstance(inner.value, str):
+                reached.add(inner.value)
+    return frozenset(reached)
+
+
 def _lexical_owner(node: ast.AST, source: StaticSourceEvidence) -> ast.AST:
     """Return the module/function/class scope that owns ``node``."""
     child = node
@@ -19138,9 +19208,12 @@ def build_signal_from_entry(
         # than pricing a coordinate that cannot distinguish a real read from a
         # borrowed one.
         #
-        # It cannot go the other way. A name that IS present proves nothing -
-        # tools are ordinary calls and this module does not attempt a call
-        # graph - so a present name is left exactly as unverified as before.
+        # This refusal cannot go the other way, and that is still true of it:
+        # a name that IS present is not thereby a tool, because presence is a
+        # fact about the file rather than about the call. What decides credit
+        # is the narrower question below - whether the selected callable
+        # reaches the name - so a present name survives this raise and then
+        # earns nothing unless that walk finds it (traigent-first-run#461).
         absent = sorted(set(declared) - derived_source_names(source))
         if absent:
             raise AgentDiscoveryInputError(
@@ -19150,6 +19223,21 @@ def build_signal_from_entry(
                 "selected source"
             )
     unreachable = _build_names(check, spec, "unreachable")
+    # And what the SOURCE says is unreachable, which is the half a declaration
+    # cannot supply (traigent-first-run#461). A declared name that the selected
+    # callable never reaches - not directly, and not through a module-level
+    # table the callable names - has not been shown to be wired into this
+    # agent, so it earns nothing even where the document calls it reachable.
+    #
+    # UNION, deliberately: this may only ever ADD to what does not resolve, so
+    # a derivation that is wrong about a name can cost credit and can never
+    # create it. That is the same one-way discipline `derived_source_names`
+    # carries above, applied to the direction that pays.
+    if source is not None:
+        unreachable = sorted(
+            set(unreachable)
+            | (set(declared) - names_reached_from_selected_callable(source))
+        )
     stray = sorted(set(unreachable) - set(declared))
     if stray:
         raise AgentDiscoveryInputError(

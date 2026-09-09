@@ -14831,6 +14831,21 @@ def _read(build=None, knobs=None):
             # `agent-no-varying-knobs` fired across nine fixtures that had
             # nothing to do with tools.
             lines.append(f"TOOLS = {sorted(set(tool_names))!r}")
+            # ...and the callable REACHES it, which a document declaring tools
+            # is asserting. Credit is derived from reachability now
+            # (traigent-first-run#461), so a fixture that names tools in a
+            # module table nothing reads is not a fixture with tools - it is
+            # the broken-wiring case, and every expectation written for a
+            # well-built agent would be measuring that instead.
+            #
+            # The return line is REPLACED rather than added to, for the reason
+            # the constant is appended rather than inserted: every knob's
+            # `source_lines` was computed from this list's length, and an
+            # inserted line re-points all of them.
+            for index, line in enumerate(lines):
+                if line.startswith("    return provider("):
+                    lines[index] = f"{line[:-1]}, tools=TOOLS)"
+                    break
         if _answers("control-flow", "loop") and call_arguments:
             body = lines.index("def selected(choice):") + 1
             lines.insert(body, "    for _ in range(3):")
