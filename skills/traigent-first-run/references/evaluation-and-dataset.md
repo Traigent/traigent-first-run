@@ -40,6 +40,28 @@ that returns the same rows. Write `equivalent_good` as a surface variant the can
 resolves, and record a differently-shaped equivalent as a known coverage gap rather than widening
 the scorer until it passes.
 
+A state-transition check is bounded by something else again, and the bound is arithmetic rather than
+coverage. Its job is to drive the workflow and inspect what changed, so each execution leaves the
+world different from how it found it - and this guide executes the evaluator at least three times
+over the same material: four calibration probes, the baseline, then once per configuration per row.
+If the workflow flips a record from `no` to `yes`, the first probe finds `no` and leaves `yes`, and
+every later probe, the baseline and every configuration start from a world an earlier execution
+changed. Two configurations are then scored against different starting states, and part of the
+difference between them is the order they ran in. Nothing else in this guide catches that: the
+held-out split protects against the search overfitting and its own rows are graded by the same
+mutating evaluator, and calibration's checks compare scores within one probe set and cannot see that
+the set moved the world.
+
+So the check has to leave the world as it found it - a fixture, a transaction rolled back, a
+disposable target - and where it does not, say so rather than reporting the comparison as though it
+did. Say it in both places the sampled answer key is said: when the card is explained, as something
+to know before the run, and at the close, as a limit on what the numbers mean. The sentence is that
+the comparison assumed a world that did not move, and this evaluator moves it, so the difference
+between two configurations includes the order they were run in. Whether this guide supports the
+shape at all - require idempotence, require a reset between executions, or refuse it to the manual
+containment route - is not settled here, and this disclosure is what an unsettled shape owes a
+customer meanwhile.
+
 Structural comparison is bounded differently, and it is the row to take when the answer is one
 `SELECT`. It compares the select set, predicates, grouping, ordering, aggregates and nesting of
 two parses, so reordered conjuncts and renamed aliases match while a differently shaped subquery
