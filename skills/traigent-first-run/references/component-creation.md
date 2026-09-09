@@ -441,10 +441,18 @@ below already names. A `while True` carrying an exit that the rule above counts 
 same reason, because whether that exit is reached is not a question this read can answer. A `for` is
 never refused on this ground at all: it is bounded by its iterable.
 
-**`tools` is refuted, never confirmed.** A name in `declared` that appears nowhere in the selected
-agent's file - not as an identifier, an attribute, or a string - is not a tool that agent declares,
-and is refused. A name that is present establishes nothing: tools are ordinary calls and nothing here
-follows a call graph.
+**`tools` is credited only where the selected callable reaches the name.** A name in `declared` that
+appears nowhere in the selected agent's file - not as an identifier, an attribute, or a string - is
+not a tool that agent declares, and is refused outright. Presence alone earns nothing beyond
+surviving that refusal: credit needs the callable to reach the name, directly or through a
+module-level assignment the callable itself names, so a name sitting in a table nothing reads is
+declared and unresolved rather than declared and wired. Declare what the call really reaches; a name
+listed because it appears somewhere costs the check rather than paying for it.
+
+That walk goes one hop and no further, and it settles the reachability of a NAME rather than what the
+thing behind it is. Nothing here decides what makes a call a tool, so a name it does reach is no more
+proven to be one than it was before - reachability can only ever lower the credit a declaration
+claims, never manufacture it.
 
 **`prompt` and `output-contract` are located only.** Nothing statically decides whether a prompt
 carries worked examples, or whether anything pins the shape of an answer. Their `source_lines` say

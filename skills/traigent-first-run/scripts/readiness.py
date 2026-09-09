@@ -19170,9 +19170,12 @@ def build_signal_from_entry(
         # than pricing a coordinate that cannot distinguish a real read from a
         # borrowed one.
         #
-        # It cannot go the other way. A name that IS present proves nothing -
-        # tools are ordinary calls and this module does not attempt a call
-        # graph - so a present name is left exactly as unverified as before.
+        # This refusal cannot go the other way, and that is still true of it:
+        # a name that IS present is not thereby a tool, because presence is a
+        # fact about the file rather than about the call. What decides credit
+        # is the narrower question below - whether the selected callable
+        # reaches the name - so a present name survives this raise and then
+        # earns nothing unless that walk finds it (traigent-first-run#461).
         absent = sorted(set(declared) - derived_source_names(source))
         if absent:
             raise AgentDiscoveryInputError(

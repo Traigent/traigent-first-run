@@ -117,8 +117,8 @@ Configuration (config, variant)
   agent.
 
 Optimization (optimization run)
-  Plain: the search where we try many configurations and find the ones that get
-  the best accuracy for the lowest cost and latency.
+  Plain: the search where we try many configurations and find the ones that do
+  best on what you are optimizing for, at the lowest cost and latency.
   Precise: a guided search over the configuration space, scored on the dataset
   by the evaluator, that returns the best non-dominated candidates.
 
@@ -152,8 +152,8 @@ Difficulty spread
   rather than all one level.
 
 Pareto frontier (optimal frontier)
-  Plain: the set of best trade-offs - each one is a config where you cannot get
-  more accuracy without paying more cost or latency.
+  Plain: the set of best trade-offs - each one is a config where you cannot do
+  better on what you are optimizing for without paying more cost or latency.
 
 The lines under each pillar on the card
   Plain: each line is one question the score asked about your setup, with what
@@ -229,10 +229,11 @@ The lines under each pillar on the card
                                  loop with a limit stops on the limit; a loop
                                  with neither can spend an unbounded number of
                                  calls on a single input.
-    tools it declares, and can reach - whether every tool the agent lists can be
-                                 found behind its name. An agent that calls no
-                                 tools is not scored on this, because there is
-                                 nothing here to be right or wrong about.
+    tools it declares, and can reach - whether every tool the agent lists is
+                                 reached by the code that runs. An agent that
+                                 calls no tools is not scored on this, because
+                                 there is nothing here to be right or wrong
+                                 about.
     The card also names this pillar's other two checks: whether your dataset
     and your evaluation method are wired into the agent. This run builds that
     integration and verifies it later against the installed SDK, so the
