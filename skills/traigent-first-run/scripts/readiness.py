@@ -11079,7 +11079,38 @@ def dataset_facts_from_preflight(records: Sequence[dict[str, Any]]) -> DatasetFa
         duplicate_status=statuses.get("dataset-duplicates"),
         near_duplicate_status=statuses.get("dataset-near-duplicates"),
         answer_dominance_status=_answer_dominance_status(statuses),
-        split_overlap=_failed(statuses, "dataset-split"),
+        # READ FROM THE METRIC AND NOT FROM THE STATUS, which is the third
+        # application of that rule on this call and the reason
+        # traigent-first-run#457 asked for the class rather than a fourth
+        # patch. `shared_families` and `placeholder_rows` above already read
+        # their metric; #442 moved the two `dataset-ids` counts onto theirs
+        # after #438's relaxation of that check's severity deleted a blocking
+        # line off the card with every test green. This one had not been broken
+        # yet, and the only thing standing between it and the same regression
+        # was somebody remembering.
+        #
+        # The status survives as a FLOOR and not as the source, which is the
+        # one difference from the `dataset-ids` counts below. There
+        # `required=_failed(...)` refuses an older payload outright, and that
+        # is right where the count IS the price: a missing number cannot be
+        # priced. Here a FAIL already establishes the finding on its own, so
+        # refusing a `preflight.json` left on disk by an earlier checkout would
+        # cost a run something and buy nothing. `or` can only ever ADD the cap,
+        # never withhold it, so relaxing this arm's severity - the regression
+        # this is filed against - now leaves the count doing the work, and the
+        # cap fires on a WARN exactly as it did on a FAIL.
+        #
+        # Absent on the tuning-only and no-split arms, where there is no
+        # held-out side and the question does not arise. `required=False`
+        # reads that as no overlap, which it is.
+        split_overlap=_row_count(
+            metrics.get("dataset-split", {}).get("overlapping_inputs"),
+            "overlapping_inputs",
+            required=False,
+            check="dataset-split",
+        )
+        > 0
+        or _failed(statuses, "dataset-split"),
         # Read from the metric and not from the status, so a SKIP and a check
         # that never fired reach the same `None`. Both mean the question was
         # not answered, and the check is conditional by construction - see

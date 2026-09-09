@@ -94,7 +94,20 @@ def _provenance_metric(records: list[dict]) -> dict:
 
 
 def _cap(score: dict, condition: str) -> dict:
-    return next(cap for cap in score["caps"] if cap["condition"] == condition)
+    """The named cap, or an AssertionError that says which one was missing.
+
+    A bare `next()` raises `StopIteration`, and an absent cap is exactly the
+    state most of this file's regression probes are written to detect - so the
+    one failure a reader most needs named arrived as a traceback into a
+    generator expression, with neither the condition asked for nor the
+    conditions present anywhere in it. Reverting a fix and re-running its test
+    is how these are read; that read should say what is missing.
+    """
+    for cap in score["caps"]:
+        if cap["condition"] == condition:
+            return cap
+    present = ", ".join(sorted(cap["condition"] for cap in score["caps"])) or "none"
+    raise AssertionError(f"no {condition!r} cap on this score; caps present: {present}")
 
 
 def _dataset_subscore(score: dict, name: str) -> dict:
@@ -5289,6 +5302,163 @@ class AMissingIdIsPricedFromTheCountNotTheStatusTests(unittest.TestCase):
         self.assertEqual(ids["status"], "PASS")
         self.assertNotIn(
             "dataset-integrity-fail", [cap["condition"] for cap in score["caps"]]
+        )
+
+
+class TheSplitOverlapIsPricedFromTheCountNotTheStatusTests(unittest.TestCase):
+    """The sibling traigent-first-run#457 filed before anybody broke it.
+
+    `split_overlap` was read as `_failed(statuses, "dataset-split")`, which is
+    the identical shape that cost the card an entire blocking line when #438
+    relaxed `dataset-ids`' missing-id arm from FAIL to WARN. Nothing was wrong
+    with it on the day it was filed - `dataset-split` FAILs on an overlap today,
+    so the cap fires today - and nothing except one person remembering stood
+    between it and the same regression, because every existing test of this
+    ceiling builds `DatasetFacts` BY HAND with `split_overlap=True`
+    (`tests/test_readiness_scoring.py:1028, 7165, 8145, 11033, 12890`). A
+    hand-forged fact cannot notice that the real payload stopped producing it.
+
+    So the count is published and priced. `preflight.py` now emits
+    `overlapping_inputs` on both `dataset-split` arms that compared the two
+    splits, and absent - never zero - on the tuning-only and no-split arms,
+    where there is no held-out side and the question does not arise.
+
+    The status survives as a FLOOR rather than as the source, which is the one
+    difference from the `dataset-ids` counts. There a missing count cannot be
+    priced at all, so absence is refused; here a FAIL establishes the finding on
+    its own, and refusing a `preflight.json` left on disk by an earlier checkout
+    would cost a run something and buy nothing. `or` can only ever ADD the cap.
+    """
+
+    @staticmethod
+    def _overlapping_rows() -> list[dict]:
+        rows = [
+            {
+                "id": f"row-{index:03d}",
+                "input": f"question {index} about the billing system and its rules",
+                "output": f"answer-{index % 4}",
+                "difficulty": ["easy", "medium", "hard", "very-hard"][index % 4],
+                "source": "production-log",
+                "split": "tune" if index < 30 else "holdout",
+            }
+            for index in range(40)
+        ]
+        # The overlap itself: three held-out inputs are also tuning inputs.
+        for index in range(30, 33):
+            rows[index]["input"] = rows[index - 30]["input"]
+        return rows
+
+    @staticmethod
+    def _disjoint_rows() -> list[dict]:
+        return [
+            {
+                "id": f"row-{index:03d}",
+                "input": f"question {index} about the billing system and its rules",
+                "output": f"answer-{index % 4}",
+                "difficulty": ["easy", "medium", "hard", "very-hard"][index % 4],
+                "source": "production-log",
+                "split": "tune" if index < 30 else "holdout",
+            }
+            for index in range(40)
+        ]
+
+    def test_preflight_publishes_the_count_on_both_arms_that_asked(self) -> None:
+        """The premise, from real preflight output rather than a fixture.
+
+        Both arms that compared the two splits carry the number. If the count
+        stops being emitted this fails here, before any of the pricing below
+        has a chance to pass for the wrong reason.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            overlapping = _preflight_records(
+                _write_jsonl(Path(directory), "overlap.jsonl", self._overlapping_rows())
+            )
+            disjoint = _preflight_records(
+                _write_jsonl(Path(directory), "clean.jsonl", self._disjoint_rows())
+            )
+        failing = next(r for r in overlapping if r["check"] == "dataset-split")
+        self.assertEqual(failing["status"], "FAIL")
+        self.assertEqual(failing["metrics"]["overlapping_inputs"], 3)
+        passing = next(r for r in disjoint if r["check"] == "dataset-split")
+        self.assertEqual(passing["status"], "PASS")
+        self.assertEqual(passing["metrics"]["overlapping_inputs"], 0)
+
+    def test_the_ceiling_survives_a_relaxed_severity(self) -> None:
+        """The regression this class exists for, executed.
+
+        The severity is relaxed to WARN on a payload that still reports three
+        overlapping inputs - which is exactly what #438 did to `dataset-ids`,
+        and is a decision `preflight.py` is entitled to take without asking
+        this module. The cap must still fire, and before this change it did
+        not.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            records = _preflight_records(
+                _write_jsonl(Path(directory), "overlap.jsonl", self._overlapping_rows())
+            )
+        for record in records:
+            if record["check"] == "dataset-split":
+                record["status"] = "WARN"
+        score = _score_records(records)
+        cap = _cap(score, "dataset-tune-holdout-overlap")
+        self.assertEqual(cap["ceiling"], MODULE.SPLIT_OVERLAP_CEILING)
+        self.assertIn("appear in both", cap["reason"])
+
+    def test_an_older_payload_with_no_count_is_still_priced(self) -> None:
+        """The floor. A `preflight.json` predating the metric still caps.
+
+        Refusing it would be the `dataset-ids` treatment, and it is wrong here:
+        the FAIL already establishes the finding, so there is nothing a missing
+        number would have added.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            records = _preflight_records(
+                _write_jsonl(Path(directory), "overlap.jsonl", self._overlapping_rows())
+            )
+        for record in records:
+            if record["check"] == "dataset-split":
+                record["metrics"] = {"kind": "tuning-and-holdout"}
+        cap = _cap(_score_records(records), "dataset-tune-holdout-overlap")
+        self.assertEqual(cap["ceiling"], MODULE.SPLIT_OVERLAP_CEILING)
+
+    def test_a_disjoint_split_is_not_capped_by_this(self) -> None:
+        """The false-red direction, because the trigger moved off a status.
+
+        A PASSing `dataset-split` now reaches the same expression with a zero
+        count. Asserted rather than assumed: a cap that halves the ceiling is
+        the wrong place to find out.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            score = _score(
+                _write_jsonl(Path(directory), "clean.jsonl", self._disjoint_rows())
+            )
+        self.assertNotIn(
+            "dataset-tune-holdout-overlap",
+            [cap["condition"] for cap in score["caps"]],
+        )
+
+    def test_a_corpus_with_no_declared_split_is_not_capped_by_this(self) -> None:
+        """Absence, which is the third state and not a zero.
+
+        With no held-out side there is nothing to overlap, so `preflight.py`
+        emits no `overlapping_inputs` at all and `required=False` reads that as
+        no overlap - which it is. The arm exists because reading absence as a
+        FAIL, or refusing it, would both cap a corpus on a question nobody
+        asked.
+        """
+        rows = self._disjoint_rows()
+        for row in rows:
+            row.pop("split")
+        with tempfile.TemporaryDirectory() as directory:
+            records = _preflight_records(
+                _write_jsonl(Path(directory), "nosplit.jsonl", rows)
+            )
+            score = _score_records(records)
+        split = next(r for r in records if r["check"] == "dataset-split")
+        self.assertNotIn("overlapping_inputs", split.get("metrics") or {})
+        self.assertNotIn(
+            "dataset-tune-holdout-overlap",
+            [cap["condition"] for cap in score["caps"]],
         )
 
 
