@@ -94,7 +94,20 @@ def _provenance_metric(records: list[dict]) -> dict:
 
 
 def _cap(score: dict, condition: str) -> dict:
-    return next(cap for cap in score["caps"] if cap["condition"] == condition)
+    """The named cap, or an AssertionError that says which one was missing.
+
+    A bare `next()` raises `StopIteration`, and an absent cap is exactly the
+    state most of this file's regression probes are written to detect - so the
+    one failure a reader most needs named arrived as a traceback into a
+    generator expression, with neither the condition asked for nor the
+    conditions present anywhere in it. Reverting a fix and re-running its test
+    is how these are read; that read should say what is missing.
+    """
+    for cap in score["caps"]:
+        if cap["condition"] == condition:
+            return cap
+    present = ", ".join(sorted(cap["condition"] for cap in score["caps"])) or "none"
+    raise AssertionError(f"no {condition!r} cap on this score; caps present: {present}")
 
 
 def _dataset_subscore(score: dict, name: str) -> dict:
