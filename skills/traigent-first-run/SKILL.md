@@ -524,6 +524,14 @@ weakness are one decision about what this run will measure. That question carrie
    present as strong however good the rest is, and no configuration from the result may be promoted.
 4. One answer where something is missing: proceed. Where it is only short, keeping what they
    brought is a second. `I have it` with a path is never counted among them.
+5. **What they want optimized**, in one line, where this run cannot already tell. The SDK optimizes
+   for whatever they choose; this guide is the only thing narrowing that, and the narrowing is
+   invisible unless it is said. Read it off their evaluator where the evaluator answers it - a
+   scorer comparing an answer to an expected one is optimizing correctness and needs no question -
+   and ask only where it does not, which is where the answer could be something this run would
+   never guess. Where they name nothing, proceed on accuracy and cost **and say that in those
+   words**, so a default nobody chose is not mistaken for a choice somebody made.
+   `references/evaluation-and-dataset.md` owns what the answer becomes.
 
 Then stop and wait, and ask nothing else here; what this run writes is shown at the pre-spend
 approval in section 6, the other checkpoint. The question closes the message: the board and the
