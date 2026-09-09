@@ -92,7 +92,20 @@ When building an evaluator:
 - Fail evaluator/runtime errors distinctly; do not let a crashed harness look like an incorrect
   agent answer.
 - Name the primary objective for the metric it measures; use that same key in the objective,
-  scorer, and result reading.
+  scorer, and result reading. That key is **what the customer said they were optimizing for**, not
+  `accuracy` by habit: `references/sdk-execution.md` wires an arbitrary name through the objective,
+  the metric function, the result reading and the frontier, and the portal is not an
+  `accuracy`-only display. A customer whose evaluator scores tool-use compliance optimizes
+  tool-use compliance, and calling it accuracy reports agreement with a word rather than with their
+  task.
+- **Cost is always the second objective, and accuracy is never bolted on beside it.** Cost is
+  measured the same way whatever the primary is, so it is free information and never a claim about
+  their task. Accuracy is not: it means something only where their evaluator measures correctness,
+  and adding it to a run optimizing tool-use compliance reports a number that describes nothing -
+  which is the mislabel this rule exists to stop, one layer out.
+- Where the customer named nothing and the evaluator settles nothing, the run proceeds on accuracy
+  and cost and **says so in those words**. A hardcoded default that is never spoken reads as a
+  discovered one, and the customer cannot disagree with a choice they were not shown.
 - When the scorer reads row metadata, prove the SDK delivers it: the 0.26.0 loader nests an
   explicit `metadata` object one level down, so `metadata["db_id"]` reads `None`. Read both shapes.
 
