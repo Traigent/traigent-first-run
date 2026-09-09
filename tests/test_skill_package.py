@@ -3365,9 +3365,9 @@ class SkillPackageTests(unittest.TestCase):
             for line in rows.splitlines()
             if line.startswith("| Tool/action workflow |")
         )
-        self.assertIn("`--evaluator-method final-state`", workflow)
+        self.assertIn("`--evaluator-method state-transition`", workflow)
         self.assertIn(
-            "final-state",
+            "state-transition",
             READINESS.METHOD_PROFILES,
             "the row names a method the scorer would refuse",
         )

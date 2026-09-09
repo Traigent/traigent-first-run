@@ -23052,9 +23052,9 @@ class TaskFitIsMeasuredOnThePairNotOnEitherFieldTests(unittest.TestCase):
         # `routing` was the first entry here whose claim is about WHAT is
         # compared rather than about the comparison discipline: a chosen route
         # against the expected one is a whole-value equality however the
-        # labels are folded. `final-state` is the second, on the identical
+        # labels are folded. `state-transition` is the second, on the identical
         # argument about a final state, and it was added to this set after a
-        # run showed that the plainest evaluator the guide's tool-workflow row
+        # run showed that the plainest evaluator the guide's tool row
         # describes - `return output == expected` over a final state - is
         # settled by the walk as `exact`. Left out, the table refuted the true
         # declaration and paid `exact` + `structured` 17 task-fit points more
@@ -23065,7 +23065,7 @@ class TaskFitIsMeasuredOnThePairNotOnEitherFieldTests(unittest.TestCase):
             if shapes & {"exact", "normalized-exact"}
         }
         self.assertEqual(
-            supported, {"exact", "normalized-exact", "routing", "final-state"}
+            supported, {"exact", "normalized-exact", "routing", "state-transition"}
         )
         # And the one a proven structural SQL comparison supports, which is
         # deliberately not one of those three: a file that reads both answers
@@ -26250,7 +26250,7 @@ class TheHonestDeclarationIsNeverOutscoredTests(unittest.TestCase):
     them needs a comparison shape preflight cannot establish for a file that
     reads a trace.
 
-    The fix is vocabulary: `final-state` over `tool-workflow` is the true
+    The fix is vocabulary: `state-transition` over `tool` is the true
     declaration, and it earns what a deterministic ruler that suits the output
     earns. The property below is what must survive, and it is written over the
     tables rather than over that pair, because a later method or task kind
@@ -26302,14 +26302,14 @@ class TheHonestDeclarationIsNeverOutscoredTests(unittest.TestCase):
         method fits can only lose points. Checked against the tables the flags
         actually take their choices from.
         """
-        self.assertIn("tool-workflow", MODULE.TASK_KINDS)
+        self.assertIn("tool", MODULE.TASK_KINDS)
         fitting = {
             name
             for name, profile in MODULE.METHOD_PROFILES.items()
-            if "tool-workflow" in profile["fits"]
+            if "tool" in profile["fits"]
         }
         self.assertTrue(fitting, "no method suits a tool or action workflow")
-        self.assertIn("final-state", fitting)
+        self.assertIn("state-transition", fitting)
 
     # The one settled shape this property is not asserted over, named here
     # because the sweep below derives its own axis and has to say what it is
@@ -26318,7 +26318,7 @@ class TheHonestDeclarationIsNeverOutscoredTests(unittest.TestCase):
     # `derived_comparison_shape` returns this only for a file that imports the
     # guide's own bundled SQL comparator and delegates both answers to it, so
     # a file settled as `sql-structure` is a query comparator whatever was
-    # typed over it and `final-state` is not the true declaration for it.
+    # typed over it and `state-transition` is not the true declaration for it.
     # `test_the_new_word_is_still_refused_from_proof` asserts that state
     # instead.
     SHAPES_THIS_PROPERTY_EXCLUDES = frozenset({"sql-structure"})
@@ -26339,7 +26339,7 @@ class TheHonestDeclarationIsNeverOutscoredTests(unittest.TestCase):
         because an earlier revision of this docstring claimed the whole thing
         was derived and it is not. Whether a declaration is TRUE of a file is
         a fact about that file, and no table here holds it. A sixteenth method
-        that is itself the honest declaration for a new kind - `final-state`
+        that is itself the honest declaration for a new kind - `state-transition`
         was exactly that - therefore needs its own pair added to this test, and
         nothing in the suite can notice that it was not.
 
@@ -26355,7 +26355,7 @@ class TheHonestDeclarationIsNeverOutscoredTests(unittest.TestCase):
 
         **What it can catch, then.** The honest pair sits at the pillar
         ceiling, so nothing added later can climb PAST it; every way this goes
-        red is the honest side falling - `final-state` joining
+        red is the honest side falling - `state-transition` joining
         `METHOD_REQUIRES_PROVEN_COMPARISON`, its execution claim turning
         `True`, its dials being trimmed, its `METHOD_COMPARISON_SUPPORT` entry
         narrowing, a new provable comparison shape it does not support, or the
@@ -26407,7 +26407,7 @@ class TheHonestDeclarationIsNeverOutscoredTests(unittest.TestCase):
                     "comparison_shape": shape,
                     "comparison_witness": witness,
                 }
-                honest = self.pillar("final-state", "tool-workflow", **state)
+                honest = self.pillar("state-transition", "tool", **state)
                 for method in sorted(MODULE.METHOD_PROFILES):
                     for kind in MODULE.TASK_KINDS:
                         with self.subTest(
@@ -26417,7 +26417,7 @@ class TheHonestDeclarationIsNeverOutscoredTests(unittest.TestCase):
                                 self.pillar(method, kind, **state),
                                 honest,
                                 f"{method} + {kind} pays more than the truth "
-                                "about a tool-workflow evaluator whose file "
+                                "about a tool evaluator whose file "
                                 f"settled as {shape}, so this score is again "
                                 "buying a mislabel",
                             )
@@ -26429,7 +26429,7 @@ class TheHonestDeclarationIsNeverOutscoredTests(unittest.TestCase):
         the issue was filed on, and a sweep that silently stopped covering
         them would still pass.
         """
-        honest = self.pillar("final-state", "tool-workflow")
+        honest = self.pillar("state-transition", "tool")
         self.assertEqual(honest, self.pillar("exact", "structured"))
         self.assertGreater(honest, self.pillar("composite", "structured"))
         self.assertGreater(honest, self.pillar(None, None))
@@ -26444,7 +26444,7 @@ class TheHonestDeclarationIsNeverOutscoredTests(unittest.TestCase):
         vocabulary's gap.
         """
         silent = self.pillar(None, None)
-        self.assertGreater(self.pillar("final-state", "tool-workflow"), silent)
+        self.assertGreater(self.pillar("state-transition", "tool"), silent)
         withheld = [
             sub
             for sub in MODULE.score_evaluation(
@@ -26474,7 +26474,7 @@ class TheHonestDeclarationIsNeverOutscoredTests(unittest.TestCase):
         describes refutes that: `return output == expected` over a final state
         is a whole-value comparison OF THE STATE, the walk settles it as
         `exact`, and the empty set therefore refused the true declaration and
-        printed a card sentence calling a final-state check an exact one -
+        printed a card sentence calling a state-transition check an exact one -
         while `exact` + `structured` over the same file kept every point.
 
         So the two whole-value shapes credit this method, for the reason they
@@ -26487,15 +26487,15 @@ class TheHonestDeclarationIsNeverOutscoredTests(unittest.TestCase):
         ):
             with self.subTest(shape=shape):
                 credited = self.fit(
-                    "final-state",
-                    "tool-workflow",
+                    "state-transition",
+                    "tool",
                     comparison_shape=shape,
                     comparison_witness=witness,
                     executes_candidate=False,
                 )
                 self.assertEqual(credited.value, MODULE.TASK_FIT_WEIGHT)
                 self.assertEqual(
-                    credited.evidence, "final-state suits tool-workflow output"
+                    credited.evidence, "state-transition suits tool output"
                 )
 
     def test_the_new_word_is_still_refused_from_proof(self) -> None:
@@ -26508,20 +26508,20 @@ class TheHonestDeclarationIsNeverOutscoredTests(unittest.TestCase):
         guide under any word.
         """
         structural = self.fit(
-            "final-state",
-            "tool-workflow",
+            "state-transition",
+            "tool",
             comparison_shape="sql-structure",
             comparison_witness="both answers parsed as SQL (line 6)",
             executes_candidate=False,
         )
         self.assertEqual(structural.value, MODULE.TASK_FIT_UNFIT_CREDIT)
-        self.assertIn("rather than final-state", structural.evidence)
+        self.assertIn("rather than state-transition", structural.evidence)
         engine = "cursor.execute(candidate) (line 12)"
         refused = MODULE.score_evaluation(
             MODULE.EvaluationFacts(
                 present=True,
-                method="final-state",
-                task_kind="tool-workflow",
+                method="state-transition",
+                task_kind="tool",
                 executes_candidate=True,
                 execution_witness=engine,
             )
@@ -26534,7 +26534,7 @@ class TheHonestDeclarationIsNeverOutscoredTests(unittest.TestCase):
         """`DETERMINISTIC_METHODS` decides a sentence, and nothing was reading it.
 
         Membership there changes no number - the dials do that - so dropping
-        `final-state` from it leaves the whole package green while the card
+        `state-transition` from it leaves the whole package green while the card
         starts telling a customer their local state comparison "can vary
         between runs and may require paid calls". A sentence a customer reads
         off their own evaluator is worth one assertion, and this is the only
@@ -26542,17 +26542,17 @@ class TheHonestDeclarationIsNeverOutscoredTests(unittest.TestCase):
         """
         pillar, _caps = MODULE.score_evaluation(
             MODULE.EvaluationFacts(
-                present=True, method="final-state", task_kind="tool-workflow"
+                present=True, method="state-transition", task_kind="tool"
             )
         )
         line = next(sub for sub in pillar.subscores if sub.name == "reproducibility")
         self.assertEqual(line.evidence, "deterministic scoring rule")
-        self.assertIn("final-state", MODULE.DETERMINISTIC_METHODS)
+        self.assertIn("state-transition", MODULE.DETERMINISTIC_METHODS)
 
     def test_the_new_method_is_not_held_to_a_proof_it_can_never_have(
         self,
     ) -> None:
-        """Why `final-state` is not in `METHOD_REQUIRES_PROVEN_COMPARISON`.
+        """Why `state-transition` is not in `METHOD_REQUIRES_PROVEN_COMPARISON`.
 
         `sql-structure` belongs there because the walk CAN establish the
         comparison it claims, so demanding the proof costs an honest customer
@@ -26562,8 +26562,8 @@ class TheHonestDeclarationIsNeverOutscoredTests(unittest.TestCase):
         is asserted rather than left implicit, because it is the one line that
         would silently undo this fix.
         """
-        self.assertIn("final-state", MODULE.METHOD_PROFILES)
-        self.assertNotIn("final-state", MODULE.METHOD_REQUIRES_PROVEN_COMPARISON)
+        self.assertIn("state-transition", MODULE.METHOD_PROFILES)
+        self.assertNotIn("state-transition", MODULE.METHOD_REQUIRES_PROVEN_COMPARISON)
         for method in sorted(MODULE.METHOD_REQUIRES_PROVEN_COMPARISON):
             with self.subTest(method=method):
                 self.assertTrue(MODULE.METHOD_COMPARISON_SUPPORT[method])
