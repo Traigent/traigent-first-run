@@ -331,6 +331,34 @@ is, because finding no engine settles nothing by the paragraph above. None of it
 anything their evaluator did: the reason is the unbounded target above. The route out is the
 customer's own, stated on the card.
 
+### A replay that changes the customer's world asks first
+
+The stop above is about an engine. An evaluator that replays a workflow reaches none: it calls the
+customer's own functions, which is ordinary code by every signal the walk reads, so the gate is
+silent and calibration runs it - four probes, four executions, four sets of whatever those functions
+do - before the customer has approved anything. Their first chance to object comes after the thing
+they might have objected to.
+
+Widening the walk is not the answer and is refused here rather than left to be tried: no static
+signal separates a function that appends to a log from one that sends an email, so "calls any
+project function" would refuse most honest evaluators. What decides it is what the effect DOES, read
+by the assistant from the call path it has already inspected.
+
+| the replayed workflow | before calibration |
+| --- | --- |
+| writes a record, sends a mail, calls a paid or outward-facing API, changes state anywhere | **ask** |
+| retrieves, reads, searches, embeds - changes nothing | do not ask |
+
+If it changes nothing there is nothing to consent to, and an approval step that fires on read-only
+retrieval is the false-refusal problem that made the wider walk unacceptable. The question is only
+worth asking where the answer could be no.
+
+**And the ask names what will actually run** - the functions, the database calls and the tools the
+replay reaches, from the path already read - not "may I run your evaluator". A customer approving a
+category has not been asked anything they can weigh. It is one stop, before calibration, and a `no`
+routes to the manual containment design above rather than to a quieter version of the same
+execution.
+
 ### Deterministic calibration and mock plumbing
 
 Deterministic calibration is a separate execution gate and always requires a recorded `sufficient`
