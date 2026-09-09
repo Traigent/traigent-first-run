@@ -2118,6 +2118,16 @@ def checkable_guidance_sections() -> list[tuple[Path, str, str]]:
     exempt everything under it, which is a green nobody chose. Getting that
     right costs four lines and removes the case rather than betting it stays
     hypothetical.
+
+    What a fence does NOT do is take its contents out of the record scan, and
+    that is a decision rather than an oversight. A routing sentence is prose
+    and a fence usually holds a command or a sample, so scanning both costs a
+    false red on the day someone quotes a failure-only record inside an example
+    block outside `## Recovery` - and buys that no routing instruction can
+    escape by being written inside one. The cheaper error is the one that
+    fails loudly; the remedy for the example is to reword it or to record the
+    section, and this sentence exists so the next author reads that as a choice
+    somebody made.
     """
     sections: list[tuple[Path, str, str]] = []
     for document in assistant_facing_documents():
