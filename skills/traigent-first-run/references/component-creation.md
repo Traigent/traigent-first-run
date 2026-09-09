@@ -297,6 +297,15 @@ Inspect all three columns first, then follow exactly one row:
 
 Never generate components independently and attempt to glue them together afterward.
 
+And build each one to the TASK, never to the artefact it was derived from. The matrix makes the trio
+coherent; this is what keeps coherent from becoming circular. An evaluation method built from a
+dataset has to score the product's idea of a right answer, so it holds for inputs and expected
+outputs this dataset does not contain and separates right from wrong rather than recognising these
+particular answers. A dataset built to match an evaluator has to exercise the real task that
+evaluator scores, not only the shapes it happens to handle. Say which way the derivation ran, in the
+terms `references/run-safety.md` sets out at the close: a ruler drawn around one object measures
+nothing else, and the number it gives is optimistic about exactly the material it was drawn around.
+
 ## Agent creation
 
 When creating an agent:

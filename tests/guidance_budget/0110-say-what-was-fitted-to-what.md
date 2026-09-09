@@ -6,16 +6,19 @@ follows-total-measured: 497_838
 follows-document-measured: 134_261
 resident-ceiling: 106_030
 resident-measured: 106_026
-total-ceiling: 498_811
-total-measured: 498_807
+total-ceiling: 499_594
+total-measured: 499_590
 document-ceiling: 135_492
 document-measured: 134_261
 
-Twenty-five bytes of RESIDENT against a recorded median of 500, and 965 of TOTAL against 1_342.
-Both are well under one typical raise, and the split between them is the point rather than an
-accident: the flow document gains three words naming a third thing the close owes, and the depth
-behind those words is bought in the budget a reader pays once. The twenty-five buy the only part
-that has to be carried every turn, which is that the obligation exists at all.
+Twenty-five bytes of RESIDENT against a recorded median of 500, and 1_748 of TOTAL against 1_342.
+The split between them is the point rather than an accident: the flow document gains three words
+naming a third thing the close owes, and the depth behind those words is bought in the budget a
+reader pays once. The twenty-five buy the only part that has to be carried every turn, which is that
+the obligation exists at all. TOTAL runs a third over its median because this entry pays for two
+halves of one decision - the disclosure at the close and the instruction at creation - and splitting
+them into two entries would have priced one decision twice while making neither reviewable on its
+own.
 
 What it buys is a sentence the provenance fields cannot say. This run writes whatever the customer
 is missing, and `SKILL.md` records "all missing components were built around the existing ones" as a
@@ -42,3 +45,14 @@ Neither is a deduction, and the entry records that as a decision rather than an 
 generated-provenance ceilings already price this material once. A second ceiling for the same fact
 would charge twice for it, and the thing that was missing here was never a number - it was the
 sentence.
+
+The other half sits where the risk is made rather than where it is reported. `component-creation.md`
+holds a dependency matrix that builds whichever component is missing out of the ones that are there,
+and it closes on "never generate components independently and attempt to glue them together
+afterward" - which is right, and is the whole reason the material ends up fitted. Two of its rows are
+the case exactly: an evaluation method built from a dataset, and a dataset built to match an
+evaluator. So the counterweight goes there, in both directions, because which direction the
+derivation runs depends only on which component the customer happened to bring. Build to the task,
+not to the artefact it was derived from. A rule stated where the reader chooses their row costs
+nothing to find; the same rule in a section of its own would be read by whoever was already
+convinced.

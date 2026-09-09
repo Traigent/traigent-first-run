@@ -17127,6 +17127,31 @@ class SkillPackageTests(unittest.TestCase):
         # Disclosure, not a second deduction. The provenance ceilings already
         # price the generated material once.
         self.assertIn("charging twice for one fact", safety)
+        # And the other half of the same decision, at the other end of the run:
+        # the disclosure says what happened, this stops it happening tighter
+        # than it has to. Both directions, because the matrix builds either
+        # component from the other depending on which one the customer brought.
+        creation = " ".join(
+            (SKILL_ROOT / "references" / "component-creation.md").read_text().split()
+        )
+        self.assertIn("build each one to the TASK, never to the artefact", creation)
+        for direction in (
+            # evaluator derived from a dataset
+            "holds for inputs and expected outputs this dataset does not contain",
+            "rather than recognising these particular answers",
+            # dataset derived from an evaluator
+            "has to exercise the real task that evaluator scores",
+            "not only the shapes it happens to handle",
+        ):
+            with self.subTest(derivation=direction):
+                self.assertIn(direction, creation)
+        # It sits with the matrix that creates the risk, not in a section of
+        # its own: the rule is a counterweight to "never generate components
+        # independently", and a reader meets it where they choose a row.
+        self.assertLess(
+            creation.index("Never generate components independently"),
+            creation.index("build each one to the TASK"),
+        )
         self.assertLess(
             skill.index("say what would make this production ready"),
             skill.index("these are available whenever the user wants them"),
