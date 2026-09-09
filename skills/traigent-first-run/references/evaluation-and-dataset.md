@@ -899,6 +899,14 @@ run produced, which is this run checking its own work and is why the ceiling on 
 clean it came back. Above the first-run subset size, read the drawn rows in full at the section-4
 re-score.
 
+Where no read reached the score at all, the hold stands and the card asks for one. Put that where
+the card is explained, never at the pre-spend approval and never as a stop, and put the two routes
+in this order: **proceed** first and recommended, because the hold caps nothing and is not a defect
+in their material; then, less recommended, that they read or repair the key themselves before the
+run continues. An ask placed in the middle of the run, or one that lists the customer's own work
+first, sends someone away to read a whole answer key to start a run that is small and nearly free -
+which is the outcome this ordering exists to prevent.
+
 
 ### Choosing rows when difficulty is not labelled
 

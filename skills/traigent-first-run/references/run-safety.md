@@ -423,8 +423,10 @@ reach the scorer, because the scorer cannot tell a document withheld before the 
 search failed to produce - both are the same absent input. So on a closing card after a stopped, failed, or
 zero-trial search, `status: OK` describes only the evidence this cap was given, and is not a verdict
 that the search succeeded. `recommended_action` reads `proceed` there only when nothing else blocks
-and nothing else is asking: an asking cap carries its own remedy into that field, so `proceed` on
-this card is the absence of every other finding rather than a statement about this one. Report that
+and nothing else is asking: an asking cap carries its own remedy into that field, and so does an ask
+that caps nothing, which arrives in `open_asks` rather than in `caps` - the unread answer key is the
+one this run raises. So `proceed` on this card is the absence of every other finding rather than a
+statement about this one, and a remedy standing beside an empty `caps` list is accounted for. Report that
 search's outcome from the run itself - trials executed, spend, the error it stopped on - and never
 let an advisory agent cap stand in for it. Whether a search that produced nothing may be retried or
 paid for again is the approval question it always was, decided on that outcome, not on this score.
@@ -644,10 +646,19 @@ exist and points at a file that was never created.
 
   The final reply-ready block below places this pair too.
 
-An asking cap is what this card exists to discharge, and discharging it means the customer meets its
+An asking CAP is what this card exists to discharge, and discharging it means the customer meets its
 remedy at the moment they are asked to pay - not that its question is put here a second time.
 Bound, never block - the run is still worth making, and the question is what to settle before it
 rather than instead of it.
+
+An ask that caps nothing is deliberately NOT carried here, and the difference is a decision rather
+than an omission. A ceiling standing on the score is a bounded claim the customer is being asked to
+pay for, so it belongs at the moment of paying. An unread answer key bounds nothing: putting it here
+invites a customer to stop and go and read a key nobody was asking them to read, when the run is
+small, its spend is bounded by the ceiling on the approval below, and what it buys is seeing the
+thing work end to end. It is carried
+where the card is explained instead, in the order
+`references/evaluation-and-dataset.md` sets out.
 
 After showing the baseline result, give the connected stage a preview and approval:
 
