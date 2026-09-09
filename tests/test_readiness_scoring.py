@@ -10986,7 +10986,7 @@ class RowLevelSanityTests(unittest.TestCase):
             if before.evidence != after.evidence
         ]
         self.assertEqual([name for name, _ in differing], ["labels"])
-        self.assertIn("the coding assistant read 28 of 28", differing[0][1])
+        self.assertIn("the coding assistant sampled 28 of 28", differing[0][1])
         self.assertIn("none contradicts its own input", differing[0][1])
 
     def test_a_material_share_of_wrong_answers_lowers_the_ceiling(self) -> None:
@@ -11077,7 +11077,7 @@ class RowLevelSanityTests(unittest.TestCase):
             facts, "normalized-exact", _review(reviewed=28)
         )
         labels = next(s for s in pillar.subscores if s.name == "labels")
-        self.assertIn("read 28 of 4812 provided rows", labels.evidence)
+        self.assertIn("sampled 28 of 4812 provided rows", labels.evidence)
 
     def test_generated_rows_are_out_of_scope_and_the_line_says_so(self) -> None:
         facts = _brought(
@@ -11091,7 +11091,7 @@ class RowLevelSanityTests(unittest.TestCase):
             facts, "normalized-exact", _review(reviewed=18)
         )
         labels = next(s for s in pillar.subscores if s.name == "labels")
-        self.assertIn("read 18 of 18 provided rows", labels.evidence)
+        self.assertIn("sampled 18 of 18 provided rows", labels.evidence)
         self.assertIn("10 generated rows not reviewed", labels.evidence)
 
     def test_a_reference_free_judge_reads_no_expected_output_so_none_can_cap(
@@ -11579,9 +11579,13 @@ class TheTopBandsNeedAReadOfTheAnswersTests(unittest.TestCase):
     ) -> None:
         """The variation that makes the floor liftable at real dataset sizes.
 
-        A 4,812-row export is not read end to end by anybody. What the search
-        is graded against is the declared split, the review says which rows
-        those are, and covering them is the whole of what this floor asks.
+        A 4,812-row export is not read end to end by anybody, and neither is
+        its declared split: covering the split was what this floor used to ask
+        for, and on this corpus the split IS the 4,812 rows, so the ask was
+        unsatisfiable and the hold never lifted (traigent-first-run#441). What
+        it asks for now is the rows the comparison actually runs on, which a
+        bounded first run caps at `ANSWER_KEY_DRAWN_ROWS` - deliverable at any
+        size, and coverage rather than a sample of what the search will read.
         """
         large = dict(
             rows=4812,
@@ -11590,21 +11594,116 @@ class TheTopBandsNeedAReadOfTheAnswersTests(unittest.TestCase):
             collected_rows=4812,
             distinct_rows=4812,
         )
+        drawn = MODULE.ANSWER_KEY_DRAWN_ROWS
         lifted = _healthy_score(
-            _review(reviewed=60, reviewed_in_run=48, unsound_in_run=0), **large
+            _review(reviewed=drawn, reviewed_in_run=drawn, unsound_in_run=0), **large
         )
         self.assertFalse(lifted.band_limited_by_unread_answers)
         self.assertGreaterEqual(MODULE.BAND_ORDER.index(lifted.band), self._strong())
-        # And a read of the same size that never says which rows it covered is
-        # a read of 60 rows out of 4,812, which clears nothing.
-        partial = _healthy_score(_review(reviewed=60), **large)
-        self.assertTrue(partial.band_limited_by_unread_answers)
+        # The state the old rule produced on this corpus, and the whole of the
+        # defect: a review of sixty rows naming exactly which of the graded
+        # rows it read still left the hold standing, because sixty is not four
+        # thousand eight hundred and twelve.
+        self.assertFalse(
+            _healthy_score(
+                _review(reviewed=60, reviewed_in_run=60, unsound_in_run=0), **large
+            ).band_limited_by_unread_answers
+        )
+        # And the draw is a floor on this arm rather than a suggestion. A read
+        # that named a handful of the graded rows used to be enough because the
+        # threshold was the five-row sample; the whole point of the owner's
+        # decision is that the comparison is small enough to read whole, so a
+        # read short of it holds the band exactly as an unread key does.
+        self.assertTrue(
+            _healthy_score(
+                _review(
+                    reviewed=drawn - 1, reviewed_in_run=drawn - 1, unsound_in_run=0
+                ),
+                **large,
+            ).band_limited_by_unread_answers
+        )
+        # And a read that never says which rows it covered is a sample of the
+        # FILE rather than a reading of the graded rows, which is the honest
+        # opening state before a subset is drawn. It releases the hold on the
+        # smaller sample, because there is no drawn population to cover yet.
+        undeclared = _healthy_score(
+            _review(reviewed=MODULE.ANSWER_KEY_SAMPLE_ROWS), **large
+        )
+        self.assertFalse(undeclared.band_limited_by_unread_answers)
 
-    def test_a_partial_read_lifts_nothing(self) -> None:
-        """Coverage is the claim, and half of it is not a smaller version of it."""
-        partial = _healthy_score(_review(reviewed=20))
-        self.assertTrue(partial.band_limited_by_unread_answers)
-        self.assertLess(MODULE.BAND_ORDER.index(partial.band), self._strong())
+    def test_the_evidence_line_says_coverage_where_it_covered_the_comparison(
+        self,
+    ) -> None:
+        """The clause the sentence ends on is derived, never fixed.
+
+        A read that covered every row the comparison runs on has not sampled
+        that comparison, and telling the customer it did understates their own
+        evidence in the one sentence they are most likely to quote. A read that
+        did not is a sample and has to keep saying so, because a clean sample
+        is exactly the state a reader rounds up to "checked". One number
+        decides which clause prints, so the two can never disagree
+        (traigent-first-run#441).
+        """
+        covered = _routing_corpus(
+            rows=28,
+            labelled_rows=28,
+            answerable_rows=28,
+            collected_rows=28,
+            distinct_rows=28,
+            tuning_rows=18,
+            holdout_rows=10,
+            tuning_labelled_rows=18,
+            holdout_labelled_rows=10,
+        )
+        whole = MODULE.row_review_evidence(
+            _review(reviewed=28, reviewed_in_run=28), covered
+        )
+        self.assertIn("that is every row this run is graded on", whole)
+        self.assertNotIn("a sample, so the answers are assumed sound", whole)
+        part = MODULE.row_review_evidence(
+            _review(reviewed=12, reviewed_in_run=12), covered
+        )
+        self.assertIn("a sample, so the answers are assumed sound", part)
+        self.assertNotIn("that is every row this run is graded on", part)
+
+    def test_a_read_below_the_sample_lifts_nothing(self) -> None:
+        """A sample is a floor, and one row under it is not a smaller sample.
+
+        The size is what stops the release becoming free. Five rows is little
+        enough that a run has no excuse not to read them, which is exactly why
+        four may not buy what five buys.
+        """
+        short = _healthy_score(_review(reviewed=MODULE.ANSWER_KEY_SAMPLE_ROWS - 1))
+        self.assertTrue(short.band_limited_by_unread_answers)
+        self.assertLess(MODULE.BAND_ORDER.index(short.band), self._strong())
+
+    def test_a_file_smaller_than_the_sample_is_asked_for_what_it_has(self) -> None:
+        """The other end of the scale, and the same failure if it is ignored.
+
+        Asking five rows of a three-row file rebuilds the unliftable hold this
+        change removed, one order of magnitude down. The sample is capped by
+        the population it is drawn from, so a run that read every reviewable
+        row has done everything that can be asked of it.
+        """
+        tiny = dict(
+            rows=3,
+            labelled_rows=3,
+            answerable_rows=3,
+            collected_rows=3,
+            distinct_rows=3,
+            tuning_rows=2,
+            holdout_rows=1,
+            tuning_labelled_rows=2,
+            holdout_labelled_rows=1,
+        )
+        facts = _routing_corpus(**tiny)
+        self.assertLess(MODULE.graded_rows(facts), MODULE.ANSWER_KEY_SAMPLE_ROWS)
+        self.assertTrue(
+            MODULE.answer_key_read(facts, _review(reviewed=3, reviewed_in_run=3))
+        )
+        self.assertFalse(
+            MODULE.answer_key_read(facts, _review(reviewed=2, reviewed_in_run=2))
+        )
 
     def test_a_corpus_with_no_answer_key_is_never_held(self) -> None:
         """A reference-free judge grades inputs; there is no key to read.
@@ -11751,7 +11850,67 @@ class TheTopBandsNeedAReadOfTheAnswersTests(unittest.TestCase):
             MODULE.RowReview(supplied=True, reviewed=1, reviewed_in_run=0), facts
         )
         self.assertNotIn("of the 0 rows", line)
-        self.assertIn("read 1 of", line)
+        self.assertIn("sampled 1 of", line)
+
+    def test_the_evidence_line_says_sampled_and_names_what_it_assumed(self) -> None:
+        """The card may not let a clean sample read as a checked dataset.
+
+        This is the half of traigent-first-run#441 that is not arithmetic. The
+        hold now comes off on five rows, so the sentence beside the released
+        band is the only thing standing between "we looked at five of your
+        answers" and a customer's reasonable reading of "read": that their
+        answer key was checked. It says the word and states the assumption in
+        the same breath, because a reader who has to infer the assumption will
+        not - and a sample that found nothing is exactly the state most likely
+        to be rounded up.
+        """
+        facts = _routing_corpus()
+        line = MODULE.row_review_evidence(_review(reviewed=5, reviewed_in_run=5), facts)
+        self.assertIn("sampled 5 of", line)
+        self.assertNotIn("the coding assistant read", line)
+        self.assertIn(
+            "a sample, so the answers are assumed sound rather than verified", line
+        )
+        # And the clause is last, so it is what the sentence ends on rather
+        # than something a finding can be appended after.
+        self.assertTrue(line.endswith("rather than verified"))
+
+    def test_a_sample_taken_through_this_runs_own_method_says_so(self) -> None:
+        """The self-certification the owner accepted, made visible.
+
+        Where no evaluation method existed this run writes one and then judges
+        the expected answers against it, which is this run checking its own
+        work. No human step was added - that was the decision - so the only
+        thing that keeps it honest is saying it. `evaluator-generated` prices
+        the method; nothing said that the one behavioural read on the card was
+        taken through it.
+        """
+        facts = _routing_corpus()
+        review = _review(reviewed=5, reviewed_in_run=5)
+        brought = MODULE.row_review_evidence(review, facts, "brought")
+        generated = MODULE.row_review_evidence(review, facts, "generated")
+        self.assertNotIn("wrote the evaluation method", brought)
+        self.assertEqual(brought, MODULE.row_review_evidence(review, facts))
+        self.assertIn(
+            "this run wrote the evaluation method they were judged against",
+            generated,
+        )
+        # It reaches the card the customer holds, not only the helper.
+        card = MODULE.score_run(
+            facts,
+            replace(_passing_calibration(), origin="generated"),
+            _wired_space(),
+            dict(MODULE.DEFAULT_WEIGHTS),
+            review,
+        )
+        dataset = next(pillar for pillar in card.pillars if pillar.name == "dataset")
+        self.assertTrue(
+            any(
+                "wrote the evaluation method they were judged against" in sub.evidence
+                for sub in dataset.subscores
+            ),
+            "the disclosure never reaches a pillar the card renders",
+        )
 
     def test_a_payload_predating_the_provenance_counts_is_never_held(self) -> None:
         """This module does not charge a caller for a field it could not send."""

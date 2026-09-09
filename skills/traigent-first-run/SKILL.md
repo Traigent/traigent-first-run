@@ -284,7 +284,8 @@ omitting `--dataset` when none exists. Then include every safe measurement that 
 the first readiness card. When rows carry expected answers, do the row-level sanity check in
 `references/evaluation-and-dataset.md` here and pass it as `--row-review` - on every opening scoring
 call and not only where calibration is deferred: it is your own read, it spends nothing, and no
-generated row competes with it yet. Nothing counted off a dataset can establish that an answer
+generated row competes with it yet. Read the graded rows, or five brought ones where no split
+is settled; it is yours, not the user's. Nothing counted off a dataset can establish that an answer
 answers its own question, and that reference states what the read is worth once it enters. When `existing-traigent-use` reports a declaration, or a Traigent key is
 already configured, say so in the readiness turn: Traigent was set up in this project before this
 run started, so this may not be a first run, and this run still charges for its own baseline and
@@ -733,8 +734,8 @@ paragraph below carries both halves:
   a question; a real source the user names is recorded, and new data is never the remedy. Meanwhile
   apply the rules above. The rows may be real and only this run cannot tell, so it bounds the claim
   exactly as a declared-generated corpus does and holds nothing up.
-- `dataset-generated-answer-key` - require that a person reviews a sample of the answers before a
-  correctness claim; until then the score measures model agreement.
+- `dataset-generated-answer-key` - require that a person reviews a sample of the answers, not this
+  run's own sampled read, before a correctness claim; until then the score measures model agreement.
 - `dataset-mostly-generated-answer-key` - the same review, on the model-written answers only, and
   say how many of the expected answers they are; the run proceeds meanwhile.
 - `dataset-unsound-expected-outputs` - bounded, not stopped: put the flagged rows to the user as one

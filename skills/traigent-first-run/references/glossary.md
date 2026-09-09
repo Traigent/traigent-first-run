@@ -333,7 +333,9 @@ Readiness score (the card, the three pillars, bands, caps, blocked)
   evidence is missing rather than merely low. Two things hold them: too little
   of the score was measured at all, or nobody has read the expected answers the
   run is graded against - which no count taken off your file can establish, and
-  only a row-by-row read of an input beside its answer can. Neither moves the
+  only a read of an input beside its answer can. That read covers the rows the
+  run is graded on and samples the file behind them, so what it settles is the
+  comparison rather than the dataset. Neither moves the
   number, because every measurement behind it stands; what is held is the
   verdict. Neither is a cap, so neither stops the run, and the card names which
   one is in force and points at what would close it.

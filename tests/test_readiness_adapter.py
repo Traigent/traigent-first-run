@@ -6533,7 +6533,7 @@ class ARowReviewIsMatchedToTheRowsPreflightReadTests(unittest.TestCase):
         )
         self.assertEqual(card.returncode, 0, card.stderr)
         self.assertIn(
-            "the coding assistant read 40 of 40 provided rows, covering 40 of "
+            "the coding assistant sampled 40 of 40 provided rows, 40 of them from "
             "the 40 rows this run is graded on",
             " ".join(card.stdout.split()),
         )
