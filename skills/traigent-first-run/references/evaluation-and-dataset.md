@@ -957,12 +957,18 @@ claims" below owns when each source draws.
 Six rules make the subset honest:
 
 1. **Score the dataset, not the subset.** All readiness scores - the opening gate, each repair or
-   validation gate, and the post-run read - run on the **whole** dataset. The subset is chosen
-   afterwards, as run scoping, immediately before the paid comparison. Getting this backwards makes
-   the user's data wear the run's limitation: 500 labelled production rows scored as an 18-row
-   subset read as `a wiring check, not a score` - true of the run and false of the dataset.
-   Difficulty and diversity survive a compliant sample; evidence volume collapses, so that
-   limitation must be attributed correctly.
+   validation gate, and the post-run read - run on the **whole** dataset, and the combined,
+   split-labelled file stays the input to preflight and readiness. The drawn subset files are never
+   that input, at any stage. Getting this backwards makes the user's data wear the run's limitation:
+   500 labelled production rows scored as an 18-row subset read as `a wiring check, not a score` -
+   true of the run and false of the dataset. Difficulty and diversity survive a compliant sample;
+   evidence volume collapses, so that limitation must be attributed correctly.
+
+   This rule used to be kept by arithmetic rather than by anyone remembering it: the subset was
+   drawn immediately before the paid comparison, so at every scoring gate there was no subset to
+   score by mistake. The draw now happens earlier - see below - which trades a structural guarantee
+   for a sentence, and that is the one thing this move costs. It is written here, at the top of the
+   six, because the file the score reads is the whole of what it protects.
 2. **Report the run's sample-size limitation separately.** It belongs in the run report, not the
    dataset score: "this run compares configurations on 18 questions drawn from your 4,812 rows;
    treat a small difference as directional unless paired uncertainty from the completed outputs
@@ -1048,10 +1054,23 @@ run finishes.
 ## Held-out set and claims
 
 Reserve 10 held-out rows (2 easy, 3 medium, 3 hard, 2 very hard) and keep the same rows aside for
-the rest of the run. When they are drawn follows the source, in two cases: a dataset this run
+the rest of the run. When they are drawn follows the source, in two cases that now reach the same
+moment: a dataset this run
 generates, tops up, or splits itself reserves the held-out split when its working copy is written,
 before any component design, calibration, or optimization touches it; a dataset above the first-run subset size draws the ten from that split with the
-tuning subset, immediately before the paid comparison. The row-review hold on such a corpus lifts on
+tuning subset as soon as its own working copy is settled - after it is created, topped up or
+repaired, and before anything else is designed, calibrated or validated against it.
+
+That collapses two timings into one, and the one it keeps is the safer. The brought corpus used to
+draw immediately before the paid comparison, which meant the evaluator was designed while looking at
+the whole file and ten of those rows were relabelled held-out afterwards - rows that had already
+shaped the ruler about to grade them. Drawing first and designing second costs nothing and is
+strictly better blindness. What it does cost is rule 1's structural guarantee, which is why that rule
+now states the file the score reads and says why the sentence is load-bearing.
+
+Not at the opening card. `SKILL.md` opens that gate "before any component creation or repair", so
+nothing has been deduplicated, no placeholder filled and no id repaired yet, and a draw there would
+select rows the repair then changes or removes. The row-review hold on such a corpus lifts on
 a read of the drawn rows in full, at the opening gate where a split was already settled and at the
 section-4 re-score where it was not; that is a hold on the band, not a third timing of the draw.
 That composition holds wherever the rows come from, because the rule governs the split this run

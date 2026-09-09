@@ -588,6 +588,7 @@ If calibration reaches its timeout: [`references/evaluation-and-dataset.md` § W
 If a check reports that the dataset or evaluator cannot separate configurations: [`references/evaluation-and-dataset.md` § Quality diagnosis and repair choice](references/evaluation-and-dataset.md#quality-diagnosis-and-repair-choice).
 If the agent and the evaluator have to be validated against each other before optimization: [`references/component-creation.md` § Compatibility contract](references/component-creation.md#compatibility-contract).
 If a repair is to move a component from `limited` or `invalid` to `real`: [`references/component-creation.md` § Readiness transitions](references/component-creation.md#readiness-transitions).
+If the dataset carries more than 100 usable rows: [`references/evaluation-and-dataset.md` § First-run subset for a large dataset](references/evaluation-and-dataset.md#first-run-subset-for-a-large-dataset).
 
 Follow this order:
 
@@ -851,14 +852,12 @@ If a public signature or capability has to be confirmed on the installed SDK: [`
 
 ### 6. Approve and run the baseline
 
-Scope the run before pricing it. When the dataset carries more than 100 usable rows, select the
-bounded first-run subset described in `references/evaluation-and-dataset.md` - 18 questions by
-default, at least four from each difficulty band, drawn within each split rather than across it, and
-distinct by input across the whole draw - and estimate runtime and spend from the rows those
-questions bring, never from the full row count.
+Scope the run before pricing it. Where the dataset carries more than 100 usable rows, section 4
+already drew the bounded first-run subset; this stage prices it and never draws it. Estimate runtime
+and spend from the rows those questions bring, never from the full row count.
 
-Select only after scoring the full dataset and before pricing the run. Record the chosen row ids,
-report subset and full sizes, and state that the small first-run sample limits the claim.
+Report subset and full sizes from the ids section 4 recorded, and state that the small first-run
+sample limits the claim.
 
 Do not ask the user to choose cost, retries, or timeout settings during discovery or setup, and do
 not repeat a provider choice already resolved in section 5.
@@ -869,7 +868,6 @@ preserved baseline or generated twelve-configuration sweep. Say only that a sepa
 follow; do not front-load its algorithm, search space, trial arithmetic, portal features, or insights.
 
 **Read next.** Required: [`references/run-safety.md` § Approval and budgets](references/run-safety.md#approval-and-budgets).
-If the dataset carries more than 100 usable rows: [`references/evaluation-and-dataset.md` § First-run subset for a large dataset](references/evaluation-and-dataset.md#first-run-subset-for-a-large-dataset).
 If runtime or a trial count has to be estimated: [`references/sdk-execution.md` § Automatic run bounds](references/sdk-execution.md#automatic-run-bounds).
 If this walkthrough supplies the baseline's models: [`references/sdk-execution.md` § Walkthrough model ladder](references/sdk-execution.md#walkthrough-model-ladder).
 
