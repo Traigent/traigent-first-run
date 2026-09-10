@@ -3,10 +3,10 @@
 follows: 0120
 follows-resident-measured: 106_913
 follows-total-measured: 508_528
-resident-ceiling: 107_296
-resident-measured: 107_292
-total-ceiling: 513_372
-total-measured: 513_368
+resident-ceiling: 107_725
+resident-measured: 107_721
+total-ceiling: 513_801
+total-measured: 513_797
 
 Five kilobytes, most of it disclosure prose, and the reason is that a principle nobody had
 written down let a shipped cap tell a paying customer to fix something no change of theirs could
@@ -59,3 +59,10 @@ the answer and no line that changed if somebody did - a card promising to record
 script could not record, which is the same defect as a remedy nobody can perform. It now has three
 sentences for three answers, because a question whose every answer is identical is not a question,
 and a run that has been told the destructive path is open must not read like a run nobody asked.
+
+The last of it is the criterion nobody had re-read. Three completion criteria require calibration
+evidence, and the run this entry unblocks never calibrates - so an assistant following them could
+start that customer, disclose to them, spend their money and then find no way to declare the run
+finished. Continuing and never completing is the same block wearing a different shape, and it would
+have shipped inside the change that removed the block. The criteria now name the `containment`
+warning as what meets them, which is the record that check was skipped rather than failed.

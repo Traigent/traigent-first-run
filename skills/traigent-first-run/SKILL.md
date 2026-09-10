@@ -1283,6 +1283,11 @@ The first run is complete only when:
 - The assistant performed and recorded an evidence-backed semantic-coverage review of every
   material input, outcome, and rubric/schema branch, including mode and threshold rationale, known
   gaps, and the verdict before execution.
+- **The three criteria above are met by the `containment` warning where the evaluator-execution
+  scope gate skipped calibration.** That run never calibrates, so requiring its evidence would
+  leave it unable to finish - continuing and never completing, which is the block this guide
+  removed wearing a different shape. What it records instead is the skipped check, the disclosure,
+  and the connection answer if one was given.
 - Any unresolved ambiguity that would materially change correctness or ranking was resolved by one
   product-grading question before calibration; absent such ambiguity, no review-only pause
   occurred.
