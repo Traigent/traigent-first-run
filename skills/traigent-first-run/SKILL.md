@@ -532,6 +532,12 @@ weakness are one decision about what this run will measure. That question carrie
    never guess. Where they name nothing, proceed on accuracy and cost **and say that in those
    words**, so a default nobody chose is not mistaken for a choice somebody made.
    `references/evaluation-and-dataset.md` owns what the answer becomes.
+6. **Whether their evaluator connects read-only**, in one line, and only where the
+   evaluator-execution scope gate in `references/run-safety.md` already fired on an evaluator they
+   brought. Read-only means the engine itself refuses a destructive statement, so the answer closes
+   the hazard that gate discloses. It is optional: record either answer, and proceed on silence.
+   Where the gate fires later than this ask - an evaluator this run created or repaired in section 3
+   - the pre-spend approval in section 6 is its home instead, and that reference owns the wording.
 
 Then stop and wait, and ask nothing else here; what this run writes is shown at the pre-spend
 approval in section 6, the other checkpoint. The question closes the message: the board and the
@@ -776,8 +782,9 @@ an evidence boundary, not a repair finding.
 `evaluator-calibration-refused` is that same evidence boundary reached by the scope gate rather than
 by a step nobody took, and like `evaluator-unvalidated` it does not block: the run proceeds on the
 disclosure `references/run-safety.md` sets out, and the ceiling bounds what the card may claim rather
-than what the customer may do. Its one ask is whether their evaluator connects read-only, folded into
-the run's single ask and never a stop of its own; silence proceeds. Say that the ceiling is about
+than what the customer may do. Its one ask is whether their evaluator connects read-only - item 6 of
+the single ask in section 2, or the pre-spend card where the gate fires after it - and never a stop
+of its own; silence proceeds. Say that the ceiling is about
 missing evidence and not a finding against their evaluator, that there is nothing for them to fix
 because the unmade check is ours, and never present the unsafe route as the way to lift it.
 `evaluator-timeout` is neither a repair to route nor the invalid-evaluator

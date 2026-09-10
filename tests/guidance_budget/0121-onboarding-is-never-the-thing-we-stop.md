@@ -3,10 +3,10 @@
 follows: 0120
 follows-resident-measured: 106_913
 follows-total-measured: 508_528
-resident-ceiling: 107_725
-resident-measured: 107_721
-total-ceiling: 514_235
-total-measured: 514_231
+resident-ceiling: 108_365
+resident-measured: 108_361
+total-ceiling: 514_875
+total-measured: 514_871
 
 Five kilobytes, most of it disclosure prose, and the reason is that a principle nobody had
 written down let a shipped cap tell a paying customer to fix something no change of theirs could
@@ -66,3 +66,12 @@ start that customer, disclose to them, spend their money and then find no way to
 finished. Continuing and never completing is the same block wearing a different shape, and it would
 have shipped inside the change that removed the block. The criteria now name the `containment`
 warning as what meets them, which is the record that check was skipped rather than failed.
+
+And the question needed somewhere to be ASKED, which is not the same as somewhere to be answered.
+A flag, a field and three card sentences gave the answer a home; the ask itself was described in the
+cap-routing paragraph as "folded into the run's single ask" while that ask enumerated five items and
+closed on "ask nothing else here". An assistant building the ask from its own list would never have
+put the question in it. So it is item six, conditional on the gate having fired on material the
+customer brought, and where the gate fires later than the ask - an evaluator this run wrote in
+section 3 - the pre-spend card is named as its home instead. The claim and the enumeration now
+describe one thing.
