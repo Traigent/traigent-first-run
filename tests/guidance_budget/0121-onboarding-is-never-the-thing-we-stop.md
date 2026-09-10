@@ -3,12 +3,12 @@
 follows: 0120
 follows-resident-measured: 106_913
 follows-total-measured: 508_528
-resident-ceiling: 107_069
-resident-measured: 107_065
-total-ceiling: 511_553
-total-measured: 511_549
+resident-ceiling: 107_296
+resident-measured: 107_292
+total-ceiling: 513_372
+total-measured: 513_368
 
-Three kilobytes, most of it disclosure prose, and the reason is that a principle nobody had
+Five kilobytes, most of it disclosure prose, and the reason is that a principle nobody had
 written down let a shipped cap tell a paying customer to fix something no change of theirs could
 reach. An evaluator that runs the candidate's own SQL earned `FIX BEFORE PAID RUN` at 45 out of 100.
 Neither half survived being read aloud. There was no fix available, because the unmade check was one
@@ -38,3 +38,24 @@ Also here: two documents stopped disagreeing. SKILL.md and the safety reference 
 ending at this gate while the reversal landed in the scorer, and a pair of documents describing
 opposite outcomes for one state is precisely the failure the whole-document review rule exists
 against.
+
+A second pass added the rest of it, and the rest was the part that made the first pass true. Review
+found the reversal shipped in the scorer while five other places still narrated a run ending at this
+gate - a permutation-probe note, a deferred-calibration paragraph, the calibration reference, the
+customer-facing glossary entry, and the skill's own description, which is what selects the skill at
+all and could have declined the job before any of this prose was read. The money paragraph was worse
+than stale: it told the assistant this shape never reaches the spend approval, so the one disclosure
+that matters at the one moment money moves was excluded by a rule nobody had revisited.
+
+So the standing rule gained the sentence naming what it does not touch. "Ever" is doing real work in
+it, and the same file defines stops that are not in question - secret entry, a tracked credential
+file, a modified ignore file, a replay that alters the customer's world, spending without approval.
+Each of those waits on something only the customer can give and each is theirs to clear. The rule
+bites where they cannot clear it, because the obstacle is ours, and a rule that did not say so read
+as a licence to remove gates it was never about.
+
+And the one question stopped being ornamental. It had no flag to answer it with, no field to hold
+the answer and no line that changed if somebody did - a card promising to record something the
+script could not record, which is the same defect as a remedy nobody can perform. It now has three
+sentences for three answers, because a question whose every answer is identical is not a question,
+and a run that has been told the destructive path is open must not read like a run nobody asked.

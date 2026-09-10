@@ -79,6 +79,17 @@ COMPONENTS = ("agent", "dataset", "evaluation")
 # `collected`.
 BROUGHT, GENERATED = "brought", "generated"
 COMPONENT_ORIGINS = (BROUGHT, GENERATED)
+# How a customer's evaluator reaches its engine, as THEY report it.
+#
+# Ordered so the choices print in the order the question is asked, and named
+# in the customer's own words rather than ours: a read-only connection is a
+# thing they configured, not a property this run measured. There is
+# deliberately no third value for "did not answer" - absence is silence, and a
+# flag that made silence explicit would turn an optional question into one the
+# caller has to answer (traigent-first-run#392, #449).
+READ_ONLY = "read-only"
+READ_WRITE = "read-write"
+EVALUATOR_CONNECTIONS = (READ_ONLY, READ_WRITE)
 
 
 @dataclass(frozen=True)
@@ -1236,11 +1247,10 @@ COMPLETE_CALIBRATION = "complete-calibration"
 # is telling it to do the thing the guide forbids, which is what one slug for
 # both states would say - and the score would then be the only party in the
 # package arguing for the unsafe route.
-REVIEW_EVALUATOR_CONTAINMENT = "review-evaluator-containment"
 # AND THE REVERSAL, recorded here because this is where the old decision is.
 #
 # The paragraph above is still true about the SLUG and is now wrong about the
-# outcome. `REVIEW_EVALUATOR_CONTAINMENT` named a containment review this guide
+# outcome. The retired `review-evaluator-containment` slug named a review this guide
 # does not run and a customer cannot start from the card, and it rode on a cap
 # that BLOCKED the paid run at 45/100 under `FIX BEFORE PAID RUN`. Both halves
 # of that sentence were false: there is no fix, because we declined to make the
@@ -1393,7 +1403,7 @@ ACTION_FOR_CONDITION: dict[str, str] = {
     "evaluator-unvalidated": COMPLETE_CALIBRATION,
     # The same absent evidence, reached by obeying a rule rather than by
     # skipping a step, and it needs its own remedy for that reason alone. See
-    # `REVIEW_EVALUATOR_CONTAINMENT`.
+    # the retired `review-evaluator-containment` slug.
     "evaluator-calibration-refused": CONFIRM_EVALUATOR_CONNECTION,
     "evaluator-timeout": "bound-evaluator-cost",
     "agent-no-varying-knobs": "vary-knobs",
@@ -2868,14 +2878,54 @@ CALIBRATION_REFUSAL_CORE: dict[tuple[bool, bool, bool], str] = {
 # action without saying which result changes anything is a promise for half
 # its readers, which is the same defect as promising a remedy that cannot be
 # reached, one notch weaker.
+# WHAT THE CARD SAYS ABOUT THE ONE QUESTION IT ASKS, keyed by the answer.
+#
+# THREE ANSWERS, THREE SENTENCES, because a question with one outcome is not a
+# question. `read-only` closes the hazard and says so. `read-write` is the
+# answer worth having: a run that has been TOLD the destructive path is open
+# must not read like a run nobody asked. Silence proceeds, and the silent arm
+# is the only one that asks for anything.
+#
+# Every arm labels the answer as THEIRS. Nothing here opens the connection to
+# look, so this is a declaration bounding a claim, never a measurement earning
+# one - and the card may not let the two read alike.
+CONNECTION_DISCLOSURE: dict[str | None, str] = {
+    READ_ONLY: (
+        " You told this run it connects read-only, recorded here as your word "
+        "rather than as anything this run checked: a read-only engine refuses "
+        "a destructive statement, so that is the hazard closed."
+    ),
+    READ_WRITE: (
+        " You told this run it connects read-write, recorded here as your word "
+        "rather than as anything this run checked: the destructive path is "
+        "open, so weigh that before approving the spend."
+    ),
+    None: (
+        " If it connects read-only the engine itself refuses a destructive "
+        "statement, which closes that - pass `--evaluator-connection "
+        "read-only` and this card will say so. Not answering is fine and "
+        "changes nothing."
+    ),
+}
 CALIBRATION_REFUSAL_ROUTE: dict[tuple[bool, bool, bool], str] = {
+    # THE CEILING NO LONGER NAMES A CONTAINMENT REVIEW, so these two rows may
+    # not point at one. They read ", and the containment review named in the
+    # ceiling is where a run that could make that check gets designed" while
+    # the ceiling beside them was rewritten to name no review at all - a
+    # pointer to something the reader cannot find, which is the exact failure
+    # the paragraph above this constant exists to prevent, and it landed on
+    # the `charged=False` arms: the customer who obeyed and lost no points
+    # (traigent-first-run#392).
+    #
+    # What is true on these two arms is that nothing is owed and nothing is
+    # charged, so the clause says that instead of sending them somewhere.
     (False, True, True): (
-        ", and the containment review named in the ceiling is where a run "
-        "that could make that check gets designed"
+        ", and nothing here asks you for it - no run inside this guide makes "
+        "that check"
     ),
     (False, False, True): (
-        ", and the containment review named in the ceiling is where a run "
-        "that could make that check gets designed"
+        ", and nothing here asks you for it - no run inside this guide makes "
+        "that check"
     ),
     (True, True, True): " - establish the evaluator as the ceiling describes",
     (True, False, True): " - establish the evaluator as the ceiling describes",
@@ -3662,6 +3712,28 @@ class EvaluationFacts:
     # projects pay a charge no rerun lifts. The card says so rather than
     # promising them the evidence is coming.
     calibration_scope_refused: bool = False
+    # HOW THE CUSTOMER'S EVALUATOR CONNECTS, when they said - and `None` when
+    # nobody asked or nobody answered.
+    #
+    # The card asks one question for this shape, and it asked it into nothing.
+    # "say so and this card records it" was printed with no flag to say it
+    # with, no field to hold it and no line that changed if they did - a
+    # promise the script could not keep, which is the same defect as a remedy
+    # a customer cannot perform, one notch weaker
+    # (traigent-first-run#392).
+    #
+    # THREE STATES, and the third is not the same as the second. `read-only`
+    # is the answer that collapses the hazard, because the engine itself
+    # refuses a destructive statement. `read-write` is an answer, and it is
+    # the one worth having: a run that has been told the destructive path is
+    # live should not read identically to a run that was never asked.
+    # `None` is silence, and silence proceeds.
+    #
+    # A DECLARATION, never a measurement. Nothing here opens the customer's
+    # connection to check, so this may bound a claim and may never earn
+    # credit - the rule this module applies to every unverified input, and the
+    # reason the card labels the answer as theirs rather than as a finding.
+    evaluator_connection: str | None = None
 
 
 @dataclass(frozen=True)
@@ -3889,15 +3961,11 @@ SOURCE_CHECK_SCOPE = {
     # REFUTED, NOT FOUND, and the difference is the whole sentence.
     # `derived_unbounded_while` raises only where it FINDS a literal-true
     # `while` in the callable's own body with no uncaptured exit; finding
-    # nothing establishes nothing, which its own docstring says in those
-    # words. An earlier draft of this entry read "the loop in the selected
-    # function's own body has a way out of it" - a positive existential claim
-    # attached to a refute-only walk. Executed on a callable holding NO loop
-    # at all, delegating to a helper whose body is `while True: pass` and
-    # honestly declared `loop: true, bounded: true`, the card told the
-    # customer their loop had a way out over an agent that provably never
-    # returns. That is the delegation case this module designs for and names
-    # twelve lines above.
+    # nothing establishes nothing, which its own docstring says in those words.
+    # So this clause may not claim a way out was found - a callable holding no
+    # loop at all, delegating to a helper that spins, is the delegation case
+    # this module designs for and names twelve lines above, and it reaches
+    # here.
     "control-flow:bounded": (
         "no unbounded loop in the selected function's own body, which does "
         "not establish that it ends"
@@ -7349,7 +7417,7 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
         # "Until a complete calibration is measured" is the right instruction
         # for a run that simply has not calibrated yet, and is an instruction
         # to break the rule for a run the scope gate refused - the same class
-        # of statement `REVIEW_EVALUATOR_CONTAINMENT` exists to keep off this
+        # of statement the retired containment slug existed to keep off this
         # card (traigent-first-run#394). It is decided here, beside the
         # sentence and after every arm, so that "whatever is appended to every
         # arm has to be true of every arm" is a property of one expression
@@ -7367,7 +7435,7 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
         # "Until a complete calibration is measured" is the right instruction
         # for a run that simply has not calibrated yet, and is an instruction
         # to break the rule for a run the scope gate refused - the same class
-        # of statement `REVIEW_EVALUATOR_CONTAINMENT` exists to keep off this
+        # of statement the retired containment slug existed to keep off this
         # card (traigent-first-run#394). Everything the refused states say is
         # decided in `calibration_refusal_consequence`, which is handed the
         # facts and returns the sentence beside the deduction it describes:
@@ -7752,15 +7820,13 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
             # The witness rides along because a refusal a customer cannot
             # check is one they cannot usefully disagree with.
             witness = f" ({facts.execution_witness})" if facts.execution_witness else ""
-            # THE CLASS, and the witness beside it names the instance. This
-            # said "a check that opens your database", which is one half of
-            # what the gate refuses: `candidate_execution_witnesses` walks
-            # every import through `_execution_module_name` as well as its SQL
-            # branch, so an evaluator that shells out and touches no database
-            # raises this cap and was told it had opened one
-            # (traigent-first-run#492). Every other sentence in this module
-            # already says "a code or SQL engine"; only the two a customer
-            # reads did not.
+            # THE CLASS, and the witness beside it names the instance. Naming
+            # only the database is half of what the gate refuses:
+            # `candidate_execution_witnesses` walks every import through
+            # `_execution_module_name` as well as its SQL branch, so an
+            # evaluator that shells out and touches no database raises this cap
+            # too, and a sentence about databases is unperformable for it
+            # (traigent-first-run#492).
             body = (
                 "the evaluator check was run on it, which this guide's "
                 f"evaluator-execution scope gate does not permit{witness}, so "
@@ -7809,20 +7875,15 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
                 declared + body + " That is a limit of this run and not a "
                 "judgement of your evaluator, which may well be sound - there "
                 "is nothing here for you to fix, because the check is one this "
-                "guide declined to make. THIS does not stop your run - a cap "
-                "knows its own condition and nothing else, so it says what it "
-                "does rather than what the run will do. What proceeding means, "
-                "plainly: during the paid run the MODEL "
-                "writes the statements and your evaluator executes them "
-                "against whatever it is configured to reach, many times over. "
-                "The statements are generated, not yours, so your trust in "
-                "your own code is not the trust being asked for. If your "
-                "evaluator connects read-only, the engine itself refuses a "
-                "destructive statement and that hazard is gone - say so and "
-                "this card records it. Until some run measures this evaluator "
-                "against answers already known to be right and wrong, no card "
-                "can claim it grades correctly, which is what the ceiling "
-                "reports.",
+                "guide declined to make, and THIS does not stop your run. "
+                "What proceeding means: during the paid run the MODEL writes "
+                "the statements and your evaluator runs them against whatever "
+                "it is configured to reach, many times over - generated "
+                "statements, not yours."
+                + CONNECTION_DISCLOSURE[facts.evaluator_connection]
+                + " Until some run measures this evaluator against answers "
+                "already known to be right and wrong, no card can claim it "
+                "grades correctly, which is what the ceiling reports.",
                 # DOES NOT BLOCK, and this REVERSES the half of
                 # traigent-first-run#393 that set `blocks=True` here. Written
                 # down as a reversal rather than edited away: a repository that
@@ -7866,20 +7927,20 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
                 # `recommended_action` for a run that PROCEEDS, which is the
                 # state this cap now describes and did not before.
                 #
+                # ...AND ONLY WHILE IT IS UNANSWERED, so the card stops naming
+                # a question it already has an answer to and stops holding the
+                # single action slot against remedies the customer can perform.
+                #
                 # Silence proceeds. The disclosure above has already done its
                 # work, and traigent-first-run#449's decision governs the rest:
                 # "if no need to stop, no need, i want it seamless".
                 #
                 # AND THE REASON SAYS WHAT THIS CAP DOES, NEVER WHAT THE RUN
-                # WILL DO. It read "Your first run continues", which is a claim
-                # about the whole card made by one condition that cannot see
-                # the others. Executed on the ordinary cold start - an
-                # executing evaluator, no dataset, no agent yet - `dataset-
-                # absent` and `agent-absent` both block, `status` is BLOCKED,
-                # and this sentence promised the opposite on the same card.
-                # That is the defect class this whole batch exists to remove,
-                # reintroduced by the fix for it.
-                asks=True,
+                # WILL DO. A cap sees its own condition and no other, so it may
+                # not promise the card: on the ordinary cold start
+                # `dataset-absent` and `agent-absent` block beside it and
+                # `status` is BLOCKED.
+                asks=facts.evaluator_connection is None,
             )
         )
     return combine("evaluation", subs), caps
@@ -10293,7 +10354,20 @@ def render_markdown(
         # `--json` still carries `action_kind` on every cap for consumers that
         # want it; what goes away is the word "fix" over a state that is not
         # broken.
-        remedy = f", fix: `{cap.action_kind}`" if cap.blocks or cap.asks else ""
+        # "fix" ONLY WHERE SOMETHING IS BROKEN. A cap that asks and does not
+        # block is not a defect, and this line printed `fix:` beside a reason
+        # whose own words are "there is nothing here for you to fix" - in the
+        # durable artifact, which is the one that outlives the terminal
+        # (traigent-first-run#392). The word was inherited wholesale when that
+        # condition moved from `blocks=True` to `asks=True`, so the comment
+        # below - which exists to keep "fix" off a state that is not broken -
+        # was defeated by a flag flip one condition over.
+        if cap.blocks:
+            remedy = f", fix: `{cap.action_kind}`"
+        elif cap.asks:
+            remedy = f", asks: `{cap.action_kind}`"
+        else:
+            remedy = ""
         return f"- **{cap.condition}** ({effect}{remedy}): {cap.reason}"
 
     if blocking:
@@ -10687,6 +10761,16 @@ class PreviousScore:
     overall: int
     pillars: dict[str, int]
     caps: tuple[str, ...]
+    # WHICH of those caps stopped the run, because a cap can stop blocking
+    # without leaving the card. Comparing conditions alone made the largest
+    # change this package has made - a blocking ceiling becoming an advisory
+    # one - invisible on every surface: same condition, same ceiling, same
+    # pillar scores, and `changed: none` printed across it
+    # (traigent-first-run#392). Defaulted, because a payload written before
+    # this field existed carries no `blocks` and must still be readable; an
+    # older card compares as "nothing was blocking", which is the honest
+    # reading of a document that does not say.
+    blocking: tuple[str, ...] = ()
 
 
 def previous_score_from_document(document: Any, reference: str) -> PreviousScore:
@@ -10745,7 +10829,13 @@ def previous_score_from_document(document: Any, reference: str) -> PreviousScore
             "prints"
         )
     return PreviousScore(
-        overall=overall, pillars=read, caps=tuple(cap["condition"] for cap in caps)
+        overall=overall,
+        pillars=read,
+        caps=tuple(cap["condition"] for cap in caps),
+        # `is True` rather than truthiness: a payload that omits `blocks`
+        # says nothing about it, and reading a missing key as False is the
+        # same answer arrived at honestly.
+        blocking=tuple(cap["condition"] for cap in caps if cap.get("blocks") is True),
     )
 
 
@@ -10766,6 +10856,21 @@ def score_delta(previous: PreviousScore, score: ReadinessScore) -> dict[str, Any
         condition for condition in previous.caps if condition not in current_caps
     ]
     new = [condition for condition in current_caps if condition not in previous.caps]
+    # A cap that stopped blocking and stayed on the card. Neither `cleared`
+    # nor `new` can see it - the condition is in both lists - and it is the
+    # change a reader most needs, because it is the difference between a run
+    # that may start and one that may not.
+    current_blocking = tuple(cap.condition for cap in score.caps if cap.blocks)
+    unblocked = [
+        condition
+        for condition in previous.blocking
+        if condition in current_caps and condition not in current_blocking
+    ]
+    blocked = [
+        condition
+        for condition in current_blocking
+        if condition in previous.caps and condition not in previous.blocking
+    ]
     changed = [name for name in PILLAR_ORDER if previous.pillars[name] != current[name]]
     unchanged = [name for name in PILLAR_ORDER if name not in changed]
     # One line, two halves, both always present: a reader scanning for the
@@ -10781,6 +10886,11 @@ def score_delta(previous: PreviousScore, score: ReadinessScore) -> dict[str, Any
         )
         + "; unchanged: "
         + (", ".join(unchanged) or "none")
+        # Said on the same line rather than only in the payload, because the
+        # line is what a reader reads. Omitted entirely when nothing moved, so
+        # the ordinary re-score keeps the shape it had.
+        + ("; no longer blocking: " + ", ".join(unblocked) if unblocked else "")
+        + ("; now blocking: " + ", ".join(blocked) if blocked else "")
     )
     return {
         "overall": {"previous": previous.overall, "current": score.overall},
@@ -10792,6 +10902,8 @@ def score_delta(previous: PreviousScore, score: ReadinessScore) -> dict[str, Any
         "unchanged": unchanged,
         "cleared": cleared,
         "new": new,
+        "unblocked": unblocked,
+        "blocked": blocked,
         "line": line,
     }
 
@@ -11534,6 +11646,7 @@ def evaluation_facts_from_calibration(
     comparison_shape: str | None = None,
     comparison_witness: str | None = None,
     calibration_scope_refused: bool = False,
+    evaluator_connection: str | None = None,
 ) -> EvaluationFacts:
     """Normalize both shapes `calibrate_evaluator` emits into one fact set.
 
@@ -11566,6 +11679,7 @@ def evaluation_facts_from_calibration(
             comparison_shape=comparison_shape,
             comparison_witness=comparison_witness,
             calibration_scope_refused=calibration_scope_refused,
+            evaluator_connection=evaluator_connection,
         )
     if not isinstance(payload, dict):
         raise CalibrationInputError(
@@ -11662,6 +11776,7 @@ def evaluation_facts_from_calibration(
         # that reads it fires only where no complete calibration was
         # established, so a payload that carries one raises nothing here.
         calibration_scope_refused=calibration_scope_refused,
+        evaluator_connection=evaluator_connection,
     )
 
 
@@ -19935,6 +20050,19 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--evaluator-connection",
+        choices=EVALUATOR_CONNECTIONS,
+        help=(
+            "how the customer says their evaluator connects, where the "
+            "evaluator-execution scope gate made this run ask. `read-only` is "
+            "the answer that removes the hazard, because the engine itself "
+            "refuses a destructive statement; `read-write` is an answer too, "
+            "and the card says what it means. Omitting it is silence, which "
+            "proceeds - the question never blocks. A declaration this score "
+            "cannot verify, so it changes what the card SAYS and no number"
+        ),
+    )
+    parser.add_argument(
         "--evaluator-origin",
         choices=COMPONENT_ORIGINS,
         help=(
@@ -20320,6 +20448,7 @@ def run(argv: Sequence[str] | None = None) -> int:
             comparison_shape=comparison_shape,
             comparison_witness=comparison_witness,
             calibration_scope_refused=args.calibration_scope_refused,
+            evaluator_connection=args.evaluator_connection,
         )
         # `--config-space` first, and the `elif` is the safety property, not a
         # style choice: a brought document decides the agent pillar outright,

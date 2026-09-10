@@ -4066,8 +4066,9 @@ def check_evaluator(path: Path) -> None:
             f"{path} parses as valid Python, and its call path reaches a code "
             f"or SQL engine: {'; '.join(witnesses[:MAX_REPORTED_EXECUTION_WITNESSES])}"
             ". This guide grades with non-executing comparison evaluators, so "
-            "read the call path and, if candidate output reaches it, stop here "
-            "and design containment separately" + comparator_note,
+            "read the call path; if candidate output reaches it, this guide "
+            "skips its own evaluator check and your run carries on - nothing "
+            "here stops you" + comparator_note,
             {
                 "exists": True,
                 "parses": True,

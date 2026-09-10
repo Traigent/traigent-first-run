@@ -3364,7 +3364,15 @@ class SkillPackageTests(unittest.TestCase):
         description = next(
             line for line in frontmatter.splitlines() if line.startswith("description:")
         ).casefold()
-        self.assertIn("non-executing comparison evaluators", description)
+        # The description no longer NARROWS to non-executing evaluators, and
+        # this pin is what would have kept it narrow. The skill's description
+        # is what selects the skill, so an agent meeting a text-to-SQL project
+        # could decline before reading a word of the guidance that handles it
+        # - the onboarding block, one level above the card
+        # (traigent-first-run#392).
+        self.assertIn("comparison evaluators", description)
+        self.assertNotIn("non-executing comparison evaluators", description)
+        self.assertIn("never by refusing the run", description)
         self.assertIn(
             "query or code text compared rather than run",
             description,
@@ -6162,8 +6170,8 @@ class SkillPackageTests(unittest.TestCase):
             # do reaches - the unmade check is ours (traigent-first-run#392).
             # A disclosure that ends by naming a remedy reads as a to-do, and
             # the whole reversal is that it is not one.
-            "there is no route out to give them",
-            "nothing they do lifts the ceiling",
+            "gives them no route out of the ceiling",
+            "nothing they do inside\nthis run lifts it".replace("\n", " "),
             # And the block is gone, said here because this is the document
             # #393 cited when it added one.
             "does not block",
@@ -6172,6 +6180,9 @@ class SkillPackageTests(unittest.TestCase):
                 self.assertIn(phrase, section)
         self.assertNotIn("a file this run never read", section)
         self.assertNotIn("the route out is the customer's own", section)
+        # And the containment review is reconciled rather than contradicted:
+        # it is the route to the EVIDENCE, never a precondition of a first run.
+        self.assertIn("never a precondition of its first run", section)
         # SKILL.md owns the routing clause and the imperatives. The reference
         # states the consequence and the facts behind it; nine words of
         # SKILL.md's own sentence had grown a second home here, and two
@@ -9234,7 +9245,10 @@ class SkillPackageTests(unittest.TestCase):
         refusing = next(
             (part for part in entry.split(".") if "execution match" in part), ""
         )
-        for phrase in ("unit tests", "ends this guide"):
+        for phrase in (
+            "unit tests",
+            "a check this guide skips rather than one that stops you",
+        ):
             with self.subTest(phrase=phrase):
                 self.assertIn(
                     phrase,
@@ -9288,7 +9302,7 @@ class SkillPackageTests(unittest.TestCase):
             "resolved evaluator call path identifies code/sql execution",
             # The event is still recorded and calibration is still skipped.
             # What changed is the sentence after it: the run continues.
-            "record the `containment` event",
+            "record the `containment` warning",
             "continue the run on the disclosure",
             "the run does not end",
         ):
@@ -9310,7 +9324,7 @@ class SkillPackageTests(unittest.TestCase):
         for phrase in (
             "supports non-executing comparison evaluators",
             "does not ship, select, or validate a sandbox",
-            "record a `containment` event",
+            "record a `containment` warning",
             # THE RUN CONTINUES, and the three clauses of the disclosure that
             # replaces the stop are pinned individually because the whole value
             # of an informed decision is that no part of it was softened.
@@ -9388,7 +9402,7 @@ class SkillPackageTests(unittest.TestCase):
             # deferred for an installed dependency, whose path is not
             # standard-library-only by then.
             "before every calibration this stage performs, run only a non-executing evaluator",
-            "an execution evaluator has already ended this guide at the scope gate above",
+            "an execution evaluator had its evaluator check skipped at the scope gate above",
         ):
             with self.subTest(calibration_phrase=phrase):
                 self.assertIn(phrase, calibration)
@@ -9400,7 +9414,7 @@ class SkillPackageTests(unittest.TestCase):
             .split()
         )
         for phrase in (
-            "the stop in `static and mock validation` above ends this guide before this card",
+            "this card does price them - and it is the moment their disclosure",
         ):
             with self.subTest(approval_phrase=phrase):
                 self.assertIn(phrase, approval)
@@ -9413,8 +9427,8 @@ class SkillPackageTests(unittest.TestCase):
         )
         for phrase in (
             "process separation, not sandbox isolation",
-            "skill's scope gate ends this guide",
-            "before any evaluator executes candidate code or sql",
+            "skill's scope gate skips",
+            "rather than executing candidate code or sql, and the run continues without it",
         ):
             self.assertIn(phrase, evaluation)
         for duplicated_mandate in (
@@ -31671,7 +31685,6 @@ class ARunThatStoppedCanSayWhyTests(unittest.TestCase):
             "stopped": (
                 "`credential-file-tracked`",
                 "`ignore-check`",
-                "`containment`",
                 "`readiness-cap`",
                 "`invariants`",
                 "`tool`",
@@ -31688,6 +31701,7 @@ class ARunThatStoppedCanSayWhyTests(unittest.TestCase):
                 "`uncategorized`",
             ),
             "warning": (
+                "`containment`",
                 "`refused-trial`",
                 "`untracked-cost`",
                 "`cap-standing`",

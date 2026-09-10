@@ -704,9 +704,10 @@ def scope_refusal_message(scan: dict[str, Any]) -> str:
             "does not own an execution boundary, and an in-process one is not "
             "a boundary at all: see the containment section of "
             "references/run-safety.md, which now records why. Design "
-            "containment separately, and tell readiness.py what happened with "
-            "--calibration-scope-refused so the card asks for that review "
-            "instead of for this check.",
+            "containment separately if you want that evidence, and tell "
+            "readiness.py what happened with --calibration-scope-refused so "
+            "the card discloses the unmade check instead of asking for it. "
+            "Your run carries on either way - nothing here stops it.",
             "",
             "This refusal is about calibration only. A trial, where the model "
             "writes the query and this scorer runs it, is the other moment and "

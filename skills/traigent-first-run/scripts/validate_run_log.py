@@ -62,7 +62,11 @@ CLASSES: dict[str, frozenset[str]] = {
             # a gate this guide defines
             "credential-file-tracked",
             "ignore-check",
-            "containment",
+            # `containment` is deliberately NOT here: the scope gate skips
+            # one evaluator check and the run carries on, so recording it as
+            # `stopped` would say in the durable artifact - the one a user
+            # hands to somebody else - that the run halted. It is a `warning`
+            # below (traigent-first-run#392).
             "readiness-cap",
             "invariants",
             # a bundled script that could not run
@@ -83,7 +87,16 @@ CLASSES: dict[str, frozenset[str]] = {
         }
     ),
     "warning": frozenset(
-        {"refused-trial", "untracked-cost", "cap-standing", "uncategorized"}
+        {
+            # The evaluator check the scope gate skipped. It can distort the
+            # result - nothing measured that evaluator - and it stops nothing,
+            # which is exactly what this event means.
+            "containment",
+            "refused-trial",
+            "untracked-cost",
+            "cap-standing",
+            "uncategorized",
+        }
     ),
 }
 EVENTS = frozenset(CLASSES)

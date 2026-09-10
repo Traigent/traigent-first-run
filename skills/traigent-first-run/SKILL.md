@@ -1,6 +1,6 @@
 ---
 name: traigent-first-run
-description: Guide a professional first Traigent optimization for non-executing comparison evaluators, such as classification, extraction, short-answer QA, and query or code text compared rather than run. Use when a user asks to try Traigent, get started with Traigent, run a first optimization, optimize an agent for the first time, set up Traigent, or opens the Traigent/traigent-first-run repository. Inspect what already exists, preserve real components, diagnose limitations with concrete evidence, offer repair and revalidation before spending, create only the missing pieces as one coherent system, distinguish demonstration substitutes from production readiness, preserve the user's baseline or generate a credible small sweep, run one broader bounded optimization, and report what the result does and does not prove.
+description: Guide a professional first Traigent optimization for comparison evaluators, such as classification, extraction, short-answer QA, and query or code text compared rather than run; an evaluator that runs candidate code or SQL is handled by skipping that one check, never by refusing the run. Use when a user asks to try Traigent, get started with Traigent, run a first optimization, optimize an agent for the first time, set up Traigent, or opens the Traigent/traigent-first-run repository. Inspect what already exists, preserve real components, diagnose limitations with concrete evidence, offer repair and revalidation before spending, create only the missing pieces as one coherent system, distinguish demonstration substitutes from production readiness, preserve the user's baseline or generate a credible small sweep, run one broader bounded optimization, and report what the result does and does not prove.
 license: Apache-2.0
 ---
 
@@ -609,8 +609,8 @@ Follow this order:
    Resolve any `permutation_question` from inspected evidence; ask before paid work only if the
    competing order semantics remain unresolved.
    If inspection identifies an execution evaluator, do not use a permutation probe to turn a
-   parse/runtime result into evidence. The scope stop below ends this first-run guide before any
-   evaluator execution.
+   parse/runtime result into evidence. The scope gate below skips the evaluator check rather than
+   running it, and the run carries on from there under that reference's disclosure.
 2. If unresolved product-grading ambiguity would materially change which output is correct or how
    candidate configurations rank, ask exactly one product-grading question, explain the affected
    decision, then stop and wait. Otherwise record that no ambiguity remains and do not add a generic
@@ -627,9 +627,9 @@ Follow this order:
    `--evaluator-method` value to this preflight and the paired readiness invocation in step 5 (or
    omit it from both when no method exists). This heuristic check does not assert SDK compatibility.
 4. Before calibration, apply `references/run-safety.md`'s execution-evaluator scope gate. If the
-   resolved evaluator call path identifies code/SQL execution, record the `containment` event, skip
+   resolved evaluator call path identifies code/SQL execution, record the `containment` warning, skip
    calibration, and continue the run on the disclosure that reference sets out - the run does not
-   end. What is refused at this step is the database such a scorer opens on our initiative, not the
+   end, and a `stopped` identity would say in the durable log that it had. What is refused at this step is the database such a scorer opens on our initiative, not the
    probes it runs, which are the ones your matrix authored.
    Otherwise, run deterministic calibration only after a `sufficient`
    semantic-coverage verdict. Its path must be fully inspected, must not execute

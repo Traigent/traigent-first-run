@@ -8261,7 +8261,13 @@ class ACapThatOnlyScopesAClaimDoesNotStopTheRunTests(unittest.TestCase):
         report = MODULE.render_markdown(score)
         # The report names the remedy, and it is the same one the payload
         # names - the disagreement this closes was between these two lines.
-        self.assertIn(f"fix: `{cap.action_kind}`", report)
+        # "asks:" rather than "fix:", because this cap asks and does
+        # not block. The word was the same for both until a cap that
+        # says "there is nothing here for you to fix" printed `fix:`
+        # beside it in the durable artifact
+        # (traigent-first-run#392); nothing here is broken either.
+        self.assertIn(f"asks: `{cap.action_kind}`", report)
+        self.assertNotIn(f"fix: `{cap.action_kind}`", report)
         self.assertEqual(score.recommended_action, cap.action_kind)
         self.assertEqual(cap.action_kind, "review-answer-key")
         # Under the limiting heading, never the blocking one.
@@ -13122,7 +13128,7 @@ class TheWitnessDecidesTheScopeGateNotTheDeclarationTests(unittest.TestCase):
                 # to a sentence that already carried one.
                 self.assertRegex(
                     evidence,
-                    r"containment review|preflight\.py --evaluator|"
+                    r"nothing here asks you for it|preflight\.py --evaluator|"
                     r"establish the evaluator as the ceiling describes",
                 )
                 cap = next(
@@ -13284,9 +13290,17 @@ class TheWitnessDecidesTheScopeGateNotTheDeclarationTests(unittest.TestCase):
         self.assertTrue(cap.reason.startswith("An evaluator is connected, and "))
         self.assertNotIn("method (None)", cap.reason)
         # And the line and the ceiling agree, which is the property under test.
+        # It used to agree by pointing at "the containment review named in the
+        # ceiling" - and then the ceiling was rewritten to name no review at
+        # all, so the pointer survived while its target did not
+        # (traigent-first-run#392). The clause now says what is true on this
+        # arm, which is that nothing is being asked of them.
         self.assertIn(
-            "containment review named in the ceiling",
+            "nothing here asks you for it",
             self._calibration_subscore(score).evidence,
+        )
+        self.assertNotIn(
+            "containment review", self._calibration_subscore(score).evidence
         )
 
     def test_a_timed_out_refusal_names_no_ceiling_and_keeps_its_own_fact(
@@ -13426,7 +13440,12 @@ class TheWitnessDecidesTheScopeGateNotTheDeclarationTests(unittest.TestCase):
                 # trust being asked for is not trust in their own code.
                 self.assertIn("the MODEL writes the statements", cap.reason)
                 self.assertIn("many times over", cap.reason)
-                self.assertIn("generated, not yours", cap.reason)
+                self.assertIn(
+                    "generated\n                    statements, not yours".replace(
+                        "\n                    ", " "
+                    ),
+                    cap.reason,
+                )
                 # The one question that is genuinely theirs, and settles it.
                 self.assertIn("connects read-only", cap.reason)
                 # The fixture convention is a tester's phrase and the owner

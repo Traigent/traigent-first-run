@@ -82,8 +82,9 @@ Evaluator (evaluation method, scorer)
   Kinds: exact match, comparison over canonical form - how a query or code
   answer is graded here, with aliases, case and spacing resolved before
   matching - overlap metrics (F1), or an LLM-as-judge that reads a rubric.
-  Running the answer to grade it, as execution match and unit tests do, ends
-  this guide instead.
+  Running the answer to grade it, as execution match and unit tests do, is a
+  check this guide skips rather than one that stops you: the run carries on
+  and the card says what went unchecked.
   Ask like this: "How do you (or should we) decide whether an answer is correct?"
 
 Evaluation (grading)

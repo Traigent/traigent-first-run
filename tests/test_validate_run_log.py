@@ -73,7 +73,12 @@ class TheClosedVocabulariesAreEnforcedTests(unittest.TestCase):
                 {
                     "credential-file-tracked",
                     "ignore-check",
-                    "containment",
+                    # `containment` LEFT this set on purpose, which is the
+                    # edit this test exists to make somebody make. The scope
+                    # gate skips one evaluator check and the run carries on,
+                    # so a run that recorded it here said in the durable
+                    # artifact that it had halted when it had not
+                    # (traigent-first-run#392). It is a `warning` below.
                     "readiness-cap",
                     "invariants",
                     "tool",
@@ -94,7 +99,14 @@ class TheClosedVocabulariesAreEnforcedTests(unittest.TestCase):
         self.assertEqual(
             validate_run_log.CLASSES["warning"],
             frozenset(
-                {"refused-trial", "untracked-cost", "cap-standing", "uncategorized"}
+                {
+                    # ...and ARRIVED here, on the same deliberate edit.
+                    "containment",
+                    "refused-trial",
+                    "untracked-cost",
+                    "cap-standing",
+                    "uncategorized",
+                }
             ),
         )
         self.assertEqual(validate_run_log.EVENTS, frozenset(validate_run_log.CLASSES))
