@@ -12961,7 +12961,22 @@ class TheOneQuestionHasSomewhereToLiveTests(unittest.TestCase):
                     self.assertIn("You told this run", reason)
                     self.assertIn("rather than as anything this run checked", reason)
         self.assertIn("pass `--evaluator-connection", seen[None])
-        self.assertIn("that is the hazard closed", seen[MODULE.READ_ONLY])
+        # SCOPED, not absolute. This cap fires on a SQL engine AND on code
+        # execution, so "the hazard closed" was printed to an evaluator that
+        # shells out and touches no database - a false safety claim, and the
+        # same defect as #492's database wording: one half of what the gate
+        # refuses, written as the whole.
+        self.assertIn(
+            "closes whatever your evaluator reaches through that connection",
+            seen[MODULE.READ_ONLY],
+        )
+        self.assertIn(
+            "says nothing about code your evaluator runs outside one",
+            seen[MODULE.READ_ONLY],
+        )
+        self.assertNotIn("that is the hazard closed", seen[MODULE.READ_ONLY])
+        # And the unanswered arm may not promise more than the answer would.
+        self.assertIn("closes nothing for an evaluator that runs candidate code", seen[None])
         self.assertIn(
             "the destructive path is\n        open".replace("\n        ", " "),
             seen[MODULE.READ_WRITE],

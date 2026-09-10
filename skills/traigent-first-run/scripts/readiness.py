@@ -2903,11 +2903,23 @@ CALIBRATION_REFUSAL_CORE: dict[tuple[bool, bool, bool], str] = {
 # Every arm labels the answer as THEIRS. Nothing here opens the connection to
 # look, so this is a declaration bounding a claim, never a measurement earning
 # one - and the card may not let the two read alike.
+#
+# AND EACH ARM NAMES WHAT THE ANSWER DOES NOT COVER, because this cap fires on
+# two different hazards and read-only only answers one of them.
+# `candidate_execution_witnesses` raises on a SQL engine AND on code execution
+# through `_execution_module_name`, so an evaluator that shells out and touches
+# no database reaches here - and "that is the hazard closed" was printed to it,
+# over a `subprocess.run` a read-only connection has no bearing on whatsoever.
+# A false safety claim is the worst sentence on this card, and it is the same
+# defect as #492's database wording: one half of what the gate refuses,
+# written as the whole.
 CONNECTION_DISCLOSURE: dict[str | None, str] = {
     READ_ONLY: (
         " You told this run it connects read-only, recorded here as your word "
         "rather than as anything this run checked: a read-only engine refuses "
-        "a destructive statement, so that is the hazard closed."
+        "a destructive statement, so that closes whatever your evaluator "
+        "reaches through that connection. It says nothing about code your "
+        "evaluator runs outside one."
     ),
     READ_WRITE: (
         " You told this run it connects read-write, recorded here as your word "
@@ -2915,10 +2927,11 @@ CONNECTION_DISCLOSURE: dict[str | None, str] = {
         "open, so weigh that before approving the spend."
     ),
     None: (
-        " If it connects read-only the engine itself refuses a destructive "
-        "statement, which closes that - pass `--evaluator-connection "
-        "read-only` and this card will say so. Not answering is fine and "
-        "changes nothing."
+        " If it reaches an engine and that connection is read-only, the engine "
+        "itself refuses a destructive statement, which closes that much - pass "
+        "`--evaluator-connection read-only` and this card will say so. It "
+        "closes nothing for an evaluator that runs candidate code outside a "
+        "connection. Not answering is fine and changes nothing."
     ),
 }
 CALIBRATION_REFUSAL_ROUTE: dict[tuple[bool, bool, bool], str] = {
