@@ -6966,7 +6966,7 @@ class TheCostApprovedWarningNamesItsSourceTests(unittest.TestCase):
         The sibling half of a fix already made: `check_shadowed_credentials`
         takes `env_path` for exactly this reason and says so in its own
         docstring, and `check_keys` has handed it on since. This function is
-        called from the same line of `main` and was never given it
+        called from the next line of `main` and was never given it
         (traigent-first-run#494 D).
 
         All four arms, because fixing one of four leaves three saying it.

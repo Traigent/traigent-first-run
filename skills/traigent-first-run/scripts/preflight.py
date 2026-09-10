@@ -1308,7 +1308,7 @@ def check_cost_settings(
 
     That fix was made for the credential check and not for this one, which is
     the sibling half of it (traigent-first-run#494 D). `check_keys` has taken
-    `env_path` and handed it on since; this function is called from the same
+    `env_path` and handed it on since; this function is called from the NEXT
     line of `main` and was never given it.
     """
     # The first-run launcher overwrites this legacy SDK variable from the three
