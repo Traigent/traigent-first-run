@@ -21408,8 +21408,9 @@ class TheBuildHalfCitesTheAgentItReadTests(unittest.TestCase):
             (
                 "bounded",
                 {"loop": True, "bounded": True},
-                "no unbounded loop in the selected function's own body, which "
-                "does not establish that it ends",
+                "nothing in the selected function's own body matched the "
+                "unbounded-loop shapes this read knows, which does not "
+                "establish that it ends",
             ),
             ("unbounded", {"loop": True, "bounded": False}, None),
         ):
@@ -21447,21 +21448,40 @@ class TheBuildHalfCitesTheAgentItReadTests(unittest.TestCase):
             "MODEL = ['a']\ndef spin(q):\n    while True:\n        pass\n"
             "def selected(q):\n    return spin(q)\n"
         )
-        delegated = self._score_source(
-            delegating, {"control-flow": {"loop": True, "bounded": True}}
+        # THE SHAPES THIS READ DOES NOT KNOW, which is what makes these
+        # assertions discriminating. The delegating fixture alone could not:
+        # the clause is a constant selected by (loop, bounded, source), so
+        # nothing about delegation participates in choosing it, and the
+        # subTest reds only when its sibling does.
+        #
+        # `while not False` is the sharp one. It is constant-true, it is
+        # DIRECTLY in the selected function's own body - no delegation, no
+        # nesting - and `derived_unbounded_while` does not refuse it, which
+        # this module's own docstring records. Any sentence claiming there is
+        # no unbounded loop here is false about four lines of Python.
+        looping_unrefused = (
+            "MODEL = ['a']\ndef selected(q):\n    while not False:\n"
+            "        pass\n    return q\n"
         )
-        row = {
-            signal.name: signal.evidence
-            for signal in MODULE.build_declarations_are_unmeasured(delegated.build)
-        }["control-flow"]
-        with self.subTest(check="control-flow", kind="delegated"):
-            # True of this agent: its own body holds no unbounded loop.
-            self.assertIn("no unbounded loop", row)
-            # And the residual named is the real one - it may not end.
-            self.assertIn("does not establish that it ends", row)
-            # The claim that was false here, in either spelling.
-            self.assertNotIn("has a way out of it", row)
-            self.assertNotIn("the way out is taken", row)
+        for kind, source in (
+            ("delegated", delegating),
+            ("constant-true-condition", looping_unrefused),
+        ):
+            arm = self._score_source(
+                source, {"control-flow": {"loop": True, "bounded": True}}
+            )
+            said = {
+                signal.name: signal.evidence
+                for signal in MODULE.build_declarations_are_unmeasured(arm.build)
+            }["control-flow"]
+            with self.subTest(check="control-flow", kind=kind):
+                # What the read DID, and the limit in the same clause.
+                self.assertIn("matched the unbounded-loop shapes this read knows", said)
+                self.assertIn("does not establish that it ends", said)
+                # Neither existential claim a refutation cannot support.
+                self.assertNotIn("has a way out of it", said)
+                self.assertNotIn("the way out is taken", said)
+                self.assertNotIn("no unbounded loop", said)
 
         # BOTH tool arms, because the clause has to survive the arm that
         # refutes as well as the arm that credits. The source above declares
