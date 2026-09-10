@@ -7965,16 +7965,27 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
                 # `recommended_action` for a run that PROCEEDS, which is the
                 # state this cap now describes and did not before.
                 #
-                # ...UNTIL THE ANSWER CLOSES THE HAZARD, which is `read-only`
-                # and only `read-only`. Keyed on the answer rather than on
-                # having one: treating any answer as "answered" made
-                # `read-write` machine-indistinguishable from a clean run -
-                # same `asks=False`, same `proceed`, same report line as a
-                # purely advisory cap - so the most dangerous answer was the
-                # quietest, and silence was louder than being told the
-                # destructive path is open. It also switched off the pre-spend
-                # approval card, which fires on a cap that asks and carries
-                # "what was answered" to the money moment.
+                # ALWAYS, because no answer to this question settles it.
+                #
+                # Two revisions tried to let an answer quiet the card and both
+                # were wrong in the same place. Keying on HAVING an answer made
+                # `read-write` machine-indistinguishable from a clean run, so
+                # the most dangerous answer was the quietest. Keying on
+                # `== READ_ONLY` fixed that and left a worse one: this cap
+                # fires on a SQL engine AND on code execution, so a
+                # `subprocess` evaluator with no database anywhere answered
+                # `read-only` and got `asks=False`, `proceed`, and a report
+                # line identical to a purely advisory cap - a false all-clear,
+                # bought with a declaration that has no bearing on the hazard
+                # that actually fired.
+                #
+                # Distinguishing the two would need preflight to publish which
+                # branch of the witness raised this, and it does not. Until it
+                # does, no answer here closes anything this run can verify - so
+                # the answer is RECORDED on the card and the question stays
+                # open. Nothing blocks either way, silence still proceeds, and
+                # the pre-spend card keeps carrying the answer to the moment
+                # money moves.
                 #
                 # Silence proceeds. The disclosure above has already done its
                 # work, and traigent-first-run#449's decision governs the rest:
@@ -7985,7 +7996,7 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
                 # not promise the card: on the ordinary cold start
                 # `dataset-absent` and `agent-absent` block beside it and
                 # `status` is BLOCKED.
-                asks=facts.evaluator_connection != READ_ONLY,
+                asks=True,
             )
         )
     return combine("evaluation", subs), caps

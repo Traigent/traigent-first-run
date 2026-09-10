@@ -12985,19 +12985,26 @@ class TheOneQuestionHasSomewhereToLiveTests(unittest.TestCase):
         )
         self.assertEqual(len(set(seen.values())), 3, "two answers read alike")
 
-    def test_only_read_only_stops_the_card_asking(self) -> None:
-        """`read-write` is the answer that must stay conspicuous.
+    def test_no_answer_settles_a_question_this_run_cannot_verify(self) -> None:
+        """Two revisions let an answer quiet the card; both were wrong here.
 
-        Keying on "has an answer" made the most dangerous answer the quietest:
-        `read-write` produced the same `asks`, the same `recommended_action`
-        and the same report line as a purely advisory cap, so silence was
-        louder than being told the destructive path is open. It also switched
-        off the pre-spend approval card, which fires on a cap that ASKS and
-        carries the answer to the moment money moves.
+        Keying on HAVING an answer made `read-write` machine-indistinguishable
+        from a clean run - the most dangerous answer, the quietest card.
+        Keying on `== READ_ONLY` fixed that and left a worse one: this cap
+        fires on a SQL engine AND on code execution, so a `subprocess`
+        evaluator with no database answered `read-only` and got `asks=False`,
+        `proceed`, and a report line identical to a purely advisory cap. A
+        false all-clear bought with a declaration that has no bearing on the
+        hazard that fired.
+
+        Telling the two apart needs preflight to publish which branch of the
+        witness raised this, and it does not. So the answer is recorded and
+        the question stays open - which is true whichever hazard fired
+        (traigent-first-run#392, #492).
         """
-        self.assertTrue(self._cap(self._score(None)).asks)
-        self.assertTrue(self._cap(self._score(MODULE.READ_WRITE)).asks)
-        self.assertFalse(self._cap(self._score(MODULE.READ_ONLY)).asks)
+        for connection in (None, MODULE.READ_ONLY, MODULE.READ_WRITE):
+            with self.subTest(connection=connection):
+                self.assertTrue(self._cap(self._score(connection)).asks)
         # And no arm blocks - the whole point of the reversal.
         for connection in (None, MODULE.READ_ONLY, MODULE.READ_WRITE):
             with self.subTest(connection=connection):
@@ -13046,12 +13053,39 @@ class TheOneQuestionHasSomewhereToLiveTests(unittest.TestCase):
         Refused rather than warned, on the reasoning the sibling guard states:
         a safety declaration is the worst option to lose quietly.
         """
-        out, err = io.StringIO(), io.StringIO()
-        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
-            code = MODULE.run(
-                ["--preflight", "-", "--evaluator-connection", "read-write"],
+        # A REAL PAYLOAD, and the message asserted. The first version passed
+        # `--preflight -` and asserted only `code == 2` - which the stdin guard
+        # returns before the scoring guard is reached, so the test passed with
+        # the entire production change deleted. A false green inside a test
+        # written to prevent one.
+        with tempfile.TemporaryDirectory() as directory:
+            payload = Path(directory) / "preflight.json"
+            payload.write_text(
+                json.dumps(
+                    [
+                        {
+                            "check": "evaluator-shape",
+                            "status": "PASS",
+                            "detail": "parses",
+                            "metrics": {},
+                        }
+                    ]
+                )
             )
+            out, err = io.StringIO(), io.StringIO()
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                code = MODULE.run(
+                    [
+                        "--preflight",
+                        str(payload),
+                        "--evaluator-connection",
+                        "read-write",
+                    ]
+                )
         self.assertEqual(code, 2)
+        # For the reason under test, not because something else exited 2.
+        self.assertIn("--evaluator-connection", err.getvalue())
+        self.assertIn("did not reach that gate", err.getvalue())
 
     def test_the_answer_is_kept_where_the_gate_did_ask(self) -> None:
         """And the guard may not refuse the run it exists for."""
