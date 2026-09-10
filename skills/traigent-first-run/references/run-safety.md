@@ -28,15 +28,21 @@ we do not have. A block that bounds what the customer may *do* is ours to justif
 chose does not justify it.
 
 **What this does not touch**, because "ever" is doing real work above and the file defines hard stops
-below that are not in question. **The test is one sentence, and the list under it is examples rather
-than the set**: a stop the customer CAN clear is not this rule's business, whatever it is about. The
-rule bites only where they cannot clear it, because the thing in the way is ours.
+below that are not in question. **The test is OWNERSHIP - whose is the thing in the way? - and the
+list under it is examples rather than the set.** This rule is about a check WE declined to make,
+where the obstacle is ours and nothing the customer does reaches it. It does not lift a stop that
+waits on something only they can give.
 
-So it does not lift a stop waiting on something only they can give - among them secret entry, a key
-this run has not been handed, a tracked credential file, a modified ignore file, a dedicated
-environment, a replay that changes their world, spending their money without approval, or a
-readiness cap that blocks because a component is absent rather than because a check was declined.
-Read the sentence, not the list; a stop this list happens not to name is still theirs to clear.
+Those are theirs, and among them: secret entry, a key this run has not been handed, a tracked
+credential file, a modified ignore file, a dedicated environment, a replay that changes their world,
+spending their money without approval, or a readiness cap that blocks because a component is absent
+rather than because a check was declined. Read the test, not the list - a stop this list happens not
+to name is measured by the same question.
+
+**Not "can they clear it", which is a different question and gets this wrong.** A customer whose
+evaluator executes candidate code could clear that stop by rewriting the evaluator - and the whole
+finding is that they should not have to, because the unmade check is ours. Difficulty is not the
+test; whose the obstacle is, is.
 
 Stated here, ahead of every gate below, because it is the rule each of them is measured against.
 
@@ -660,8 +666,13 @@ Before the provider-paid baseline, show only its immediate scope:
   defaulting to `$5.00`. Call it an execution stop target, not a billing guarantee.
 - Recipients: baseline-data services; for OpenRouter, the gateway and allowed upstream/fallback routes.
 - Execution evaluators: the scope gate in `Static and mock validation` above skips their evaluator
-  check and the run continues, so this card DOES price them. Their disclosure is carried by the
-  asking-cap bullet below, which owns it; nothing is restated here.
+  check and the run continues, so this card DOES price them - and it carries the disclosure, because
+  this bullet is unconditional and the moment money moves is the moment it matters. Say what was not
+  checked, that it is our boundary rather than their defect, and what the paid run will have their
+  evaluator do with model-written statements. The asking-cap bullet below owns the QUESTION and its
+  answer, which is a different thing and only exists where one was asked - a customer who answered
+  `read-only` has no asking cap and would otherwise reach the spend with no disclosure at all, which
+  is the safest answer buying the quietest card.
 
 ### The pre-spend approval card
 
@@ -707,9 +718,9 @@ exist and points at a file that was never created.
   the finding, the answer taken, and what proceeding on that answer means for the money about to be
   spent - do not put the question a second time in different words, with a different pair of exits.
   Where the cap's route owns no question of its own, this card is that one home and asks it here.
-  `evaluator-calibration-refused` is one of those: say what was not checked, that it is our boundary
-  rather than their defect, what the paid run will have their evaluator do with model-written
-  statements, and - where they answered - which connection answer this spend is approved on.
+  `evaluator-calibration-refused` is one of those, and only its ANSWER belongs here: which connection
+  answer this spend is being approved on. What was not checked is stated once, in the scope bullet
+  above, which fires whether or not this cap is still asking.
 - **Where we are.** `Stage 3/5 · Baseline`, so the choice arrives placed in the run rather than
   loose.
 - **Proceed, or fix.** Two lettered routes with the recommendation on one of them, in the shape

@@ -5,8 +5,8 @@ follows-resident-measured: 106_913
 follows-total-measured: 508_528
 resident-ceiling: 108_365
 resident-measured: 108_361
-total-ceiling: 514_875
-total-measured: 514_871
+total-ceiling: 515_671
+total-measured: 515_667
 
 Five kilobytes, most of it disclosure prose, and the reason is that a principle nobody had
 written down let a shipped cap tell a paying customer to fix something no change of theirs could
@@ -75,3 +75,16 @@ put the question in it. So it is item six, conditional on the gate having fired 
 customer brought, and where the gate fires later than the ask - an evaluator this run wrote in
 section 3 - the pre-spend card is named as its home instead. The claim and the enumeration now
 describe one thing.
+
+Two corrections from a review of the corrections, and both were the rule turning on itself. The
+carve-out's operative test had become "a stop the customer CAN clear" - which reads well and
+classifies this rule's own founding case straight out of it, because a customer whose evaluator
+executes candidate code CAN clear that stop by rewriting the evaluator, and the entire finding is
+that they should not have to. Difficulty was never the question. Ownership is, and it says so now,
+with the wrong test named beside it so nobody re-derives it.
+
+And consolidating the disclosure into one home put it behind a condition that had just been narrowed.
+The pre-spend card carries an asking cap's question; answering `read-only` stops the cap asking; so
+the customer who gave the safest answer reached the moment money moves with no disclosure at all.
+The unconditional bullet carries what was not checked, the asking-cap bullet carries the answer where
+there is one, and those are two different things rather than one thing stated twice.

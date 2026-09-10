@@ -9414,7 +9414,13 @@ class SkillPackageTests(unittest.TestCase):
             .split()
         )
         for phrase in (
-            "this card does price them. their disclosure is carried by the",
+            # The disclosure is UNCONDITIONAL, on the bullet that always
+            # shows. Consolidating it onto the asking-cap bullet put it behind
+            # a condition `asks` had just narrowed, so the customer who
+            # answered `read-only` - the safest answer - reached the moment
+            # money moves with no disclosure at all.
+            "this card does price them - and it carries the disclosure",
+            "what the paid run will have their evaluator do with model-written",
         ):
             with self.subTest(approval_phrase=phrase):
                 self.assertIn(phrase, approval)
