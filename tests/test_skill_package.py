@@ -10534,17 +10534,41 @@ class SkillPackageTests(unittest.TestCase):
             self.assertEqual(len(cells), 3, row)
             knob, _values, choose = cells
             with self.subTest(knob=knob):
-                # A refusal in the choosing column, however phrased. Each of
-                # these is a way of answering "never" that the two rows used or
-                # that the next author might reach for.
+                # THE LEADING CLAUSE, and STEMS rather than whole phrases.
+                # Both halves were measured against the shipped table rather
+                # than chosen.
+                #
+                # Scoped to the clause before the first `;` because that is
+                # where both real refusals sat, and because scanning the whole
+                # cell false-reds on ordinary text: "answers do not come from
+                # recall" and "the task's framing was never examined" are
+                # legitimate `Choose it when` answers that a whole-cell scan
+                # rejects. A gate that refuses correct writing teaches authors
+                # to phrase around it, which is worse than no gate.
+                #
+                # Stems because whole phrases leak: `ineligible here` is this
+                # gate's own marker word in another inflection and
+                # `"not eligible" not in "ineligible"`. Nine plausible ways of
+                # saying "never" passed the phrase list.
+                #
+                # It is still an enumeration and still bounded by whoever
+                # wrote it - ledger 0120 says so rather than claiming this
+                # catches every phrasing.
+                leading = choose.casefold().split(";", 1)[0]
                 for refusal in (
-                    "not part of",
+                    "not part",
                     "never",
                     "do not",
-                    "excluded",
-                    "not eligible",
+                    "exclud",
+                    "eligib",
+                    "outside",
+                    "cannot",
+                    "out of scope",
+                    "unavailable",
+                    "n/a",
+                    "beyond",
                 ):
-                    self.assertNotIn(refusal, choose.casefold(), row)
+                    self.assertNotIn(refusal, leading, row)
             if "not eligible" in knob:
                 ineligible += 1
         self.assertEqual(
