@@ -3777,10 +3777,20 @@ class BuildSignal:
     # this the derivation is invisible downstream and the next reader meets the
     # confusion #357 opened on.
     #
-    # NOT a claim that a checked signal is confirmed. Both derivations refute
+    # NOT a claim that a checked signal is confirmed. Every derivation refutes
     # in one direction only, so passing means "not contradicted", never
     # "established".
-    source_checked: bool = False
+    #
+    # THE SCOPE ITSELF RATHER THAN A FLAG, and per ARM rather than per check.
+    # It was a bool, resolved at render time through a dict keyed by the check
+    # name - so every arm of a check printed whichever scope that check's other
+    # arm had established. `control-flow` has three arms and two derivations,
+    # and the one sentence claimed "no contradicting loop in the selected
+    # function's own body" beside a declared loop the reader had just been told
+    # about, over a callable containing `while True:`. A flag cannot carry
+    # which of a check's derivations ran; the sentence can, so the sentence is
+    # what the signal carries and the arm that ran no derivation carries none.
+    source_check_scope: str = ""
     # The physical lines this check cited, and what the selected agent actually
     # says on them. Read out of the parsed tree at the coordinates
     # `checked_source_lines` already validated, so it is derived rather than
@@ -3812,21 +3822,60 @@ class BuildSignal:
 #
 # The scope is in the sentence because a bare "checked for a contradiction and
 # none was found" reads as corroboration, and it is strongest precisely where
-# the derivation is blindest. Neither of these leaves the selected callable's
-# own body, so an agent that delegates its loop to a helper, recurses, or hands
-# the work to a comprehension passes both - and the customer-facing line has to
-# say that it passed a narrow read rather than that it was checked.
+# the derivation is blindest. `control-flow` never leaves the selected
+# callable's own body, so an agent that delegates its loop to a helper,
+# recurses, or hands the work to a comprehension passes it and may never
+# return; `tools` takes exactly one hop past that body, into a module-level
+# assignment the callable itself names, and stops. Each clause states its own
+# reach, because the two are no longer the same reach and a shared sentence
+# would have to be wrong about one of them.
+#
+# EACH CLAUSE NAMES WHAT ITS DERIVATION STILL CANNOT SETTLE, which is the half
+# that has to be re-read whenever the derivation changes. `tools` said "does
+# not establish that any of them is reachable" until traigent-first-run#484
+# made reachability the acceptance test, and the clause then introduced a
+# finding about reachability by denying that reachability was checked - the
+# sentence contradicting itself on the arm where the walk had done its most
+# decisive work. What the walk still cannot settle is not reachability but
+# tool-hood: `names_reached_from_selected_callable` answers a question about a
+# NAME, and this module refuses to define what makes the thing behind it a
+# tool.
+# Keyed by ARM, not by check: `control-flow` runs a different derivation on
+# each of its two answered arms and none at all on the third, so a scope keyed
+# by the check name would state one arm's reach on all three.
 SOURCE_CHECK_SCOPE = {
-    "control-flow": (
+    "control-flow:no-loop": (
         "no contradicting loop in the selected function's own body, which does "
         "not establish that it ends"
     ),
+    # WHAT THE READ DID, never what is true of the code. This is a refute-only
+    # walk: `derived_unbounded_while` raises where it FINDS a literal-true
+    # `while` in the callable's own body with no uncaptured exit, and finding
+    # nothing establishes nothing - its own docstring says so in those words.
+    #
+    # So the clause may not say "a way out was found", and it may not say "no
+    # unbounded loop" either. Both are existential claims a refutation cannot
+    # support, and each is false on shapes this module already documents:
+    # `while not False` is constant-true and is not refused; a `while True`
+    # inside a nested `def` is never descended into; a `raise` whose capture
+    # cannot be settled blocks the refusal exactly as a proven exit does; and
+    # a callable that delegates to a helper that spins holds no loop node at
+    # all. Every one of those is a callable that may never return, and the
+    # sentence would have denied it.
+    #
+    # What is true on every arm is that nothing MATCHED the shapes this read
+    # knows. That is what it says, with the limit in the same clause.
+    "control-flow:bounded": (
+        "nothing in the selected function's own body matched the "
+        "unbounded-loop shapes this read knows, which does not establish that "
+        "it ends"
+    ),
     "tools": (
-        "every declared tool name appears in the selected file, which does not "
-        "establish that any of them is reachable"
+        "every declared tool name was traced from the selected callable, one "
+        "hop through the module, which does not establish that any of them is "
+        "a tool"
     ),
 }
-SOURCE_CHECKED_BUILD_CHECKS = frozenset(SOURCE_CHECK_SCOPE)
 # WHOSE VOICE THE REST OF THE LINE IS IN, in the one form the card uses.
 #
 # `evidence` on a build check is prose the assistant being scored wrote about
@@ -7671,19 +7720,29 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
             # The witness rides along because a refusal a customer cannot
             # check is one they cannot usefully disagree with.
             witness = f" ({facts.execution_witness})" if facts.execution_witness else ""
+            # THE CLASS, and the witness beside it names the instance. This
+            # said "a check that opens your database", which is one half of
+            # what the gate refuses: `candidate_execution_witnesses` walks
+            # every import through `_execution_module_name` as well as its SQL
+            # branch, so an evaluator that shells out and touches no database
+            # raises this cap and was told it had opened one
+            # (traigent-first-run#492). Every other sentence in this module
+            # already says "a code or SQL engine"; only the two a customer
+            # reads did not.
             body = (
                 "the evaluator check was run on it, which this guide's "
                 f"evaluator-execution scope gate does not permit{witness}, so "
                 "this card cannot read that result. This guide does not "
-                "accept a check that opens your database, which is why it "
-                "will not read that one."
+                "accept a check that runs candidate code or opens your "
+                "database, which is why it will not read that one."
             )
         else:
             body = (
                 "this run did not run the evaluator check on it, because running it "
                 "here is outside the scope this guide permits. This run did "
-                "not execute your evaluator: doing so opens your database "
-                "from inside this guide, and it will not reach into it."
+                "not execute your evaluator: doing so would run candidate code "
+                "or open your database from inside this guide, and it will not "
+                "reach into either."
             )
         caps.append(
             Cap(
@@ -7703,10 +7762,13 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
                 # plain fact, because "this run did not execute your
                 # evaluator" is false of the run that calibrated anyway and
                 # true of the run that obeyed. Then the reason in their terms
-                # (it opens your database, and this guide will not reach into
-                # it), and then the one thing they can actually do, which is
-                # the check itself, against their own database, where they own
-                # the blast radius.
+                # (it would run candidate code or open their database, and
+                # this guide will not reach into either), and then the one
+                # thing they can actually do, which is the check itself, where
+                # it already runs and they own the blast radius. That last
+                # clause named the database alone until #492: the witness fires
+                # on code execution too, so half the refused customers were
+                # sent to a database they do not have.
                 #
                 # The ceiling sentence stays and stays last. It is the true
                 # part - nothing here established that this evaluator ranks
@@ -7715,7 +7777,7 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
                 declared + body + " That is a limit of this run and not a "
                 "judgement of your evaluator, which may well be sound. You can "
                 "establish that yourself, outside this guide, by running it "
-                "against your own database on answers you already know are "
+                "where it already runs, on answers you already know are "
                 "right and wrong, and confirming it separates them; the "
                 "containment review is where the boundary for doing that here "
                 "gets designed. Until "
@@ -9187,7 +9249,21 @@ def score_run(
         # resolved against that marker raises rather than mis-binding, which is
         # why neither of these is passed by position.
         repeated=repeated,
-        agent_source_read=agent_facts.discovery_supplied,
+        # WHETHER A READ REACHED THIS SCORE, which is a different question from
+        # `discovery_supplied` and was answered with it until a card said the
+        # agent had never been read directly above four rows quoting its source
+        # (traigent-first-run#490). `--config-space` with `--agent-knobs` keeps
+        # the build half of the read and drops the search-space half, so
+        # `discovery_supplied` is False there and correctly so - it is the
+        # field the three decisions below gate the SEARCH SPACE on, and a
+        # document must win that outright. `build` is the half that survived,
+        # and it is `None` exactly when no read reached the score, so it
+        # answers this question without touching theirs. A customer who
+        # supplied a config space and no read still gets "no agent source
+        # read", because nothing populated it.
+        agent_source_read=(
+            agent_facts.discovery_supplied or agent_facts.build is not None
+        ),
         # The same pair of conditions `score_agent_evidence` branches on to
         # reach the discovery path at all. A config-space document wins
         # outright there, so a route refusal recorded under one was never
@@ -19050,7 +19126,14 @@ def build_signal_from_entry(
                 )
         if not _build_flag(check, spec, "loop"):
             return BuildSignal(
-                check, weight, f"one call per input, so it ends ({evidence})"
+                check,
+                weight,
+                f"one call per input, so it ends ({evidence})",
+                source_check_scope=(
+                    SOURCE_CHECK_SCOPE["control-flow:no-loop"]
+                    if source is not None
+                    else ""
+                ),
             )
         if _build_flag(check, spec, "bounded"):
             if source is not None and derived_unbounded_while(source):
@@ -19067,7 +19150,14 @@ def build_signal_from_entry(
                     "record bounded=False"
                 )
             return BuildSignal(
-                check, weight, f"a loop, and a stop condition to point at ({evidence})"
+                check,
+                weight,
+                f"a loop, and a stop condition to point at ({evidence})",
+                source_check_scope=(
+                    SOURCE_CHECK_SCOPE["control-flow:bounded"]
+                    if source is not None
+                    else ""
+                ),
             )
         return BuildSignal(
             check,
@@ -19245,11 +19335,15 @@ def build_signal_from_entry(
             "does not declare them; an unreachable tool is one of the declared "
             "ones this read could not find behind its name"
         )
+    # Both arms below ran the walk exactly when there was a source to walk, so
+    # they carry its scope on the same condition.
+    walked = SOURCE_CHECK_SCOPE["tools"] if source is not None else ""
     if not unreachable:
         return BuildSignal(
             check,
             weight,
             f"{len(declared)} tool(s), each reachable ({evidence})",
+            source_check_scope=walked,
         )
     return BuildSignal(
         check,
@@ -19258,6 +19352,7 @@ def build_signal_from_entry(
         f"found behind the name: {', '.join(sorted(set(unreachable)))}; tool "
         "wiring receives credit only for declared tools that resolve "
         f"({evidence})",
+        source_check_scope=walked,
     )
 
 
@@ -19276,9 +19371,12 @@ def _read_build_check(
     """
     signal = build_signal_from_entry(check, spec, source)
     path, cited = cited_source_text(spec, source)
+    # The scope rides from the arm that established it, in
+    # `build_signal_from_entry`. Nothing is added here, because this function
+    # cannot see which arm was taken and guessing from the check name is the
+    # defect that keyed it here in the first place.
     return replace(
         signal,
-        source_checked=(source is not None and check in SOURCE_CHECKED_BUILD_CHECKS),
         cited_source_path=path,
         cited_source=cited,
     )
@@ -19615,8 +19713,8 @@ def _observed_declaration(signal: BuildSignal) -> BuildSignal:
         evidence=(
             "not independently verified; excluded from this score. "
             + (
-                f"Assistant observation ({SOURCE_CHECK_SCOPE[signal.name]}): "
-                if signal.source_checked
+                f"Assistant observation ({signal.source_check_scope}): "
+                if signal.source_check_scope
                 else UNCHECKED_OBSERVATION
             )
             + signal.evidence

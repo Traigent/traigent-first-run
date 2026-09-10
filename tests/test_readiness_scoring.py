@@ -13313,16 +13313,23 @@ class TheWitnessDecidesTheScopeGateNotTheDeclarationTests(unittest.TestCase):
                 )
                 # What this run did, said plainly and without jargon.
                 self.assertIn("did not execute your evaluator", cap.reason)
-                # Why, in the customer's terms rather than in ours.
-                self.assertIn("opens your database", cap.reason)
-                self.assertIn("will not reach into it", cap.reason)
+                # Why, in the customer's terms rather than in ours - and as
+                # the CLASS the gate refuses, not one half of it. The witness
+                # fires on code execution as readily as on SQL, so a sentence
+                # naming only the database is false for half the customers it
+                # reaches (traigent-first-run#492).
+                self.assertIn("run candidate code or open your database", cap.reason)
+                self.assertIn("will not reach into either", cap.reason)
                 self.assertNotIn("does not accept a calibration", cap.reason)
                 # Not a verdict on their work.
                 self.assertIn("not a judgement of your evaluator", cap.reason)
                 self.assertIn("may well be sound", cap.reason)
-                # The route forward, performable by them, outside this guide.
+                # The route forward, performable by them, outside this guide
+                # - which means it may not name a database an evaluator that
+                # only shells out does not have.
                 self.assertIn("You can establish that yourself", cap.reason)
-                self.assertIn("against your own database", cap.reason)
+                self.assertIn("where it already runs", cap.reason)
+                self.assertNotIn("against your own database", cap.reason)
                 self.assertIn(
                     "answers you already know are right and wrong", cap.reason
                 )
@@ -13361,7 +13368,11 @@ class TheWitnessDecidesTheScopeGateNotTheDeclarationTests(unittest.TestCase):
             if c.condition == "evaluator-calibration-refused"
         ).reason
         self.assertNotIn("did not execute your evaluator", taken)
-        self.assertIn("does not accept a check that opens your database", taken)
+        self.assertIn(
+            "does not accept a check that runs candidate code or opens your "
+            "database",
+            taken,
+        )
         for shared in (
             "not a judgement of your evaluator",
             "You can establish that yourself",
@@ -20429,6 +20440,88 @@ class AFoundAgentDoesNotLookLikeAMissingOneTests(unittest.TestCase):
         self.assertIn("agent source read", found_line)
         self.assertIn("no agent source read", missing_line)
 
+    def test_a_config_space_document_does_not_hide_the_read_beside_it(
+        self,
+    ) -> None:
+        """The route the guide actually closes on, which nothing exercised.
+
+        `--config-space` WITH `--agent-knobs` is what SKILL.md section 7 runs
+        at the close, and SKILL.md:372 says every guided run that found an
+        agent does this read. On that route the search-space half of the read
+        is dropped - a document decides the space outright - and the build half
+        survives. `agent_source_read` was derived from `discovery_supplied`,
+        which is False there, so the card said the agent had never been read
+        directly above four rows quoting its source
+        (traigent-first-run#490).
+
+        Both directions, because the line's whole job is telling them apart: a
+        config-space document with no read must still say no read, and that is
+        the case the field was added for.
+        """
+        source = "MODEL = ['a']\ndef selected(q):\n    return q\n"
+        build = {
+            check: {"evidence": "read", "source_lines": [3]}
+            for check in MODULE.BUILD_CHECK_ANSWER
+        }
+        build["prompt"]["present"] = False
+        build["output-contract"]["present"] = False
+        build["control-flow"]["loop"] = False
+        build["tools"]["used"] = False
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "agent.py").write_text(source)
+            read = MODULE.agent_facts_from_discovery(
+                {"source": "agent.py", "knobs": {}, "build": build},
+                source_root=root,
+                selected_agent=root / "agent.py",
+                selected_agent_callable="selected",
+            )
+        document = MODULE.agent_facts_from_config_space({"knobs": {"model": ["a"]}})
+        # Exactly what the CLI assembles on that branch: the document, wearing
+        # the build half of the read.
+        combined = replace(document, build=read.build)
+
+        with self.subTest(route="config-space beside a read"):
+            score = MODULE.score_run(
+                MODULE.DatasetFacts(),
+                MODULE.EvaluationFacts(),
+                combined,
+                dict(MODULE.DEFAULT_WEIGHTS),
+            )
+            self.assertTrue(score.agent_source_read)
+            line = next(
+                row
+                for row in MODULE.render_card(score, unicode_ok=False).splitlines()
+                if row.strip().startswith("AGENT")
+            )
+            self.assertIn("agent source read", line)
+            self.assertNotIn("no agent source read", line)
+
+        with self.subTest(route="config-space alone"):
+            alone = MODULE.score_run(
+                MODULE.DatasetFacts(),
+                MODULE.EvaluationFacts(),
+                document,
+                dict(MODULE.DEFAULT_WEIGHTS),
+            )
+            self.assertFalse(alone.agent_source_read)
+            line = next(
+                row
+                for row in MODULE.render_card(alone, unicode_ok=False).splitlines()
+                if row.strip().startswith("AGENT")
+            )
+            self.assertIn("no agent source read", line)
+
+        # The flag may not move a number, and the two routes differ in their
+        # search space, so the comparison that means anything is against the
+        # SAME facts with the flag forced the other way -
+        # `test_the_read_state_moves_no_number` below owns it over every
+        # pillar. Asserted here only that this route did not acquire a cap.
+        self.assertEqual(
+            [cap.condition for cap in score.caps],
+            [cap.condition for cap in alone.caps],
+        )
+
     def test_the_read_state_moves_no_number(self) -> None:
         """The false-red direction, and the whole constraint on this change.
 
@@ -21293,9 +21386,9 @@ class TheBuildHalfCitesTheAgentItReadTests(unittest.TestCase):
         with self.subTest(check="control-flow", kind="settled"):
             # The SCOPE, not a bare "checked". A clause saying the source was
             # checked and nothing was found reads as corroboration, and it is
-            # strongest exactly where the derivation is blindest: neither
-            # derivation leaves the callable's own body, so an agent that
-            # delegates its loop to a helper passes both and may never return.
+            # strongest exactly where the derivation is blindest: this one
+            # never leaves the callable's own body, so an agent that delegates
+            # its loop to a helper passes it and may never return.
             self.assertIn(
                 "no contradicting loop in the selected function's own body",
                 rows["control-flow"],
@@ -21311,22 +21404,143 @@ class TheBuildHalfCitesTheAgentItReadTests(unittest.TestCase):
         # and so still says whose that is - asserted in
         # `test_the_no_tools_arm_says_whose_sentence_it_is`. The applicable
         # case below is the one that has a scope to state.
-        used = self._score_source(
-            "MODEL = ['a']\nTOOLS = ['search']\ndef selected(q):\n    return q\n",
-            {
-                "control-flow": {"loop": False, "bounded": True},
-                "tools": {"used": True, "declared": ["search"], "unreachable": []},
-            },
+        # ALL THREE control-flow arms, because the check runs a DIFFERENT
+        # derivation on each answered arm and none at all on the third. The
+        # scope used to be keyed by the check name, so every arm printed
+        # whichever reach the `loop: false` arm had established - and a
+        # declared, bounded loop was introduced by a clause announcing "no
+        # contradicting loop", over a callable containing `while True:`.
+        looping = (
+            "MODEL = ['a']\ndef selected(q):\n    out = None\n"
+            "    while True:\n        out = call(q)\n        if out:\n"
+            "            break\n    return out\n"
         )
-        marked = {
-            signal.name: signal.evidence
-            for signal in MODULE.build_declarations_are_unmeasured(used.build)
-        }
-        with self.subTest(check="tools", kind="settled"):
-            self.assertIn("appears in the selected file", marked["tools"])
-            self.assertIn(
-                "does not establish that any of them is reachable", marked["tools"]
+        for kind, answer, expected in (
+            (
+                "bounded",
+                {"loop": True, "bounded": True},
+                "nothing in the selected function's own body matched the "
+                "unbounded-loop shapes this read knows, which does not "
+                "establish that it ends",
+            ),
+            ("unbounded", {"loop": True, "bounded": False}, None),
+        ):
+            facts_arm = self._score_source(looping, {"control-flow": answer})
+            row = {
+                signal.name: signal.evidence
+                for signal in MODULE.build_declarations_are_unmeasured(facts_arm.build)
+            }["control-flow"]
+            with self.subTest(check="control-flow", kind=kind):
+                if expected is None:
+                    # No derivation runs on this arm, so there is no reach to
+                    # state. Silence here is the honest answer; the assistant's
+                    # sentence still says whose it is.
+                    self.assertNotIn("Assistant observation (", row)
+                    self.assertIn(MODULE.UNCHECKED_OBSERVATION.strip(), row)
+                else:
+                    self.assertIn(expected, row)
+                # The other arm's reach may never appear on this one.
+                self.assertNotIn("no contradicting loop", row)
+
+        # THE DELEGATION CASE, which is the one this clause got wrong and the
+        # one CI could not see. `derived_unbounded_while` REFUTES: it raises
+        # where it finds a literal-true `while` in the callable's own body with
+        # no uncaptured exit, and finding nothing establishes nothing - its own
+        # docstring says so. An earlier sentence here read "the loop in the
+        # selected function's own body has a way out of it", a positive
+        # existential claim over a refute-only walk.
+        #
+        # So: a callable holding NO loop at all, delegating to a helper whose
+        # body is `while True: pass`, honestly declared `loop: true,
+        # bounded: true` - which is the shape this module designs for and names
+        # at `derived_control_flow_loop`. The card told that customer their
+        # loop had a way out, over an agent that provably never returns.
+        delegating = (
+            "MODEL = ['a']\ndef spin(q):\n    while True:\n        pass\n"
+            "def selected(q):\n    return spin(q)\n"
+        )
+        # THE SHAPES THIS READ DOES NOT KNOW, which is what makes these
+        # assertions discriminating. The delegating fixture alone could not:
+        # the clause is a constant selected by (loop, bounded, source), so
+        # nothing about delegation participates in choosing it, and the
+        # subTest reds only when its sibling does.
+        #
+        # `while not False` is the sharp one. It is constant-true, it is
+        # DIRECTLY in the selected function's own body - no delegation, no
+        # nesting - and `derived_unbounded_while` does not refuse it, which
+        # this module's own docstring records. Any sentence claiming there is
+        # no unbounded loop here is false about four lines of Python.
+        looping_unrefused = (
+            "MODEL = ['a']\ndef selected(q):\n    while not False:\n"
+            "        pass\n    return q\n"
+        )
+        for kind, source in (
+            ("delegated", delegating),
+            ("constant-true-condition", looping_unrefused),
+        ):
+            arm = self._score_source(
+                source, {"control-flow": {"loop": True, "bounded": True}}
             )
+            said = {
+                signal.name: signal.evidence
+                for signal in MODULE.build_declarations_are_unmeasured(arm.build)
+            }["control-flow"]
+            with self.subTest(check="control-flow", kind=kind):
+                # What the read DID, and the limit in the same clause.
+                self.assertIn("matched the unbounded-loop shapes this read knows", said)
+                self.assertIn("does not establish that it ends", said)
+                # Neither existential claim a refutation cannot support.
+                self.assertNotIn("has a way out of it", said)
+                self.assertNotIn("the way out is taken", said)
+                self.assertNotIn("no unbounded loop", said)
+
+        # BOTH tool arms, because the clause has to survive the arm that
+        # refutes as well as the arm that credits. The source above declares
+        # `TOOLS` at module level and never names it inside `selected`, so
+        # `search` is NOT reached - the fixture reads like the crediting case
+        # and is the refuting one, which is exactly where the clause has to be
+        # read carefully.
+        for kind, source in (
+            (
+                "unreached",
+                "MODEL = ['a']\nTOOLS = ['search']\ndef selected(q):\n"
+                "    return q\n",
+            ),
+            (
+                "reached",
+                "MODEL = ['a']\nTOOLS = ['search']\ndef selected(q):\n"
+                "    return TOOLS[0] + q\n",
+            ),
+        ):
+            used = self._score_source(
+                source,
+                {
+                    "control-flow": {"loop": False, "bounded": True},
+                    "tools": {"used": True, "declared": ["search"], "unreachable": []},
+                },
+            )
+            marked = {
+                signal.name: signal.evidence
+                for signal in MODULE.build_declarations_are_unmeasured(used.build)
+            }
+            with self.subTest(check="tools", kind=kind):
+                self.assertIn("was traced from the selected callable", marked["tools"])
+                self.assertIn("one hop through the module", marked["tools"])
+                # What the walk still cannot settle. It settles reachability -
+                # saying otherwise made the clause deny the very finding it
+                # introduces (traigent-first-run#484 changed the rule and this
+                # sentence kept the old one).
+                self.assertIn(
+                    "does not establish that any of them is a tool", marked["tools"]
+                )
+                self.assertNotIn("is reachable", marked["tools"])
+            # And the two arms really are the two arms, so the assertions above
+            # are not both taken over the same behaviour.
+            with self.subTest(check="tools", kind=kind, part="arm"):
+                if kind == "unreached":
+                    self.assertIn("were not found behind the name", marked["tools"])
+                else:
+                    self.assertIn("each reachable", marked["tools"])
 
     def test_a_tool_the_source_never_mentions_is_refused(self) -> None:
         """The same move for `tools`, and only in the refuting direction.
