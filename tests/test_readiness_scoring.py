@@ -21311,6 +21311,42 @@ class TheBuildHalfCitesTheAgentItReadTests(unittest.TestCase):
         # and so still says whose that is - asserted in
         # `test_the_no_tools_arm_says_whose_sentence_it_is`. The applicable
         # case below is the one that has a scope to state.
+        # ALL THREE control-flow arms, because the check runs a DIFFERENT
+        # derivation on each answered arm and none at all on the third. The
+        # scope used to be keyed by the check name, so every arm printed
+        # whichever reach the `loop: false` arm had established - and a
+        # declared, bounded loop was introduced by a clause announcing "no
+        # contradicting loop", over a callable containing `while True:`.
+        looping = (
+            "MODEL = ['a']\ndef selected(q):\n    out = None\n"
+            "    while True:\n        out = call(q)\n        if out:\n"
+            "            break\n    return out\n"
+        )
+        for kind, answer, expected in (
+            (
+                "bounded",
+                {"loop": True, "bounded": True},
+                "has a way out of it, which does not establish that the way out is taken",
+            ),
+            ("unbounded", {"loop": True, "bounded": False}, None),
+        ):
+            facts_arm = self._score_source(looping, {"control-flow": answer})
+            row = {
+                signal.name: signal.evidence
+                for signal in MODULE.build_declarations_are_unmeasured(facts_arm.build)
+            }["control-flow"]
+            with self.subTest(check="control-flow", kind=kind):
+                if expected is None:
+                    # No derivation runs on this arm, so there is no reach to
+                    # state. Silence here is the honest answer; the assistant's
+                    # sentence still says whose it is.
+                    self.assertNotIn("Assistant observation (", row)
+                    self.assertIn(MODULE.UNCHECKED_OBSERVATION.strip(), row)
+                else:
+                    self.assertIn(expected, row)
+                # The other arm's reach may never appear on this one.
+                self.assertNotIn("no contradicting loop", row)
+
         # BOTH tool arms, because the clause has to survive the arm that
         # refutes as well as the arm that credits. The source above declares
         # `TOOLS` at module level and never names it inside `selected`, so
