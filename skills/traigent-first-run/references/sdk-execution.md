@@ -195,16 +195,17 @@ card shows the selected three and why they fit.
 | `thinking_shape` | `direct`, `chain_of_thought` | default slot; answers need derivation, not recall |
 | `reflect` | off, on | default slot; answers are nearly right and need one revision |
 | `few_shot_count` | two counts within 0-10 | the task has a house format worked examples would teach |
-| `retrieval_k` | two counts within 1-5 | not part of this first-run paid space; retrieval is indirect and needs separately contained tracing |
+| `retrieval_k` - not eligible | two counts within 1-5 | retrieved context is the lever, in a space contained enough to trace it |
 | `context_format` | two layouts | retrieved or structured context is pasted in raw |
-| `tool_policy` | two policies | not part of this first-run paid space; tool behavior is indirect and needs separately contained tracing |
+| `tool_policy` - not eligible | two policies | tool behavior is the lever, in a space contained enough to trace it |
 | `temperature` | the customer's own values | only when preserving a customer-owned sweep - see below |
 
 This first run includes only direct request parameters: values this finalized wrapper passes to
 its single model request and whose distinct values produce distinct dicts for every selected model
 and tuning input. Source inspection does not
-prove the customer's original agent varies. Retrieval, tool, repair, and multi-call controls -
-including task decomposition and self-consistency - are indirect even when changing one also changes
+prove the customer's original agent varies. Retrieval, tool, repair, and multi-call controls - `retrieval_k`
+and `tool_policy` above, task decomposition, self-consistency - are indirect even when
+changing one also changes
 an outer request dict; they require separately contained tracing and are excluded from this paid space.
 
 For an assistant-prepared walkthrough, temperature is one task-selected fixed value, not a search
