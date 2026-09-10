@@ -1237,6 +1237,39 @@ COMPLETE_CALIBRATION = "complete-calibration"
 # both states would say - and the score would then be the only party in the
 # package arguing for the unsafe route.
 REVIEW_EVALUATOR_CONTAINMENT = "review-evaluator-containment"
+# AND THE REVERSAL, recorded here because this is where the old decision is.
+#
+# The paragraph above is still true about the SLUG and is now wrong about the
+# outcome. `REVIEW_EVALUATOR_CONTAINMENT` named a containment review this guide
+# does not run and a customer cannot start from the card, and it rode on a cap
+# that BLOCKED the paid run at 45/100 under `FIX BEFORE PAID RUN`. Both halves
+# of that sentence were false: there is no fix, because we declined to make the
+# check, and the 45 measured OUR boundary printed on their report as if it were
+# their score.
+#
+# The standing rule this now follows is stated in `references/run-safety.md`:
+# a first run does not stop a legitimate customer from onboarding, and where a
+# customer's own data makes a check unsafe for US to perform they get full
+# knowledge of what was not checked and what proceeding means, and then they
+# proceed. Disclosure, not a gate. Deduct for what the customer controls; never
+# for what we do not own.
+#
+# This REVERSES the blocking half of traigent-first-run#393, which landed
+# `blocks=True` here. It is a reversal rather than a correction and is written
+# down as one: #393 was right that the forbidden remedy must not be handed to
+# the project it is forbidden for, and that half stands. What it also did was
+# convert "we will not run this" into "you may not proceed", and nothing had
+# written down that a first run may not do that. #392 closes as out of scope on
+# the same reasoning - no sandbox, no disposable schema, no parser tier - and
+# the block goes with it.
+#
+# The one thing the customer can usefully answer is not a fix either; it is a
+# fact only they hold, and it settles the whole hazard in a line. A read-only
+# connection means the engine itself refuses a destructive statement, so the
+# risk is gone without any containment this repository would have to own.
+# Asking is optional and silence proceeds (traigent-first-run#449's decision:
+# "if no need to stop, no need, i want it seamless").
+CONFIRM_EVALUATOR_CONNECTION = "confirm-evaluator-connection"
 ACTION_FOR_CONDITION: dict[str, str] = {
     "dataset-absent": "get-data",
     # A file was named and no row in it matched the shape preflight read it
@@ -1361,7 +1394,7 @@ ACTION_FOR_CONDITION: dict[str, str] = {
     # The same absent evidence, reached by obeying a rule rather than by
     # skipping a step, and it needs its own remedy for that reason alone. See
     # `REVIEW_EVALUATOR_CONTAINMENT`.
-    "evaluator-calibration-refused": REVIEW_EVALUATOR_CONTAINMENT,
+    "evaluator-calibration-refused": CONFIRM_EVALUATOR_CONNECTION,
     "evaluator-timeout": "bound-evaluator-cost",
     "agent-no-varying-knobs": "vary-knobs",
     # The third pillar's own absence, and the remedy it could not reach before.
@@ -1634,7 +1667,12 @@ ROUTE_CATEGORY: dict[str, str] = {
     # against their own database - rather than a change to it. Telling someone
     # whose evaluator is fine to repair it is exactly the defect the third
     # category exists to remove.
-    "evaluator-calibration-refused": DIAGNOSTIC,
+    # CLAIM_SCOPING, not DIAGNOSTIC, and the change of category is the change
+    # of meaning. Nothing here diagnoses anything about the customer's
+    # evaluator - the run declined to look at it. What the cap does is bound
+    # what this card may claim, which is the same thing `evaluator-unvalidated`
+    # does one entry up and for the same reason.
+    "evaluator-calibration-refused": CLAIM_SCOPING,
     "evaluator-timeout": CREATION_OR_REPAIR,
     # Conditional, and classified the same way `dataset-below-measurable-size`
     # above already is: by what the result IS, not by whether the run waits.
@@ -7757,39 +7795,67 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
                 # the task - and it is what the band is reporting; what
                 # changed is that it no longer arrives as the whole message.
                 declared + body + " That is a limit of this run and not a "
-                "judgement of your evaluator, which may well be sound. You can "
-                "establish that yourself, outside this guide, by running it "
-                "where it already runs, on answers you already know are "
-                "right and wrong, and confirming it separates them; the "
-                "containment review is where the boundary for doing that here "
-                "gets designed. Until "
-                "some run makes that check, no card can claim this evaluator "
-                "grades correctly, which is what the ceiling reports.",
-                # BLOCKS, because the guide has already stopped
-                # (traigent-first-run#393). `references/run-safety.md` ends the
-                # run for this shape before calibration, credentials, provider
-                # calls and paid work; the card used to answer OK and say the
-                # paid run may start, so the two documents a customer follows
-                # disagreed about a state they arrive in by following them. The
-                # card blocking does not create that cost - it records it, and
-                # refusing to record it is what made the artifact lie.
+                "judgement of your evaluator, which may well be sound - there "
+                "is nothing here for you to fix, because the check is one this "
+                "guide declined to make. Your first run continues. What "
+                "proceeding means, plainly: during the paid run the MODEL "
+                "writes the statements and your evaluator executes them "
+                "against whatever it is configured to reach, many times over. "
+                "The statements are generated, not yours, so your trust in "
+                "your own code is not the trust being asked for. If your "
+                "evaluator connects read-only, the engine itself refuses a "
+                "destructive statement and that hazard is gone - say so and "
+                "this card records it. Until some run measures this evaluator "
+                "against answers already known to be right and wrong, no card "
+                "can claim it grades correctly, which is what the ceiling "
+                "reports.",
+                # DOES NOT BLOCK, and this REVERSES the half of
+                # traigent-first-run#393 that set `blocks=True` here. Written
+                # down as a reversal rather than edited away: a repository that
+                # quietly inverts its own decisions stops being able to trust
+                # its records.
                 #
-                # On BOTH arms, declared and witnessed. An earlier draft split
-                # them, blocking only where the walk saw the engine, so that
-                # declaring a refusal stayed cheap. It was withdrawn twice
-                # over: nobody falsely declares their own evaluator dangerous,
-                # so there is nothing to game, and the honest run has already
-                # stopped by mandate whether or not this card says so. The run
-                # that declares nothing and calibrates anyway is uncovered
-                # either way, is `calibrate_evaluator.py`'s refusal to catch
-                # where it can, and is not made worse here.
-                blocks=True,
-                # And it no longer ASKS. `asks` exists for the run that
-                # proceeds and still owes the user an answer first; a blocking
-                # condition already routes its remedy through
-                # `recommended_action`, so setting both would say the run
-                # carries on and does not in one payload.
-                asks=False,
+                # What #393 argued was that `references/run-safety.md` ends the
+                # run for this shape, so a card answering OK made the two
+                # documents a customer follows disagree. THE PREMISE IS WHAT
+                # CHANGED. run-safety no longer ends the run for this shape; it
+                # discloses and continues, under the standing rule it now
+                # states - a first run does not stop a legitimate customer from
+                # onboarding, and where their own data makes a check unsafe for
+                # US to perform they get full knowledge of what was not checked
+                # and what proceeding means, and then they proceed. So the two
+                # documents agree again, at the other value.
+                #
+                # `FIX BEFORE PAID RUN` at 45/100 was false twice over. There
+                # is no fix - nothing the customer changes about their
+                # evaluator alters the outcome, because the outcome is our
+                # decision not to look. And the 45 measured OUR boundary while
+                # printing on THEIR report as their score. Same class as the
+                # shipped sentences #487, #488, #490 and #492 correct: a card
+                # saying something the code does not do.
+                #
+                # THE CEILING STAYS, and that distinction is the design. A
+                # ceiling bounds what this CARD MAY CLAIM, which is honest -
+                # nothing established that this evaluator ranks the task. A
+                # block bounds what the CUSTOMER MAY DO, which is ours to
+                # justify and we cannot. `evaluator-unvalidated` one condition
+                # up has carried exactly this shape all along - same ceiling,
+                # `blocks=False`, `asks=True` - so this is the precedent rather
+                # than an exception to it.
+                blocks=False,
+                # And it ASKS, on the one question that is genuinely theirs.
+                # Not a fix and not a check they owe: whether the evaluator
+                # connects read-only is a fact only they hold, and it settles
+                # the hazard outright, because a read-only engine refuses a
+                # destructive statement by itself - no containment this
+                # repository would have to own. `asks` is what puts it in
+                # `recommended_action` for a run that PROCEEDS, which is the
+                # state this cap now describes and did not before.
+                #
+                # Silence proceeds. The disclosure above has already done its
+                # work, and traigent-first-run#449's decision governs the rest:
+                # "if no need to stop, no need, i want it seamless".
+                asks=True,
             )
         )
     return combine("evaluation", subs), caps

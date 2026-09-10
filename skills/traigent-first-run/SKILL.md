@@ -143,7 +143,7 @@ approval.
 | Create or update a minimal `.env` | Proceed only after free checks, and only through `references/run-safety.md`'s ordered handoff, which selects the file. Preserve existing values and comments, append only its missing provider key, and require mode `0600` before opening. Before writing, run that reference's git-tracked-file safety check and its ignore verification; it owns the exact commands and exit-code handling, and stop before secret entry if either check fails. Outside Git, do not create `.gitignore`. Never copy or request a duplicate key. Add or request the Traigent key only after the baseline checkpoint. |
 | Repair a working copy after the user chooses repair | Proceed only within the agreed repair scope, then revalidate as section 4's post-repair rule states. |
 | Change real labels, expected answers, examples, or rubric policy | Show the exact judgment-dependent change and obtain explicit approval. |
-| Execute an evaluator or mock check | Proceed without provider approval only after inspection proves a non-executing evaluator path is local-only or every mock model call is intercepted, with no external side effects. A path that executes or imports candidate output as code, shells out with it, or submits it to a code/SQL engine is outside this first-run guide; what is outside is that path, never the task whose answer is code or SQL: stop before execution and follow `run-safety.md`'s manual-containment route. |
+| Execute an evaluator or mock check | Proceed without provider approval only after inspection proves a non-executing evaluator path is local-only or every mock model call is intercepted, with no external side effects. A path that executes or imports candidate output as code, shells out with it, or submits it to a code/SQL engine is one this guide will not run on its own initiative; what is out of scope is that path, never the task whose answer is code or SQL, and never the customer's onboarding: skip that execution, disclose it per `run-safety.md`, and continue. |
 | Make provider, private-data, connected Traigent, or external calls other than the narrow dependency fetch | Obtain stage-specific approval for recipients/data, scope, runtime, and ceiling: baseline first; connected optimization after its checkpoint. |
 | Perform destructive or production-affecting actions | Obtain separate explicit approval for the exact action. |
 
@@ -310,8 +310,8 @@ or executing path, or an LLM judge that needs paid approval. Missing calibration
 not a failed evaluator; the `evaluator-unvalidated` ceiling limits the readiness claim to 45 until
 the evaluation method is actually checked, and the card's recommended action names that outstanding
 calibration rather than reading `proceed`. Where the deferral is the evaluator-execution scope gate
-rather than a step this run could take, pass `--calibration-scope-refused` so the card asks for the
-containment review instead of for the calibration the gate forbids; it moves no number, and it is
+rather than a step this run could take, pass `--calibration-scope-refused` so the card discloses the
+unmade check instead of asking for the calibration the gate forbids; it moves no number, and it is
 the only route where preflight finds no engine. `calibrate_evaluator.py` refuses such an
 evaluator itself, naming the file and line, and `references/run-safety.md` records why no
 in-process route replaces it. Apply the run-scoped evaluator-method rule above to both
@@ -627,11 +627,10 @@ Follow this order:
    `--evaluator-method` value to this preflight and the paired readiness invocation in step 5 (or
    omit it from both when no method exists). This heuristic check does not assert SDK compatibility.
 4. Before calibration, apply `references/run-safety.md`'s execution-evaluator scope gate. If the
-   resolved evaluator call path identifies code/SQL execution, record the `containment` stop and
-   end this guide before calibration, environment setup, credentials, provider calls, or paid work.
-   What the stop is about at this step is the database such a scorer opens, not the probes it runs,
-   which are the ones your matrix authored; the trial where the model writes the query stays closed
-   either way.
+   resolved evaluator call path identifies code/SQL execution, record the `containment` event, skip
+   calibration, and continue the run on the disclosure that reference sets out - the run does not
+   end. What is refused at this step is the database such a scorer opens on our initiative, not the
+   probes it runs, which are the ones your matrix authored.
    Otherwise, run deterministic calibration only after a `sufficient`
    semantic-coverage verdict. Its path must be fully inspected, must not execute
    candidate-generated code or SQL, and must be local-only and
@@ -775,11 +774,12 @@ component on purpose, the run continues, and what the ceiling refuses is the cla
 when that gate establishes eligibility, or keep the ceiling and name the concrete deferral. It is
 an evidence boundary, not a repair finding.
 `evaluator-calibration-refused` is that same evidence boundary reached by the scope gate rather than
-by a step nobody took, and it blocks where `evaluator-unvalidated` does not: the scope gate ends this
-run, so the card records the stop rather than reporting that the paid run may start. It routes to the
-manual-containment route in `references/run-safety.md`, never to running the check here. Say that the
-ceiling is about missing evidence and not a finding against their evaluator, and never present the
-unsafe route as the way to lift it.
+by a step nobody took, and like `evaluator-unvalidated` it does not block: the run proceeds on the
+disclosure `references/run-safety.md` sets out, and the ceiling bounds what the card may claim rather
+than what the customer may do. Its one ask is whether their evaluator connects read-only, folded into
+the run's single ask and never a stop of its own; silence proceeds. Say that the ceiling is about
+missing evidence and not a finding against their evaluator, that there is nothing for them to fix
+because the unmade check is ours, and never present the unsafe route as the way to lift it.
 `evaluator-timeout` is neither a repair to route nor the invalid-evaluator
 paragraph: calibration ran and did not finish, which establishes nothing about this evaluator and
 does not make it invalid - slow and broken look identical from here. Settle it while gaps are still

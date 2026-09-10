@@ -4,6 +4,7 @@ Use this reference for setup, dry-run, paid execution, portal verification, reco
 
 ## Contents
 
+0. The standing rule
 1. Environment and privacy
 2. Static and mock validation
 3. Approval and budgets
@@ -11,6 +12,24 @@ Use this reference for setup, dry-run, paid execution, portal verification, reco
 5. Baseline and optimization
 6. Post-run verification
 7. Recovery
+
+## The standing rule
+
+**A first run does not stop a legitimate customer from onboarding. Ever.**
+
+Where a customer's own data or code makes a check genuinely unsafe for **us** to perform, they get
+full knowledge of what was not checked and what proceeding means - and then they proceed.
+Disclosure, not a gate.
+
+**Corollary: deduct for what the customer controls; never deduct for what we do not own.** A check
+this guide declined to make is our boundary, not their defect, and it is never printed as their
+failure. A ceiling that bounds what this card may *claim* is honest, because it describes evidence
+we do not have. A block that bounds what the customer may *do* is ours to justify, and a boundary we
+chose does not justify it.
+
+This is stated here, ahead of every gate below, because it is the rule each of them inherits. It was
+not written down once, and a cap shipped that told a customer `FIX BEFORE PAID RUN` for a check
+nothing they could change would ever satisfy.
 
 ## Environment and privacy
 
@@ -281,14 +300,33 @@ is code or SQL stays in scope, graded by the comparison `references/evaluation-a
 selects for it. A virtual environment, stripped credentials, an ordinary subprocess, a timeout, or
 mock flags do not make that execution safe.
 
-When the resolved evaluator call path is an executing one, preserve the project, run only
-read-only static inspection that does not import or execute it, record a `stopped` `containment`
-event, and end this guide before calibration, environment setup, credentials, provider calls, or
-paid work.
-The next step is a separate manual containment design and review outside this guide; it must decide
-the execution boundary, mounted inputs, credentials, network, limits, cleanup, and SQL data scope.
-Do not describe that manual work as available through this guide or imply that a local subprocess
-fulfils it.
+When the resolved evaluator call path is an executing one, preserve the project, run only read-only
+static inspection that does not import or execute it, record a `containment` event, and **do not
+calibrate**. What this guide declines is running the customer's scorer against the customer's engine
+on our initiative. It is not their onboarding.
+
+**The run continues, on full disclosure.** Under the standing rule at the top of this file, tell them
+in their own words, and do not soften any of it:
+
+- **what was not checked** - their evaluator, against their engine;
+- **that the reason is our boundary, not their defect** - there is nothing for them to fix, and no
+  change to their evaluator alters the outcome;
+- **what proceeding concretely means** - during the paid run the *model* writes the statements and
+  their evaluator executes them against whatever it is configured to reach, many times over. The
+  statements are generated, not theirs, so their trust in their own code is not the trust being
+  asked for.
+
+Then ask one optional question, folded into the run's single ask and never as a stop of its own:
+**does the evaluator connect read-only?** That is the whole safety story in a line - a read-only
+engine refuses a destructive statement by itself, so the hazard is gone without any containment this
+guide would have to own. Record the answer. **Silence proceeds**, and a `no` proceeds too: the
+disclosure above has already done its work.
+
+A separate manual containment design and review remains available outside this guide, and it is the
+only route to the calibration evidence itself; it must decide the execution boundary, mounted
+inputs, credentials, network, limits, cleanup, and SQL data scope. Do not describe that manual work
+as available through this guide, imply that a local subprocess fulfils it, or present it as
+something the customer must complete before their first run.
 
 Two moments sit behind that stop and only one of them is about the model's output, so each is
 refused on its own reason rather than both on the stronger-sounding one. Calibration runs the four
@@ -299,8 +337,10 @@ do is import the scorer and let it open its engine against whatever database it 
 and that database is the project's. That is the reason calibration is refused outside the contained
 route: the target is unbounded, which is a containment question this guide declines to own rather
 than a claim about where the statements came from. A trial is the other moment - there the model
-writes the query and the scorer runs it - and nothing in this guide opens it, at any stage, under
-any flag.
+writes the query and the scorer runs it - and this guide neither opens it nor stands in front of it:
+it is the customer's own run against the customer's own engine, and the disclosure above is what
+makes it a decision they took rather than one taken for them. What this guide will not do is
+initiate that execution on its own account, which is the calibration step and stays refused.
 
 `scripts/calibrate_evaluator.py` now enforces this rule instead of relying on it being read. Before
 it imports anything, it asks the same walk `preflight.py` reports through `evaluator-shape` of every
@@ -319,18 +359,20 @@ An in-process envelope is not a route to that evidence: bounding Python from ins
 interpreter means bounding it against every extension module, every constructor and every native
 handle it can reach, and that surface has no edge. A boundary the operating system enforces is a
 different proposition, and it is one this guide deliberately does not own. So the manual
-containment design and review above is still the whole of the route, and a project whose evaluator
-runs the candidate's answer stops here with its calibration evidence uncollected.
+containment design and review above is still the whole of the route to that EVIDENCE, and a project
+whose evaluator runs the candidate's answer proceeds with its calibration evidence uncollected.
 
 That customer's card is a consequence of this decision rather than of their project. The evaluator
 check is not made, so it earns nothing and the probe spread is never measured, and `readiness.py`
-raises `evaluator-calibration-refused`, which blocks and limits the readiness claim to 45, so the
-card carries the stop this section has already made.
+raises `evaluator-calibration-refused`, which limits the readiness CLAIM to 45 and **does not block**
+- the ceiling says what this card may assert, and nothing here says what the customer may do. The
+card carries the disclosure this section makes, and the one question it asks.
 Whether the unmade check is also CHARGED depends on what preflight's walk found, and the card says which case a run is
 in: a walk that established the engine is not charged, and a run resting on the declaration alone
 is, because finding no engine settles nothing by the paragraph above. None of it follows from
-anything their evaluator did: the reason is the unbounded target above. The route out is the
-customer's own, stated on the card.
+anything their evaluator did: the reason is the unbounded target above. There is no route out to
+give them, and the card no longer pretends there is - the unmade check is ours, so nothing they do
+lifts the ceiling, and saying otherwise handed them an errand instead of a disclosure.
 
 ### A replay that changes the customer's world asks first
 

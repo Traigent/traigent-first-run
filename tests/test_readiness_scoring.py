@@ -7484,13 +7484,19 @@ _TIED_PAIRS_WITH_NO_WITNESS: dict[tuple[str, str], str] = {
         "reading of one function rather than a proof over every input, which "
         "is why this pair is recorded here instead of pinned."
     ),
-    ("evaluator-timeout", "evaluator-calibration-refused"): (
-        "`calibration_refusal_capped` yields to a timeout: it is the refusal "
-        "predicate AND `timed_out is not True`, so a run whose calibration "
-        "did not finish raises the timeout and never the refusal. The pair "
-        "arrived at this tie when the refusal began to block "
-        "(traigent-first-run#393) - before that the two sat in different "
-        "queues and the rank was settled before it was consulted."
+    ("evaluator-unvalidated", "evaluator-calibration-refused"): (
+        "`score_evaluation` guards the unvalidated branch with `and not "
+        "execution_scope_refused`, so the two read one predicate in opposite "
+        "directions and no payload can carry both - the same shape as the "
+        "absent/unresolved pair above, and the reason `CAP_SEVERITY_ORDER` "
+        "records about this pair in the module itself. "
+        "The pair arrived at this tie when the refusal STOPPED blocking: "
+        "un-blocking it moved it into the queue `evaluator-unvalidated` "
+        "already sat in, at the same ceiling, which is the precedent that "
+        "reversal was modelled on. The tie it replaces - timeout against "
+        "refused - is gone by the same move, because "
+        "`calibration_refusal_capped` yields to a timeout and the two sit in "
+        "different queues again."
     ),
 }
 
@@ -12580,7 +12586,7 @@ class ADeferredCalibrationSaysSoInTheFieldConsumersReadTests(unittest.TestCase):
         self.assertIn("evaluator-calibration-refused", conditions)
         self.assertNotIn("evaluator-unvalidated", conditions)
         self.assertEqual(
-            refused.recommended_action, MODULE.REVIEW_EVALUATOR_CONTAINMENT
+            refused.recommended_action, MODULE.CONFIRM_EVALUATOR_CONNECTION
         )
         self.assertNotEqual(refused.recommended_action, MODULE.COMPLETE_CALIBRATION)
         cap = next(c for c in refused.caps if c.condition.endswith("refused"))
@@ -12592,20 +12598,27 @@ class ADeferredCalibrationSaysSoInTheFieldConsumersReadTests(unittest.TestCase):
         # ceiling. `TheWitnessDecidesTheScopeGateNotTheDeclarationTests`
         # pins the whole four-part shape.
         self.assertIn("not a judgement of your evaluator", cap.reason)
-        self.assertIn("You can establish that yourself", cap.reason)
+        self.assertIn("nothing here for you to fix", cap.reason)
         self.assertNotIn("Complete calibration", cap.reason)
-        # It STOPS, which is where it parts company with the deferral it
-        # otherwise mirrors (traigent-first-run#393). `run-safety.md` ends the
-        # guide for this shape - "nothing in this guide opens it, at any stage,
-        # under any flag" - so a card answering OK described a run the
-        # guidance had already stopped, and the payload was the half that was
-        # understating.
-        self.assertTrue(cap.blocks)
-        # And it no longer asks: a blocking condition routes its remedy through
-        # `recommended_action`, which the assertion above already reads, so
-        # setting both would say the run carries on and does not at once.
-        self.assertFalse(cap.asks)
-        self.assertEqual(refused.status, "BLOCKED")
+        # IT DOES NOT STOP, and this is the reversal of the half of
+        # traigent-first-run#393 that this assertion used to pin.
+        #
+        # #393's argument was that `run-safety.md` ends the guide for this
+        # shape, so a card answering OK understated. run-safety no longer ends
+        # the run here: it discloses and continues, under the standing rule it
+        # now states at the top of the file - a first run does not stop a
+        # legitimate customer from onboarding, and a check we declined to make
+        # is our boundary rather than their defect. The two documents agree
+        # again, at the other value.
+        #
+        # `FIX BEFORE PAID RUN` at 45 was false twice: no change to their
+        # evaluator reaches the outcome, and the 45 measured our boundary under
+        # their project's name.
+        self.assertFalse(cap.blocks)
+        # And it ASKS, on the one question that is genuinely theirs to answer
+        # and settles the hazard outright.
+        self.assertTrue(cap.asks)
+        self.assertNotEqual(refused.status, "BLOCKED")
 
     def test_the_declaration_changes_the_ask_and_never_the_number(self) -> None:
         """An unverified declaration may bound a claim; it may not earn credit.
@@ -12978,7 +12991,7 @@ class TheWitnessDecidesTheScopeGateNotTheDeclarationTests(unittest.TestCase):
             ["evaluator-calibration-refused"],
         )
         self.assertEqual(
-            witnessed.recommended_action, MODULE.REVIEW_EVALUATOR_CONTAINMENT
+            witnessed.recommended_action, MODULE.CONFIRM_EVALUATOR_CONNECTION
         )
         self.assertEqual(
             witnessed.overall, MODULE.CAP_CEILING["evaluator-calibration-refused"]
@@ -13028,7 +13041,7 @@ class TheWitnessDecidesTheScopeGateNotTheDeclarationTests(unittest.TestCase):
         self.assertIn("evaluator-calibration-refused", conditions)
         self.assertNotIn("evaluator-unvalidated", conditions)
         self.assertEqual(
-            witnessed.recommended_action, MODULE.REVIEW_EVALUATOR_CONTAINMENT
+            witnessed.recommended_action, MODULE.CONFIRM_EVALUATOR_CONNECTION
         )
         self.assertNotEqual(witnessed.recommended_action, MODULE.COMPLETE_CALIBRATION)
         # The two routes into the state agree about the whole verdict - one
@@ -13118,7 +13131,17 @@ class TheWitnessDecidesTheScopeGateNotTheDeclarationTests(unittest.TestCase):
                     if c.condition == "evaluator-calibration-refused"
                 )
                 self.assertNotIn("complete calibration", cap.reason.casefold())
-                self.assertIn("containment review", cap.reason)
+                # And it no longer points at the containment review either.
+                # That was the route named when this cap BLOCKED and the
+                # customer needed somewhere to go; it is a process this guide
+                # does not run and cannot be started from the card, so under
+                # the standing rule in `references/run-safety.md` the cap
+                # discloses and the run proceeds instead of routing them into
+                # work they cannot begin. The route clause survives on the
+                # `evidence` line asserted above, which is where an arm that
+                # genuinely has one belongs.
+                self.assertNotIn("containment review", cap.reason)
+                self.assertIn("Your first run continues", cap.reason)
 
     def test_the_run_that_calibrated_anyway_is_told_which_run_it_was(self) -> None:
         """Two runs did different things and only one of them did nothing wrong.
@@ -13196,7 +13219,7 @@ class TheWitnessDecidesTheScopeGateNotTheDeclarationTests(unittest.TestCase):
         self.assertIn(
             "evaluator-calibration-refused", [cap.condition for cap in score.caps]
         )
-        self.assertEqual(score.recommended_action, MODULE.REVIEW_EVALUATOR_CONTAINMENT)
+        self.assertEqual(score.recommended_action, MODULE.CONFIRM_EVALUATOR_CONNECTION)
         self.assertEqual(
             score.overall, MODULE.CAP_CEILING["evaluator-calibration-refused"]
         )
@@ -13324,29 +13347,38 @@ class TheWitnessDecidesTheScopeGateNotTheDeclarationTests(unittest.TestCase):
                 # Not a verdict on their work.
                 self.assertIn("not a judgement of your evaluator", cap.reason)
                 self.assertIn("may well be sound", cap.reason)
-                # The route forward, performable by them, outside this guide
-                # - which means it may not name a database an evaluator that
-                # only shells out does not have.
-                self.assertIn("You can establish that yourself", cap.reason)
-                self.assertIn("where it already runs", cap.reason)
+                # THERE IS NO ROUTE FORWARD, and saying there was one was the
+                # defect. The card used to hand them "You can establish that
+                # yourself, outside this guide" - a task, for a check nothing
+                # they do reaches, because the unmade check is OURS. The
+                # standing rule in `references/run-safety.md` says the run
+                # proceeds and the customer is told what was not checked, so
+                # the sentence that replaces it is a disclosure, not an
+                # errand.
+                self.assertIn("nothing here for you to fix", cap.reason)
+                self.assertIn("Your first run continues", cap.reason)
+                self.assertNotIn("You can establish that yourself", cap.reason)
                 self.assertNotIn("against your own database", cap.reason)
-                self.assertIn(
-                    "answers you already know are right and wrong", cap.reason
-                )
+                # And it says what proceeding actually means, unsoftened. The
+                # trust being asked for is not trust in their own code.
+                self.assertIn("the MODEL writes the statements", cap.reason)
+                self.assertIn("many times over", cap.reason)
+                self.assertIn("generated, not yours", cap.reason)
+                # The one question that is genuinely theirs, and settles it.
+                self.assertIn("connects read-only", cap.reason)
                 # The fixture convention is a tester's phrase and the owner
                 # has flagged it twice; the card uses the calibration check's
                 # own display vocabulary instead.
                 self.assertNotIn("known-good", cap.reason)
-                # And the ceiling still says what it is reporting.
-                self.assertIn(
-                    "no card can claim this evaluator grades correctly", cap.reason
-                )
-                # The route the customer can take is not replaced by the one
-                # they cannot start themselves.
-                self.assertLess(
-                    cap.reason.index("You can establish that yourself"),
-                    cap.reason.index("containment review"),
-                )
+                # And the ceiling still says what it is reporting - a bound on
+                # the CLAIM, which survives the reversal untouched because it
+                # describes evidence we do not have rather than anything the
+                # customer may or may not do.
+                self.assertIn("no card can claim it grades correctly", cap.reason)
+                # The containment review is no longer named to the customer at
+                # all: it is a process this guide does not run and they cannot
+                # start from the card.
+                self.assertNotIn("containment review", cap.reason)
 
         # And the run that CALIBRATED anyway is told its own plain fact, not
         # this one: "this run did not execute your evaluator" is false of it.
@@ -13375,9 +13407,11 @@ class TheWitnessDecidesTheScopeGateNotTheDeclarationTests(unittest.TestCase):
         )
         for shared in (
             "not a judgement of your evaluator",
-            "You can establish that yourself",
-            "answers you already know are right and wrong",
-            "no card can claim this evaluator grades correctly",
+            "nothing here for you to fix",
+            "Your first run continues",
+            "the MODEL writes the statements",
+            "connects read-only",
+            "no card can claim it grades correctly",
         ):
             with self.subTest(shared=shared):
                 self.assertIn(shared, taken)
@@ -13422,7 +13456,7 @@ class TheWitnessDecidesTheScopeGateNotTheDeclarationTests(unittest.TestCase):
         )
         self.assertEqual(witnessed.band, "PARTIAL")
         self.assertEqual(
-            witnessed.recommended_action, MODULE.REVIEW_EVALUATOR_CONTAINMENT
+            witnessed.recommended_action, MODULE.CONFIRM_EVALUATOR_CONNECTION
         )
 
     def test_only_evidence_retires_the_charge_never_the_declaration(self) -> None:
