@@ -28,11 +28,15 @@ we do not have. A block that bounds what the customer may *do* is ours to justif
 chose does not justify it.
 
 **What this does not touch**, because "ever" is doing real work above and the file defines hard stops
-below that are not in question. This rule is about a check WE declined to make. It does not lift a
-stop that protects the customer from an action THIS RUN would take on their behalf - secret entry,
-a tracked credential file, a modified ignore file, a replay that changes their world, or spending
-their money without approval. Each of those waits on something only they can give, and each is a
-stop they can clear. The rule bites where they cannot clear it, because the thing in the way is ours.
+below that are not in question. **The test is one sentence, and the list under it is examples rather
+than the set**: a stop the customer CAN clear is not this rule's business, whatever it is about. The
+rule bites only where they cannot clear it, because the thing in the way is ours.
+
+So it does not lift a stop waiting on something only they can give - among them secret entry, a key
+this run has not been handed, a tracked credential file, a modified ignore file, a dedicated
+environment, a replay that changes their world, spending their money without approval, or a
+readiness cap that blocks because a component is absent rather than because a check was declined.
+Read the sentence, not the list; a stop this list happens not to name is still theirs to clear.
 
 Stated here, ahead of every gate below, because it is the rule each of them is measured against.
 
@@ -656,11 +660,8 @@ Before the provider-paid baseline, show only its immediate scope:
   defaulting to `$5.00`. Call it an execution stop target, not a billing guarantee.
 - Recipients: baseline-data services; for OpenRouter, the gateway and allowed upstream/fallback routes.
 - Execution evaluators: the scope gate in `Static and mock validation` above skips their evaluator
-  check and the run continues, so this card DOES price them - and it is the moment their disclosure
-  has to be repeated, because it is the moment the money moves. Restate what was not checked, that
-  it is our boundary rather than their defect, and what the paid run will have their evaluator do
-  with model-written statements. Where they answered the connection question, say which answer this
-  spend is being approved on.
+  check and the run continues, so this card DOES price them. Their disclosure is carried by the
+  asking-cap bullet below, which owns it; nothing is restated here.
 
 ### The pre-spend approval card
 
@@ -706,6 +707,9 @@ exist and points at a file that was never created.
   the finding, the answer taken, and what proceeding on that answer means for the money about to be
   spent - do not put the question a second time in different words, with a different pair of exits.
   Where the cap's route owns no question of its own, this card is that one home and asks it here.
+  `evaluator-calibration-refused` is one of those: say what was not checked, that it is our boundary
+  rather than their defect, what the paid run will have their evaluator do with model-written
+  statements, and - where they answered - which connection answer this spend is approved on.
 - **Where we are.** `Stage 3/5 · Baseline`, so the choice arrives placed in the run rather than
   loose.
 - **Proceed, or fix.** Two lettered routes with the recommendation on one of them, in the shape

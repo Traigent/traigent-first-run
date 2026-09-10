@@ -9414,7 +9414,7 @@ class SkillPackageTests(unittest.TestCase):
             .split()
         )
         for phrase in (
-            "this card does price them - and it is the moment their disclosure",
+            "this card does price them. their disclosure is carried by the",
         ):
             with self.subTest(approval_phrase=phrase):
                 self.assertIn(phrase, approval)

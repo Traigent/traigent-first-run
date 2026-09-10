@@ -292,8 +292,9 @@ The lines under each pillar on the card
   from calibrating the evaluator - that happens later in the run, so at the
   opening score they have not been done yet. Neither is something you were
   supposed to bring, and the two are not charged alike. The first keeps its
-  weight and earns nothing, so it does hold the pillar under 100 until
-  calibration is done. The second is left out of the total altogether and
+  weight and earns nothing, so it does hold the pillar under 100 until some run
+  measures the evaluator - calibration, except where this guide declined to run
+  it, and then no run here makes that measurement and the ceiling stands. The second is left out of the total altogether and
   deducts nothing, which is why the card says so on the line itself.
 
   No settings document ever reaches an opening score. Every config-space file

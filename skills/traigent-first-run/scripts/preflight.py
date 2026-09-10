@@ -3159,8 +3159,8 @@ _ENGINE_CALL_NAMES: frozenset[str] = frozenset(
 # That is the same one-directional reading the module list is built on: the
 # cost of declining is a claim, and the cost of claiming wrongly is a customer
 # refused an evaluator that does what the guide asked for - which since the
-# calibration scope gate is a stop and a manual containment review, not a
-# smaller number.
+# calibration scope gate skips that check and lets the run carry on, costs
+# them the measurement rather than the run.
 #
 # WHAT IT GIVES UP, named rather than left to be found: a scorer that imports
 # nothing at all and submits candidate text through a connection handed in with

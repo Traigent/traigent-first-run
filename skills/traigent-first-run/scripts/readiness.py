@@ -7165,7 +7165,8 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
     # alone (traigent-first-run#392, #393, #394).
     #
     # `calibration_scope_refused` is the run's own declaration that SKILL.md's
-    # evaluator-execution scope gate stopped it. `executes_candidate is True`
+    # evaluator-execution scope gate skipped the calibration - the check, not
+    # the run, which carries on. `executes_candidate is True`
     # is preflight's WITNESS: the walk found a construct that establishes the
     # call path to a code or SQL engine, so the gate would refuse this
     # evaluator whether or not anybody typed the flag. A witness is positive

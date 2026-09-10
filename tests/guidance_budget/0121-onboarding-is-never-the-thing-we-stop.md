@@ -5,8 +5,8 @@ follows-resident-measured: 106_913
 follows-total-measured: 508_528
 resident-ceiling: 107_725
 resident-measured: 107_721
-total-ceiling: 513_801
-total-measured: 513_797
+total-ceiling: 514_235
+total-measured: 514_231
 
 Five kilobytes, most of it disclosure prose, and the reason is that a principle nobody had
 written down let a shipped cap tell a paying customer to fix something no change of theirs could
