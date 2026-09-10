@@ -10447,6 +10447,72 @@ class SkillPackageTests(unittest.TestCase):
             " ".join(catalog.split()),
         )
 
+    def test_no_choose_it_when_cell_answers_that_the_knob_may_not_be_chosen(
+        self,
+    ) -> None:
+        """The column reserved for "pick this one" may not say "never".
+
+        Two of the nine rows answered `Choose it when` by saying the knob is
+        not part of this paid space at all - the one instruction the column
+        exists to carry, written as its opposite. The heading already says
+        seven of nine are eligible, so the fact was present; it was present in
+        the HEADING and contradicted in the TABLE, and a table is the part of a
+        reference an assistant scans rather than reads.
+
+        Both exclusions are correct and neither is in question. Where they are
+        stated is. The eligibility marker rides in the `Knob` cell, and the
+        reason lives in the paragraph below the table that already excludes
+        `batch_size` and `max_tokens` in words (traigent-first-run#485).
+
+        Asserted over the third column rather than over the two known rows, so
+        a third exclusion written the same way is caught the first time rather
+        than after somebody reads the table closely.
+        """
+        text = SDK_EXECUTION.read_text()
+        catalog = text.split("### The knob catalog", 1)[1].split("###", 1)[0]
+        header = "| Knob | Values | Choose it when |"
+        table = catalog.split(header, 1)[1].split("\n\n", 1)[0]
+        rows = [
+            line
+            for line in table.splitlines()
+            if line.startswith("|") and not set(line) <= set("|- ")
+        ]
+        self.assertEqual(len(rows), 9, "the catalog no longer offers nine rows")
+        ineligible = 0
+        for row in rows:
+            cells = [cell.strip() for cell in row.strip().strip("|").split("|")]
+            self.assertEqual(len(cells), 3, row)
+            knob, _values, choose = cells
+            with self.subTest(knob=knob):
+                # A refusal in the choosing column, however phrased. Each of
+                # these is a way of answering "never" that the two rows used or
+                # that the next author might reach for.
+                for refusal in (
+                    "not part of",
+                    "never",
+                    "do not",
+                    "excluded",
+                    "not eligible",
+                ):
+                    self.assertNotIn(refusal, choose.casefold(), row)
+            if "not eligible" in knob:
+                ineligible += 1
+        self.assertEqual(
+            ineligible,
+            2,
+            "the heading promises seven eligible of nine; the markers must agree",
+        )
+        # And the reason has to survive the move, in the place the move sent it.
+        prose = catalog.split(header, 1)[1].split("\n\n", 1)[1]
+        self.assertIn("require separately contained tracing", prose)
+        # NAMED there, not merely alluded to. A marker whose reason cannot be
+        # found from the marker is a second puzzle rather than a fix, and the
+        # older test would not notice: it pins the nine names against the
+        # SECTION, so the table row alone satisfies it.
+        for knob in ("retrieval_k", "tool_policy"):
+            with self.subTest(knob=knob, part="reason"):
+                self.assertIn(f"`{knob}`", prose)
+
     def test_the_retired_prompt_control_is_absent_from_the_tracked_tree(self) -> None:
         """Removal is repository-wide, not only from the worked example."""
         forbidden = (
