@@ -1485,7 +1485,26 @@ TUNING_SPLIT_NAMES = frozenset({"tune", "tuning", "train", "search"})
 #: the reason its sibling above was: the split walk and the id digests below
 #: both have to agree on which rows this run reads, and a second literal set is
 #: a second answer to that question.
-HOLDOUT_SPLIT_NAMES = frozenset({"holdout", "test", "validation", "validate"})
+HOLDOUT_SPLIT_NAMES = frozenset(
+    {
+        "holdout",
+        # THE HYPHENATED FORMS, because they are the ones this package's own
+        # guidance uses. `evaluation-and-dataset.md` says "held-out" in every
+        # sentence the concept appears in, and SKILL.md tells the assistant to
+        # label rows with their split - so the word the guide teaches was the
+        # one word this set did not accept, and a row carrying it fell into
+        # neither side (traigent-first-run#499).
+        "held-out",
+        "heldout",
+        "held_out",
+        "test",
+        "validation",
+        "validate",
+    }
+)
+#: Every split name this run understands, in one place, so a refusal can print
+#: what it accepts instead of leaving the caller to guess.
+KNOWN_SPLIT_NAMES = TUNING_SPLIT_NAMES | HOLDOUT_SPLIT_NAMES
 #: What `drawable_distinct_inputs` counted over, in the customer's terms.
 TUNING_SPLIT_SCOPE = "the tuning split"
 DATASET_SCOPE = "this dataset"
@@ -4718,6 +4737,34 @@ def check_dataset(
         *(values for name, values in splits.items() if name in holdout_names)
     )
     overlap = tune_inputs & holdout_inputs
+    # A SPLIT NAME THIS RUN DOES NOT KNOW IS NOT SILENCE. Widening the
+    # vocabulary above fixes the collision that was found; it cannot fix the
+    # next word nobody thought of, and the failure mode is the dangerous one -
+    # a row labelled with an unknown token belongs to neither side, so a
+    # customer who reserved ten rows was told "tuning-only dataset; no held-out
+    # split was declared" on a PASS, and the held-out check they were promised
+    # never ran (traigent-first-run#499).
+    #
+    # Named rather than guessed at: this run does not decide which side an
+    # unknown word meant, because guessing wrong silently moves rows across the
+    # line the held-out claim rests on. It says the word it did not know and
+    # the words it does, which is the same shape `dataset-provenance` already
+    # uses for a source token it cannot read.
+    unknown_splits = sorted(set(splits) - KNOWN_SPLIT_NAMES)
+    if unknown_splits:
+        emit(
+            "dataset-split-vocabulary",
+            WARN,
+            f"{len(unknown_splits)} split name(s) this run does not know: "
+            f"{', '.join(unknown_splits)}; rows carrying one are counted on "
+            "neither side, so they are not tuning rows and not held-out rows. "
+            "Re-label them with one of "
+            f"{', '.join(sorted(KNOWN_SPLIT_NAMES))} and re-run",
+            {
+                "unknown_splits": unknown_splits,
+                "known_splits": sorted(KNOWN_SPLIT_NAMES),
+            },
+        )
 
     def emit_tuning_size(tuning_count: int, tuning_labelled: int) -> None:
         tuning_scoreable = tuning_count if reference_free else tuning_labelled
