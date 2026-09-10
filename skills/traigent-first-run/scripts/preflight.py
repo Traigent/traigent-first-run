@@ -1294,7 +1294,23 @@ def check_cost_settings(
     env: dict[str, str | None],
     file_values: dict[str, str | None],
     process_values: dict[str, str | None],
+    env_path: Path,
 ) -> None:
+    """The cost inventory, and it names the file it actually read.
+
+    `env_path` is here for the reason `check_shadowed_credentials` already
+    documents one line of its own docstring away: four findings below tell a
+    reader that a value is "preserved in .env", and they said `.env` whatever
+    `--env` pointed at. The handoff file is whichever local file the user
+    identified for the run, so a customer following one of these verbatim was
+    sent to look in a file this run never opened - and where a stale `.env`
+    happens to sit beside it, sent to the wrong file rather than to none.
+
+    That fix was made for the credential check and not for this one, which is
+    the sibling half of it (traigent-first-run#494 D). `check_keys` has taken
+    `env_path` and handed it on since; this function is called from the same
+    line of `main` and was never given it.
+    """
     # The first-run launcher overwrites this legacy SDK variable from the three
     # approved first-run figures before it imports the SDK.  It never carries
     # authority for this walkthrough, whether it came from .env or the parent
@@ -1336,8 +1352,9 @@ def check_cost_settings(
         emit(
             "cost-figures-in-file",
             SKIP,
-            f"{', '.join(persisted)} preserved in .env; they do not authorize "
-            "this first run, whose approved figures are supplied per paid process",
+            f"{', '.join(persisted)} preserved in {env_path}; they do not "
+            "authorize this first run, whose approved figures are supplied per "
+            "paid process",
         )
 
     approved_in_file = file_values.get("TRAIGENT_COST_APPROVED")
@@ -1355,8 +1372,8 @@ def check_cost_settings(
             "this is the approved paid process before any paid call, and unset "
             "it in the shell that launched this check otherwise"
             + (
-                ". The .env copy of it is inventory only and does not authorize "
-                "a first-run paid process"
+                f". The {env_path} copy of it is inventory only and does not "
+                "authorize a first-run paid process"
                 if key_present(approved_in_file)
                 else ""
             ),
@@ -1369,17 +1386,17 @@ def check_cost_settings(
         emit(
             "cost-approved",
             SKIP,
-            "TRAIGENT_COST_APPROVED is preserved in .env; it does not authorize a "
-            "first-run paid process, and nothing in the process environment "
-            "sets it",
+            f"TRAIGENT_COST_APPROVED is preserved in {env_path}; it does not "
+            "authorize a first-run paid process, and nothing in the process "
+            "environment sets it",
         )
     elif key_present(approved_in_file):
         emit(
             "cost-approved",
             SKIP,
             f"TRAIGENT_COST_APPROVED={approved_in_file.strip()!r} is preserved "
-            "in .env and is not an approval value; it does not authorize a "
-            "first-run paid process, and nothing in the process environment "
+            f"in {env_path} and is not an approval value; it does not authorize "
+            "a first-run paid process, and nothing in the process environment "
             "sets it",
         )
 
@@ -2676,9 +2693,26 @@ def emit_dataset_provenance(
     if counts[PROVENANCE_UNDECLARED]:
         # Appended to whichever detail was built, so a mixture keeps its shares
         # and still says what happens to the silent part of it.
+        # NOT "record no provenance", which is false of exactly the row this
+        # clause most often describes. A row carrying `provenance: "n/a"` DID
+        # record something - `n/a` is an undeclared token, not an absent field
+        # - and so did a row whose word this vocabulary does not know, which
+        # the `unrecognised` clause below then names on the same report. The
+        # reader was told the row recorded nothing directly beside what it
+        # recorded.
+        #
+        # `readiness.py` corrected its copy of this sentence when the glossary
+        # was corrected before it, and said so in the comment there: "The
+        # glossary's entry was corrected for this; the card, which is what the
+        # customer actually reads, kept the sentence." This is the third copy,
+        # and it kept it too (traigent-first-run#494 E). The wording follows
+        # readiness deliberately, so the two reports say one thing about one
+        # row.
         detail += (
-            f"; {counts[PROVENANCE_UNDECLARED]} of {total} rows record no "
-            "provenance and are scored as generated"
+            f"; {counts[PROVENANCE_UNDECLARED]} of {total} rows name no real "
+            "source this run can read - no provenance field at all, a "
+            "non-answer such as n/a, or a word its vocabulary does not know - "
+            "and are scored as generated"
         )
     emit(
         "dataset-provenance",
@@ -5152,7 +5186,7 @@ def run() -> int:
     check_sdk(defer_missing=args.defer_missing_sdk)
     check_existing_traigent_use(Path(args.project_root))
     check_keys(env, file_values, process_values, env_path)
-    check_cost_settings(env, file_values, process_values)
+    check_cost_settings(env, file_values, process_values, env_path)
 
     models = [model.strip() for model in args.models.split(",") if model.strip()]
     check_models(models)
