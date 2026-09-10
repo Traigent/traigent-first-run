@@ -3812,18 +3812,33 @@ class BuildSignal:
 #
 # The scope is in the sentence because a bare "checked for a contradiction and
 # none was found" reads as corroboration, and it is strongest precisely where
-# the derivation is blindest. Neither of these leaves the selected callable's
-# own body, so an agent that delegates its loop to a helper, recurses, or hands
-# the work to a comprehension passes both - and the customer-facing line has to
-# say that it passed a narrow read rather than that it was checked.
+# the derivation is blindest. `control-flow` never leaves the selected
+# callable's own body, so an agent that delegates its loop to a helper,
+# recurses, or hands the work to a comprehension passes it and may never
+# return; `tools` takes exactly one hop past that body, into a module-level
+# assignment the callable itself names, and stops. Each clause states its own
+# reach, because the two are no longer the same reach and a shared sentence
+# would have to be wrong about one of them.
+#
+# EACH CLAUSE NAMES WHAT ITS DERIVATION STILL CANNOT SETTLE, which is the half
+# that has to be re-read whenever the derivation changes. `tools` said "does
+# not establish that any of them is reachable" until traigent-first-run#484
+# made reachability the acceptance test, and the clause then introduced a
+# finding about reachability by denying that reachability was checked - the
+# sentence contradicting itself on the arm where the walk had done its most
+# decisive work. What the walk still cannot settle is not reachability but
+# tool-hood: `names_reached_from_selected_callable` answers a question about a
+# NAME, and this module refuses to define what makes the thing behind it a
+# tool.
 SOURCE_CHECK_SCOPE = {
     "control-flow": (
         "no contradicting loop in the selected function's own body, which does "
         "not establish that it ends"
     ),
     "tools": (
-        "every declared tool name appears in the selected file, which does not "
-        "establish that any of them is reachable"
+        "every declared tool name was traced from the selected callable, one "
+        "hop through the module, which does not establish that any of them is "
+        "a tool"
     ),
 }
 SOURCE_CHECKED_BUILD_CHECKS = frozenset(SOURCE_CHECK_SCOPE)

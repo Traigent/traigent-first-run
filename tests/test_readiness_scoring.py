@@ -21293,9 +21293,9 @@ class TheBuildHalfCitesTheAgentItReadTests(unittest.TestCase):
         with self.subTest(check="control-flow", kind="settled"):
             # The SCOPE, not a bare "checked". A clause saying the source was
             # checked and nothing was found reads as corroboration, and it is
-            # strongest exactly where the derivation is blindest: neither
-            # derivation leaves the callable's own body, so an agent that
-            # delegates its loop to a helper passes both and may never return.
+            # strongest exactly where the derivation is blindest: this one
+            # never leaves the callable's own body, so an agent that delegates
+            # its loop to a helper passes it and may never return.
             self.assertIn(
                 "no contradicting loop in the selected function's own body",
                 rows["control-flow"],
@@ -21311,22 +21311,53 @@ class TheBuildHalfCitesTheAgentItReadTests(unittest.TestCase):
         # and so still says whose that is - asserted in
         # `test_the_no_tools_arm_says_whose_sentence_it_is`. The applicable
         # case below is the one that has a scope to state.
-        used = self._score_source(
-            "MODEL = ['a']\nTOOLS = ['search']\ndef selected(q):\n    return q\n",
-            {
-                "control-flow": {"loop": False, "bounded": True},
-                "tools": {"used": True, "declared": ["search"], "unreachable": []},
-            },
-        )
-        marked = {
-            signal.name: signal.evidence
-            for signal in MODULE.build_declarations_are_unmeasured(used.build)
-        }
-        with self.subTest(check="tools", kind="settled"):
-            self.assertIn("appears in the selected file", marked["tools"])
-            self.assertIn(
-                "does not establish that any of them is reachable", marked["tools"]
+        # BOTH tool arms, because the clause has to survive the arm that
+        # refutes as well as the arm that credits. The source above declares
+        # `TOOLS` at module level and never names it inside `selected`, so
+        # `search` is NOT reached - the fixture reads like the crediting case
+        # and is the refuting one, which is exactly where the clause has to be
+        # read carefully.
+        for kind, source in (
+            (
+                "unreached",
+                "MODEL = ['a']\nTOOLS = ['search']\ndef selected(q):\n"
+                "    return q\n",
+            ),
+            (
+                "reached",
+                "MODEL = ['a']\nTOOLS = ['search']\ndef selected(q):\n"
+                "    return TOOLS[0] + q\n",
+            ),
+        ):
+            used = self._score_source(
+                source,
+                {
+                    "control-flow": {"loop": False, "bounded": True},
+                    "tools": {"used": True, "declared": ["search"], "unreachable": []},
+                },
             )
+            marked = {
+                signal.name: signal.evidence
+                for signal in MODULE.build_declarations_are_unmeasured(used.build)
+            }
+            with self.subTest(check="tools", kind=kind):
+                self.assertIn("was traced from the selected callable", marked["tools"])
+                self.assertIn("one hop through the module", marked["tools"])
+                # What the walk still cannot settle. It settles reachability -
+                # saying otherwise made the clause deny the very finding it
+                # introduces (traigent-first-run#484 changed the rule and this
+                # sentence kept the old one).
+                self.assertIn(
+                    "does not establish that any of them is a tool", marked["tools"]
+                )
+                self.assertNotIn("is reachable", marked["tools"])
+            # And the two arms really are the two arms, so the assertions above
+            # are not both taken over the same behaviour.
+            with self.subTest(check="tools", kind=kind, part="arm"):
+                if kind == "unreached":
+                    self.assertIn("were not found behind the name", marked["tools"])
+                else:
+                    self.assertIn("each reachable", marked["tools"])
 
     def test_a_tool_the_source_never_mentions_is_refused(self) -> None:
         """The same move for `tools`, and only in the refuting direction.
