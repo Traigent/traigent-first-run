@@ -8933,9 +8933,15 @@ class TheRemedyIsMachineReadableTests(unittest.TestCase):
         self.assertEqual(payload["caps"][0]["action_kind"], "repair-evaluator")
         self.assertEqual(
             payload["schema_version"],
-            4,
+            5,
             "a consumer must be able to tell 'emits no remedy' from 'has none'",
         )
+        # 5 rather than 4, and the reason is a value rather than a key again:
+        # `evaluator-calibration-refused` stopped blocking, so a schema-4
+        # consumer gating paid work on `status` starts a run it would have
+        # stopped and one routing on `recommended_action` meets a slug 4 never
+        # contained (traigent-first-run#392).
+        #
         # 4 rather than 3, and again the reason is a value rather than a key.
         # Every remedy this payload emitted was some cap's, so a schema-3
         # consumer could look the slug up in `caps` and read the ceiling behind
@@ -12902,6 +12908,152 @@ class ADeferredCalibrationSaysSoInTheFieldConsumersReadTests(unittest.TestCase):
         )
         self.assertEqual(reverted.recommended_action, unasked.PROCEED)
         self.assertEqual(kept.recommended_action, MODULE.COMPLETE_CALIBRATION)
+
+
+class TheOneQuestionHasSomewhereToLiveTests(unittest.TestCase):
+    """The ask, the answer, and the delta that shows the block lifting.
+
+    Three fixes landed here with no test between them, which is how the
+    review that found them had to write its own probes
+    (traigent-first-run#392). Each half is pinned against the behaviour a
+    consumer sees rather than against the field that produces it.
+    """
+
+    WITNESS = "calls .execute() on the candidate's SQL (scorer.py line 6)"
+
+    def _facts(self, connection=None):
+        return MODULE.EvaluationFacts(
+            present=True,
+            method="execution",
+            task_kind="code-sql",
+            parses=True,
+            origin="brought",
+            executes_candidate=True,
+            execution_witness=self.WITNESS,
+            evaluator_connection=connection,
+        )
+
+    def _score(self, connection=None):
+        return MODULE.score_run(
+            _routing_corpus(),
+            self._facts(connection),
+            _wired_space(),
+            dict(MODULE.DEFAULT_WEIGHTS),
+            _review(reviewed=48),
+        )
+
+    def _cap(self, score):
+        return next(
+            cap
+            for cap in score.caps
+            if cap.condition == "evaluator-calibration-refused"
+        )
+
+    def test_three_answers_are_three_sentences(self) -> None:
+        """A question whose every answer is identical is not a question."""
+        seen = {}
+        for connection in (None, MODULE.READ_ONLY, MODULE.READ_WRITE):
+            with self.subTest(connection=connection):
+                reason = self._cap(self._score(connection)).reason
+                seen[connection] = reason
+                # Every arm labels the answer as THEIRS, never as a finding.
+                if connection is not None:
+                    self.assertIn("You told this run", reason)
+                    self.assertIn("rather than as anything this run checked", reason)
+        self.assertIn("pass `--evaluator-connection", seen[None])
+        self.assertIn("that is the hazard closed", seen[MODULE.READ_ONLY])
+        self.assertIn(
+            "the destructive path is\n        open".replace("\n        ", " "),
+            seen[MODULE.READ_WRITE],
+        )
+        self.assertEqual(len(set(seen.values())), 3, "two answers read alike")
+
+    def test_only_read_only_stops_the_card_asking(self) -> None:
+        """`read-write` is the answer that must stay conspicuous.
+
+        Keying on "has an answer" made the most dangerous answer the quietest:
+        `read-write` produced the same `asks`, the same `recommended_action`
+        and the same report line as a purely advisory cap, so silence was
+        louder than being told the destructive path is open. It also switched
+        off the pre-spend approval card, which fires on a cap that ASKS and
+        carries the answer to the moment money moves.
+        """
+        self.assertTrue(self._cap(self._score(None)).asks)
+        self.assertTrue(self._cap(self._score(MODULE.READ_WRITE)).asks)
+        self.assertFalse(self._cap(self._score(MODULE.READ_ONLY)).asks)
+        # And no arm blocks - the whole point of the reversal.
+        for connection in (None, MODULE.READ_ONLY, MODULE.READ_WRITE):
+            with self.subTest(connection=connection):
+                score = self._score(connection)
+                self.assertFalse(self._cap(score).blocks)
+                self.assertNotEqual(score.status, "BLOCKED")
+
+    def test_the_answer_is_refused_where_nothing_would_record_it(self) -> None:
+        """A safety declaration is the worst option to accept and drop.
+
+        Its sibling `--calibration-scope-refused` carries this guard and the
+        comment above it calls losing one quietly the worst case. This flag
+        shipped without it, so a customer declaring `read-write` on the
+        planner half had the declaration accepted and discarded.
+        """
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = MODULE.run(
+                [
+                    "--agent",
+                    "real",
+                    "--dataset",
+                    "real",
+                    "--evaluation",
+                    "real",
+                    "--evaluator-connection",
+                    "read-write",
+                ]
+            )
+        stderr = err.getvalue()
+        self.assertEqual(code, 2)
+        self.assertIn("--evaluator-connection", stderr)
+        self.assertIn("nothing here would record the answer", stderr)
+
+    def test_the_delta_says_the_block_lifted(self) -> None:
+        """Same condition, same ceiling, same pillars - and a different run.
+
+        Comparing cap conditions alone made the largest change this package
+        has made invisible on every surface: the card, the report and the
+        JSON all said `changed: none` across a blocking ceiling becoming an
+        advisory one.
+        """
+        score = self._score()
+        previous = MODULE.PreviousScore(
+            overall=score.overall,
+            pillars={pillar.name: pillar.score for pillar in score.pillars},
+            caps=("evaluator-calibration-refused",),
+            blocking=("evaluator-calibration-refused",),
+        )
+        delta = MODULE.score_delta(previous, score)
+        self.assertEqual(delta["unblocked"], ["evaluator-calibration-refused"])
+        self.assertEqual(delta["blocked"], [])
+        self.assertIn(
+            "no longer blocking: evaluator-calibration-refused", delta["line"]
+        )
+
+    def test_a_payload_that_never_said_blocks_asserts_nothing(self) -> None:
+        """The honest reading of a document that does not say.
+
+        `blocking` is defaulted so an older payload still parses. What it may
+        not do is read a missing key as "nothing was blocking" and then
+        announce a change that may not have happened, so the clause is omitted
+        rather than asserted.
+        """
+        score = self._score()
+        previous = MODULE.PreviousScore(
+            overall=score.overall,
+            pillars={pillar.name: pillar.score for pillar in score.pillars},
+            caps=("evaluator-calibration-refused",),
+        )
+        delta = MODULE.score_delta(previous, score)
+        self.assertEqual(delta["unblocked"], [])
+        self.assertNotIn("no longer blocking", delta["line"])
 
 
 class TheWitnessDecidesTheScopeGateNotTheDeclarationTests(unittest.TestCase):

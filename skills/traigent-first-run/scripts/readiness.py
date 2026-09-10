@@ -263,7 +263,21 @@ def render_text(plan: ReadinessPlan) -> str:
 # The version is what lets it tell a payload where the remedy may name an ask
 # that caps nothing from one where every remedy is a ceiling, exactly the
 # distinction 2 and 3 were bumped for.
-SCHEMA_VERSION = 4
+#
+# 5: `evaluator-calibration-refused` stops blocking. A run whose evaluator
+# executes candidate code or SQL used to emit `status: "BLOCKED"`,
+# `caps[].blocks: true` and `recommended_action: "review-evaluator-containment"`;
+# it now emits `"OK"`, `false`, and `"confirm-evaluator-connection"` - a slug
+# schema 4 never contained (traigent-first-run#392).
+#
+# Additive in keys again - `unblocked` and `blocked` on the delta - and again
+# not additive in MEANING, which is the half that decides. A schema-4 consumer
+# gating paid work on `status` starts a run it would have stopped, and one
+# routing on `recommended_action` meets a value it cannot resolve. Without the
+# bump each version silently accepts the other's payload and `--strict` flips
+# its exit under an unchanged number, which is the reading 2 was bumped to
+# prevent.
+SCHEMA_VERSION = 5
 DEFAULT_WEIGHTS = {"dataset": 40.0, "evaluation": 35.0, "agent": 25.0}
 # Read each entry as "score BELOW this number is that band" - these are
 # exclusive upper bounds, not the score a band requires. The last entry is an
@@ -7927,9 +7941,16 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
                 # `recommended_action` for a run that PROCEEDS, which is the
                 # state this cap now describes and did not before.
                 #
-                # ...AND ONLY WHILE IT IS UNANSWERED, so the card stops naming
-                # a question it already has an answer to and stops holding the
-                # single action slot against remedies the customer can perform.
+                # ...UNTIL THE ANSWER CLOSES THE HAZARD, which is `read-only`
+                # and only `read-only`. Keyed on the answer rather than on
+                # having one: treating any answer as "answered" made
+                # `read-write` machine-indistinguishable from a clean run -
+                # same `asks=False`, same `proceed`, same report line as a
+                # purely advisory cap - so the most dangerous answer was the
+                # quietest, and silence was louder than being told the
+                # destructive path is open. It also switched off the pre-spend
+                # approval card, which fires on a cap that asks and carries
+                # "what was answered" to the money moment.
                 #
                 # Silence proceeds. The disclosure above has already done its
                 # work, and traigent-first-run#449's decision governs the rest:
@@ -7940,7 +7961,7 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
                 # not promise the card: on the ordinary cold start
                 # `dataset-absent` and `agent-absent` block beside it and
                 # `status` is BLOCKED.
-                asks=facts.evaluator_connection is None,
+                asks=facts.evaluator_connection != READ_ONLY,
             )
         )
     return combine("evaluation", subs), caps
@@ -20266,6 +20287,22 @@ def run(argv: Sequence[str] | None = None) -> int:
             "a scoring call. The planner half takes no evidence, so there is "
             "no calibration for it to describe and nothing would record it. "
             "Pass it beside --preflight.",
+            file=sys.stderr,
+        )
+        return 2
+
+    # The same guard, for the same reason, on the flag that arrived last. The
+    # paragraph above is the rule and this flag shipped without it: a customer
+    # declaring their evaluator connects read-write on the planner half had
+    # that declaration accepted and dropped, which is the defect that
+    # paragraph names, on the safety declaration it calls the worst one to
+    # lose quietly.
+    if args.evaluator_connection and not scoring_requested(args):
+        print(
+            "cannot read scoring input: --evaluator-connection answers a "
+            "question the scoring half asks. The planner half reads no "
+            "evaluator, so nothing here would record the answer. Pass it "
+            "beside --preflight.",
             file=sys.stderr,
         )
         return 2
