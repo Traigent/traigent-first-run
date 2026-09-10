@@ -13141,7 +13141,61 @@ class TheWitnessDecidesTheScopeGateNotTheDeclarationTests(unittest.TestCase):
                 # `evidence` line asserted above, which is where an arm that
                 # genuinely has one belongs.
                 self.assertNotIn("containment review", cap.reason)
-                self.assertIn("Your first run continues", cap.reason)
+                self.assertIn("THIS does not stop your run", cap.reason)
+
+    def test_the_refusal_does_not_promise_a_run_other_caps_stopped(self) -> None:
+        """A cap sees its own condition and no other, so it may not promise the card.
+
+        The fix that un-blocked this condition wrote "Your first run
+        continues" into its reason - true of THIS cap and not of the card it
+        prints on. Executed on the ordinary cold start, which is the shape a
+        customer with an executing evaluator most often arrives in:
+
+            evaluator: execution / code-sql, engine witnessed
+            dataset:   absent
+            agent:     absent
+
+        `dataset-absent` and `agent-absent` both carry `blocks=True`, `status`
+        is `BLOCKED`, and the refusal sat on the same card saying the run
+        continues. That is the defect class this batch exists to remove,
+        reintroduced by the fix for it (traigent-first-run#392).
+
+        So the sentence says what the CONDITION does. That is true whatever
+        else is on the card, which is the only kind of claim a cap is in a
+        position to make.
+        """
+        score = MODULE.score_run(
+            MODULE.DatasetFacts(),
+            MODULE.EvaluationFacts(
+                present=True,
+                method="execution",
+                task_kind="code-sql",
+                parses=True,
+                origin="brought",
+                executes_candidate=True,
+                execution_witness=self.WITNESS,
+            ),
+            MODULE.AgentFacts(),
+            dict(MODULE.DEFAULT_WEIGHTS),
+        )
+        # The premise: this card really is blocked, by conditions that are not
+        # this one. Asserted rather than assumed - if it stops being true the
+        # test below stops meaning anything.
+        blocking = [cap.condition for cap in score.caps if cap.blocks]
+        self.assertTrue(blocking, "the fixture no longer blocks; pick another")
+        self.assertNotIn("evaluator-calibration-refused", blocking)
+        self.assertEqual(score.status, "BLOCKED")
+
+        refused = next(
+            cap
+            for cap in score.caps
+            if cap.condition == "evaluator-calibration-refused"
+        )
+        self.assertFalse(refused.blocks)
+        # It says what it does...
+        self.assertIn("THIS does not stop your run", refused.reason)
+        # ...and never what the card does, on a card that says the opposite.
+        self.assertNotIn("Your first run continues", refused.reason)
 
     def test_the_run_that_calibrated_anyway_is_told_which_run_it_was(self) -> None:
         """Two runs did different things and only one of them did nothing wrong.
@@ -13356,7 +13410,16 @@ class TheWitnessDecidesTheScopeGateNotTheDeclarationTests(unittest.TestCase):
                 # the sentence that replaces it is a disclosure, not an
                 # errand.
                 self.assertIn("nothing here for you to fix", cap.reason)
-                self.assertIn("Your first run continues", cap.reason)
+                # WHAT THIS CAP DOES, never what the run will do. A cap sees
+                # its own condition and no other, so "Your first run
+                # continues" was a promise it had no standing to make - and on
+                # the ordinary cold start (executing evaluator, no dataset, no
+                # agent) `dataset-absent` and `agent-absent` both block and
+                # `status` is BLOCKED while this sentence said otherwise. The
+                # co-occurrence case is asserted in
+                # `test_the_refusal_does_not_promise_a_run_other_caps_stopped`.
+                self.assertIn("THIS does not stop your run", cap.reason)
+                self.assertNotIn("Your first run continues", cap.reason)
                 self.assertNotIn("You can establish that yourself", cap.reason)
                 self.assertNotIn("against your own database", cap.reason)
                 # And it says what proceeding actually means, unsoftened. The
@@ -13408,7 +13471,7 @@ class TheWitnessDecidesTheScopeGateNotTheDeclarationTests(unittest.TestCase):
         for shared in (
             "not a judgement of your evaluator",
             "nothing here for you to fix",
-            "Your first run continues",
+            "THIS does not stop your run",
             "the MODEL writes the statements",
             "connects read-only",
             "no card can claim it grades correctly",

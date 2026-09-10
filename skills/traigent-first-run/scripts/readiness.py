@@ -7797,8 +7797,10 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
                 declared + body + " That is a limit of this run and not a "
                 "judgement of your evaluator, which may well be sound - there "
                 "is nothing here for you to fix, because the check is one this "
-                "guide declined to make. Your first run continues. What "
-                "proceeding means, plainly: during the paid run the MODEL "
+                "guide declined to make. THIS does not stop your run - a cap "
+                "knows its own condition and nothing else, so it says what it "
+                "does rather than what the run will do. What proceeding means, "
+                "plainly: during the paid run the MODEL "
                 "writes the statements and your evaluator executes them "
                 "against whatever it is configured to reach, many times over. "
                 "The statements are generated, not yours, so your trust in "
@@ -7855,6 +7857,16 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
                 # Silence proceeds. The disclosure above has already done its
                 # work, and traigent-first-run#449's decision governs the rest:
                 # "if no need to stop, no need, i want it seamless".
+                #
+                # AND THE REASON SAYS WHAT THIS CAP DOES, NEVER WHAT THE RUN
+                # WILL DO. It read "Your first run continues", which is a claim
+                # about the whole card made by one condition that cannot see
+                # the others. Executed on the ordinary cold start - an
+                # executing evaluator, no dataset, no agent yet - `dataset-
+                # absent` and `agent-absent` both block, `status` is BLOCKED,
+                # and this sentence promised the opposite on the same card.
+                # That is the defect class this whole batch exists to remove,
+                # reintroduced by the fix for it.
                 asks=True,
             )
         )
