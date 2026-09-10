@@ -9218,7 +9218,21 @@ def score_run(
         # resolved against that marker raises rather than mis-binding, which is
         # why neither of these is passed by position.
         repeated=repeated,
-        agent_source_read=agent_facts.discovery_supplied,
+        # WHETHER A READ REACHED THIS SCORE, which is a different question from
+        # `discovery_supplied` and was answered with it until a card said the
+        # agent had never been read directly above four rows quoting its source
+        # (traigent-first-run#490). `--config-space` with `--agent-knobs` keeps
+        # the build half of the read and drops the search-space half, so
+        # `discovery_supplied` is False there and correctly so - it is the
+        # field the three decisions below gate the SEARCH SPACE on, and a
+        # document must win that outright. `build` is the half that survived,
+        # and it is `None` exactly when no read reached the score, so it
+        # answers this question without touching theirs. A customer who
+        # supplied a config space and no read still gets "no agent source
+        # read", because nothing populated it.
+        agent_source_read=(
+            agent_facts.discovery_supplied or agent_facts.build is not None
+        ),
         # The same pair of conditions `score_agent_evidence` branches on to
         # reach the discovery path at all. A config-space document wins
         # outright there, so a route refusal recorded under one was never
