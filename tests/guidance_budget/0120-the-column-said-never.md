@@ -28,13 +28,17 @@ Neither row leaves the catalog, and that is deliberate. Listing them is what sto
 proposing retrieval or tool controls for a paid space this run cannot trace. The older test pins the
 nine names against the SECTION rather than the table, so lifting a row out and leaving the name in
 prose would have stayed green - measured, by deleting a row and re-running it. The new test counts
-the rows, so the removal is refused outright. Its read of the third column is weaker than the count
-and is written down as weaker: it matches an enumerated set of word stems, scoped to the clause
-before the first semicolon. Both halves of that were measured rather than chosen. A first draft
-matched whole phrases and let nine plausible ways of saying "never" through, `ineligible here` among
-them, because the marker word in another inflection is not the marker word. And scanning the whole
-cell refused ordinary writing - "answers do not come from recall" is a legitimate answer to "choose
-it when", and a gate that rejects correct prose teaches authors to phrase around it rather than to
-mean it. Both directions were probed against the shipped table: eight refusal phrasings now caught,
-two legitimate cells now allowed. It remains an enumeration, bounded by whoever wrote it, and this
-entry claims no more than that.
+the rows and then DERIVES the rest rather than reading it, which is this package's own rule turned on
+its own guard. Two drafts before it scanned the third column for refusal words, and a keyword list
+doing semantic work was wrong in both directions each time - measured on the shipped table, three
+refusals written after a semicolon walked past it and four legitimate answers were rejected, among
+them "answers do not come from recall". A gate that refuses correct writing teaches authors to phrase
+around it, which is worse than having none.
+
+What replaced it reads no wording at all. This section already states its eligible set twice and
+neither statement is prose: the heading counts them, and "say what is being tried" names them one
+bullet each, maintained apart from the table. So the markers are checked against that list. It cannot
+false-red on a phrasing because it inspects none, and it cannot be walked past by a phrasing for the
+same reason - and it catches two things no word list could, a marker quietly deleted and an eligible
+knob wrongly marked. The two sentences that actually regressed keep an exact-string guard beside it,
+which has no false-red surface at all.

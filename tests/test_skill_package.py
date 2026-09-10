@@ -10464,9 +10464,27 @@ class SkillPackageTests(unittest.TestCase):
         reason lives in the paragraph below the table that already excludes
         `batch_size` and `max_tokens` in words (traigent-first-run#485).
 
-        Asserted over the third column rather than over the two known rows, so
-        a third exclusion written the same way is caught the first time rather
-        than after somebody reads the table closely.
+        DERIVED FROM STRUCTURE, NOT SCANNED FROM PROSE, which is this module's
+        own rule applied to its own test. Two earlier revisions of this check
+        read the `Choose it when` cell for refusal words, and a keyword list
+        doing semantic classification was wrong in both directions every time:
+        measured on the shipped table, three refusals written after a semicolon
+        passed and four legitimate answers - "answers do not come from recall",
+        "the task's framing was never examined" - were rejected. A gate that
+        refuses correct writing teaches authors to phrase around it, which is
+        worse than no gate.
+
+        The document already states the eligible set TWICE and neither is
+        prose: the heading counts them, and "Say what is being tried" names
+        them one per bullet. So the table's markers are checked against that
+        list. It cannot false-red on any wording, because it reads no wording;
+        it cannot leak past a phrasing, because it never asks what a sentence
+        means. What it enforces is the invariant the defect broke - the table
+        and the rest of the section agreeing about which seven are choosable.
+
+        The two shipped refusal sentences keep an exact-string guard beside it.
+        Exact strings have no false-red surface, and they are what actually
+        regressed.
         """
         text = SDK_EXECUTION.read_text()
         catalog = text.split("### The knob catalog", 1)[1].split("###", 1)[0]
@@ -10482,43 +10500,7 @@ class SkillPackageTests(unittest.TestCase):
         for row in rows:
             cells = [cell.strip() for cell in row.strip().strip("|").split("|")]
             self.assertEqual(len(cells), 3, row)
-            knob, _values, choose = cells
-            with self.subTest(knob=knob):
-                # THE LEADING CLAUSE, and STEMS rather than whole phrases.
-                # Both halves were measured against the shipped table rather
-                # than chosen.
-                #
-                # Scoped to the clause before the first `;` because that is
-                # where both real refusals sat, and because scanning the whole
-                # cell false-reds on ordinary text: "answers do not come from
-                # recall" and "the task's framing was never examined" are
-                # legitimate `Choose it when` answers that a whole-cell scan
-                # rejects. A gate that refuses correct writing teaches authors
-                # to phrase around it, which is worse than no gate.
-                #
-                # Stems because whole phrases leak: `ineligible here` is this
-                # gate's own marker word in another inflection and
-                # `"not eligible" not in "ineligible"`. Nine plausible ways of
-                # saying "never" passed the phrase list.
-                #
-                # It is still an enumeration and still bounded by whoever
-                # wrote it - ledger 0120 says so rather than claiming this
-                # catches every phrasing.
-                leading = choose.casefold().split(";", 1)[0]
-                for refusal in (
-                    "not part",
-                    "never",
-                    "do not",
-                    "exclud",
-                    "eligib",
-                    "outside",
-                    "cannot",
-                    "out of scope",
-                    "unavailable",
-                    "n/a",
-                    "beyond",
-                ):
-                    self.assertNotIn(refusal, leading, row)
+            knob, _values, _choose = cells
             if "not eligible" in knob:
                 ineligible += 1
         self.assertEqual(
@@ -10526,6 +10508,37 @@ class SkillPackageTests(unittest.TestCase):
             2,
             "the heading promises seven eligible of nine; the markers must agree",
         )
+        # THE CROSS-CHECK. `Say what is being tried` names one bullet per
+        # eligible knob and is maintained independently of this table, so the
+        # two disagreeing is the defect itself - a knob the table offers that
+        # the run is never told to say, or one it says and the table forbids.
+        spoken = {
+            match.group(1)
+            for match in re.finditer(
+                r"- \*\*([^*]+)\*\* - ",
+                text.split("### Say what is being tried", 1)[1].split("\n##", 1)[0],
+            )
+        }
+        offered = {
+            row.strip().strip("|").split("|")[0].strip().strip("`").split("`")[0]
+            for row in rows
+            if "not eligible" not in row.split("|")[1]
+        }
+        self.assertEqual(
+            offered,
+            spoken,
+            "the table's eligible knobs and the ones the run is told to say "
+            "have drifted apart",
+        )
+        self.assertEqual(len(spoken), 7, "the heading promises seven eligible")
+        # And the two sentences that actually regressed, by exact text - no
+        # false-red surface, and they are what came back last time.
+        for gone in (
+            "not part of this first-run paid space; retrieval is indirect",
+            "not part of this first-run paid space; tool behavior is indirect",
+        ):
+            with self.subTest(gone=gone):
+                self.assertNotIn(gone, table)
         # And the reason has to survive the move, in the place the move sent it.
         prose = catalog.split(header, 1)[1].split("\n\n", 1)[1]
         self.assertIn("require separately contained tracing", prose)
