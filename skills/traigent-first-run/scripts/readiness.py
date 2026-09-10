@@ -20608,6 +20608,34 @@ def run(argv: Sequence[str] | None = None) -> int:
     score = score_run(
         dataset_facts, evaluation_facts, agent_facts, args.weights, row_review
     )
+    # A SAFETY DECLARATION IS NEVER SILENTLY DROPPED, and this is the half a
+    # parse-time guard cannot reach. `--evaluator-connection` answers a
+    # question only `evaluator-calibration-refused` asks, and whether that cap
+    # fires is not knowable until the facts are built - so the guard above
+    # refuses it on the planner half, where there is no evidence at all, and
+    # every scoring route it admits was left honouring it nowhere. Measured on
+    # three of them - `--config-space`, `--agent-knobs` and a `--preflight`
+    # with no execution witness - the payload was byte-identical with the flag
+    # and without it.
+    #
+    # Refused rather than warned, on the same reasoning the comment above the
+    # planner guard gives: an option that means one thing in one mode and
+    # nothing in another is a defect in any case, and a safety declaration is
+    # the worst one to lose quietly. A customer who says their evaluator
+    # connects read-write has told this run something, and a run that takes it
+    # and says nothing has answered them with silence.
+    if args.evaluator_connection and not any(
+        cap.condition == "evaluator-calibration-refused" for cap in score.caps
+    ):
+        print(
+            "cannot read scoring input: --evaluator-connection answers the "
+            "question the evaluator-execution scope gate asks, and this score "
+            "did not reach that gate - no calibration refusal is on this card, "
+            "so nothing here records the answer. Drop the flag, or pass the "
+            "evidence that raises the refusal.",
+            file=sys.stderr,
+        )
+        return 2
     assumption = provenance_assumption(
         score, dataset_facts, evaluation_facts, agent_facts, args.weights, row_review
     )

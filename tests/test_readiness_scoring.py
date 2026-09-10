@@ -12976,7 +12976,9 @@ class TheOneQuestionHasSomewhereToLiveTests(unittest.TestCase):
         )
         self.assertNotIn("that is the hazard closed", seen[MODULE.READ_ONLY])
         # And the unanswered arm may not promise more than the answer would.
-        self.assertIn("closes nothing for an evaluator that runs candidate code", seen[None])
+        self.assertIn(
+            "closes nothing for an evaluator that runs candidate code", seen[None]
+        )
         self.assertIn(
             "the destructive path is\n        open".replace("\n        ", " "),
             seen[MODULE.READ_WRITE],
@@ -13029,6 +13031,36 @@ class TheOneQuestionHasSomewhereToLiveTests(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertIn("--evaluator-connection", stderr)
         self.assertIn("nothing here would record the answer", stderr)
+
+    def test_the_answer_is_refused_on_a_score_that_never_asked(self) -> None:
+        """The half a parse-time guard cannot reach.
+
+        Whether `evaluator-calibration-refused` fires is not knowable until
+        the facts are built, so the parse-time guard covers the planner half
+        and admitted every scoring route while honouring the flag on none of
+        them. Measured before this test existed: `--config-space`,
+        `--agent-knobs` and a `--preflight` with no execution witness each
+        produced a payload byte-identical with the flag and without it
+        (traigent-first-run#392).
+
+        Refused rather than warned, on the reasoning the sibling guard states:
+        a safety declaration is the worst option to lose quietly.
+        """
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = MODULE.run(
+                ["--preflight", "-", "--evaluator-connection", "read-write"],
+            )
+        self.assertEqual(code, 2)
+
+    def test_the_answer_is_kept_where_the_gate_did_ask(self) -> None:
+        """And the guard may not refuse the run it exists for."""
+        for connection in (MODULE.READ_ONLY, MODULE.READ_WRITE):
+            with self.subTest(connection=connection):
+                score = self._score(connection)
+                cap = self._cap(score)
+                self.assertEqual(cap.condition, "evaluator-calibration-refused")
+                self.assertIn("You told this run", cap.reason)
 
     def test_the_delta_says_the_block_lifted(self) -> None:
         """Same condition, same ceiling, same pillars - and a different run.
@@ -13614,7 +13646,15 @@ class TheWitnessDecidesTheScopeGateNotTheDeclarationTests(unittest.TestCase):
                     cap.reason,
                 )
                 # The one question that is genuinely theirs, and settles it.
-                self.assertIn("connects read-only", cap.reason)
+                # SCOPED: the clause names the connection it closes and the
+                # code it does not. This cap fires on a SQL engine and on code
+                # execution, and read-only answers only the first
+                # (traigent-first-run#392, #492).
+                self.assertIn("that connection is read-only", cap.reason)
+                self.assertIn(
+                    "closes nothing for an evaluator that runs candidate code",
+                    cap.reason,
+                )
                 # The fixture convention is a tester's phrase and the owner
                 # has flagged it twice; the card uses the calibration check's
                 # own display vocabulary instead.
@@ -13659,7 +13699,7 @@ class TheWitnessDecidesTheScopeGateNotTheDeclarationTests(unittest.TestCase):
             "nothing here for you to fix",
             "THIS does not stop your run",
             "the MODEL writes the statements",
-            "connects read-only",
+            "that connection is read-only",
             "no card can claim it grades correctly",
         ):
             with self.subTest(shared=shared):
