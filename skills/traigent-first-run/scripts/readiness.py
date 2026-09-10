@@ -3972,17 +3972,27 @@ SOURCE_CHECK_SCOPE = {
         "no contradicting loop in the selected function's own body, which does "
         "not establish that it ends"
     ),
-    # REFUTED, NOT FOUND, and the difference is the whole sentence.
-    # `derived_unbounded_while` raises only where it FINDS a literal-true
-    # `while` in the callable's own body with no uncaptured exit; finding
-    # nothing establishes nothing, which its own docstring says in those words.
-    # So this clause may not claim a way out was found - a callable holding no
-    # loop at all, delegating to a helper that spins, is the delegation case
-    # this module designs for and names twelve lines above, and it reaches
-    # here.
+    # WHAT THE READ DID, never what is true of the code. This is a refute-only
+    # walk: `derived_unbounded_while` raises where it FINDS a literal-true
+    # `while` in the callable's own body with no uncaptured exit, and finding
+    # nothing establishes nothing - its own docstring says so in those words.
+    #
+    # So the clause may not say "a way out was found", and it may not say "no
+    # unbounded loop" either. Both are existential claims a refutation cannot
+    # support, and each is false on shapes this module already documents:
+    # `while not False` is constant-true and is not refused; a `while True`
+    # inside a nested `def` is never descended into; a `raise` whose capture
+    # cannot be settled blocks the refusal exactly as a proven exit does; and
+    # a callable that delegates to a helper that spins holds no loop node at
+    # all. Every one of those is a callable that may never return, and the
+    # sentence would have denied it.
+    #
+    # What is true on every arm is that nothing MATCHED the shapes this read
+    # knows. That is what it says, with the limit in the same clause.
     "control-flow:bounded": (
-        "no unbounded loop in the selected function's own body, which does "
-        "not establish that it ends"
+        "nothing in the selected function's own body matched the "
+        "unbounded-loop shapes this read knows, which does not establish that "
+        "it ends"
     ),
     "tools": (
         "every declared tool name was traced from the selected callable, one "
