@@ -3848,9 +3848,21 @@ SOURCE_CHECK_SCOPE = {
         "no contradicting loop in the selected function's own body, which does "
         "not establish that it ends"
     ),
+    # REFUTED, NOT FOUND, and the difference is the whole sentence.
+    # `derived_unbounded_while` raises only where it FINDS a literal-true
+    # `while` in the callable's own body with no uncaptured exit; finding
+    # nothing establishes nothing, which its own docstring says in those
+    # words. An earlier draft of this entry read "the loop in the selected
+    # function's own body has a way out of it" - a positive existential claim
+    # attached to a refute-only walk. Executed on a callable holding NO loop
+    # at all, delegating to a helper whose body is `while True: pass` and
+    # honestly declared `loop: true, bounded: true`, the card told the
+    # customer their loop had a way out over an agent that provably never
+    # returns. That is the delegation case this module designs for and names
+    # twelve lines above.
     "control-flow:bounded": (
-        "the loop in the selected function's own body has a way out of it, "
-        "which does not establish that the way out is taken"
+        "no unbounded loop in the selected function's own body, which does "
+        "not establish that it ends"
     ),
     "tools": (
         "every declared tool name was traced from the selected callable, one "
