@@ -3,10 +3,10 @@
 follows: 0120
 follows-resident-measured: 106_913
 follows-total-measured: 508_528
-resident-ceiling: 108_365
-resident-measured: 108_361
-total-ceiling: 515_671
-total-measured: 515_667
+resident-ceiling: 107_812
+resident-measured: 107_808
+total-ceiling: 515_972
+total-measured: 515_968
 
 Five kilobytes, most of it disclosure prose, and the reason is that a principle nobody had
 written down let a shipped cap tell a paying customer to fix something no change of theirs could
@@ -28,9 +28,9 @@ it already points at, repeatedly - and that trusting code they wrote themselves 
 being requested of them. Softening any clause of that turns informed consent back into a rubber
 stamp, which is what a bullet list of reassurances usually is.
 
-The single question folded in beside it earns its own line by collapsing the whole hazard. An engine
+The single question beside it earns its own line by collapsing the whole hazard. An engine
 opened read-only will not carry out a destructive statement, so the danger disappears without this
-repository ever owning a sandbox, a throwaway schema or a parser tier. It rides on the ask that
+repository ever owning a sandbox, a throwaway schema or a parser tier. It rides on a checkpoint that
 already exists and nothing waits on an answer, per the seamlessness decision recorded at 0117's
 sibling: quiet means carry on.
 
@@ -71,10 +71,17 @@ And the question needed somewhere to be ASKED, which is not the same as somewher
 A flag, a field and three card sentences gave the answer a home; the ask itself was described in the
 cap-routing paragraph as "folded into the run's single ask" while that ask enumerated five items and
 closed on "ask nothing else here". An assistant building the ask from its own list would never have
-put the question in it. So it is item six, conditional on the gate having fired on material the
-customer brought, and where the gate fires later than the ask - an evaluator this run wrote in
-section 3 - the pre-spend card is named as its home instead. The claim and the enumeration now
-describe one thing.
+put the question in it, so the claim and the enumeration disagreed.
+
+A sixth item was drafted to close that and then dropped, and dropping it is the better answer for a
+reason the draft made visible. The question only bears on the moment money moves; asked in section 2
+it arrives before anything it could inform, conditional on a gate that may not have fired yet, with a
+second home named for the case where the evaluator does not exist until section 3. One question with
+two homes and a condition deciding between them is three things to keep true. The pre-spend approval
+card is the single home now: the gate raises the question and deliberately does not put it, the card
+puts it once, and the answer is recorded where the spend it qualifies is approved. An optional
+question asked at two checkpoints reads as a stop, which is the one thing this entry exists to stop
+it being.
 
 Two corrections from a review of the corrections, and both were the rule turning on itself. The
 carve-out's operative test had become "a stop the customer CAN clear" - which reads well and
@@ -86,5 +93,22 @@ with the wrong test named beside it so nobody re-derives it.
 And consolidating the disclosure into one home put it behind a condition that had just been narrowed.
 The pre-spend card carries an asking cap's question; answering `read-only` stops the cap asking; so
 the customer who gave the safest answer reached the moment money moves with no disclosure at all.
-The unconditional bullet carries what was not checked, the asking-cap bullet carries the answer where
-there is one, and those are two different things rather than one thing stated twice.
+The unconditional bullet carries what was not checked, the asking-cap bullet puts the question and
+records its answer, and those are two different things rather than one thing stated twice.
+
+A third read, by someone given the documents and the rule and none of the drafts, found three more
+and all three were this entry's own new prose disagreeing with itself. The readiness card was still
+described as carrying "the one question it asks" while the paragraph four hundred lines above had
+just moved that question to the pre-spend approval and said an optional question asked twice reads
+as a stop. The money bullet still explained itself by saying a customer who answered `read-only` has
+no asking cap - a sentence that assumes the answer arrives before the card it is now asked on, and
+that the scorer refutes anyway, since the cap asks on every connection answer. And the disclosure
+bullet told the customer no change to their evaluator alters the outcome, dropping the three words
+that make that true: inside this run. An evaluator rewritten to compare rather than execute leaves
+this gate entirely, so the absolute form was false in the one place the file instructs nobody to
+soften. The scoped form says what the run can stand behind and stops short of the errand.
+
+Also corrected here because the list moved: the single ask is introduced as carrying "four things"
+in three places and enumerates five. It was wrong before this entry and wronger during it, the
+draft sixth item having made it six against four, and a count nobody maintains is how an assistant
+building the ask from its own reading drops the item that arrived last.

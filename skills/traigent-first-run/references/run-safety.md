@@ -324,18 +324,23 @@ on our initiative. It is not their onboarding.
 in their own words, and do not soften any of it:
 
 - **what was not checked** - their evaluator, against their engine;
-- **that the reason is our boundary, not their defect** - there is nothing for them to fix, and no
-  change to their evaluator alters the outcome;
+- **that the reason is our boundary, not their defect** - there is nothing for them to fix, and
+  nothing they change inside this run lifts it. Say it with that scope and not wider: an evaluator
+  rewritten later to compare rather than execute is a different evaluator, out of this gate
+  altogether, and telling them no change of theirs could ever matter is both false and an errand
+  they were not given;
 - **what proceeding concretely means** - during the paid run the *model* writes the statements and
   their evaluator executes them against whatever it is configured to reach, many times over. The
   statements are generated, not theirs, so their trust in their own code is not the trust being
   asked for.
 
-Then ask one optional question, folded into the run's single ask and never as a stop of its own:
-**does the evaluator connect read-only?** That is the whole safety story in a line - a read-only
-engine refuses a destructive statement by itself, so the hazard is gone without any containment this
-guide would have to own. Record the answer. **Silence proceeds**, and a `no` proceeds too: the
-disclosure above has already done its work.
+One optional question follows from it - **does the evaluator connect read-only?** - and that is the
+whole safety story in a line: a read-only engine refuses a destructive statement by itself, so the
+hazard is gone without any containment this guide would have to own. It is not asked here. The
+pre-spend approval card below is its one home, because the answer bears on the moment money moves
+and on nothing before it, and an optional question asked twice is a question that reads as a stop.
+Record the answer there. **Silence proceeds**, and a `no` proceeds too: the disclosure above has
+already done its work.
 
 A separate manual containment design and review remains available outside this guide, and it is the
 only route to the calibration evidence itself; it must decide the execution boundary, mounted
@@ -382,7 +387,8 @@ That customer's card is a consequence of this decision rather than of their proj
 check is not made, so it earns nothing and the probe spread is never measured, and `readiness.py`
 raises `evaluator-calibration-refused`, which limits the readiness CLAIM to 45 and **does not block**
 - the ceiling says what this card may assert, and nothing here says what the customer may do. The
-card carries the disclosure this section makes, and the one question it asks.
+card carries the disclosure this section makes. It does not put the question: that happens once, at
+the pre-spend approval, for the reason given above.
 Whether the unmade check is also CHARGED depends on what preflight's walk found, and the card says which case a run is
 in: a walk that established the engine is not charged, and a run resting on the declaration alone
 is, because finding no engine settles nothing by the paragraph above. None of it follows from
@@ -669,10 +675,11 @@ Before the provider-paid baseline, show only its immediate scope:
   check and the run continues, so this card DOES price them - and it carries the disclosure, because
   this bullet is unconditional and the moment money moves is the moment it matters. Say what was not
   checked, that it is our boundary rather than their defect, and what the paid run will have their
-  evaluator do with model-written statements. The asking-cap bullet below owns the QUESTION and its
-  answer, which is a different thing and only exists where one was asked - a customer who answered
-  `read-only` has no asking cap and would otherwise reach the spend with no disclosure at all, which
-  is the safest answer buying the quietest card.
+  evaluator do with model-written statements. The asking-cap bullet below owns the QUESTION and the
+  answer given to it, which is a different thing from what was not checked. Both land on this same
+  card, and this bullet is why the order cannot be relied on: the disclosure is unconditional, so it
+  is stated whatever the connection answer turns out to be. An earlier draft made it conditional on
+  the cap still asking, which would have let the safest answer buy the quietest card.
 
 ### The pre-spend approval card
 
@@ -718,9 +725,11 @@ exist and points at a file that was never created.
   the finding, the answer taken, and what proceeding on that answer means for the money about to be
   spent - do not put the question a second time in different words, with a different pair of exits.
   Where the cap's route owns no question of its own, this card is that one home and asks it here.
-  `evaluator-calibration-refused` is one of those, and only its ANSWER belongs here: which connection
-  answer this spend is being approved on. What was not checked is stated once, in the scope bullet
-  above, which fires whether or not this cap is still asking.
+  `evaluator-calibration-refused` is one of those, and it is asked here and nowhere else: whether
+  the evaluator connects read-only, and so which connection answer this spend is being approved on.
+  The scope gate above raises the question and deliberately does not put it, because this is the
+  moment the answer bears on. What was NOT checked is a different thing and is stated once, in the
+  scope bullet above, which fires whether or not this cap is still asking.
 - **Where we are.** `Stage 3/5 · Baseline`, so the choice arrives placed in the run rather than
   loose.
 - **Proceed, or fix.** Two lettered routes with the recommendation on one of them, in the shape

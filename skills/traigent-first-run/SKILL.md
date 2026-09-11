@@ -446,7 +446,7 @@ conversation; recording it is a write and waits for the answer.
    inventory found request/response logs or accepted traces, say they are built from those: "I
    will create the dataset, the evaluation method and the agent from your logs" is a different
    offer from "I will write them", and the second undersells material they already have. Carry the
-   four things "One ask for every gap" below requires - including the `I have it` answer and its
+   five things "One ask for every gap" below requires - including the `I have it` answer and its
    path - on this same question, so it stays one and not two.
 3. Ask exactly one task-intent question: **"What should the walkthrough agent do?"** Offer at
    most three short choices, each put as the job itself - "pull the total and the date out of a
@@ -511,7 +511,7 @@ the user hears it once, in one question, riding on the board above rather than a
 turn, and before anything is built. Never one question per component: a project with no examples and no
 way to grade them has a single gap in it, and asking twice asks the same person to consent to the
 same substitution twice. When a quality advisory fires in the same turn, fold it in - a gap and a
-weakness are one decision about what this run will measure. That question carries four things:
+weakness are one decision about what this run will measure. That question carries five things:
 
 1. What the inventory did not find, named plainly and all of it at once - what was searched for and
    not seen, never what the project does not have - and, on the same line, what it found too little
@@ -532,13 +532,6 @@ weakness are one decision about what this run will measure. That question carrie
    never guess. Where they name nothing, proceed on accuracy and cost **and say that in those
    words**, so a default nobody chose is not mistaken for a choice somebody made.
    `references/evaluation-and-dataset.md` owns what the answer becomes.
-6. **Whether their evaluator connects read-only**, in one line, and only where the
-   evaluator-execution scope gate in `references/run-safety.md` already fired on an evaluator they
-   brought. Read-only means the engine itself refuses a destructive statement, so the answer closes
-   the hazard that gate discloses. It is optional: record either answer, and proceed on silence.
-   Where the gate fires later than this ask - an evaluator this run created or repaired in section 3
-   - the pre-spend approval in section 6 is its home instead, and that reference owns the wording.
-
 Then stop and wait, and ask nothing else here; what this run writes is shown at the pre-spend
 approval in section 6, the other checkpoint. The question closes the message: the board and the
 cost sit above it, and no summary of it sits above them.
@@ -546,7 +539,7 @@ A path given here names material that was in the project all along, so re-run th
 read that as the opening score; the record waits for this answer in any gap run, for the reason the
 zero-anchor gate above already gives for its own.
 When nothing anchors task intent at all this is not a second question - the zero-anchor gate above
-asks one and carries these four things on it. The answer covers absence and shortfall, never a
+asks one and carries these five things on it. The answer covers absence and shortfall, never a
 defect; broken
 material keeps every gate section 4 already puts on it. `references/component-creation.md` owns the
 wording, what a supplied path is checked for, and where each way of not getting one lands.
@@ -782,9 +775,9 @@ an evidence boundary, not a repair finding.
 `evaluator-calibration-refused` is that same evidence boundary reached by the scope gate rather than
 by a step nobody took, and like `evaluator-unvalidated` it does not block: the run proceeds on the
 disclosure `references/run-safety.md` sets out, and the ceiling bounds what the card may claim rather
-than what the customer may do. Its one ask is whether their evaluator connects read-only - item 6 of
-the single ask in section 2, or the pre-spend card where the gate fires after it - and never a stop
-of its own; silence proceeds. Say that the ceiling is about
+than what the customer may do. Its one ask is whether their evaluator connects read-only, and the
+pre-spend approval in section 6 is where it is put - the moment the answer bears on, and the one
+place it is asked - never a stop of its own; silence proceeds. Say that the ceiling is about
 missing evidence and not a finding against their evaluator, that there is nothing for them to fix
 because the unmade check is ours, and never present the unsafe route as the way to lift it.
 `evaluator-timeout` is neither a repair to route nor the invalid-evaluator
