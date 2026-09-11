@@ -784,6 +784,69 @@ class StaticPreflightTests(unittest.TestCase):
             holdout.metrics, {"holdout_rows": 6, "holdout_labelled_rows": 6}
         )
 
+    def test_the_split_word_the_guidance_teaches_is_accepted(self) -> None:
+        """`held-out` is what the guide says to write, so it has to read.
+
+        `evaluation-and-dataset.md` says "held-out" in every sentence the
+        concept appears in, and SKILL.md tells the assistant to label rows with
+        their split - so the one word this vocabulary did not accept was the
+        one the guide teaches. A customer who reserved ten rows with it was
+        told "tuning-only dataset; no held-out split was declared" on a
+        **PASS**, and the held-out check never ran
+        (traigent-first-run#499).
+        """
+        for token in ("held-out", "heldout", "held_out", "holdout"):
+            with self.subTest(token=token):
+                MODULE.RESULTS.clear()
+                rows = [dict(row, split="tuning") for row in synthetic_rows()[:18]]
+                rows += [dict(row, split=token) for row in synthetic_rows()[18:24]]
+                with tempfile.TemporaryDirectory() as directory:
+                    dataset = Path(directory) / "eval.jsonl"
+                    dataset.write_text(
+                        "\n".join(json.dumps(row) for row in rows) + "\n"
+                    )
+                    MODULE.check_dataset(dataset)
+                split = next(
+                    result
+                    for result in MODULE.RESULTS
+                    if result.check == "dataset-split"
+                )
+                self.assertEqual(split.status, MODULE.PASS)
+                self.assertIn("disjoint", split.detail)
+                self.assertNotIn(
+                    "dataset-split-vocabulary",
+                    {result.check for result in MODULE.RESULTS},
+                )
+        MODULE.RESULTS.clear()
+
+    def test_a_split_name_outside_the_vocabulary_is_named_not_absorbed(self) -> None:
+        """The half a widened set cannot cover: the next unknown word.
+
+        Guessing which side `reserved` meant would silently move rows across
+        the line the held-out claim rests on, so it is reported instead - and
+        the report names what this run does accept, so nobody has to discover
+        the vocabulary by trial.
+        """
+        rows = [dict(row, split="tuning") for row in synthetic_rows()[:18]]
+        rows += [dict(row, split="reserved") for row in synthetic_rows()[18:24]]
+        with tempfile.TemporaryDirectory() as directory:
+            dataset = Path(directory) / "eval.jsonl"
+            dataset.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+            MODULE.check_dataset(dataset)
+        record = next(
+            result
+            for result in MODULE.RESULTS
+            if result.check == "dataset-split-vocabulary"
+        )
+        self.assertEqual(record.status, MODULE.WARN)
+        self.assertIn("reserved", record.detail)
+        self.assertIn("neither side", record.detail)
+        for known in MODULE.KNOWN_SPLIT_NAMES:
+            with self.subTest(known=known):
+                self.assertIn(known, record.detail)
+        self.assertEqual(record.metrics["unknown_splits"], ["reserved"])
+        MODULE.RESULTS.clear()
+
     def test_tuning_only_dataset_is_not_reported_as_an_undeclared_split(self) -> None:
         rows = synthetic_rows()[:18]
         with tempfile.TemporaryDirectory() as directory:
