@@ -1102,10 +1102,10 @@ reveals a specific, worthwhile hypothesis.
 
 Before saying the run succeeded, apply every post-run verification in
 `references/run-safety.md`. Also verify that the baseline was preserved exactly or the generated
-twelve-configuration default (including its initial configuration) ran, subject only to an approved disclosed
-reduction; the enhanced run used real controls and either produced at least 10 of its 12 permitted
-trials, matched an explicitly approved and disclosed reduced target, or reports a concrete
-stop/failure reason; and a
+twelve-configuration default ran in full, its initial configuration among them - the baseline grid
+is never reduced, and an approved disclosure does not make it so; the enhanced run used real
+controls and either produced at least 10 of its 12 permitted trials, matched an explicitly approved
+and disclosed reduced target, or reports a concrete stop/failure reason; and a
 best configuration and non-degenerate measures exist. Verify the held-out score belongs to the one
 configuration this run recommends, chosen on the tuning scores, and that no other candidate was
 scored on those rows. Report truncation and persistence failures, require the portal
