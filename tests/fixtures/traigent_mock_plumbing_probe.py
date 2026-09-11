@@ -39,7 +39,7 @@ def main() -> None:
         with contextlib.redirect_stdout(captured), contextlib.redirect_stderr(captured):
             import traigent
             from traigent.api.decorators import EvaluationOptions
-            from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema
+            from traigent.core import objectives
             from traigent.utils.env_config import is_mock_llm
 
             if mode in {"api", "raw"}:
@@ -54,9 +54,9 @@ def main() -> None:
                 return float(prediction == expected)
 
             @traigent.optimize(
-                objectives=ObjectiveSchema.from_objectives(
+                objectives=objectives.ObjectiveSchema.from_objectives(
                     [
-                        ObjectiveDefinition(
+                        objectives.ObjectiveDefinition(
                             name="score", orientation="maximize", weight=1.0
                         )
                     ]

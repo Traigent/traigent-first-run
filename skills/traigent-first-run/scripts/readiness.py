@@ -6171,15 +6171,11 @@ def row_review_evidence(
     review of 5 rows out of 4,812 says exactly that instead of implying the
     dataset was cleared.
 
-    THE CLOSING CLAUSE IS THE POINT OF THE SENTENCE, and it is derived rather
-    than fixed (traigent-first-run#441). What a customer will take from a card
-    that says "read" beside a released hold is that their answers were checked,
-    so the difference between the two things this read can be has to be printed
-    rather than inferred. Where the review covered every row the comparison
-    runs on, nothing about that comparison is assumed and the clause says so;
-    where it did not, the rows that were looked at held and the rest are
-    assumed to be like them. The number decides which clause is printed, so the
-    two can never disagree.
+    File coverage and graded-row coverage are separate counts. Covering all
+    graded rows may leave other provided rows unread, but covering the whole
+    provided population leaves no such remainder (traigent-first-run#534).
+    Neither coverage claim verifies the comparison: this is the assistant's
+    assessment of expected answers, not an optimization measurement.
 
     And where this run wrote the method those rows were judged against, the
     line says so. The sample is then this run checking its own work - which the
@@ -6192,7 +6188,11 @@ def row_review_evidence(
     if not review.supplied:
         return ""
     provided = provided_rows(facts)
-    line = f"the coding assistant sampled {review.reviewed} of {provided} provided rows"
+    all_provided = provided > 0 and review.reviewed >= provided
+    if all_provided:
+        line = f"the coding assistant reviewed all {provided} provided rows"
+    else:
+        line = f"the coding assistant sampled {review.reviewed} of {provided} provided rows"
     # And what those rows COVER, where the review said which rows the run
     # reads. Without this clause the card printed "read 60 of 4812 provided
     # rows" beside a top band, because the sentence counts the file and the
@@ -6205,10 +6205,19 @@ def row_review_evidence(
     # it reads as a coverage failure where the finding is that the split the
     # run compares on carries no answer at all, which the dataset pillar's own
     # cap is the place that says so (traigent-first-run#395).
-    if review.reviewed_in_run is not None and graded:
+    split_rows = run_rows(facts)
+    # `in_run` counts all reviewed split rows, including unlabelled ones.
+    # Only when the populations coincide may that count name graded rows.
+    all_split_rows_graded = split_rows is not None and split_rows == graded
+    if review.reviewed_in_run is not None and graded and all_split_rows_graded:
         line += (
             f", {review.reviewed_in_run} of them from the {graded} rows this "
             "run is graded on"
+        )
+    elif review.reviewed_in_run is not None and split_rows:
+        line += (
+            f", {review.reviewed_in_run} of them from the {split_rows} rows "
+            "in the declared tuning/held-out split"
         )
     if review.unsound == 1:
         line += "; 1 expected answer contradicts its input"
@@ -6220,22 +6229,27 @@ def row_review_evidence(
         line += f", {review.unsure} undecided"
     if facts.synthesised_rows:
         line += f"; {facts.synthesised_rows} generated rows not reviewed"
-    # Last, so it is the clause the sentence ends on, and never omitted: a
-    # read that found nothing is exactly the state a reader is most likely to
-    # round up to "checked". Which of the two it is comes off the counts, so a
-    # run that covered the comparison is not told it sampled it, and a run that
-    # sampled is never told otherwise.
+    # A complete read of the graded rows is not necessarily a complete read
+    # of the provided file. Report an unread remainder only when one exists.
     if (
         graded
         and review.reviewed_in_run is not None
-        and review.reviewed_in_run >= graded
+        and split_rows is not None
+        and review.reviewed_in_run >= split_rows
     ):
+        if all_split_rows_graded:
+            line += "; that is every row this run is graded on"
+        else:
+            line += f"; all {graded} graded rows are among those reviewed"
+        if not all_provided:
+            line += (
+                f"; {provided - review.reviewed} other provided rows were not reviewed"
+            )
+    elif not all_provided:
         line += (
-            "; that is every row this run is graded on, so nothing about the "
-            "comparison is assumed - the rest of your file was not read"
+            "; a sample, so unreviewed answers are assumed sound rather than verified"
         )
-    else:
-        line += "; a sample, so the answers are assumed sound rather than verified"
+    line += "; this row review does not verify comparison results"
     if evaluator_origin == "generated":
         line += " - and this run wrote the evaluation method they were judged against"
     return line

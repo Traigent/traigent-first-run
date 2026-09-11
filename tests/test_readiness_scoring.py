@@ -17,6 +17,7 @@ import typing
 import unittest
 from dataclasses import asdict, replace
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "skills" / "traigent-first-run" / "scripts" / "readiness.py"
@@ -11196,7 +11197,9 @@ class RowLevelSanityTests(unittest.TestCase):
             if before.evidence != after.evidence
         ]
         self.assertEqual([name for name, _ in differing], ["labels"])
-        self.assertIn("the coding assistant sampled 28 of 28", differing[0][1])
+        self.assertIn(
+            "the coding assistant reviewed all 28 provided rows", differing[0][1]
+        )
         self.assertIn("none contradicts its own input", differing[0][1])
 
     def test_a_material_share_of_wrong_answers_lowers_the_ceiling(self) -> None:
@@ -11301,7 +11304,7 @@ class RowLevelSanityTests(unittest.TestCase):
             facts, "normalized-exact", _review(reviewed=18)
         )
         labels = next(s for s in pillar.subscores if s.name == "labels")
-        self.assertIn("sampled 18 of 18 provided rows", labels.evidence)
+        self.assertIn("reviewed all 18 provided rows", labels.evidence)
         self.assertIn("10 generated rows not reviewed", labels.evidence)
 
     def test_a_reference_free_judge_reads_no_expected_output_so_none_can_cap(
@@ -11869,11 +11872,11 @@ class TheTopBandsNeedAReadOfTheAnswersTests(unittest.TestCase):
             _review(reviewed=28, reviewed_in_run=28), covered
         )
         self.assertIn("that is every row this run is graded on", whole)
-        self.assertNotIn("a sample, so the answers are assumed sound", whole)
+        self.assertNotIn("a sample, so unreviewed answers are assumed sound", whole)
         part = MODULE.row_review_evidence(
             _review(reviewed=12, reviewed_in_run=12), covered
         )
-        self.assertIn("a sample, so the answers are assumed sound", part)
+        self.assertIn("a sample, so unreviewed answers are assumed sound", part)
         self.assertNotIn("that is every row this run is graded on", part)
 
     def test_a_read_below_the_sample_lifts_nothing(self) -> None:
@@ -12079,11 +12082,12 @@ class TheTopBandsNeedAReadOfTheAnswersTests(unittest.TestCase):
         self.assertIn("sampled 5 of", line)
         self.assertNotIn("the coding assistant read", line)
         self.assertIn(
-            "a sample, so the answers are assumed sound rather than verified", line
+            "a sample, so unreviewed answers are assumed sound rather than verified",
+            line,
         )
-        # And the clause is last, so it is what the sentence ends on rather
-        # than something a finding can be appended after.
-        self.assertTrue(line.endswith("rather than verified"))
+        self.assertTrue(
+            line.endswith("this row review does not verify comparison results")
+        )
 
     def test_a_sample_taken_through_this_runs_own_method_says_so(self) -> None:
         """The self-certification the owner accepted, made visible.
@@ -28156,3 +28160,163 @@ class UnsupportedSourceKeepsItsExplanationTests(unittest.TestCase):
         self.assertEqual(set(payload), set(asdict(_healthy_score())))
         self.assertEqual(score.schema_version, _healthy_score().schema_version)
         self.assertNotIn("source_unavailable_reason", json.dumps(payload))
+
+
+class RowReviewCoverageDescribesOnlyWhatWasReadTests(unittest.TestCase):
+    """#534: full coverage cannot invent an unread remainder or verify a result."""
+
+    @staticmethod
+    def reviewed_dataset(*, provided=28, generated=0, graded=28, reviewed=28):
+        total = provided + generated
+        ids = tuple(f"review-row-{index}" for index in range(total))
+        facts = _brought(
+            total,
+            collected_rows=provided,
+            synthesised_rows=generated,
+            tuning_rows=graded - 10 if graded is not None else None,
+            holdout_rows=10 if graded is not None else None,
+            tuning_labelled_rows=graded - 10 if graded is not None else None,
+            holdout_labelled_rows=10 if graded is not None else None,
+            row_id_digests=tuple(MODULE.row_id_digest(value) for value in ids),
+            run_row_id_digests=(
+                tuple(MODULE.row_id_digest(value) for value in ids[:graded])
+                if graded is not None
+                else None
+            ),
+        )
+        document = {
+            "reviewer": "assistant",
+            "rows": [
+                {
+                    "id": ids[index],
+                    "origin": "collected",
+                    "verdict": "yes",
+                    "note": "The expected answer follows from the input.",
+                    **({"in_run": index < graded} if graded is not None else {}),
+                }
+                for index in range(reviewed)
+            ],
+        }
+        return facts, MODULE.row_review_from_document(document, facts)
+
+    def test_every_provided_and_graded_row_has_no_unread_remainder(self):
+        facts, review = self.reviewed_dataset()
+        line = MODULE.row_review_evidence(review, facts)
+        self.assertEqual(
+            line,
+            "the coding assistant reviewed all 28 provided rows, 28 of them from "
+            "the 28 rows this run is graded on; none contradicts its own input; "
+            "that is every row this run is graded on; "
+            "this row review does not verify comparison results",
+        )
+        self.assertNotIn("sample", line)
+        self.assertNotIn("not read", line)
+        self.assertNotIn("not reviewed", line)
+        self.assertNotIn("nothing about the comparison is assumed", line)
+
+    def test_all_graded_rows_can_leave_other_provided_rows_unread(self):
+        facts, review = self.reviewed_dataset(provided=100)
+        line = MODULE.row_review_evidence(review, facts)
+        self.assertIn("sampled 28 of 100 provided rows", line)
+        self.assertIn("that is every row this run is graded on", line)
+        self.assertIn("72 other provided rows were not reviewed", line)
+        self.assertNotIn("unreviewed answers are assumed sound", line)
+        self.assertIn("this row review does not verify comparison results", line)
+
+    def test_partial_graded_coverage_keeps_the_unreviewed_answer_assumption(self):
+        facts, review = self.reviewed_dataset(reviewed=12)
+        line = MODULE.row_review_evidence(review, facts)
+        self.assertIn("sampled 12 of 28 provided rows", line)
+        self.assertIn("12 of them from the 28 rows this run is graded on", line)
+        self.assertIn("unreviewed answers are assumed sound rather than verified", line)
+        self.assertNotIn("that is every row", line)
+        self.assertIn("this row review does not verify comparison results", line)
+
+    def test_a_full_file_read_does_not_invent_an_undeclared_split(self):
+        facts, review = self.reviewed_dataset(graded=None)
+        line = MODULE.row_review_evidence(review, facts)
+        self.assertIn("reviewed all 28 provided rows", line)
+        self.assertNotIn("graded on", line)
+        self.assertNotIn("sample", line)
+        self.assertNotIn("not reviewed", line)
+        self.assertIn("this row review does not verify comparison results", line)
+
+    def test_generated_rows_remain_excluded_from_full_provided_coverage(self):
+        facts, review = self.reviewed_dataset(provided=18, generated=10, reviewed=18)
+        line = MODULE.row_review_evidence(review, facts, "generated")
+        self.assertIn("reviewed all 18 provided rows", line)
+        self.assertIn("18 of them from the 28 rows this run is graded on", line)
+        self.assertIn("10 generated rows not reviewed", line)
+        self.assertNotIn("that is every row", line)
+        self.assertNotIn("other provided rows", line)
+        self.assertIn("this row review does not verify comparison results", line)
+        self.assertTrue(
+            line.endswith(
+                "this run wrote the evaluation method they were judged against"
+            )
+        )
+
+    def test_split_row_counts_do_not_claim_coverage_of_unidentified_labelled_rows(self):
+        for reviewed in (18, 28):
+            with self.subTest(reviewed=reviewed):
+                facts, review = self.reviewed_dataset(reviewed=reviewed)
+                facts = replace(
+                    facts,
+                    labelled_rows=18,
+                    answerable_rows=18,
+                    tuning_labelled_rows=8,
+                )
+                line = MODULE.row_review_evidence(review, facts)
+                self.assertIn(
+                    f"{reviewed} of them from the 28 rows in the declared tuning/held-out split",
+                    line,
+                )
+                self.assertNotIn("from the 18 rows this run is graded on", line)
+                if reviewed == 28:
+                    self.assertIn("all 18 graded rows are among those reviewed", line)
+                else:
+                    self.assertNotIn("that is every row this run is graded on", line)
+                    self.assertNotIn("all 18 graded rows", line)
+
+    def test_findings_and_declined_verdicts_are_not_replaced_by_coverage(self):
+        facts, review = self.reviewed_dataset()
+        line = MODULE.row_review_evidence(replace(review, unsound=1, unsure=2), facts)
+        self.assertIn("1 expected answer contradicts its input, 2 undecided", line)
+        self.assertNotIn("none contradicts", line)
+        self.assertIn("this row review does not verify comparison results", line)
+        self.assertEqual(MODULE.row_review_evidence(MODULE.RowReview(), facts), "")
+
+    def test_only_evidence_changes_in_the_serialized_score(self):
+        facts, review = self.reviewed_dataset()
+        arguments = (
+            facts,
+            _passing_calibration(),
+            _wired_space(),
+            dict(MODULE.DEFAULT_WEIGHTS),
+            review,
+        )
+        score = MODULE.score_run(*arguments)
+        after = asdict(score)
+        with mock.patch.object(
+            MODULE, "row_review_evidence", return_value="prior wording"
+        ):
+            before = asdict(MODULE.score_run(*arguments))
+        before_labels = next(
+            sub
+            for pillar in before["pillars"]
+            if pillar["name"] == "dataset"
+            for sub in pillar["subscores"]
+            if sub["name"] == "labels"
+        )
+        after_labels = next(
+            sub
+            for pillar in after["pillars"]
+            if pillar["name"] == "dataset"
+            for sub in pillar["subscores"]
+            if sub["name"] == "labels"
+        )
+        self.assertNotEqual(before_labels["evidence"], after_labels["evidence"])
+        before_labels["evidence"] = after_labels["evidence"]
+        self.assertEqual(before, after)
+        self.assertIn("reviewed all 28 provided rows", after_labels["evidence"])
+        self.assertIn("reviewed all 28 provided rows", MODULE.render_markdown(score))
