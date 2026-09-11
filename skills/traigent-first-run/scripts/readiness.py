@@ -19545,6 +19545,37 @@ def cited_source_text(
     )
 
 
+def cited(answer: str, evidence: str) -> str:
+    """One build answer and the assistant's own note about it, kept apart.
+
+    These are two different claims and the card used to print them as one
+    sentence. The clause before the parenthesis is derived from the structured
+    yes/no on the checklist; inside it sat the assistant's free-text `evidence`
+    verbatim. Both come from the same document and neither is verified here, so
+    the framing above is right about both - but they can DISAGREE, and when they
+    did the card asserted the contradiction in one breath:
+
+        a prompt, no worked examples in it (a prompt with two worked examples
+        (other_agent.py:41-58))
+
+    A reader cannot act on that. Which half is the finding? It also cited a file
+    that is not the agent being scored, and nothing on the line said so.
+
+    So the two are attributed instead of concatenated, in words a customer can
+    parse without knowing what a checklist entry is: the answer this run was
+    GIVEN, and then, quoted, what the assistant WROTE about it. Quoting is what
+    does the work - a reader who sees the second half in quotation marks knows
+    whose sentence it is and can weigh it against the first, which is the whole
+    of what was missing.
+
+    Deriving the answer instead, so the two cannot disagree, is the larger fix
+    and is refused here as a feature rather than a correction
+    (traigent-first-run#362). This stops the card asserting a contradiction; it
+    does not pretend to resolve one.
+    """
+    return f"from the checklist, {answer}; in its own words, {evidence!r}"
+
+
 def build_signal_from_entry(
     check: str, spec: Any, source: StaticSourceEvidence | None = None
 ) -> BuildSignal:
@@ -19708,7 +19739,7 @@ def build_signal_from_entry(
     if check == "prompt":
         if not _build_flag(check, spec, "present"):
             return BuildSignal(
-                check, 0.0, f"no prompt reached the model call ({evidence})"
+                check, 0.0, cited("no prompt reached the model call", evidence)
             )
         shots = spec.get("few_shot", 0)
         if not isinstance(shots, int) or isinstance(shots, bool) or shots < 0:
@@ -19724,17 +19755,20 @@ def build_signal_from_entry(
         counted = (
             f"{shots} worked example(s) in it" if shots else "no worked examples in it"
         )
-        return BuildSignal(check, earned, f"a prompt, {counted} ({evidence})")
+        return BuildSignal(check, earned, cited(f"a prompt, {counted}", evidence))
     if check == "output-contract":
         if _build_flag(check, spec, "present"):
             return BuildSignal(
-                check, weight, f"the answer's shape is constrained ({evidence})"
+                check, weight, cited("the answer's shape is constrained", evidence)
             )
         return BuildSignal(
             check,
             0.0,
-            "nothing constrains the shape of the answer, so an evaluator has to "
-            f"accept whatever comes back ({evidence})",
+            cited(
+                "nothing constrains the shape of the answer, so an evaluator "
+                "has to accept whatever comes back",
+                evidence,
+            ),
         )
     if check == "control-flow":
         # The claim, checked against the tree - not the coordinate, checked
@@ -19759,7 +19793,7 @@ def build_signal_from_entry(
             return BuildSignal(
                 check,
                 weight,
-                f"one call per input, so it ends ({evidence})",
+                cited("one call per input, so it ends", evidence),
                 source_check_scope=(
                     SOURCE_CHECK_SCOPE["control-flow:no-loop"]
                     if source is not None
@@ -19783,7 +19817,7 @@ def build_signal_from_entry(
             return BuildSignal(
                 check,
                 weight,
-                f"a loop, and a stop condition to point at ({evidence})",
+                cited("a loop, and a stop condition to point at", evidence),
                 source_check_scope=(
                     SOURCE_CHECK_SCOPE["control-flow:bounded"]
                     if source is not None
@@ -19793,8 +19827,11 @@ def build_signal_from_entry(
         return BuildSignal(
             check,
             0.0,
-            "a loop with no stop condition this read could point at, so one "
-            f"input can cost an unbounded number of calls ({evidence})",
+            cited(
+                "a loop with no stop condition this read could point at, so "
+                "one input can cost an unbounded number of calls",
+                evidence,
+            ),
         )
     if not _build_flag(check, spec, "used"):
         # CHARGED, and it used to be EXCLUDED - `applicable=False`, which took
@@ -19973,16 +20010,19 @@ def build_signal_from_entry(
         return BuildSignal(
             check,
             weight,
-            f"{len(declared)} tool(s), each reachable ({evidence})",
+            cited(f"{len(declared)} tool(s), each reachable", evidence),
             source_check_scope=walked,
         )
     return BuildSignal(
         check,
         round(weight * (len(declared) - len(set(unreachable))) / len(declared), 2),
-        f"{len(set(unreachable))} of {len(declared)} declared tool(s) were not "
-        f"found behind the name: {', '.join(sorted(set(unreachable)))}; tool "
-        "wiring receives credit only for declared tools that resolve "
-        f"({evidence})",
+        cited(
+            f"{len(set(unreachable))} of {len(declared)} declared tool(s) were "
+            f"not found behind the name: "
+            f"{', '.join(sorted(set(unreachable)))}; tool wiring receives "
+            "credit only for declared tools that resolve",
+            evidence,
+        ),
         source_check_scope=walked,
     )
 
