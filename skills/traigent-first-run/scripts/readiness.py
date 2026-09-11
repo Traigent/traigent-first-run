@@ -2410,8 +2410,10 @@ CAP_NO_IMPLICATION: dict[str, str] = {
         "search-space conditions"
     ),
     "evaluator-calibration-refused": (
-        "mutually exclusive with the unvalidated route it shares a ceiling "
-        "with - one branch raises one or the other and never both - and a "
+        "mutually exclusive with the unvalidated route - one branch raises one "
+        "or the other and never both - which is why the two share a ceiling on "
+        "the declared arm and part company on the witnessed one, where this "
+        "condition bounds nothing at all. And a "
         "refusal to execute this evaluator says nothing about where the rows "
         "came from or how large the search space is"
     ),
@@ -3169,6 +3171,34 @@ class CalibrationRefusalLine:
         if self.names_ceiling:
             text += CALIBRATION_REFUSAL_ROUTE[self.core_key]
         return text
+
+
+def witnessed_engine(facts: "EvaluationFacts") -> bool:
+    """Did a walk actually QUOTE the construct, or did a document just say so.
+
+    The flag and the witness are not the same evidence, and only one of them
+    can carry thirty-two points.
+
+    `executes_candidate` is `reported_bool(shape["executes"])`, read straight
+    out of the `--preflight` document handed to this script. Nothing here
+    produced it and nothing here can check it. `execution_witness` is the
+    construct and the line preflight's walk quoted - positive evidence a reader
+    can go and disagree with.
+
+    Keyed on the flag alone, lifting the ceiling made the flag worth +32: a
+    hand-written `{"executes": true}` with no witness scored 77 where the same
+    document scored 45 before this change. That inverts the rule this module
+    applies everywhere else - a judgement may withhold a claim and may never
+    manufacture one - and it inverts it on the ONE property the guide treats as
+    the unsafe shape, so the cheapest way to a high score became claiming your
+    evaluator opens a database.
+
+    The witness is what this file already says stops the claim being free. So
+    the ceiling comes off where the walk quoted something, and stays wherever
+    all this run holds is somebody's word - which is the same line the CHARGE
+    is drawn on, one field over.
+    """
+    return facts.executes_candidate is True and bool(facts.execution_witness)
 
 
 def calibration_refusal_consequence(
@@ -8202,7 +8232,7 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
                 # `calibration_scope_refused` promises.
                 (
                     CALIBRATION_REFUSED_NO_CEILING
-                    if facts.executes_candidate is True
+                    if witnessed_engine(facts)
                     else CALIBRATION_REFUSED_CEILING
                 ),
                 # The order is the message: what we did, why, that it is not
@@ -8257,7 +8287,26 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
                 "already known to be right and wrong, no card can claim it "
                 "grades correctly - so the evaluation pillar above reports "
                 "two of its four checks as measured, and this run cannot "
-                "present as STRONG. Your score is not reduced for it.",
+                "present as STRONG."
+                # ARM-AWARE, and it has to be, because the ceiling above is.
+                #
+                # "Your score is not reduced for it" is true where the walk
+                # WITNESSED the engine - that arm carries no ceiling. It is
+                # false on the declaration-only arm, which is still held at 45,
+                # and printing it there put "LIMITED TO 45" and "your score is
+                # not reduced" on one card. That is the class this whole change
+                # exists to remove, re-committed by the change itself: the
+                # sentence was written while the ceiling came off
+                # unconditionally, and narrowing the ceiling to the witnessed
+                # arm did not revisit it.
+                + (
+                    " Your score is not reduced for it."
+                    if facts.executes_candidate is True
+                    else " The ceiling above stands for a different reason: no "
+                    "preflight report for this evaluator reached this score, so "
+                    "nothing here established what it reaches. That is a gap in "
+                    "what this run was given, not a finding about your file."
+                ),
                 # DOES NOT BLOCK, and this REVERSES the half of
                 # traigent-first-run#393 that set `blocks=True` here. Written
                 # down as a reversal rather than edited away: a repository that
@@ -10082,8 +10131,9 @@ def blocker_lines(score: ReadinessScore, palette: Palette) -> list[str]:
     The two say different things about different questions. The band grades the
     EVIDENCE - how good what you brought is. The block answers whether the paid
     run may START. Both can be true at once, and routinely are: a project whose
-    dataset is absent scores in the thirties and is blocked by `dataset-absent`
-    while the agent pillar beside it reads perfectly well.
+    dataset is absent is held at `DATASET_ABSENT_CEILING` and blocked by
+    `dataset-absent`, while the agent pillar beside it reads perfectly well -
+    the band grades what arrived, the block answers whether to spend.
 
     The example given here used to be the generated-dataset walkthrough, blocked
     by `dataset-fully-synthetic`. That one does not occur: the condition routes
@@ -10524,8 +10574,18 @@ def render_card(
             repeated_input_routes(
                 score.repeated_inputs,
                 offers_top_up=score.recommended_action == ADD_EXAMPLES,
+                # `cap.asks`, not the routing label alone. `action_kind` says
+                # which remedy this condition routes to; whether the card
+                # actually PUTS the offer is `asks`, set from whether
+                # `top_up_offer` returned one. They part company on every size
+                # cap whose offer is empty - a file already at the bounded size
+                # has nothing to top up - and keying on the label alone printed
+                # "rows this run writes are scored as the generated rows they
+                # are" on a card that offers to write none. That is the
+                # sentence this fix removed from the other arm, reintroduced
+                # pointing the other way.
                 card_offers_rows=any(
-                    cap.action_kind == ADD_EXAMPLES for cap in score.caps
+                    cap.asks and cap.action_kind == ADD_EXAMPLES for cap in score.caps
                 ),
             )
         )
@@ -20721,8 +20781,9 @@ EXIT_CODES_HELP = f"""exit codes:
   1  the score is BLOCKED and --strict was passed
   2  an input was refused or the command line was wrong; the message on
      stderr says what was wrong, and names the flag where it can - a file
-     that cannot be read or parsed is reported by its path, not by the
-     option it arrived on
+     that cannot be READ is reported by its path, and one that cannot be
+     PARSED by the parser's own complaint, neither of them by the option
+     the file arrived on
   {INTERNAL_ERROR_EXIT}  this script failed on its own - a defect here, not in your project -
      and nothing was scored; re-run with {TRACEBACK_ENV}=1 to see where"""
 

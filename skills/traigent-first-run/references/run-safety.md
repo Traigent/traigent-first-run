@@ -388,13 +388,16 @@ whose evaluator runs the candidate's answer proceeds here with its calibration e
 
 That customer's card is a consequence of this decision rather than of their project. The evaluator
 check is not made, so it earns nothing and the probe spread is never measured, and `readiness.py`
-raises `evaluator-calibration-refused`, which limits the readiness CLAIM to 45 and **does not block**
-- the ceiling says what this card may assert, and nothing here says what the customer may do. The
+raises `evaluator-calibration-refused`, which **does not block** - nothing here says what the
+customer may do. **Whether it bounds the CLAIM depends on what preflight's walk found, and so does
+whether the check is charged; the same witness decides both.** Where the walk established the
+engine, the boundary is demonstrably ours: nothing is bounded and nothing is deducted. Where this
+run holds only the declaration, the claim is held at 45 and the check is charged, because a word
+about a file nobody read may bound a claim and may never lift one. The
 card carries the disclosure this section makes. It does not put the question: that happens once, at
 the pre-spend approval, for the reason given above.
-Whether the unmade check is also CHARGED depends on what preflight's walk found, and the card says which case a run is
-in: a walk that established the engine is not charged, and a run resting on the declaration alone
-is, because finding no engine settles nothing by the paragraph above. None of it follows from
+The card says which case a run is
+in. None of it follows from
 anything their evaluator did: the reason is the unbounded target above. The card gives them no route
 out of the ceiling, and no longer pretends to - the unmade check is ours, so nothing they do inside
 this run lifts it, and saying otherwise handed them an errand instead of a disclosure. That is a
