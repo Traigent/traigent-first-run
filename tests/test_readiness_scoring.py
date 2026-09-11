@@ -13217,6 +13217,43 @@ class TheOneQuestionHasSomewhereToLiveTests(unittest.TestCase):
         self.assertNotIn("no longer blocking", delta["line"])
 
 
+def _fuses_evidence(joined: ast.JoinedStr) -> bool:
+    """Is this the `<clause> ({evidence})` shape, specifically.
+
+    Narrower than "interpolates `evidence`", because one arm legitimately
+    does: the undetermined branch puts `UNCHECKED_OBSERVATION` immediately in
+    front of it, so the voice is already named and there is nothing for
+    `cited` to separate. What the card cannot carry is the evidence in BARE
+    PARENTHESES against a derived clause, which reads as one sentence.
+
+    So the match is positional: a formatted `evidence`, preceded by a constant
+    ending in an open parenthesis, followed by one starting with a close.
+    """
+    parts = joined.values
+    for index, part in enumerate(parts):
+        if not (
+            isinstance(part, ast.FormattedValue)
+            and isinstance(part.value, ast.Name)
+            and part.value.id == "evidence"
+        ):
+            continue
+        before = parts[index - 1] if index else None
+        after = parts[index + 1] if index + 1 < len(parts) else None
+        opens = (
+            isinstance(before, ast.Constant)
+            and isinstance(before.value, str)
+            and before.value.rstrip().endswith("(")
+        )
+        closes = (
+            isinstance(after, ast.Constant)
+            and isinstance(after.value, str)
+            and after.value.lstrip().startswith(")")
+        )
+        if opens and closes:
+            return True
+    return False
+
+
 class TheCardDoesNotAssertAContradictionTests(unittest.TestCase):
     """Two claims from one document, printed as two claims.
 
@@ -13264,7 +13301,20 @@ class TheCardDoesNotAssertAContradictionTests(unittest.TestCase):
         self.assertIn("'agent.py:12-30'", line)
 
     def test_every_build_check_uses_the_one_helper(self) -> None:
-        """Or the next check added reintroduces the fused form quietly."""
+        """Or the next check added reintroduces the fused form quietly.
+
+        The first version of this guard looked for the literal `({evidence})`
+        among the function's prose constants, and could not fail for any code:
+        in `f"a prompt, {counted} ({evidence})"` the only constants are
+        `'a prompt, '`, `' ('` and `')'` - the interpolation is an
+        `ast.FormattedValue`, never part of a constant. Seven of the nine
+        converted arms had no protection at all, and the test whose docstring
+        promised it was the one thing that could not see it.
+
+        What is checked now is the SHAPE: inside `build_signal_from_entry`, no
+        f-string may interpolate `evidence` itself. Every such join goes through
+        `cited`, which is the one place the two voices are kept apart.
+        """
         source = Path(MODULE.__file__).read_text(encoding="utf-8")
         function = next(
             node
@@ -13273,16 +13323,45 @@ class TheCardDoesNotAssertAContradictionTests(unittest.TestCase):
             and node.name == "build_signal_from_entry"
         )
         fused = [
-            literal
-            for literal in _prose_literals(function)
-            if "({evidence})" in literal
+            ast.unparse(joined)
+            for joined in ast.walk(function)
+            if isinstance(joined, ast.JoinedStr) and _fuses_evidence(joined)
         ]
         self.assertEqual(
             fused,
             [],
-            "a build answer is concatenated with the assistant's note instead "
+            "a build answer is interpolated with the assistant's note instead "
             "of going through `cited`, which is how the card came to assert a "
             "contradiction as one sentence",
+        )
+        # The guard must be able to SEE the thing it forbids: the same walk over
+        # a fused sample finds it. Without this, a later refactor that renames
+        # the argument turns the check green for the wrong reason.
+        sample = ast.parse('f"a prompt, {counted} ({evidence})"')
+        self.assertTrue(
+            [
+                joined
+                for joined in ast.walk(sample)
+                if isinstance(joined, ast.JoinedStr) and _fuses_evidence(joined)
+            ],
+            "the detector cannot see the fused form it exists to refuse",
+        )
+        # ...and it must NOT see the arm that is already attributed. That one
+        # puts `UNCHECKED_OBSERVATION` in front of the evidence instead of
+        # wrapping it in bare parentheses, so the voice is already named and
+        # there is nothing to separate. A guard that refuses it is a false red
+        # over correct writing, which teaches authors to work around the check.
+        attributed = ast.parse(
+            'f"not established by this read - {reason}. {UNCHECKED_OBSERVATION}{evidence}"'
+        )
+        self.assertEqual(
+            [
+                joined
+                for joined in ast.walk(attributed)
+                if isinstance(joined, ast.JoinedStr) and _fuses_evidence(joined)
+            ],
+            [],
+            "the detector refuses an arm that already names whose words these are",
         )
 
 
