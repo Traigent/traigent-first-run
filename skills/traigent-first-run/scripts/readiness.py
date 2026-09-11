@@ -20,7 +20,9 @@ could not compute is marked unmeasured and excluded rather than scored zero,
 while one this run was asked for and did not supply is marked unmeasured and kept
 in the denominator (`SubScore.withheld`), so silence cannot outscore an honest
 answer. The user-facing evidence coverage reports both as unchecked and says how
-much of the pillar was actually observed.
+much of the pillar was actually observed. Confirmed absence of a required
+component is a measured structural finding at zero, not a quality measurement
+of nonexistent material.
 The config space's 'wired' list is the one input that is weaker than that: it is
 an attestation, taken at its word rather than inferred from code. Separate
 selected-source evidence can verify supported call-path shapes, but the config
@@ -4435,6 +4437,11 @@ class AgentFacts:
     # not exist yet - and nothing equivalent distinguishes an absent evaluator,
     # which preflight reports directly.
     origin: str | None = None
+
+    # Produced by the selected-source checker, never accepted from input JSON.
+    # Keep it even for an empty knobs map: failure to inspect the source is
+    # not proof that every possible configuration behaves identically.
+    source_unavailable_reason: str | None = None
 
 
 def round_half_up(value: float) -> int:
@@ -9034,7 +9041,9 @@ def score_discovered_agent(
         # qualification a settings document that lists nothing already carries,
         # where nobody proposed dropping the pillar over it.
         refused = [knob for knob in facts.discovered if not knob.credited]
-        unverified = any(knob.unverified for knob in facts.discovered)
+        unverified = bool(facts.source_unavailable_reason) or any(
+            knob.unverified for knob in facts.discovered
+        )
         if unverified:
             # Each name WITH its reason, which is where the rule that refused
             # it is now written. This branch printed the names alone, so the
@@ -9049,13 +9058,16 @@ def score_discovered_agent(
                     for knob in refused
                     if knob.unverified
                 )
+                or facts.source_unavailable_reason
                 or "the candidates"
             )
             evidence = (
                 "the source read found candidate settings, but this narrow static "
                 "check could not verify how they reach the selected local call: "
-                f"{detail}. It has not established an opening search dimension"
-            )
+                if facts.discovered
+                else "the opening reading lists no settings, and this local static "
+                "check could not inspect the selected source: "
+            ) + f"{detail}. It has not established an opening search dimension"
             # The same figure the credited branch prints, for the same reason.
             # Learning what the unfollowed settings would come to must not
             # depend on whether one OTHER setting happened to be followed - a
@@ -9092,18 +9104,20 @@ def score_discovered_agent(
                     else "the read found no parameter the agent can vary"
                 )
             )
+        cap = (
+            UNPROBED_DISCOVERED_KNOBS_CAP
+            if unverified
+            else NOTHING_IN_THE_AGENT_TO_VARY_CAP
+        )
+        if facts.source_unavailable_reason:
+            cap = replace(
+                cap,
+                reason=f"{facts.source_unavailable_reason}. The opening ceiling records "
+                "this check's limit, not a finding that the agent has no setting.",
+            )
         return (
-            nothing_to_search_pillar(
-                evidence,
-                supplied=True,
-            ),
-            [
-                (
-                    UNPROBED_DISCOVERED_KNOBS_CAP
-                    if unverified
-                    else NOTHING_IN_THE_AGENT_TO_VARY_CAP
-                )
-            ],
+            nothing_to_search_pillar(evidence, supplied=True),
+            [cap],
             [],
         )
     # This is a statically verified statement of what the selected agent's
@@ -10119,6 +10133,31 @@ def marker(sub: SubScore, unicode_ok: bool) -> str:
     return "!!" if not unicode_ok else "❗"
 
 
+ACTION_DISPLAY_NAMES = {
+    PROCEED: "Continue to the next guided step.",
+    ADD_EXAMPLES: "Add examples that broaden this comparison.",
+    COMPLETE_CALIBRATION: "Complete the evaluator check before paid work.",
+    CONFIRM_EVALUATOR_CONNECTION: "Clarify the evaluator connection if that information is available.",
+    "bound-evaluator-cost": "Resolve the evaluator's runtime before paid work.",
+    "connect-agent": "Connect an existing agent or prepare a walkthrough agent.",
+    "connect-evaluator": "Connect or prepare an evaluation method for this task.",
+    "connect-real-agent": "Connect the real agent before drawing production conclusions.",
+    "connect-real-data": "Use collected examples before drawing production conclusions.",
+    "connect-real-evaluator": "Align the evaluation method with the product's grading policy.",
+    "declare-data-provenance": "Clarify where the examples came from.",
+    "get-data": "Choose existing examples or a walkthrough dataset with your assistant.",
+    "label-data": "Provide expected results for a representative set of examples.",
+    "read-dataset": "Check the selected dataset path and readable format.",
+    "repair-dataset": "Review a proposed dataset repair and validate its working copy.",
+    "repair-evaluator": "Review the evaluator's grading issue and validate its repair.",
+    "resplit-dataset": "Separate the tuning examples from the held-out examples.",
+    "review-answer-key": "Review the expected answers that support this comparison.",
+    "review-repeats": "Review repeated examples and their effect on this comparison.",
+    "review-split": "Review how the dataset is divided for this comparison.",
+    "vary-knobs": "Identify settings that change the agent's actual requests.",
+}
+
+
 BLOCKER_KEYWORD = "BLOCKER"
 # The BODY column, not the whole line: the keyword and its gutter are added
 # on top, so a rendered line is this plus eleven characters.
@@ -10160,15 +10199,16 @@ def blocker_lines(score: ReadinessScore, palette: Palette) -> list[str]:
     if not blocking:
         return []
     if len(blocking) == 1:
-        count, pronoun, marked = "one thing has", "it", "marked"
+        count, marked = "one thing has", "marked"
     else:
         count = f"{len(blocking)} things have"
-        pronoun, marked = "them", "each marked"
+        marked = "each marked"
     body = (
         f"{score.overall}/100 {score.band} is what your evidence supports, and "
         f"that stands. Whether the paid run may start is a separate question: "
-        f"{count} to be cleared first, {marked} FIX BEFORE PAID RUN below. Fix "
-        f"{pronoun}, run this score again, and the paid comparison can start."
+        f"{count} to be cleared first, {marked} FIX BEFORE PAID RUN below. "
+        "Your assistant will explain and address these items with you, then "
+        "recheck readiness before any paid comparison."
     )
     wrapped = textwrap.wrap(body, width=BLOCKER_BODY_WIDTH)
     indent = " " * (2 + len(BLOCKER_KEYWORD) + 2)
@@ -10315,6 +10355,18 @@ def repeated_input_routes(
     return lines
 
 
+def confirmed_absence_note(score: ReadinessScore) -> str | None:
+    if any(
+        cap.condition in {"dataset-absent", "evaluator-absent", "agent-absent"}
+        for cap in score.caps
+    ):
+        return (
+            "Confirmed absence is a measured structural finding. "
+            "The missing component's quality has not been tested."
+        )
+    return None
+
+
 def render_card(
     score: ReadinessScore, *, palette: Palette = PLAIN, unicode_ok: bool = True
 ) -> str:
@@ -10333,6 +10385,8 @@ def render_card(
     lines.append(f"TRAIGENT OPTIMIZATION READINESS{' ' * 8}{headline}")
     lines.append("")
     lines.extend(blocker_lines(score, palette))
+    if note := confirmed_absence_note(score):
+        lines.extend([note, ""])
     for pillar in score.pillars:
         colour = band_color(palette, pillar.score)
         headline_suffix = f"  {pillar.score}/100"
@@ -10678,10 +10732,9 @@ def render_card(
     # Last, and in the same shape the declared-mode board ends on. Everything
     # above is a finding; this is the one thing to do about them first, which
     # `recommended_action` already decided for the payload and the card left
-    # the reader to re-derive from the ceilings. The slug and not a sentence:
-    # SKILL.md routes on `recommended_action`, and a second wording of each
-    # remedy here would be a rule stated in two places.
-    lines.append(f"Action: {score.recommended_action}")
+    # the reader to re-derive from the ceilings. JSON retains the routing id;
+    # the card translates that same decision into the user's language.
+    lines.append(f"Action: {ACTION_DISPLAY_NAMES[score.recommended_action]}")
     return "\n".join(lines)
 
 
@@ -10698,6 +10751,7 @@ def render_markdown(
     then ends on the same two lines the card does.
     """
     lines = ["# Traigent optimization readiness", ""]
+    absence_note = confirmed_absence_note(score)
     if timestamp:
         lines.extend([f"Generated: {timestamp}", ""])
     lines.extend(
@@ -10732,6 +10786,7 @@ def render_markdown(
             f"Weighted average before caps: {score.weighted_average}/100. "
             f"Evidence coverage: {score.confidence:.0%}.",
             "",
+            *([absence_note, ""] if absence_note else []),
             # The card says this and the durable report has to as well, for the
             # reason the agent pillar's "not covered" list is repeated here: a
             # reader who keeps the report and not the session would otherwise
@@ -10953,7 +11008,7 @@ def render_markdown(
         lines.append("")
     # The same two closing lines as the card, so the durable copy names the
     # next thing to do and, under --previous, what moved.
-    lines.append(f"Action: {score.recommended_action}")
+    lines.append(f"Action: {ACTION_DISPLAY_NAMES[score.recommended_action]}")
     if delta is not None:
         lines.append(delta["line"])
     return "\n".join(lines)
@@ -19148,7 +19203,8 @@ def discovered_knob_from_entry(
             "unknown",
             evidence,
             uncredited_reason=(
-                "neither a list of options nor a low/high range was established, "
+                source_unavailable_reason
+                or "neither a list of options nor a low/high range was established, "
                 "so how much this parameter could vary is not something this score "
                 "has seen"
             ),
@@ -20231,17 +20287,9 @@ def agent_facts_from_discovery(
     source: StaticSourceEvidence | None = None
     source_unavailable_reason: str | None = None
     if source_root and selected_agent:
-        # Static source credit is a Python-only optional refinement.  A
-        # non-Python selected agent remains an honest unknown at this gate;
-        # rejecting its entire readiness record would confuse unsupported
-        # inspection with proof that it has no settings.
-        if selected_agent.suffix.casefold() != ".py":
-            source_unavailable_reason = (
-                "the selected agent is not Python, so this local static source "
-                "check cannot verify executable alternatives; leave source credit "
-                "unestablished or use a thin Python adapter that calls unchanged behavior"
-            )
-        elif (
+        # Parse the selected text; a suffix cannot establish its language.
+        # Unsupported inspection remains an unknown, not proof of no settings.
+        if (
             not isinstance(selected_agent_callable, str)
             or not selected_agent_callable.isidentifier()
         ):
@@ -20272,7 +20320,7 @@ def agent_facts_from_discovery(
                     # static-inspection path, not evidence that the agent has
                     # no knobs and not a malformed assistant-authored claim.
                     source_unavailable_reason = (
-                        "the selected Python agent cannot be parsed by this local "
+                        "the selected source cannot be parsed as Python by this local "
                         "static checker, so source credit is unestablished; use a "
                         "compatible local checker or a thin Python adapter that calls "
                         "unchanged behavior"
@@ -20292,6 +20340,7 @@ def agent_facts_from_discovery(
         ),
         # Reaching this line is the proof: the agent was read.
         discovery_supplied=True,
+        source_unavailable_reason=source_unavailable_reason,
         # Optional at this boundary and mandated by the guide, which is the
         # same footing `knobs` has had since #210: the reader refuses a
         # malformed answer and reports an absent one, and it is SKILL.md that

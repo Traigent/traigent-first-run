@@ -111,12 +111,114 @@ When building an evaluator:
 
 ## Mandatory calibration
 
+### Local validation sequence
+
+This sequence belongs to SKILL.md section 4. The opening gate reads the calibration-case and
+semantic-review contracts here, but follows component-creation.md's Opening readiness procedure
+for its own order and flags; it does not run this later sequence.
+
+Follow this order:
+
+1. Define or revalidate the calibration case matrix and thresholds from the task semantics, then record the
+   assistant-performed semantic-coverage review in this reference, grounded
+   in the strongest available product evidence. Record its evidence, materially distinct paths,
+   mode/threshold rationale, gaps, and `sufficient` or `ambiguous` verdict. Use the outcome-class
+   table in `references/run-safety.md` and name each case's classes in `outcome_classes`.
+
+   Resolve any `permutation_question` from inspected evidence; ask before paid work only if the
+   competing order semantics remain unresolved.
+   If inspection identifies an execution evaluator, do not use a permutation probe to turn a
+   parse/runtime result into evidence. The scope gate below skips the evaluator check rather than
+   running it, and the run carries on from there under that reference's disclosure.
+2. If unresolved product-grading ambiguity would materially change which output is correct or how
+   candidate configurations rank, ask exactly one product-grading question, explain the affected
+   decision, then stop and wait. Otherwise record that no ambiguity remains and do not add a generic
+   review pause. Clarification never authorizes changing real labels, examples, answers, or policy;
+   follow this reference for degenerate-row bounds and gold-repair rules.
+3. Run the bundled static preflight with `--defer-missing-sdk` and a single `--dataset` JSONL path
+   holding every row of both splits, each carrying its `split` label, so local structure and
+   quality problems are checked without importing user modules. That combined file is scoring
+   evidence; this reference owns the files the run writes from it. Omit optional model-pricing checks in this
+   standard-library-only pass. It checks canonical `input`/`output` fields by default. For another
+   schema, pass explicit `--input-field` and `--expected-field` dot paths selected from the user's
+   data and task; do not infer SDK aliases. Apply the run-scoped evaluator-method rule in component-creation.md's Opening readiness procedure: if
+   the evaluator was created or changed, resolve its method again, then pass that same current
+   `--evaluator-method` value to this preflight and the paired readiness invocation in step 5 (or
+   omit it from both when no method exists). This heuristic check does not assert SDK compatibility.
+4. Before calibration, apply `references/run-safety.md`'s execution-evaluator scope gate. If the
+   resolved evaluator call path identifies code/SQL execution, record the `containment` warning, skip
+   calibration, and continue the run on the disclosure that reference sets out - the run does not
+   end, and a `stopped` identity would say in the durable log that it had. Otherwise, run deterministic calibration only after a `sufficient`
+   semantic-coverage verdict. Its path must be fully inspected, must not execute
+   candidate-generated code or SQL, and must be local-only and
+   side-effect-free, and runs in the credential-stripped calibration subprocess. Where the agent has
+   a reply-to-answer step, pass it as `--reply-transform` and pass `--task-kind` beside it under the
+   destination rule in this reference. When each flag is passed is decided
+   here; that reference owns the destination rule, the seam probes the flags add, and what those
+   probes may claim. The transform's whole module is imported to reach it,
+   so the inspection sentence above covers that module too: where it imports a dependency this
+   environment does not yet have, defer both flags with the calibration itself to the Environment and privacy setup sequence rather than
+   installing anything here. When the opening
+   gate already produced that fresh result, reuse it here unless the evaluator, cases, semantic
+   evidence, execution path, or the flags above changed; a result produced without them establishes
+   nothing about delivery, so it is not the fresh result this step needs. Do not execute the same
+   calibration twice merely because the flow reached this step. Run here anything the opening gate
+   truthfully deferred and can now establish.
+5. Re-run `scripts/readiness.py` on the fresh preflight JSON plus any applicable calibration
+   result and the row-level read of the drawn rows this reference asks for
+   at this step; the hold that read releases applies to this card too, not only the opening one.
+   Omit every config-space file found before this run's enhanced search here just as at the
+   opening gate. This score is required even when a low score or cap is expected. Record its gate
+   result in `traigent-runs/run-plan.md`. If calibration was deferred for an installed local
+   dependency, record the preflight-only result now and re-run the score immediately after that
+   calibration.
+
+A missing Traigent SDK is `SKIP` in this deferred pre-install pass; an installed package that is not
+the SDK is a failure, while a release other than the tested one is reported and never stops the run;
+an optional provider package may defer only its own check. The recorded gate result is
+the summary; the post-repair rule in SKILL.md section 4 owns what is shown after a repair or creation. Do not
+separately explain passed calibration/mock wiring unless action is
+needed or the user asks; neither is agent accuracy or an optimization result.
+
+Do not execute an LLM judge or an evaluator with an uncertain or external call path here. Keep it
+pending behind the applicable stage's egress and paid approval; removing keys or setting offline flags does
+not prove an external evaluator is safe.
+
+Classify a structurally usable but evidence-limited real component as `limited`; keep it `❗`.
+Classify a component that cannot execute or measure the task as `invalid`.
+
+For a limited component, recommend repairing a copy under `traigent-runs/`. Continuing unchanged
+is permitted only as an explicitly labelled workflow demonstration;
+this reference owns when that limitation is stated.
+
+For an invalid evaluator, incompatible schema, corrupted required rows, or unverified call path,
+do not run paid optimization against it. Offer two routes: build and revalidate a reversible copy
+under `traigent-runs/` - mending what survives and writing what does not, which is one action and
+not two - or pause for a user-authored fix. Say in that same sentence how much of their material
+survives: it decides whether the result reads `✅` or as a substitute. Never treat "continue as is" as
+permission to optimize against a broken grading signal. Letter the routes from `A` and mark the
+build one recommended; close with the unnumbered `I have it` line, which is never a route and always
+last. Nothing follows it, and no route carries a decision of its own.
+`references/component-creation.md` owns the wording.
+
+### Calibration cases and interpretation
+
 Before any optimization, construct at least four probes for each materially distinct case:
 
-1. `good` - clearly correct.
-2. `equivalent_good` - semantically correct with a different valid surface form.
-3. `partial` - contains some correct information but misses an important requirement.
-4. `bad` - clearly incorrect.
+1. `good` - fully satisfies the criterion the evaluator measures.
+2. `equivalent_good` - satisfies it equally through another accepted form or behavior.
+3. `partial` - satisfies only part of that criterion.
+4. `bad` - clearly fails it.
+
+These names describe success on the chosen objective. For tool-use compliance, vary the tool
+records the scorer reads: all required calls, an equally valid sequence, a missing requirement,
+and a forbidden or wrong call. For a scorer that reads only tool records, hold answer text fixed;
+four differently worded answers cannot calibrate it. Put each probe's structured record
+in its `output`, in the preserved evaluator's expected shape; case-level `metadata` is shared by
+the four probes. Record the criterion and accepted equivalence with the existing case rationale.
+Calibration expects a higher-is-better score in `[0, 1]`; when the chosen raw objective is minimized,
+document a normalization that preserves that preference for calibration without changing the raw
+objective's direction. The SDK measures channel is described in `references/sdk-execution.md`.
 
 Choose and record `score_mode` from the real task semantics before running each case:
 
@@ -475,6 +577,107 @@ cannot be audited; an id opens the exact row. Ids already do that job here - the
 records the ones it chose and an excluded degenerate gold records its own - so reuse them rather
 than inventing a second way to point at a row.
 
+### Routing readiness findings
+
+`readiness.py` emits these decisions as closed `action_kind` values and one
+`recommended_action`: the lowest-ceiling blocking remedy, otherwise the lowest-ceiling
+asking one, otherwise an ask that caps nothing, otherwise `proceed`.
+
+Route every active dataset cap to the branch this flow already defines, and present the reason
+rather than the condition id, in the user's language - machine vocabulary and condition ids stay
+internal. Three kinds, not two. A route asking for a creation or repair blocks the run, and so does
+one asking for a first look at material nothing has read - under either, nothing was measured. A
+route that only scopes what the result may claim lets the run proceed wherever there is a result to
+scope, and divides again: where the scope leaves a person something to settle, put it once in the
+home that owns that question and carry the answer to the pre-spend approval in section 6; where it
+leaves nothing to do, the ceiling is advisory and there is no repair to route. Route by the reason,
+never by the kind - the agent's own no-varying-knobs condition still reads both ways, and its
+agent paragraph below carries both halves:
+
+- `dataset-absent` - enter the creation dependency matrix, and put both ways out on the one ask:
+  point this run at the dataset they already have, or have it derive one from whatever the project
+  does hold - the agent, the evaluation method, logs.
+- `dataset-shape-unrecognised` - no row matched the shape the score read the file with, which is not
+  a verdict on the data: do not enter the creation dependency matrix or call it invalid. Read and
+  re-map it per the dataset reference, then re-score; repair, then create, only if mapping fails.
+- `dataset-no-expected-outputs` - keep it `limited` and `❗`; recommend repairing a labelled working
+  copy, with approval for judgment-dependent labels. Do not use unchanged input-only data with a
+  reference-requiring evaluator; disclose a reference-free method's absent independent answer key.
+- `dataset-integrity-fail` - treat it as invalid; repair and revalidate a working copy or use a
+  labeled substitute.
+- `dataset-tune-holdout-overlap` - repair a disjoint split and make no generalization claim yet.
+- `dataset-split-by-task-family` - disjoint and drawn in the wrong place: every recurring kind of
+  input sits on one side, so the held-out score measures transfer to unseen work rather than the
+  task that was tuned. Inferred from a leading form, so ask before repairing - name the two kinds in
+  the user's own words and take their answer on the one ask. One task, and the run continues with
+  the ceiling standing; two, and redraw the split so each kind appears on both sides. Do not enter
+  the creation dependency matrix and do not ask for more data.
+- `dataset-fully-synthetic` - apply the walkthrough labeling rules; never claim production readiness.
+- `dataset-mostly-synthetic` - apply those rules, name the split out loud, and scope the claim.
+- `dataset-undeclared-provenance`, `dataset-mostly-undeclared` - say the assumption and both card
+  scores when shown, and state it again on the pre-spend approval as a limit on the claim, never as
+  a question; a real source the user names is recorded, and new data is never the remedy. Meanwhile
+  apply the rules above. The rows may be real and only this run cannot tell, so it bounds the claim
+  exactly as a declared-generated corpus does and holds nothing up.
+- `dataset-generated-answer-key` - require that a person reviews a sample of the answers, not this
+  run's own sampled read, before a correctness claim; until then the score measures model agreement.
+- `dataset-mostly-generated-answer-key` - the same review, on the model-written answers only, and
+  say how many of the expected answers they are; the run proceeds meanwhile.
+- `dataset-unsound-expected-outputs` - bounded, not stopped: put the flagged rows to the user as one
+  approval-gated question and take the answer, per "A `no` is never a silent edit" in
+  `references/evaluation-and-dataset.md`.
+- `dataset-tuning-split-empty` - the rows are fine and the split is not: no row on the side the
+  search compares on can be scored. Repair the split as `dataset-tune-holdout-overlap` above is
+  repaired; do not enter the creation dependency matrix and do not ask for more data.
+- `dataset-below-measurable-size` - more comparable examples is what lifts this; until then call
+  rankings exploratory, not stable comparisons. The run is worth making, so where the card asks,
+  carry the top-up on the one ask rather than sending anyone away for data.
+- `dataset-repeated-rows` - fewer questions than rows: bounded, not stopped. Take the card's two
+  routes on the one ask - carry on over the examples that differ, or have them replace the repeats.
+- `dataset-coarse-resolution` - more comparable examples is what lifts this too, and the same
+  bounded offer carries it wherever the card asks; after paired outputs exist, report paired outcome counts and justified
+  uncertainty, calling a small or flat difference directional or inconclusive.
+
+Evaluator and agent caps route through the rules that already own them: `evaluator-unresolved` (a
+connected file with no honestly declarable method) and `evaluator-invalid` route through the
+invalid-evaluator paragraph in section 4 of SKILL.md - inspect, repair, or replace; `evaluator-absent` routes through
+the absent-evidence reading in the opening readiness gate and the creation dependency matrix -
+create or select. `evaluator-generated` and `agent-generated` route through the walkthrough labeling
+rules and nothing else - carry the substitute's provenance into the words as well as the card, and say the
+result measures the substitute rather than their product. Neither is a repair: this run created the
+component on purpose, the run continues, and what the ceiling refuses is the claim, not the work.
+`evaluator-unvalidated` routes through the opening/section-4 calibration gate in SKILL.md: measure it once
+when that gate establishes eligibility, or keep the ceiling and name the concrete deferral. It is
+an evidence boundary, not a repair finding.
+`evaluator-calibration-refused` is that same evidence boundary reached by the scope gate rather than
+by a step nobody took, and like `evaluator-unvalidated` it does not block: the run proceeds on the
+disclosure `references/run-safety.md` sets out. Where it bounds the claim at all - that reference
+owns which arm does - the bound is on what the card may say and never on what the customer may do. Its one ask is whether their evaluator connects read-only, and the
+pre-spend approval in section 6 is where it is put - the moment the answer bears on, and the one
+place it is asked - never a stop of its own; silence proceeds. Say that what is missing is evidence
+and not a finding against their evaluator, that because the check was not made
+this run does not know whether their evaluator works - neither that it does nor that it does not -
+and that no step here would change that. Never say there is nothing for them to fix: that claims a
+look this run did not take. Never present the unsafe route as the way to lift it.
+`evaluator-timeout` is neither a repair to route nor the invalid-evaluator
+paragraph: calibration ran and did not finish, which establishes nothing about this evaluator and
+does not make it invalid - slow and broken look identical from here. Settle it while gaps are still
+being filled, before the baseline spends anything: before calibration starts, say what it does and
+how long it may take, and on a timeout ask the one five-option question in
+`references/evaluation-and-dataset.md` rather than declaring the evaluator broken or carrying the
+wait into a paid run. Bounding what one scoring call costs is one option inside that question, not
+the route. Name any avoidable cause of the slowness in the readiness summary and again at the
+close if it was not fixed.
+
+`agent-absent` blocks where no document, read, or declared origin names an agent at all: connect the
+one they have, or create it.
+`agent-no-varying-knobs` blocks when a settings document or a statically checked source read finds
+no usable dimension. Mark one setting with a second value or expose a direct request parameter. It
+is advisory only for a declared agent with no evidence, or source candidates whose references could
+not be verified.
+Before either paid grid, the local request-difference proof—not the opening score—must establish
+every selected direct dimension. Report stops/zero trials when that proof cannot do so.
+
 ## Dataset construction
 
 Prefer, in order:
@@ -569,15 +772,12 @@ score by under 3. So how much of the data was invented also sets a ceiling on th
 | Real questions, but most expected answers written by a model | 74 |
 | Real questions, but every expected answer written by a model | 74 |
 
-An undeclared corpus reaches the first two rungs exactly as a generated one does. It asks for a
-declaration rather than new data unless over half the corpus is declared generated - a ceiling no
-declaration can lift. Half declared collected and half silent is 50%, under the threshold, and is
-capped by neither. The two differ only in the remedy: declaring is a change to the file rather than
-data anyone has to go and collect, so the undeclared rungs put that word to the customer where the
-declared twins ask for nothing. Neither holds the paid run. The question rides on the approval that
-already halts before the first billed call. Its two answers are not the same size: saying where the
-rows came from lifts the ceiling, and agreeing to run without saying leaves the number and the band
-exactly where they were.
+An undeclared corpus reaches the first two rungs exactly as a generated one does. Half declared
+collected and half silent is 50%, under the threshold, and is capped by neither. A real source the
+user supplies may change that classification; it cannot relabel generated rows as collected.
+Explain the assumption and any alternative score the card actually shows. SKILL's cap routing owns
+the pre-spend disclosure: provenance is a stated limitation, not another question or a request for
+new data. Continuing without new source evidence leaves the score and band unchanged.
 
 The ladder is ordered by how much of the result is the model talking to itself. The last two rungs
 are the highest because the questions are still real - but an accuracy number computed against an
@@ -1222,25 +1422,29 @@ not told the difference will hear the second one. The details layer below carrie
 Name both written files in the closing summary's details layer, by absolute path -
 `<project root>/traigent-runs/tuning.jsonl` and `<project root>/traigent-runs/holdout.jsonl` - and
 say the reserved rows are the second one, so a user who wants them gone knows which file to open.
-Both are derived: their dataset was read and rows were copied out of it. Nothing was moved and
-nothing has to be put back - the original was never modified, lost no row, and stays the canonical
-copy - so deleting either derived file loses nothing. This is housekeeping, so it goes below the
-outcome and the recommendation, never beside them.
+Both are derived: original rows were copied, with repairs or generated additions recorded as such.
+Nothing was moved and nothing has to be put back - the original was never modified, lost no row,
+and stays the canonical copy. Deleting a derived split preserves that original but loses the exact
+rows used for this comparison, including any repairs or additions held only there. Keep those
+files if the user wants to reproduce or build on the result. This is housekeeping, so it goes below
+the outcome and the recommendation, never beside them.
 
 Those two are not the only files this run wrote, and a user who wants to know where everything
 went should not have to ask twice. In the same layer, list the rest under the same project root:
 `traigent-runs/run-plan.md`, `traigent-runs/run-log.jsonl`, `traigent-runs/config-space.json`,
 `traigent-runs/calibration-cases.json`, `traigent-runs/calibration-results.json`, plus any
 `traigent-runs/walkthrough_agent.py`, `traigent-runs/evaluator.py`, readiness report, and
-SDK run logs that exist. Name only what was actually written. The sentence above covers all of
-them - every one is derived, and that whole folder is git-ignored and can be deleted without
-losing anything. Four writes sit outside the folder and are not covered by it: the
-`/traigent-runs/` line added to the project `.gitignore`; the provider key line in `.env`, or the
+SDK run logs that exist. Name only what was actually written. Deleting this ignored folder leaves
+the original customer components untouched, but removes walkthrough components, results, repairs,
+and resume evidence stored only there. Retain anything the user wants before optional cleanup;
+never promise that deleting it loses nothing. Other writes sit outside the folder and are not
+covered by it: the `/traigent-runs/` and `/.venv-traigent/` rules added to the project `.gitignore`;
+the provider key line in `.env`, or the
 whole file when this run created it; the dedicated first-run virtual environment at the project
-root, `.venv-traigent`; and the credential handoff when the user named a file of their own, which
-is outside the project by definition. Name only the ones this run actually performed, and for the
-last two give the absolute path, because "delete the folder and nothing is lost" is false of them
-and a reader cannot find them from here. Existing environments and their site-packages are not
+root, `.venv-traigent`; and any changes to a credential handoff file the user named, wherever that
+file lives. Name only the ones this run actually performed, giving absolute paths for the
+environment and selected credential file so the user can find what deleting `traigent-runs/`
+leaves behind. Existing environments and their site-packages are not
 first-run writes: this guide preserves them.
 
 Skills installed during this run are the one item the list cannot hand over ready to use. Name the
@@ -1277,8 +1481,13 @@ reason to pause the first walkthrough. Until then:
 - Do not promote the result to production.
 - Do not describe the measured lift as expected customer lift.
 
-Beside those two totals, report the paired outcome counts - how many examples the enhanced winner
-scored correctly that the baseline did not, how many went the other way, and how many tied. This
-is required on the ten-row default, not only above it: at that size the paired counts are the
-whole resolution the split has, and a percentage claims one it does not. State a difference as
-directional unless a justified paired uncertainty analysis supports a stronger claim.
+In the comparison details, report paired outcomes from the shared **tuning rows** already scored
+by both runs. For binary correctness, count enhanced-only correct, baseline-only correct, and
+ties. For graded or other objectives, report paired per-row score changes using the declared
+direction; do not invent a pass threshold to turn those scores into correct/incorrect counts.
+Label these as tuning comparisons, including on a small walkthrough. Use matching row ids and actual per-row results; if those results are not
+available, say the paired comparison was not measured rather than deriving it from aggregate
+scores or paying for another pass. The held-out line reports only the one configuration selected
+before those rows were scored; it establishes no paired baseline-versus-enhanced improvement.
+State a tuning difference as directional unless a justified paired uncertainty analysis supports
+a stronger claim, and keep any such claim scoped to the tuning sample used for selection.

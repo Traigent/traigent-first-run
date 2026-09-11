@@ -41,15 +41,121 @@ broken evaluator or incompatible dataset is not safe to continue unchanged.
 
 ## The one ask, and the path that answers it
 
-The matrix below says what gets built. This is what the user was told before it was, and SKILL.md
-owns that it is one question, when it is asked, and what it has to carry. Here is what it sounds
-like and what happens to the answer.
+SKILL.md owns when the single question is asked. This section owns its contents, wording, and
+the handling of a supplied path.
+
+### The gap-question contract
+
+Whatever the inventory did not find - agent, dataset, evaluation method, one of them or all three -
+or found and could not read out of, which the opening gate in section 1 of SKILL.md defers here for the same reason -
+the user hears it once, in one question, riding on the board above rather than arriving as its own
+turn, and before anything is built. Never one question per component. Fold any quality advisory
+into the same decision. That question carries five things:
+
+1. What the inventory did not find, named plainly and all of it at once - what was searched for and
+   not seen, never what the project does not have - and, on the same line, what it found too little
+   of to compare on. Name the pieces themselves, in the words the customer uses for them: dataset,
+   agent, evaluation method.
+2. That this run can build each missing piece from what exists. Offer a dataset top-up only when
+   its cap has `asks: true`; otherwise name the limitation, but do not offer rows.
+3. What that costs, in terms the score already uses: what this run writes stays a substitute, never
+   becomes real-world readiness, examples it writes carry the generated-data ceiling and cannot
+   present as strong however good the rest is, and no configuration from the result may be promoted.
+4. One answer where something is missing: proceed. Where it is only short, keeping what they
+   brought is a second. `I have it` with a path is never counted among them.
+5. **What they want optimized**, in one line, where this run cannot already tell. The SDK optimizes
+   for their chosen objective. Read it off their evaluator where the evaluator answers it - a
+   scorer comparing an answer to an expected one is optimizing correctness and needs no question -
+   and ask only where it does not. Where they name nothing, proceed on accuracy and cost **and say that in those
+   words**, so a default nobody chose is not mistaken for a choice somebody made.
+   `references/evaluation-and-dataset.md` owns what the answer becomes.
+Then stop and wait, and ask nothing else here; what this run writes is shown at the pre-spend
+approval in section 6, the other checkpoint. The question closes the message: the board and the
+cost sit above it, and no summary of it sits above them.
+A path given here names material that was in the project all along, so re-run the opening gate over it and
+read that as the opening score; the record waits for this answer in any gap run, for the reason the
+zero-anchor gate below already gives for its own.
+When nothing anchors task intent at all this is not a second question - the zero-anchor gate below
+asks one and carries these five things on it. The answer covers absence and shortfall, never a
+defect; broken
+material keeps every gate section 4 already puts on it. The wording and supplied-path checks below own each outcome.
+
+When a dataset below this run's **28** has an asking cap, its top-up rides on that same question
+and never as a second one.
+State the bound before the answer. Agreeing changes what the dataset is, never what it earns:
+generated rows retain their provenance, so say before they answer that accepting lowers the ceiling.
+The shortfall procedure below owns how each size is put, what that sentence says and where the
+offer ends; the dataset reference owns the split behind the total, how the rows are drawn and the
+ceiling that follows.
+
+### When nothing anchors task intent
+
+When the read-only inventory finds no agent *that performs an identifiable task*, and no dataset,
+evaluation, product documentation, tests, fixtures, or other component that anchors task intent,
+follow this exact order:
+
+Judge that by what the component does, not by whether the file exists. An agent that returns a
+constant, echoes its input, or is a fixture or placeholder counts as **missing** for anchoring
+intent, however importable it is, under Evidence and provenance above.
+
+The opening readiness gate has already scored the empty project. Keep that result in the
+conversation; recording it is a write and waits for the answer.
+
+1. Show the rendered card, then the three real-world gaps:
+   - ❗ **Agent** - no production agent is connected.
+   - ❗ **Dataset** - no real examples are connected.
+   - ❗ **Evaluation** - no validated grading method is connected.
+2. Say plainly what is lacking, in the customer's own three words - dataset, agent, evaluation
+   method - and that the coding assistant will create each after the user chooses the task, and
+   that synthetic results demonstrate workflow rather than production performance. Where the
+   inventory found request/response logs or accepted traces, say they are built from those: "I
+   will create the dataset, the evaluation method and the agent from your logs" is a different
+   offer from "I will write them", and the second undersells material they already have. Carry the
+   five things "The gap-question contract" above requires - including the `I have it` answer and its
+   path - on this same question, so it stays one and not two.
+3. Ask exactly one task-intent question: **"What should the walkthrough agent do?"** Offer at
+   most three short choices, each put as the job itself - "pull the total and the date out of a
+   receipt" - never as a category name like extraction or classification. Write every choice in
+   the customer's own words. Avoid unexplained category vocabulary: metric, time range, grouping, entity, intent, schema, or
+   canonical form; where their material has no word for a thing, say the thing plainly. Then
+   recommend a structured, deterministically scoreable task, and in that same sentence name what
+   in THEIR material makes it the one to pick - "it is what your logs already show, and it grades
+   deterministically". This question is the last thing in the message. Example for a project
+   holding log lines:
+
+   > **A.** Turn a plain-English question about your singers database into a SQL query
+   > *(recommended - it is what your logs already show, and it grades deterministically)*
+
+4. **STOP and wait for the answer.** Do not continue setup in the same turn.
+
+Before that answer, make zero writes:
+
+- Do not create `traigent-runs/`.
+- Do not copy or fill the run plan.
+- Do not change `.gitignore`.
+- Do not create an environment.
+- Do not install dependencies.
+- Do not generate components.
+
+Once the user answers, create the run record before generating the coherent trio, then continue
+with the remaining stages. Record the unchanged opening score in that run record as its first
+entry, before any substitute exists.
+
+### Wording the offer
+
+Resolve the discovered agent's execution boundary before composing this ask. If the real agent is
+not Python, keep Agent `❗` unless a thin Python adapter calls the unchanged real behavior and can
+be evaluated safely. Fold any adapter/substitute choice into this same ask, keeping the selected
+agent and task anchored. A generated Python walkthrough agent is a substitute; it does not mean
+the non-Python production agent was optimized. Subprocess, HTTP, and raw provider calls are not
+intercepted automatically by Traigent mock mode. Source inspection alone does not establish that
+an agent runs; say what was actually inspected or executed.
 
 Say it in their words, naming only what this run looked for and did not find - and name the pieces
 themselves rather than the situation: "here is what is lacking: dataset, agent, evaluation method"
 is a sentence a customer can act on, where "the inventory is incomplete" is not.
 
-> Your agent is here and it runs. Searching outward from it, I did not find any set of examples to
+> I found your agent's source. Searching outward from it, I did not find any set of examples to
 > score it on, or anything that says what a right answer looks like - they may well exist somewhere
 > I did not look. I can write both from the agent itself: examples that exercise what it actually
 > does, and a grading method to match. Examples I write are weaker evidence than examples out of
@@ -59,25 +165,13 @@ is a sentence a customer can act on, where "the inventory is incomplete" is not.
 > Shall I go ahead? Or reply `I have it` with a path - `agent: <path>`, `dataset: <path>`,
 > `evaluation: <path>` - and I will use yours.
 
-Never say the material does not exist. This run reads the project directory, and a dataset can be
-real, in use, and outside it - a shared mount, a sibling repo, a path configured somewhere this
-shell never saw, an environment variable this session did not inherit. "There is none here" asserts
-what this run did not check, and a user looking straight at their dataset reads the whole card as
-wrong. It is also what makes `I have it` the natural next line rather than a correction: nobody is
-being told they were wrong, they are being asked to point. `readiness.py` already speaks this way -
-its caps say a dataset was not provided *to this score* - so this is the wording catching up with
-the script.
+Never say the material does not exist: it may live outside the inspected project directory.
+Say what was not found and offer `I have it` with a path.
 
 ### What the ask offers, and the opening that says what they are choosing between
 
-The offer is one where material is missing - write it - and two where it is only short: keep what
-they brought, or add. `I have it` is never among them. It rides on every ask, unnumbered and last,
-because it answers where the material is rather than what to do about the material here - and a
-document that counts it teaches a reader to number it.
-
-What varies beyond that is the first sentence, and it is not a further route: whether the run
-derives from something or from nothing is a fact this run already established, so offering both
-would be asking the user to pick a situation rather than an action.
+The gap-question contract owns the choices. Adapt the opening sentence to the anchor discovered;
+do not offer the user a choice between starting states the inventory already settled.
 
 Name the anchor and what comes off it. `math_calc` that takes a question and returns a number is a
 grader and a set of arithmetic examples; a retrieval agent over a docs folder is questions its own
@@ -87,16 +181,10 @@ a project with no dataset often has the material for one, and saying so is the d
 the last anchor to fall: an agent that echoes its input anchors nothing, and that case is the
 matrix's all-missing row, which asks what the walkthrough should do rather than guessing it.
 
-Match the cost sentence to how much is derived. One generated piece around a real agent, real rows
-and a real ruler is not the same claim as a trio built from one sentence of intent, and
-`readiness.py` already scores them apart. One sentence for both tells the smaller case its result
-is worth less than it is, and the larger case that its result is worth more.
-
-Keep the two answers on the last line, the cost to one sentence, and the search to one clause. Three
-hedges in front of a choice reads as a compliance gate; one reads as a colleague who has already
-done the work. Do not soften that sentence, and do not oversell the other exit either: what the user
-is choosing between is a real demonstration on generated material today and a delay of unknown
-length. Proceeding is one keystroke, and it is what a user with nothing to point at should do.
+Match the cost sentence to how much is derived: one generated component around real material and
+a trio built from task intent support different claims. Keep the answers last, the cost to one
+sentence, and the search to one clause. Explain the generated demonstration accurately without
+overselling the alternative of waiting for real material.
 
 ### When the gap is a shortfall
 
@@ -110,9 +198,7 @@ accepting it costs:
 > model-written, which lowers the ceiling on what the result may claim. Continue on the nine, add the
 > rest, or reply `I have it` with a path if there are rows I did not find.
 
-Two answers plus the standing path line, and the cost sits between the offer and them: a customer
-who is not told that a mostly-generated set claims less is being asked to agree to something they
-cannot weigh. Say it plainly and once - the dataset reference owns the arithmetic behind it.
+The dataset reference owns the split and provenance arithmetic behind this offer.
 
 Match the sentence to which ceiling the card actually raised rather than to a row count of your own.
 The wiring-check ceiling is the harder finding, and its sentence is the one above; the
@@ -347,12 +433,163 @@ from this default.
 
 Do not create a story-writing or summarization walkthrough with exact-string grading.
 
-If the real agent is not Python, keep Agent `❗` unless a thin Python adapter calls the unchanged
-real behavior and can be evaluated safely. A generated Python walkthrough agent is a substitute; it does
-not mean the non-Python production agent was optimized. Warn that subprocess, HTTP, and raw
-provider calls are not intercepted automatically by Traigent mock mode.
+For a non-Python agent, apply the adapter/substitute boundary in "The one ask, and the path that
+answers it" above; the choice must already have been disclosed before construction.
 
 ## Reading the agent for the opening score
+
+### Opening readiness procedure
+
+Treat the resolved evaluator method as run-scoped validation state. Resolve it from the currently
+selected evaluator, update it whenever that evaluator is created, repaired, or replaced, and pass
+the same current `--evaluator-method` value to every paired preflight/readiness invocation. When no
+evaluator method exists, omit the flag from both; never let one half infer a different method. When
+a file exists but no method can be honestly declared for it without executing it - a syntax error,
+or behavior that plainly ignores its input - still omit `--evaluator-method`, but pass its path to
+preflight's `--evaluator` for a static syntax check; this reports present-but-unresolved, not absent.
+
+Ground readiness task kind per the evaluation reference.
+
+Declare who wrote the evaluator and the agent on every readiness call, as run-scoped state beside
+the method above: `--evaluator-origin` and `--agent-origin`, `brought` for the customer's own and
+`generated` for one this run created or relies on in their place - a customer's disclaimer of a
+pre-existing file makes it `generated`, however cleanly it reads or calibrates. Decide it yourself,
+never ask. Omit a flag only while that component does not exist, and update it the moment this run
+creates the component. The dataset takes no such flag: its origin is counted per row from declared
+provenance.
+
+Before any component creation or repair, choose from the recorded inventory. If there is exactly
+one compatible Python 3.11-3.13 isolated-environment candidate overall and its resolved path is
+inside the user's project root, use its resolved interpreter and report `python-version` as
+measured. Otherwise resolve an already installed supported interpreter using
+[`run-safety.md` § Finding a supported interpreter](run-safety.md#finding-a-supported-interpreter)
+as a provisional, no-install bootstrap. Multiple compatible candidates and environments outside
+the project wait for section 5; if the sole candidate fails, record why and use that same lookup.
+Run bootstrap preflight and readiness with `-I -S`, excluding user-site packages and `PYTHONPATH`.
+Name its executable and version; its SDK availability is unmeasured, not evidence that the run
+environment is ready. An opening SDK finding from either interpreter never replaces section 5's
+required post-install check in the dedicated environment, which remains authoritative for the run.
+
+Run the bundled static preflight with `--defer-missing-sdk` over whatever dataset was discovered,
+omitting `--dataset` when none exists. Then include every safe measurement that can finish now in
+the first readiness card. When rows carry expected answers, do the row-level sanity check in
+`references/evaluation-and-dataset.md` here and pass it as `--row-review` on every opening scoring
+call, even when calibration is deferred: it is a free read and no generated row competes with it yet. Read the graded rows, or five brought ones where no split
+is settled; it is yours, not the user's. When `existing-traigent-use` reports a declaration, or a Traigent key is
+already configured, say so in the readiness turn: Traigent was set up in this project before this
+run started, so this may not be a first run, and this run still charges for its own baseline and
+search. Never read that as a blocker or a reason to stop - the evidence cannot tell an install apart
+from a finished optimization, and the decision is theirs at the section 6 approval, which already
+stops. When task intent is anchored and inspection finds a resolved deterministic
+evaluator, construct or revalidate its current-run case matrix and semantic-coverage review, then
+apply the evaluator-execution scope gate from section 4. If the verdict is `sufficient` and the
+complete path does not execute candidate-generated code or SQL, is local-only, side-effect-free,
+standard-library-only, and expected to return in seconds, run fresh credential-stripped calibration now and pass its result to
+`scripts/readiness.py --calibration`. This validates an existing component; it does not create or
+repair one, needs no provider approval under the action table, and lets the opening card report
+what the run can actually establish. Before launching it, tell the user that this local check imports
+the inspected evaluator. Pass `--allow-execution` as the assistant's explicit acknowledgement only
+after the inspection above; the flag is not safety evidence and bypasses no scope gate. This notice
+adds no stop-and-wait. The evaluator-method name and `--kind deterministic` are not safety evidence.
+Never reuse a result from an earlier run or a pre-existing artifact.
+
+Otherwise run readiness without `--calibration` and name the concrete deferral: unresolved
+semantics, no defensible probe matrix, an uninstalled local dependency, a slow, uncertain, external,
+or executing path, or an LLM judge that needs paid approval. Missing calibration is then unmeasured,
+not a failed evaluator; the `evaluator-unvalidated` ceiling limits the readiness claim to 45 until
+the evaluation method is actually checked, and the card's recommended action names that outstanding
+calibration rather than reading `proceed`. Where the deferral is the evaluator-execution scope gate
+rather than a step this run could take, pass `--calibration-scope-refused` so the card discloses the
+unmade check instead of asking for the calibration the gate forbids; it moves no number, and it is
+the only route where preflight finds no engine. `calibrate_evaluator.py` refuses such an
+evaluator itself, naming the file and line, and `references/run-safety.md` records why no
+in-process route replaces it. Apply the run-scoped evaluator-method rule above to both
+scripts, and apply the run-scoped task-kind rule to readiness only here - narrower than its
+destination rule in `references/evaluation-and-dataset.md`, because this gate's calibration takes no
+seam flags and so establishes nothing about delivery for section 4 to reuse - and the origin rule with
+it.
+**Opening dataset sequencing.** The opening preflight reads a discovered dataset with its default
+`input`/`output` fields, before any explicit field mapping; do not pass `--input-field` or
+`--expected-field` to that opening call. A request/response log or accepted trace is a **source**
+from which rows may later be built, never a `--dataset` argument. If only such sources exist, omit
+`--dataset` so the opening card records `dataset-absent` and routes to `get-data`. After that
+recorded opening result, map a custom dataset's actual fields and re-score; when deriving rows from
+recorded calls, declare the real input separately from the generated candidate output, which is not
+an expected-answer key.
+
+On a zero-anchor run, keep the preflight JSON on stdout and feed it directly to
+`readiness.py --preflight -`; retain the rendered card in the conversation only. Until the answer
+anchors intent, do not use `--report`, write evidence under the project, or name a readiness
+directory.
+Explicitly omit every config-space file found before this run's enhanced search from scoring,
+including one left by an earlier guided run, which SKILL.md's historical-document rule already
+excludes. Record its provenance; a timestamp, hash, or non-empty `wired` list does not make it
+current. A customer-authored file may guide inspection, never score values or wiring. Every
+guided run does this, including a zero-anchor run.
+
+After task intent is anchored, place each scoring's evidence document, preflight JSON, and notes
+in one fresh readiness directory. Use `traigent-runs/readiness/<YYYYMMDDTHHMMSSZ>/` under the
+name-stamp definition in SKILL.md. Never delete these directories or let a later scoring read an
+earlier one's evidence. Name the directory beside the card in project-relative form, never an
+absolute path. The canonical `traigent-runs/calibration-cases.json` and
+`traigent-runs/calibration-results.json` are evaluator-validation evidence owned by
+`references/evaluation-and-dataset.md`; name both paths before the card when opening calibration
+creates them. Read both the agent's knobs and build when an agent was found.
+For a selected top-level Python function, include
+`--agent-source-root`, `--selected-agent`, and `--selected-agent-callable`; `source_lines` must show values on its
+verified selected-call path. Otherwise leave source credit unestablished and use the advisory route. A thin Python adapter is
+walkthrough material, not proof that the original agent was optimized.
+Use the executable source-evidence rules below; comments and declarations do not establish values. Read the same source for how the agent is built and
+answer all four checks below: whether it carries a prompt and worked examples,
+whether anything pins down the
+shape of its answer, whether it ends and on what, and whether the tools it declares can be reached.
+Answer a check you cannot settle as undetermined with the reason, never as a no - a no says the
+agent lacks the thing. Build declarations stay visible but unmeasured; an undetermined check
+still needs its reason. Never write a range or an option you did not read; section 7 adds settings.
+It attests nothing about wiring, clears no wiring cap, and writes nothing into the user's project.
+Every guided run that found an agent does this read - not conditionally, not depending on the
+agent's language or on how the card would look without it - and the flag is left off only where the
+inventory found no agent at all. Where an agent was found and its settings cannot be read out of it,
+name it and say what stopped the read, then offer to be pointed at source that can be read. That
+offer changes the opening score and rides on the one ask in SKILL.md section 2 rather than adding one. Leave `--agent-knobs` off in that case: the flag says what a
+read found: passing an empty one reports a finding about the customer's agent that nothing established. A document `readiness.py` rejects is yours to correct and send
+again, never a reason to drop the flag. Proceed with what can be varied if nothing comes back. Never ask
+for a config-space file here; this gate withholds them. The ceiling left
+standing is routed through Quality diagnosis and repair choice in the dataset reference. Pass this same reading to every
+later re-score of this record, as section 4's post-repair rule states.
+The opening score is not skippable, always reports all three pillars, and is the score this run
+reports for the project. Show it before any Agent, Dataset, or Evaluation component is created or
+repaired; current-run validation evidence may be prepared first as the gate above requires.
+
+Say that the scoring command reads the project and changes nothing of the customer's. Name the
+evidence the guided run wrote before it: its row review when rows exist, and both calibration
+artifacts when opening calibration ran.
+Show its rendered card verbatim,
+then explain its score, band, and cap reasons without internal ids. Describe an existing but
+unmeasured component as not yet measured. Presentation detail lives in the glossary:
+use its readiness-score presentation.
+
+The score grades measured evidence, not declared existence. Report an uncalibrated real evaluator
+and an agent without current-run wiring evidence as not yet measured, never as absent. Do not infer
+`wired` from declared `knobs`, copy it from a historical document, or write it merely to clear a
+cap. Re-establish wiring on the current agent before the enhanced search as section 7 requires; the
+zero-anchor opening may proceed through the same absent-evidence cap while local setup continues.
+Read-only preflight and readiness runs are static local validation; they authorize no project
+write.
+
+**Opening invocation contract.** When the opening call supplies measured evidence - its
+`--preflight` JSON and any applicable `--agent-knobs` and
+`--row-review` documents - do **not** also pass `readiness.py --agent`, `--dataset`, or
+`--evaluation`. Those three flags are fallback declarations for material the score was not given;
+adding them beside measurements supplies two incompatible accounts of the same project, so
+`readiness.py` rejects the invocation. The opening readiness argv therefore contains the measured
+inputs plus the run-scoped `--task-kind`, `--evaluator-method`, and component-origin flags the
+rules above establish. Before running it, check the row-review mechanically against its shape:
+every row has a preflight-read `id`, normalized `origin`, `verdict`, one-sentence `note`, and the
+same explicit `in_run` boolean, on the split, when membership is settled. Do not rely on a
+successful exit to prove an omitted field was intentionally omitted.
+
+### Source evidence for the opening score
 
 SKILL.md's opening gate asks for this; the shape is here. One document, two halves: `knobs` is what
 the agent can be told to do differently, and `build` is how it is put together.
@@ -365,7 +602,7 @@ evidence without `values` or `low`/`high`; verify the real build path before add
 to the enhanced space. A stub whose comment lists the settings a real call *would* take is describing
 an agent that does not exist yet, and recording those names reports a search space this project does
 not have - the same false readiness a historical config-space file produces. Pass it as
-`scripts/readiness.py --agent-knobs`; SKILL.md section 1 states where it is written, how far one
+`scripts/readiness.py --agent-knobs`; The opening readiness procedure above states where it is written, how far one
 reading travels, and where it stops. Each scoring gets its own directory there because a read is
 evidence about the source at the moment it was taken.
 

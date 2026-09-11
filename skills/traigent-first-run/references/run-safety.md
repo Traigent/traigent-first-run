@@ -51,12 +51,84 @@ Stated here, ahead of every gate below, because it is the rule each of them is m
 ### Why the install sits where it does
 
 The opening gate establishes every scoreable fact available without installation, SKILL section 4 finishes
-deferred local validation, and SKILL section 5 creates the dedicated first-run environment. Installing
-earlier can therefore modify the wrong environment or spend time on a walkthrough whose task is not
-yet anchored. After that point, the remaining capability and mock checks need the installed SDK, so
+deferred local validation, and SKILL section 5 creates the dedicated first-run environment. After that point, the remaining capability and mock checks need the installed SDK, so
 no useful independent work overlaps the install. Keep this one foreground command with its complete
-resolver diagnostic; explain the wait and do not delegate it. Nothing in this guide requires
-sub-agents, which not every supported assistant provides.
+resolver diagnostic; explain the wait and do not delegate it.
+
+### Setup sequence
+
+Only after the standard-library-only component checks:
+
+1. Resolve the route from the selected agent, never from key names. Inventory presence—not values—in
+   the process, handoff, and exact credentials a project-declared env loader, launcher, or secret
+   manager exposes without external calls. Never enumerate stores or copy values; mark declared-only
+   sources unverified. Reuse a matching credential in place when inheritable; on mismatch, do not call the
+   file unsaved. Say: `Agent route: <vendor/model>. Provider credentials: <vendors and sources>.
+   Traigent key: <present/absent> (not a provider credential).` Ask nothing here: a route whose
+   credential is absent is decided at step 6 of this sequence, on its one stop. A route change requires
+   recipient disclosure and approval; never rewrite a route merely to match a key. With no route,
+   use the sole available vendor, or carry that choice to the same stop. Generated baselines need
+   their model ladder; a user-owned baseline requires only its existing route and credential.
+2. Resolve and prepare the dedicated first-run environment `.venv-traigent` under the rules below, naming its absolute path before touching it. Preserve every existing
+   environment. The reference owns creation, recovery, and activation mechanics; never fall back
+   to a shared or dependent environment. If resume validation verified this run's completed setup,
+   skip creation and installation and continue with the remaining free checks or credential handoff.
+3. For a new environment, install the exact declared dependencies under SKILL.md's narrow authorization: the exact pins in
+   `assets/requirements-first-run.txt`, never the project's own declarations, which the run never
+   edits. Never use an unversioned `pip install traigent`.
+   Say first: `Installing traigent==0.26.0, litellm==1.93.0 and python-dotenv==1.2.2 into
+   <absolute path>/.venv-traigent - a package fetch only: no provider or Traigent calls, and none
+   of your project's code runs.` Then proceed: the notice is not a question, and the
+   install-approval policy clause in the authorization table still governs. Keep this unattended
+   step foregrounded, explain the wait, and do not delegate it; Why the install sits where it does above explains the wait. Then re-run `scripts/preflight.py` in that environment without
+   `--defer-missing-sdk`; `sdk-version: PASS` is required before continuing. On `sdk-version: FAIL`,
+   preserve that environment, report its path and the concrete failure, and stop. Handle other
+   failed records at their own gates; a credential-file mode finding is not an installation failure.
+   Recreate it only on the
+   user's explicit request; nothing else catches a silent or partial install.
+4. Verify capabilities and public signatures from the installed SDK. Use its public dataset
+   loader/validator, decorator, and evaluation models; use a public no-execution contract validator
+   when available, otherwise finish with safe mock plumbing and do not claim exhaustive static
+   compatibility. Never recreate SDK binding fallbacks. Use resolved dataset paths for the pinned
+   SDK's tracked nested-relative defect.
+5. Run calibration deferred solely for a local installed dependency. Then run a fresh-process
+   Traigent mock plumbing check only when every model call and external side effect is intercepted;
+   exit it and never reuse that process for a real run.
+6. After all applicable free checks, create or minimally update `.env` through
+   the ordered credential handoff below, which selects the file: add only a
+   genuinely missing selected-provider key, and stop once for only that secret locally. Where the
+   route's credential is absent and another vendor's is present, that stop closes its message with
+   the lettered ask - `A.` preserve this route by adding <key>, marked recommended unless the user
+   already chose the other vendor; `B.` change to <available vendor> - and nothing follows it: one
+   reply pastes the key or changes the route. Do not request or route the Traigent key before the
+   section-7 baseline checkpoint.
+
+### Finding a supported interpreter
+
+Use only locally installed Python 3.11-3.13. On POSIX, try the host `python3`, then `python3.13`,
+`python3.12`, and `python3.11`; accept the first executable that actually reports a supported
+version, not merely a matching command name. This probe prints its absolute path and version:
+
+```sh
+first_run_python_found=false
+for first_run_python in python3 python3.13 python3.12 python3.11; do
+  if "$first_run_python" -I -S -c 'import sys; ok = (3, 11) <= sys.version_info[:2] < (3, 14); print(sys.executable, sys.version.split()[0]) if ok else None; sys.exit(0 if ok else 1)' 2>/dev/null; then
+    first_run_python_found=true
+    break
+  fi
+done
+test "$first_run_python_found" = true
+```
+
+On Windows, list already installed paths with `py -0p`, then probe those executables directly in
+3.13, 3.12, 3.11 order with the same `-I -S -c` check. Never use a launcher mode that auto-installs.
+If the PATH/launcher search fails and `uv` is already present, use
+`uv python find --offline --no-python-downloads '>=3.11,<3.14'` and probe its returned path too.
+Do not install a manager or download a runtime during this lookup. If none works, report readiness
+as not yet measured and give one remedy: install Python 3.13 locally, then provide its executable
+path to resume. An unsupported project environment remains untouched and is named as such.
+Use the chosen executable's literal absolute path for later commands; do not depend on a shell
+variable surviving the next tool call. This chooses a runtime, never an environment to install into.
 
 ### Rules
 
@@ -64,15 +136,38 @@ sub-agents, which not every supported assistant provides.
   every shared or dependent environment. Create the dedicated `.venv-traigent` under the project
   root with Python 3.11-3.13; do not replace the project's interpreter or install into an existing
   environment.
+- Before creating that environment, when the project is a Git worktree, ensure the project-root
+  `.gitignore` excludes `/.venv-traigent/`, preserving its existing rules. Do not initialize Git
+  just for this. The environment stays available after the walkthrough without entering commits.
 - Name the dedicated environment by absolute path before creating or touching it. If that path
-  already exists, inspect it without changing it, stop with its path and evidence, and recommend
-  inspection. Remove and recreate the existing dedicated environment only on the user's explicit
-  request. Never reuse it. Never select an existing project, shared, dependent, external, or
-  assistant-owned environment as a fallback.
+  already exists without the verified same-run setup below, inspect it without changing it, stop
+  with its path and evidence, and recommend inspection. Remove and recreate the existing dedicated
+  environment only on the user's explicit request. Never adopt an environment from a different or
+  unverified run. Never select an existing project, shared, dependent, external, or assistant-owned
+  environment as a fallback.
+- **Continue this run's completed setup.** After successful creation, installation, and `sdk-version: PASS` from installed
+  preflight, record the setup evidence in `traigent-runs/run-plan.md` before any credential wait:
+  the dedicated absolute path,
+  its interpreter and Python version, `sys.prefix`, installed top-level versions, the requirements
+  file's SHA-256, and the creation/install/preflight results. On a matching unfinished run, including
+  a stage-5 wait for a missing credential, treat that evidence as a hint and independently verify
+  it before continuing. The resolved environment must still be the project's `.venv-traigent`,
+  and its named interpreter must report that environment as `sys.prefix` and the recorded supported
+  Python version. Read installed versions through that interpreter's `importlib.metadata`; they
+  must match both the recorded versions and the unchanged `assets/requirements-first-run.txt`.
+  Re-run installed preflight without `--defer-missing-sdk` and require `sdk-version: PASS`; other
+  failed records retain their own remedies. Only a verified completed setup continues
+  at the remaining free checks or credential handoff: do not recreate the environment or repeat
+  installation. A finished or historical record, missing creation/completion evidence, path or pin
+  drift, or a failed setup or environment verification keeps the preserve-and-stop rule above. This exception grants no
+  provider, data-transfer, or paid authority; the resume approval rules still apply.
 - Create and activate the named dedicated environment before installing. Confirm `sys.prefix`
   points inside it before `pip install`, or the install silently lands in global Python and the
   run cannot find `traigent`.
-- Create it with a supported interpreter, for example `python3.13 -m venv .venv-traigent`.
+- Resolve its supported interpreter using Finding a supported interpreter above, then run
+  `"<resolved-python>" -m venv .venv-traigent`. The bootstrap's `-I -S` flags belong only to its
+  static preflight/readiness checks; omit them from the dedicated environment's post-install SDK
+  check so it measures that environment's installed packages.
 - Keep dependency installation as its own action class. It may proceed without another approval
   only inside that environment, from the exact packages and versions recorded for the top-level
   requirements plus their package-declared dependencies, as a package-artifact-only fetch/install
@@ -80,16 +175,9 @@ sub-agents, which not every supported assistant provides.
   a fully pinned, hash-checked requirements file and wheels; stop if fulfilling it requires source
   builds, additional undeclared top-level packages, or code execution. A user or environment
   install-approval policy still takes precedence.
-- Install the tested pins from `assets/requirements-first-run.txt`, whatever the project declares
-  for itself; the dedicated environment exists so this run uses the stack it was measured on, and
-  the project's own pin is left alone rather than installed or edited. Never run an unversioned
-  `pip install traigent`: on an unsupported interpreter, package resolution can select the
-  unrelated obsolete `0.0.1` release, which carries none of the optimizer and which the preflight
-  refuses by name.
-- Verify installed packages and public signatures before generating SDK integration code.
-  Dependency installation does not authorize importing or executing user/project modules.
-- Verify SDK capabilities from the installed version and CLI rather than hardcoding what installs
-  "today."
+- The setup sequence uses the tested pins, whatever the project declares for itself; the project's
+  own pin is left alone rather than installed or edited. Dependency installation does not authorize
+  importing or executing user/project modules.
 - After every applicable free component, capability, and safe mock check, select the credential
   handoff file: a local file the user explicitly identified for this run, or otherwise the
   target-project `.env`. Verify its owner-only mode, check only key presence, and do not copy or
@@ -108,7 +196,11 @@ sub-agents, which not every supported assistant provides.
   that exact relative path, then require
   `git -C "<credential-file-worktree>" check-ignore -q -- "<credential-file-relative-path>"` to succeed.
   Stop before secret entry if the effective-ignore check fails, and repair the ignore rules. Outside Git, do not create
-  `.gitignore`. Stop once only when a key is truly missing. Add or request the Traigent key only
+  `.gitignore`. After these checks, announce and set the selected owner-controlled file to mode
+  `0600` on POSIX before opening it or adding a key. If ownership or filesystem permissions prevent
+  that, preserve it and explain the required owner action. A blank-file permission warning can
+  wait for this handoff; a populated-file permission failure must be resolved before secret use.
+  Stop once only when a key is truly missing. Add or request the Traigent key only
   after the local baseline checkpoint.
 - Check presence only; never inspect, paste, or print secret values.
 - Hand the file off unambiguously. In a graphical session, launch the opener detached and
@@ -442,7 +534,7 @@ transform is the one other thing it does: reaching that function executes its mo
 which for an agent file is commonly a provider client. A non-executing evaluator that needs a
 declared local dependency waits until that dependency is installed, and so does a transform whose
 module does - the flag waits with it rather than pulling an install into this stage. That deferred
-calibration is outside these three words and SKILL.md section 5 step 5 runs it: its path carries
+calibration is outside these three words and Environment and privacy's Setup sequence step 5 runs it: its path carries
 the installed dependency by construction, so the inspection that declared it is what binds it
 there. An execution evaluator had its evaluator check skipped at the scope gate above and the run
 continued; nothing is owed here either. Run either
@@ -457,9 +549,25 @@ A Traigent mock run is a separate plumbing check:
 - Set `TRAIGENT_OFFLINE_MODE=true` and `LITELLM_LOCAL_MODEL_COST_MAP=true` before imports. Traigent
   offline mode does not by itself suppress LiteLLM's import-time remote pricing-map fetch; use both
   in every generated mock wrapper and every documented free mock invocation.
-- Confirm every agent and evaluator model path is interceptable. LiteLLM/LangChain paths may be
-  intercepted; raw provider SDKs, subprocesses, HTTP services, tools, and custom judges may still
-  make real calls.
+- Enable the pinned SDK's mock responses in that process before importing or rehearsing the
+  inspected agent integration; the two flags above do not mock model calls:
+
+  ```python
+  from traigent.testing import enable_mock_mode_for_quickstart
+
+  enable_mock_mode_for_quickstart()
+  ```
+
+  Use a separate free-check entry point, not either paid-phase runner. Keep both paid runners'
+  inherited-mock refusal intact and never supply pretend spend approval to launch this check.
+  If the SDK refuses activation, use the static-only or approved-probe route below.
+- Confirm the entire call path fits the pinned SDK's interception boundary: LiteLLM completion
+  calls inside a Traigent optimized/evaluated run after its interceptor is installed, or LangChain
+  calls through an installed Traigent framework integration. Direct calls before interception,
+  raw provider SDKs, subprocesses, HTTP services, tools, and custom judges are not covered merely
+  because mock mode is active. Agent logic and evaluators still execute normally. The installed
+  SDK's interception of the actual path must be established rather than treating a framework name
+  as proof.
 - Treat proxy variables, removed keys, and mock flags as defense in depth, not as a sandbox or
   proof that an invoked path is local-only.
 - If any path cannot be proven free, do not call it a free dry-run. Ask approval for the smallest
@@ -687,6 +795,47 @@ Before the provider-paid baseline, show only its immediate scope:
   is stated whatever the connection answer turns out to be. An earlier draft made it conditional on
   the cap still asking, which would have let the safest answer buy the quietest card.
 
+### Rendering and enforcing baseline approval
+
+When this run filled a gap for the walkthrough, or an active cap asks rather than blocks, that same
+approval also carries the pre-spend card in this reference: what the gap was and how it
+was filled, absolute paths to what was written, the easiest and hardest rows, what the evaluation
+method counts as correct, and the provenance this run assumed, stated rather than asked. It is
+content on the approval that already stops, never a second pause, and the card ends on exactly one
+lettered ask: the proceed-or-fix pair, whose proceed route is the spend approval. A standing
+`seam_probe_advisory` rides that same approval whether or not the card does: what the evaluator
+scored the answer as the author wrote it and in the shape the probe sent, and every string the
+advisory recorded - which is one string, not two, where no reply step ran.
+
+When the opening gate found Traigent already set up here, that approval carries it too, beside the
+figure: what was found, and that this run charges for its own baseline and search whether or not
+they have optimized here already. One line on the approval that already stops.
+
+Immediately before the paid baseline, show a short run card with model ids, each varying knob and
+its explicit values, one plain-language note per knob, and the total combination count. The
+enhanced card waits until after the baseline checkpoint.
+
+Put the baseline estimate, selected row count and ids, and **30-minute completion target** in the
+money approval. Preflight's first-run count is only a proposal; it cannot know the selected rows.
+This is an estimate, not a hard wall-clock guarantee. Size the baseline before it starts.
+
+When the SDK exposes trustworthy live progress, report only those values; otherwise report only
+observable phase milestones. Never invent progress or quietly drop validation. A timeout follows
+Recovery in this reference.
+
+If the estimate exceeds `$5.00` or 30 minutes, first recommend a smaller representative slice
+while preserving meaningful difficulty coverage; the baseline grid is never reduced - a generated
+one runs its twelve configurations and a preserved one runs as the user defined it. Proceed after
+one explicit approval and keep it process-only. The limits and retry rules below apply.
+Maintain its single
+running total across every paid phase, stop before the next estimate exceeds the remainder, and
+do not layer another retry loop. Launch every paid process with the three approved figures below, so what the user approved is what the code enforces; a phase missing any one of
+them stops before spending rather than falling back to a limit nobody approved.
+
+After the approved live provider probe, derive internal time bounds from observed latency and the
+baseline work. If they no longer fit the approval, offer a smaller run or quote the additional
+time/cost; do not ask the user to select implementation timeouts.
+
 ### The pre-spend approval card
 
 The baseline is the first thing in this run that costs money, and the last moment at which changing
@@ -878,9 +1027,10 @@ is materially long, recommend a smaller slice or, for the search, a lower trial 
 The approved total is not a number the assistant carries in its head between phases. Launch every
 paid process with three figures in its environment, supplied by the process and never by `.env`,
 exactly as `TRAIGENT_FIRST_RUN_PHASE` is: `TRAIGENT_FIRST_RUN_COST_CEILING_USD` is the total
-approved above; `TRAIGENT_FIRST_RUN_COST_SPENT_USD` is the single running total at the moment that
-process starts, which is `0` only while nothing has been spent yet - a live probe or a judge
-calibration that already ran is in it; and `TRAIGENT_FIRST_RUN_UNTRACKED_CALL_COST_USD` is the
+approved above; `TRAIGENT_FIRST_RUN_COST_SPENT_USD` carries the cumulative budget debit when the
+process starts: known costs plus conservative reservations for calls whose cost is unknown.
+Include any earlier live probe or judge calibration; use `0` only before any debit.
+`TRAIGENT_FIRST_RUN_UNTRACKED_CALL_COST_USD` is the
 conservative amount one provider call is deducted for when its route reports no cost, rounded up
 from the observed per-call cost once the probe has one and from the estimate the approval card was
 priced with until then. None of the three has a default, so a paid phase launched
@@ -895,7 +1045,7 @@ Do not persist `TRAIGENT_COST_APPROVED=true`; set approval only in the current p
 is what keeps the SDK's own prompt from offering to raise the approved total. The SDK enforces its
 optimization-call limit, but it does not yet share one cumulative budget with calibration and other
 calls. Until it does, keep a single running total rather than a phase ledger: each paid phase prints
-what it spent against the figures it was launched with, and the combined figure that line names -
+its budget debit and known cost separately. The cumulative debit that line names -
 not the SDK's tracked cost, which cannot see a conservative deduction or a refused trial - is the
 running total, passed to the next process as its `TRAIGENT_FIRST_RUN_COST_SPENT_USD`.
 Before the next phase, stop if its estimate does not fit the remaining total ceiling.
@@ -914,8 +1064,8 @@ nothing at all, and that rule is what to hold rather than a list of two: measure
 - what `kill -9`, the out-of-memory killer and a container eviction send - SIGHUP, a dropped SSH
 session, SIGQUIT, `os._exit` and `os.abort` each printed no line. When no ledger line was printed,
 that phase's spend is not recoverable and the SDK's tracked cost is a floor rather than the figure
-- so carry the whole of what that phase was approved to spend forward as spent, say to the user
-that it was killed and its exact spend is unknown, and take any further work back to them as a
+- so carry the whole of that phase's approved allowance forward as a conservative budget debit.
+Say that it was killed and its exact spend is unknown, and take any further work back to them as a
 fresh approval.
 
 The SDK already retries transient Traigent-backend requests and classifies provider failures.
@@ -1007,6 +1157,108 @@ the question past the approval card into the middle of a paid phase.
 
 ## Baseline and optimization
 
+### Comparison sequence
+
+Use the same tuning slice, evaluator, objectives, and agent call path for both measurements.
+Preserve the user's existing baseline exactly, including its original configuration count; never
+pad it. Only when missing, prepare the credible twelve-configuration fixed sweep, including the
+initial configuration. The space construction rules below own the enhanced dimensions and values.
+Keep every baseline value and model, add only meaningful controls the agent consumes, and test up
+to 12 configurations. Any new model is a separately disclosed experiment. This is the last run,
+so the controls that carry cost are varied here or not at all, within that approved experiment.
+
+Report each measurement as a **Pareto frontier over the declared objective and cost**, naming the
+objective in the customer's own words. It costs nothing - it is arithmetic over trials already
+paid for. Never show a frontier point worse than the configuration the user is already running
+under the declared objective direction. The objective-cost frontier below owns claim strength;
+SDK Result checks owns the read.
+The three-tier ladder applies only when this walkthrough supplies a missing baseline: one fast,
+one mid, and one strong tier one step below - never the vendor's newest flagship. Preserve a
+customer baseline's exact model set and do not add cheaper tiers without separate disclosure.
+Frame the enhanced run as a deliberately small enhancement: a small slice of what Traigent can
+drive, not its full capability.
+
+The baseline needs only the user's provider credential. Run its explicit fixed grid without a
+Traigent key in that process, preserving any existing key on disk. Say plainly that this is a
+**local fixed grid**, not Traigent choosing which configurations to test. It is local, not free:
+provider calls spend from the same approved total.
+
+Immediately after it returns, show a **Local baseline checkpoint** before any Traigent-key or
+account request:
+
+- Start with the recorded target project and selected agent identity; put substitute limits before
+  numbers where applicable. State that this was a local fixed grid, not Traigent choosing trials.
+- Show the best configuration, the primary tuning metric by its actual name, cost, latency, and
+  executed and failed trial counts. Report unavailable cost or latency as `not measured`.
+- Show this grid's own objective-cost frontier beside the winner, read from the trials it just
+  paid for. Explain each baseline knob in one plain-language note.
+- State that no generalization or production-improvement claim exists yet and this phase created
+  no portal experiment. Do not disclose the held-out score before section 8.
+
+Check whether the dataset and evaluator distinguish configurations. If not, stop before search
+and recommend the evidenced repair before any connected preview. For a free repair to code this
+run wrote or to a working copy preserving their files, use component-creation.md's repair routes:
+never offer a route that carries the diagnosed fault into paid work, and do not put abandoning the
+run as a co-equal letter beside the free repair.
+For a nearly perfect baseline with no informative failures, report little or no measured quality
+or cost headroom as a limit on the claim; a ceiling effect remains a hypothesis. Harder realistic
+cases belong to the post-run `traigent-dataset-curate` handoff. Offer `A.` the bounded connected
+run as an optional no-lift-possible verification with no expected gain, recommended for the
+capability and information it adds; or `B.` stop with the preserved baseline-only result.
+A quality-only search with walkthrough material requires a workflow-demonstration label. A cost
+objective may proceed at equal objective score only when materially lower cost remains possible;
+report any gain as cost and flag weak evidence.
+
+Recommend the sound continuing route: measured headroom can strengthen the case but is not its
+only basis. State what continuing produces: managed trial selection, a portal experiment/link,
+a recommendation across both runs, and a held-out score. Approval and budgets owns the two standing
+reasons that rest on no number. Declining stays available and plainly answerable. Stopping here
+leaves a real measured baseline, reported as baseline-only rather than a completed Traigent
+optimization. Never promise improvement or what the held-out score will be, or suggest stopping
+is a mistake.
+
+Present `Stage 4/5 · Optimize` through Approval and budgets' connected preview: managed selection,
+portal history, bounded calls/cost, and deeper insights as conditional capabilities. Its lettered
+routes are last, below the disclosure prose. Obtain explicit approval for this connected stage
+before its key, probe, sync, or calls. Do not ask the user to choose trial counts or knobs; select
+them from the inspected agent and include their calls in connected-stage approval.
+In the enhanced run card, repeat the baseline knobs, label
+every addition new, and give the total combination count beside this run's trial cap as a ceiling,
+never a range. Disclose any reduction here; never promise a pause at minute 30. Size the run first.
+Explain Traigent's documented synchronization, exclusions, and exceptions inside the preview,
+above its routes; call it a service contract rather than a packet audit and stop if runtime
+behavior contradicts it.
+
+Only after that checkpoint, ask for the Traigent key: a provider-backed result precedes any
+account request. The key needs full access rather than the read-only default. Reuse a suitable
+preserved key or resolve the four account/key states under Environment and privacy, using its
+same local handoff file and two 10-day windows: the access code, then portal access.
+Enter credentials locally, never in chat.
+Once the key is present, run the zero-LLM portal probe. Then feature-detect a public exact sync id
+and use SDK Carrying the local baseline into the portal. Without a supported id, keep the baseline
+local; never inspect private storage or use `--all`. Never pay to repeat the baseline for a portal
+entry. Run the enhanced optimization connected and verify its own link without implying it covers
+an unsynced baseline.
+
+Before either paid phase, prove the applicable wrapper and spaces locally; re-prove after changes.
+Historical `wired` is never proof. Generated `reflect` uses `off`/`on` because the pinned cloud
+session rejects bools; never recode a customer boolean. Refuse an SDK-rejected final space before
+baseline approval. Space construction below owns meaningful dimensions and the bounded arithmetic.
+Follow the freeze/remove/persist lifecycle: save `traigent-runs/config-space.json` only after this
+search returns nonzero trials, from the exact space received. Only that current-run file enters
+the closing readiness `--config-space` score.
+Select the recommendation on tuning scores across both measurements, never on held-out rows, then
+score only that one against the ten held-out rows under the dataset reference's Held-out set and
+claims. Do not fabricate configurations to hit a count: a preserved baseline of one configuration
+stays one, while a generated walkthrough must supply twelve configurations.
+If provider, backend, or portal connectivity fails, stop with the concrete failure and one recovery;
+never substitute mock or synthetic results or call offline checks a completed optimization. Resume
+the connected path after resolution. The baseline and the enhanced search are this run's only paid
+passes; the operating contract owns that bound. Further iterations belong after this result under
+a specific hypothesis and newly scoped approval.
+
+### Space construction and request proof
+
 Follow SKILL section 7 for the comparison order, evidence held constant, checkpoint, and exact-sync
 decision. This section owns configuration-selection depth and execution/reporting safeguards.
 
@@ -1043,8 +1295,8 @@ at two values each is 1024 configurations against a 12-trial cap - 1% of the spa
 the scorer damps the search-space points past 20x the cap, 240 configurations at that
 default. What it credits is how much of the space this run will actually compare -
 `min(configurations, trial cap)` - and it pays full credit only from twelve reachable
-configurations up, which is what SKILL.md's upper bound on the enhanced space delivers against
-the default cap.
+configurations up. The three-slot enhanced construction below reaches that credit within the
+default cap.
 
 Which of theirs to keep is the baseline's call, not preference. For each knob the baseline VARIED,
 compare the best score on each of its values: a spread under the evaluator's separation margin did
@@ -1090,7 +1342,7 @@ one task-selected temperature owned by `sdk-execution.md` across both phases and
 on behaviour knobs instead. Preserve a user-owned baseline's temperature behavior exactly,
 including an unset provider default; record resulting nondeterminism as a limitation rather than
 silently changing the baseline. Multi-call controls are outside this first-run paid space. Match
-each direct parameter to an observed single-call failure; blind wiring adds cost and can lower score.
+each direct parameter to an observed single-call failure; blind wiring adds cost and can worsen the objective.
 
 Managed `auto` is a guided search, not an exhaustive grid: `max_trials` is a cap, not a minimum,
 so the service can stop with fewer trials. `auto` already runs Traigent's smart cloud search, so do
@@ -1106,13 +1358,15 @@ Composite patterns are a later workflow, not a first-run paid dimension.
 
 ### The objective-cost frontier
 
-SKILL section 7 owns when a frontier is reported and its score floor; `references/sdk-execution.md`
+SKILL section 7 owns when a frontier is reported and its incumbent score bound; `references/sdk-execution.md`
 owns the read. Owned here: what it may claim, and the wording of its two outcomes. It costs nothing
 and adds no stage - both runs priced every trial they completed, so this is arithmetic over trials
 already in hand. Report it whichever way it comes out.
 
 The floor is a number this run reads rather than a judgement it makes: the incumbent's score on
-this run's own metric, the incumbent being the configuration the user is already running.
+this run's own metric, the incumbent being the configuration the user is already running. It is a
+lower bound for a maximized objective and an upper bound for a minimized objective; use that same
+declared direction for admissibility, dominance, and the user-facing comparison.
 
 It needs measured cost to exist at all, and two runs fail that for opposite reasons the user is
 told apart:
@@ -1126,21 +1380,23 @@ told apart:
 
 Each point is one configuration's measured cost beside its score on this run's own metric, over the
 same rows, evaluator, and agent call path as everything else it reports. Dominated points are
-dropped - a configuration that cost more and scored no higher than another on the same evidence is
-not a trade-off anyone would take.
+dropped - a configuration that cost more and performed no better under the declared objective
+direction than another on the same evidence is not a trade-off anyone would take.
 
-Cost is measured directly but not exactly: one configuration evaluated twice returns two different
+Cost is measured directly but not exactly: one configuration evaluated twice can return different
 token counts, inside a single run as much as across two. Report each point's measured cost and let
 the reader see the gap; never present two points a few percent apart as a saving.
 
 A frontier asserts no win, so it needs no threshold to clear and states none. What it does need is
-the score claim `references/evaluation-and-dataset.md` decides from the paired counts rather than
-from the direction of two averages: default to directional - "no score difference was detected on
-these rows" - and say "the score did not get worse" only where a justified paired uncertainty
-analysis over the completed outputs supports it. Rows where the cheaper point lost and the
-incumbent won are reported even when they are outnumbered, because failing to detect a drop on a
+the score claim `references/evaluation-and-dataset.md` decides from paired evidence on the shared
+tuning rows: binary outcome counts or graded per-row changes in the declared objective direction.
+When those per-row results are unavailable, say the paired comparison was not measured; never
+derive it from aggregate scores or pay for another pass. Where paired evidence exists, keep the
+claim directional, and say "the score did not get worse" only where a justified paired uncertainty
+analysis over the completed outputs supports it. Report rows where the cheaper point performed
+worse than the incumbent even when they are outnumbered, because failing to detect a drop on a
 first-run slice is not evidence there was none. A point reaching the frontier is not evidence its
-score held: several configurations are statistically indistinguishable at this size, so the one
+score held: several configurations can be statistically indistinguishable at this size, so the one
 that matched the incumbent's number may simply have measured lucky. Never let "the optimizer picked
 it" stand in for evidence that the score held.
 
@@ -1158,11 +1414,11 @@ configuration the user runs now, then the rest of the frontier as the trade-offs
 
 > `<config>` scored `<value>` at `<measured cost>`, against `<value>` at `<measured cost>` for the
 > configuration you are running now, on the same rows, evaluator, and agent call path -
-> `<paired outcome counts>`. Cost here is arithmetic over reported token counts, so it is measured
-> directly. The score is not measured directly - it is a comparison over `<n>` rows - so `<the score
-> statement the counts support>`. The whole frontier this run measured is `<points, cheapest
-> first>`, and two points a few percent apart in cost are inside what re-measuring one
-> configuration moves.
+> `<paired tuning evidence, or paired comparison not measured>`. Cost here is arithmetic over
+> reported token counts, so it is measured directly. The score comparison covers `<n>` rows:
+> `<the claim the available paired evidence supports, or its absence and the resulting limit>`.
+> The whole frontier this run measured is `<points, cheapest first>`.
+> These are the measured costs of this run; repeatability was not tested.
 
 **The incumbent is the only point on it.** This is a finding, and it gets its own copy. Report what
 this run counted, never a property of the space: the space is larger than the run's trial cap, so
@@ -1171,7 +1427,8 @@ any claim about the space quantifies over configurations the run never reached.
 > This run tested `<executed trials>` of `<total combination count>` configurations. On
 > `<what you are optimizing for>` against cost, the configuration you are already running is still
 > the only point on the frontier:
-> nothing tested cost less at its score, and nothing scored higher at its cost. So keeping it is
+> nothing tested cost less at its score, and nothing scored better in the declared objective
+> direction at its cost. So keeping it is
 > the answer this run supports. A run this size reaches few configurations by design; widening the
 > search across your full dataset and your own controls is what the skills named at the close are
 > for.
@@ -1184,6 +1441,89 @@ and it points at an action and never at a result: the handoff below names what a
 let the user *do*, never what it would find. Do not answer it with another paid run.
 
 ## Post-run verification
+
+### Reporting procedure
+
+Lead with a layered summary whose opening layers are enough for a quick read and whose details are
+auditable:
+
+1. **Outcome** - baseline versus enhanced result and whether a recommendation is supported.
+2. **What the evidence establishes** - baseline tuning result, enhanced tuning result, and actual
+   persisted runs.
+3. **Current state and limits** - component provenance, exclusions, uncertainty, incomplete
+   phases, and any small-sample held-out gap.
+4. **Next action** - one action the recorded opening state earns.
+5. **Details** - configurations, objectives, trials, failures, cost, stop reason, artifacts, and
+   verified links.
+
+Include:
+
+- Best baseline configuration versus best enhanced configuration on the tuning set.
+- Each run's objective-cost frontier, in the details layer. One recommendation still leads; a
+  frontier put where the recommendation belongs is the menu this stage already refuses.
+- The recommended configuration's held-out score and small-sample note, shown here first.
+- Cost, the configurations tested out of the space's total, failures, stop reason, and direct
+  portal links.
+- Which components were `✅` real and which were walkthrough substitutes.
+- What this run created or repaired, and what that costs the claim: examples it wrote are weaker
+  evidence than examples collected from the product, and an evaluation method it wrote is a
+  starting point rather than the product's grading policy - one a person may want to move in
+  either direction, so it rewards what their product values.
+- The run's scope, in this run's own recorded numbers: rows scored beside the dataset's usable
+  rows, trials executed beside the enhanced space's combination count, and knobs varied beside the
+  controls this run identified on the agent. Say plainly that those bounds were the walkthrough's
+  own choice - a getting-familiar run rather than the largest one available - and keep it a scope
+  statement, never a pitch. Drop any clause this run did not measure instead of estimating it.
+  Run-scope statement below owns each number's source and how the sentence degrades.
+- When the enhanced run does not beat the baseline, report the observed flat/negative delta first,
+  then separate verified facts, evidence-backed inferences, and untested hypotheses. Use
+  `cause not established by this run` unless the evidence rules a cause in. The hypotheses and
+  rule-out order below guide the next test; they are not mandatory
+  diagnoses. When the reference is demonstrably ambiguous, wrong, or degenerate, say so rather
+  than blaming the model. A flat result on demonstration data shows only that this comparison ran
+  and found no lift on its evidence, not that production cannot improve. Carry the run-scope
+  statement above into this no-lift report beside the delta itself, not only in the scope line: the
+  bounds are what let no lift be read at the scale it was actually measured at.
+
+Retain every experiment that was actually persisted in the Traigent portal. Never delete one as
+automatic teardown or cleanup. Give the user a direct verified link for each persisted run and
+label the baseline local-only when exact sync was unsupported or failed.
+
+If any substitute was used, lead the interpretation with:
+
+> Completed in this run: `<verified phases>`. Not completed or independently verified:
+> `<missing phases>`. Because `<components>` were prepared as walkthrough substitutes, the
+> measured result is not evidence of expected production performance.
+
+Do not promote a configuration from a fully synthetic run. For real components, promotion still
+requires explicit user approval and a later validation check that is tracked separately from the
+baseline/enhanced comparison. When the assistant inspected or authored that material, call it
+assistant-authored or assistant-inspected evidence and do not present it as independent
+production-promotion evidence.
+
+Name every row the comparison did not score, with its id: rows excluded as degenerate references,
+and the ids of the bounded subset when one was drawn. State it even when nothing was excluded, so
+silence never has to be interpreted.
+
+Do not close on a second number. Re-run `scripts/readiness.py` on the post-run evidence for the one
+reading nothing earlier could take - the agent pillar, scored from the space the enhanced search
+actually received - passing the current run's `--config-space traigent-runs/config-space.json` only
+when that search emitted it, and the same row-level read, so this score is not held for a gap an
+earlier card already closed; otherwise score the agent from absent evidence. The opening and section-4
+scores withhold every config-space document by construction, so this is the run's only measurement
+of the space the customer paid to search. Its dataset and evaluation caps rank nothing and settle
+nothing about what is still open: a gap this run filled with a substitute reads exactly like one the
+customer closed themselves. Never show that
+score or set it beside the opening one.
+
+Two things read that call. Its agent cap is a finding about the search that just ran: a document
+that varies nothing means the paid run compared one configuration, so the card blocks and the close
+reports it beside the search's own outcome. And this is the only place anything reads
+`traigent-runs/config-space.json`, so a file this run wrote and cannot itself parse is refused here
+by name rather than left in the customer's project for them to find. The verification rules below own how that card reads after a stopped, failed, or zero-trial search. Leave the user knowing which
+remaining gap to close first.
+
+### Verification checks
 
 Before claiming success, verify:
 
@@ -1206,12 +1546,14 @@ Before claiming success, verify:
 11. Baseline and enhanced tuning results are shown side by side, with the tuning-data limitation
     named before any generalization claim, and the held-out score SKILL section 8 discloses appears
     beside them.
-12. Every reported frontier carries measured costs, a score claim the paired counts support, and no
-    point below the floor. Trials that came back without reported cost carry no cost claim: report
-    that, not a number.
+12. Every reported frontier carries measured costs, a score claim supported by the available paired
+    evidence or an explicit statement that the paired comparison was not measured, and no point
+    worse than the incumbent under the declared objective direction. Trials that came back without
+    reported cost carry no cost claim: report that, not a number.
 13. Each paid process ran against the approved figures it was launched with, and the close reports
-    them: the approved total, what this run spent against it, and what is left. A phase that
-    refused to start, or stopped at the remaining, is named with the work it did not do.
+    them: the approved total, cumulative budget debit, known cost and unpriced calls separately,
+    and remaining ceiling. A conservative reservation is a budget deduction, not a measured charge.
+    A phase that refused to start, or stopped at the remaining, is named with the work it did not do.
 
 An optimized winner that does not beat the baseline is a valid no-lift result. Report the observed
 delta first, then separate verified facts, evidence-backed inferences, and untested hypotheses.
@@ -1294,14 +1636,67 @@ Then one sentence saying those bounds were the walkthrough's own choice, so this
 getting-familiar run rather than the largest one available.
 
 Keep it a scope statement. It reports what was measured and what was not; it does not predict that
-a larger run would have won, attach a deadline, or supply a reason to act now. The motivation stays
-the user's own measured evidence.
+a larger run would have won, attach a deadline, or supply a reason to act now.
 
 ### Continuation handoff
 
-Offer the skills package to every finished run. Which skills the close names comes from what this
-run recorded, so the handoff continues this run rather than restarting it. Name two or three, each
-with the observation that selected it and what it would let the user do next:
+Close by saying what a further run would be worth. Name the gaps still open and what each is now
+costing; use the user's own measured evidence rather than encouragement. Say what this walkthrough
+cannot close, and say what would make this production ready - every pillar this run generated made
+real or checked by a person, an answer key read rather than verified, and what this run
+built around what - on the run-scope terms above, including what the run was worth without them. Then give the one next action the **recorded opening state** earns: rank the opening
+score's caps and this run's own recorded limits, and name its value. A gap this run filled with a
+substitute is not cleared - it is filled provisionally, so it stays on this list and the action is
+what closing it properly takes:
+
+- Generated or mostly generated data, or an evaluation method this run wrote - one move that closes
+  it and one worth making anyway, in this order. **Best:** collect or export real examples of the
+  same task, and build the evaluation method from them and from what their expected results actually
+  are. This is the only one of the two that lifts the ceiling. **Otherwise:** keep what this run
+  generated and have a person read and approve it - the rows and their expected
+  answers, and the generated method too, whose grading logic has to match what the agent is really
+  scored on and what its expected result is. Say plainly that this one does not lift the ceiling:
+  the score reads where the rows came from, and a person approving generated rows leaves them
+  generated. Address this binding gap first whenever it applies.
+- Real inputs with model-written answers - have a person review a sample of the answer key. Until
+  then the accuracy number measures agreement with a model, not correctness.
+- Rows without expected outputs when the evaluator requires references - label a representative
+  slice rather than the whole set. Symbol-only outputs are an explicit verification question, not
+  silently discarded labels.
+- One difficulty band, or answers that are nearly all the same - add examples where the agent
+  currently fails, which is also where a search has room to win.
+- A substitute component still standing in for a real one - connect the production agent, dataset or
+  evaluator it replaced, and say which of the reported numbers would change. Where there is nothing
+  yet to connect, a person checking that the substitute does what the product does is what stands in
+  meanwhile.
+- A thin evaluator, or one that was never calibrated - align the method with the product's own
+  grading policy before trusting a comparison built on it.
+
+Then the forward half, which is not a gap in anything. The run-scope statement already recorded the
+three bounds this walkthrough chose - rows scored, configurations tested, controls varied - so name
+whichever bound this run hardest and what lifting it would let the user do: more of the agent's
+controls, the whole dataset instead of the slice, a space wider than a first look needs. It is a
+clause on the recommendation above, not a second one, and it names an action they can take, never a
+result a wider run would find.
+
+A menu offered *instead of* a recommendation is the same as no recommendation; put extras later.
+
+End with the final reply-ready block in Approval and budgets above; `continue` never bypasses
+approval.
+
+After the state-specific recommendation and the result, these are available whenever the user wants them:
+
+- Hand over the Traigent optimization skills so the user can continue alone, at their full dataset,
+  more controls, and their own iterations. Tell the user first and remind them to restart the
+  session so the new skills load. List them with `npx skills add Traigent/traigent-skills --list`,
+  install one with `npx skills add Traigent/traigent-skills --skill <name>`, or take all of them
+  with `--skill '*'`. Then name the two or three this run's own evidence points at and what each
+  would let them do next; the map below selects those skills. Offering this is not a
+  state-specific recommendation and never displaces the one above; only which skills get named
+  comes from this run's evidence.
+- Continue into the advanced Traigent lifecycle.
+
+Choose the two or three skills from the run's observations using this map:
 
 | What this run recorded | Skill to name | What it would let them do |
 |---|---|---|
@@ -1366,6 +1761,43 @@ For generated wrappers, set the process-only SDK results folder to a child of `t
 before importing Traigent so its local optimization logs and state remain inside the ignored
 walkthrough directory. Store no secrets, raw private content in run names, or prompts/outputs in
 numeric telemetry, and keep error text and metadata recorded with the run content-free.
+
+### Run record and resuming
+
+Keep its stage-status block current from the moment the record exists: at every stage boundary and
+before every stop-and-wait, mark each stage done, in progress, or skipped with the reason; the
+next stage is always the first neither marked done nor skipped. A session finding
+`traigent-runs/run-plan.md` with a matching target and agent - target plus the recorded task answer
+when the agent line is `none discovered` - begins resume validation rather than automatically
+restarting: read it top to bottom and treat its status and results as resume hints. Independently
+verify the target and agent, rerun the cheap read-only/free gates required by the next action,
+including execution-evaluator scope and call-path checks, and verify a paid artifact before quoting
+it.
+After that verification, continue through free work at the first stage neither marked done nor
+skipped. For this unfinished run's completed dedicated setup, first apply the same-run environment
+verification in Environment and privacy. Continue the remaining setup without repeating creation
+or installation only when that verification passes. The record may avoid repeating paid work,
+never waive a safety precondition.
+Recorded scores, spend, completed paid results, and the opening score stand; recorded approvals do
+not. Open with where the run stands, not the opening message. Before a new or restarted provider,
+private-data, connected Traigent, or other approval-gated external call, re-ground in the latest
+user approval in the current conversation and confirm it covers the remaining recipients/data,
+scope, runtime, and ceiling. If absent, revoked, or insufficient, re-render that remaining-scope
+card and obtain explicit approval; the record alone grants no authority. Before that call, compute
+the current comparison invariants and compare them byte-for-byte with the pre-baseline invariants
+recorded after free validation; never rewrite the recorded invariants. They are the objective,
+agent/call behavior, exact tuning and held-out rows, evaluator, and baseline model/value set. The
+enhanced space is deliberately excluded because it must add controls; before a connected call,
+verify separately that it retains every recorded baseline model/value and that its only additions
+exactly match the freshly rendered and approved enhanced card. If the invariants are incomplete or
+differ, do not resume this run: rename the old record to the next unused
+`traigent-runs/run-plan-historical-<YYYYMMDDTHHMMSSZ>.md` (never overwrite), keep its spend and results
+historical or baseline-only, copy a fresh template to canonical `traigent-runs/run-plan.md`, start
+at section 1 with a new opening score; the operating contract owns re-running paid work. That
+opening score re-reads the agent, because the old record's readiness directories are historical
+with it: an opening score over an old reading is not one. Observe a live process, but never restart or expand it from the record alone. A record with every
+stage done or skipped is finished, not a resume point. The operating contract owns the mismatch
+rule.
 
 ### The run log
 

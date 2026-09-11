@@ -5942,13 +5942,19 @@ class PowerBoundsTheBandTests(unittest.TestCase):
 
                 if count == 1:
                     self.assertIn("one thing has to be cleared", said)
-                    self.assertIn("Fix it,", said)
+                    self.assertIn(
+                        "Your assistant will explain and address these items with you",
+                        said,
+                    )
                     self.assertNotIn("things have", said)
                     self.assertNotIn("each marked", said)
                     self.assertNotIn("Fix them,", said)
                 else:
                     self.assertIn(f"{count} things have to be cleared", said)
-                    self.assertIn("Fix them,", said)
+                    self.assertIn(
+                        "Your assistant will explain and address these items with you",
+                        said,
+                    )
                     self.assertIn("each marked", said)
                     self.assertNotIn("one thing has", said)
                     self.assertNotIn("Fix it,", said)
@@ -9722,6 +9728,113 @@ class TheCardSpeaksTheUsersLanguageTests(unittest.TestCase):
     nowhere to look it up.
     """
 
+    def test_every_action_is_readable_without_changing_its_machine_id(self) -> None:
+        self.assertEqual(set(MODULE.ACTION_DISPLAY_NAMES), set(MODULE.ACTION_KINDS))
+        for action in MODULE.ACTION_KINDS:
+            with self.subTest(action=action):
+                score = replace(_healthy_score(), recommended_action=action)
+                before = asdict(score)
+                card = MODULE.render_card(
+                    score, palette=MODULE.Palette(), unicode_ok=False
+                )
+                report = MODULE.render_markdown(score)
+                card_action = card.splitlines()[-1]
+                self.assertEqual(card_action, report.splitlines()[-1])
+                self.assertTrue(card_action.startswith("Action: "))
+                self.assertGreater(len(card_action.split()), 4)
+                self.assertNotEqual(card_action, f"Action: {action}")
+                self.assertEqual(asdict(score), before)
+                self.assertEqual(asdict(score)["recommended_action"], action)
+
+    def test_confirmed_absence_explains_measured_structure_on_both_displays(
+        self,
+    ) -> None:
+        for absent in (
+            {"dataset"},
+            {"evaluator"},
+            {"agent"},
+            {"dataset", "evaluator", "agent"},
+        ):
+            with self.subTest(absent=absent):
+                score = MODULE.score_run(
+                    MODULE.DatasetFacts() if "dataset" in absent else _routing_corpus(),
+                    (
+                        MODULE.EvaluationFacts()
+                        if "evaluator" in absent
+                        else _passing_calibration()
+                    ),
+                    MODULE.AgentFacts() if "agent" in absent else _wired_space(),
+                    dict(MODULE.DEFAULT_WEIGHTS),
+                )
+                self.assertEqual(
+                    {
+                        c.condition
+                        for c in score.caps
+                        if c.condition.endswith("-absent")
+                    },
+                    {name + "-absent" for name in absent},
+                )
+                before = asdict(score)
+                for rendered in (
+                    MODULE.render_card(score, unicode_ok=False),
+                    MODULE.render_markdown(score),
+                ):
+                    self.assertEqual(
+                        rendered.count(
+                            "Confirmed absence is a measured structural finding."
+                        ),
+                        1,
+                    )
+                    self.assertIn(
+                        "The missing component's quality has not been tested.", rendered
+                    )
+                self.assertEqual(asdict(score), before)
+
+    def test_present_but_unmeasured_components_are_not_called_absent(self) -> None:
+        cases = (
+            ("healthy", _routing_corpus(), _passing_calibration(), _wired_space()),
+            (
+                "unread-agent",
+                _routing_corpus(),
+                _passing_calibration(),
+                MODULE.AgentFacts(origin=MODULE.BROUGHT),
+            ),
+            (
+                "unresolved-evaluator",
+                _routing_corpus(),
+                MODULE.EvaluationFacts(present=True),
+                _wired_space(),
+            ),
+            (
+                "uncalibrated-evaluator",
+                _routing_corpus(),
+                MODULE.EvaluationFacts(present=True, method="normalized-exact"),
+                _wired_space(),
+            ),
+            (
+                "unrecognized-dataset",
+                MODULE.DatasetFacts(dataset_supplied=True, unreadable_rows=3),
+                _passing_calibration(),
+                _wired_space(),
+            ),
+        )
+        for name, dataset, evaluation, agent in cases:
+            with self.subTest(name=name):
+                score = MODULE.score_run(
+                    dataset, evaluation, agent, dict(MODULE.DEFAULT_WEIGHTS)
+                )
+                self.assertFalse(
+                    any(c.condition.endswith("-absent") for c in score.caps)
+                )
+                before = asdict(score)
+                for rendered in (
+                    MODULE.render_card(score, unicode_ok=False),
+                    MODULE.render_markdown(score),
+                ):
+                    self.assertNotIn("Confirmed absence", rendered)
+                    self.assertNotIn("missing component's quality", rendered)
+                self.assertEqual(asdict(score), before)
+
     def all_check_names(self) -> set[str]:
         """Read off the module, so a new check cannot be added unnamed.
 
@@ -12555,7 +12668,9 @@ class AnAskThatIsNotACapIsStillRoutedTests(unittest.TestCase):
         # And it is not a claim that nothing at all is pending: the ask this
         # very sentence describes is outstanding, and the card's last line says
         # so four lines below it.
-        self.assertIn(f"Action: {held.recommended_action}", card)
+        self.assertIn(
+            f"Action: {MODULE.ACTION_DISPLAY_NAMES[held.recommended_action]}", card
+        )
         self.assertFalse(MODULE.nothing_pending_beyond(held, "some-other-ask"))
 
 
@@ -27294,7 +27409,8 @@ class ThePreviousScoreAndTheActionLineTests(unittest.TestCase):
         score = json.loads(payload)
         self.assertEqual(score["status"], "BLOCKED")
         self.assertEqual(
-            self._lines(card)[-1], f"Action: {score['recommended_action']}"
+            self._lines(card)[-1],
+            f"Action: {MODULE.ACTION_DISPLAY_NAMES[score['recommended_action']]}",
         )
         self.assertIn(score["recommended_action"], MODULE.ACTION_KINDS)
 
@@ -27883,3 +27999,156 @@ class TheHonestDeclarationIsNeverOutscoredTests(unittest.TestCase):
         for method in sorted(MODULE.METHOD_REQUIRES_PROVEN_COMPARISON):
             with self.subTest(method=method):
                 self.assertTrue(MODULE.METHOD_COMPARISON_SUPPORT[method])
+
+
+class UnsupportedSourceKeepsItsExplanationTests(unittest.TestCase):
+    """A checker limitation must not disappear when no options were invented."""
+
+    SOURCE = (
+        'MODELS = ["fast", "slow"]\n'
+        "def call(message, model):\n"
+        "    return provider(model=MODELS[model], message=message)\n"
+    )
+
+    def facts(self, source, *, name="agent.py", knobs=None):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            selected = root / name
+            selected.write_text(source)
+            return MODULE.agent_facts_from_discovery(
+                {"source": name, "knobs": {} if knobs is None else knobs},
+                source_root=root,
+                selected_agent=selected,
+                selected_agent_callable="call",
+            )
+
+    @staticmethod
+    def options():
+        return {
+            "model": {
+                "values": ["fast", "slow"],
+                "source_lines": [1],
+                "evidence": "the selected source declares model alternatives",
+            }
+        }
+
+    @staticmethod
+    def numeric_profile(pillar):
+        return (
+            pillar.score,
+            pillar.confidence,
+            [
+                (
+                    sub.name,
+                    sub.value,
+                    sub.maximum,
+                    sub.measured,
+                    sub.withheld,
+                    sub.applicable,
+                )
+                for sub in pillar.subscores
+            ],
+        )
+
+    def test_python_source_with_pyw_or_no_suffix_earns_the_same_verified_credit(self):
+        baseline, baseline_caps, baseline_knobs = MODULE.score_agent(
+            self.facts(self.SOURCE, knobs=self.options())
+        )
+        self.assertGreater(baseline.score, 0)
+        for name in ("agent.pyw", "agent"):
+            with self.subTest(name=name):
+                facts = self.facts(self.SOURCE, name=name, knobs=self.options())
+                self.assertTrue(facts.discovered[0].credited)
+                pillar, caps, knobs = MODULE.score_agent(facts)
+                self.assertGreater(pillar.score, 0)
+                self.assertEqual(
+                    self.numeric_profile(baseline), self.numeric_profile(pillar)
+                )
+                self.assertEqual(baseline_caps, caps)
+                self.assertEqual(baseline_knobs, knobs)
+
+    def test_unparseable_source_keeps_its_reason_without_claimed_values(self):
+        unknown = {"model": {"evidence": "the selected agent accepts a model setting"}}
+        for name, source in (
+            ("agent.cpp", "int call() { return 0; }\n"),
+            ("agent.py", "def call(message)\n    return message\n"),
+        ):
+            with self.subTest(name=name):
+                facts = self.facts(source, name=name, knobs=unknown)
+                self.assertTrue(facts.discovered[0].unverified)
+                self.assertFalse(facts.discovered[0].credited)
+                reason = facts.discovered[0].uncredited_reason
+                self.assertIn("cannot be parsed as Python", reason)
+                self.assertNotIn("is not Python", reason)
+                self.assertNotIn("neither a list of options", reason)
+                pillar, caps, knobs = MODULE.score_agent(facts)
+                generic = MODULE.agent_facts_from_discovery({"knobs": unknown})
+                generic_pillar, generic_caps, generic_knobs = MODULE.score_agent(
+                    generic
+                )
+                self.assertEqual(
+                    self.numeric_profile(pillar), self.numeric_profile(generic_pillar)
+                )
+                self.assertEqual(
+                    [(c.condition, c.ceiling, c.blocks) for c in caps],
+                    [(c.condition, c.ceiling, c.blocks) for c in generic_caps],
+                )
+                self.assertEqual(knobs, generic_knobs)
+                self.assertIn("cannot be parsed as Python", caps[0].reason)
+                score = MODULE.score_run(
+                    _routing_corpus(),
+                    _passing_calibration(),
+                    facts,
+                    dict(MODULE.DEFAULT_WEIGHTS),
+                )
+                for rendered in (
+                    MODULE.render_card(score, unicode_ok=False),
+                    MODULE.render_markdown(score),
+                ):
+                    self.assertIn("cannot be parsed as Python", rendered)
+
+    def test_empty_unparseable_source_is_unknown_not_proof_of_identical_requests(self):
+        unsupported = self.facts("int call() { return 0; }\n", name="agent.cpp")
+        known_empty = self.facts(self.SOURCE)
+        unsupported_pillar, unsupported_caps, _ = MODULE.score_agent(unsupported)
+        known_pillar, known_caps, _ = MODULE.score_agent(known_empty)
+        self.assertEqual(
+            self.numeric_profile(unsupported_pillar), self.numeric_profile(known_pillar)
+        )
+        self.assertFalse(unsupported_caps[0].blocks)
+        self.assertTrue(known_caps[0].blocks)
+        self.assertEqual(unsupported_caps[0].ceiling, known_caps[0].ceiling)
+        self.assertIn("cannot be parsed as Python", unsupported_caps[0].reason)
+        self.assertNotIn("every configuration", unsupported_caps[0].reason)
+        self.assertNotIn("found candidate settings", unsupported_caps[0].reason)
+        self.assertIn("every configuration", known_caps[0].reason)
+
+    def test_a_disconnected_python_setting_still_receives_no_credit(self):
+        source = self.SOURCE.replace("MODELS[model]", '"fixed"')
+        facts = self.facts(source, knobs=self.options())
+        self.assertIsNone(facts.source_unavailable_reason)
+        self.assertFalse(facts.discovered[0].credited)
+        self.assertTrue(facts.discovered[0].route_unverified)
+        pillar, caps, knobs = MODULE.score_agent(facts)
+        self.assertEqual(
+            next(s.value for s in pillar.subscores if s.name == "search-space"), 0
+        )
+        self.assertFalse(caps[0].blocks)
+        self.assertEqual(knobs, [])
+
+    def test_checker_context_does_not_expand_public_input_or_output_schema(self):
+        with self.assertRaisesRegex(MODULE.AgentDiscoveryInputError, "unknown field"):
+            MODULE.agent_facts_from_discovery(
+                {"knobs": {}, "source_unavailable_reason": "claimed"}
+            )
+        facts = self.facts("int call() { return 0; }\n", name="agent.cpp")
+        score = MODULE.score_run(
+            _routing_corpus(),
+            _passing_calibration(),
+            facts,
+            dict(MODULE.DEFAULT_WEIGHTS),
+        )
+        payload = asdict(score)
+        self.assertEqual(set(payload), set(asdict(_healthy_score())))
+        self.assertEqual(score.schema_version, _healthy_score().schema_version)
+        self.assertNotIn("source_unavailable_reason", json.dumps(payload))

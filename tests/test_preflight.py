@@ -228,7 +228,7 @@ class StaticPreflightTests(unittest.TestCase):
     def test_env_permissions_reject_group_or_world_access(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             env_path = Path(directory) / ".env"
-            env_path.write_text("OPENAI_API_KEY=\n")
+            env_path.write_text("OPENAI_API_KEY=example-present-value\n")
             env_path.chmod(0o664)
             MODULE.check_env_permissions(env_path)
         result = next(
@@ -236,6 +236,56 @@ class StaticPreflightTests(unittest.TestCase):
         )
         self.assertEqual(result.status, MODULE.FAIL)
         self.assertIn("0600", result.detail)
+
+    @unittest.skipIf(os.name == "nt", "POSIX permissions are not available")
+    def test_blank_template_permissions_warn_without_mutating_the_file(self) -> None:
+        cases = (
+            ("", 0, MODULE.WARN),
+            ("# Local keys\nOPENAI_API_KEY=\nOTHER_KEY=''\n", 0, MODULE.WARN),
+            ('export OPENAI_API_KEY="" # enter locally\n', 0, MODULE.WARN),
+            ("OPENAI_API_KEY=example-present-value\n", 1, MODULE.FAIL),
+            ("CUSTOM_SETTING=example-present-value\n", 1, MODULE.FAIL),
+            ("OPENAI_API_KEY=example-present-value\nOPENAI_API_KEY=\n", 1, MODULE.FAIL),
+            ("unparsed-private-content\nOPENAI_API_KEY=\n", 1, MODULE.FAIL),
+        )
+        for contents, expected_exit, expected_status in cases:
+            with self.subTest(
+                contents=contents
+            ), tempfile.TemporaryDirectory() as directory:
+                env_path = Path(directory) / ".env"
+                env_path.write_text(contents)
+                env_path.chmod(0o644)
+                completed = subprocess.run(
+                    [
+                        sys.executable,
+                        "-I",
+                        "-S",
+                        str(SCRIPT),
+                        "--env",
+                        str(env_path),
+                        "--defer-missing-sdk",
+                        "--json",
+                    ],
+                    cwd=directory,
+                    env={},
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                self.assertEqual(completed.returncode, expected_exit, completed.stderr)
+                results = json.loads(completed.stdout)
+                permissions = next(
+                    item for item in results if item["check"] == "env-permissions"
+                )
+                self.assertEqual(permissions["status"], expected_status)
+                self.assertEqual(env_path.read_text(), contents)
+                self.assertEqual(env_path.stat().st_mode & 0o777, 0o644)
+                self.assertNotIn(
+                    "example-present-value", completed.stdout + completed.stderr
+                )
+                self.assertNotIn(
+                    "unparsed-private-content", completed.stdout + completed.stderr
+                )
 
     @unittest.skipIf(os.name == "nt", "POSIX permissions are not available")
     def test_env_permissions_accept_owner_only_access(self) -> None:

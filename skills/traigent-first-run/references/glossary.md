@@ -273,7 +273,8 @@ The lines under each pillar on the card
                                  separates quality cleanly; a narrow gap means
                                  any improvement the run reports could sit
                                  inside the evaluator's own noise. They come
-                                 from calibration, later in the run.
+                                 from the calibration evidence available for
+                                 this card.
     undeclared row             - a row that names no real source this run can
                                  read: no provenance field at all, a non-answer
                                  such as `n/a` that the card still prints as the
@@ -287,15 +288,14 @@ The lines under each pillar on the card
                                  second number too; when it would not, the
                                  card omits it.
 
-  Why two lines are blank at the start: they are "tried on answers already
-  known right and wrong" and "separates good answers from bad", which both come
-  from calibrating the evaluator - that happens later in the run, so at the
-  opening score they have not been done yet. Neither is something you were
-  supposed to bring, and the two are not charged alike. The first keeps its
-  weight and earns nothing, so it does hold the pillar under 100 until some run
-  measures the evaluator - calibration, except where this guide declined to run
-  it, and then no run here makes that measurement and the ceiling stands. The second is left out of the total altogether and
-  deducts nothing, which is why the card says so on the line itself.
+  When calibration lines are unmeasured: "tried on answers already known right
+  and wrong" and "separates good answers from bad" need an executed calibration.
+  They can already be measured on the opening card when the opening gate ran
+  that check. Otherwise explain the recorded reason it was deferred or declined;
+  neither is something the user was supposed to bring. Read the card's own
+  measured-check counts, deductions and claim limits rather than assigning one
+  explanation to every missing result. `SKILL.md` owns the timing; the execution
+  scope disclosure in `references/run-safety.md` owns a declined check.
 
   No settings document ever reaches an opening score. Every config-space file
   found before this run's search is omitted; an earlier run's is circular

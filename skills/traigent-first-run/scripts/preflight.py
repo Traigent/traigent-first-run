@@ -842,6 +842,24 @@ def read_env(
     return effective, file_values, process_values
 
 
+def env_is_blank_template(path: Path) -> bool:
+    """Recognize only comments and empty assignments, including shadowed lines.
+
+    The parsed mapping keeps the last assignment. Inspect every source line so
+    a populated value followed by an empty assignment is never called blank.
+    Unrecognized syntax is not evidence of an empty template.
+    """
+    empty_assignment = re.compile(
+        r"(?:export[ \t]+)?[A-Za-z_][A-Za-z0-9_]*[ \t]*=[ \t]*"
+        r"(?:''|\"\")?(?:[ \t]+#.*)?"
+    )
+    for raw in path.read_text().splitlines():
+        line = raw.strip()
+        if line and not line.startswith("#") and not empty_assignment.fullmatch(line):
+            return False
+    return True
+
+
 def check_env_permissions(path: Path) -> None:
     """Require owner-only access before a local file receives secrets."""
     if not path.exists():
@@ -855,10 +873,17 @@ def check_env_permissions(path: Path) -> None:
         return
     mode = stat.S_IMODE(path.stat().st_mode)
     if mode != 0o600:
+        blank_template = not mode & 0o111 and env_is_blank_template(path)
         emit(
             "env-permissions",
-            FAIL,
-            f"{path} mode is {mode:04o}; set owner-only mode 0600 before entering secrets",
+            WARN if blank_template else FAIL,
+            f"{path} mode is {mode:04o}; "
+            + (
+                "only comments and empty assignments were found; "
+                if blank_template
+                else ""
+            )
+            + "set owner-only mode 0600 before entering secrets",
         )
     else:
         emit("env-permissions", PASS, f"{path} mode is 0600")
@@ -872,7 +897,9 @@ def check_python() -> None:
         emit(
             "python-version",
             FAIL,
-            f"Python {current[0]}.{current[1]} is outside the supported 3.11-3.13 range",
+            f"Python {current[0]}.{current[1]} is outside the supported 3.11-3.13 range; "
+            "use an already installed Python 3.11-3.13 executable, or install Python 3.13 "
+            "locally and provide its executable path to resume",
         )
 
 
@@ -934,7 +961,12 @@ def check_sdk(*, defer_missing: bool = False) -> None:
             emit(
                 "sdk-version",
                 SKIP,
-                "traigent is not installed yet; verify it in the isolated environment after installation",
+                (
+                    "SDK availability is unmeasured in the standard-library bootstrap; "
+                    "verify it in the dedicated environment after installation"
+                    if sys.flags.isolated and sys.flags.no_site
+                    else "traigent is not installed yet; verify it in the isolated environment after installation"
+                ),
             )
         else:
             emit(
