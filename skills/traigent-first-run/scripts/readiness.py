@@ -317,7 +317,7 @@ MIN_CONFIDENCE_FOR_TOP_BANDS = 0.75
 # over every run that never reviewed its rows. Measured by re-running the
 # committed case in `tests/behavioral/outcomes/clean-proceed/case.json` through
 # `tests/behavioral/outcomes.py`, which declares the card that fixture produces:
-# a flat ceiling moves it from 81 to 74 and gives it a cap it does not deserve -
+# a flat ceiling moves it from 91 to 74 and gives it a cap it does not deserve -
 # 48 collected rows, a brought evaluator that calibrates, and a band already
 # held at WORKABLE for thin evidence. Nothing about that run overclaims.
 #
@@ -391,7 +391,8 @@ def answer_key_hold_paragraph(band: str, nothing_else_pending: bool) -> str:
             else ""
         )
         + " A read of the rows the run is graded on - each input beside its "
-        "expected answer, all of them where the split is settled and a small "
+        f"expected answer, up to {ANSWER_KEY_DRAWN_ROWS} of them where the "
+        "split is settled, or all of them if there are fewer, and a small "
         "sample of what you brought where it is not - is what lifts it."
     )
 
@@ -1090,7 +1091,7 @@ METHOD_COMPARISON_SUPPORT: dict[str, frozenset[str]] = {
 # read alone, would have credited that claim on the word. `METHOD_COMPARISON
 # _SUPPORT` refutes from proof: it fires only where a shape was settled, so a
 # file the walk could not account for refutes nothing and keeps full credit.
-# That asymmetry is right for the thirteen methods it now covers, whose
+# That asymmetry is right for the other methods it covers, whose
 # claim is about the OUTPUT kind and not about the file. It is wrong for this
 # one, where "the walk could not account for the file" and "the file does not
 # do this" are the same answer to the customer, and the didn't-find-it branch
@@ -2371,7 +2372,14 @@ CAP_IMPLICATIONS: tuple[tuple[str, str], ...] = (
 CAP_NO_IMPLICATION: dict[str, str] = {
     "evaluator-invalid": (
         "a ruler that scores wrong answers well is orthogonal to every dataset "
-        "condition and mutually exclusive with the other evaluator ones"
+        "condition. Mutually exclusive with the other evaluator STATE "
+        "conditions - absent, unresolved, unvalidated, timeout and the "
+        "calibration refusal all describe a check that did not happen, and one "
+        "branch raises one of them - but NOT with `evaluator-generated`, which "
+        "records who wrote the file rather than what it does. Its own entry "
+        "below says so: a generated evaluator can be valid or invalid, and the "
+        "two co-occur. No `CAP_IMPLICATIONS` pair records that, correctly, "
+        "because neither implies the other"
     ),
     "evaluator-absent": "nothing is connected; no other condition can be read off that",
     # Origin against brokenness, which is the distinction #238 was filed on.
@@ -2525,9 +2533,15 @@ class Cap:
     #
     # Read off that table, `dataset-absent` ("enter the creation dependency
     # matrix"), `dataset-no-expected-outputs`, `dataset-integrity-fail` and
-    # `dataset-tune-holdout-overlap` ("repair a disjoint split") block, and the
-    # three evaluator conditions block through the invalid-evaluator paragraph -
-    # "do not run paid optimization against it". The synthetic-provenance,
+    # `dataset-tune-holdout-overlap` ("repair a disjoint split") block, and four
+    # of the seven evaluator conditions block - `evaluator-absent`,
+    # `evaluator-invalid` and `evaluator-timeout` through the
+    # invalid-evaluator paragraph, "do not run paid optimization against it",
+    # and `evaluator-unresolved` through its own diagnostic route. The other
+    # three scope a claim instead: `evaluator-unvalidated`,
+    # `evaluator-generated` and `evaluator-calibration-refused`, the last of
+    # which bounds nothing at all where the walk witnessed the engine. The
+    # synthetic-provenance,
     # generated-answer-key and small-sample conditions do not: their routes are
     # "apply the walkthrough labeling rules", "scope the claim", "before a
     # correctness claim", and "call rankings exploratory". Those are sentences
@@ -2850,8 +2864,8 @@ ANSWER_KEY_UNREAD_ASK = Ask(
 #
 # This is the guide's own rule applied to its most-read artifact: "Keep
 # internal check IDs, SDK internals, and optimization jargon out of user-facing
-# progress" (SKILL.md). Cap condition ids were already kept out; these twelve
-# were printed verbatim, and nine of them appeared in no glossary entry, so a
+# progress" (SKILL.md). Cap condition ids were already kept out; these check
+# names were printed verbatim, and most appeared in no glossary entry, so a
 # reader who wanted to know what "power" meant had nowhere to look.
 #
 # Each is phrased as the question the check answers, so the line reads as a
@@ -2897,6 +2911,33 @@ def readable_kinds(kinds: Sequence[str]) -> str:
     if len(kinds) == 1:
         return kinds[0]
     return f"{', '.join(kinds[:-1])} or {kinds[-1]}"
+
+
+def reproducibility_evidence(method: str) -> str:
+    """What the reproducibility sub-score says, read off what it scored.
+
+    `DETERMINISTIC_METHODS` and the `reproducibility` factor in
+    `METHOD_PROFILES` answer two different questions, and the card printed the
+    first as though it answered the second. Ten methods are deterministic in
+    the sense that matters here - no model is asked, nothing is sampled - and
+    two of them still carry a factor below 1.0, because determinism is not the
+    only thing that dial expresses: `execution` at 0.9 runs the candidate's own
+    code against state this score cannot see, and `sql-structure` at 0.95 can
+    call a semantically equivalent query written differently wrong.
+
+    So a card printed "deterministic scoring rule" beside 18.60 out of 20 and
+    left the reader to reconcile a flat claim with a visible deduction. The
+    label now names the residual, which is the thing the number is actually
+    reporting, and stays silent about it for the eight methods that score the
+    full weight.
+    """
+    factor = METHOD_PROFILES.get(method, {}).get("reproducibility")
+    if not isinstance(factor, (int, float)) or factor >= 1.0:
+        return "deterministic scoring rule"
+    return (
+        f"{method} asks no model and samples nothing, so it is deterministic "
+        "as a rule; what it reads is not, which is what this check deducts for"
+    )
 
 
 def task_fit_evidence(method: str, task_kind: str, fits: Sequence[str]) -> str:
@@ -3299,7 +3340,7 @@ def task_fit_comparison_evidence(method: str, shape: str, witness: str | None) -
 
 
 def task_fit_unproven_comparison_evidence(
-    method: str, shape: str | None, witness: str | None
+    method: str, shape: str | None, witness: str | None, read_the_file: bool = True
 ) -> str:
     """Why a method whose whole claim is about the file earns nothing yet.
 
@@ -3320,12 +3361,23 @@ def task_fit_unproven_comparison_evidence(
     """
     if shape is not None:
         return task_fit_comparison_evidence(method, shape, witness)
+    # Two states, never one sentence, which is the rule the execution sibling
+    # already applies: a file that WAS read and settled nothing is a finding
+    # about that file, and no file reaching this score at all is a finding
+    # about this run. Saying the first over the second tells a customer their
+    # evaluator was inspected and found wanting when nothing opened it.
+    unsettled = (
+        "the evaluator file read for this score does not establish that it does"
+        if read_the_file
+        else "no evaluator file was read for this score, so nothing establishes "
+        "that it does"
+    )
     return (
         f"{method} says the evaluator reads both answers as SQL and compares "
-        "them as parsed structures, and the evaluator file read for this score "
-        "does not establish that it does. This check is credited from what the "
-        "file does, so an unestablished comparison earns no credit; the route "
-        "in references/evaluation-and-dataset.md is the one this score can read"
+        f"them as parsed structures, and {unsettled}. This check is credited "
+        "from what the file does, so an unestablished comparison earns no "
+        "credit; the route in references/evaluation-and-dataset.md is the one "
+        "this score can read"
     )
 
 
@@ -7896,7 +7948,13 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
             # about, one indirection further out.
             value = TASK_FIT_UNFIT_CREDIT
             evidence = task_fit_unproven_comparison_evidence(
-                facts.method or "", facts.comparison_shape, facts.comparison_witness
+                facts.method or "",
+                facts.comparison_shape,
+                facts.comparison_witness,
+                # A preflight record in either direction means a file was
+                # opened; `None` means none reached this score at all. The
+                # same three-state read the execution arm makes, one fact over.
+                facts.executes_candidate is not None,
             )
         elif (
             fits
@@ -7973,7 +8031,7 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
                 20.0,
                 True,
                 (
-                    "deterministic scoring rule"
+                    reproducibility_evidence(facts.method or "")
                     if deterministic
                     else f"{facts.method} can vary between runs and may require paid calls"
                 ),
@@ -10072,9 +10130,17 @@ def blocker_lines(score: ReadinessScore, palette: Palette) -> list[str]:
 
     The two say different things about different questions. The band grades the
     EVIDENCE - how good what you brought is. The block answers whether the paid
-    run may START. Both can be true at once, and routinely are: the walkthrough
-    that generates its own dataset scores 65/100 WORKABLE and is blocked by
-    `dataset-fully-synthetic`, which is the ordinary case rather than an edge.
+    run may START. Both can be true at once, and routinely are: a project whose
+    dataset is absent is held at `DATASET_ABSENT_CEILING` and blocked by
+    `dataset-absent`, while the agent pillar beside it reads perfectly well -
+    the band grades what arrived, the block answers whether to spend.
+
+    The example given here used to be the generated-dataset walkthrough, blocked
+    by `dataset-fully-synthetic`. That one does not occur: the condition routes
+    as `claim-scoping` and both of its constructors pass `blocks=False`, so it
+    bounds what the card may claim and stops nothing. It was the only evidence
+    offered for this whole function, which is why it is replaced rather than
+    deleted.
 
     Printed adjacent with no connective - `65/100  WORKABLE  (PAID RUN
     BLOCKED)` - they read as one self-contradicting verdict, and a reader who
@@ -10117,7 +10183,9 @@ REPEATED_ROWS_LABEL = "REPEATED ROWS"
 RECOMMENDED_MARK = "(recommended"
 
 
-def repeated_input_routes(finding: RepeatedInputs, *, offers_top_up: bool) -> list[str]:
+def repeated_input_routes(
+    finding: RepeatedInputs, *, offers_top_up: bool, card_offers_rows: bool
+) -> list[str]:
     """What a customer may do about repeated rows, as routes they can reply to.
 
     WRITING ROWS IS NOT THIS BLOCK'S TO OFFER, and that is the correction this
@@ -10223,10 +10291,23 @@ def repeated_input_routes(finding: RepeatedInputs, *, offers_top_up: bool) -> li
         )
         lines.append(f"  {letter}. {text}{mark}")
     closing = "  Your file is read and never written to"
-    if offers_top_up:
-        # Only where rows might actually be written. On the other arm this run
-        # is writing nothing, and a sentence about how written rows are scored
-        # would describe an event that cannot happen.
+    if card_offers_rows:
+        # `card_offers_rows`, NOT `offers_top_up`, and the two answer different
+        # questions - which is the whole of this fix.
+        #
+        # `offers_top_up` is "is route A on offer", and it follows the run's own
+        # recommendation: a blocking cap ahead of the size cap takes the lead,
+        # and offering to write rows while something else must be fixed first
+        # would be the wrong instruction. That stays exactly as it was.
+        #
+        # This is "does this card mention writing rows anywhere", which is a
+        # property of the caps rather than of which one leads. A size cap states
+        # its top-up offer in its own reason whether or not it is the
+        # recommendation, so keying the reconciliation on the lead left a card
+        # carrying "This run can write generated examples up to 28 rows" above a
+        # flat "Your file is read and never written to", with nothing joining
+        # them. One variable was answering two questions and the second answer
+        # was wrong whenever anything blocked.
         closing += (
             ", and rows this run writes are scored as the generated rows they are"
         )
@@ -10493,6 +10574,19 @@ def render_card(
             repeated_input_routes(
                 score.repeated_inputs,
                 offers_top_up=score.recommended_action == ADD_EXAMPLES,
+                # `cap.asks`, not the routing label alone. `action_kind` says
+                # which remedy this condition routes to; whether the card
+                # actually PUTS the offer is `asks`, set from whether
+                # `top_up_offer` returned one. They part company on every size
+                # cap whose offer is empty - a file already at the bounded size
+                # has nothing to top up - and keying on the label alone printed
+                # "rows this run writes are scored as the generated rows they
+                # are" on a card that offers to write none. That is the
+                # sentence this fix removed from the other arm, reintroduced
+                # pointing the other way.
+                card_offers_rows=any(
+                    cap.asks and cap.action_kind == ADD_EXAMPLES for cap in score.caps
+                ),
             )
         )
         lines.append("")
@@ -10844,7 +10938,7 @@ def render_markdown(
                 "and are one accepted shape rather than the only one.",
                 "",
                 f"{len(ACCEPTED_ROUTE_PARTS)} parts make a route readable, "
-                "and this check wants them all:",
+                "the last of them only where it applies:",
                 "",
             ]
         )
@@ -19473,8 +19567,8 @@ def accepted_route_shape() -> list[str]:
         "",
     ]
     lines.append(
-        f"  {len(ACCEPTED_ROUTE_PARTS)} parts make a route readable, and this "
-        "check wants them all:"
+        f"  {len(ACCEPTED_ROUTE_PARTS)} parts make a route readable, the last "
+        "of them only where it applies:"
     )
     lines.extend(
         f"    {index}. {part}" for index, part in enumerate(ACCEPTED_ROUTE_PARTS, 1)
@@ -20478,24 +20572,29 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--agent-source-root",
         help=(
             "absolute project root containing the selected agent source named by "
-            "--agent-knobs; required with --agent-knobs so source:line evidence "
-            "is statically checked without importing customer code"
+            "--agent-knobs. Optional, and one of three that travel together: "
+            "supply all of them and source:line evidence is statically checked "
+            "without importing customer code, or none and the build half is "
+            "read without source credit"
         ),
     )
     parser.add_argument(
         "--selected-agent",
         help=(
-            "absolute path of the one agent selected at inventory; required with "
-            "--agent-knobs and --agent-source-root. The document's relative "
+            "absolute path of the one agent selected at inventory. Optional, "
+            "and supplied together with --agent-source-root and "
+            "--selected-agent-callable or not at all. The document's relative "
             "'source' must resolve exactly to this file."
         ),
     )
     parser.add_argument(
         "--selected-agent-callable",
         help=(
-            "identifier of the inventory-selected top-level Python callable; "
-            "required with --agent-knobs, --agent-source-root, and --selected-agent. "
-            "Static source credit is anchored here and follows only bounded, "
+            "identifier of the inventory-selected top-level Python callable. "
+            "Optional, and supplied together with --agent-source-root and "
+            "--selected-agent or not at all - an agent this static check "
+            "cannot name a callable for still scores its build half. Static "
+            "source credit is anchored here and follows only bounded, "
             "inspectable same-file paths from this callable."
         ),
     )
@@ -20594,9 +20693,10 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--previous",
         help=(
             "an earlier --json output of this script's scoring half (path or -). "
-            "Prints one line after the card saying what moved since it - each "
-            "pillar's score, the ceilings that cleared and the ones that "
-            "appeared - and carries the same under 'delta' in --json. Refused "
+            "Prints one line after the card naming each pillar that moved and "
+            "each that did not; the ceilings that cleared and the ones that "
+            "appeared travel under 'delta' in --json, which is where a "
+            "consumer reads them. Refused "
             "when the earlier output was written by a different schema version, "
             "because its numbers were computed under different rules"
         ),
@@ -20680,7 +20780,10 @@ EXIT_CODES_HELP = f"""exit codes:
      --strict is passed, because the card carries the verdict
   1  the score is BLOCKED and --strict was passed
   2  an input was refused or the command line was wrong; the message on
-     stderr names the flag and what it expected
+     stderr says what was wrong, and names the flag where it can - a file
+     that cannot be READ is reported by its path, and one that cannot be
+     PARSED by the parser's own complaint, neither of them by the option
+     the file arrived on
   {INTERNAL_ERROR_EXIT}  this script failed on its own - a defect here, not in your project -
      and nothing was scored; re-run with {TRACEBACK_ENV}=1 to see where"""
 
