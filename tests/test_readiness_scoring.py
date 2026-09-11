@@ -20429,6 +20429,88 @@ class AFoundAgentDoesNotLookLikeAMissingOneTests(unittest.TestCase):
         self.assertIn("agent source read", found_line)
         self.assertIn("no agent source read", missing_line)
 
+    def test_a_config_space_document_does_not_hide_the_read_beside_it(
+        self,
+    ) -> None:
+        """The route the guide actually closes on, which nothing exercised.
+
+        `--config-space` WITH `--agent-knobs` is what SKILL.md section 7 runs
+        at the close, and SKILL.md:372 says every guided run that found an
+        agent does this read. On that route the search-space half of the read
+        is dropped - a document decides the space outright - and the build half
+        survives. `agent_source_read` was derived from `discovery_supplied`,
+        which is False there, so the card said the agent had never been read
+        directly above four rows quoting its source
+        (traigent-first-run#490).
+
+        Both directions, because the line's whole job is telling them apart: a
+        config-space document with no read must still say no read, and that is
+        the case the field was added for.
+        """
+        source = "MODEL = ['a']\ndef selected(q):\n    return q\n"
+        build = {
+            check: {"evidence": "read", "source_lines": [3]}
+            for check in MODULE.BUILD_CHECK_ANSWER
+        }
+        build["prompt"]["present"] = False
+        build["output-contract"]["present"] = False
+        build["control-flow"]["loop"] = False
+        build["tools"]["used"] = False
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "agent.py").write_text(source)
+            read = MODULE.agent_facts_from_discovery(
+                {"source": "agent.py", "knobs": {}, "build": build},
+                source_root=root,
+                selected_agent=root / "agent.py",
+                selected_agent_callable="selected",
+            )
+        document = MODULE.agent_facts_from_config_space({"knobs": {"model": ["a"]}})
+        # Exactly what the CLI assembles on that branch: the document, wearing
+        # the build half of the read.
+        combined = replace(document, build=read.build)
+
+        with self.subTest(route="config-space beside a read"):
+            score = MODULE.score_run(
+                MODULE.DatasetFacts(),
+                MODULE.EvaluationFacts(),
+                combined,
+                dict(MODULE.DEFAULT_WEIGHTS),
+            )
+            self.assertTrue(score.agent_source_read)
+            line = next(
+                row
+                for row in MODULE.render_card(score, unicode_ok=False).splitlines()
+                if row.strip().startswith("AGENT")
+            )
+            self.assertIn("agent source read", line)
+            self.assertNotIn("no agent source read", line)
+
+        with self.subTest(route="config-space alone"):
+            alone = MODULE.score_run(
+                MODULE.DatasetFacts(),
+                MODULE.EvaluationFacts(),
+                document,
+                dict(MODULE.DEFAULT_WEIGHTS),
+            )
+            self.assertFalse(alone.agent_source_read)
+            line = next(
+                row
+                for row in MODULE.render_card(alone, unicode_ok=False).splitlines()
+                if row.strip().startswith("AGENT")
+            )
+            self.assertIn("no agent source read", line)
+
+        # The flag may not move a number, and the two routes differ in their
+        # search space, so the comparison that means anything is against the
+        # SAME facts with the flag forced the other way -
+        # `test_the_read_state_moves_no_number` below owns it over every
+        # pillar. Asserted here only that this route did not acquire a cap.
+        self.assertEqual(
+            [cap.condition for cap in score.caps],
+            [cap.condition for cap in alone.caps],
+        )
+
     def test_the_read_state_moves_no_number(self) -> None:
         """The false-red direction, and the whole constraint on this change.
 
