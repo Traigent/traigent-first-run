@@ -324,11 +324,14 @@ on our initiative. It is not their onboarding.
 in their own words, and do not soften any of it:
 
 - **what was not checked** - their evaluator, against their engine;
-- **that the reason is our boundary, not their defect** - there is nothing for them to fix, and
-  nothing they change inside this run lifts it. Say it with that scope and not wider: an evaluator
-  rewritten later to compare rather than execute is a different evaluator, out of this gate
-  altogether, and telling them no change of theirs could ever matter is both false and an errand
-  they were not given;
+- **that the reason is our boundary, not their defect, and that we therefore do not know whether
+  their evaluator works** - we declined the check, so nothing here established that it is sound and
+  nothing here established that it is broken. Their query may be wrong, their column types may not
+  match, their cells may be null; this run has not looked. No step in this guide would change that,
+  and that is a fact about the guide rather than about them. **Never say there is nothing for them
+  to fix** - that says we looked, and we did not. Keep the scope tight in the other direction too:
+  an evaluator rewritten later to compare rather than execute is a different evaluator, out of this
+  gate altogether, so "no change of yours could ever matter" is false as well;
 - **what proceeding concretely means** - during the paid run the *model* writes the statements and
   their evaluator executes them against whatever it is configured to reach, many times over. The
   statements are generated, not theirs, so their trust in their own code is not the trust being

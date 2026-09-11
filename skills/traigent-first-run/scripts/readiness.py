@@ -277,7 +277,7 @@ def render_text(plan: ReadinessPlan) -> str:
 # bump each version silently accepts the other's payload and `--strict` flips
 # its exit under an unchanged number, which is the reading 2 was bumped to
 # prevent.
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 DEFAULT_WEIGHTS = {"dataset": 40.0, "evaluation": 35.0, "agent": 25.0}
 # Read each entry as "score BELOW this number is that band" - these are
 # exclusive upper bounds, not the score a band requires. The last entry is an
@@ -1892,7 +1892,57 @@ EVALUATOR_UNVALIDATED_CEILING = 45
 # A declared method describes intended semantics, but only a complete current-
 # run calibration establishes the connected evaluator's behavior. The ceiling
 # bounds that unverified claim without calling the evaluator defective.
+#
+# `None`, and it is the only one, because this is the only condition on the
+# table whose missing evidence is OURS. Every other ceiling here reports a gap
+# in the customer's material - no evaluator, no answers, rows that repeat - and
+# bounding what the card may claim about material like that is honest. This one
+# reports a check `references/run-safety.md` declined to make on their behalf,
+# and a number is the wrong instrument for it: there is no version of their
+# project that scores higher, so the deduction is not a measurement of anything
+# they own.
+#
+# The pillar already declines to charge - calibration is excluded from its own
+# denominator and the card prints "no points are deducted for it" - so the
+# ceiling was the same refusal stated a second time, and the only statement of
+# it that cost anything. Measured: 77 uncapped against 45 capped, thirty-two
+# points. Source: tests/test_readiness_scoring.py, produced by
+# TheCeilingPricedOurOwnBoundaryTests.
+#
+# What still holds the claim down needs no ceiling and is already built. The
+# pillar reads 59/100 "(2 of 4 checks measured)", and `band_for` holds any run
+# whose weakest pillar confidence falls under `MIN_CONFIDENCE_FOR_TOP_BANDS`
+# out of STRONG and EXCELLENT. So the uncapped run bands WORKABLE, not STRONG,
+# and an evaluator nobody measured cannot present as one this card stands
+# behind - which is what the 45 was reaching for, arrived at by the mechanism
+# that already exists for exactly this.
 CALIBRATION_REFUSED_CEILING = 45
+# ...and the same condition, where preflight's walk PROVED the engine, bounds
+# nothing at all. One condition, two ceilings, and the discriminator is not a
+# new one: it is the witness, which already decides whether the calibration
+# sub-score is renormalized away or charged.
+#
+# Where the walk found the engine, the boundary is demonstrably ours. The check
+# is one this guide declined to make on a file it has read, there is no version
+# of the customer's project that scores higher for it, and a number taken off
+# their card is our limit printed under their name. Measured: 77 uncapped against 45 capped, thirty-two
+# points. Source: tests/test_readiness_scoring.py, produced by
+# TheCeilingPricedOurOwnBoundaryTests.
+#
+# Where all this run has is the DECLARATION, the ceiling stays, and that is the
+# half that keeps the file honest. `calibration_scope_refused` is a word about a
+# file this score never read. Removing the ceiling there too would take the
+# declared arm from 45 to 67 - twenty-two points for typing a flag - and the
+# rule against exactly that is stated at the flag itself: a judgement may
+# withhold a claim and may never manufacture one. So the flag goes on doing what
+# its help text says it does, changing the sentence and the remedy and not the
+# number.
+#
+# The two ceilings agree with the two charges, which is the point. A witnessed
+# refusal renormalizes calibration out AND bounds nothing; a declared one
+# charges for it AND keeps the bound. There is no arrangement in which a
+# declaration outscores the run that simply has not calibrated.
+CALIBRATION_REFUSED_NO_CEILING: int | None = None
 # EQUAL to `evaluator-unvalidated`, and the equality is the decision rather
 # than an oversight.
 #
@@ -2134,7 +2184,7 @@ REPEATED_ROWS_CEILING = 89
 # comparison size; this is counted too, so the tie falls to the older rung,
 # which is the one a reader has already been taught to read at that number.
 
-CAP_SEVERITY_ORDER: tuple[tuple[str, tuple[tuple[str, int], ...]], ...] = (
+CAP_SEVERITY_ORDER: tuple[tuple[str, tuple[tuple[str, int | None], ...]], ...] = (
     (
         "no result to bound",
         (
@@ -2159,11 +2209,13 @@ CAP_SEVERITY_ORDER: tuple[tuple[str, tuple[tuple[str, int], ...]], ...] = (
         (
             ("evaluator-timeout", EVALUATOR_TIMEOUT_CEILING),
             ("evaluator-unvalidated", EVALUATOR_UNVALIDATED_CEILING),
-            # Ranked directly after the condition it shares a ceiling with,
-            # and the rank decides nothing observable: the two are mutually
-            # exclusive by construction, so no card carries both. Declared
-            # anyway, because this table refuses an unranked condition and a
-            # tie left to declaration order is the failure it was written for.
+            # The BOUNDING half of this condition - the arm resting on the
+            # declaration alone, which is the one a ceiling still applies to.
+            # Its witnessed arm carries no ceiling and so has no rung on this
+            # ladder; see `CALIBRATION_REFUSED_NO_CEILING`. Ranked here because
+            # a declared refusal and an uncalibrated method leave the card with
+            # the same absent behavioural evidence, and the ceiling grades the
+            # state rather than the reason for it.
             ("evaluator-calibration-refused", CALIBRATION_REFUSED_CEILING),
             ("agent-no-varying-knobs", AGENT_NO_VARYING_KNOBS_CEILING),
             ("dataset-tune-holdout-overlap", SPLIT_OVERLAP_CEILING),
@@ -2211,7 +2263,7 @@ CAP_SEVERITY_ORDER: tuple[tuple[str, tuple[tuple[str, int], ...]], ...] = (
 # test reads the source to prove it - a literal at a call site is how one
 # condition acquires two ceilings, which is the defect `action_kind` already
 # removed for remedies.
-CAP_CEILING: dict[str, int] = {
+CAP_CEILING: dict[str, int | None] = {
     condition: ceiling
     for _group, entries in CAP_SEVERITY_ORDER
     for condition, ceiling in entries
@@ -2248,7 +2300,11 @@ def cap_order(cap: "Cap") -> tuple[int, int]:
     is how the card's recommended action and the gap list come to disagree
     about which cap is worst. They call this.
     """
-    return (cap.ceiling, CAP_RANK[cap.condition])
+    # A cap that bounds nothing sorts BELOW every one that does. `None` has no
+    # place on a 0-100 scale, and 101 is the same one-past-the-top sentinel the
+    # band table already uses, so a disclosure never outranks a real ceiling
+    # when the card picks which cap to lead with.
+    return (101 if cap.ceiling is None else cap.ceiling, CAP_RANK[cap.condition])
 
 
 # Where one condition's evidence STRICTLY IMPLIES another's, the stricter one
@@ -2422,7 +2478,33 @@ CAP_OVERLAP_REVIEWED: frozenset[str] = frozenset(
 @dataclass(frozen=True)
 class Cap:
     condition: str
-    ceiling: int
+    # `None` is a cap that DISCLOSES and may ASK, and does not bound the score.
+    #
+    # It exists because a ceiling is a claim about evidence WE are missing, and
+    # the standing rule in `references/run-safety.md` draws the line at whose
+    # the missing thing is. Where the gap is the customer's - no evaluator, no
+    # rows, an answer key nobody read - a ceiling is honest: the card cannot
+    # claim what nothing established. Where the gap is OURS, because this guide
+    # declined to make the check, the same ceiling prints our boundary under
+    # their project's name and takes points off a run that did nothing wrong.
+    #
+    # The pillar already refuses to charge for a check we declined: the
+    # sub-score is excluded from its own denominator and the card says "no
+    # points are deducted for it". A ceiling on top of that is the same fact
+    # stated a second time, and the only statement of it that costs the
+    # customer anything. Measured on the refused-calibration run: 77 uncapped,
+    # 45 capped - thirty-two points, all of them ours. Source:
+    # tests/test_readiness_scoring.py, produced by
+    # TheCeilingPricedOurOwnBoundaryTests.
+    #
+    # What carries the uncertainty instead is already built and needs nothing
+    # new. The pillar reports "2 of 4 checks measured", and `band_for` holds a
+    # run whose weakest pillar confidence is under
+    # `MIN_CONFIDENCE_FOR_TOP_BANDS` out of the top two bands - so an evaluator
+    # nobody measured reads WORKABLE and can never present as STRONG. The
+    # caveat is structural rather than prose, which is what a ceiling was being
+    # used to approximate.
+    ceiling: int | None
     reason: str
     # Whether this condition stops the run, or only limits what it may claim.
     #
@@ -2581,19 +2663,42 @@ class Cap:
         # otherwise reach is legitimate, and the source-reading test is where a
         # wrong constant at a call site actually shows up. What is refused is a
         # ceiling that is not a score on the 0-100 scale the band table reads.
-        if isinstance(self.ceiling, bool) or not isinstance(self.ceiling, int):
+        # A cap that bounds nothing must say which pillar it speaks for, and it
+        # fails closed here rather than at the point of use. `unmeasured_checks`
+        # reads `DISCLOSURE_CAP_PILLAR` to decide whether an excluded sub-check
+        # is `declined` - our boundary, nothing for the customer to do - or
+        # `absent`, which is their gap and the thing they should go and fix.
+        # Getting that wrong in the lenient direction would report a missing
+        # evaluator as our own boundary and ask them for nothing, so there is no
+        # default: an unregistered disclosure is refused at construction.
+        if self.ceiling is None and self.condition not in DISCLOSURE_CAP_PILLAR:
             raise ValueError(
-                f"cap {self.condition!r} carries a non-integer ceiling "
-                f"{self.ceiling!r}; a ceiling is a score on the same 0-100 "
-                "scale as the overall, because that is what it is compared to"
+                f"cap {self.condition!r} bounds nothing and names no pillar; "
+                "add it to DISCLOSURE_CAP_PILLAR, because a cap with no "
+                "ceiling reports a check THIS GUIDE declined and the pillar it "
+                "speaks for is what tells a consumer that from a gap in the "
+                "customer's own material"
             )
-        if not 0 <= self.ceiling <= 100:
-            raise ValueError(
-                f"cap {self.condition!r} carries a ceiling of {self.ceiling}, "
-                "which is off the 0-100 scale; a ceiling above 100 can never "
-                "bind and one below 0 always does, and neither describes a "
-                "band this module can name"
-            )
+        # `None` is a cap that bounds nothing, and it skips the two checks below
+        # and NOTHING else. Written as a conditional rather than an early return
+        # for that reason: a return here also skipped the `blocks` and `asks`
+        # guards that follow, so a non-bounding cap could carry `blocks="yes"` -
+        # the exact hole this block was added to close, reopened for one value
+        # of one field.
+        if self.ceiling is not None:
+            if isinstance(self.ceiling, bool) or not isinstance(self.ceiling, int):
+                raise ValueError(
+                    f"cap {self.condition!r} carries a non-integer ceiling "
+                    f"{self.ceiling!r}; a ceiling is a score on the same 0-100 "
+                    "scale as the overall, because that is what it is compared to"
+                )
+            if not 0 <= self.ceiling <= 100:
+                raise ValueError(
+                    f"cap {self.condition!r} carries a ceiling of "
+                    f"{self.ceiling}, which is off the 0-100 scale; a ceiling "
+                    "above 100 can never bind and one below 0 always does, and "
+                    "neither describes a band this module can name"
+                )
         if not isinstance(self.blocks, bool):
             raise ValueError(
                 f"cap {self.condition!r} carries a non-boolean blocks flag "
@@ -2913,6 +3018,25 @@ CALIBRATION_REFUSAL_CORE: dict[tuple[bool, bool, bool], str] = {
 # A false safety claim is the worst sentence on this card, and it is the same
 # defect as #492's database wording: one half of what the gate refuses,
 # written as the whole.
+# THE CONDITIONALS IN THESE THREE SENTENCES ARE LOAD-BEARING. DO NOT SIMPLIFY.
+#
+# Nothing in this package knows whether a given evaluator reaches a database or
+# runs the candidate in a subprocess, and nothing ever will: preflight's walk
+# answers "does this reach an engine" in one direction only - a witness proves
+# execution, finding none proves nothing - so there is no route by which a card
+# could assert which kind it is holding. That is a PERMANENT property of a
+# static read, not a gap waiting on a feature, and there is no trigger that
+# reopens it.
+#
+# So every clause about the connection is hedged on purpose. "If it reaches an
+# engine", "whatever your evaluator reaches THROUGH that connection", "It says
+# nothing about code your evaluator runs OUTSIDE one" - each one is the sentence
+# staying inside what a read can support. Collapsing any of them into an
+# assertion ("a read-only connection closes this") prints a safety guarantee to
+# the customer whose evaluator shells out to a subprocess, for whom read-only
+# closes exactly nothing. Measured: the three connection answers are inert in
+# the score by design, so the sentence is the ONLY thing carrying the
+# distinction, and there is no second place a reader could check it against.
 CONNECTION_DISCLOSURE: dict[str | None, str] = {
     READ_ONLY: (
         " You told this run it connects read-only, recorded here as your word "
@@ -3192,7 +3316,11 @@ def binds(cap: Cap, overall: int) -> bool:
     `overall` is `min(weighted_average, min(ceilings))`, so it is never above a
     ceiling - equality is the whole test.
     """
-    return cap.ceiling == overall
+    # A cap that bounds nothing can never be the thing the score is resting on,
+    # whatever the score happens to be. Without this, `None == overall` is
+    # merely False today and becomes a typing question the moment anyone
+    # compares them the other way round.
+    return cap.ceiling is not None and cap.ceiling == overall
 
 
 @dataclass(frozen=True)
@@ -3238,6 +3366,56 @@ class ProvenanceAssumption:
 
 
 @dataclass(frozen=True)
+class UnmeasuredCheck:
+    """One sub-check that was left out of its pillar's denominator, and why.
+
+    Derivable from `pillars` already - a sub-score with `measured=False` and
+    `withheld=False` is an excluded one - so this adds no fact. What it adds is
+    the WHY, which is not derivable from the sub-score at all, and without which
+    two identical numbers mean opposite things to a consumer.
+
+    A 59 on the evaluation pillar because this guide DECLINED to run the check
+    is a statement about our boundary; a 59 because the customer connected no
+    evaluator is a statement about their project. The first is nothing for them
+    to act on and the second is the whole of what they should do next. A human
+    reading the card is told which, in the cap's own sentence. An agent reading
+    `--json` had only the raw flags, and those are identical in both cases.
+
+    `reason` is a closed set:
+
+    `declined`  this guide chose not to make the check - the customer's material
+                is not implicated and no change of theirs inside this run alters
+                it. Nothing is deducted and nothing is asked of them.
+    `absent`    there was nothing to measure. This IS about their material, and
+                the pillar's own caps say what to do about it.
+    """
+
+    pillar: str
+    check: str
+    weight: float
+    reason: str
+
+
+DECLINED = "declined"
+ABSENT = "absent"
+#: Which pillar each non-bounding cap speaks for. A cap whose `ceiling` is
+#: `None` reports a check THIS GUIDE declined to make, so the sub-checks it left
+#: unmeasured are `declined` rather than `absent` - and that classification is
+#: the difference between "nothing for you to do" and "go and connect an
+#: evaluator". The pillar cannot be read off the condition slug, so it is
+#: written here and `test_readiness_scoring.py` refuses a non-bounding cap that
+#: is not in this table.
+DISCLOSURE_CAP_PILLAR: dict[str, str] = {
+    "evaluator-calibration-refused": "evaluation",
+}
+#: The reasons a check can be missing from its own denominator. A consumer that
+#: branches on this should fail loudly on a value outside the set rather than
+#: treating an unknown reason as `absent`, which is the one that asks the
+#: customer to go and do something.
+UNMEASURED_REASONS = frozenset({DECLINED, ABSENT})
+
+
+@dataclass(frozen=True)
 class ReadinessScore:
     schema_version: int
     overall: int
@@ -3266,6 +3444,12 @@ class ReadinessScore:
     # `None` when no row was silent, which is the ordinary case: there is no
     # assumption to disclose, so nothing is printed. Additive, so a consumer
     # reading schema 2 keeps working; it gains a key it can ignore.
+    # Every sub-check excluded from its own pillar's denominator, with the
+    # reason. Empty on a run where everything was measured, which is the
+    # ordinary case. Additive: a consumer reading an earlier schema gains a key
+    # it can ignore, and one that reads it stops having to guess why a pillar is
+    # short. See `UnmeasuredCheck`.
+    unmeasured: tuple[UnmeasuredCheck, ...] = ()
     provenance_assumption: ProvenanceAssumption | None = None
     # `None` when no scoreable row repeats another's input, which is the
     # ordinary case. Additive on the same terms as the field above, and its
@@ -3584,6 +3768,8 @@ class RowReview:
 
 @dataclass(frozen=True)
 class EvaluationFacts:
+    """What this run established about the customer's evaluation method."""
+
     # An evaluator is connected, on EITHER witness: a method was declared for
     # it, or preflight's static shape check found a file on disk. It used to
     # mean only the first, which is why a project whose evaluator existed but
@@ -3761,6 +3947,30 @@ class EvaluationFacts:
     # credit - the rule this module applies to every unverified input, and the
     # reason the card labels the answer as theirs rather than as a finding.
     evaluator_connection: str | None = None
+
+    def __post_init__(self) -> None:
+        # An evaluator that is not connected cannot have been walked to a code
+        # or SQL engine. `present=False` says this score has no evaluator;
+        # `executes_candidate=True` is preflight's witness that it read one and
+        # found the call path. A caller supplying both has described two
+        # different files, and there is no card that is honest about it - the
+        # absent cap would say "connect an evaluation method" about a file the
+        # witness just quoted a line number from.
+        #
+        # Refused here rather than resolved in `score_evaluation`, because the
+        # branch there returns before the refusal is computed, and every version
+        # of picking a winner leaves one of the two facts unsaid. Measured: a
+        # guard in that branch scores this pair 56 with no cap at all. The state
+        # is unreachable from the CLI, where the two options refuse each other,
+        # and reachable by a direct caller - which is the shape this scorer
+        # exists to survive.
+        if self.present is False and self.executes_candidate is True:
+            raise ValueError(
+                "evaluation facts say no evaluator is connected "
+                "(present=False) and that a walk proved one reaches a code or "
+                "SQL engine (executes_candidate=True); those describe two "
+                "different files, so no card can be honest about both"
+            )
 
 
 @dataclass(frozen=True)
@@ -7035,6 +7245,84 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
         if generated is not None:
             caps.append(generated)
 
+    # Hoisted above the absent branch below, which used to return before this
+    # was computed - so `evaluator-absent` was the one condition on this pillar
+    # with no view of the scope gate. That is unreachable from the CLI, where
+    # the two options refuse each other, and reachable by a direct caller, which
+    # is the shape this scorer exists to survive.
+    # Whether this run was permitted to calibrate this evaluator at all, and
+    # the ONE place that question is answered. Two inputs reach it, and the
+    # asymmetry between them is why both belong here rather than the flag
+    # alone (traigent-first-run#392, #393, #394).
+    #
+    # `calibration_scope_refused` is the run's own declaration that SKILL.md's
+    # evaluator-execution scope gate skipped the calibration - the check, not
+    # the run, which carries on. `executes_candidate is True`
+    # is preflight's WITNESS: the walk found a construct that establishes the
+    # call path to a code or SQL engine, so the gate would refuse this
+    # evaluator whether or not anybody typed the flag. A witness is positive
+    # evidence and may raise a state; a declaration may bound a claim and may
+    # never raise one - the rule this module applies to every unverified
+    # input, and the reason the flag alone was never enough here.
+    #
+    # Reading only the flag left three things wrong at once, every figure
+    # below taken from tests/test_readiness_scoring.py's
+    # `TheWitnessDecidesTheScopeGateNotTheDeclarationTests`, which executes
+    # each of them: a run that calibrated an evaluator the walk had PROVED
+    # reaches an engine scored 85/STRONG with no cap and
+    # `recommended_action: proceed`, 40 points above the run that obeyed the
+    # gate; the same witness with no flag raised `evaluator-unvalidated` and
+    # recommended `complete-calibration`, which is the step the guide forbids,
+    # to the one project it is forbidden for; and the refused state itself
+    # rested on a word nothing checked.
+    #
+    # `False` and `None` change nothing here, and that is the same one-way
+    # reading `run-safety.md` states for the walk itself: a walk that found no
+    # witness settled nothing about a helper module, a connection handed in
+    # with the row, or a name bound while the process runs. A run this
+    # predicate does not catch is one it had no grounds to catch, never one it
+    # cleared - so the incentive survives for the shapes the walk cannot see,
+    # which is `traigent-first-run#416`'s residue and not this seam's.
+    #
+    # PROPOSED AND MEASURED AND REFUSED: making `None` refuse too, on the
+    # reading that "unknown is not established, so it should not be charged".
+    # Executed on one evaluator, one method, no calibration:
+    #
+    #   None  (no walk ran)          pillar 24  evaluator-unvalidated   CHARGED
+    #   False (walk, no witness)     pillar 24  evaluator-unvalidated   CHARGED
+    #   True  (WITNESSED)            pillar 44  calibration-refused     EXCLUDED
+    #   the declaration flag alone   pillar 24  calibration-refused     CHARGED
+    #
+    # `None` is not a false all-clear and does not land in the unexamined arm -
+    # it already gets the strictest treatment here. Moving it to the refused arm
+    # would ADD twenty pillar points for "we never looked", available to anyone
+    # whose evaluator the walk cannot see. And `None` is the DEFAULT: a normal
+    # passing evaluator carries it and scores 91/EXCELLENT, so the reductio is
+    # immediate - every uncalibrated customer would have these forty points
+    # renormalized away and nobody would ever be charged for skipping
+    # calibration at all.
+    #
+    # The three states are not "yes, no, maybe" about the engine. They are
+    # "proved", "looked and could not prove", and "did not look", and only the
+    # first is evidence. Leave `is True` alone.
+    execution_scope_refused = (
+        facts.calibration_scope_refused or facts.executes_candidate is True
+    )
+
+    # The absent branch below deliberately does NOT carry the
+    # `and not execution_scope_refused` clause `evaluator-unvalidated` has, and
+    # the asymmetry was measured rather than assumed. Adding it scores a run
+    # with `present=False` and a witness at 56 with NO cap at all - the absent
+    # cap suppressed, and the refusal cap unreachable because this branch
+    # returns before it is raised. A missing evaluator reported as nothing wrong
+    # is a worse answer than either cap.
+    #
+    # The state those two facts describe is not a run this score should be
+    # ranking at all: an evaluator that is not connected cannot have been walked
+    # to a code or SQL engine, so a caller supplying both has described two
+    # different files. `EvaluationFacts` refuses the pair outright, which is
+    # stronger than choosing a winner here - it removes the state instead of
+    # deciding what a card should say about a contradiction it was handed.
     if not facts.present:
         # Deliberately left as-is. The dataset pillar above earns its new
         # phrasing with a new fact (`dataset_supplied`); this pillar has no
@@ -7182,42 +7470,6 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
     # binary.
     disqualifying = observed_failure or established
 
-    # Whether this run was permitted to calibrate this evaluator at all, and
-    # the ONE place that question is answered. Two inputs reach it, and the
-    # asymmetry between them is why both belong here rather than the flag
-    # alone (traigent-first-run#392, #393, #394).
-    #
-    # `calibration_scope_refused` is the run's own declaration that SKILL.md's
-    # evaluator-execution scope gate skipped the calibration - the check, not
-    # the run, which carries on. `executes_candidate is True`
-    # is preflight's WITNESS: the walk found a construct that establishes the
-    # call path to a code or SQL engine, so the gate would refuse this
-    # evaluator whether or not anybody typed the flag. A witness is positive
-    # evidence and may raise a state; a declaration may bound a claim and may
-    # never raise one - the rule this module applies to every unverified
-    # input, and the reason the flag alone was never enough here.
-    #
-    # Reading only the flag left three things wrong at once, every figure
-    # below taken from tests/test_readiness_scoring.py's
-    # `TheWitnessDecidesTheScopeGateNotTheDeclarationTests`, which executes
-    # each of them: a run that calibrated an evaluator the walk had PROVED
-    # reaches an engine scored 85/STRONG with no cap and
-    # `recommended_action: proceed`, 40 points above the run that obeyed the
-    # gate; the same witness with no flag raised `evaluator-unvalidated` and
-    # recommended `complete-calibration`, which is the step the guide forbids,
-    # to the one project it is forbidden for; and the refused state itself
-    # rested on a word nothing checked.
-    #
-    # `False` and `None` change nothing here, and that is the same one-way
-    # reading `run-safety.md` states for the walk itself: a walk that found no
-    # witness settled nothing about a helper module, a connection handed in
-    # with the row, or a name bound while the process runs. A run this
-    # predicate does not catch is one it had no grounds to catch, never one it
-    # cleared - so the incentive survives for the shapes the walk cannot see,
-    # which is `traigent-first-run#416`'s residue and not this seam's.
-    execution_scope_refused = (
-        facts.calibration_scope_refused or facts.executes_candidate is True
-    )
     # ...and therefore whether calibration credit is refused.
     #
     # `not observed_failure` is the one direction this is allowed to fail in.
@@ -7883,7 +8135,18 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
         caps.append(
             Cap(
                 "evaluator-calibration-refused",
-                CALIBRATION_REFUSED_CEILING,
+                # The witness decides the ceiling, exactly as it decides the
+                # charge twenty lines below. A walk that PROVED the engine
+                # establishes that the unmade check is ours, so nothing is
+                # bounded and nothing is deducted. A declaration on its own
+                # establishes nothing about any file, so the ceiling stays and
+                # the flag buys no readiness - which is the whole of what
+                # `calibration_scope_refused` promises.
+                (
+                    CALIBRATION_REFUSED_NO_CEILING
+                    if facts.executes_candidate is True
+                    else CALIBRATION_REFUSED_CEILING
+                ),
                 # The order is the message: what we did, why, that it is not
                 # about them, and what they can do next.
                 #
@@ -7910,10 +8173,23 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
                 # part - nothing here established that this evaluator ranks
                 # the task - and it is what the band is reporting; what
                 # changed is that it no longer arrives as the whole message.
-                declared + body + " That is a limit of this run and not a "
-                "judgement of your evaluator, which may well be sound - there "
-                "is nothing here for you to fix, because the check is one this "
-                "guide declined to make, and THIS does not stop your run. "
+                #
+                # AND IT NO LONGER SAYS "there is nothing here for you to fix".
+                # That was written to stop a customer being handed an errand,
+                # which is right, and it overshot into a claim this run cannot
+                # support: we declined the check, so we do not know their
+                # evaluator is sound. Their database path may be broken, their
+                # column types wrong, their cells null - and a card telling
+                # them there is nothing to fix says we looked. We did not.
+                # What is true is narrower and is what it says now: we did not
+                # check, we therefore do not know, and no step in this guide
+                # would change that.
+                declared + body + " So we do not know whether your evaluator "
+                "works, and no step in this guide would change that - not "
+                "because you failed anything, but because this check is "
+                "outside what this guide performs. It is a limit of this run "
+                "and not a judgement of your evaluator, and THIS does not stop "
+                "your run. "
                 "What proceeding means: during the paid run the MODEL writes "
                 "the statements and your evaluator runs them against whatever "
                 "it is configured to reach, many times over - generated "
@@ -7921,7 +8197,9 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
                 + CONNECTION_DISCLOSURE[facts.evaluator_connection]
                 + " Until some run measures this evaluator against answers "
                 "already known to be right and wrong, no card can claim it "
-                "grades correctly, which is what the ceiling reports.",
+                "grades correctly - so the evaluation pillar above reports "
+                "two of its four checks as measured, and this run cannot "
+                "present as STRONG. Your score is not reduced for it.",
                 # DOES NOT BLOCK, and this REVERSES the half of
                 # traigent-first-run#393 that set `blocks=True` here. Written
                 # down as a reversal rather than edited away: a repository that
@@ -9293,6 +9571,49 @@ def nothing_pending_beyond(score: "ReadinessScore", condition: str) -> bool:
     return not score.caps and {ask.condition for ask in score.open_asks} <= {condition}
 
 
+def unmeasured_checks(
+    pillars: "Sequence[Pillar]", caps: "Sequence[Cap]"
+) -> tuple["UnmeasuredCheck", ...]:
+    """Which sub-checks left their own denominator, and on whose account.
+
+    Read off the pillars rather than recorded as they are built, for the reason
+    this module applies to every derived claim: a second place to write it down
+    is a second place for it to drift from the arithmetic it describes. The
+    exclusion IS `measured=False` with `withheld=False`, so that pair is the
+    definition and this reads it.
+
+    The reason is the part that cannot be read off a sub-score, and it is
+    decided by the caps rather than guessed from the evidence string. A cap that
+    bounds nothing is this guide reporting its OWN boundary - there is exactly
+    one, `evaluator-calibration-refused`, and `Cap.ceiling is None` is what says
+    so without this function having to know its name. Its pillar's excluded
+    checks are `declined`; everything else is `absent`.
+
+    `Cap.ceiling is None` selects the disclosures and `DISCLOSURE_CAP_PILLAR`
+    says which pillar each one speaks for. The pillar is not derivable from the
+    condition slug - `evaluator-calibration-refused` speaks for the pillar named
+    `evaluation`, and no prefix of one is a prefix of the other - so it is
+    declared, and a test refuses a non-bounding cap that is missing from the
+    table. Guessing it from the slug is how a customer's absent evaluator would
+    come to be reported as our boundary, which is the one error this field
+    exists to make impossible.
+    """
+    declined_pillars = {
+        DISCLOSURE_CAP_PILLAR[cap.condition] for cap in caps if cap.ceiling is None
+    }
+    return tuple(
+        UnmeasuredCheck(
+            pillar=pillar.name,
+            check=sub.name,
+            weight=sub.maximum,
+            reason=DECLINED if pillar.name in declined_pillars else ABSENT,
+        )
+        for pillar in sorted(pillars, key=lambda one: one.name)
+        for sub in sorted(pillar.subscores, key=lambda one: one.name)
+        if not sub.measured and not sub.withheld
+    )
+
+
 def aggregate(
     pillars: Sequence[Pillar],
     caps: Sequence[Cap],
@@ -9334,7 +9655,10 @@ def aggregate(
     weighted_average = round_half_up(weighted)
 
     ordered_caps = tuple(sorted(caps, key=cap_order))
-    ceiling = min((cap.ceiling for cap in ordered_caps), default=100)
+    ceiling = min(
+        (cap.ceiling for cap in ordered_caps if cap.ceiling is not None),
+        default=100,
+    )
     overall = min(weighted_average, ceiling)
 
     confidence_total = sum(weights.get(p.name, 0.0) for p in pillars) or 1.0
@@ -9361,6 +9685,7 @@ def aggregate(
     open_asks = (ANSWER_KEY_UNREAD_ASK,) if held_for_answers else ()
     return ReadinessScore(
         schema_version=SCHEMA_VERSION,
+        unmeasured=unmeasured_checks(pillars, ordered_caps),
         overall=overall,
         weighted_average=weighted_average,
         band=band,
@@ -10081,6 +10406,14 @@ def render_card(
             # fix - it says the ceiling is real without claiming it applies now.
             if cap.blocks:
                 label = f"{palette.bad}FIX BEFORE PAID RUN{palette.reset}"
+            elif cap.ceiling is None:
+                # Nothing is limited, so no number is shown and none is
+                # implied. `NOT CHECKED HERE` is the whole claim: a check this
+                # run did not make, said in the customer's terms rather than
+                # in the scorer's. Printing `LIMITED TO` beside a cap that
+                # bounds nothing would be the defect this arm exists to
+                # remove, wearing the old label.
+                label = f"{palette.warn}NOT CHECKED HERE{palette.reset}"
             elif binds(cap, score.overall):
                 label = f"{palette.warn}LIMITED TO {cap.ceiling}{palette.reset}"
             else:
@@ -10364,11 +10697,17 @@ def render_markdown(
         # Conditioned for the same reason the card's label is: a ceiling that is
         # not the operative one caps nothing, and stating it flat invites the
         # reader to take it as the score's limit.
-        effect = (
-            f"caps the score at {cap.ceiling}"
-            if binds(cap, score.overall)
-            else f"would cap the score at {cap.ceiling}"
-        )
+        if cap.ceiling is None:
+            # The durable artifact has to be readable by someone who never saw
+            # the card, so this says what happened rather than what did not:
+            # the check was not made here, and the score is not carrying a
+            # deduction for it.
+            effect = "was not checked by this run, and costs the score nothing"
+        elif binds(cap, score.overall):
+            effect = f"caps the score at {cap.ceiling}"
+        else:
+            effect = f"would cap the score at {cap.ceiling}"
+
         # The remedy goes in the durable report, not on the card: this file
         # already names each cap by its internal condition id, and the card
         # deliberately does not - the guide keeps that vocabulary out of
@@ -10412,9 +10751,9 @@ def render_markdown(
         # broken.
         # "fix" ONLY WHERE SOMETHING IS BROKEN. A cap that asks and does not
         # block is not a defect, and this line printed `fix:` beside a reason
-        # whose own words are "there is nothing here for you to fix" - in the
-        # durable artifact, which is the one that outlives the terminal
-        # (traigent-first-run#392). The word was inherited wholesale when that
+        # that says in its own words that this run did not make the check and
+        # no step here would - in the durable artifact, which outlives the
+        # terminal (traigent-first-run#392). It was inherited wholesale when that
         # condition moved from `blocks=True` to `asks=True`, so the comment
         # below - which exists to keep "fix" off a state that is not broken -
         # was defeated by a flag flip one condition over.
