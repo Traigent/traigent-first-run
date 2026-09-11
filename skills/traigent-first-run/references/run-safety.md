@@ -39,6 +39,28 @@ spending their money without approval, or a readiness cap that blocks because a 
 rather than because a check was declined. Read the test, not the list - a stop this list happens not
 to name is measured by the same question.
 
+**And ownership is not a question with two answers.** A stop may be theirs, and it may be ours in
+either of two ways that are not the declined check this rule is about, and it may be neither
+party's. Four categories, because a rule stating one reason over three is how a sound stop comes to
+look like a violation:
+
+1. **Theirs** - the list above. It waits on something only they can give, and their giving it clears
+   the stop.
+2. **An action WE refuse to take on their machine.** Not a check we declined to make, which costs
+   them a measurement; a thing we will not do TO their project, which would cost them their machine.
+   Executing arbitrary setup code during a dependency build is the live case. The corollary does not
+   reach it - nothing is being deducted and no claim is being bounded - and the disclosure it owes
+   is a ROUTE rather than a score: say what we will not run, and what they can do instead.
+3. **A broken instrument.** Where the thing measuring is itself untrustworthy, continuing does not
+   produce a worse number, it produces a number that cannot mean anything - and then bills them for
+   it. This is the one stop that gets stricter as the rule above gets more permissive, because
+   "proceed on disclosure" assumes the run can still measure something.
+4. **Neither party's.** A provider that reports no cost and no usage, a platform with no wheels
+   published: nobody here owns it and nobody's action clears it. These are the stops most often
+   written as though they were the customer's fault. They are not a stop at all where the exposure
+   is bounded and the customer can weigh it - they are an ASK, and the money carve-out above is what
+   makes one legitimate.
+
 **Not "can they clear it", which is a different question and gets this wrong.** A customer whose
 evaluator executes candidate code could clear that stop by rewriting the evaluator - and the whole
 finding is that they should not have to, because the unmade check is ours. Difficulty is not the
@@ -77,9 +99,14 @@ sub-agents, which not every supported assistant provides.
   only inside that environment, from the exact packages and versions recorded for the top-level
   requirements plus their package-declared dependencies, as a package-artifact-only fetch/install
   with no provider or Traigent calls, private-data transfer, or user/project code execution. Prefer
-  a fully pinned, hash-checked requirements file and wheels; stop if fulfilling it requires source
-  builds, additional undeclared top-level packages, or code execution. A user or environment
-  install-approval policy still takes precedence.
+  wheels; stop if fulfilling it requires source builds, additional undeclared top-level packages,
+  or code execution. **That stop is category 2 of the standing rule: an action this guide will not
+  take on their machine.** A source build runs the package's own setup code on their computer,
+  which is not a check we declined but a thing we refuse to do to them - so it owes them a route
+  rather than a number. Say which package needs building and offer both: install that one
+  themselves, outside this run, and re-run; or use an interpreter and platform the project
+  publishes wheels for. Nothing is deducted for it and no claim is bounded by it. A user or
+  environment install-approval policy still takes precedence.
 - Install the tested pins from `assets/requirements-first-run.txt`, whatever the project declares
   for itself; the dedicated environment exists so this run uses the stack it was measured on, and
   the project's own pin is left alone rather than installed or edited. Never run an unversioned
@@ -137,8 +164,13 @@ sub-agents, which not every supported assistant provides.
   values content-free and disclose them in approval. A connected request uses the Traigent API key
   to authenticate; it is not a telemetry field or guide artifact, but do not say credentials are
   'not transmitted'. This guide neither inspects network packets nor proves every optional SDK
-  feature follows that path; stop if observed runtime behavior contradicts the contract. Describe
-  the documented backend-payload contract, not independently audited network traffic.
+  feature follows that path; stop if observed runtime behavior contradicts the contract. **That
+  stop is category 3: a broken instrument.** It is the one stop the standing rule makes stricter
+  rather than looser - "proceed on disclosure" assumes the run can still measure something, and a
+  stack behaving differently from its own contract is a run that cannot. Continuing would bill them
+  for numbers that cannot mean anything, and no disclosure makes that a choice worth offering. Say
+  that it is ours, name the contradiction observed, and say plainly that nothing was spent.
+  Describe the documented backend-payload contract, not independently audited network traffic.
 - Treat backend transmission and local persistence as separate boundaries. SDK 0.26.0 writes
   per-example `query`, `response`, and `expected` text to local optimization logs by default. In
   the first-run wrapper, set `TRAIGENT_LOG_EXAMPLE_CONTENT=false` in the process before importing
@@ -948,8 +980,21 @@ For manual live-probe and other provider calls outside SDK-managed searches, pre
 provider-reported response metadata. Do not recalculate a completed OpenRouter response with
 `litellm.completion_cost()`: a missing local model-map entry can raise after the provider has
 already billed the call. If cost is absent but usage proves a real call, mark it untracked and
-deduct the approved estimate; if both are absent, stop. The SDK result remains authoritative for
-SDK-managed baseline/search cost.
+deduct the approved estimate.
+
+If BOTH are absent, ask rather than stop. This is category 4 of the standing rule - neither party
+owns it. The provider reported no cost and no usage, so nothing the customer changes makes this run
+observable and nothing we declined caused it; a stop here reads as their fault for a silence that is
+not theirs. What makes asking legitimate rather than reckless is the money carve-out in section 0
+read together with the size of what is exposed: this stage runs over the walkthrough's small
+dataset under a ceiling already approved, so the blind spend is bounded and they can weigh it.
+
+Disclose all three parts and default to stopping: that this provider returned neither a cost nor
+usage for a call that was placed, that continuing means spending against the ceiling with no
+per-call accounting to show them afterwards, and that the total ceiling still stops the run whatever
+the untracked calls turn out to have cost. Their approval proceeds; silence does not. Record the
+approval and mark every affected call untracked, so the summary says which numbers nobody can
+reconcile. The SDK result remains authoritative for SDK-managed baseline/search cost.
 
 ## Connected-run readiness
 
