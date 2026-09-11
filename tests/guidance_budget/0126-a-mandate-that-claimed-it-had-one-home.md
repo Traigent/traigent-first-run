@@ -1,12 +1,12 @@
 # 0126 - a mandate that claimed it had one home, beside its second copy
 
 follows: 0125
-follows-resident-measured: 108_113
-follows-total-measured: 518_332
-resident-ceiling: 108_117
-resident-measured: 108_113
-total-ceiling: 518_366
-total-measured: 518_362
+follows-resident-measured: 108_167
+follows-total-measured: 518_490
+resident-ceiling: 108_171
+resident-measured: 108_167
+total-ceiling: 518_524
+total-measured: 518_520
 
 Seventy bytes, no resident movement, and most of the value of this entry is in what it does NOT
 change. A sweep proposed four one-decision-one-home repairs to this file and two of them were wrong
