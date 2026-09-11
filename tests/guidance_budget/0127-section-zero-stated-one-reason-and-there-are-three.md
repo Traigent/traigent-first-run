@@ -2,8 +2,8 @@
 
 follows: 0126
 follows-total-measured: 518_520
-total-ceiling: 522_256
-total-measured: 522_252
+total-ceiling: 525_916
+total-measured: 525_912
 
 Three and a half kilobytes, and the reason is that the rule this file opens with named one way a run
 may stop and the file then defines four. A review measured every hard stop against section 0's own
@@ -40,3 +40,30 @@ the guidance twice refusing an unversioned install - but ships no hashes at all.
 already true and stays unsaid here because the bullet below states it; the hash half described a
 regime nothing in this repository follows, so it is gone rather than aspirational. A preference
 nobody implements reads as a control to the next auditor.
+
+Two reviews then found the entry re-committing its own class, twice over. The taxonomy named "a
+platform with no wheels published" as an example of an obstacle nobody owns, twelve lines before
+labelling that same case an action we refuse to take - one diff, two categories, opposite
+instructions for one customer. The source build is ours: what stops the run is this guide declining
+to execute setup code on somebody's machine, and that has a route out, which is exactly what an
+ownerless obstacle does not.
+
+Four categories were also one short. The portal rung that will not come up, and a connected run
+degrading to local-only, are ours and are not a check we declined - the run can still measure, it
+simply cannot record - and this file stops paid work at once for them. A taxonomy that cannot place
+its own strictest stops is the thing it was written to prevent.
+
+And the converted stop was half a fix as drafted: it classified and disclosed without instructing.
+It promised a ceiling would hold a bill, which this file forbids saying two hundred lines earlier
+and which no mechanism supports once a provider reports nothing; it dropped the DEDUCTION its
+sibling sentence carries, so the allowance it invoked would never have moved; it put a set of named
+routes as a bare yes/no, which the flow document forbids everywhere; and it walked the run into a
+state where post-run verification asks for token usage these calls do not have, with nothing said
+about the close. The routes are lettered now, the debit is stated as the assistant's to make
+outside the wrapper, and the close is told to report the item as unsatisfied rather than as met.
+
+The other stop stopped claiming zero spend. A contradiction between observed behaviour and the
+documented contract can be seen during or after a billable call, so "nothing was spent" is a claim
+about evidence rather than a consequence of the finding - and naming which contract broke bounds
+what may be concluded from it, since a payload or privacy breach does not make every number
+meaningless.

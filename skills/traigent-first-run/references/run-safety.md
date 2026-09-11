@@ -53,13 +53,24 @@ look like a violation:
    is a ROUTE rather than a score: say what we will not run, and what they can do instead.
 3. **A broken instrument.** Where the thing measuring is itself untrustworthy, continuing does not
    produce a worse number, it produces a number that cannot mean anything - and then bills them for
-   it. This is the one stop that gets stricter as the rule above gets more permissive, because
+   it. These are the stops that get stricter as the rule above gets more permissive, because
    "proceed on disclosure" assumes the run can still measure something.
-4. **Neither party's.** A provider that reports no cost and no usage, a platform with no wheels
-   published: nobody here owns it and nobody's action clears it. These are the stops most often
-   written as though they were the customer's fault. They are not a stop at all where the exposure
-   is bounded and the customer can weigh it - they are an ASK, and the money carve-out above is what
-   makes one legitimate.
+4. **Neither party's.** A provider that returns neither a cost nor usage for a call it billed:
+   nobody here owns the silence and no action of theirs makes it observable. These are the stops
+   most often written as though they were the customer's fault. Where the exposure is bounded, one
+   of these is an ASK rather than a stop - and the money carve-out above is what makes the ask
+   legitimate, because the DECISION to accept a blind spend is theirs even though the blindness is
+   nobody's. That is the seam between this category and the first: category 1 asks who clears the
+   stop, this one asks who caused it, and a stop can honestly answer differently to each.
+5. **Ours, and not a check we declined.** Our own service or its tracking failing - a portal rung
+   that will not come up, a connected run degrading to local-only mid-flight. The run can still
+   measure quality; what it cannot do is record, and this file stops paid work at once for it. No
+   disclosure makes it the customer's to weigh, and no route of theirs clears it, so it is neither
+   an ask nor a route: say what failed, that it is ours, and what was or was not spent.
+
+**A source build is category 2 and not category 4**, however much a platform with no published
+wheels looks ownerless. What stops the run there is not the platform - it is this guide refusing to
+execute setup code on their machine, which is a decision of ours and has a route out.
 
 **Not "can they clear it", which is a different question and gets this wrong.** A customer whose
 evaluator executes candidate code could clear that stop by rewriting the evaluator - and the whole
@@ -165,11 +176,16 @@ sub-agents, which not every supported assistant provides.
   to authenticate; it is not a telemetry field or guide artifact, but do not say credentials are
   'not transmitted'. This guide neither inspects network packets nor proves every optional SDK
   feature follows that path; stop if observed runtime behavior contradicts the contract. **That
-  stop is category 3: a broken instrument.** It is the one stop the standing rule makes stricter
+  stop is category 3: a broken instrument.** It is one of the stops the standing rule makes stricter
   rather than looser - "proceed on disclosure" assumes the run can still measure something, and a
   stack behaving differently from its own contract is a run that cannot. Continuing would bill them
-  for numbers that cannot mean anything, and no disclosure makes that a choice worth offering. Say
-  that it is ours, name the contradiction observed, and say plainly that nothing was spent.
+  for numbers that cannot mean anything, and no disclosure makes that a choice worth offering. Stop
+  further calls, say that it is ours, and name the SPECIFIC contract observed to be breached and
+  what it actually affects - a payload or privacy contradiction does not by itself make every number
+  meaningless, and claiming it does overstates in the other direction. Report spend as the evidence
+  has it: preserve and report any charges already observed and any calls marked untracked, and say
+  nothing was spent only where the evidence establishes no billable call happened. A contradiction
+  seen during or after a paid call does not establish that.
   Describe the documented backend-payload contract, not independently audited network traffic.
 - Treat backend transmission and local persistence as separate boundaries. SDK 0.26.0 writes
   per-example `query`, `response`, and `expected` text to local optimization logs by default. In
@@ -986,15 +1002,40 @@ If BOTH are absent, ask rather than stop. This is category 4 of the standing rul
 owns it. The provider reported no cost and no usage, so nothing the customer changes makes this run
 observable and nothing we declined caused it; a stop here reads as their fault for a silence that is
 not theirs. What makes asking legitimate rather than reckless is the money carve-out in section 0
-read together with the size of what is exposed: this stage runs over the walkthrough's small
-dataset under a ceiling already approved, so the blind spend is bounded and they can weigh it.
+read together with the size of what is exposed - and the bound is the approved ceiling and the
+estimate deducted per call, not the dataset. This bullet covers the live probe and other calls
+outside SDK-managed searches, which is a handful rather than a pass over rows, so what they are
+being asked to accept is countable in advance even though what it costs is not.
 
 Disclose all three parts and default to stopping: that this provider returned neither a cost nor
-usage for a call that was placed, that continuing means spending against the ceiling with no
-per-call accounting to show them afterwards, and that the total ceiling still stops the run whatever
-the untracked calls turn out to have cost. Their approval proceeds; silence does not. Record the
-approval and mark every affected call untracked, so the summary says which numbers nobody can
-reconcile. The SDK result remains authoritative for SDK-managed baseline/search cost.
+usage for a call that was placed; that continuing means spending with no per-call accounting to show
+them afterwards, so **what they are actually charged is unknown to this run and stays unknown**; and
+what does still bound it, which is the run rather than the bill - each such call deducts the approved
+estimate from the remaining allowance, so the number of further calls is limited by what is left.
+Say the size of that estimate and how much allowance remains.
+
+Put it as named routes, in the shape SKILL.md requires of every choice - lettered, one marked,
+each answerable by replying - and never as a bare yes/no:
+
+- `A.` **Place no further calls on this route and report the ones already made**, marked
+  recommended, because it is the only route that leaves nothing unaccounted. The run does not end
+  here - what ends is spending where nothing can be counted - so this is a route rather than the
+  stop the preview paragraph below refuses to mark.
+- `B.` Continue on this route, each such call deducting the approved estimate from the remaining
+  allowance, every one of them recorded untracked.
+
+Write the `blocked`/`approval` run-log line before waiting, as this file requires before every
+stop-and-wait. Silence takes `A.`; only their answer takes `B.` **And deduct on every call, not
+only mark it** - the debit is what the allowance is made of, and these calls sit outside the
+wrapper, so it is the assistant's to make. Without it nothing moves the running total, the
+remaining-allowance sentence above becomes untrue, and the bound this ask was sold on does not
+exist.
+
+At the close, say what could not be verified rather than reporting it verified. Post-run
+verification asks for nonzero token usage on provider calls, and these calls have none by
+definition - that item is not satisfied for them and must not be reported as though it were. Name
+them, say the run continued on an approval recorded above, and leave the claim where the evidence
+leaves it. The SDK result remains authoritative for SDK-managed baseline/search cost.
 
 ## Connected-run readiness
 
