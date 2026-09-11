@@ -469,8 +469,9 @@ every agent whose prompt or tools live in a second file. What the card prints be
 instead is the line your `source_lines` actually point at, quoted from the selected agent, so a
 reader can weigh the two against each other. Write the sentence so they agree.
 
-Neither derivation leaves the selected callable's own body, and passing one is not a finding that the
-answer is right. An agent whose loop is in a helper it calls passes both checks with `"loop": true,
+Only the control-flow derivations stay inside the selected callable's own body; the tools walk goes
+one hop out to module-level assignments, as stated above. Passing any of them is not a finding that
+the answer is right. An agent whose loop is in a helper it calls passes both checks with `"loop": true,
 "bounded": true` and may still never return. The card says how far each check reached for exactly
 this reason; read the source, not the refusal.
 
@@ -588,7 +589,7 @@ one object and requires `knobs` at its root.
 
 The source-read card records these answers but leaves all four unmeasured: source
 or a reader's description is not proof that a prompt reaches the provider, a
-loop ends, an output has one shape, or a named tool is reachable.
+loop ends, an output has one shape, or a named tool is really a tool.
 
 What each is asking, and what it is not. **Prompt** is whether anything the model is told reaches
 the call, and how many worked examples ride with it; two is where examples start showing a pattern
@@ -602,9 +603,11 @@ performed are separate questions and this one asks only the first, so withholdin
 stub answers a question nobody put. **Control flow** is whether the agent ends and on what: no loop
 ends trivially, a loop with a bound can be recorded, and a loop with neither is one input costing an
 unbounded number of calls. **Tools**
-is whether each declared tool can be found. A partly reachable list earns only the reachable share
-of this check. `"used": false` keeps this check's weight and earns nothing, like every answer this
-read cannot check. Dataset and evaluation are scored in separate
+is whether each declared name is reached from the callable, one hop through the module. A partly
+reachable list earns only the reachable share of this check. Reading the whole file only ever
+REFUTES a name; nothing is credited from it. None of these four is scored on the route a customer
+takes: supplying `--agent-knobs` leaves every one of them out of the denominator, so a `false`
+answer costs nothing rather than costing this check's weight. Dataset and evaluation are scored in separate
 pillars. Memory/context and provider connectivity are not scored here; run safety handles the latter.
 
 None of the four is a judgment about how good the agent is, and none may become one. Whether a
