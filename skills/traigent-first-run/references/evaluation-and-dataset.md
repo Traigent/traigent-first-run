@@ -286,8 +286,8 @@ questions.
 For deterministic calibration, the helper runs authored probes in a credential-stripped child.
 Each deterministic supplemental attempt gets a fresh child, also stripped of credentials, isolating
 process-local scorer and dependency state from other attempts. This is process separation, not
-sandbox isolation. Its supplemental phase shares the single `--timeout` budget. SKILL's scope gate
-ends this guide before any evaluator executes candidate code or SQL.
+sandbox isolation. Its supplemental phase shares the single `--timeout` budget. SKILL's scope gate skips
+the evaluator check rather than executing candidate code or SQL, and the run continues without it.
 
 Read `exception_probe_advisory` as an advisory, not a verdict. The probe family exercises common
 `ValueError`, `TypeError`, and runtime-error operations, plus malformed Python and JSON text that

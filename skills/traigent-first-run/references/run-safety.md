@@ -4,6 +4,7 @@ Use this reference for setup, dry-run, paid execution, portal verification, reco
 
 ## Contents
 
+0. The standing rule
 1. Environment and privacy
 2. Static and mock validation
 3. Approval and budgets
@@ -11,6 +12,39 @@ Use this reference for setup, dry-run, paid execution, portal verification, reco
 5. Baseline and optimization
 6. Post-run verification
 7. Recovery
+
+## The standing rule
+
+**A first run does not stop a legitimate customer from onboarding. Ever.**
+
+Where a customer's own data or code makes a check genuinely unsafe for **us** to perform, they get
+full knowledge of what was not checked and what proceeding means - and then they proceed.
+Disclosure, not a gate.
+
+**Corollary: deduct for what the customer controls; never deduct for what we do not own.** A check
+this guide declined to make is our boundary, not their defect, and it is never printed as their
+failure. A ceiling that bounds what this card may *claim* is honest, because it describes evidence
+we do not have. A block that bounds what the customer may *do* is ours to justify, and a boundary we
+chose does not justify it.
+
+**What this does not touch**, because "ever" is doing real work above and the file defines hard stops
+below that are not in question. **The test is OWNERSHIP - whose is the thing in the way? - and the
+list under it is examples rather than the set.** This rule is about a check WE declined to make,
+where the obstacle is ours and nothing the customer does reaches it. It does not lift a stop that
+waits on something only they can give.
+
+Those are theirs, and among them: secret entry, a key this run has not been handed, a tracked
+credential file, a modified ignore file, a dedicated environment, a replay that changes their world,
+spending their money without approval, or a readiness cap that blocks because a component is absent
+rather than because a check was declined. Read the test, not the list - a stop this list happens not
+to name is measured by the same question.
+
+**Not "can they clear it", which is a different question and gets this wrong.** A customer whose
+evaluator executes candidate code could clear that stop by rewriting the evaluator - and the whole
+finding is that they should not have to, because the unmade check is ours. Difficulty is not the
+test; whose the obstacle is, is.
+
+Stated here, ahead of every gate below, because it is the rule each of them is measured against.
 
 ## Environment and privacy
 
@@ -281,14 +315,38 @@ is code or SQL stays in scope, graded by the comparison `references/evaluation-a
 selects for it. A virtual environment, stripped credentials, an ordinary subprocess, a timeout, or
 mock flags do not make that execution safe.
 
-When the resolved evaluator call path is an executing one, preserve the project, run only
-read-only static inspection that does not import or execute it, record a `stopped` `containment`
-event, and end this guide before calibration, environment setup, credentials, provider calls, or
-paid work.
-The next step is a separate manual containment design and review outside this guide; it must decide
-the execution boundary, mounted inputs, credentials, network, limits, cleanup, and SQL data scope.
-Do not describe that manual work as available through this guide or imply that a local subprocess
-fulfils it.
+When the resolved evaluator call path is an executing one, preserve the project, run only read-only
+static inspection that does not import or execute it, record a `containment` warning, and **do not
+calibrate**. What this guide declines is running the customer's scorer against the customer's engine
+on our initiative. It is not their onboarding.
+
+**The run continues, on full disclosure.** Under the standing rule at the top of this file, tell them
+in their own words, and do not soften any of it:
+
+- **what was not checked** - their evaluator, against their engine;
+- **that the reason is our boundary, not their defect** - there is nothing for them to fix, and
+  nothing they change inside this run lifts it. Say it with that scope and not wider: an evaluator
+  rewritten later to compare rather than execute is a different evaluator, out of this gate
+  altogether, and telling them no change of theirs could ever matter is both false and an errand
+  they were not given;
+- **what proceeding concretely means** - during the paid run the *model* writes the statements and
+  their evaluator executes them against whatever it is configured to reach, many times over. The
+  statements are generated, not theirs, so their trust in their own code is not the trust being
+  asked for.
+
+One optional question follows from it - **does the evaluator connect read-only?** - and that is the
+whole safety story in a line: a read-only engine refuses a destructive statement by itself, so the
+hazard is gone without any containment this guide would have to own. It is not asked here. The
+pre-spend approval card below is its one home, because the answer bears on the moment money moves
+and on nothing before it, and an optional question asked twice is a question that reads as a stop.
+Record the answer there. **Silence proceeds**, and a `no` proceeds too: the disclosure above has
+already done its work.
+
+A separate manual containment design and review remains available outside this guide, and it is the
+only route to the calibration evidence itself; it must decide the execution boundary, mounted
+inputs, credentials, network, limits, cleanup, and SQL data scope. Do not describe that manual work
+as available through this guide, imply that a local subprocess fulfils it, or present it as
+something the customer must complete before their first run.
 
 Two moments sit behind that stop and only one of them is about the model's output, so each is
 refused on its own reason rather than both on the stronger-sounding one. Calibration runs the four
@@ -299,8 +357,10 @@ do is import the scorer and let it open its engine against whatever database it 
 and that database is the project's. That is the reason calibration is refused outside the contained
 route: the target is unbounded, which is a containment question this guide declines to own rather
 than a claim about where the statements came from. A trial is the other moment - there the model
-writes the query and the scorer runs it - and nothing in this guide opens it, at any stage, under
-any flag.
+writes the query and the scorer runs it - and this guide neither opens it nor stands in front of it:
+it is the customer's own run against the customer's own engine, and the disclosure above is what
+makes it a decision they took rather than one taken for them. What this guide will not do is
+initiate that execution on its own account, which is the calibration step and stays refused.
 
 `scripts/calibrate_evaluator.py` now enforces this rule instead of relying on it being read. Before
 it imports anything, it asks the same walk `preflight.py` reports through `evaluator-shape` of every
@@ -319,18 +379,24 @@ An in-process envelope is not a route to that evidence: bounding Python from ins
 interpreter means bounding it against every extension module, every constructor and every native
 handle it can reach, and that surface has no edge. A boundary the operating system enforces is a
 different proposition, and it is one this guide deliberately does not own. So the manual
-containment design and review above is still the whole of the route, and a project whose evaluator
-runs the candidate's answer stops here with its calibration evidence uncollected.
+containment design and review above is still the whole of the route to that EVIDENCE - work a project
+can commission for itself, on its own time, and never a precondition of its first run - and a project
+whose evaluator runs the candidate's answer proceeds here with its calibration evidence uncollected.
 
 That customer's card is a consequence of this decision rather than of their project. The evaluator
 check is not made, so it earns nothing and the probe spread is never measured, and `readiness.py`
-raises `evaluator-calibration-refused`, which blocks and limits the readiness claim to 45, so the
-card carries the stop this section has already made.
+raises `evaluator-calibration-refused`, which limits the readiness CLAIM to 45 and **does not block**
+- the ceiling says what this card may assert, and nothing here says what the customer may do. The
+card carries the disclosure this section makes. It does not put the question: that happens once, at
+the pre-spend approval, for the reason given above.
 Whether the unmade check is also CHARGED depends on what preflight's walk found, and the card says which case a run is
 in: a walk that established the engine is not charged, and a run resting on the declaration alone
 is, because finding no engine settles nothing by the paragraph above. None of it follows from
-anything their evaluator did: the reason is the unbounded target above. The route out is the
-customer's own, stated on the card.
+anything their evaluator did: the reason is the unbounded target above. The card gives them no route
+out of the ceiling, and no longer pretends to - the unmade check is ours, so nothing they do inside
+this run lifts it, and saying otherwise handed them an errand instead of a disclosure. That is a
+statement about THIS RUN, not about the containment review above, which stays available to a project
+that wants the evidence for its own reasons.
 
 ### A replay that changes the customer's world asks first
 
@@ -372,7 +438,8 @@ declared local dependency waits until that dependency is installed, and so does 
 module does - the flag waits with it rather than pulling an install into this stage. That deferred
 calibration is outside these three words and SKILL.md section 5 step 5 runs it: its path carries
 the installed dependency by construction, so the inspection that declared it is what binds it
-there. An execution evaluator has already ended this guide at the scope gate above. Run either
+there. An execution evaluator had its evaluator check skipped at the scope gate above and the run
+continued; nothing is owed here either. Run either
 before creating `.env` or requesting a provider key. A generic outside-review wait is not a gate;
 pause only when one unresolved product-grading ambiguity would materially change correctness or
 ranking. Do not execute an LLM judge or an uncertain or external evaluator without explicit
@@ -604,8 +671,15 @@ Before the provider-paid baseline, show only its immediate scope:
   configurations, calls, metric, runtime, estimated spend, and one total walkthrough ceiling,
   defaulting to `$5.00`. Call it an execution stop target, not a billing guarantee.
 - Recipients: baseline-data services; for OpenRouter, the gateway and allowed upstream/fallback routes.
-- Execution evaluators: the stop in `Static and mock validation` above ends this guide before
-  this card, so none is priced here.
+- Execution evaluators: the scope gate in `Static and mock validation` above skips their evaluator
+  check and the run continues, so this card DOES price them - and it carries the disclosure, because
+  this bullet is unconditional and the moment money moves is the moment it matters. Say what was not
+  checked, that it is our boundary rather than their defect, and what the paid run will have their
+  evaluator do with model-written statements. The asking-cap bullet below owns the QUESTION and the
+  answer given to it, which is a different thing from what was not checked. Both land on this same
+  card, and this bullet is why the order cannot be relied on: the disclosure is unconditional, so it
+  is stated whatever the connection answer turns out to be. An earlier draft made it conditional on
+  the cap still asking, which would have let the safest answer buy the quietest card.
 
 ### The pre-spend approval card
 
@@ -651,6 +725,11 @@ exist and points at a file that was never created.
   the finding, the answer taken, and what proceeding on that answer means for the money about to be
   spent - do not put the question a second time in different words, with a different pair of exits.
   Where the cap's route owns no question of its own, this card is that one home and asks it here.
+  `evaluator-calibration-refused` is one of those, and it is asked here and nowhere else: whether
+  the evaluator connects read-only, and so which connection answer this spend is being approved on.
+  The scope gate above raises the question and deliberately does not put it, because this is the
+  moment the answer bears on. What was NOT checked is a different thing and is stated once, in the
+  scope bullet above, which fires whether or not this cap is still asking.
 - **Where we are.** `Stage 3/5 · Baseline`, so the choice arrives placed in the run rather than
   loose.
 - **Proceed, or fix.** Two lettered routes with the recommendation on one of them, in the shape
@@ -1316,7 +1395,7 @@ Each event names what its `class` may be.
 - `blocked` - waiting on the user: `approval`, `key`, or `answer`. Written before every
   stop-and-wait that happens after the record exists, which is what says where a stuck run stopped.
 - `stopped` - this run cannot go on, or a phase ended early. A gate this guide defines refused:
-  `credential-file-tracked`, `ignore-check`, `containment`, `readiness-cap`, `invariants`. A
+  `credential-file-tracked`, `ignore-check`, `readiness-cap`, `invariants`. A
   bundled script could not run, or a command failed to execute: `tool`, with its exit status in
   `detail`. A provider, portal, or Traigent refusal, under the category this file already gives it:
   `authentication`, `key-scope`, `account-access`, `quota`, `rate`, `validation`. The run or a phase
@@ -1324,8 +1403,11 @@ Each event names what its `class` may be.
   degradation that carries no refusal category, so a refusal that halts the run keeps its own. And
   `uncategorized`, for anything the four groups above do not name, the provider error this file
   elsewhere says to surface without guessing a category among them.
-- `warning` - observed, and able to distort the result without stopping the run: `refused-trial`,
-  `untracked-cost`, `cap-standing`, or `uncategorized`. Nothing that halts the run is one of these,
+- `warning` - observed, and able to distort the result without stopping the run: `containment`,
+  `refused-trial`, `untracked-cost`, `cap-standing`, or `uncategorized`. The first is the evaluator
+  check the scope gate skipped: nothing measured that evaluator, which can distort the result, and
+  nothing about it stops the run. Recording it under the event above would say, in the artifact a
+  user hands to somebody else, that a completed run had halted. Nothing that halts the run is one of these,
   however it presents: tracking that degrades to local-only stops paid work, so it is a `stopped`.
 
 `detail` and the `class` beside it carry the event and nothing else: one sentence naming what

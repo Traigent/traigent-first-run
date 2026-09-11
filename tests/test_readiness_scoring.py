@@ -7484,13 +7484,19 @@ _TIED_PAIRS_WITH_NO_WITNESS: dict[tuple[str, str], str] = {
         "reading of one function rather than a proof over every input, which "
         "is why this pair is recorded here instead of pinned."
     ),
-    ("evaluator-timeout", "evaluator-calibration-refused"): (
-        "`calibration_refusal_capped` yields to a timeout: it is the refusal "
-        "predicate AND `timed_out is not True`, so a run whose calibration "
-        "did not finish raises the timeout and never the refusal. The pair "
-        "arrived at this tie when the refusal began to block "
-        "(traigent-first-run#393) - before that the two sat in different "
-        "queues and the rank was settled before it was consulted."
+    ("evaluator-unvalidated", "evaluator-calibration-refused"): (
+        "`score_evaluation` guards the unvalidated branch with `and not "
+        "execution_scope_refused`, so the two read one predicate in opposite "
+        "directions and no payload can carry both - the same shape as the "
+        "absent/unresolved pair above, and the reason `CAP_SEVERITY_ORDER` "
+        "records about this pair in the module itself. "
+        "The pair arrived at this tie when the refusal STOPPED blocking: "
+        "un-blocking it moved it into the queue `evaluator-unvalidated` "
+        "already sat in, at the same ceiling, which is the precedent that "
+        "reversal was modelled on. The tie it replaces - timeout against "
+        "refused - is gone by the same move, because "
+        "`calibration_refusal_capped` yields to a timeout and the two sit in "
+        "different queues again."
     ),
 }
 
@@ -8255,7 +8261,13 @@ class ACapThatOnlyScopesAClaimDoesNotStopTheRunTests(unittest.TestCase):
         report = MODULE.render_markdown(score)
         # The report names the remedy, and it is the same one the payload
         # names - the disagreement this closes was between these two lines.
-        self.assertIn(f"fix: `{cap.action_kind}`", report)
+        # "asks:" rather than "fix:", because this cap asks and does
+        # not block. The word was the same for both until a cap that
+        # says "there is nothing here for you to fix" printed `fix:`
+        # beside it in the durable artifact
+        # (traigent-first-run#392); nothing here is broken either.
+        self.assertIn(f"asks: `{cap.action_kind}`", report)
+        self.assertNotIn(f"fix: `{cap.action_kind}`", report)
         self.assertEqual(score.recommended_action, cap.action_kind)
         self.assertEqual(cap.action_kind, "review-answer-key")
         # Under the limiting heading, never the blocking one.
@@ -8921,9 +8933,15 @@ class TheRemedyIsMachineReadableTests(unittest.TestCase):
         self.assertEqual(payload["caps"][0]["action_kind"], "repair-evaluator")
         self.assertEqual(
             payload["schema_version"],
-            4,
+            5,
             "a consumer must be able to tell 'emits no remedy' from 'has none'",
         )
+        # 5 rather than 4, and the reason is a value rather than a key again:
+        # `evaluator-calibration-refused` stopped blocking, so a schema-4
+        # consumer gating paid work on `status` starts a run it would have
+        # stopped and one routing on `recommended_action` meets a slug 4 never
+        # contained (traigent-first-run#392).
+        #
         # 4 rather than 3, and again the reason is a value rather than a key.
         # Every remedy this payload emitted was some cap's, so a schema-3
         # consumer could look the slug up in `caps` and read the ceiling behind
@@ -12580,7 +12598,7 @@ class ADeferredCalibrationSaysSoInTheFieldConsumersReadTests(unittest.TestCase):
         self.assertIn("evaluator-calibration-refused", conditions)
         self.assertNotIn("evaluator-unvalidated", conditions)
         self.assertEqual(
-            refused.recommended_action, MODULE.REVIEW_EVALUATOR_CONTAINMENT
+            refused.recommended_action, MODULE.CONFIRM_EVALUATOR_CONNECTION
         )
         self.assertNotEqual(refused.recommended_action, MODULE.COMPLETE_CALIBRATION)
         cap = next(c for c in refused.caps if c.condition.endswith("refused"))
@@ -12592,20 +12610,27 @@ class ADeferredCalibrationSaysSoInTheFieldConsumersReadTests(unittest.TestCase):
         # ceiling. `TheWitnessDecidesTheScopeGateNotTheDeclarationTests`
         # pins the whole four-part shape.
         self.assertIn("not a judgement of your evaluator", cap.reason)
-        self.assertIn("You can establish that yourself", cap.reason)
+        self.assertIn("nothing here for you to fix", cap.reason)
         self.assertNotIn("Complete calibration", cap.reason)
-        # It STOPS, which is where it parts company with the deferral it
-        # otherwise mirrors (traigent-first-run#393). `run-safety.md` ends the
-        # guide for this shape - "nothing in this guide opens it, at any stage,
-        # under any flag" - so a card answering OK described a run the
-        # guidance had already stopped, and the payload was the half that was
-        # understating.
-        self.assertTrue(cap.blocks)
-        # And it no longer asks: a blocking condition routes its remedy through
-        # `recommended_action`, which the assertion above already reads, so
-        # setting both would say the run carries on and does not at once.
-        self.assertFalse(cap.asks)
-        self.assertEqual(refused.status, "BLOCKED")
+        # IT DOES NOT STOP, and this is the reversal of the half of
+        # traigent-first-run#393 that this assertion used to pin.
+        #
+        # #393's argument was that `run-safety.md` ends the guide for this
+        # shape, so a card answering OK understated. run-safety no longer ends
+        # the run here: it discloses and continues, under the standing rule it
+        # now states at the top of the file - a first run does not stop a
+        # legitimate customer from onboarding, and a check we declined to make
+        # is our boundary rather than their defect. The two documents agree
+        # again, at the other value.
+        #
+        # `FIX BEFORE PAID RUN` at 45 was false twice: no change to their
+        # evaluator reaches the outcome, and the 45 measured our boundary under
+        # their project's name.
+        self.assertFalse(cap.blocks)
+        # And it ASKS, on the one question that is genuinely theirs to answer
+        # and settles the hazard outright.
+        self.assertTrue(cap.asks)
+        self.assertNotEqual(refused.status, "BLOCKED")
 
     def test_the_declaration_changes_the_ask_and_never_the_number(self) -> None:
         """An unverified declaration may bound a claim; it may not earn credit.
@@ -12885,6 +12910,233 @@ class ADeferredCalibrationSaysSoInTheFieldConsumersReadTests(unittest.TestCase):
         self.assertEqual(kept.recommended_action, MODULE.COMPLETE_CALIBRATION)
 
 
+class TheOneQuestionHasSomewhereToLiveTests(unittest.TestCase):
+    """The ask, the answer, and the delta that shows the block lifting.
+
+    Three fixes landed here with no test between them, which is how the
+    review that found them had to write its own probes
+    (traigent-first-run#392). Each half is pinned against the behaviour a
+    consumer sees rather than against the field that produces it.
+    """
+
+    WITNESS = "calls .execute() on the candidate's SQL (scorer.py line 6)"
+
+    def _facts(self, connection=None):
+        return MODULE.EvaluationFacts(
+            present=True,
+            method="execution",
+            task_kind="code-sql",
+            parses=True,
+            origin="brought",
+            executes_candidate=True,
+            execution_witness=self.WITNESS,
+            evaluator_connection=connection,
+        )
+
+    def _score(self, connection=None):
+        return MODULE.score_run(
+            _routing_corpus(),
+            self._facts(connection),
+            _wired_space(),
+            dict(MODULE.DEFAULT_WEIGHTS),
+            _review(reviewed=48),
+        )
+
+    def _cap(self, score):
+        return next(
+            cap
+            for cap in score.caps
+            if cap.condition == "evaluator-calibration-refused"
+        )
+
+    def test_three_answers_are_three_sentences(self) -> None:
+        """A question whose every answer is identical is not a question."""
+        seen = {}
+        for connection in (None, MODULE.READ_ONLY, MODULE.READ_WRITE):
+            with self.subTest(connection=connection):
+                reason = self._cap(self._score(connection)).reason
+                seen[connection] = reason
+                # Every arm labels the answer as THEIRS, never as a finding.
+                if connection is not None:
+                    self.assertIn("You told this run", reason)
+                    self.assertIn("rather than as anything this run checked", reason)
+        self.assertIn("pass `--evaluator-connection", seen[None])
+        # SCOPED, not absolute. This cap fires on a SQL engine AND on code
+        # execution, so "the hazard closed" was printed to an evaluator that
+        # shells out and touches no database - a false safety claim, and the
+        # same defect as #492's database wording: one half of what the gate
+        # refuses, written as the whole.
+        self.assertIn(
+            "closes whatever your evaluator reaches through that connection",
+            seen[MODULE.READ_ONLY],
+        )
+        self.assertIn(
+            "says nothing about code your evaluator runs outside one",
+            seen[MODULE.READ_ONLY],
+        )
+        self.assertNotIn("that is the hazard closed", seen[MODULE.READ_ONLY])
+        # And the unanswered arm may not promise more than the answer would.
+        self.assertIn(
+            "closes nothing for an evaluator that runs candidate code", seen[None]
+        )
+        self.assertIn(
+            "the destructive path is\n        open".replace("\n        ", " "),
+            seen[MODULE.READ_WRITE],
+        )
+        self.assertEqual(len(set(seen.values())), 3, "two answers read alike")
+
+    def test_no_answer_settles_a_question_this_run_cannot_verify(self) -> None:
+        """Two revisions let an answer quiet the card; both were wrong here.
+
+        Keying on HAVING an answer made `read-write` machine-indistinguishable
+        from a clean run - the most dangerous answer, the quietest card.
+        Keying on `== READ_ONLY` fixed that and left a worse one: this cap
+        fires on a SQL engine AND on code execution, so a `subprocess`
+        evaluator with no database answered `read-only` and got `asks=False`,
+        `proceed`, and a report line identical to a purely advisory cap. A
+        false all-clear bought with a declaration that has no bearing on the
+        hazard that fired.
+
+        Telling the two apart needs preflight to publish which branch of the
+        witness raised this, and it does not. So the answer is recorded and
+        the question stays open - which is true whichever hazard fired
+        (traigent-first-run#392, #492).
+        """
+        for connection in (None, MODULE.READ_ONLY, MODULE.READ_WRITE):
+            with self.subTest(connection=connection):
+                self.assertTrue(self._cap(self._score(connection)).asks)
+        # And no arm blocks - the whole point of the reversal.
+        for connection in (None, MODULE.READ_ONLY, MODULE.READ_WRITE):
+            with self.subTest(connection=connection):
+                score = self._score(connection)
+                self.assertFalse(self._cap(score).blocks)
+                self.assertNotEqual(score.status, "BLOCKED")
+
+    def test_the_answer_is_refused_where_nothing_would_record_it(self) -> None:
+        """A safety declaration is the worst option to accept and drop.
+
+        Its sibling `--calibration-scope-refused` carries this guard and the
+        comment above it calls losing one quietly the worst case. This flag
+        shipped without it, so a customer declaring `read-write` on the
+        planner half had the declaration accepted and discarded.
+        """
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = MODULE.run(
+                [
+                    "--agent",
+                    "real",
+                    "--dataset",
+                    "real",
+                    "--evaluation",
+                    "real",
+                    "--evaluator-connection",
+                    "read-write",
+                ]
+            )
+        stderr = err.getvalue()
+        self.assertEqual(code, 2)
+        self.assertIn("--evaluator-connection", stderr)
+        self.assertIn("nothing here would record the answer", stderr)
+
+    def test_the_answer_is_refused_on_a_score_that_never_asked(self) -> None:
+        """The half a parse-time guard cannot reach.
+
+        Whether `evaluator-calibration-refused` fires is not knowable until
+        the facts are built, so the parse-time guard covers the planner half
+        and admitted every scoring route while honouring the flag on none of
+        them. Measured before this test existed: `--config-space`,
+        `--agent-knobs` and a `--preflight` with no execution witness each
+        produced a payload byte-identical with the flag and without it
+        (traigent-first-run#392).
+
+        Refused rather than warned, on the reasoning the sibling guard states:
+        a safety declaration is the worst option to lose quietly.
+        """
+        # A REAL PAYLOAD, and the message asserted. The first version passed
+        # `--preflight -` and asserted only `code == 2` - which the stdin guard
+        # returns before the scoring guard is reached, so the test passed with
+        # the entire production change deleted. A false green inside a test
+        # written to prevent one.
+        with tempfile.TemporaryDirectory() as directory:
+            payload = Path(directory) / "preflight.json"
+            payload.write_text(
+                json.dumps(
+                    [
+                        {
+                            "check": "evaluator-shape",
+                            "status": "PASS",
+                            "detail": "parses",
+                            "metrics": {},
+                        }
+                    ]
+                )
+            )
+            out, err = io.StringIO(), io.StringIO()
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                code = MODULE.run(
+                    [
+                        "--preflight",
+                        str(payload),
+                        "--evaluator-connection",
+                        "read-write",
+                    ]
+                )
+        self.assertEqual(code, 2)
+        # For the reason under test, not because something else exited 2.
+        self.assertIn("--evaluator-connection", err.getvalue())
+        self.assertIn("did not reach that gate", err.getvalue())
+
+    def test_the_answer_is_kept_where_the_gate_did_ask(self) -> None:
+        """And the guard may not refuse the run it exists for."""
+        for connection in (MODULE.READ_ONLY, MODULE.READ_WRITE):
+            with self.subTest(connection=connection):
+                score = self._score(connection)
+                cap = self._cap(score)
+                self.assertEqual(cap.condition, "evaluator-calibration-refused")
+                self.assertIn("You told this run", cap.reason)
+
+    def test_the_delta_says_the_block_lifted(self) -> None:
+        """Same condition, same ceiling, same pillars - and a different run.
+
+        Comparing cap conditions alone made the largest change this package
+        has made invisible on every surface: the card, the report and the
+        JSON all said `changed: none` across a blocking ceiling becoming an
+        advisory one.
+        """
+        score = self._score()
+        previous = MODULE.PreviousScore(
+            overall=score.overall,
+            pillars={pillar.name: pillar.score for pillar in score.pillars},
+            caps=("evaluator-calibration-refused",),
+            blocking=("evaluator-calibration-refused",),
+        )
+        delta = MODULE.score_delta(previous, score)
+        self.assertEqual(delta["unblocked"], ["evaluator-calibration-refused"])
+        self.assertEqual(delta["blocked"], [])
+        self.assertIn(
+            "no longer blocking: evaluator-calibration-refused", delta["line"]
+        )
+
+    def test_a_payload_that_never_said_blocks_asserts_nothing(self) -> None:
+        """The honest reading of a document that does not say.
+
+        `blocking` is defaulted so an older payload still parses. What it may
+        not do is read a missing key as "nothing was blocking" and then
+        announce a change that may not have happened, so the clause is omitted
+        rather than asserted.
+        """
+        score = self._score()
+        previous = MODULE.PreviousScore(
+            overall=score.overall,
+            pillars={pillar.name: pillar.score for pillar in score.pillars},
+            caps=("evaluator-calibration-refused",),
+        )
+        delta = MODULE.score_delta(previous, score)
+        self.assertEqual(delta["unblocked"], [])
+        self.assertNotIn("no longer blocking", delta["line"])
+
+
 class TheWitnessDecidesTheScopeGateNotTheDeclarationTests(unittest.TestCase):
     """The gate reads what preflight proved, not what the run remembered to say.
 
@@ -12978,7 +13230,7 @@ class TheWitnessDecidesTheScopeGateNotTheDeclarationTests(unittest.TestCase):
             ["evaluator-calibration-refused"],
         )
         self.assertEqual(
-            witnessed.recommended_action, MODULE.REVIEW_EVALUATOR_CONTAINMENT
+            witnessed.recommended_action, MODULE.CONFIRM_EVALUATOR_CONNECTION
         )
         self.assertEqual(
             witnessed.overall, MODULE.CAP_CEILING["evaluator-calibration-refused"]
@@ -13028,7 +13280,7 @@ class TheWitnessDecidesTheScopeGateNotTheDeclarationTests(unittest.TestCase):
         self.assertIn("evaluator-calibration-refused", conditions)
         self.assertNotIn("evaluator-unvalidated", conditions)
         self.assertEqual(
-            witnessed.recommended_action, MODULE.REVIEW_EVALUATOR_CONTAINMENT
+            witnessed.recommended_action, MODULE.CONFIRM_EVALUATOR_CONNECTION
         )
         self.assertNotEqual(witnessed.recommended_action, MODULE.COMPLETE_CALIBRATION)
         # The two routes into the state agree about the whole verdict - one
@@ -13109,7 +13361,7 @@ class TheWitnessDecidesTheScopeGateNotTheDeclarationTests(unittest.TestCase):
                 # to a sentence that already carried one.
                 self.assertRegex(
                     evidence,
-                    r"containment review|preflight\.py --evaluator|"
+                    r"nothing here asks you for it|preflight\.py --evaluator|"
                     r"establish the evaluator as the ceiling describes",
                 )
                 cap = next(
@@ -13118,7 +13370,71 @@ class TheWitnessDecidesTheScopeGateNotTheDeclarationTests(unittest.TestCase):
                     if c.condition == "evaluator-calibration-refused"
                 )
                 self.assertNotIn("complete calibration", cap.reason.casefold())
-                self.assertIn("containment review", cap.reason)
+                # And it no longer points at the containment review either.
+                # That was the route named when this cap BLOCKED and the
+                # customer needed somewhere to go; it is a process this guide
+                # does not run and cannot be started from the card, so under
+                # the standing rule in `references/run-safety.md` the cap
+                # discloses and the run proceeds instead of routing them into
+                # work they cannot begin. The route clause survives on the
+                # `evidence` line asserted above, which is where an arm that
+                # genuinely has one belongs.
+                self.assertNotIn("containment review", cap.reason)
+                self.assertIn("THIS does not stop your run", cap.reason)
+
+    def test_the_refusal_does_not_promise_a_run_other_caps_stopped(self) -> None:
+        """A cap sees its own condition and no other, so it may not promise the card.
+
+        The fix that un-blocked this condition wrote "Your first run
+        continues" into its reason - true of THIS cap and not of the card it
+        prints on. Executed on the ordinary cold start, which is the shape a
+        customer with an executing evaluator most often arrives in:
+
+            evaluator: execution / code-sql, engine witnessed
+            dataset:   absent
+            agent:     absent
+
+        `dataset-absent` and `agent-absent` both carry `blocks=True`, `status`
+        is `BLOCKED`, and the refusal sat on the same card saying the run
+        continues. That is the defect class this batch exists to remove,
+        reintroduced by the fix for it (traigent-first-run#392).
+
+        So the sentence says what the CONDITION does. That is true whatever
+        else is on the card, which is the only kind of claim a cap is in a
+        position to make.
+        """
+        score = MODULE.score_run(
+            MODULE.DatasetFacts(),
+            MODULE.EvaluationFacts(
+                present=True,
+                method="execution",
+                task_kind="code-sql",
+                parses=True,
+                origin="brought",
+                executes_candidate=True,
+                execution_witness=self.WITNESS,
+            ),
+            MODULE.AgentFacts(),
+            dict(MODULE.DEFAULT_WEIGHTS),
+        )
+        # The premise: this card really is blocked, by conditions that are not
+        # this one. Asserted rather than assumed - if it stops being true the
+        # test below stops meaning anything.
+        blocking = [cap.condition for cap in score.caps if cap.blocks]
+        self.assertTrue(blocking, "the fixture no longer blocks; pick another")
+        self.assertNotIn("evaluator-calibration-refused", blocking)
+        self.assertEqual(score.status, "BLOCKED")
+
+        refused = next(
+            cap
+            for cap in score.caps
+            if cap.condition == "evaluator-calibration-refused"
+        )
+        self.assertFalse(refused.blocks)
+        # It says what it does...
+        self.assertIn("THIS does not stop your run", refused.reason)
+        # ...and never what the card does, on a card that says the opposite.
+        self.assertNotIn("Your first run continues", refused.reason)
 
     def test_the_run_that_calibrated_anyway_is_told_which_run_it_was(self) -> None:
         """Two runs did different things and only one of them did nothing wrong.
@@ -13196,7 +13512,7 @@ class TheWitnessDecidesTheScopeGateNotTheDeclarationTests(unittest.TestCase):
         self.assertIn(
             "evaluator-calibration-refused", [cap.condition for cap in score.caps]
         )
-        self.assertEqual(score.recommended_action, MODULE.REVIEW_EVALUATOR_CONTAINMENT)
+        self.assertEqual(score.recommended_action, MODULE.CONFIRM_EVALUATOR_CONNECTION)
         self.assertEqual(
             score.overall, MODULE.CAP_CEILING["evaluator-calibration-refused"]
         )
@@ -13207,9 +13523,17 @@ class TheWitnessDecidesTheScopeGateNotTheDeclarationTests(unittest.TestCase):
         self.assertTrue(cap.reason.startswith("An evaluator is connected, and "))
         self.assertNotIn("method (None)", cap.reason)
         # And the line and the ceiling agree, which is the property under test.
+        # It used to agree by pointing at "the containment review named in the
+        # ceiling" - and then the ceiling was rewritten to name no review at
+        # all, so the pointer survived while its target did not
+        # (traigent-first-run#392). The clause now says what is true on this
+        # arm, which is that nothing is being asked of them.
         self.assertIn(
-            "containment review named in the ceiling",
+            "nothing here asks you for it",
             self._calibration_subscore(score).evidence,
+        )
+        self.assertNotIn(
+            "containment review", self._calibration_subscore(score).evidence
         )
 
     def test_a_timed_out_refusal_names_no_ceiling_and_keeps_its_own_fact(
@@ -13324,29 +13648,60 @@ class TheWitnessDecidesTheScopeGateNotTheDeclarationTests(unittest.TestCase):
                 # Not a verdict on their work.
                 self.assertIn("not a judgement of your evaluator", cap.reason)
                 self.assertIn("may well be sound", cap.reason)
-                # The route forward, performable by them, outside this guide
-                # - which means it may not name a database an evaluator that
-                # only shells out does not have.
-                self.assertIn("You can establish that yourself", cap.reason)
-                self.assertIn("where it already runs", cap.reason)
+                # THERE IS NO ROUTE FORWARD, and saying there was one was the
+                # defect. The card used to hand them "You can establish that
+                # yourself, outside this guide" - a task, for a check nothing
+                # they do reaches, because the unmade check is OURS. The
+                # standing rule in `references/run-safety.md` says the run
+                # proceeds and the customer is told what was not checked, so
+                # the sentence that replaces it is a disclosure, not an
+                # errand.
+                self.assertIn("nothing here for you to fix", cap.reason)
+                # WHAT THIS CAP DOES, never what the run will do. A cap sees
+                # its own condition and no other, so "Your first run
+                # continues" was a promise it had no standing to make - and on
+                # the ordinary cold start (executing evaluator, no dataset, no
+                # agent) `dataset-absent` and `agent-absent` both block and
+                # `status` is BLOCKED while this sentence said otherwise. The
+                # co-occurrence case is asserted in
+                # `test_the_refusal_does_not_promise_a_run_other_caps_stopped`.
+                self.assertIn("THIS does not stop your run", cap.reason)
+                self.assertNotIn("Your first run continues", cap.reason)
+                self.assertNotIn("You can establish that yourself", cap.reason)
                 self.assertNotIn("against your own database", cap.reason)
+                # And it says what proceeding actually means, unsoftened. The
+                # trust being asked for is not trust in their own code.
+                self.assertIn("the MODEL writes the statements", cap.reason)
+                self.assertIn("many times over", cap.reason)
                 self.assertIn(
-                    "answers you already know are right and wrong", cap.reason
+                    "generated\n                    statements, not yours".replace(
+                        "\n                    ", " "
+                    ),
+                    cap.reason,
+                )
+                # The one question that is genuinely theirs, and settles it.
+                # SCOPED: the clause names the connection it closes and the
+                # code it does not. This cap fires on a SQL engine and on code
+                # execution, and read-only answers only the first
+                # (traigent-first-run#392, #492).
+                self.assertIn("that connection is read-only", cap.reason)
+                self.assertIn(
+                    "closes nothing for an evaluator that runs candidate code",
+                    cap.reason,
                 )
                 # The fixture convention is a tester's phrase and the owner
                 # has flagged it twice; the card uses the calibration check's
                 # own display vocabulary instead.
                 self.assertNotIn("known-good", cap.reason)
-                # And the ceiling still says what it is reporting.
-                self.assertIn(
-                    "no card can claim this evaluator grades correctly", cap.reason
-                )
-                # The route the customer can take is not replaced by the one
-                # they cannot start themselves.
-                self.assertLess(
-                    cap.reason.index("You can establish that yourself"),
-                    cap.reason.index("containment review"),
-                )
+                # And the ceiling still says what it is reporting - a bound on
+                # the CLAIM, which survives the reversal untouched because it
+                # describes evidence we do not have rather than anything the
+                # customer may or may not do.
+                self.assertIn("no card can claim it grades correctly", cap.reason)
+                # The containment review is no longer named to the customer at
+                # all: it is a process this guide does not run and they cannot
+                # start from the card.
+                self.assertNotIn("containment review", cap.reason)
 
         # And the run that CALIBRATED anyway is told its own plain fact, not
         # this one: "this run did not execute your evaluator" is false of it.
@@ -13375,9 +13730,11 @@ class TheWitnessDecidesTheScopeGateNotTheDeclarationTests(unittest.TestCase):
         )
         for shared in (
             "not a judgement of your evaluator",
-            "You can establish that yourself",
-            "answers you already know are right and wrong",
-            "no card can claim this evaluator grades correctly",
+            "nothing here for you to fix",
+            "THIS does not stop your run",
+            "the MODEL writes the statements",
+            "that connection is read-only",
+            "no card can claim it grades correctly",
         ):
             with self.subTest(shared=shared):
                 self.assertIn(shared, taken)
@@ -13422,7 +13779,7 @@ class TheWitnessDecidesTheScopeGateNotTheDeclarationTests(unittest.TestCase):
         )
         self.assertEqual(witnessed.band, "PARTIAL")
         self.assertEqual(
-            witnessed.recommended_action, MODULE.REVIEW_EVALUATOR_CONTAINMENT
+            witnessed.recommended_action, MODULE.CONFIRM_EVALUATOR_CONNECTION
         )
 
     def test_only_evidence_retires_the_charge_never_the_declaration(self) -> None:

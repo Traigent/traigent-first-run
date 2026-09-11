@@ -79,6 +79,17 @@ COMPONENTS = ("agent", "dataset", "evaluation")
 # `collected`.
 BROUGHT, GENERATED = "brought", "generated"
 COMPONENT_ORIGINS = (BROUGHT, GENERATED)
+# How a customer's evaluator reaches its engine, as THEY report it.
+#
+# Ordered so the choices print in the order the question is asked, and named
+# in the customer's own words rather than ours: a read-only connection is a
+# thing they configured, not a property this run measured. There is
+# deliberately no third value for "did not answer" - absence is silence, and a
+# flag that made silence explicit would turn an optional question into one the
+# caller has to answer (traigent-first-run#392, #449).
+READ_ONLY = "read-only"
+READ_WRITE = "read-write"
+EVALUATOR_CONNECTIONS = (READ_ONLY, READ_WRITE)
 
 
 @dataclass(frozen=True)
@@ -252,7 +263,21 @@ def render_text(plan: ReadinessPlan) -> str:
 # The version is what lets it tell a payload where the remedy may name an ask
 # that caps nothing from one where every remedy is a ceiling, exactly the
 # distinction 2 and 3 were bumped for.
-SCHEMA_VERSION = 4
+#
+# 5: `evaluator-calibration-refused` stops blocking. A run whose evaluator
+# executes candidate code or SQL used to emit `status: "BLOCKED"`,
+# `caps[].blocks: true` and `recommended_action: "review-evaluator-containment"`;
+# it now emits `"OK"`, `false`, and `"confirm-evaluator-connection"` - a slug
+# schema 4 never contained (traigent-first-run#392).
+#
+# Additive in keys again - `unblocked` and `blocked` on the delta - and again
+# not additive in MEANING, which is the half that decides. A schema-4 consumer
+# gating paid work on `status` starts a run it would have stopped, and one
+# routing on `recommended_action` meets a value it cannot resolve. Without the
+# bump each version silently accepts the other's payload and `--strict` flips
+# its exit under an unchanged number, which is the reading 2 was bumped to
+# prevent.
+SCHEMA_VERSION = 5
 DEFAULT_WEIGHTS = {"dataset": 40.0, "evaluation": 35.0, "agent": 25.0}
 # Read each entry as "score BELOW this number is that band" - these are
 # exclusive upper bounds, not the score a band requires. The last entry is an
@@ -1236,7 +1261,39 @@ COMPLETE_CALIBRATION = "complete-calibration"
 # is telling it to do the thing the guide forbids, which is what one slug for
 # both states would say - and the score would then be the only party in the
 # package arguing for the unsafe route.
-REVIEW_EVALUATOR_CONTAINMENT = "review-evaluator-containment"
+# AND THE REVERSAL, recorded here because this is where the old decision is.
+#
+# The paragraph above is still true about the SLUG and is now wrong about the
+# outcome. The retired `review-evaluator-containment` slug named a review this guide
+# does not run and a customer cannot start from the card, and it rode on a cap
+# that BLOCKED the paid run at 45/100 under `FIX BEFORE PAID RUN`. Both halves
+# of that sentence were false: there is no fix, because we declined to make the
+# check, and the 45 measured OUR boundary printed on their report as if it were
+# their score.
+#
+# The standing rule this now follows is stated in `references/run-safety.md`:
+# a first run does not stop a legitimate customer from onboarding, and where a
+# customer's own data makes a check unsafe for US to perform they get full
+# knowledge of what was not checked and what proceeding means, and then they
+# proceed. Disclosure, not a gate. Deduct for what the customer controls; never
+# for what we do not own.
+#
+# This REVERSES the blocking half of traigent-first-run#393, which landed
+# `blocks=True` here. It is a reversal rather than a correction and is written
+# down as one: #393 was right that the forbidden remedy must not be handed to
+# the project it is forbidden for, and that half stands. What it also did was
+# convert "we will not run this" into "you may not proceed", and nothing had
+# written down that a first run may not do that. #392 closes as out of scope on
+# the same reasoning - no sandbox, no disposable schema, no parser tier - and
+# the block goes with it.
+#
+# The one thing the customer can usefully answer is not a fix either; it is a
+# fact only they hold, and it settles the whole hazard in a line. A read-only
+# connection means the engine itself refuses a destructive statement, so the
+# risk is gone without any containment this repository would have to own.
+# Asking is optional and silence proceeds (traigent-first-run#449's decision:
+# "if no need to stop, no need, i want it seamless").
+CONFIRM_EVALUATOR_CONNECTION = "confirm-evaluator-connection"
 ACTION_FOR_CONDITION: dict[str, str] = {
     "dataset-absent": "get-data",
     # A file was named and no row in it matched the shape preflight read it
@@ -1360,8 +1417,8 @@ ACTION_FOR_CONDITION: dict[str, str] = {
     "evaluator-unvalidated": COMPLETE_CALIBRATION,
     # The same absent evidence, reached by obeying a rule rather than by
     # skipping a step, and it needs its own remedy for that reason alone. See
-    # `REVIEW_EVALUATOR_CONTAINMENT`.
-    "evaluator-calibration-refused": REVIEW_EVALUATOR_CONTAINMENT,
+    # the retired `review-evaluator-containment` slug.
+    "evaluator-calibration-refused": CONFIRM_EVALUATOR_CONNECTION,
     "evaluator-timeout": "bound-evaluator-cost",
     "agent-no-varying-knobs": "vary-knobs",
     # The third pillar's own absence, and the remedy it could not reach before.
@@ -1634,7 +1691,12 @@ ROUTE_CATEGORY: dict[str, str] = {
     # against their own database - rather than a change to it. Telling someone
     # whose evaluator is fine to repair it is exactly the defect the third
     # category exists to remove.
-    "evaluator-calibration-refused": DIAGNOSTIC,
+    # CLAIM_SCOPING, not DIAGNOSTIC, and the change of category is the change
+    # of meaning. Nothing here diagnoses anything about the customer's
+    # evaluator - the run declined to look at it. What the cap does is bound
+    # what this card may claim, which is the same thing `evaluator-unvalidated`
+    # does one entry up and for the same reason.
+    "evaluator-calibration-refused": CLAIM_SCOPING,
     "evaluator-timeout": CREATION_OR_REPAIR,
     # Conditional, and classified the same way `dataset-below-measurable-size`
     # above already is: by what the result IS, not by whether the run waits.
@@ -2830,14 +2892,67 @@ CALIBRATION_REFUSAL_CORE: dict[tuple[bool, bool, bool], str] = {
 # action without saying which result changes anything is a promise for half
 # its readers, which is the same defect as promising a remedy that cannot be
 # reached, one notch weaker.
+# WHAT THE CARD SAYS ABOUT THE ONE QUESTION IT ASKS, keyed by the answer.
+#
+# THREE ANSWERS, THREE SENTENCES, because a question with one outcome is not a
+# question. `read-only` closes the hazard and says so. `read-write` is the
+# answer worth having: a run that has been TOLD the destructive path is open
+# must not read like a run nobody asked. Silence proceeds, and the silent arm
+# is the only one that asks for anything.
+#
+# Every arm labels the answer as THEIRS. Nothing here opens the connection to
+# look, so this is a declaration bounding a claim, never a measurement earning
+# one - and the card may not let the two read alike.
+#
+# AND EACH ARM NAMES WHAT THE ANSWER DOES NOT COVER, because this cap fires on
+# two different hazards and read-only only answers one of them.
+# `candidate_execution_witnesses` raises on a SQL engine AND on code execution
+# through `_execution_module_name`, so an evaluator that shells out and touches
+# no database reaches here - and "that is the hazard closed" was printed to it,
+# over a `subprocess.run` a read-only connection has no bearing on whatsoever.
+# A false safety claim is the worst sentence on this card, and it is the same
+# defect as #492's database wording: one half of what the gate refuses,
+# written as the whole.
+CONNECTION_DISCLOSURE: dict[str | None, str] = {
+    READ_ONLY: (
+        " You told this run it connects read-only, recorded here as your word "
+        "rather than as anything this run checked: a read-only engine refuses "
+        "a destructive statement, so that closes whatever your evaluator "
+        "reaches through that connection. It says nothing about code your "
+        "evaluator runs outside one."
+    ),
+    READ_WRITE: (
+        " You told this run it connects read-write, recorded here as your word "
+        "rather than as anything this run checked: the destructive path is "
+        "open, so weigh that before approving the spend."
+    ),
+    None: (
+        " If it reaches an engine and that connection is read-only, the engine "
+        "itself refuses a destructive statement, which closes that much - pass "
+        "`--evaluator-connection read-only` and this card will say so. It "
+        "closes nothing for an evaluator that runs candidate code outside a "
+        "connection. Not answering is fine and changes nothing."
+    ),
+}
 CALIBRATION_REFUSAL_ROUTE: dict[tuple[bool, bool, bool], str] = {
+    # THE CEILING NO LONGER NAMES A CONTAINMENT REVIEW, so these two rows may
+    # not point at one. They read ", and the containment review named in the
+    # ceiling is where a run that could make that check gets designed" while
+    # the ceiling beside them was rewritten to name no review at all - a
+    # pointer to something the reader cannot find, which is the exact failure
+    # the paragraph above this constant exists to prevent, and it landed on
+    # the `charged=False` arms: the customer who obeyed and lost no points
+    # (traigent-first-run#392).
+    #
+    # What is true on these two arms is that nothing is owed and nothing is
+    # charged, so the clause says that instead of sending them somewhere.
     (False, True, True): (
-        ", and the containment review named in the ceiling is where a run "
-        "that could make that check gets designed"
+        ", and nothing here asks you for it - no run inside this guide makes "
+        "that check"
     ),
     (False, False, True): (
-        ", and the containment review named in the ceiling is where a run "
-        "that could make that check gets designed"
+        ", and nothing here asks you for it - no run inside this guide makes "
+        "that check"
     ),
     (True, True, True): " - establish the evaluator as the ceiling describes",
     (True, False, True): " - establish the evaluator as the ceiling describes",
@@ -3624,6 +3739,28 @@ class EvaluationFacts:
     # projects pay a charge no rerun lifts. The card says so rather than
     # promising them the evidence is coming.
     calibration_scope_refused: bool = False
+    # HOW THE CUSTOMER'S EVALUATOR CONNECTS, when they said - and `None` when
+    # nobody asked or nobody answered.
+    #
+    # The card asks one question for this shape, and it asked it into nothing.
+    # "say so and this card records it" was printed with no flag to say it
+    # with, no field to hold it and no line that changed if they did - a
+    # promise the script could not keep, which is the same defect as a remedy
+    # a customer cannot perform, one notch weaker
+    # (traigent-first-run#392).
+    #
+    # THREE STATES, and the third is not the same as the second. `read-only`
+    # is the answer that collapses the hazard, because the engine itself
+    # refuses a destructive statement. `read-write` is an answer, and it is
+    # the one worth having: a run that has been told the destructive path is
+    # live should not read identically to a run that was never asked.
+    # `None` is silence, and silence proceeds.
+    #
+    # A DECLARATION, never a measurement. Nothing here opens the customer's
+    # connection to check, so this may bound a claim and may never earn
+    # credit - the rule this module applies to every unverified input, and the
+    # reason the card labels the answer as theirs rather than as a finding.
+    evaluator_connection: str | None = None
 
 
 @dataclass(frozen=True)
@@ -7051,7 +7188,8 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
     # alone (traigent-first-run#392, #393, #394).
     #
     # `calibration_scope_refused` is the run's own declaration that SKILL.md's
-    # evaluator-execution scope gate stopped it. `executes_candidate is True`
+    # evaluator-execution scope gate skipped the calibration - the check, not
+    # the run, which carries on. `executes_candidate is True`
     # is preflight's WITNESS: the walk found a construct that establishes the
     # call path to a code or SQL engine, so the gate would refuse this
     # evaluator whether or not anybody typed the flag. A witness is positive
@@ -7317,7 +7455,7 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
         # "Until a complete calibration is measured" is the right instruction
         # for a run that simply has not calibrated yet, and is an instruction
         # to break the rule for a run the scope gate refused - the same class
-        # of statement `REVIEW_EVALUATOR_CONTAINMENT` exists to keep off this
+        # of statement the retired containment slug existed to keep off this
         # card (traigent-first-run#394). It is decided here, beside the
         # sentence and after every arm, so that "whatever is appended to every
         # arm has to be true of every arm" is a property of one expression
@@ -7335,7 +7473,7 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
         # "Until a complete calibration is measured" is the right instruction
         # for a run that simply has not calibrated yet, and is an instruction
         # to break the rule for a run the scope gate refused - the same class
-        # of statement `REVIEW_EVALUATOR_CONTAINMENT` exists to keep off this
+        # of statement the retired containment slug existed to keep off this
         # card (traigent-first-run#394). Everything the refused states say is
         # decided in `calibration_refusal_consequence`, which is handed the
         # facts and returns the sentence beside the deduction it describes:
@@ -7720,15 +7858,13 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
             # The witness rides along because a refusal a customer cannot
             # check is one they cannot usefully disagree with.
             witness = f" ({facts.execution_witness})" if facts.execution_witness else ""
-            # THE CLASS, and the witness beside it names the instance. This
-            # said "a check that opens your database", which is one half of
-            # what the gate refuses: `candidate_execution_witnesses` walks
-            # every import through `_execution_module_name` as well as its SQL
-            # branch, so an evaluator that shells out and touches no database
-            # raises this cap and was told it had opened one
-            # (traigent-first-run#492). Every other sentence in this module
-            # already says "a code or SQL engine"; only the two a customer
-            # reads did not.
+            # THE CLASS, and the witness beside it names the instance. Naming
+            # only the database is half of what the gate refuses:
+            # `candidate_execution_witnesses` walks every import through
+            # `_execution_module_name` as well as its SQL branch, so an
+            # evaluator that shells out and touches no database raises this cap
+            # too, and a sentence about databases is unperformable for it
+            # (traigent-first-run#492).
             body = (
                 "the evaluator check was run on it, which this guide's "
                 f"evaluator-execution scope gate does not permit{witness}, so "
@@ -7775,39 +7911,92 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
                 # the task - and it is what the band is reporting; what
                 # changed is that it no longer arrives as the whole message.
                 declared + body + " That is a limit of this run and not a "
-                "judgement of your evaluator, which may well be sound. You can "
-                "establish that yourself, outside this guide, by running it "
-                "where it already runs, on answers you already know are "
-                "right and wrong, and confirming it separates them; the "
-                "containment review is where the boundary for doing that here "
-                "gets designed. Until "
-                "some run makes that check, no card can claim this evaluator "
+                "judgement of your evaluator, which may well be sound - there "
+                "is nothing here for you to fix, because the check is one this "
+                "guide declined to make, and THIS does not stop your run. "
+                "What proceeding means: during the paid run the MODEL writes "
+                "the statements and your evaluator runs them against whatever "
+                "it is configured to reach, many times over - generated "
+                "statements, not yours."
+                + CONNECTION_DISCLOSURE[facts.evaluator_connection]
+                + " Until some run measures this evaluator against answers "
+                "already known to be right and wrong, no card can claim it "
                 "grades correctly, which is what the ceiling reports.",
-                # BLOCKS, because the guide has already stopped
-                # (traigent-first-run#393). `references/run-safety.md` ends the
-                # run for this shape before calibration, credentials, provider
-                # calls and paid work; the card used to answer OK and say the
-                # paid run may start, so the two documents a customer follows
-                # disagreed about a state they arrive in by following them. The
-                # card blocking does not create that cost - it records it, and
-                # refusing to record it is what made the artifact lie.
+                # DOES NOT BLOCK, and this REVERSES the half of
+                # traigent-first-run#393 that set `blocks=True` here. Written
+                # down as a reversal rather than edited away: a repository that
+                # quietly inverts its own decisions stops being able to trust
+                # its records.
                 #
-                # On BOTH arms, declared and witnessed. An earlier draft split
-                # them, blocking only where the walk saw the engine, so that
-                # declaring a refusal stayed cheap. It was withdrawn twice
-                # over: nobody falsely declares their own evaluator dangerous,
-                # so there is nothing to game, and the honest run has already
-                # stopped by mandate whether or not this card says so. The run
-                # that declares nothing and calibrates anyway is uncovered
-                # either way, is `calibrate_evaluator.py`'s refusal to catch
-                # where it can, and is not made worse here.
-                blocks=True,
-                # And it no longer ASKS. `asks` exists for the run that
-                # proceeds and still owes the user an answer first; a blocking
-                # condition already routes its remedy through
-                # `recommended_action`, so setting both would say the run
-                # carries on and does not in one payload.
-                asks=False,
+                # What #393 argued was that `references/run-safety.md` ends the
+                # run for this shape, so a card answering OK made the two
+                # documents a customer follows disagree. THE PREMISE IS WHAT
+                # CHANGED. run-safety no longer ends the run for this shape; it
+                # discloses and continues, under the standing rule it now
+                # states - a first run does not stop a legitimate customer from
+                # onboarding, and where their own data makes a check unsafe for
+                # US to perform they get full knowledge of what was not checked
+                # and what proceeding means, and then they proceed. So the two
+                # documents agree again, at the other value.
+                #
+                # `FIX BEFORE PAID RUN` at 45/100 was false twice over. There
+                # is no fix - nothing the customer changes about their
+                # evaluator alters the outcome, because the outcome is our
+                # decision not to look. And the 45 measured OUR boundary while
+                # printing on THEIR report as their score. Same class as the
+                # shipped sentences #487, #488, #490 and #492 correct: a card
+                # saying something the code does not do.
+                #
+                # THE CEILING STAYS, and that distinction is the design. A
+                # ceiling bounds what this CARD MAY CLAIM, which is honest -
+                # nothing established that this evaluator ranks the task. A
+                # block bounds what the CUSTOMER MAY DO, which is ours to
+                # justify and we cannot. `evaluator-unvalidated` one condition
+                # up has carried exactly this shape all along - same ceiling,
+                # `blocks=False`, `asks=True` - so this is the precedent rather
+                # than an exception to it.
+                blocks=False,
+                # And it ASKS, on the one question that is genuinely theirs.
+                # Not a fix and not a check they owe: whether the evaluator
+                # connects read-only is a fact only they hold, and it settles
+                # the hazard outright, because a read-only engine refuses a
+                # destructive statement by itself - no containment this
+                # repository would have to own. `asks` is what puts it in
+                # `recommended_action` for a run that PROCEEDS, which is the
+                # state this cap now describes and did not before.
+                #
+                # ALWAYS, because no answer to this question settles it.
+                #
+                # Two revisions tried to let an answer quiet the card and both
+                # were wrong in the same place. Keying on HAVING an answer made
+                # `read-write` machine-indistinguishable from a clean run, so
+                # the most dangerous answer was the quietest. Keying on
+                # `== READ_ONLY` fixed that and left a worse one: this cap
+                # fires on a SQL engine AND on code execution, so a
+                # `subprocess` evaluator with no database anywhere answered
+                # `read-only` and got `asks=False`, `proceed`, and a report
+                # line identical to a purely advisory cap - a false all-clear,
+                # bought with a declaration that has no bearing on the hazard
+                # that actually fired.
+                #
+                # Distinguishing the two would need preflight to publish which
+                # branch of the witness raised this, and it does not. Until it
+                # does, no answer here closes anything this run can verify - so
+                # the answer is RECORDED on the card and the question stays
+                # open. Nothing blocks either way, silence still proceeds, and
+                # the pre-spend card keeps carrying the answer to the moment
+                # money moves.
+                #
+                # Silence proceeds. The disclosure above has already done its
+                # work, and traigent-first-run#449's decision governs the rest:
+                # "if no need to stop, no need, i want it seamless".
+                #
+                # AND THE REASON SAYS WHAT THIS CAP DOES, NEVER WHAT THE RUN
+                # WILL DO. A cap sees its own condition and no other, so it may
+                # not promise the card: on the ordinary cold start
+                # `dataset-absent` and `agent-absent` block beside it and
+                # `status` is BLOCKED.
+                asks=True,
             )
         )
     return combine("evaluation", subs), caps
@@ -10221,7 +10410,20 @@ def render_markdown(
         # `--json` still carries `action_kind` on every cap for consumers that
         # want it; what goes away is the word "fix" over a state that is not
         # broken.
-        remedy = f", fix: `{cap.action_kind}`" if cap.blocks or cap.asks else ""
+        # "fix" ONLY WHERE SOMETHING IS BROKEN. A cap that asks and does not
+        # block is not a defect, and this line printed `fix:` beside a reason
+        # whose own words are "there is nothing here for you to fix" - in the
+        # durable artifact, which is the one that outlives the terminal
+        # (traigent-first-run#392). The word was inherited wholesale when that
+        # condition moved from `blocks=True` to `asks=True`, so the comment
+        # below - which exists to keep "fix" off a state that is not broken -
+        # was defeated by a flag flip one condition over.
+        if cap.blocks:
+            remedy = f", fix: `{cap.action_kind}`"
+        elif cap.asks:
+            remedy = f", asks: `{cap.action_kind}`"
+        else:
+            remedy = ""
         return f"- **{cap.condition}** ({effect}{remedy}): {cap.reason}"
 
     if blocking:
@@ -10615,6 +10817,16 @@ class PreviousScore:
     overall: int
     pillars: dict[str, int]
     caps: tuple[str, ...]
+    # WHICH of those caps stopped the run, because a cap can stop blocking
+    # without leaving the card. Comparing conditions alone made the largest
+    # change this package has made - a blocking ceiling becoming an advisory
+    # one - invisible on every surface: same condition, same ceiling, same
+    # pillar scores, and `changed: none` printed across it
+    # (traigent-first-run#392). Defaulted, because a payload written before
+    # this field existed carries no `blocks` and must still be readable; an
+    # older card compares as "nothing was blocking", which is the honest
+    # reading of a document that does not say.
+    blocking: tuple[str, ...] = ()
 
 
 def previous_score_from_document(document: Any, reference: str) -> PreviousScore:
@@ -10673,7 +10885,13 @@ def previous_score_from_document(document: Any, reference: str) -> PreviousScore
             "prints"
         )
     return PreviousScore(
-        overall=overall, pillars=read, caps=tuple(cap["condition"] for cap in caps)
+        overall=overall,
+        pillars=read,
+        caps=tuple(cap["condition"] for cap in caps),
+        # `is True` rather than truthiness: a payload that omits `blocks`
+        # says nothing about it, and reading a missing key as False is the
+        # same answer arrived at honestly.
+        blocking=tuple(cap["condition"] for cap in caps if cap.get("blocks") is True),
     )
 
 
@@ -10694,6 +10912,21 @@ def score_delta(previous: PreviousScore, score: ReadinessScore) -> dict[str, Any
         condition for condition in previous.caps if condition not in current_caps
     ]
     new = [condition for condition in current_caps if condition not in previous.caps]
+    # A cap that stopped blocking and stayed on the card. Neither `cleared`
+    # nor `new` can see it - the condition is in both lists - and it is the
+    # change a reader most needs, because it is the difference between a run
+    # that may start and one that may not.
+    current_blocking = tuple(cap.condition for cap in score.caps if cap.blocks)
+    unblocked = [
+        condition
+        for condition in previous.blocking
+        if condition in current_caps and condition not in current_blocking
+    ]
+    blocked = [
+        condition
+        for condition in current_blocking
+        if condition in previous.caps and condition not in previous.blocking
+    ]
     changed = [name for name in PILLAR_ORDER if previous.pillars[name] != current[name]]
     unchanged = [name for name in PILLAR_ORDER if name not in changed]
     # One line, two halves, both always present: a reader scanning for the
@@ -10709,6 +10942,11 @@ def score_delta(previous: PreviousScore, score: ReadinessScore) -> dict[str, Any
         )
         + "; unchanged: "
         + (", ".join(unchanged) or "none")
+        # Said on the same line rather than only in the payload, because the
+        # line is what a reader reads. Omitted entirely when nothing moved, so
+        # the ordinary re-score keeps the shape it had.
+        + ("; no longer blocking: " + ", ".join(unblocked) if unblocked else "")
+        + ("; now blocking: " + ", ".join(blocked) if blocked else "")
     )
     return {
         "overall": {"previous": previous.overall, "current": score.overall},
@@ -10720,6 +10958,8 @@ def score_delta(previous: PreviousScore, score: ReadinessScore) -> dict[str, Any
         "unchanged": unchanged,
         "cleared": cleared,
         "new": new,
+        "unblocked": unblocked,
+        "blocked": blocked,
         "line": line,
     }
 
@@ -11462,6 +11702,7 @@ def evaluation_facts_from_calibration(
     comparison_shape: str | None = None,
     comparison_witness: str | None = None,
     calibration_scope_refused: bool = False,
+    evaluator_connection: str | None = None,
 ) -> EvaluationFacts:
     """Normalize both shapes `calibrate_evaluator` emits into one fact set.
 
@@ -11494,6 +11735,7 @@ def evaluation_facts_from_calibration(
             comparison_shape=comparison_shape,
             comparison_witness=comparison_witness,
             calibration_scope_refused=calibration_scope_refused,
+            evaluator_connection=evaluator_connection,
         )
     if not isinstance(payload, dict):
         raise CalibrationInputError(
@@ -11590,6 +11832,7 @@ def evaluation_facts_from_calibration(
         # that reads it fires only where no complete calibration was
         # established, so a payload that carries one raises nothing here.
         calibration_scope_refused=calibration_scope_refused,
+        evaluator_connection=evaluator_connection,
     )
 
 
@@ -19863,6 +20106,19 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--evaluator-connection",
+        choices=EVALUATOR_CONNECTIONS,
+        help=(
+            "how the customer says their evaluator connects, where the "
+            "evaluator-execution scope gate made this run ask. `read-only` is "
+            "the answer that removes the hazard, because the engine itself "
+            "refuses a destructive statement; `read-write` is an answer too, "
+            "and the card says what it means. Omitting it is silence, which "
+            "proceeds - the question never blocks. A declaration this score "
+            "cannot verify, so it changes what the card SAYS and no number"
+        ),
+    )
+    parser.add_argument(
         "--evaluator-origin",
         choices=COMPONENT_ORIGINS,
         help=(
@@ -20070,6 +20326,22 @@ def run(argv: Sequence[str] | None = None) -> int:
         )
         return 2
 
+    # The same guard, for the same reason, on the flag that arrived last. The
+    # paragraph above is the rule and this flag shipped without it: a customer
+    # declaring their evaluator connects read-write on the planner half had
+    # that declaration accepted and dropped, which is the defect that
+    # paragraph names, on the safety declaration it calls the worst one to
+    # lose quietly.
+    if args.evaluator_connection and not scoring_requested(args):
+        print(
+            "cannot read scoring input: --evaluator-connection answers a "
+            "question the scoring half asks. The planner half reads no "
+            "evaluator, so nothing here would record the answer. Pass it "
+            "beside --preflight.",
+            file=sys.stderr,
+        )
+        return 2
+
     if args.row_review and not args.preflight:
         print(
             "cannot read scoring input: --row-review needs --preflight - its "
@@ -20248,6 +20520,7 @@ def run(argv: Sequence[str] | None = None) -> int:
             comparison_shape=comparison_shape,
             comparison_witness=comparison_witness,
             calibration_scope_refused=args.calibration_scope_refused,
+            evaluator_connection=args.evaluator_connection,
         )
         # `--config-space` first, and the `elif` is the safety property, not a
         # style choice: a brought document decides the agent pillar outright,
@@ -20346,6 +20619,34 @@ def run(argv: Sequence[str] | None = None) -> int:
     score = score_run(
         dataset_facts, evaluation_facts, agent_facts, args.weights, row_review
     )
+    # A SAFETY DECLARATION IS NEVER SILENTLY DROPPED, and this is the half a
+    # parse-time guard cannot reach. `--evaluator-connection` answers a
+    # question only `evaluator-calibration-refused` asks, and whether that cap
+    # fires is not knowable until the facts are built - so the guard above
+    # refuses it on the planner half, where there is no evidence at all, and
+    # every scoring route it admits was left honouring it nowhere. Measured on
+    # three of them - `--config-space`, `--agent-knobs` and a `--preflight`
+    # with no execution witness - the payload was byte-identical with the flag
+    # and without it.
+    #
+    # Refused rather than warned, on the same reasoning the comment above the
+    # planner guard gives: an option that means one thing in one mode and
+    # nothing in another is a defect in any case, and a safety declaration is
+    # the worst one to lose quietly. A customer who says their evaluator
+    # connects read-write has told this run something, and a run that takes it
+    # and says nothing has answered them with silence.
+    if args.evaluator_connection and not any(
+        cap.condition == "evaluator-calibration-refused" for cap in score.caps
+    ):
+        print(
+            "cannot read scoring input: --evaluator-connection answers the "
+            "question the evaluator-execution scope gate asks, and this score "
+            "did not reach that gate - no calibration refusal is on this card, "
+            "so nothing here records the answer. Drop the flag, or pass the "
+            "evidence that raises the refusal.",
+            file=sys.stderr,
+        )
+        return 2
     assumption = provenance_assumption(
         score, dataset_facts, evaluation_facts, agent_facts, args.weights, row_review
     )

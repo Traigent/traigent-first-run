@@ -82,8 +82,9 @@ Evaluator (evaluation method, scorer)
   Kinds: exact match, comparison over canonical form - how a query or code
   answer is graded here, with aliases, case and spacing resolved before
   matching - overlap metrics (F1), or an LLM-as-judge that reads a rubric.
-  Running the answer to grade it, as execution match and unit tests do, ends
-  this guide instead.
+  Running the answer to grade it, as execution match and unit tests do, is a
+  check this guide skips rather than one that stops you: the run carries on
+  and the card says what went unchecked.
   Ask like this: "How do you (or should we) decide whether an answer is correct?"
 
 Evaluation (grading)
@@ -291,8 +292,9 @@ The lines under each pillar on the card
   from calibrating the evaluator - that happens later in the run, so at the
   opening score they have not been done yet. Neither is something you were
   supposed to bring, and the two are not charged alike. The first keeps its
-  weight and earns nothing, so it does hold the pillar under 100 until
-  calibration is done. The second is left out of the total altogether and
+  weight and earns nothing, so it does hold the pillar under 100 until some run
+  measures the evaluator - calibration, except where this guide declined to run
+  it, and then no run here makes that measurement and the ceiling stands. The second is left out of the total altogether and
   deducts nothing, which is why the card says so on the line itself.
 
   No settings document ever reaches an opening score. Every config-space file

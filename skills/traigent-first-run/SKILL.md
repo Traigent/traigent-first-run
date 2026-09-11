@@ -1,6 +1,6 @@
 ---
 name: traigent-first-run
-description: Guide a professional first Traigent optimization for non-executing comparison evaluators, such as classification, extraction, short-answer QA, and query or code text compared rather than run. Use when a user asks to try Traigent, get started with Traigent, run a first optimization, optimize an agent for the first time, set up Traigent, or opens the Traigent/traigent-first-run repository. Inspect what already exists, preserve real components, diagnose limitations with concrete evidence, offer repair and revalidation before spending, create only the missing pieces as one coherent system, distinguish demonstration substitutes from production readiness, preserve the user's baseline or generate a credible small sweep, run one broader bounded optimization, and report what the result does and does not prove.
+description: Guide a professional first Traigent optimization for comparison evaluators, such as classification, extraction, short-answer QA, and query or code text compared rather than run; an evaluator that runs candidate code or SQL is handled by skipping that one check, never by refusing the run. Use when a user asks to try Traigent, get started with Traigent, run a first optimization, optimize an agent for the first time, set up Traigent, or opens the Traigent/traigent-first-run repository. Inspect what already exists, preserve real components, diagnose limitations with concrete evidence, offer repair and revalidation before spending, create only the missing pieces as one coherent system, distinguish demonstration substitutes from production readiness, preserve the user's baseline or generate a credible small sweep, run one broader bounded optimization, and report what the result does and does not prove.
 license: Apache-2.0
 ---
 
@@ -143,7 +143,7 @@ approval.
 | Create or update a minimal `.env` | Proceed only after free checks, and only through `references/run-safety.md`'s ordered handoff, which selects the file. Preserve existing values and comments, append only its missing provider key, and require mode `0600` before opening. Before writing, run that reference's git-tracked-file safety check and its ignore verification; it owns the exact commands and exit-code handling, and stop before secret entry if either check fails. Outside Git, do not create `.gitignore`. Never copy or request a duplicate key. Add or request the Traigent key only after the baseline checkpoint. |
 | Repair a working copy after the user chooses repair | Proceed only within the agreed repair scope, then revalidate as section 4's post-repair rule states. |
 | Change real labels, expected answers, examples, or rubric policy | Show the exact judgment-dependent change and obtain explicit approval. |
-| Execute an evaluator or mock check | Proceed without provider approval only after inspection proves a non-executing evaluator path is local-only or every mock model call is intercepted, with no external side effects. A path that executes or imports candidate output as code, shells out with it, or submits it to a code/SQL engine is outside this first-run guide; what is outside is that path, never the task whose answer is code or SQL: stop before execution and follow `run-safety.md`'s manual-containment route. |
+| Execute an evaluator or mock check | Proceed without provider approval only after inspection proves a non-executing evaluator path is local-only or every mock model call is intercepted, with no external side effects. A path that executes or imports candidate output as code, shells out with it, or submits it to a code/SQL engine is one this guide will not run on its own initiative; what is out of scope is that path, never the task whose answer is code or SQL, and never the customer's onboarding: skip that execution, disclose it per `run-safety.md`, and continue. |
 | Make provider, private-data, connected Traigent, or external calls other than the narrow dependency fetch | Obtain stage-specific approval for recipients/data, scope, runtime, and ceiling: baseline first; connected optimization after its checkpoint. |
 | Perform destructive or production-affecting actions | Obtain separate explicit approval for the exact action. |
 
@@ -310,8 +310,8 @@ or executing path, or an LLM judge that needs paid approval. Missing calibration
 not a failed evaluator; the `evaluator-unvalidated` ceiling limits the readiness claim to 45 until
 the evaluation method is actually checked, and the card's recommended action names that outstanding
 calibration rather than reading `proceed`. Where the deferral is the evaluator-execution scope gate
-rather than a step this run could take, pass `--calibration-scope-refused` so the card asks for the
-containment review instead of for the calibration the gate forbids; it moves no number, and it is
+rather than a step this run could take, pass `--calibration-scope-refused` so the card discloses the
+unmade check instead of asking for the calibration the gate forbids; it moves no number, and it is
 the only route where preflight finds no engine. `calibrate_evaluator.py` refuses such an
 evaluator itself, naming the file and line, and `references/run-safety.md` records why no
 in-process route replaces it. Apply the run-scoped evaluator-method rule above to both
@@ -446,7 +446,7 @@ conversation; recording it is a write and waits for the answer.
    inventory found request/response logs or accepted traces, say they are built from those: "I
    will create the dataset, the evaluation method and the agent from your logs" is a different
    offer from "I will write them", and the second undersells material they already have. Carry the
-   four things "One ask for every gap" below requires - including the `I have it` answer and its
+   five things "One ask for every gap" below requires - including the `I have it` answer and its
    path - on this same question, so it stays one and not two.
 3. Ask exactly one task-intent question: **"What should the walkthrough agent do?"** Offer at
    most three short choices, each put as the job itself - "pull the total and the date out of a
@@ -511,7 +511,7 @@ the user hears it once, in one question, riding on the board above rather than a
 turn, and before anything is built. Never one question per component: a project with no examples and no
 way to grade them has a single gap in it, and asking twice asks the same person to consent to the
 same substitution twice. When a quality advisory fires in the same turn, fold it in - a gap and a
-weakness are one decision about what this run will measure. That question carries four things:
+weakness are one decision about what this run will measure. That question carries five things:
 
 1. What the inventory did not find, named plainly and all of it at once - what was searched for and
    not seen, never what the project does not have - and, on the same line, what it found too little
@@ -532,7 +532,6 @@ weakness are one decision about what this run will measure. That question carrie
    never guess. Where they name nothing, proceed on accuracy and cost **and say that in those
    words**, so a default nobody chose is not mistaken for a choice somebody made.
    `references/evaluation-and-dataset.md` owns what the answer becomes.
-
 Then stop and wait, and ask nothing else here; what this run writes is shown at the pre-spend
 approval in section 6, the other checkpoint. The question closes the message: the board and the
 cost sit above it, and no summary of it sits above them.
@@ -540,7 +539,7 @@ A path given here names material that was in the project all along, so re-run th
 read that as the opening score; the record waits for this answer in any gap run, for the reason the
 zero-anchor gate above already gives for its own.
 When nothing anchors task intent at all this is not a second question - the zero-anchor gate above
-asks one and carries these four things on it. The answer covers absence and shortfall, never a
+asks one and carries these five things on it. The answer covers absence and shortfall, never a
 defect; broken
 material keeps every gate section 4 already puts on it. `references/component-creation.md` owns the
 wording, what a supplied path is checked for, and where each way of not getting one lands.
@@ -609,8 +608,8 @@ Follow this order:
    Resolve any `permutation_question` from inspected evidence; ask before paid work only if the
    competing order semantics remain unresolved.
    If inspection identifies an execution evaluator, do not use a permutation probe to turn a
-   parse/runtime result into evidence. The scope stop below ends this first-run guide before any
-   evaluator execution.
+   parse/runtime result into evidence. The scope gate below skips the evaluator check rather than
+   running it, and the run carries on from there under that reference's disclosure.
 2. If unresolved product-grading ambiguity would materially change which output is correct or how
    candidate configurations rank, ask exactly one product-grading question, explain the affected
    decision, then stop and wait. Otherwise record that no ambiguity remains and do not add a generic
@@ -627,11 +626,10 @@ Follow this order:
    `--evaluator-method` value to this preflight and the paired readiness invocation in step 5 (or
    omit it from both when no method exists). This heuristic check does not assert SDK compatibility.
 4. Before calibration, apply `references/run-safety.md`'s execution-evaluator scope gate. If the
-   resolved evaluator call path identifies code/SQL execution, record the `containment` stop and
-   end this guide before calibration, environment setup, credentials, provider calls, or paid work.
-   What the stop is about at this step is the database such a scorer opens, not the probes it runs,
-   which are the ones your matrix authored; the trial where the model writes the query stays closed
-   either way.
+   resolved evaluator call path identifies code/SQL execution, record the `containment` warning, skip
+   calibration, and continue the run on the disclosure that reference sets out - the run does not
+   end, and a `stopped` identity would say in the durable log that it had. What is refused at this step is the database such a scorer opens on our initiative, not the
+   probes it runs, which are the ones your matrix authored.
    Otherwise, run deterministic calibration only after a `sufficient`
    semantic-coverage verdict. Its path must be fully inspected, must not execute
    candidate-generated code or SQL, and must be local-only and
@@ -775,11 +773,13 @@ component on purpose, the run continues, and what the ceiling refuses is the cla
 when that gate establishes eligibility, or keep the ceiling and name the concrete deferral. It is
 an evidence boundary, not a repair finding.
 `evaluator-calibration-refused` is that same evidence boundary reached by the scope gate rather than
-by a step nobody took, and it blocks where `evaluator-unvalidated` does not: the scope gate ends this
-run, so the card records the stop rather than reporting that the paid run may start. It routes to the
-manual-containment route in `references/run-safety.md`, never to running the check here. Say that the
-ceiling is about missing evidence and not a finding against their evaluator, and never present the
-unsafe route as the way to lift it.
+by a step nobody took, and like `evaluator-unvalidated` it does not block: the run proceeds on the
+disclosure `references/run-safety.md` sets out, and the ceiling bounds what the card may claim rather
+than what the customer may do. Its one ask is whether their evaluator connects read-only, and the
+pre-spend approval in section 6 is where it is put - the moment the answer bears on, and the one
+place it is asked - never a stop of its own; silence proceeds. Say that the ceiling is about
+missing evidence and not a finding against their evaluator, that there is nothing for them to fix
+because the unmade check is ours, and never present the unsafe route as the way to lift it.
 `evaluator-timeout` is neither a repair to route nor the invalid-evaluator
 paragraph: calibration ran and did not finish, which establishes nothing about this evaluator and
 does not make it invalid - slow and broken look identical from here. Settle it while gaps are still
@@ -1283,6 +1283,11 @@ The first run is complete only when:
 - The assistant performed and recorded an evidence-backed semantic-coverage review of every
   material input, outcome, and rubric/schema branch, including mode and threshold rationale, known
   gaps, and the verdict before execution.
+- **The three criteria above are met by the `containment` warning where the evaluator-execution
+  scope gate skipped calibration.** That run never calibrates, so requiring its evidence would
+  leave it unable to finish - continuing and never completing, which is the block this guide
+  removed wearing a different shape. What it records instead is the skipped check, the disclosure,
+  and the connection answer if one was given.
 - Any unresolved ambiguity that would materially change correctness or ranking was resolved by one
   product-grading question before calibration; absent such ambiguity, no review-only pause
   occurred.

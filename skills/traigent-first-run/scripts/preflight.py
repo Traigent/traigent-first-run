@@ -3159,8 +3159,8 @@ _ENGINE_CALL_NAMES: frozenset[str] = frozenset(
 # That is the same one-directional reading the module list is built on: the
 # cost of declining is a claim, and the cost of claiming wrongly is a customer
 # refused an evaluator that does what the guide asked for - which since the
-# calibration scope gate is a stop and a manual containment review, not a
-# smaller number.
+# calibration scope gate skips that check and lets the run carry on, costs
+# them the measurement rather than the run.
 #
 # WHAT IT GIVES UP, named rather than left to be found: a scorer that imports
 # nothing at all and submits candidate text through a connection handed in with
@@ -4066,8 +4066,9 @@ def check_evaluator(path: Path) -> None:
             f"{path} parses as valid Python, and its call path reaches a code "
             f"or SQL engine: {'; '.join(witnesses[:MAX_REPORTED_EXECUTION_WITNESSES])}"
             ". This guide grades with non-executing comparison evaluators, so "
-            "read the call path and, if candidate output reaches it, stop here "
-            "and design containment separately" + comparator_note,
+            "read the call path; if candidate output reaches it, this guide "
+            "skips its own evaluator check and your run carries on - nothing "
+            "here stops you" + comparator_note,
             {
                 "exists": True,
                 "parses": True,
