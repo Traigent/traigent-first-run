@@ -2410,8 +2410,10 @@ CAP_NO_IMPLICATION: dict[str, str] = {
         "search-space conditions"
     ),
     "evaluator-calibration-refused": (
-        "mutually exclusive with the unvalidated route it shares a ceiling "
-        "with - one branch raises one or the other and never both - and a "
+        "mutually exclusive with the unvalidated route - one branch raises one "
+        "or the other and never both - which is why the two share a ceiling on "
+        "the declared arm and part company on the witnessed one, where this "
+        "condition bounds nothing at all. And a "
         "refusal to execute this evaluator says nothing about where the rows "
         "came from or how large the search space is"
     ),
@@ -3169,6 +3171,34 @@ class CalibrationRefusalLine:
         if self.names_ceiling:
             text += CALIBRATION_REFUSAL_ROUTE[self.core_key]
         return text
+
+
+def witnessed_engine(facts: "EvaluationFacts") -> bool:
+    """Did a walk actually QUOTE the construct, or did a document just say so.
+
+    The flag and the witness are not the same evidence, and only one of them
+    can carry thirty-two points.
+
+    `executes_candidate` is `reported_bool(shape["executes"])`, read straight
+    out of the `--preflight` document handed to this script. Nothing here
+    produced it and nothing here can check it. `execution_witness` is the
+    construct and the line preflight's walk quoted - positive evidence a reader
+    can go and disagree with.
+
+    Keyed on the flag alone, lifting the ceiling made the flag worth +32: a
+    hand-written `{"executes": true}` with no witness scored 77 where the same
+    document scored 45 before this change. That inverts the rule this module
+    applies everywhere else - a judgement may withhold a claim and may never
+    manufacture one - and it inverts it on the ONE property the guide treats as
+    the unsafe shape, so the cheapest way to a high score became claiming your
+    evaluator opens a database.
+
+    The witness is what this file already says stops the claim being free. So
+    the ceiling comes off where the walk quoted something, and stays wherever
+    all this run holds is somebody's word - which is the same line the CHARGE
+    is drawn on, one field over.
+    """
+    return facts.executes_candidate is True and bool(facts.execution_witness)
 
 
 def calibration_refusal_consequence(
@@ -8202,7 +8232,7 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
                 # `calibration_scope_refused` promises.
                 (
                     CALIBRATION_REFUSED_NO_CEILING
-                    if facts.executes_candidate is True
+                    if witnessed_engine(facts)
                     else CALIBRATION_REFUSED_CEILING
                 ),
                 # The order is the message: what we did, why, that it is not
@@ -8257,7 +8287,26 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
                 "already known to be right and wrong, no card can claim it "
                 "grades correctly - so the evaluation pillar above reports "
                 "two of its four checks as measured, and this run cannot "
-                "present as STRONG. Your score is not reduced for it.",
+                "present as STRONG."
+                # ARM-AWARE, and it has to be, because the ceiling above is.
+                #
+                # "Your score is not reduced for it" is true where the walk
+                # WITNESSED the engine - that arm carries no ceiling. It is
+                # false on the declaration-only arm, which is still held at 45,
+                # and printing it there put "LIMITED TO 45" and "your score is
+                # not reduced" on one card. That is the class this whole change
+                # exists to remove, re-committed by the change itself: the
+                # sentence was written while the ceiling came off
+                # unconditionally, and narrowing the ceiling to the witnessed
+                # arm did not revisit it.
+                + (
+                    " Your score is not reduced for it."
+                    if facts.executes_candidate is True
+                    else " The ceiling above stands for a different reason: no "
+                    "preflight report for this evaluator reached this score, so "
+                    "nothing here established what it reaches. That is a gap in "
+                    "what this run was given, not a finding about your file."
+                ),
                 # DOES NOT BLOCK, and this REVERSES the half of
                 # traigent-first-run#393 that set `blocks=True` here. Written
                 # down as a reversal rather than edited away: a repository that

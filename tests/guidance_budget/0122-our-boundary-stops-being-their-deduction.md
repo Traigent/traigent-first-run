@@ -3,10 +3,10 @@
 follows: 0121
 follows-resident-measured: 107_808
 follows-total-measured: 515_968
-resident-ceiling: 107_998
-resident-measured: 107_994
-total-ceiling: 517_855
-total-measured: 517_851
+resident-ceiling: 108_052
+resident-measured: 108_048
+total-ceiling: 518_013
+total-measured: 518_009
 
 Two kilobytes, and most of it is a glossary headword plus one disclosure bullet learning to stop
 claiming something nobody checked. The entry before this one removed the block and left the number
@@ -45,3 +45,11 @@ it: "which may well be sound" is the same unearned verdict pointed the friendly 
 symmetric and true, that we did not check, that we therefore do not know either way, and that no
 step in this guide would change it - not because they failed anything, but because this check is
 outside what the guide performs.
+
+A review of this entry's own change found the class it exists to remove, re-committed by the change
+itself. The card's closing sentence read "Your score is not reduced for it", written while the
+ceiling came off unconditionally. Narrowing the ceiling to the witnessed arm did not revisit it, so
+the declaration-only card printed LIMITED TO 45 and "your score is not reduced" together, four lines
+apart. The sentence is arm-aware now, and the safety reference stopped stating the 45 as though it
+applied to both arms - it was wrong there by thirty-two points for the arm that whole section is
+written about.
