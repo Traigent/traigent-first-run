@@ -3749,6 +3749,26 @@ class TheSeamBetweenTheProbesAndTheAgentTests(unittest.TestCase):
         self.assertIn("--scorer could not be loaded", wrong_name.stderr)
         self.assertIn("is a wrong flag: fix it", wrong_name.stderr)
 
+    def test_a_scorer_that_exits_four_itself_is_not_called_unloadable(self) -> None:
+        """The worker runs CUSTOMER code, so its exit status is not ours alone.
+
+        `sys.exit(4)` from inside `score()` - loaded, called, running - matched
+        `WORKER_SCORER_UNLOADABLE` and was reported as a flag that could not be
+        loaded. False twice: it loaded, and it ran. The status is corroborated
+        against the marker the worker prints, so only our own refusal claims it.
+        """
+        exiting = (
+            "import sys\n\n\n"
+            "def task_score(*, output, expected, input_data, metadata):\n"
+            "    sys.exit(4)\n"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            process, _ = self.calibrate(
+                directory, "--task-kind", "code-sql", scorer=exiting
+            )
+        self.assertEqual(process.returncode, 1, process.stderr)
+        self.assertNotIn("could not be loaded", process.stderr)
+
     def test_a_missing_scorer_dependency_is_not_a_wrong_flag(self) -> None:
         """The non-firing half, and the reason the fix above is narrow.
 

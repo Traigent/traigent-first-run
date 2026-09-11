@@ -876,7 +876,7 @@ def run_worker() -> int:
                     # is_not_reported_as_a_broken_transform` failed, which is
                     # what that test is for.
                     print(
-                        f"--scorer could not be loaded: "
+                        f"{SCORER_UNLOADABLE_MARKER} "
                         f"{type(error).__name__}: {error}",
                         file=sys.stderr,
                     )
@@ -1098,13 +1098,19 @@ def loadable_callable_spec(value: str) -> str:
     customer code at argument-parsing time - which is the one thing the
     execution gate exists to hold back.
     """
-    file_part, separator, function_part = value.rpartition(":")
+    # `partition`, not `rpartition`, and no `expanduser`: both to match
+    # `load_function`, which is the thing that will actually open this. A
+    # validator that resolves a different string certifies a path nobody opens
+    # - it passed `~/scorer.py` by expanding the tilde and then handed the
+    # unexpanded text to `subprocess`, and it refused a real directory NAMED
+    # `~` that had worked, with no spelling that got through.
+    file_part, separator, function_part = value.partition(":")
     if not separator or not file_part or not function_part:
         raise argparse.ArgumentTypeError(
             "must be FILE.py:FUNCTION, with the function named after a colon"
         )
     try:
-        path = Path(file_part).expanduser().resolve()
+        path = Path(file_part).resolve()
     except (OSError, RuntimeError) as error:
         raise argparse.ArgumentTypeError(
             f"names a path this system cannot read: {file_part}"
@@ -1736,6 +1742,14 @@ INTERNAL_ERROR_EXIT = 3
 # their evaluator failed when the name is simply wrong sends them to read code
 # that was never called (traigent-first-run#494 N3).
 WORKER_SCORER_UNLOADABLE = 4
+#: Printed by the worker immediately before it returns the status above, and
+#: required by the parent before it believes that status. The worker runs the
+#: CUSTOMER'S code, so its exit status is not ours alone: a scorer that calls
+#: `sys.exit(4)` from inside `score()` - loaded, called, and running - would
+#: otherwise be reported as a flag that could not be loaded, which is false
+#: twice over and contradicts what `EXIT_CODES_HELP` promises exit 2 means.
+#: Two signals, because only one of them is ours.
+SCORER_UNLOADABLE_MARKER = "--scorer could not be loaded:"
 TRACEBACK_ENV = "TRAIGENT_FIRST_RUN_TRACEBACK"
 
 # Printed by --help. Codes 1 and 2 answer different questions - "the evaluator
@@ -2048,7 +2062,10 @@ def run() -> int:
                 )
             )
         return 1
-    if process.returncode == WORKER_SCORER_UNLOADABLE:
+    if (
+        process.returncode == WORKER_SCORER_UNLOADABLE
+        and process.stderr.lstrip().startswith(SCORER_UNLOADABLE_MARKER)
+    ):
         # Exit 2, not 1, because the contract in EXIT_CODES_HELP says 2 is
         # "the evaluator was not run" - and a scorer that could not be loaded
         # was not run. The sibling flag has said this correctly for longer:
