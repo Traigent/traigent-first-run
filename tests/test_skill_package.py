@@ -6093,7 +6093,7 @@ class SkillPackageTests(unittest.TestCase):
         text = RUN_SAFETY.read_text()
         normalized_safety = " ".join(text.casefold().split())
         self.assertIn(
-            "follow skill's opening gate and sections 4-7 for ordering; this reference does not define a second flow",
+            "follow skill's opening gate and sections 4-8 for ordering; this reference does not define a second flow",
             normalized_safety,
         )
         self.assertNotIn("use this gate order", normalized_safety)
@@ -29965,8 +29965,9 @@ class OneShapeAndOneMarkForEveryChoiceTests(unittest.TestCase):
             # and all.
             (
                 safety,
-                "the mark on `a` follows the pre-spend card's rule above. "
-                "that rule is stated there once and is not restated here",
+                "the mark on `a` follows the pre-spend card's rule above, "
+                "which `references/component-creation.md` states in full and "
+                "this file does not repeat",
             ),
             (safety, "stopping is never the marked route"),
             # The mark stays on the bounded run: the pre-spend rule's moving
