@@ -774,11 +774,11 @@ when that gate establishes eligibility, or keep the ceiling and name the concret
 an evidence boundary, not a repair finding.
 `evaluator-calibration-refused` is that same evidence boundary reached by the scope gate rather than
 by a step nobody took, and like `evaluator-unvalidated` it does not block: the run proceeds on the
-disclosure `references/run-safety.md` sets out, and the ceiling bounds what the card may claim rather
-than what the customer may do. Its one ask is whether their evaluator connects read-only, and the
+disclosure `references/run-safety.md` sets out. Where it bounds the claim at all - that reference
+owns which arm does - the bound is on what the card may say and never on what the customer may do. Its one ask is whether their evaluator connects read-only, and the
 pre-spend approval in section 6 is where it is put - the moment the answer bears on, and the one
-place it is asked - never a stop of its own; silence proceeds. Say that the ceiling is about
-missing evidence and not a finding against their evaluator, that because the check was not made
+place it is asked - never a stop of its own; silence proceeds. Say that what is missing is evidence
+and not a finding against their evaluator, that because the check was not made
 this run does not know whether their evaluator works - neither that it does nor that it does not -
 and that no step here would change that. Never say there is nothing for them to fix: that claims a
 look this run did not take. Never present the unsafe route as the way to lift it.

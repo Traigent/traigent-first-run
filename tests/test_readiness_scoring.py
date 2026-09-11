@@ -6833,8 +6833,17 @@ class ACapCarriesAScoreNotAnyValueTests(unittest.TestCase):
         self.assertIsNone(cap.ceiling)
         with self.assertRaises(ValueError):
             MODULE.Cap("evaluator-calibration-refused", None, "reason", blocks="yes")
-        with self.assertRaises(ValueError):
-            MODULE.Cap("not-a-real-condition", None, "reason")
+        # A REGISTERED condition, so the ACTION_FOR_CONDITION guard above cannot
+        # be what refuses it - this has to reach the DISCLOSURE_CAP_PILLAR check
+        # or nothing tests that check at all. `dataset-absent` is real, routes
+        # normally, and names no pillar for a disclosure, so bounding nothing is
+        # exactly what it may not do.
+        with self.assertRaises(ValueError) as unregistered:
+            MODULE.Cap("dataset-absent", None, "reason")
+        self.assertIn("DISCLOSURE_CAP_PILLAR", str(unregistered.exception))
+        # And the same condition WITH a ceiling still constructs, so the refusal
+        # above is about the missing pillar and not about the condition.
+        self.assertEqual(MODULE.Cap("dataset-absent", 30, "reason").ceiling, 30)
 
     def test_a_non_boolean_blocks_flag_is_refused(self) -> None:
         with self.assertRaises(ValueError) as caught:
@@ -13289,6 +13298,57 @@ class TheCeilingPricedOurOwnBoundaryTests(unittest.TestCase):
         # whole reason the hold has to be the thing keeping it out.
         self.assertGreaterEqual(score.overall, 75)
 
+    def test_a_claim_with_no_witness_buys_nothing(self) -> None:
+        """The thirty-two points are bought by EVIDENCE, never by a word.
+
+        `executes_candidate` is read straight out of the `--preflight` document
+        handed to this script; nothing here produced it and nothing here can
+        check it. Keyed on that flag alone, lifting the ceiling made a
+        hand-written `{"executes": true}` worth +32 - and worth it for claiming
+        the one property the guide treats as the unsafe shape, so the cheapest
+        route to a high score became saying your evaluator opens a database.
+
+        `execution_witness` is the construct and the line the walk quoted. The
+        ceiling comes off for that and for nothing else.
+        """
+        common = dict(
+            present=True,
+            method="execution",
+            task_kind="code-sql",
+            parses=True,
+            origin="brought",
+        )
+
+        def scored(**extra):
+            return MODULE.score_run(
+                _routing_corpus(),
+                MODULE.EvaluationFacts(**common, **extra),
+                _wired_space(),
+                dict(MODULE.DEFAULT_WEIGHTS),
+                _review(reviewed=48),
+            )
+
+        witnessed = scored(executes_candidate=True, execution_witness=self.WITNESS)
+        bare_claim = scored(executes_candidate=True)
+        self.assertEqual(witnessed.overall, 77)
+        self.assertEqual(bare_claim.overall, 45)
+        self.assertEqual(
+            self._cap(bare_claim).ceiling, MODULE.CALIBRATION_REFUSED_CEILING
+        )
+        # The predicate itself, so the intent survives a refactor of the caller.
+        self.assertTrue(
+            MODULE.witnessed_engine(
+                MODULE.EvaluationFacts(
+                    **common, executes_candidate=True, execution_witness=self.WITNESS
+                )
+            )
+        )
+        self.assertFalse(
+            MODULE.witnessed_engine(
+                MODULE.EvaluationFacts(**common, executes_candidate=True)
+            )
+        )
+
     def test_an_absent_evaluator_still_caps(self) -> None:
         """The non-firing control: only what WE declined stops charging."""
         score = MODULE.score_run(
@@ -13301,6 +13361,38 @@ class TheCeilingPricedOurOwnBoundaryTests(unittest.TestCase):
         absent = next(cap for cap in score.caps if cap.condition == "evaluator-absent")
         self.assertEqual(absent.ceiling, MODULE.EVALUATOR_ABSENT_CEILING)
         self.assertEqual(score.overall, 40)
+
+    def test_the_card_never_denies_a_ceiling_it_is_printing(self) -> None:
+        """Both arms, because the sentence is arm-aware and the ceiling is.
+
+        "Your score is not reduced for it" is true where the walk witnessed the
+        engine and false where this run holds only the declaration - that arm is
+        still held at 45. Printed unconditionally, it put LIMITED TO 45 and "your
+        score is not reduced" on one card, four lines apart.
+        """
+        witnessed = MODULE.render_card(self._refused())
+        self.assertIn("Your score is not reduced for it", witnessed)
+        self.assertNotIn("LIMITED TO", witnessed)
+
+        declared = MODULE.score_run(
+            _routing_corpus(),
+            MODULE.EvaluationFacts(
+                present=True,
+                method="execution",
+                task_kind="code-sql",
+                parses=True,
+                origin="brought",
+                calibration_scope_refused=True,
+            ),
+            _wired_space(),
+            dict(MODULE.DEFAULT_WEIGHTS),
+            _review(reviewed=48),
+        )
+        card = MODULE.render_card(declared)
+        self.assertIn("LIMITED TO 45", card)
+        self.assertNotIn("Your score is not reduced for it", card)
+        # And it says why the ceiling stands, without handing them an errand.
+        self.assertIn("no preflight report for this evaluator reached", card)
 
     def test_the_card_shows_no_ceiling_it_does_not_have(self) -> None:
         card = MODULE.render_card(self._refused())

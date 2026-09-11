@@ -6144,7 +6144,13 @@ class SkillPackageTests(unittest.TestCase):
             # What the card does, in the words the card uses.
             "the evaluator check is not made, so it earns nothing",
             "`evaluator-calibration-refused`",
-            "limits the readiness claim to 45",
+            # BOTH ARMS, because the ceiling has two of them now. Pinning only
+            # "limits the readiness claim to 45" let this document state the
+            # bound unconditionally after the scorer stopped applying it where
+            # the walk witnessed the engine - wrong by thirty-two points for
+            # the arm this whole section is written about.
+            "the claim is held at 45 and the check is charged",
+            "nothing is bounded and nothing is deducted",
             # That whether the check is CHARGED depends on the walk, which is
             # the half a disclosure naming only the free outcome would leave
             # out. Said in terms of what preflight found, because the earlier
@@ -6154,8 +6160,7 @@ class SkillPackageTests(unittest.TestCase):
             # says twenty lines above that a walk which finds none has still
             # read the file.
             "depends on what preflight's walk found",
-            "a walk that established the engine is not charged",
-            "finding no engine settles nothing",
+            "the same witness decides both",
             # That it is not a verdict on their evaluator. The MANDATE to
             # say so lives in `SKILL.md`'s cap-routing paragraph and may not
             # be restated here; what belongs here is the fact behind it.
@@ -6214,8 +6219,12 @@ class SkillPackageTests(unittest.TestCase):
         # changed in one, and this pair is a guidance document and its own
         # reference.
         safety_all = " ".join(RUN_SAFETY.read_text().casefold().split())
+        # Not "the ceiling is about missing evidence": there is no ceiling on
+        # the witnessed arm, so naming one instructs the assistant to narrate a
+        # number the card it is looking at does not print. What is true on both
+        # arms is that the thing missing is EVIDENCE.
         self.assertIn(
-            "say that the ceiling is about missing evidence and not a finding "
+            "say that what is missing is evidence and not a finding "
             "against their evaluator",
             skill,
         )
