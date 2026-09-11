@@ -1,12 +1,12 @@
 # 0125 - the baseline grid is never reduced
 
 follows: 0124
-follows-resident-measured: 108_069
-follows-total-measured: 518_288
-resident-ceiling: 108_117
-resident-measured: 108_113
-total-ceiling: 518_336
-total-measured: 518_332
+follows-resident-measured: 108_123
+follows-total-measured: 518_446
+resident-ceiling: 108_171
+resident-measured: 108_167
+total-ceiling: 518_494
+total-measured: 518_490
 
 Forty-four bytes to delete a carve-out and say why it is gone, and the reason it is worth an entry
 at all is where the clause sat. Section 8 is the post-run verification - the list an assistant walks
