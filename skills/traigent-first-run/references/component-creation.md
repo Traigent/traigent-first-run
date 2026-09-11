@@ -840,11 +840,10 @@ performed are separate questions and this one asks only the first, so withholdin
 stub answers a question nobody put. **Control flow** is whether the agent ends and on what: no loop
 ends trivially, a loop with a bound can be recorded, and a loop with neither is one input costing an
 unbounded number of calls. **Tools**
-is whether each declared name is reached from the callable, one hop through the module. A partly
-reachable list earns only the reachable share of this check. Reading the whole file only ever
-REFUTES a name; nothing is credited from it. None of these four is scored on the route a customer
-takes: supplying `--agent-knobs` leaves every one of them out of the denominator, so a `false`
-answer costs nothing rather than costing this check's weight. Dataset and evaluation are scored in separate
+is whether each declared name is reached from the callable, one hop through the module. Reading
+the whole file only ever REFUTES a name; nothing is credited from it. None of these four is scored
+on the route a customer takes: supplying `--agent-knobs` leaves every one of them out of the
+denominator, so a `false` answer costs nothing rather than costing this check's weight. Dataset and evaluation are scored in separate
 pillars. Memory/context and provider connectivity are not scored here; run safety handles the latter.
 
 None of the four is a judgment about how good the agent is, and none may become one. Whether a
@@ -852,8 +851,7 @@ prompt is well written, whether a tool is the right tool, whether the objective 
 objective - those are opinions, and an opinion may lower a score and never raise one, so they are
 outside this document. Answer `{"determined": false, "reason": "...", "evidence": "..."}` where the
 read genuinely could not settle a check - a prompt assembled at runtime from somewhere this read
-cannot reach is the common case - and the check keeps its weight and earns nothing, the same as
-an honest no.
+cannot reach is the common case.
 
 Two of the criteria this pillar is asked about are not here, and the card says so rather than
 letting four checks imply that six were looked at: whether the dataset and the evaluation method are

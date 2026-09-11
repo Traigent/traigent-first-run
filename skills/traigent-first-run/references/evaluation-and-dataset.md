@@ -1101,12 +1101,13 @@ though the user gave it. If they approve a repair, the repaired row follows "Dec
 above: its expected answer is now model-written, carries `output_provenance` saying so, and stops
 counting as an answer anyone observed.
 
-Say what you sampled and what you assumed. Readiness scores the whole dataset and never a subset,
-so the evidence line reports the rows sampled against the rows the user brought, and the number
-stays exactly as honest about that whatever the sample found. Give the user the rest of it in their
-own words: this run checked their expected answers against the method that will grade them, those
-answers looked right, and the rest of the dataset is assumed sound rather than shown to be - so if the
-answers were not put together carefully by a person, that is worth their own look. Where this run
+Say what you reviewed and what you assumed. Readiness scores the whole dataset and never a subset,
+so distinguish provided-file coverage from graded-row coverage using the card's actual counts.
+Describe the recorded verdicts: which reviewed answers looked right, which were flagged, and which
+remained uncertain. A full review has no unread remainder; a `no` or `unsure` is not a clean pass.
+Only when provided rows remain unread, say that the rest of the dataset is assumed sound rather
+than shown to be. If the answers were not put together carefully by a person, recommend their own
+look without claiming that this review established correctness. Where this run
 wrote the dataset or the evaluation method, say that too: the read was taken through material this
 run produced, which is this run checking its own work and is why the ceiling on it stands however
 clean it came back. Above the first-run subset size, read the drawn rows in full at the section-4
@@ -1353,18 +1354,16 @@ this run does not establish either as the cause of an observed gap:
   can also select on that sample's noise. The winner's tuning score can therefore be optimistic;
   the held-out measurement checks the already chosen candidate, and may be lower, level, or higher.
   Do not predict its value from selection alone.
-- **Ten rows cannot resolve a small gap.** One *standard error* on an accuracy measured from ten
-  items is about 15 points near 50% and still about 10 points near 90% - and a 95% interval is
-  roughly twice that, about +/-31 and +/-19 points. Quote the interval as the interval; a standard
-  error presented as "the uncertainty" understates it about twofold. This bounds one accuracy from
-  its sample size, and is not the paired uncertainty rule 2 above defers until outcomes exist. A
-  gap inside that range is neither confirmed overfitting nor confirmed fine - it is inconclusive,
-  and no wording should claim otherwise.
+- **Ten rows give a coarse measurement.** For binary correctness, one outcome moves the fraction
+  by ten percentage points. Report the actual counts; do not quote a 95% interval by doubling the
+  plug-in standard error on ten rows. Any interval needs the actual outcomes, a suitable
+  small-sample method, and stated sampling assumptions. A calculation cannot make synthetic or
+  non-blind examples representative. This is separate from paired uncertainty on the shared
+  tuning outcomes; the observed gap alone establishes neither overfitting nor its absence.
 
 Do not say Traigent prevents or corrects this: holdout support is not yet a first-class SDK
-feature, so that claim would not be true. Do not call a gap in this range "overfitting," either -
-name it for what it is, the ordinary result of picking the best of several configurations on a
-small sample, and say plainly that ten examples cannot tell how much of it is real. Giving
+feature, so that claim would not be true. Report the observed gap without assigning a cause this
+run did not establish. Giving
 Traigent real holdout support instead of this guide-authored split is tracked internally as a
 Traigent-owned follow-up - never surface a repository, issue, or tracker reference to the user;
 the disclosure note below stays free of one.

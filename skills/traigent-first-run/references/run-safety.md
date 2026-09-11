@@ -1665,7 +1665,7 @@ name the needed real replacement or human review of its task fit. Those are next
 actions, not proof of production readiness. Reporting procedure above and "Held-out set and
 claims" in `references/evaluation-and-dataset.md` own the later promotion requirements; human
 review alone does not satisfy them. Describe the answer-key review on the terms "Say what you
-sampled and what you assumed" in that reference sets out.
+reviewed and what you assumed" in that reference sets out.
 
 Say what the run actually gave the user, using only completed phases and verified artifacts.
 A preserved local baseline is useful even without a portal result. Name results in the portal only

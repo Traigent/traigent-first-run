@@ -6,10 +6,10 @@ follows-total-measured: 525_912
 follows-document-measured: 134_261
 resident-ceiling: 50_939
 resident-measured: 50_935
-total-ceiling: 539_891
-total-measured: 539_887
-document-ceiling: 147_748
-document-measured: 147_744
+total-ceiling: 539_596
+total-measured: 539_592
+document-ceiling: 147_749
+document-measured: 147_745
 
 The resident skill now keeps ordered decisions and stage dispatch while its detailed opening,
 setup, calibration, recovery, and reporting procedures live in their existing reference owners.
@@ -51,3 +51,8 @@ The final review also made the dataset construction and reservation references e
 creation, and separated post-result reply behavior from the earlier connected-run approval.
 Those small dispatch corrections preserve completed results and keep later work under its own
 approval. The qualified tuning-selection claim and its existing test now agree.
+
+Review of the published PR removed remaining scoring claims about source observations, made
+row-review explanations follow actual coverage and verdicts, and removed an unsupported causal
+reading and normal-interval approximation for the ten-row result. The score and execution stay
+unchanged; the existing owners and contradiction checks now carry the narrower claims.

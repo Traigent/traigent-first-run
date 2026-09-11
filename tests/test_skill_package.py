@@ -15107,9 +15107,11 @@ class SkillPackageTests(unittest.TestCase):
             "top each set up to its composition with generated rows rather than "
             "dropping a band",
             "cannot show that the winner generalizes to real inputs",
-            # A standard error is labelled as one, beside the interval.
-            "one *standard error*",
-            "a 95% interval is roughly twice that",
+            # Ten outcomes do not justify a nominal normal interval or a
+            # causal diagnosis from the gap alone.
+            "do not quote a 95% interval by doubling the plug-in standard error on ten rows",
+            "a suitable small-sample method, and stated sampling assumptions",
+            "the observed gap alone establishes neither overfitting nor its absence",
             # Counts, at the size where a percentage lies.
             "report counts, not percentages, for binary correctness while the split is this small",
             "can land lower, level, or higher",
@@ -17784,21 +17786,24 @@ class SkillPackageTests(unittest.TestCase):
             ),
         )
         # The words themselves, once, where the stage lives.
-        self.assertIn("Say what you sampled and what you assumed", dataset)
+        self.assertIn("Say what you reviewed and what you assumed", dataset)
         self.assertIn(
-            "the rest of the dataset is assumed sound rather than shown to be",
+            "Only when provided rows remain unread, say that the rest of the dataset "
+            "is assumed sound rather than shown to be",
             dataset,
         )
         self.assertIn(
-            "if the answers were not put together carefully by a person", dataset
+            "If the answers were not put together carefully by a person", dataset
         )
+        self.assertIn("A full review has no unread remainder", dataset)
+        self.assertIn("a `no` or `unsure` is not a clean pass", dataset)
         # And the self-certification the owner accepted rather than gating: a
         # sample taken through material this run wrote is this run checking its
         # own work, and a reader must not take it for an outside check.
         self.assertIn("this run checking its own work", dataset)
         # The flow points; it does not re-say.
         for owned_by_the_reference in (
-            "Say what you sampled and what you assumed",
+            "Say what you reviewed and what you assumed",
             "assumed sound rather than shown to be",
         ):
             with self.subTest(sentence=owned_by_the_reference):
@@ -24052,6 +24057,30 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
     # (decision, phrases asserting one answer, phrases asserting the opposite)
     CONTRADICTIONS = (
         (
+            "whether source-read build observations enter the score denominator",
+            (
+                "supplying `--agent-knobs` leaves every one of them out of the denominator",
+            ),
+            (
+                "a partly reachable list earns only the reachable share of this check",
+                "the check keeps its weight and earns nothing, the same as an honest no",
+            ),
+        ),
+        (
+            "whether every row review implies clean answers and an unread remainder",
+            ("a full review has no unread remainder",),
+            (
+                "those answers looked right, and the rest of the dataset is assumed sound",
+            ),
+        ),
+        (
+            "whether twice a plug-in standard error gives a reliable ten-row interval",
+            (
+                "do not quote a 95% interval by doubling the plug-in standard error on ten rows",
+            ),
+            ("a 95% interval is roughly twice that",),
+        ),
+        (
             "whether a larger run or human review establishes production readiness",
             (
                 "more rows or a wider search alone do not establish real-world performance",
@@ -24647,12 +24676,17 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         (
             # #127/#141: the held-out set came back, and with it the two
             # wrong things to say about the gap it exposes. Winner's-curse
-            # selection bias plus ten rows' sampling noise means the gap is
-            # inconclusive - not proof of overfitting, and not something
-            # holdout support (not yet a real SDK feature) already prevents.
-            "whether a tuning/held-out gap is called overfitting",
-            ('do not call a gap in this range "overfitting,"',),
-            ("small-data overfitting risk",),
+            # The observed gap alone establishes neither its cause nor the
+            # absence of overfitting. Do not replace one diagnosis with an
+            # equally unproved attribution to selection.
+            "whether a tuning/held-out gap establishes its cause",
+            (
+                "report the observed gap without assigning a cause this run did not establish",
+            ),
+            (
+                "small-data overfitting risk",
+                "name it for what it is, the ordinary result of picking the best of several configurations",
+            ),
         ),
         (
             "whether traigent already prevents the held-out gap",
