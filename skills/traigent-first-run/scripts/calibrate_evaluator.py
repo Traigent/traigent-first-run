@@ -851,7 +851,36 @@ def run_worker() -> int:
             # naming a correct flag and telling the assistant to fix it - while
             # the scorer's own failure has an exit code and a message of its
             # own that it must be allowed to reach.
-            function = None if operation == "load" else load_function(request["scorer"])
+            if operation == "load":
+                function = None
+            else:
+                try:
+                    function = load_function(request["scorer"])
+                except ValueError as error:
+                    # ONLY `ValueError`, and the narrowness is the whole of it.
+                    #
+                    # `load_function` raises `ValueError` for the three things
+                    # that are a wrong FLAG - a spec without a colon, a file
+                    # that will not load as a module, a name that is not a
+                    # callable in it - and lets everything the scorer's own
+                    # imports raise travel untouched. A `ModuleNotFoundError`
+                    # from the customer's missing dependency is not a typo and
+                    # must not be reported as one: SKILL stage 4 defers that to
+                    # stage 5, where the dependency is installed, and telling
+                    # the author to fix a flag that is already correct sends
+                    # them to change the one thing that is right.
+                    #
+                    # This is the same line `--reply-transform` already draws
+                    # in its own refusal text, and a first attempt at this fix
+                    # caught `Exception` and erased it - `test_a_broken_scorer_
+                    # is_not_reported_as_a_broken_transform` failed, which is
+                    # what that test is for.
+                    print(
+                        f"--scorer could not be loaded: "
+                        f"{type(error).__name__}: {error}",
+                        file=sys.stderr,
+                    )
+                    return WORKER_SCORER_UNLOADABLE
             if operation == "authored":
                 case_results = []
                 for case in request["cases"]:
@@ -1050,6 +1079,43 @@ def existing_directory(value: str) -> Path:
     return path
 
 
+def loadable_callable_spec(value: str) -> str:
+    """`FILE.py:FUNCTION`, refused here when the file is not there to load.
+
+    A customer's typo in a path is a wrong flag, and exit 2 is what this script
+    says a wrong flag costs. Without this, the mistake travelled: `worker_cwd`
+    is `Path(scorer_file).resolve().parent`, and a missing PARENT COMPONENT
+    reached `subprocess.run(cwd=...)` unvalidated, so `FileNotFoundError` came
+    back as exit 3 - "a defect in the check rather than in your project",
+    printed over the customer's own typing.
+
+    `--import-root` has had `existing_directory` for exactly this reason and
+    `--scorer` had nothing, which is the sibling-fix shape this package keeps
+    finding: the same guard written once and not applied to the other arm.
+
+    Only the FILE is checked. Whether the function inside it exists is a
+    question for the loader, and answering it here would mean importing
+    customer code at argument-parsing time - which is the one thing the
+    execution gate exists to hold back.
+    """
+    file_part, separator, function_part = value.rpartition(":")
+    if not separator or not file_part or not function_part:
+        raise argparse.ArgumentTypeError(
+            "must be FILE.py:FUNCTION, with the function named after a colon"
+        )
+    try:
+        path = Path(file_part).expanduser().resolve()
+    except (OSError, RuntimeError) as error:
+        raise argparse.ArgumentTypeError(
+            f"names a path this system cannot read: {file_part}"
+        ) from error
+    if not path.is_file():
+        raise argparse.ArgumentTypeError(
+            f"names a file that does not exist: {file_part}"
+        )
+    return value
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
@@ -1061,6 +1127,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--scorer",
         required=True,
+        type=loadable_callable_spec,
         help=(
             "FILE.py:FUNCTION accepting keyword arguments output, expected, "
             "input_data, and metadata"
@@ -1657,6 +1724,18 @@ def run_seam_batch(
 # non-zero and distinct, and nothing pretends a calibration ran. The
 # environment variable prints the stack for whoever is fixing it.
 INTERNAL_ERROR_EXIT = 3
+# What the worker returns when the SCORER could not be loaded, as opposed to
+# loaded and then failing. The parent maps it to exit 2, because the contract
+# below already says 2 means the evaluator was not run - and a scorer that
+# never loaded was never run.
+#
+# It needs a status of its own because the worker returns 1 for every
+# exception, so "your scorer raised while scoring" and "there is no such
+# function in that file" arrived identically. The first is a finding about the
+# customer's evaluator; the second is a typo in a flag, and telling somebody
+# their evaluator failed when the name is simply wrong sends them to read code
+# that was never called (traigent-first-run#494 N3).
+WORKER_SCORER_UNLOADABLE = 4
 TRACEBACK_ENV = "TRAIGENT_FIRST_RUN_TRACEBACK"
 
 # Printed by --help. Codes 1 and 2 answer different questions - "the evaluator
@@ -1667,9 +1746,10 @@ EXIT_CODES_HELP = f"""exit codes:
   1  calibration ran and a check failed, timed out, or the evaluator process
      could not produce a result; the payload or stderr says which
   2  the evaluator was not run: the run was refused (no --allow-execution, an
-     evaluator that reaches an engine, an unapproved LLM judge), the
-     --reply-transform could not be loaded, or the command line was wrong;
-     the message on stderr names the reason
+     evaluator that reaches an engine, an unapproved LLM judge), the --scorer
+     or the --reply-transform could not be loaded, or the command line was
+     wrong - including a --scorer path that is not there; the message on
+     stderr names the reason
   {INTERNAL_ERROR_EXIT}  this script failed on its own - a defect here, not in your project -
      and no result was produced; re-run with {TRACEBACK_ENV}=1 to see where"""
 
@@ -1968,6 +2048,25 @@ def run() -> int:
                 )
             )
         return 1
+    if process.returncode == WORKER_SCORER_UNLOADABLE:
+        # Exit 2, not 1, because the contract in EXIT_CODES_HELP says 2 is
+        # "the evaluator was not run" - and a scorer that could not be loaded
+        # was not run. The sibling flag has said this correctly for longer:
+        # `--reply-transform` that cannot be loaded already exits 2, and the
+        # same mistake on `--scorer` reported "Evaluator execution failed" at
+        # exit 1, sending the reader to debug an evaluator nothing had called.
+        print(
+            process.stderr.strip()
+            or "--scorer could not be loaded, so nothing was calibrated.",
+            file=sys.stderr,
+        )
+        print(
+            "A path, a function name or a signature that is wrong is a wrong "
+            "flag: fix it. Nothing about this evaluator has been established, "
+            "so it stays unchecked rather than failing.",
+            file=sys.stderr,
+        )
+        return 2
     if process.returncode != 0:
         print(
             process.stderr.strip() or "Evaluator calibration failed.", file=sys.stderr
