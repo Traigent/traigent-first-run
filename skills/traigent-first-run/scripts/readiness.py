@@ -3777,10 +3777,20 @@ class BuildSignal:
     # this the derivation is invisible downstream and the next reader meets the
     # confusion #357 opened on.
     #
-    # NOT a claim that a checked signal is confirmed. Both derivations refute
+    # NOT a claim that a checked signal is confirmed. Every derivation refutes
     # in one direction only, so passing means "not contradicted", never
     # "established".
-    source_checked: bool = False
+    #
+    # THE SCOPE ITSELF RATHER THAN A FLAG, and per ARM rather than per check.
+    # It was a bool, resolved at render time through a dict keyed by the check
+    # name - so every arm of a check printed whichever scope that check's other
+    # arm had established. `control-flow` has three arms and two derivations,
+    # and the one sentence claimed "no contradicting loop in the selected
+    # function's own body" beside a declared loop the reader had just been told
+    # about, over a callable containing `while True:`. A flag cannot carry
+    # which of a check's derivations ran; the sentence can, so the sentence is
+    # what the signal carries and the arm that ran no derivation carries none.
+    source_check_scope: str = ""
     # The physical lines this check cited, and what the selected agent actually
     # says on them. Read out of the parsed tree at the coordinates
     # `checked_source_lines` already validated, so it is derived rather than
@@ -3812,21 +3822,60 @@ class BuildSignal:
 #
 # The scope is in the sentence because a bare "checked for a contradiction and
 # none was found" reads as corroboration, and it is strongest precisely where
-# the derivation is blindest. Neither of these leaves the selected callable's
-# own body, so an agent that delegates its loop to a helper, recurses, or hands
-# the work to a comprehension passes both - and the customer-facing line has to
-# say that it passed a narrow read rather than that it was checked.
+# the derivation is blindest. `control-flow` never leaves the selected
+# callable's own body, so an agent that delegates its loop to a helper,
+# recurses, or hands the work to a comprehension passes it and may never
+# return; `tools` takes exactly one hop past that body, into a module-level
+# assignment the callable itself names, and stops. Each clause states its own
+# reach, because the two are no longer the same reach and a shared sentence
+# would have to be wrong about one of them.
+#
+# EACH CLAUSE NAMES WHAT ITS DERIVATION STILL CANNOT SETTLE, which is the half
+# that has to be re-read whenever the derivation changes. `tools` said "does
+# not establish that any of them is reachable" until traigent-first-run#484
+# made reachability the acceptance test, and the clause then introduced a
+# finding about reachability by denying that reachability was checked - the
+# sentence contradicting itself on the arm where the walk had done its most
+# decisive work. What the walk still cannot settle is not reachability but
+# tool-hood: `names_reached_from_selected_callable` answers a question about a
+# NAME, and this module refuses to define what makes the thing behind it a
+# tool.
+# Keyed by ARM, not by check: `control-flow` runs a different derivation on
+# each of its two answered arms and none at all on the third, so a scope keyed
+# by the check name would state one arm's reach on all three.
 SOURCE_CHECK_SCOPE = {
-    "control-flow": (
+    "control-flow:no-loop": (
         "no contradicting loop in the selected function's own body, which does "
         "not establish that it ends"
     ),
+    # WHAT THE READ DID, never what is true of the code. This is a refute-only
+    # walk: `derived_unbounded_while` raises where it FINDS a literal-true
+    # `while` in the callable's own body with no uncaptured exit, and finding
+    # nothing establishes nothing - its own docstring says so in those words.
+    #
+    # So the clause may not say "a way out was found", and it may not say "no
+    # unbounded loop" either. Both are existential claims a refutation cannot
+    # support, and each is false on shapes this module already documents:
+    # `while not False` is constant-true and is not refused; a `while True`
+    # inside a nested `def` is never descended into; a `raise` whose capture
+    # cannot be settled blocks the refusal exactly as a proven exit does; and
+    # a callable that delegates to a helper that spins holds no loop node at
+    # all. Every one of those is a callable that may never return, and the
+    # sentence would have denied it.
+    #
+    # What is true on every arm is that nothing MATCHED the shapes this read
+    # knows. That is what it says, with the limit in the same clause.
+    "control-flow:bounded": (
+        "nothing in the selected function's own body matched the "
+        "unbounded-loop shapes this read knows, which does not establish that "
+        "it ends"
+    ),
     "tools": (
-        "every declared tool name appears in the selected file, which does not "
-        "establish that any of them is reachable"
+        "every declared tool name was traced from the selected callable, one "
+        "hop through the module, which does not establish that any of them is "
+        "a tool"
     ),
 }
-SOURCE_CHECKED_BUILD_CHECKS = frozenset(SOURCE_CHECK_SCOPE)
 # WHOSE VOICE THE REST OF THE LINE IS IN, in the one form the card uses.
 #
 # `evidence` on a build check is prose the assistant being scored wrote about
@@ -19050,7 +19099,14 @@ def build_signal_from_entry(
                 )
         if not _build_flag(check, spec, "loop"):
             return BuildSignal(
-                check, weight, f"one call per input, so it ends ({evidence})"
+                check,
+                weight,
+                f"one call per input, so it ends ({evidence})",
+                source_check_scope=(
+                    SOURCE_CHECK_SCOPE["control-flow:no-loop"]
+                    if source is not None
+                    else ""
+                ),
             )
         if _build_flag(check, spec, "bounded"):
             if source is not None and derived_unbounded_while(source):
@@ -19067,7 +19123,14 @@ def build_signal_from_entry(
                     "record bounded=False"
                 )
             return BuildSignal(
-                check, weight, f"a loop, and a stop condition to point at ({evidence})"
+                check,
+                weight,
+                f"a loop, and a stop condition to point at ({evidence})",
+                source_check_scope=(
+                    SOURCE_CHECK_SCOPE["control-flow:bounded"]
+                    if source is not None
+                    else ""
+                ),
             )
         return BuildSignal(
             check,
@@ -19245,11 +19308,15 @@ def build_signal_from_entry(
             "does not declare them; an unreachable tool is one of the declared "
             "ones this read could not find behind its name"
         )
+    # Both arms below ran the walk exactly when there was a source to walk, so
+    # they carry its scope on the same condition.
+    walked = SOURCE_CHECK_SCOPE["tools"] if source is not None else ""
     if not unreachable:
         return BuildSignal(
             check,
             weight,
             f"{len(declared)} tool(s), each reachable ({evidence})",
+            source_check_scope=walked,
         )
     return BuildSignal(
         check,
@@ -19258,6 +19325,7 @@ def build_signal_from_entry(
         f"found behind the name: {', '.join(sorted(set(unreachable)))}; tool "
         "wiring receives credit only for declared tools that resolve "
         f"({evidence})",
+        source_check_scope=walked,
     )
 
 
@@ -19276,9 +19344,12 @@ def _read_build_check(
     """
     signal = build_signal_from_entry(check, spec, source)
     path, cited = cited_source_text(spec, source)
+    # The scope rides from the arm that established it, in
+    # `build_signal_from_entry`. Nothing is added here, because this function
+    # cannot see which arm was taken and guessing from the check name is the
+    # defect that keyed it here in the first place.
     return replace(
         signal,
-        source_checked=(source is not None and check in SOURCE_CHECKED_BUILD_CHECKS),
         cited_source_path=path,
         cited_source=cited,
     )
@@ -19615,8 +19686,8 @@ def _observed_declaration(signal: BuildSignal) -> BuildSignal:
         evidence=(
             "not independently verified; excluded from this score. "
             + (
-                f"Assistant observation ({SOURCE_CHECK_SCOPE[signal.name]}): "
-                if signal.source_checked
+                f"Assistant observation ({signal.source_check_scope}): "
+                if signal.source_check_scope
                 else UNCHECKED_OBSERVATION
             )
             + signal.evidence

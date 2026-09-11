@@ -21293,9 +21293,9 @@ class TheBuildHalfCitesTheAgentItReadTests(unittest.TestCase):
         with self.subTest(check="control-flow", kind="settled"):
             # The SCOPE, not a bare "checked". A clause saying the source was
             # checked and nothing was found reads as corroboration, and it is
-            # strongest exactly where the derivation is blindest: neither
-            # derivation leaves the callable's own body, so an agent that
-            # delegates its loop to a helper passes both and may never return.
+            # strongest exactly where the derivation is blindest: this one
+            # never leaves the callable's own body, so an agent that delegates
+            # its loop to a helper passes it and may never return.
             self.assertIn(
                 "no contradicting loop in the selected function's own body",
                 rows["control-flow"],
@@ -21311,22 +21311,143 @@ class TheBuildHalfCitesTheAgentItReadTests(unittest.TestCase):
         # and so still says whose that is - asserted in
         # `test_the_no_tools_arm_says_whose_sentence_it_is`. The applicable
         # case below is the one that has a scope to state.
-        used = self._score_source(
-            "MODEL = ['a']\nTOOLS = ['search']\ndef selected(q):\n    return q\n",
-            {
-                "control-flow": {"loop": False, "bounded": True},
-                "tools": {"used": True, "declared": ["search"], "unreachable": []},
-            },
+        # ALL THREE control-flow arms, because the check runs a DIFFERENT
+        # derivation on each answered arm and none at all on the third. The
+        # scope used to be keyed by the check name, so every arm printed
+        # whichever reach the `loop: false` arm had established - and a
+        # declared, bounded loop was introduced by a clause announcing "no
+        # contradicting loop", over a callable containing `while True:`.
+        looping = (
+            "MODEL = ['a']\ndef selected(q):\n    out = None\n"
+            "    while True:\n        out = call(q)\n        if out:\n"
+            "            break\n    return out\n"
         )
-        marked = {
-            signal.name: signal.evidence
-            for signal in MODULE.build_declarations_are_unmeasured(used.build)
-        }
-        with self.subTest(check="tools", kind="settled"):
-            self.assertIn("appears in the selected file", marked["tools"])
-            self.assertIn(
-                "does not establish that any of them is reachable", marked["tools"]
+        for kind, answer, expected in (
+            (
+                "bounded",
+                {"loop": True, "bounded": True},
+                "nothing in the selected function's own body matched the "
+                "unbounded-loop shapes this read knows, which does not "
+                "establish that it ends",
+            ),
+            ("unbounded", {"loop": True, "bounded": False}, None),
+        ):
+            facts_arm = self._score_source(looping, {"control-flow": answer})
+            row = {
+                signal.name: signal.evidence
+                for signal in MODULE.build_declarations_are_unmeasured(facts_arm.build)
+            }["control-flow"]
+            with self.subTest(check="control-flow", kind=kind):
+                if expected is None:
+                    # No derivation runs on this arm, so there is no reach to
+                    # state. Silence here is the honest answer; the assistant's
+                    # sentence still says whose it is.
+                    self.assertNotIn("Assistant observation (", row)
+                    self.assertIn(MODULE.UNCHECKED_OBSERVATION.strip(), row)
+                else:
+                    self.assertIn(expected, row)
+                # The other arm's reach may never appear on this one.
+                self.assertNotIn("no contradicting loop", row)
+
+        # THE DELEGATION CASE, which is the one this clause got wrong and the
+        # one CI could not see. `derived_unbounded_while` REFUTES: it raises
+        # where it finds a literal-true `while` in the callable's own body with
+        # no uncaptured exit, and finding nothing establishes nothing - its own
+        # docstring says so. An earlier sentence here read "the loop in the
+        # selected function's own body has a way out of it", a positive
+        # existential claim over a refute-only walk.
+        #
+        # So: a callable holding NO loop at all, delegating to a helper whose
+        # body is `while True: pass`, honestly declared `loop: true,
+        # bounded: true` - which is the shape this module designs for and names
+        # at `derived_control_flow_loop`. The card told that customer their
+        # loop had a way out, over an agent that provably never returns.
+        delegating = (
+            "MODEL = ['a']\ndef spin(q):\n    while True:\n        pass\n"
+            "def selected(q):\n    return spin(q)\n"
+        )
+        # THE SHAPES THIS READ DOES NOT KNOW, which is what makes these
+        # assertions discriminating. The delegating fixture alone could not:
+        # the clause is a constant selected by (loop, bounded, source), so
+        # nothing about delegation participates in choosing it, and the
+        # subTest reds only when its sibling does.
+        #
+        # `while not False` is the sharp one. It is constant-true, it is
+        # DIRECTLY in the selected function's own body - no delegation, no
+        # nesting - and `derived_unbounded_while` does not refuse it, which
+        # this module's own docstring records. Any sentence claiming there is
+        # no unbounded loop here is false about four lines of Python.
+        looping_unrefused = (
+            "MODEL = ['a']\ndef selected(q):\n    while not False:\n"
+            "        pass\n    return q\n"
+        )
+        for kind, source in (
+            ("delegated", delegating),
+            ("constant-true-condition", looping_unrefused),
+        ):
+            arm = self._score_source(
+                source, {"control-flow": {"loop": True, "bounded": True}}
             )
+            said = {
+                signal.name: signal.evidence
+                for signal in MODULE.build_declarations_are_unmeasured(arm.build)
+            }["control-flow"]
+            with self.subTest(check="control-flow", kind=kind):
+                # What the read DID, and the limit in the same clause.
+                self.assertIn("matched the unbounded-loop shapes this read knows", said)
+                self.assertIn("does not establish that it ends", said)
+                # Neither existential claim a refutation cannot support.
+                self.assertNotIn("has a way out of it", said)
+                self.assertNotIn("the way out is taken", said)
+                self.assertNotIn("no unbounded loop", said)
+
+        # BOTH tool arms, because the clause has to survive the arm that
+        # refutes as well as the arm that credits. The source above declares
+        # `TOOLS` at module level and never names it inside `selected`, so
+        # `search` is NOT reached - the fixture reads like the crediting case
+        # and is the refuting one, which is exactly where the clause has to be
+        # read carefully.
+        for kind, source in (
+            (
+                "unreached",
+                "MODEL = ['a']\nTOOLS = ['search']\ndef selected(q):\n"
+                "    return q\n",
+            ),
+            (
+                "reached",
+                "MODEL = ['a']\nTOOLS = ['search']\ndef selected(q):\n"
+                "    return TOOLS[0] + q\n",
+            ),
+        ):
+            used = self._score_source(
+                source,
+                {
+                    "control-flow": {"loop": False, "bounded": True},
+                    "tools": {"used": True, "declared": ["search"], "unreachable": []},
+                },
+            )
+            marked = {
+                signal.name: signal.evidence
+                for signal in MODULE.build_declarations_are_unmeasured(used.build)
+            }
+            with self.subTest(check="tools", kind=kind):
+                self.assertIn("was traced from the selected callable", marked["tools"])
+                self.assertIn("one hop through the module", marked["tools"])
+                # What the walk still cannot settle. It settles reachability -
+                # saying otherwise made the clause deny the very finding it
+                # introduces (traigent-first-run#484 changed the rule and this
+                # sentence kept the old one).
+                self.assertIn(
+                    "does not establish that any of them is a tool", marked["tools"]
+                )
+                self.assertNotIn("is reachable", marked["tools"])
+            # And the two arms really are the two arms, so the assertions above
+            # are not both taken over the same behaviour.
+            with self.subTest(check="tools", kind=kind, part="arm"):
+                if kind == "unreached":
+                    self.assertIn("were not found behind the name", marked["tools"])
+                else:
+                    self.assertIn("each reachable", marked["tools"])
 
     def test_a_tool_the_source_never_mentions_is_refused(self) -> None:
         """The same move for `tools`, and only in the refuting direction.
