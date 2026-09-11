@@ -13208,6 +13208,91 @@ class TheOneQuestionHasSomewhereToLiveTests(unittest.TestCase):
         self.assertNotIn("no longer blocking", delta["line"])
 
 
+class TheBuildHalfChargesNothingOnTheLiveRouteTests(unittest.TestCase):
+    """The seven points `traigent-first-run#461` asks to stop charging are
+    already uncharged, and this is what keeps that true.
+
+    #461 row 3 asks for the tools charge to be retired: a declared name the
+    one-hop walk cannot reach costs the agent pillar its tool weight, and the
+    gradient therefore runs toward claiming fewer tools. Measured, that charge
+    never reaches a score. `build_declarations_are_unmeasured` rewrites every
+    build signal with `measured=False, withheld=False` and the CLI applies it
+    unconditionally wherever `--agent-knobs` is supplied - which is the only
+    flag by which a build half reaches the pillar at all - so all four weights
+    leave the denominator and an unreachable tool costs nothing.
+
+    The issue closes as already-satisfied on that measurement. A measurement is
+    evidence on the day it is taken, and the weight table is one edit away from
+    making it false again, so it is pinned rather than recorded in a comment.
+    """
+
+    EVIDENCE = {"evidence": "agent.py:3"}
+
+    def _live_route(self, tools_spec):
+        specs = {
+            "prompt": {"present": True, **self.EVIDENCE},
+            "output-contract": {"present": True, **self.EVIDENCE},
+            "control-flow": {"loop": False, **self.EVIDENCE},
+            "tools": tools_spec,
+        }
+        return MODULE.build_declarations_are_unmeasured(
+            [MODULE.build_signal_from_entry(name, spec) for name, spec in specs.items()]
+        )
+
+    def test_an_unreachable_tool_costs_nothing(self) -> None:
+        unreachable = self._live_route(
+            {
+                "declared": ["search"],
+                "used": True,
+                "unreachable": ["search"],
+                **self.EVIDENCE,
+            }
+        )
+        tools = next(signal for signal in unreachable if signal.name == "tools")
+        self.assertFalse(tools.measured)
+        # `withheld` is the half that decides whether the weight stays in the
+        # denominator, and it is the one this pin is really about: measured is
+        # false on plenty of charged checks.
+        self.assertFalse(tools.withheld)
+        self.assertEqual(tools.points, 0.0)
+
+    def test_no_build_check_reaches_the_score_on_the_live_route(self) -> None:
+        """All four, because retiring one charge is not the claim #461 closes on."""
+        signals = self._live_route(
+            {"declared": ["search"], "used": True, **self.EVIDENCE}
+        )
+        self.assertEqual(len(signals), 4)
+        for signal in signals:
+            with self.subTest(check=signal.name):
+                self.assertFalse(signal.measured)
+                self.assertFalse(signal.withheld)
+
+    def test_reaching_a_tool_buys_nothing_either(self) -> None:
+        """The non-firing half: the gradient is flat, not merely forgiving.
+
+        If an unreachable tool cost nothing but a reachable one earned
+        something, the incentive #461 describes would survive pointing the
+        other way. It does not: both answers land in the same place.
+        """
+        reached = self._live_route(
+            {"declared": ["search"], "used": True, **self.EVIDENCE}
+        )
+        missed = self._live_route(
+            {
+                "declared": ["search"],
+                "used": True,
+                "unreachable": ["search"],
+                **self.EVIDENCE,
+            }
+        )
+        for a, b in zip(reached, missed):
+            with self.subTest(check=a.name):
+                self.assertEqual(
+                    (a.points, a.measured, a.withheld),
+                    (b.points, b.measured, b.withheld),
+                )
+
+
 class TheCardDoesNotAssertAContradictionTests(unittest.TestCase):
     """Two claims from one document, printed as two claims.
 
