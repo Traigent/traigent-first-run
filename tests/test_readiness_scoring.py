@@ -13208,6 +13208,75 @@ class TheOneQuestionHasSomewhereToLiveTests(unittest.TestCase):
         self.assertNotIn("no longer blocking", delta["line"])
 
 
+class TheCardDoesNotAssertAContradictionTests(unittest.TestCase):
+    """Two claims from one document, printed as two claims.
+
+    The build checks carry a structured yes/no and a free-text note, and the
+    card used to concatenate them into one sentence. When they disagreed, the
+    card asserted the disagreement in a single breath and a reader could not
+    tell which half was the finding (traigent-first-run#362).
+    """
+
+    CONTRADICTING = "a prompt with two worked examples (other_agent.py:41-58)"
+
+    def _rendered(self, spec):
+        signal = MODULE.build_signal_from_entry("prompt", spec)
+        return MODULE._observed_declaration(signal).evidence
+
+    def test_the_two_halves_are_attributed_not_concatenated(self) -> None:
+        line = self._rendered({"present": True, "evidence": self.CONTRADICTING})
+        # The checklist answer, in the run's voice.
+        self.assertIn("from the checklist, a prompt, no worked examples in it", line)
+        # And the assistant's, quoted, so a reader can see whose sentence it is.
+        self.assertIn("in its own words", line)
+        self.assertIn(repr(self.CONTRADICTING), line)
+        # The old shape put the note in bare parentheses directly against the
+        # derived clause, which is what read as one sentence.
+        self.assertNotIn(f"in it ({self.CONTRADICTING})", line)
+
+    def test_a_reader_can_see_the_two_halves_disagree(self) -> None:
+        """The point of the change, stated as the thing a customer gets."""
+        line = self._rendered({"present": True, "evidence": self.CONTRADICTING})
+        self.assertIn("no worked examples", line)
+        self.assertIn("two worked examples", line)
+        # Both claims survive - this fix surfaces the disagreement rather than
+        # resolving it, and resolving it is the feature #362 was re-scoped
+        # away from.
+        self.assertLess(
+            line.index("no worked examples"), line.index("in its own words")
+        )
+
+    def test_an_agreeing_pair_still_reads_as_one_finding(self) -> None:
+        """The non-firing half: attribution must not make agreement look odd."""
+        line = self._rendered(
+            {"present": True, "few_shot": 2, "evidence": "agent.py:12-30"}
+        )
+        self.assertIn("from the checklist, a prompt, 2 worked example(s) in it", line)
+        self.assertIn("'agent.py:12-30'", line)
+
+    def test_every_build_check_uses_the_one_helper(self) -> None:
+        """Or the next check added reintroduces the fused form quietly."""
+        source = Path(MODULE.__file__).read_text(encoding="utf-8")
+        function = next(
+            node
+            for node in ast.walk(ast.parse(source))
+            if isinstance(node, ast.FunctionDef)
+            and node.name == "build_signal_from_entry"
+        )
+        fused = [
+            literal
+            for literal in _prose_literals(function)
+            if "({evidence})" in literal
+        ]
+        self.assertEqual(
+            fused,
+            [],
+            "a build answer is concatenated with the assistant's note instead "
+            "of going through `cited`, which is how the card came to assert a "
+            "contradiction as one sentence",
+        )
+
+
 class TheCeilingPricedOurOwnBoundaryTests(unittest.TestCase):
     """The refusal discloses and asks, and no longer takes the score down.
 
