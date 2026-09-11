@@ -324,11 +324,14 @@ on our initiative. It is not their onboarding.
 in their own words, and do not soften any of it:
 
 - **what was not checked** - their evaluator, against their engine;
-- **that the reason is our boundary, not their defect** - there is nothing for them to fix, and
-  nothing they change inside this run lifts it. Say it with that scope and not wider: an evaluator
-  rewritten later to compare rather than execute is a different evaluator, out of this gate
-  altogether, and telling them no change of theirs could ever matter is both false and an errand
-  they were not given;
+- **that the reason is our boundary, not their defect, and that we therefore do not know whether
+  their evaluator works** - we declined the check, so nothing here established that it is sound and
+  nothing here established that it is broken. Their query may be wrong, their column types may not
+  match, their cells may be null; this run has not looked. No step in this guide would change that,
+  and that is a fact about the guide rather than about them. **Never say there is nothing for them
+  to fix** - that says we looked, and we did not. Keep the scope tight in the other direction too:
+  an evaluator rewritten later to compare rather than execute is a different evaluator, out of this
+  gate altogether, so "no change of yours could ever matter" is false as well;
 - **what proceeding concretely means** - during the paid run the *model* writes the statements and
   their evaluator executes them against whatever it is configured to reach, many times over. The
   statements are generated, not theirs, so their trust in their own code is not the trust being
@@ -385,13 +388,16 @@ whose evaluator runs the candidate's answer proceeds here with its calibration e
 
 That customer's card is a consequence of this decision rather than of their project. The evaluator
 check is not made, so it earns nothing and the probe spread is never measured, and `readiness.py`
-raises `evaluator-calibration-refused`, which limits the readiness CLAIM to 45 and **does not block**
-- the ceiling says what this card may assert, and nothing here says what the customer may do. The
+raises `evaluator-calibration-refused`, which **does not block** - nothing here says what the
+customer may do. **Whether it bounds the CLAIM depends on what preflight's walk found, and so does
+whether the check is charged; the same witness decides both.** Where the walk established the
+engine, the boundary is demonstrably ours: nothing is bounded and nothing is deducted. Where this
+run holds only the declaration, the claim is held at 45 and the check is charged, because a word
+about a file nobody read may bound a claim and may never lift one. The
 card carries the disclosure this section makes. It does not put the question: that happens once, at
 the pre-spend approval, for the reason given above.
-Whether the unmade check is also CHARGED depends on what preflight's walk found, and the card says which case a run is
-in: a walk that established the engine is not charged, and a run resting on the declaration alone
-is, because finding no engine settles nothing by the paragraph above. None of it follows from
+The card says which case a run is
+in. None of it follows from
 anything their evaluator did: the reason is the unbounded target above. The card gives them no route
 out of the ceiling, and no longer pretends to - the unmade check is ours, so nothing they do inside
 this run lifts it, and saying otherwise handed them an errand instead of a disclosure. That is a

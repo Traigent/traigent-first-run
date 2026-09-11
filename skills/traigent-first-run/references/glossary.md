@@ -376,6 +376,27 @@ Readiness score (the card, the three pillars, bands, caps, blocked)
   action. A re-score is a gate result; `SKILL.md` section 4 owns how it is presented. Do not
   animate with invented progress or narrate every card line.
 
+
+NOT CHECKED HERE
+  Plain: a check this guide chose not to run on your project, said out loud.
+  It takes nothing off your score and asks nothing of you.
+  It reads differently from every other label on the card, and the difference is
+  the point. The others all describe something about YOUR material - a component
+  that is missing, answers nobody read, rows that repeat - and each names
+  something you could change, whether it stops the run or only bounds what the
+  card may claim. This one describes a boundary of OURS. The only case that
+  carries it today is an evaluator that runs the model's answers as code or SQL:
+  running it to check it would mean executing candidate code or opening your
+  database from inside this guide, and
+  this guide will not do either. There is no version of your project that scores
+  higher for it, so no number is shown and none is deducted.
+  What it does cost is a claim rather than points. The evaluation pillar reports
+  how many of its four checks were measured - two, where this fires - and a run
+  whose evidence is that thin is held at Workable and may not present as Strong,
+  by the same rule described above. So the card stops short of saying your
+  evaluator grades correctly, because nothing here established that it does, and
+  it stops equally short of saying it does not.
+
 .env file
   Plain: a small text file in your project that holds settings and secrets -
   most importantly your keys - so the tools can run. It stays on your machine
