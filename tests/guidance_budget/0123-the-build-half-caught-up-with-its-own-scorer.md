@@ -1,9 +1,9 @@
 # 0123 - the build half caught up with its own scorer
 
 follows: 0122
-follows-total-measured: 517_851
-total-ceiling: 518_190
-total-measured: 518_186
+follows-total-measured: 518_009
+total-ceiling: 518_348
+total-measured: 518_344
 
 Three hundred bytes into the one document that tells an assistant what to write into the build half,
 and the reason is that four of its sentences described a scorer two merged changes ago. This is the
