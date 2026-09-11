@@ -1103,7 +1103,7 @@ that cap, so never silently present a two-configuration generated run as the int
 
 Composite patterns are a later workflow, not a first-run paid dimension.
 
-### The accuracy-cost frontier
+### The objective-cost frontier
 
 SKILL section 7 owns when a frontier is reported and its score floor; `references/sdk-execution.md`
 owns the read. Owned here: what it may claim, and the wording of its two outcomes. It costs nothing
@@ -1167,8 +1167,9 @@ configuration the user runs now, then the rest of the frontier as the trade-offs
 this run counted, never a property of the space: the space is larger than the run's trial cap, so
 any claim about the space quantifies over configurations the run never reached.
 
-> This run tested `<executed trials>` of `<total combination count>` configurations. On accuracy
-> against cost, the configuration you are already running is still the only point on the frontier:
+> This run tested `<executed trials>` of `<total combination count>` configurations. On
+> `<what you are optimizing for>` against cost, the configuration you are already running is still
+> the only point on the frontier:
 > nothing tested cost less at its score, and nothing scored higher at its cost. So keeping it is
 > the answer this run supports. A run this size reaches few configurations by design; widening the
 > search across your full dataset and your own controls is what the skills named at the close are
