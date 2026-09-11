@@ -6,10 +6,10 @@ follows-total-measured: 525_912
 follows-document-measured: 134_261
 resident-ceiling: 50_563
 resident-measured: 50_559
-total-ceiling: 538_131
-total-measured: 538_127
-document-ceiling: 146_899
-document-measured: 146_895
+total-ceiling: 539_167
+total-measured: 539_163
+document-ceiling: 147_400
+document-measured: 147_396
 
 The resident skill now keeps ordered decisions and stage dispatch while its detailed opening,
 setup, calibration, recovery, and reporting procedures live in their existing reference owners.
@@ -41,3 +41,8 @@ Customer-owned spaces now keep all original dimensions and values; the generated
 limit cannot silently narrow them. Verified provider-zero cost remains measured. Source-build
 recovery names the incomplete environment and the explicit recreation request, instead of
 promising that installation elsewhere supplies the missing setup evidence.
+
+The customer card now keeps concise findings and required decisions while its source-check recipe
+and detailed observations remain in the report. Closing guidance names completed, verified value
+and the next validation action; it no longer turns scale, a human review, or an inconclusive
+comparison into production-readiness proof or a recommendation the measurements did not earn.

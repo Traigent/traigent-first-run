@@ -1260,9 +1260,9 @@ When the rows carry no difficulty tags, work down the ladder in "Choosing rows w
 not labelled" above. An unlabelled pick is still bounded and reproducible, just less
 representative, and that limitation belongs in the report.
 
-The full dataset stays the dataset. A real optimization after the walkthrough runs against all of
-it, and over a wider knob space than this first look reaches; this bound exists only so the first
-run finishes.
+The full dataset stays the dataset. A later workflow can draw on more of it and a wider knob space
+when the task and evidence justify that scope. This bound keeps the first run short; the held-out
+claims below own what a later validation would need to establish.
 
 ## Held-out set and claims
 
@@ -1341,18 +1341,18 @@ on the check instead of on the search this run exists to show. Ten is therefore 
 directions, never a floor to grow from. The one split that is not ten is a project's own, kept at
 the size it already has, whatever its composition. So the resolution stays coarse, and
 the honest move is to say so plainly rather than to grow the split until the number sounds
-authoritative. What this walkthrough shows is what Traigent can do; the full picture comes from
-running the whole dataset over a wider knob space, as "First-run subset for a large dataset" above
-already says.
+authoritative. This walkthrough demonstrates the comparison at small scale; a later workflow can
+investigate more representative rows and a wider knob space, as "First-run subset for a large
+dataset" above describes. That larger scope does not itself establish stronger results.
 
-A gap between the tuning score and the held-out score is expected, and it is explained by two
-separate things - neither is a bug:
+A gap between the tuning score and the held-out score can arise for two reasons without a bug;
+this run does not establish either as the cause of an observed gap:
 
-- **Selecting on the tuning rows inflates the tuning score.** Scoring several candidate
+- **Selecting on the tuning rows can inflate the tuning score.** Scoring several candidate
   configurations on the same rows and keeping the best one selects partly on real signal and
-  partly on that sample's noise. The winner's tuning score is inflated by the act of choosing it
-  and will not fully repeat on a fresh sample even when nothing is actually overfitted. This is
-  exactly what the held-out rows exist to check.
+  can also select on that sample's noise. The winner's tuning score can therefore be optimistic;
+  the held-out measurement checks the already chosen candidate, and may be lower, level, or higher.
+  Do not predict its value from selection alone.
 - **Ten rows cannot resolve a small gap.** One *standard error* on an accuracy measured from ten
   items is about 15 points near 50% and still about 10 points near 90% - and a 95% interval is
   roughly twice that, about +/-31 and +/-19 points. Quote the interval as the interval; a standard
@@ -1415,10 +1415,11 @@ aggregation, and declared direction on both lines, alongside each split's row co
 a pass threshold to turn those scores into correct/incorrect counts. The small-sample note still
 applies; an error rate or graded score is not a count of correct answers.
 
-Then say the forward half out loud instead of leaving it implied: at full capability this same check
-runs over the customer's whole dataset, and that is where real-world validation actually happens -
-the walkthrough is showing the shape of that step cheaply rather than performing it, which is a
-choice and not a shortfall. State it without apologizing for the ten rows and without saying what a
+Then explain the next validation action: a later run can use more representative examples and
+controls, keeping evaluation separate from tuning and winner selection as the intended claim
+requires. More rows or a wider search alone do not establish real-world performance. This
+walkthrough demonstrates the comparison cheaply; its evidence remains scoped to the rows and
+components actually used. State it without apologizing for the ten rows and without saying what a
 larger run would find; the close's skills handoff is already the route to it.
 
 When the split was topped up, say so on the same line as its score. "Held out" is a claim about what

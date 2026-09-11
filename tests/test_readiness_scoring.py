@@ -9943,10 +9943,6 @@ class TheCardSpeaksTheUsersLanguageTests(unittest.TestCase):
             "`repeated or dominant answers` CHECK and when rows count as "
             "repeats, but not the block the card prints under this name."
         ),
-        "ACCEPTED ROUTE": (
-            "the label on the worked example printed beside a refused "
-            "parameter. Nothing in the glossary names it."
-        ),
     }
 
     def test_the_glossary_explains_every_term_the_card_prints(self) -> None:
@@ -10593,6 +10589,8 @@ class TheCardSpeaksTheUsersLanguageTests(unittest.TestCase):
         # nothing, which is the gap this scan exists to close - so the block is
         # named here in the same change that writes it, not in a later one.
         "accepted_route_shape",
+        "card_check_evidence",
+        "card_cap_reason",
         "assumption_sentence",
         "task_fit_evidence",
         "readable_kinds",
@@ -10775,6 +10773,33 @@ class TheCardSpeaksTheUsersLanguageTests(unittest.TestCase):
             # should write instead, so it is exactly the text these rules are
             # for, and a state nothing renders exempts it from all of them.
             replace(plain, agent_route_unverified=True),
+            replace(
+                plain,
+                agent_source_read=True,
+                caps=(MODULE.UNPROBED_DISCOVERED_KNOBS_CAP,),
+                pillars=(
+                    MODULE.combine(
+                        "agent",
+                        [
+                            MODULE.SubScore(
+                                "search-space",
+                                0,
+                                100,
+                                True,
+                                MODULE.UNVERIFIED_SETTINGS_PREFIX + "a source detail",
+                            ),
+                            MODULE.SubScore(
+                                "prompt",
+                                0,
+                                8,
+                                False,
+                                MODULE.UNVERIFIED_BUILD_PREFIX
+                                + MODULE.cited("a prompt", "a source note"),
+                            ),
+                        ],
+                    ),
+                ),
+            ),
         ]
         return scores
 
@@ -19791,26 +19816,15 @@ class TheRefusedRouteIsShownAnAcceptedOneTests(unittest.TestCase):
         self.assertGreater(pillar.score, 0)
         self.assertFalse(any(cap.condition == "agent-no-varying-knobs" for cap in caps))
 
-    def test_the_accepted_route_prints_beside_a_refused_route(self) -> None:
-        """The parts, on the card; the worked file, in the report only.
-
-        The card used to print the whole fourteen-line agent, written against
-        one provider and two named models, and a reader whose route was
-        refused read it as the shape to rebuild theirs into - the harm the
-        hedge under the label warns against. The parts are what the check
-        wants; the worked example stays in the durable report and the
-        reference, which fence it as code and carry the hedge beside it.
-        """
+    def test_the_card_routes_detailed_settings_guidance_to_the_report(self) -> None:
+        """Keep the customer finding concise and the assistant's recipe accessible."""
         card = self._card(self.REFUSED_AGENT, self.REFUSED_KNOB)
-        self.assertIn(MODULE.ACCEPTED_ROUTE_LABEL, card)
-        self.assertIn("references/component-creation.md", card)
+        self.assertIn("detailed readiness report", card)
+        self.assertNotIn("references/component-creation.md", card)
+        self.assertNotIn("ACCEPTED ROUTE", card)
         for part in MODULE.ACCEPTED_ROUTE_PARTS:
             with self.subTest(part=part):
-                self.assertIn(part, card)
-        for line in MODULE.ACCEPTED_ROUTE_AGENT.splitlines():
-            if line.strip():
-                with self.subTest(line=line):
-                    self.assertNotIn(line, card)
+                self.assertNotIn(part, card)
         self.assertNotIn("gpt-4o", card)
 
     def test_the_durable_report_carries_it_too(self) -> None:
@@ -19853,7 +19867,7 @@ class TheRefusedRouteIsShownAnAcceptedOneTests(unittest.TestCase):
             MODULE.ACCEPTED_ROUTE_AGENT,
             json.loads(json.dumps(MODULE.ACCEPTED_ROUTE_KNOB))["model"],
         )
-        self.assertNotIn(MODULE.ACCEPTED_ROUTE_LABEL, credited)
+        self.assertNotIn("ACCEPTED ROUTE", credited)
         unsettled = self._card(
             self.REFUSED_AGENT,
             {
@@ -19861,7 +19875,7 @@ class TheRefusedRouteIsShownAnAcceptedOneTests(unittest.TestCase):
                 "evidence": "seen in the agent, never settled",
             },
         )
-        self.assertNotIn(MODULE.ACCEPTED_ROUTE_LABEL, unsettled)
+        self.assertNotIn("ACCEPTED ROUTE", unsettled)
 
     def test_only_the_state_this_example_answers_sets_the_flag(self) -> None:
         """Enumerated from the source, not from the two branches I had in mind.

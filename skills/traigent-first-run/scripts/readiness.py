@@ -3562,11 +3562,12 @@ class ReadinessScore:
     # them.
     agent_source_read: bool = False
     # Whether any parameter was refused because this read could not follow its
-    # route to the call - carried for the CARD on the same terms as the field
-    # above, and weighting, capping and renormalizing nothing.
+    # route to the call - carried for the card's notice and the detailed
+    # report's recipe, and weighting, capping and renormalizing nothing.
     #
-    # It exists so the card can print an accepted route beside a refusal that
-    # could not follow one. Derived from `DiscoveredKnob.route_unverified`,
+    # It exists so the detailed report can print an accepted route beside a
+    # refusal that could not follow one. Derived from
+    # `DiscoveredKnob.route_unverified`,
     # which is set where the refusal is decided, rather than re-read at render
     # time from the evidence prose: a renderer that matched sentences would be
     # answering a semantic question from a surface signal, which is the class
@@ -4317,6 +4318,13 @@ SOURCE_CHECK_SCOPE = {
 # two literals: the arm that lost it lost it by being written somewhere else
 # (traigent-first-run#362).
 UNCHECKED_OBSERVATION = "Assistant observation, which nothing here checks: "
+UNVERIFIED_BUILD_PREFIX = "not independently verified; excluded from this score. "
+CHECKLIST_ANSWER_PREFIX = "from the checklist, "
+ASSISTANT_NOTE_PREFIX = "; in its own words, "
+UNVERIFIED_SETTINGS_PREFIX = (
+    "the source read found candidate settings, but this narrow static "
+    "check could not verify how they reach the selected local call: "
+)
 
 
 # What the read of the agent's build is asked, and what each answer is worth.
@@ -9076,8 +9084,7 @@ def score_discovered_agent(
                 or "the candidates"
             )
             evidence = (
-                "the source read found candidate settings, but this narrow static "
-                "check could not verify how they reach the selected local call: "
+                UNVERIFIED_SETTINGS_PREFIX
                 if facts.discovered
                 else "the opening reading lists no settings, and this local static "
                 "check could not inspect the selected source: "
@@ -10381,6 +10388,47 @@ def confirmed_absence_note(score: ReadinessScore) -> str | None:
     return None
 
 
+def card_check_evidence(score: ReadinessScore, pillar: Pillar, sub: SubScore) -> str:
+    """Keep diagnoses in the report and the scored finding on the card.
+
+    Only owned observation framing is shortened. The text before that framing
+    can explain a distinct unknown (for example, a prompt loaded at runtime),
+    so retain it. Unrecognized and caller-authored findings remain unchanged.
+    These display choices do not classify a component or decide a route.
+    """
+    if pillar.name != "agent":
+        return sub.evidence
+    if score.agent_source_read and sub.name in AGENT_BUILD_WEIGHT and not sub.measured:
+        if sub.evidence.startswith(UNVERIFIED_BUILD_PREFIX):
+            _, checklist, detail = sub.evidence.partition(CHECKLIST_ANSWER_PREFIX)
+            answer, note, _ = detail.partition(ASSISTANT_NOTE_PREFIX)
+            if checklist and note and answer:
+                return f"not independently verified: {answer}"
+        finding, observation, _ = sub.evidence.partition(UNCHECKED_OBSERVATION)
+        if observation and finding.strip():
+            return finding.strip()
+    if (
+        sub.name == "search-space"
+        and score.agent_source_read
+        and UNPROBED_DISCOVERED_KNOBS_CAP in score.caps
+        and sub.evidence.startswith(UNVERIFIED_SETTINGS_PREFIX)
+    ):
+        return "no varying setting verified by this opening check"
+    return sub.evidence
+
+
+def card_cap_reason(cap: Cap) -> str:
+    """Summarize only the standard advisory; preserve every other diagnosis."""
+    if cap == UNPROBED_DISCOVERED_KNOBS_CAP:
+        return (
+            "The opening check has not established which settings change the "
+            "request. This limits the planning score; it does not show that the "
+            "agent has no settings. The request check before paid work is "
+            "separate and does not raise this score."
+        )
+    return cap.reason
+
+
 def render_card(
     score: ReadinessScore, *, palette: Palette = PLAIN, unicode_ok: bool = True
 ) -> str:
@@ -10536,7 +10584,9 @@ def render_card(
         else:
             shared: dict[str, list[SubScore]] = {}
             for sub in pillar.subscores:
-                shared.setdefault(sub.evidence, []).append(sub)
+                shared.setdefault(card_check_evidence(score, pillar, sub), []).append(
+                    sub
+                )
             # Width from the labels actually present, not a constant: these are
             # phrases now, and a fixed column either wraps the long ones or
             # pads every short one to the width of the longest name in the file.
@@ -10558,7 +10608,7 @@ def render_card(
                     sub = subs[0]
                     label = display_name(sub.name)
                     lines.append(
-                        f"    {marker(sub, unicode_ok)} {label:<{width}}  {sub.evidence}"
+                        f"    {marker(sub, unicode_ok)} {label:<{width}}  {evidence}"
                     )
                     continue
                 # The finding first, then the questions it answered for. The
@@ -10616,14 +10666,20 @@ def render_card(
                 label = f"{palette.warn}LIMITED TO {cap.ceiling}{palette.reset}"
             else:
                 label = f"{palette.warn}WOULD LIMIT TO {cap.ceiling}{palette.reset}"
-            lines.append(f"  {label} {cap.reason}")
+            lines.append(f"  {label} {card_cap_reason(cap)}")
         lines.append("")
-    if score.agent_route_unverified:
-        # BELOW the ceiling that reports the refusal, for the reason the block
-        # under it is below its own finding: what to write instead is only
-        # readable once the reader has read what was refused.
-        lines.extend(accepted_route_shape())
-        lines.append("")
+    if score.agent_route_unverified or any(
+        card_check_evidence(score, pillar, sub) != sub.evidence
+        for pillar in score.pillars
+        for sub in pillar.subscores
+    ):
+        lines.extend(
+            [
+                "  The detailed readiness report carries the source observations "
+                "and settings-check guidance.",
+                "",
+            ]
+        )
     if score.repeated_inputs is not None:
         # BELOW the pillars and below the caps, and this position is the rule
         # rather than the layout that happened. A customer reads the result and
@@ -10986,35 +11042,7 @@ def render_markdown(
         lines.extend(cap_line(cap) for cap in limiting)
         lines.append("")
     if score.agent_route_unverified:
-        # In the durable report as well as on the card, and that is this
-        # module's own rule rather than a preference. A remedy printed in the
-        # terminal and missing from the report was already fixed once here for
-        # the cap remedies, on the argument that the report is the copy a
-        # reader keeps. This block is the same kind of content - what to write
-        # instead - so leaving it in the scrollback would re-open the seam that
-        # fix closed, one input over.
-        lines.extend(["## A settings route this read can follow", ""])
-        # The parts, and not the worked file, for the reason the card gives:
-        # an agent written against one provider and two named models reads as
-        # the shape to rebuild into. The worked example and the entry that
-        # cites it stay in references/component-creation.md, fenced as code
-        # and carrying the hedge beside them.
-        lines.extend(
-            [
-                "Printed because naming what failed does not say what would "
-                "pass. Many shapes carry these parts; the worked agent and the "
-                "entry that cites it are in references/component-creation.md, "
-                "and are one accepted shape rather than the only one.",
-                "",
-                f"{len(ACCEPTED_ROUTE_PARTS)} parts make a route readable, "
-                "the last of them only where it applies:",
-                "",
-            ]
-        )
-        lines.extend(
-            f"{index}. {part}" for index, part in enumerate(ACCEPTED_ROUTE_PARTS, 1)
-        )
-        lines.append("")
+        lines.extend(accepted_route_shape())
     if score.gaps:
         lines.extend(["## Ranked gaps", ""])
         for gap in score.gaps:
@@ -19609,40 +19637,30 @@ ACCEPTED_ROUTE_PARTS: tuple[str, ...] = (
     "reads",
 )
 
-ACCEPTED_ROUTE_LABEL = "ACCEPTED ROUTE"
-
 
 def accepted_route_shape() -> list[str]:
-    """The accepted worked example, as card lines.
+    """The source-check recipe for the detailed report, never the progress card.
 
-    Rendered from the constants above rather than restated, for the reason
-    `agent_knobs_shape` is: a skeleton that drifts from the checker teaches a
-    wrong shape with more authority than no skeleton at all.
+    Keep the parts tied to the checker and the worked example in the reference.
+    A provider-specific example is one accepted shape, not a demand to rebuild
+    a customer's working agent around that provider.
     """
-    # The parts, and not the worked file. The card is read by the person whose
-    # agent was refused, and a fourteen-line agent written against one provider
-    # and two named models read to them as the shape to rebuild theirs into -
-    # which is the harm the sentence under the label warns against, printed
-    # under the label. The example stays where a reader who wants it looks:
-    # the durable report and the reference, both of which fence it as code.
     lines = [
-        f"  {ACCEPTED_ROUTE_LABEL} What a settings route this check follows "
-        "looks like, in parts, because",
-        "  naming what failed does not say what would pass. Many shapes carry "
-        "these parts; the",
-        "  worked agent and the entry that cites it are in the written report "
-        "and in",
-        "  references/component-creation.md, and are one accepted shape rather "
-        "than the only one.",
+        "## A settings route this read can follow",
+        "",
+        "Printed because naming what failed does not say what would "
+        "pass. Many shapes carry these parts; the worked agent and the "
+        "entry that cites it are in references/component-creation.md, "
+        "and are one accepted shape rather than the only one.",
+        "",
+        f"{len(ACCEPTED_ROUTE_PARTS)} parts make a route readable, "
+        "the last of them only where it applies:",
         "",
     ]
-    lines.append(
-        f"  {len(ACCEPTED_ROUTE_PARTS)} parts make a route readable, the last "
-        "of them only where it applies:"
-    )
     lines.extend(
-        f"    {index}. {part}" for index, part in enumerate(ACCEPTED_ROUTE_PARTS, 1)
+        f"{index}. {part}" for index, part in enumerate(ACCEPTED_ROUTE_PARTS, 1)
     )
+    lines.append("")
     return lines
 
 
@@ -19737,7 +19755,7 @@ def cited(answer: str, evidence: str) -> str:
     (traigent-first-run#362). This stops the card asserting a contradiction; it
     does not pretend to resolve one.
     """
-    return f"from the checklist, {answer}; in its own words, {evidence!r}"
+    return f"{CHECKLIST_ANSWER_PREFIX}{answer}{ASSISTANT_NOTE_PREFIX}{evidence!r}"
 
 
 def build_signal_from_entry(
@@ -20539,7 +20557,7 @@ def _observed_declaration(signal: BuildSignal) -> BuildSignal:
         signal,
         points=0.0,
         evidence=(
-            "not independently verified; excluded from this score. "
+            UNVERIFIED_BUILD_PREFIX
             + (
                 f"Assistant observation ({signal.source_check_scope}): "
                 if signal.source_check_scope

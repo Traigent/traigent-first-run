@@ -15073,7 +15073,8 @@ class SkillPackageTests(unittest.TestCase):
             # and never gave.
             "ten rows is the design, not a placeholder",
             "ten is what the composition costs",
-            "the full picture comes from running the whole dataset over a wider knob space",
+            "a later workflow can investigate more representative rows and a wider knob space",
+            "that larger scope does not itself establish stronger results",
             # One composition, applied wherever the rows come from.
             "that composition holds wherever the rows come from",
             # Top up rather than drop a band - with what it costs.
@@ -15537,44 +15538,45 @@ class SkillPackageTests(unittest.TestCase):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, dataset)
 
-    def test_the_close_says_what_a_full_capability_run_would_do(self) -> None:
-        """The ten rows are a teaching choice, said forwards rather than implied.
-
-        The size decision is unchanged - ten, exact in both directions, for the
-        reasons the sizing paragraphs above already give. What was missing is
-        the positive half: the guide left "this is only a walkthrough" to be
-        inferred from a caveat, which reads as a limitation being apologised
-        for rather than as a step being demonstrated cheaply.
-
-        Two brakes, because this sentence is the one most likely to become a
-        pitch. It may not apologise for the ten rows, and it may not say what a
-        larger run would return - only what it would do. The route to it is the
-        skills handoff the close already carries, pointed at rather than
-        restated.
-        """
+    def test_the_close_names_validation_without_promising_its_result(self) -> None:
+        """#536: a larger run is an action, not production-validation evidence."""
+        require_stage_reference(
+            7,
+            SKILL_ROOT / "references" / "evaluation-and-dataset.md",
+            "held-out-set-and-claims",
+        )
         dataset = " ".join(
-            (SKILL_ROOT / "references" / "evaluation-and-dataset.md")
-            .read_text()
+            section_text(
+                SKILL_ROOT / "references" / "evaluation-and-dataset.md",
+                "Held-out set and claims",
+            )
             .casefold()
             .split()
         )
         for phrase in (
-            "at full capability this same check runs over the customer's whole dataset",
-            "that is where real-world validation actually happens",
-            "showing the shape of that step cheaply rather than performing it",
-            "which is a choice and not a shortfall",
+            "a later run can use more representative examples and controls",
+            "keeping evaluation separate from tuning and winner selection as the intended claim requires",
+            "more rows or a wider search alone do not establish real-world performance",
+            "its evidence remains scoped to the rows and components actually used",
             "without apologizing for the ten rows and without saying what a "
             "larger run would find",
             "the close's skills handoff is already the route to it",
+            "do not predict its value from selection alone",
+            "may be lower, level, or higher",
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, dataset)
+        for retired in (
+            "that is where real-world validation actually happens",
+            "will not fully repeat on a fresh sample",
+        ):
+            self.assertNotIn(retired, dataset)
         # It sits beside the small-sample caveat and does not replace it: the
         # backward-looking half stays exactly as it was.
         self.assertIn("ten rows cannot resolve a small gap", dataset)
         self.assertLess(
             dataset.index("keep the note only while one row still moves"),
-            dataset.index("at full capability this same check runs"),
+            dataset.index("then explain the next validation action"),
         )
         # And it does not reopen the size decision it explains.
         self.assertIn("ten is therefore exact in both directions", dataset)
@@ -17776,54 +17778,59 @@ class SkillPackageTests(unittest.TestCase):
             with self.subTest(sentence=owned_by_the_reference):
                 self.assertNotIn(owned_by_the_reference, skill)
 
-    def test_the_close_says_what_production_ready_takes_and_what_this_run_gave(
+    def test_the_close_reports_verified_value_and_remaining_validation(
         self,
     ) -> None:
-        """traigent-first-run#439: no gate, and a paragraph instead of one.
-
-        The owner refused a check over a generated corpus and refused the
-        framing the issue was filed under with it. What a generated corpus
-        needs is not a blocker but a statement the customer can act on: every
-        generated pillar - dataset, evaluation method, AGENT, which the close
-        named nowhere - made real or checked by a person. And it may not be
-        sold as worthless, because it is not: a real first run, results in the
-        portal, next steps, the shape of easy against hard, and a split held
-        out of the search. Both halves are pinned because either alone is the
-        dishonest version of this paragraph.
-        """
+        """#439/#536: useful next actions do not certify production readiness."""
         require_stage_reference(8, RUN_SAFETY, "continuation-handoff")
-        safety = " ".join(
-            (SKILL_ROOT / "references" / "run-safety.md").read_text().split()
-        )
+        safety = " ".join(section_text(RUN_SAFETY, "Verification checks").split())
         skill = " ".join(section_text(RUN_SAFETY, "Continuation handoff").split())
         self.assertIn(
-            "the dataset, the evaluation method, the agent - has to be made real "
-            "or checked by a person",
+            "the dataset, the evaluation method, the agent - name the needed "
+            "real replacement or human review of its task fit",
             safety,
         )
-        for worth in ("results in the portal", "held out of the search"):
-            with self.subTest(value=worth):
-                self.assertIn(worth, safety)
-        self.assertIn("not a full-power run and must not be described as one", safety)
+        for phrase in (
+            "next validation actions, not proof of production readiness",
+            "human review alone does not satisfy them",
+            "using only completed phases and verified artifacts",
+            "a preserved local baseline is useful even without a portal result",
+            "name results in the portal only when persistence and their links were verified",
+            "otherwise report the local result or the precise missing work",
+            "discuss easy-versus-hard behavior only where measured outcomes support it",
+            "a held-out score only when that scoring completed",
+            "with zero completed trials, describe the checks performed and the remaining work, not an optimization result",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, safety.casefold())
+        # Review and a larger sample do not replace the existing later
+        # promotion requirements or create a new gate in this walkthrough.
+        reporting = section_text(RUN_SAFETY, "Reporting procedure")
+        self.assertIn("a later validation check", reporting)
+        self.assertIn("requires explicit user approval", reporting)
         self.assertIn(
-            "not a run that established nothing, and must not be described as "
-            "that either",
-            safety,
+            "Do not promote a configuration from a fully synthetic run", reporting
         )
+        evaluation = section_text(
+            SKILL_ROOT / "references" / "evaluation-and-dataset.md",
+            "Held-out set and claims",
+        )
+        self.assertIn("only after independent human review", evaluation)
+        self.assertIn("only when the split and labels remained sealed", evaluation)
         # The flow orders it and names its home; the paragraph is not repeated
         # there, and the close still reaches it before the extras.
-        self.assertIn("say what would make this production ready", skill)
-        self.assertIn("on the run-scope terms above", skill)
+        self.assertIn("say what remains to validate before production use", skill)
+        self.assertIn("Use the run-scope terms above", skill)
         # The third thing the close owes, and the one no provenance field can
         # say: which pillars were built around which (traigent-first-run#469).
         self.assertIn(
-            "what this run\nbuilt around what",
+            "what this run built around what",
             section_text(RUN_SAFETY, "Continuation handoff"),
         )
         for disclosed in (
-            "scores that dataset better than it scores anything else",
-            "they agree by construction",
-            "a ruler drawn around their data is optimistic about their data",
+            "may fit those examples more closely than unseen inputs",
+            "shared assumptions can make their agreement look stronger than it is",
+            "Do not assert that bias occurred or quantify it without evidence",
             # The smaller residual in the same place: a repair the customer
             # never hears about outside a provenance field.
             "their dataset had problems and this run changed some of it",
@@ -17859,7 +17866,7 @@ class SkillPackageTests(unittest.TestCase):
             creation.index("build each one to the TASK"),
         )
         self.assertLess(
-            skill.index("say what would make this production ready"),
+            skill.index("say what remains to validate before production use"),
             skill.index("these are available whenever the user wants them"),
         )
 
@@ -20829,27 +20836,28 @@ class FrontierAtOrAboveTests(unittest.TestCase):
 
 
 class AFlatResultIsReadInBothDirectionsTests(unittest.TestCase):
-    """#244: the close answered a flat comparison one way only.
+    """#244/#536: favorable flat results suggest a test, not equivalence.
 
-    Its candidate causes already name easy data, and every remedy under them
-    looks upward - verify the references, add a structural knob, then consider a
-    separately disclosed stronger model. That is right when the level is low and
-    wrong when the level is high, so a run whose configurations all scored near
-    the top of its own metric was pointed at more capability and more spend.
-
-    These pin the reading that was missing and the two bounds that keep it
-    honest, because both are the ways it could do damage: as a claim about
-    configurations nobody ran, or as a cost recommendation resting on rows this
-    run invented.
+    Favorable depends on the objective: high accuracy and low error point the
+    same way. A measured tie neither identifies the cause nor licenses an
+    untested cheaper-model switch, and the next action still ranks real gaps.
     """
 
     def close(self) -> str:
-        return " ".join(RUN_SAFETY.read_text(encoding="utf-8").split())
+        require_stage_reference(8, RUN_SAFETY, "post-run-verification")
+        return " ".join(section_text(RUN_SAFETY, "Verification checks").split())
 
-    def test_the_high_flat_reading_is_stated_beside_the_low_one(self) -> None:
+    def test_the_favorable_flat_reading_uses_the_objective_direction(self) -> None:
         """A reader who has just been told to look harder will not infer it."""
         text = self.close()
-        self.assertIn("Read a flat result at a HIGH score the other way round", text)
+        for phrase in (
+            "Read a flat result at a favorable score the other way round",
+            "Use the declared objective direction and its product meaning",
+            "high accuracy can be favorable, while high error is not",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, text)
+        self.assertNotIn("a HIGH score", text)
         # The two escalations have to meet, or the second is a rule nobody
         # reaches from the first.
         self.assertLess(
@@ -20866,8 +20874,33 @@ class AFlatResultIsReadInBothDirectionsTests(unittest.TestCase):
         something about configurations it never reached.
         """
         text = self.close()
+        for phrase in (
+            "they did not separate on the measured tuning rows",
+            "does not establish equivalence or prove that these configurations are not limiting performance",
+            "under the existing tuning-selection and frontier rules",
+            "an inconclusive comparison does not make the cheapest point the winner",
+            "a favorable flat result with measured costs",
+            "can be a hypothesis for a later experiment",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, text)
         self.assertIn("never about the space", text)
         self.assertIn("does not earn another paid round here", text)
+
+    def test_the_hypothesis_keeps_the_one_ranked_next_action(self) -> None:
+        text = self.close()
+        self.assertIn("Continuation handoff's ranked recommendation", text)
+        self.assertIn("does not displace a more important unresolved gap", text)
+        require_stage_reference(8, RUN_SAFETY, "continuation-handoff")
+        handoff = " ".join(section_text(RUN_SAFETY, "Continuation handoff").split())
+        for phrase in (
+            "the one next action the **recorded opening state** earns",
+            "rank the opening score's caps and this run's own recorded limits",
+            "A gap this run filled with a substitute is not cleared",
+            "a clause on the recommendation above, not a second one",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, handoff)
 
     def test_it_requires_collected_data(self) -> None:
         """The failure this could otherwise cause, and the reason it is guarded.
@@ -20880,7 +20913,9 @@ class AFlatResultIsReadInBothDirectionsTests(unittest.TestCase):
         """
         text = self.close()
         self.assertIn("only on collected data", text)
-        self.assertIn("on generated rows a high flat score measures material", text)
+        self.assertIn(
+            "on generated rows a favorable flat score measures material", text
+        )
 
 
 class TheApprovedTotalReachesTheCodeTests(unittest.TestCase):
@@ -23990,6 +24025,32 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
 
     # (decision, phrases asserting one answer, phrases asserting the opposite)
     CONTRADICTIONS = (
+        (
+            "whether a larger run or human review establishes production readiness",
+            (
+                "more rows or a wider search alone do not establish real-world performance",
+                "next validation actions, not proof of production readiness",
+            ),
+            (
+                "that is where real-world validation actually happens",
+                "say what would make this production ready",
+            ),
+        ),
+        (
+            "whether an inconclusive flat result establishes the limiting factor",
+            ("an inconclusive comparison does not make the cheapest point the winner",),
+            (
+                "these configurations are not what limits this result",
+                "the cheapest point the run measured is not merely on the frontier, it is the answer",
+            ),
+        ),
+        (
+            "whether the close may assume unverified portal results",
+            (
+                "name results in the portal only when persistence and their links were verified",
+            ),
+            ("they have a real first run - results in the portal",),
+        ),
         (
             "whether installing elsewhere repairs an incomplete guided environment",
             (
@@ -34897,11 +34958,11 @@ class TheAcceptedRouteIsReadableBeforeItIsRefusedTests(unittest.TestCase):
         """
         parts = READINESS.ACCEPTED_ROUTE_PARTS
         self.assertGreaterEqual(len(parts), 1)
-        card = "\n".join(READINESS.accepted_route_shape())
-        self.assertIn(f"{len(parts)} parts make a route readable", card)
+        report = "\n".join(READINESS.accepted_route_shape())
+        self.assertIn(f"{len(parts)} parts make a route readable", report)
         for index in range(1, len(parts) + 1):
-            self.assertIn(f"    {index}. ", card)
-        self.assertNotIn(f"    {len(parts) + 1}. ", card)
+            self.assertIn(f"\n{index}. ", report)
+        self.assertNotIn(f"\n{len(parts) + 1}. ", report)
         # And the reference carries the same number, so the two renderings
         # cannot drift apart in count while each stays self-consistent. Scoped
         # to the block that lists them: the document holds other numbered

@@ -1638,42 +1638,50 @@ relevant knobs on a small budget, so a flat result can simply be a normal first 
 fault. The honest next step, the user's own next run, is one deliberate iteration adding a single
 structural knob where the evidence points, not piling on knobs or spend to force a win.
 
-Read a flat result at a HIGH score the other way round, and only on collected data. The paragraphs
-above answer a flat result by looking harder - another structural knob, or a separately disclosed
-stronger model - which is right when the level is low. When the paired analysis detects no
-difference between configurations and the level sits near the top of the run's own metric, "nothing
-we tried separated them" is a finding about the task rather than a failure of the search: these
-configurations are not what limits this result. Then the cheapest point the run measured is not
-merely on the frontier, it is the answer, and the experiment worth running next is a tier BELOW
-anything tested rather than above it.
+Read a flat result at a favorable score the other way round, and only on collected data. Use the
+declared objective direction and its product meaning: high accuracy can be favorable, while high
+error is not. When the completed paired analysis detects no difference between configurations, say
+they did not separate on the measured tuning rows. That does not establish equivalence or prove
+that these configurations are not limiting performance. Keep the configuration recommendation
+under the existing tuning-selection and frontier rules; an inconclusive comparison does not make
+the cheapest point the winner.
+
+For a favorable flat result with measured costs, a tier BELOW anything tested can be a hypothesis
+for a later experiment instead of a stronger model. Carry that hypothesis into Continuation
+handoff's ranked recommendation; it does not displace a more important unresolved gap.
 
 Two bounds it keeps, both already owned above. It is a statement about what this run tested and
-never about the space - a cheaper tier nobody ran is a hypothesis to test at full scale, exactly as
+never about the space - a cheaper tier nobody ran is a hypothesis for a later experiment, exactly as
 a cheaper tier that did run and matched is - and it does not earn another paid round here. And it
-requires collected data: on generated rows a high flat score measures material this run invented,
-where an easy-looking task is the likeliest thing a walkthrough dataset produces.
+requires collected data: on generated rows a favorable flat score measures material this run invented;
+an easy-looking task may reflect how the walkthrough examples were constructed.
 
 If any component is synthetic, put the limitation before the score. A synthetic Pareto frontier
 can look identical to a production one.
 
-Then say what would make it production ready, as one paragraph rather than a warning. Every pillar
-this run generated - the dataset, the evaluation method, the agent - has to be made real or checked
-by a person before a number taken over it describes production, and the answer key was sampled on
-the terms "Say what you sampled and what you assumed" in `references/evaluation-and-dataset.md`
-sets out. Say what the run was worth anyway, because it was worth something and a customer who hears only the
-limitation will not know it: they have a real first run - results in the portal, a summary naming
-what to do next, a feel for how their easy and hard questions differ, and a set held out of the
-search, which is the habit every honest comparison after this one rests on. It is not a full-power
-run and must not be described as one; it is also not a run that established nothing, and must not
-be described as that either.
+Then explain what remains to validate for the intended product use, as one paragraph rather than
+a warning. For every pillar this run generated - the dataset, the evaluation method, the agent -
+name the needed real replacement or human review of its task fit. Those are next validation
+actions, not proof of production readiness. Reporting procedure above and "Held-out set and
+claims" in `references/evaluation-and-dataset.md` own the later promotion requirements; human
+review alone does not satisfy them. Describe the answer-key review on the terms "Say what you
+sampled and what you assumed" in that reference sets out.
+
+Say what the run actually gave the user, using only completed phases and verified artifacts.
+A preserved local baseline is useful even without a portal result. Name results in the portal only
+when persistence and their links were verified; otherwise report the local result or the precise
+missing work. Discuss easy-versus-hard behavior only where measured outcomes support it, and a
+held-out score only when that scoring completed. With zero completed trials, describe the checks
+performed and the remaining work, not an optimization result. This is a bounded first look, neither
+proof of production readiness nor evidence to discard merely because a later phase did not finish.
 
 Name what this run built around what, because that is the part a provenance field cannot say. An
-evaluation method written around a dataset scores that dataset better than it scores anything else,
-and the run then reports a number produced by that method over that data; where both were written
-here, they agree by construction. The held-out split does not cover this - it protects against the
-search overfitting, and both of its sides are graded by the same ruler. So say, plainly and without
-provenance vocabulary, which pillars were built around which, and that a ruler drawn around their
-data is optimistic about their data. Where this run repaired rows the review found unsound, say that
+evaluation method written around a dataset may fit those examples more closely than unseen inputs;
+when both were written here, shared assumptions can make their agreement look stronger than it is.
+The held-out split does not resolve that risk: both sides use the same evaluation method. So say,
+plainly and without provenance vocabulary, which pillars were built around which and how that can
+limit the claim. Do not assert that bias occurred or quantify it without evidence.
+Where this run repaired rows the review found unsound, say that
 too, with the count: their dataset had problems and this run changed some of it. Neither is a
 deduction - the generated-provenance ceilings already price the material once, and charging twice
 for one fact would be a second ceiling nobody decided on.
@@ -1705,9 +1713,9 @@ a larger run would have won, attach a deadline, or supply a reason to act now.
 
 Close by saying what a further run would be worth. Name the gaps still open and what each is now
 costing; use the user's own measured evidence rather than encouragement. Say what this walkthrough
-cannot close, and say what would make this production ready - every pillar this run generated made
-real or checked by a person, an answer key read rather than verified, and what this run
-built around what - on the run-scope terms above, including what the run was worth without them. Then give the one next action the **recorded opening state** earns: rank the opening
+cannot close, and say what remains to validate before production use: the generated pillars, the
+answer key, and what this run built around what, under the evidence and promotion rules above.
+Use the run-scope terms above, including only the value this run actually established. Then give the one next action the **recorded opening state** earns: rank the opening
 score's caps and this run's own recorded limits, and name its value. A gap this run filled with a
 substitute is not cleared - it is filled provisionally, so it stays on this list and the action is
 what closing it properly takes:

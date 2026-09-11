@@ -234,8 +234,12 @@ The lines under each pillar on the card
                                  reached by the code that runs.
     None of those four is scored, and that is why an agent with no tools is not
     marked down for having none. They are this run's own read of your agent, so
-    they are reported beside the number and never added to it; what the pillar
-    counts here is the search space alone.
+    the card names the unverified questions beside the number and never adds
+    them to it; what the pillar counts here is the search space alone. Full
+    source observations, citations, and settings-check guidance stay in the
+    detailed readiness report. The card keeps each material limitation and
+    any action it requires; an advisory source-check limit is not a finding
+    that your agent is missing or broken.
     The card also names this pillar's other two checks: whether your dataset
     and your evaluation method are wired into the agent. This run builds that
     integration and verifies it later against the installed SDK, so the
