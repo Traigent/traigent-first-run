@@ -6833,8 +6833,17 @@ class ACapCarriesAScoreNotAnyValueTests(unittest.TestCase):
         self.assertIsNone(cap.ceiling)
         with self.assertRaises(ValueError):
             MODULE.Cap("evaluator-calibration-refused", None, "reason", blocks="yes")
-        with self.assertRaises(ValueError):
-            MODULE.Cap("not-a-real-condition", None, "reason")
+        # A REGISTERED condition, so the ACTION_FOR_CONDITION guard above cannot
+        # be what refuses it - this has to reach the DISCLOSURE_CAP_PILLAR check
+        # or nothing tests that check at all. `dataset-absent` is real, routes
+        # normally, and names no pillar for a disclosure, so bounding nothing is
+        # exactly what it may not do.
+        with self.assertRaises(ValueError) as unregistered:
+            MODULE.Cap("dataset-absent", None, "reason")
+        self.assertIn("DISCLOSURE_CAP_PILLAR", str(unregistered.exception))
+        # And the same condition WITH a ceiling still constructs, so the refusal
+        # above is about the missing pillar and not about the condition.
+        self.assertEqual(MODULE.Cap("dataset-absent", 30, "reason").ceiling, 30)
 
     def test_a_non_boolean_blocks_flag_is_refused(self) -> None:
         with self.assertRaises(ValueError) as caught:
@@ -13208,6 +13217,43 @@ class TheOneQuestionHasSomewhereToLiveTests(unittest.TestCase):
         self.assertNotIn("no longer blocking", delta["line"])
 
 
+def _fuses_evidence(joined: ast.JoinedStr) -> bool:
+    """Is this the `<clause> ({evidence})` shape, specifically.
+
+    Narrower than "interpolates `evidence`", because one arm legitimately
+    does: the undetermined branch puts `UNCHECKED_OBSERVATION` immediately in
+    front of it, so the voice is already named and there is nothing for
+    `cited` to separate. What the card cannot carry is the evidence in BARE
+    PARENTHESES against a derived clause, which reads as one sentence.
+
+    So the match is positional: a formatted `evidence`, preceded by a constant
+    ending in an open parenthesis, followed by one starting with a close.
+    """
+    parts = joined.values
+    for index, part in enumerate(parts):
+        if not (
+            isinstance(part, ast.FormattedValue)
+            and isinstance(part.value, ast.Name)
+            and part.value.id == "evidence"
+        ):
+            continue
+        before = parts[index - 1] if index else None
+        after = parts[index + 1] if index + 1 < len(parts) else None
+        opens = (
+            isinstance(before, ast.Constant)
+            and isinstance(before.value, str)
+            and before.value.rstrip().endswith("(")
+        )
+        closes = (
+            isinstance(after, ast.Constant)
+            and isinstance(after.value, str)
+            and after.value.lstrip().startswith(")")
+        )
+        if opens and closes:
+            return True
+    return False
+
+
 class TheBuildHalfChargesNothingOnTheLiveRouteTests(unittest.TestCase):
     """The seven points `traigent-first-run#461` asks to stop charging are
     already uncharged, and this is what keeps that true.
@@ -13350,6 +13396,40 @@ class SentencesThatOutlivedTheirRuleTests(unittest.TestCase):
             "a blocking cap leads, so the top-up must not be offered as route A",
         )
 
+    def test_a_size_cap_with_no_offer_does_not_reconcile(self) -> None:
+        """The routing label is not the offer, and keying on it regressed.
+
+        `action_kind` says which remedy a condition routes to. Whether the card
+        actually PUTS the offer is `asks`, set from whether `top_up_offer`
+        returned one - and they part company on every size cap whose offer is
+        empty, which is what a file already at the bounded size gets.
+
+        Measured: 18 comparable rows out of 40 available gives
+        `dataset-coarse-resolution` with `asks=False` and
+        `action_kind == ADD_EXAMPLES`. Keyed on the label alone, that card
+        printed "rows this run writes are scored as the generated rows they
+        are" while offering to write none - the sentence this whole fix removed
+        from the other arm, pointing the other way.
+        """
+        no_offer = MODULE.power_ceiling(18, available_rows=40)
+        self.assertIsNotNone(no_offer)
+        self.assertEqual(no_offer.action_kind, MODULE.ADD_EXAMPLES)
+        self.assertFalse(no_offer.asks, "fixture must be a cap that offers nothing")
+
+        offers = MODULE.power_ceiling(18, available_rows=24)
+        self.assertIsNotNone(offers)
+        self.assertTrue(offers.asks, "fixture must be a cap that does offer")
+
+        # The predicate the card is built from, over both.
+        for cap, expected in ((no_offer, False), (offers, True)):
+            with self.subTest(asks=cap.asks):
+                self.assertEqual(
+                    cap.asks and cap.action_kind == MODULE.ADD_EXAMPLES, expected
+                )
+                # And the label alone cannot tell them apart, which is why it
+                # was the wrong signal.
+                self.assertTrue(cap.action_kind == MODULE.ADD_EXAMPLES)
+
     def test_a_card_offering_nothing_keeps_the_flat_sentence(self) -> None:
         """The non-firing half: no offer anywhere, no reconciliation."""
         finding = MODULE.RepeatedInputs(
@@ -13428,7 +13508,20 @@ class TheCardDoesNotAssertAContradictionTests(unittest.TestCase):
         self.assertIn("'agent.py:12-30'", line)
 
     def test_every_build_check_uses_the_one_helper(self) -> None:
-        """Or the next check added reintroduces the fused form quietly."""
+        """Or the next check added reintroduces the fused form quietly.
+
+        The first version of this guard looked for the literal `({evidence})`
+        among the function's prose constants, and could not fail for any code:
+        in `f"a prompt, {counted} ({evidence})"` the only constants are
+        `'a prompt, '`, `' ('` and `')'` - the interpolation is an
+        `ast.FormattedValue`, never part of a constant. Seven of the nine
+        converted arms had no protection at all, and the test whose docstring
+        promised it was the one thing that could not see it.
+
+        What is checked now is the SHAPE: inside `build_signal_from_entry`, no
+        f-string may interpolate `evidence` itself. Every such join goes through
+        `cited`, which is the one place the two voices are kept apart.
+        """
         source = Path(MODULE.__file__).read_text(encoding="utf-8")
         function = next(
             node
@@ -13437,16 +13530,45 @@ class TheCardDoesNotAssertAContradictionTests(unittest.TestCase):
             and node.name == "build_signal_from_entry"
         )
         fused = [
-            literal
-            for literal in _prose_literals(function)
-            if "({evidence})" in literal
+            ast.unparse(joined)
+            for joined in ast.walk(function)
+            if isinstance(joined, ast.JoinedStr) and _fuses_evidence(joined)
         ]
         self.assertEqual(
             fused,
             [],
-            "a build answer is concatenated with the assistant's note instead "
+            "a build answer is interpolated with the assistant's note instead "
             "of going through `cited`, which is how the card came to assert a "
             "contradiction as one sentence",
+        )
+        # The guard must be able to SEE the thing it forbids: the same walk over
+        # a fused sample finds it. Without this, a later refactor that renames
+        # the argument turns the check green for the wrong reason.
+        sample = ast.parse('f"a prompt, {counted} ({evidence})"')
+        self.assertTrue(
+            [
+                joined
+                for joined in ast.walk(sample)
+                if isinstance(joined, ast.JoinedStr) and _fuses_evidence(joined)
+            ],
+            "the detector cannot see the fused form it exists to refuse",
+        )
+        # ...and it must NOT see the arm that is already attributed. That one
+        # puts `UNCHECKED_OBSERVATION` in front of the evidence instead of
+        # wrapping it in bare parentheses, so the voice is already named and
+        # there is nothing to separate. A guard that refuses it is a false red
+        # over correct writing, which teaches authors to work around the check.
+        attributed = ast.parse(
+            'f"not established by this read - {reason}. {UNCHECKED_OBSERVATION}{evidence}"'
+        )
+        self.assertEqual(
+            [
+                joined
+                for joined in ast.walk(attributed)
+                if isinstance(joined, ast.JoinedStr) and _fuses_evidence(joined)
+            ],
+            [],
+            "the detector refuses an arm that already names whose words these are",
         )
 
 
@@ -13531,6 +13653,57 @@ class TheCeilingPricedOurOwnBoundaryTests(unittest.TestCase):
         # whole reason the hold has to be the thing keeping it out.
         self.assertGreaterEqual(score.overall, 75)
 
+    def test_a_claim_with_no_witness_buys_nothing(self) -> None:
+        """The thirty-two points are bought by EVIDENCE, never by a word.
+
+        `executes_candidate` is read straight out of the `--preflight` document
+        handed to this script; nothing here produced it and nothing here can
+        check it. Keyed on that flag alone, lifting the ceiling made a
+        hand-written `{"executes": true}` worth +32 - and worth it for claiming
+        the one property the guide treats as the unsafe shape, so the cheapest
+        route to a high score became saying your evaluator opens a database.
+
+        `execution_witness` is the construct and the line the walk quoted. The
+        ceiling comes off for that and for nothing else.
+        """
+        common = dict(
+            present=True,
+            method="execution",
+            task_kind="code-sql",
+            parses=True,
+            origin="brought",
+        )
+
+        def scored(**extra):
+            return MODULE.score_run(
+                _routing_corpus(),
+                MODULE.EvaluationFacts(**common, **extra),
+                _wired_space(),
+                dict(MODULE.DEFAULT_WEIGHTS),
+                _review(reviewed=48),
+            )
+
+        witnessed = scored(executes_candidate=True, execution_witness=self.WITNESS)
+        bare_claim = scored(executes_candidate=True)
+        self.assertEqual(witnessed.overall, 77)
+        self.assertEqual(bare_claim.overall, 45)
+        self.assertEqual(
+            self._cap(bare_claim).ceiling, MODULE.CALIBRATION_REFUSED_CEILING
+        )
+        # The predicate itself, so the intent survives a refactor of the caller.
+        self.assertTrue(
+            MODULE.witnessed_engine(
+                MODULE.EvaluationFacts(
+                    **common, executes_candidate=True, execution_witness=self.WITNESS
+                )
+            )
+        )
+        self.assertFalse(
+            MODULE.witnessed_engine(
+                MODULE.EvaluationFacts(**common, executes_candidate=True)
+            )
+        )
+
     def test_an_absent_evaluator_still_caps(self) -> None:
         """The non-firing control: only what WE declined stops charging."""
         score = MODULE.score_run(
@@ -13543,6 +13716,38 @@ class TheCeilingPricedOurOwnBoundaryTests(unittest.TestCase):
         absent = next(cap for cap in score.caps if cap.condition == "evaluator-absent")
         self.assertEqual(absent.ceiling, MODULE.EVALUATOR_ABSENT_CEILING)
         self.assertEqual(score.overall, 40)
+
+    def test_the_card_never_denies_a_ceiling_it_is_printing(self) -> None:
+        """Both arms, because the sentence is arm-aware and the ceiling is.
+
+        "Your score is not reduced for it" is true where the walk witnessed the
+        engine and false where this run holds only the declaration - that arm is
+        still held at 45. Printed unconditionally, it put LIMITED TO 45 and "your
+        score is not reduced" on one card, four lines apart.
+        """
+        witnessed = MODULE.render_card(self._refused())
+        self.assertIn("Your score is not reduced for it", witnessed)
+        self.assertNotIn("LIMITED TO", witnessed)
+
+        declared = MODULE.score_run(
+            _routing_corpus(),
+            MODULE.EvaluationFacts(
+                present=True,
+                method="execution",
+                task_kind="code-sql",
+                parses=True,
+                origin="brought",
+                calibration_scope_refused=True,
+            ),
+            _wired_space(),
+            dict(MODULE.DEFAULT_WEIGHTS),
+            _review(reviewed=48),
+        )
+        card = MODULE.render_card(declared)
+        self.assertIn("LIMITED TO 45", card)
+        self.assertNotIn("Your score is not reduced for it", card)
+        # And it says why the ceiling stands, without handing them an errand.
+        self.assertIn("no preflight report for this evaluator reached", card)
 
     def test_the_card_shows_no_ceiling_it_does_not_have(self) -> None:
         card = MODULE.render_card(self._refused())

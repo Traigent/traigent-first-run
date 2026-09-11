@@ -1,12 +1,12 @@
 # 0124 - the frontier is named after the objective
 
 follows: 0123
-follows-resident-measured: 107_994
-follows-total-measured: 518_186
-resident-ceiling: 108_073
-resident-measured: 108_069
-total-ceiling: 518_292
-total-measured: 518_288
+follows-resident-measured: 108_048
+follows-total-measured: 518_344
+resident-ceiling: 108_127
+resident-measured: 108_123
+total-ceiling: 518_450
+total-measured: 518_446
 
 A hundred bytes, and most of them buy a placeholder. An earlier change removed accuracy as the
 objective this run assumes and wrote the rule down plainly: the key is what the customer said they
