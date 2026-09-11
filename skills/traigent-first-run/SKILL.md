@@ -297,6 +297,8 @@ Follow the dependency matrix in `references/component-creation.md`:
   runtime binding is owned by the installed SDK and is verified in section 5.
 
 **Read next.** Required: [`references/component-creation.md` § Dependency matrix](references/component-creation.md#dependency-matrix).
+If this run needs to create a dataset of examples: [`references/evaluation-and-dataset.md` § Dataset construction](references/evaluation-and-dataset.md#dataset-construction).
+If this run will create, top up, split, repair, or sample a dataset: [`references/evaluation-and-dataset.md` § Held-out set and claims](references/evaluation-and-dataset.md#held-out-set-and-claims).
 If the matrix row directs creating an agent: [`references/component-creation.md` § Agent creation](references/component-creation.md#agent-creation).
 If the row directs building an evaluation method: [`references/evaluation-and-dataset.md` § Evaluation selection](references/evaluation-and-dataset.md#evaluation-selection).
 
@@ -423,7 +425,7 @@ Follow the comparison sequence for the baseline, checkpoint, connected approval,
 **Read next.** Required: [`references/run-safety.md` § Baseline and optimization](references/run-safety.md#baseline-and-optimization).
 If this walkthrough supplies the baseline's models: [`references/sdk-execution.md` § Walkthrough model ladder](references/sdk-execution.md#walkthrough-model-ladder).
 
-The baseline needs only the user's provider credential: run the local fixed grid without a
+The baseline needs only the user's provider credential. Run the local fixed grid without a
 Traigent key in that process, preserving keys on disk. It is provider-paid and uses the shared
 approved ceiling. Prepare the wrapper and fixed grid from the execution contract.
 

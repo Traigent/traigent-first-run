@@ -1752,8 +1752,11 @@ result a wider run would find.
 
 A menu offered *instead of* a recommendation is the same as no recommendation; put extras later.
 
-End with the final reply-ready block in Approval and budgets above; `continue` never bypasses
-approval.
+End with a reply-ready block for the recommended next action, using the route shape in SKILL.md.
+Replying `continue` prepares that action and obtains any new approval its scope requires. Replying
+`stop` preserves the actual completed phases and results and starts no further work. Neither reply
+changes whether the completed run was baseline-only or included a connected optimization; do not
+reuse the connected preview's baseline-only stop text here.
 
 After the state-specific recommendation and the result, these are available whenever the user wants them:
 

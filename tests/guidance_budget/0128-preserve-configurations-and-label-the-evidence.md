@@ -4,12 +4,12 @@ follows: 0127
 follows-resident-measured: 108_167
 follows-total-measured: 525_912
 follows-document-measured: 134_261
-resident-ceiling: 50_563
-resident-measured: 50_559
-total-ceiling: 539_167
-total-measured: 539_163
-document-ceiling: 147_400
-document-measured: 147_396
+resident-ceiling: 50_939
+resident-measured: 50_935
+total-ceiling: 539_891
+total-measured: 539_887
+document-ceiling: 147_748
+document-measured: 147_744
 
 The resident skill now keeps ordered decisions and stage dispatch while its detailed opening,
 setup, calibration, recovery, and reporting procedures live in their existing reference owners.
@@ -46,3 +46,8 @@ The customer card now keeps concise findings and required decisions while its so
 and detailed observations remain in the report. Closing guidance names completed, verified value
 and the next validation action; it no longer turns scale, a human review, or an inconclusive
 comparison into production-readiness proof or a recommendation the measurements did not earn.
+
+The final review also made the dataset construction and reservation references explicit before
+creation, and separated post-result reply behavior from the earlier connected-run approval.
+Those small dispatch corrections preserve completed results and keep later work under its own
+approval. The qualified tuning-selection claim and its existing test now agree.

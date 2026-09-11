@@ -228,7 +228,7 @@ class StaticPreflightTests(unittest.TestCase):
     def test_env_permissions_reject_group_or_world_access(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             env_path = Path(directory) / ".env"
-            env_path.write_text("OPENAI_API_KEY=example-present-value\n")
+            env_path.write_text("OPENAI_API_KEY=example-present-value\n")  # placeholder
             env_path.chmod(0o664)
             MODULE.check_env_permissions(env_path)
         result = next(
@@ -241,12 +241,28 @@ class StaticPreflightTests(unittest.TestCase):
     def test_blank_template_permissions_warn_without_mutating_the_file(self) -> None:
         cases = (
             ("", 0, MODULE.WARN),
-            ("# Local keys\nOPENAI_API_KEY=\nOTHER_KEY=''\n", 0, MODULE.WARN),
-            ('export OPENAI_API_KEY="" # enter locally\n', 0, MODULE.WARN),
-            ("OPENAI_API_KEY=example-present-value\n", 1, MODULE.FAIL),
+            (
+                "# Local keys\nOPENAI_API_KEY=\nOTHER_KEY=''\n",  # placeholder
+                0,
+                MODULE.WARN,
+            ),
+            (
+                'export OPENAI_API_KEY="" # enter locally\n',  # placeholder
+                0,
+                MODULE.WARN,
+            ),
+            ("OPENAI_API_KEY=example-present-value\n", 1, MODULE.FAIL),  # placeholder
             ("CUSTOM_SETTING=example-present-value\n", 1, MODULE.FAIL),
-            ("OPENAI_API_KEY=example-present-value\nOPENAI_API_KEY=\n", 1, MODULE.FAIL),
-            ("unparsed-private-content\nOPENAI_API_KEY=\n", 1, MODULE.FAIL),
+            (
+                "OPENAI_API_KEY=example-present-value\nOPENAI_API_KEY=\n",  # placeholder
+                1,
+                MODULE.FAIL,
+            ),
+            (
+                "unparsed-private-content\nOPENAI_API_KEY=\n",  # placeholder
+                1,
+                MODULE.FAIL,
+            ),
         )
         for contents, expected_exit, expected_status in cases:
             with self.subTest(
@@ -297,8 +313,8 @@ class StaticPreflightTests(unittest.TestCase):
             ), tempfile.TemporaryDirectory() as directory:
                 env_path = Path(directory) / ".env"
                 contents = (
-                    f"export OPENAI_API_KEY={quotes} # {comment}\n"
-                    f"TRAIGENT_API_KEY={quotes} # {comment}\n"
+                    f"export OPENAI_API_KEY={quotes} # {comment}\n"  # placeholder
+                    f"TRAIGENT_API_KEY={quotes} # {comment}\n"  # placeholder
                 )
                 env_path.write_text(contents)
                 env_path.chmod(mode)
@@ -345,7 +361,7 @@ class StaticPreflightTests(unittest.TestCase):
         for raw, expected in cases:
             with self.subTest(raw=raw), tempfile.TemporaryDirectory() as directory:
                 env_path = Path(directory) / ".env"
-                contents = f"OPENAI_API_KEY={raw}\n"
+                contents = f"OPENAI_API_KEY={raw}\n"  # placeholder
                 env_path.write_text(contents)
                 env_path.chmod(0o600)
                 self.assertEqual(

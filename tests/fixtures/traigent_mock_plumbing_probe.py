@@ -77,7 +77,8 @@ def main() -> None:
                     from openai import OpenAI
 
                     client = OpenAI(
-                        api_key="offline-test-not-a-real-key", max_retries=0
+                        api_key="offline-test-not-a-real-key",  # placeholder fixture
+                        max_retries=0,
                     )
                     response = client.chat.completions.create(
                         model="gpt-4.1-mini", messages=messages, timeout=1

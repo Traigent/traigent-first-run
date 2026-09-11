@@ -13987,6 +13987,25 @@ class SkillPackageTests(unittest.TestCase):
             "repository documents",
         )
 
+    def test_post_result_replies_preserve_completion_and_scope_new_work(self) -> None:
+        require_stage_reference(8, RUN_SAFETY, "continuation-handoff")
+        handoff = " ".join(
+            section_text(RUN_SAFETY, "Continuation handoff").casefold().split()
+        )
+        for statement in (
+            "replying `continue` prepares that action and obtains any new approval "
+            "its scope requires",
+            "replying `stop` preserves the actual completed phases and results "
+            "and starts no further work",
+            "neither reply changes whether the completed run was baseline-only "
+            "or included a connected optimization",
+        ):
+            with self.subTest(statement=statement):
+                self.assertIsNone(document_states(handoff, statement))
+        self.assertNotIn(
+            "end with the final reply-ready block in approval and budgets", handoff
+        )
+
     def test_cloud_insight_is_described_as_signals_not_numbers(self) -> None:
         """The backend withholds numeric dataset-quality scores from clients.
 
@@ -14864,7 +14883,7 @@ class SkillPackageTests(unittest.TestCase):
             "create 28 examples by default: 18 tuning rows",
             "10 held-out rows (2 easy, 3 medium, 3 hard, 2 very hard)",
             "held-out set and claims",
-            "selecting on the tuning rows inflates the tuning score",
+            "selecting on the tuning rows can inflate the tuning score",
             "ten rows cannot resolve a small gap",
             "do not say traigent prevents or corrects this",
             'do not call a gap in this range "overfitting,"',
@@ -14961,6 +14980,13 @@ class SkillPackageTests(unittest.TestCase):
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, run_plan)
+
+    def test_dataset_construction_and_reservation_are_loaded_before_creation(
+        self,
+    ) -> None:
+        dataset = SKILL_ROOT / "references" / "evaluation-and-dataset.md"
+        require_stage_reference(3, dataset, "dataset-construction")
+        require_stage_reference(3, dataset, "held-out-set-and-claims")
 
     def test_the_held_out_draw_has_one_timing_per_source(self) -> None:
         """Three passages gave the timing three ways; one sentence owns it now.
