@@ -28,7 +28,7 @@ lawfully never entered, keeping its `[ ]` checkbox. SKILL.md owns every stage's 
 ## Quality evidence
 
 - Dataset rows, split, difficulty/scenario coverage, corruption, duplicates, and ceiling risk:
-- Evaluator meaning of "correct":
+- Evaluator criterion and objective direction:
 - Calibration cases and results artifacts, the reply-transform and task kind passed to them, and every seam probe reported damaged, refused, off-domain or not run, with the strings it recorded:
 - Semantic-coverage evidence, verdict (`sufficient`/`ambiguous`), and known gaps:
 - Quality advisory, user choice, and revalidation result if applicable:
@@ -50,6 +50,8 @@ lawfully never entered, keeping its `[ ]` checkbox. SKILL.md owns every stage's 
 
 ## Running state
 
+- Dedicated setup created for this run - absolute environment/interpreter paths, Python version, `sys.prefix`, installed top-level versions, and requirements-file SHA-256:
+- Setup completion evidence - creation/install/installed-preflight results; latest same-run verification result and next unfinished setup action:
 - Tracked spend, or conservative deduction where untracked:
 - Remaining total ceiling:
 - Local baseline checkpoint - artifact, best config/score, trials/failures, cost, and limits:
@@ -63,7 +65,7 @@ lawfully never entered, keeping its `[ ]` checkbox. SKILL.md owns every stage's 
 - Exact-baseline sync - public sync ID, successful CLI URL, or `local-only` with reason:
 - Connected optimization run ID, configurations tested of the total, partial/final result, stop reason, and verified portal link:
 - Baseline-versus-enhanced comparison - measured tuning behavior and justified claim strength:
-- Objective-cost frontier for each run - its points, the recommended one, and the score claim with paired outcome counts:
+- Objective-cost frontier for each run - its points, the recommended one, and the score claim with paired evidence or its unmeasured status:
 
 ## Interpretation
 

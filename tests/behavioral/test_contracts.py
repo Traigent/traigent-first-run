@@ -11,6 +11,7 @@ import unittest
 import unittest.mock
 from pathlib import Path
 
+import test_skill_package as guide_contracts
 from behavioral import harness, outcomes
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -200,11 +201,16 @@ class BehavioralContractUnitTests(unittest.TestCase):
         should reads exactly like a rule that is satisfied.
         """
         flags: set[str] = set()
+        creation = harness.SKILL.parent / "references" / "component-creation.md"
+        evaluation = harness.SKILL.parent / "references" / "evaluation-and-dataset.md"
+        guide_contracts.require_stage_reference(
+            1, creation, "reading-the-agent-for-the-opening-score"
+        )
         corpus = " ".join(
-            " ".join(document.read_text(encoding="utf-8").split())
-            for document in (
-                harness.SKILL,
-                harness.SKILL.parent / "references" / "evaluation-and-dataset.md",
+            " ".join(guide_contracts.section_text(document, heading).split())
+            for document, heading in (
+                (creation, "Opening readiness procedure"),
+                (evaluation, "Evaluation selection"),
             )
         )
         for phrase in self.SCORING_MANDATE_PHRASES:
@@ -230,6 +236,67 @@ class BehavioralContractUnitTests(unittest.TestCase):
             )
             flags.update(named)
         return flags
+
+    def test_scoring_flag_derivation_requires_the_opening_route_and_live_mandates(
+        self,
+    ) -> None:
+        creation = harness.SKILL.parent / "references" / "component-creation.md"
+        original_read = Path.read_text
+        skill_text = harness.SKILL.read_text()
+        creation_text = creation.read_text()
+        mutations = (
+            {
+                harness.SKILL: skill_text.replace(
+                    "(references/component-creation.md#reading-the-agent-for-the-opening-score)",
+                    "(references/component-creation.md#evidence-and-provenance)",
+                )
+            },
+            {
+                creation: creation_text.replace(
+                    "every readiness call", "the old scoring call"
+                )
+            },
+            {
+                creation: creation_text.replace(
+                    "`--evaluator-origin`", "the evaluator"
+                ).replace("`--agent-origin`", "the agent")
+            },
+        )
+        for changes in mutations:
+            with self.subTest(changed=list(map(str, changes))):
+
+                def read(path, *args, **kwargs):
+                    return (
+                        changes[path]
+                        if path in changes
+                        else original_read(path, *args, **kwargs)
+                    )
+
+                with unittest.mock.patch.object(Path, "read_text", read):
+                    with self.assertRaises(AssertionError):
+                        self.mandated_scoring_flags()
+
+        # A new flag in the actual owner must reach the argv comparison; a
+        # fixed test-side list would leave this deliberate mismatch green.
+        changed = creation_text.replace(
+            "`--evaluator-origin` and `--agent-origin`",
+            "`--evaluator-origin`, `--agent-origin`, and `--new-scoring-flag`",
+        )
+        self.assertNotEqual(changed, creation_text)
+
+        def extra_flag(path, *args, **kwargs):
+            return changed if path == creation else original_read(path, *args, **kwargs)
+
+        with unittest.mock.patch.object(Path, "read_text", extra_flag):
+            self.assertIn("--new-scoring-flag", self.mandated_scoring_flags())
+            probe = type(self)(
+                "test_the_recorded_cards_come_from_the_argv_the_guide_mandates"
+            )
+            result = unittest.TestResult()
+            probe.run(result)
+            self.assertEqual(result.errors, [])
+            self.assertEqual(len(result.failures), 1)
+            self.assertIn("--new-scoring-flag", result.failures[0][1])
 
     def test_the_recorded_cards_come_from_the_argv_the_guide_mandates(
         self,

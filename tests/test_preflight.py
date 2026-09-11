@@ -228,7 +228,7 @@ class StaticPreflightTests(unittest.TestCase):
     def test_env_permissions_reject_group_or_world_access(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             env_path = Path(directory) / ".env"
-            env_path.write_text("OPENAI_API_KEY=\n")
+            env_path.write_text("OPENAI_API_KEY=example-present-value\n")  # placeholder
             env_path.chmod(0o664)
             MODULE.check_env_permissions(env_path)
         result = next(
@@ -236,6 +236,159 @@ class StaticPreflightTests(unittest.TestCase):
         )
         self.assertEqual(result.status, MODULE.FAIL)
         self.assertIn("0600", result.detail)
+
+    @unittest.skipIf(os.name == "nt", "POSIX permissions are not available")
+    def test_blank_template_permissions_warn_without_mutating_the_file(self) -> None:
+        cases = (
+            ("", 0, MODULE.WARN),
+            (
+                "# Local keys\nOPENAI_API_KEY=\nOTHER_KEY=''\n",  # placeholder
+                0,
+                MODULE.WARN,
+            ),
+            (
+                'export OPENAI_API_KEY="" # enter locally\n',  # placeholder
+                0,
+                MODULE.WARN,
+            ),
+            ("OPENAI_API_KEY=example-present-value\n", 1, MODULE.FAIL),  # placeholder
+            ("CUSTOM_SETTING=example-present-value\n", 1, MODULE.FAIL),
+            (
+                "OPENAI_API_KEY=example-present-value\nOPENAI_API_KEY=\n",  # placeholder
+                1,
+                MODULE.FAIL,
+            ),
+            (
+                "unparsed-private-content\nOPENAI_API_KEY=\n",  # placeholder
+                1,
+                MODULE.FAIL,
+            ),
+        )
+        for contents, expected_exit, expected_status in cases:
+            with self.subTest(
+                contents=contents
+            ), tempfile.TemporaryDirectory() as directory:
+                env_path = Path(directory) / ".env"
+                env_path.write_text(contents)
+                env_path.chmod(0o644)
+                completed = subprocess.run(
+                    [
+                        sys.executable,
+                        "-I",
+                        "-S",
+                        str(SCRIPT),
+                        "--env",
+                        str(env_path),
+                        "--defer-missing-sdk",
+                        "--json",
+                    ],
+                    cwd=directory,
+                    env={},
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                self.assertEqual(completed.returncode, expected_exit, completed.stderr)
+                results = json.loads(completed.stdout)
+                permissions = next(
+                    item for item in results if item["check"] == "env-permissions"
+                )
+                self.assertEqual(permissions["status"], expected_status)
+                self.assertEqual(env_path.read_text(), contents)
+                self.assertEqual(env_path.stat().st_mode & 0o777, 0o644)
+                self.assertNotIn(
+                    "example-present-value", completed.stdout + completed.stderr
+                )
+                self.assertNotIn(
+                    "unparsed-private-content", completed.stdout + completed.stderr
+                )
+
+    @unittest.skipIf(os.name == "nt", "POSIX permissions are not available")
+    def test_empty_quoted_credentials_with_comments_remain_absent(self) -> None:
+        for quotes, comment, mode in itertools.product(
+            ("''", '""'), ("enter locally", 'enter your "key"'), (0o644, 0o600)
+        ):
+            with self.subTest(
+                quotes=quotes, comment=comment, mode=mode
+            ), tempfile.TemporaryDirectory() as directory:
+                env_path = Path(directory) / ".env"
+                contents = (
+                    f"export OPENAI_API_KEY={quotes} # {comment}\n"  # placeholder
+                    f"TRAIGENT_API_KEY={quotes} # {comment}\n"  # placeholder
+                )
+                env_path.write_text(contents)
+                env_path.chmod(mode)
+                completed = subprocess.run(
+                    [
+                        sys.executable,
+                        "-I",
+                        "-S",
+                        str(SCRIPT),
+                        "--env",
+                        str(env_path),
+                        "--defer-missing-sdk",
+                        "--json",
+                    ],
+                    cwd=directory,
+                    env={},
+                    text=True,
+                    capture_output=True,
+                    check=False,
+                )
+                records = {item["check"]: item for item in json.loads(completed.stdout)}
+                self.assertEqual(completed.returncode, 0, completed.stdout)
+                self.assertEqual(records["provider-credentials"]["status"], MODULE.WARN)
+                self.assertIn("not configured yet", records["traigent-key"]["detail"])
+                self.assertEqual(
+                    records["env-permissions"]["status"],
+                    MODULE.PASS if mode == 0o600 else MODULE.WARN,
+                )
+                self.assertEqual(env_path.read_text(), contents)
+                self.assertEqual(env_path.stat().st_mode & 0o777, mode)
+
+    def test_quoted_values_preserve_hashes_before_a_trailing_comment(self) -> None:
+        cases = (
+            ("plain-value", "plain-value"),
+            ("plain-value # annotation", "plain-value"),
+            ('"plain # retained"', "plain # retained"),
+            ("'plain # retained'", "plain # retained"),
+            ('"plain # retained" # annotation', "plain # retained"),
+            ("'plain # retained' # annotation", "plain # retained"),
+            ('"plain # retained" # a "comment"', "plain # retained"),
+            (r'"plain \" # retained" # annotation', r"plain \" # retained"),
+            (r"'plain \' # retained' # annotation", r"plain \' # retained"),
+        )
+        for raw, expected in cases:
+            with self.subTest(raw=raw), tempfile.TemporaryDirectory() as directory:
+                env_path = Path(directory) / ".env"
+                contents = f"OPENAI_API_KEY={raw}\n"  # placeholder
+                env_path.write_text(contents)
+                env_path.chmod(0o600)
+                self.assertEqual(
+                    MODULE.parse_env_file(env_path), {"OPENAI_API_KEY": expected}
+                )
+                completed = subprocess.run(
+                    [
+                        sys.executable,
+                        "-I",
+                        "-S",
+                        str(SCRIPT),
+                        "--env",
+                        str(env_path),
+                        "--defer-missing-sdk",
+                        "--json",
+                    ],
+                    cwd=directory,
+                    env={},
+                    text=True,
+                    capture_output=True,
+                    check=False,
+                )
+                records = {item["check"]: item for item in json.loads(completed.stdout)}
+                self.assertEqual(completed.returncode, 0, completed.stdout)
+                self.assertEqual(records["provider-credentials"]["status"], MODULE.PASS)
+                self.assertNotIn(expected, completed.stdout + completed.stderr)
+                self.assertEqual(env_path.read_text(), contents)
 
     @unittest.skipIf(os.name == "nt", "POSIX permissions are not available")
     def test_env_permissions_accept_owner_only_access(self) -> None:

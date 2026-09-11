@@ -17,6 +17,7 @@ import typing
 import unittest
 from dataclasses import asdict, replace
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "skills" / "traigent-first-run" / "scripts" / "readiness.py"
@@ -5189,13 +5190,15 @@ class PowerBoundsTheBandTests(unittest.TestCase):
                         name.upper() if "values" in spec else f"{name.upper()}_BOUNDS"
                     )
                     call_arguments.append(f"{name}={binding}[choice]")
-            if call_arguments:
-                lines.extend(
-                    [
-                        "def selected(choice):",
-                        f"    return provider({', '.join(call_arguments)})",
-                    ]
-                )
+            # Even an inventory with no options names a real callable. A
+            # missing function would test unavailable source instead of the
+            # intended refusal to invent a range from a parameter name.
+            lines.extend(
+                [
+                    "def selected(choice):",
+                    f"    return provider({', '.join(call_arguments)})",
+                ]
+            )
             (root / "agent.py").write_text("\n".join(lines) + "\n")
             return MODULE.agent_facts_from_discovery(
                 {"source": "agent.py", "knobs": document_fields},
@@ -5434,6 +5437,7 @@ class PowerBoundsTheBandTests(unittest.TestCase):
         facts = self._knob(
             temperature={"evidence": "agent.py:9 temperature is passed through"}
         )
+        self.assertIsNone(facts.source_unavailable_reason)
         self.assertFalse(facts.discovered[0].credited)
         self.assertIn(
             "neither a list of options", facts.discovered[0].uncredited_reason
@@ -5794,8 +5798,9 @@ class PowerBoundsTheBandTests(unittest.TestCase):
         blocker = next(line for line in card.splitlines() if "BLOCKER" in line)
         self.assertIn("65/100 WORKABLE is what your evidence supports", blocker)
         # Names what happens next, or the keyword is only a louder tag.
-        self.assertIn("run this score again", card)
-        self.assertIn("the paid comparison can start", card)
+        normalized_card = " ".join(card.split())
+        self.assertIn("recheck readiness before any paid comparison", normalized_card)
+        self.assertNotIn("the paid comparison can start", normalized_card)
         # The reason itself is not repeated up here; one problem, one statement.
         self.assertEqual(card.count("Every row was written by a model."), 1)
 
@@ -5942,13 +5947,19 @@ class PowerBoundsTheBandTests(unittest.TestCase):
 
                 if count == 1:
                     self.assertIn("one thing has to be cleared", said)
-                    self.assertIn("Fix it,", said)
+                    self.assertIn(
+                        "Your assistant will explain and address these items with you",
+                        said,
+                    )
                     self.assertNotIn("things have", said)
                     self.assertNotIn("each marked", said)
                     self.assertNotIn("Fix them,", said)
                 else:
                     self.assertIn(f"{count} things have to be cleared", said)
-                    self.assertIn("Fix them,", said)
+                    self.assertIn(
+                        "Your assistant will explain and address these items with you",
+                        said,
+                    )
                     self.assertIn("each marked", said)
                     self.assertNotIn("one thing has", said)
                     self.assertNotIn("Fix it,", said)
@@ -9722,6 +9733,113 @@ class TheCardSpeaksTheUsersLanguageTests(unittest.TestCase):
     nowhere to look it up.
     """
 
+    def test_every_action_is_readable_without_changing_its_machine_id(self) -> None:
+        self.assertEqual(set(MODULE.ACTION_DISPLAY_NAMES), set(MODULE.ACTION_KINDS))
+        for action in MODULE.ACTION_KINDS:
+            with self.subTest(action=action):
+                score = replace(_healthy_score(), recommended_action=action)
+                before = asdict(score)
+                card = MODULE.render_card(
+                    score, palette=MODULE.Palette(), unicode_ok=False
+                )
+                report = MODULE.render_markdown(score)
+                card_action = card.splitlines()[-1]
+                self.assertEqual(card_action, report.splitlines()[-1])
+                self.assertTrue(card_action.startswith("Action: "))
+                self.assertGreater(len(card_action.split()), 4)
+                self.assertNotEqual(card_action, f"Action: {action}")
+                self.assertEqual(asdict(score), before)
+                self.assertEqual(asdict(score)["recommended_action"], action)
+
+    def test_confirmed_absence_explains_measured_structure_on_both_displays(
+        self,
+    ) -> None:
+        for absent in (
+            {"dataset"},
+            {"evaluator"},
+            {"agent"},
+            {"dataset", "evaluator", "agent"},
+        ):
+            with self.subTest(absent=absent):
+                score = MODULE.score_run(
+                    MODULE.DatasetFacts() if "dataset" in absent else _routing_corpus(),
+                    (
+                        MODULE.EvaluationFacts()
+                        if "evaluator" in absent
+                        else _passing_calibration()
+                    ),
+                    MODULE.AgentFacts() if "agent" in absent else _wired_space(),
+                    dict(MODULE.DEFAULT_WEIGHTS),
+                )
+                self.assertEqual(
+                    {
+                        c.condition
+                        for c in score.caps
+                        if c.condition.endswith("-absent")
+                    },
+                    {name + "-absent" for name in absent},
+                )
+                before = asdict(score)
+                for rendered in (
+                    MODULE.render_card(score, unicode_ok=False),
+                    MODULE.render_markdown(score),
+                ):
+                    self.assertEqual(
+                        rendered.count(
+                            "Confirmed absence is a measured structural finding."
+                        ),
+                        1,
+                    )
+                    self.assertIn(
+                        "The missing component's quality has not been tested.", rendered
+                    )
+                self.assertEqual(asdict(score), before)
+
+    def test_present_but_unmeasured_components_are_not_called_absent(self) -> None:
+        cases = (
+            ("healthy", _routing_corpus(), _passing_calibration(), _wired_space()),
+            (
+                "unread-agent",
+                _routing_corpus(),
+                _passing_calibration(),
+                MODULE.AgentFacts(origin=MODULE.BROUGHT),
+            ),
+            (
+                "unresolved-evaluator",
+                _routing_corpus(),
+                MODULE.EvaluationFacts(present=True),
+                _wired_space(),
+            ),
+            (
+                "uncalibrated-evaluator",
+                _routing_corpus(),
+                MODULE.EvaluationFacts(present=True, method="normalized-exact"),
+                _wired_space(),
+            ),
+            (
+                "unrecognized-dataset",
+                MODULE.DatasetFacts(dataset_supplied=True, unreadable_rows=3),
+                _passing_calibration(),
+                _wired_space(),
+            ),
+        )
+        for name, dataset, evaluation, agent in cases:
+            with self.subTest(name=name):
+                score = MODULE.score_run(
+                    dataset, evaluation, agent, dict(MODULE.DEFAULT_WEIGHTS)
+                )
+                self.assertFalse(
+                    any(c.condition.endswith("-absent") for c in score.caps)
+                )
+                before = asdict(score)
+                for rendered in (
+                    MODULE.render_card(score, unicode_ok=False),
+                    MODULE.render_markdown(score),
+                ):
+                    self.assertNotIn("Confirmed absence", rendered)
+                    self.assertNotIn("missing component's quality", rendered)
+                self.assertEqual(asdict(score), before)
+
     def all_check_names(self) -> set[str]:
         """Read off the module, so a new check cannot be added unnamed.
 
@@ -9824,10 +9942,6 @@ class TheCardSpeaksTheUsersLanguageTests(unittest.TestCase):
             "the label on the repeated-inputs block. The glossary explains the "
             "`repeated or dominant answers` CHECK and when rows count as "
             "repeats, but not the block the card prints under this name."
-        ),
-        "ACCEPTED ROUTE": (
-            "the label on the worked example printed beside a refused "
-            "parameter. Nothing in the glossary names it."
         ),
     }
 
@@ -10475,6 +10589,8 @@ class TheCardSpeaksTheUsersLanguageTests(unittest.TestCase):
         # nothing, which is the gap this scan exists to close - so the block is
         # named here in the same change that writes it, not in a later one.
         "accepted_route_shape",
+        "card_check_evidence",
+        "card_cap_reason",
         "assumption_sentence",
         "task_fit_evidence",
         "readable_kinds",
@@ -10657,6 +10773,33 @@ class TheCardSpeaksTheUsersLanguageTests(unittest.TestCase):
             # should write instead, so it is exactly the text these rules are
             # for, and a state nothing renders exempts it from all of them.
             replace(plain, agent_route_unverified=True),
+            replace(
+                plain,
+                agent_source_read=True,
+                caps=(MODULE.UNPROBED_DISCOVERED_KNOBS_CAP,),
+                pillars=(
+                    MODULE.combine(
+                        "agent",
+                        [
+                            MODULE.SubScore(
+                                "search-space",
+                                0,
+                                100,
+                                True,
+                                MODULE.UNVERIFIED_SETTINGS_PREFIX + "a source detail",
+                            ),
+                            MODULE.SubScore(
+                                "prompt",
+                                0,
+                                8,
+                                False,
+                                MODULE.UNVERIFIED_BUILD_PREFIX
+                                + MODULE.cited("a prompt", "a source note"),
+                            ),
+                        ],
+                    ),
+                ),
+            ),
         ]
         return scores
 
@@ -11079,7 +11222,9 @@ class RowLevelSanityTests(unittest.TestCase):
             if before.evidence != after.evidence
         ]
         self.assertEqual([name for name, _ in differing], ["labels"])
-        self.assertIn("the coding assistant sampled 28 of 28", differing[0][1])
+        self.assertIn(
+            "the coding assistant reviewed all 28 provided rows", differing[0][1]
+        )
         self.assertIn("none contradicts its own input", differing[0][1])
 
     def test_a_material_share_of_wrong_answers_lowers_the_ceiling(self) -> None:
@@ -11184,7 +11329,7 @@ class RowLevelSanityTests(unittest.TestCase):
             facts, "normalized-exact", _review(reviewed=18)
         )
         labels = next(s for s in pillar.subscores if s.name == "labels")
-        self.assertIn("sampled 18 of 18 provided rows", labels.evidence)
+        self.assertIn("reviewed all 18 provided rows", labels.evidence)
         self.assertIn("10 generated rows not reviewed", labels.evidence)
 
     def test_a_reference_free_judge_reads_no_expected_output_so_none_can_cap(
@@ -11752,11 +11897,11 @@ class TheTopBandsNeedAReadOfTheAnswersTests(unittest.TestCase):
             _review(reviewed=28, reviewed_in_run=28), covered
         )
         self.assertIn("that is every row this run is graded on", whole)
-        self.assertNotIn("a sample, so the answers are assumed sound", whole)
+        self.assertNotIn("a sample, so unreviewed answers are assumed sound", whole)
         part = MODULE.row_review_evidence(
             _review(reviewed=12, reviewed_in_run=12), covered
         )
-        self.assertIn("a sample, so the answers are assumed sound", part)
+        self.assertIn("a sample, so unreviewed answers are assumed sound", part)
         self.assertNotIn("that is every row this run is graded on", part)
 
     def test_a_read_below_the_sample_lifts_nothing(self) -> None:
@@ -11962,11 +12107,12 @@ class TheTopBandsNeedAReadOfTheAnswersTests(unittest.TestCase):
         self.assertIn("sampled 5 of", line)
         self.assertNotIn("the coding assistant read", line)
         self.assertIn(
-            "a sample, so the answers are assumed sound rather than verified", line
+            "a sample, so unreviewed answers are assumed sound rather than verified",
+            line,
         )
-        # And the clause is last, so it is what the sentence ends on rather
-        # than something a finding can be appended after.
-        self.assertTrue(line.endswith("rather than verified"))
+        self.assertTrue(
+            line.endswith("this row review does not verify comparison results")
+        )
 
     def test_a_sample_taken_through_this_runs_own_method_says_so(self) -> None:
         """The self-certification the owner accepted, made visible.
@@ -12555,7 +12701,9 @@ class AnAskThatIsNotACapIsStillRoutedTests(unittest.TestCase):
         # And it is not a claim that nothing at all is pending: the ask this
         # very sentence describes is outstanding, and the card's last line says
         # so four lines below it.
-        self.assertIn(f"Action: {held.recommended_action}", card)
+        self.assertIn(
+            f"Action: {MODULE.ACTION_DISPLAY_NAMES[held.recommended_action]}", card
+        )
         self.assertFalse(MODULE.nothing_pending_beyond(held, "some-other-ask"))
 
 
@@ -19668,26 +19816,15 @@ class TheRefusedRouteIsShownAnAcceptedOneTests(unittest.TestCase):
         self.assertGreater(pillar.score, 0)
         self.assertFalse(any(cap.condition == "agent-no-varying-knobs" for cap in caps))
 
-    def test_the_accepted_route_prints_beside_a_refused_route(self) -> None:
-        """The parts, on the card; the worked file, in the report only.
-
-        The card used to print the whole fourteen-line agent, written against
-        one provider and two named models, and a reader whose route was
-        refused read it as the shape to rebuild theirs into - the harm the
-        hedge under the label warns against. The parts are what the check
-        wants; the worked example stays in the durable report and the
-        reference, which fence it as code and carry the hedge beside it.
-        """
+    def test_the_card_routes_detailed_settings_guidance_to_the_report(self) -> None:
+        """Keep the customer finding concise and the assistant's recipe accessible."""
         card = self._card(self.REFUSED_AGENT, self.REFUSED_KNOB)
-        self.assertIn(MODULE.ACCEPTED_ROUTE_LABEL, card)
-        self.assertIn("references/component-creation.md", card)
+        self.assertIn("detailed readiness report", card)
+        self.assertNotIn("references/component-creation.md", card)
+        self.assertNotIn("ACCEPTED ROUTE", card)
         for part in MODULE.ACCEPTED_ROUTE_PARTS:
             with self.subTest(part=part):
-                self.assertIn(part, card)
-        for line in MODULE.ACCEPTED_ROUTE_AGENT.splitlines():
-            if line.strip():
-                with self.subTest(line=line):
-                    self.assertNotIn(line, card)
+                self.assertNotIn(part, card)
         self.assertNotIn("gpt-4o", card)
 
     def test_the_durable_report_carries_it_too(self) -> None:
@@ -19730,7 +19867,7 @@ class TheRefusedRouteIsShownAnAcceptedOneTests(unittest.TestCase):
             MODULE.ACCEPTED_ROUTE_AGENT,
             json.loads(json.dumps(MODULE.ACCEPTED_ROUTE_KNOB))["model"],
         )
-        self.assertNotIn(MODULE.ACCEPTED_ROUTE_LABEL, credited)
+        self.assertNotIn("ACCEPTED ROUTE", credited)
         unsettled = self._card(
             self.REFUSED_AGENT,
             {
@@ -19738,7 +19875,7 @@ class TheRefusedRouteIsShownAnAcceptedOneTests(unittest.TestCase):
                 "evidence": "seen in the agent, never settled",
             },
         )
-        self.assertNotIn(MODULE.ACCEPTED_ROUTE_LABEL, unsettled)
+        self.assertNotIn("ACCEPTED ROUTE", unsettled)
 
     def test_only_the_state_this_example_answers_sets_the_flag(self) -> None:
         """Enumerated from the source, not from the two branches I had in mind.
@@ -27294,7 +27431,8 @@ class ThePreviousScoreAndTheActionLineTests(unittest.TestCase):
         score = json.loads(payload)
         self.assertEqual(score["status"], "BLOCKED")
         self.assertEqual(
-            self._lines(card)[-1], f"Action: {score['recommended_action']}"
+            self._lines(card)[-1],
+            f"Action: {MODULE.ACTION_DISPLAY_NAMES[score['recommended_action']]}",
         )
         self.assertIn(score["recommended_action"], MODULE.ACTION_KINDS)
 
@@ -27883,3 +28021,316 @@ class TheHonestDeclarationIsNeverOutscoredTests(unittest.TestCase):
         for method in sorted(MODULE.METHOD_REQUIRES_PROVEN_COMPARISON):
             with self.subTest(method=method):
                 self.assertTrue(MODULE.METHOD_COMPARISON_SUPPORT[method])
+
+
+class UnsupportedSourceKeepsItsExplanationTests(unittest.TestCase):
+    """A checker limitation must not disappear when no options were invented."""
+
+    SOURCE = (
+        'MODELS = ["fast", "slow"]\n'
+        "def call(message, model):\n"
+        "    return provider(model=MODELS[model], message=message)\n"
+    )
+
+    def facts(self, source, *, name="agent.py", knobs=None):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            selected = root / name
+            selected.write_text(source)
+            return MODULE.agent_facts_from_discovery(
+                {"source": name, "knobs": {} if knobs is None else knobs},
+                source_root=root,
+                selected_agent=selected,
+                selected_agent_callable="call",
+            )
+
+    @staticmethod
+    def options():
+        return {
+            "model": {
+                "values": ["fast", "slow"],
+                "source_lines": [1],
+                "evidence": "the selected source declares model alternatives",
+            }
+        }
+
+    @staticmethod
+    def numeric_profile(pillar):
+        return (
+            pillar.score,
+            pillar.confidence,
+            [
+                (
+                    sub.name,
+                    sub.value,
+                    sub.maximum,
+                    sub.measured,
+                    sub.withheld,
+                    sub.applicable,
+                )
+                for sub in pillar.subscores
+            ],
+        )
+
+    def test_python_source_with_pyw_or_no_suffix_earns_the_same_verified_credit(self):
+        baseline, baseline_caps, baseline_knobs = MODULE.score_agent(
+            self.facts(self.SOURCE, knobs=self.options())
+        )
+        self.assertGreater(baseline.score, 0)
+        for name in ("agent.pyw", "agent"):
+            with self.subTest(name=name):
+                facts = self.facts(self.SOURCE, name=name, knobs=self.options())
+                self.assertTrue(facts.discovered[0].credited)
+                pillar, caps, knobs = MODULE.score_agent(facts)
+                self.assertGreater(pillar.score, 0)
+                self.assertEqual(
+                    self.numeric_profile(baseline), self.numeric_profile(pillar)
+                )
+                self.assertEqual(baseline_caps, caps)
+                self.assertEqual(baseline_knobs, knobs)
+
+    def test_unparseable_source_keeps_its_reason_without_claimed_values(self):
+        unknown = {"model": {"evidence": "the selected agent accepts a model setting"}}
+        for name, source in (
+            ("agent.cpp", "int call() { return 0; }\n"),
+            ("agent.py", "def call(message)\n    return message\n"),
+        ):
+            with self.subTest(name=name):
+                facts = self.facts(source, name=name, knobs=unknown)
+                self.assertTrue(facts.discovered[0].unverified)
+                self.assertFalse(facts.discovered[0].credited)
+                reason = facts.discovered[0].uncredited_reason
+                self.assertIn("cannot be parsed as Python", reason)
+                self.assertNotIn("is not Python", reason)
+                self.assertNotIn("neither a list of options", reason)
+                pillar, caps, knobs = MODULE.score_agent(facts)
+                generic = MODULE.agent_facts_from_discovery({"knobs": unknown})
+                generic_pillar, generic_caps, generic_knobs = MODULE.score_agent(
+                    generic
+                )
+                self.assertEqual(
+                    self.numeric_profile(pillar), self.numeric_profile(generic_pillar)
+                )
+                self.assertEqual(
+                    [(c.condition, c.ceiling, c.blocks) for c in caps],
+                    [(c.condition, c.ceiling, c.blocks) for c in generic_caps],
+                )
+                self.assertEqual(knobs, generic_knobs)
+                self.assertIn("cannot be parsed as Python", caps[0].reason)
+                score = MODULE.score_run(
+                    _routing_corpus(),
+                    _passing_calibration(),
+                    facts,
+                    dict(MODULE.DEFAULT_WEIGHTS),
+                )
+                for rendered in (
+                    MODULE.render_card(score, unicode_ok=False),
+                    MODULE.render_markdown(score),
+                ):
+                    self.assertIn("cannot be parsed as Python", rendered)
+
+    def test_empty_unparseable_source_is_unknown_not_proof_of_identical_requests(self):
+        unsupported = self.facts("int call() { return 0; }\n", name="agent.cpp")
+        known_empty = self.facts(self.SOURCE)
+        unsupported_pillar, unsupported_caps, _ = MODULE.score_agent(unsupported)
+        known_pillar, known_caps, _ = MODULE.score_agent(known_empty)
+        self.assertEqual(
+            self.numeric_profile(unsupported_pillar), self.numeric_profile(known_pillar)
+        )
+        self.assertFalse(unsupported_caps[0].blocks)
+        self.assertTrue(known_caps[0].blocks)
+        self.assertEqual(unsupported_caps[0].ceiling, known_caps[0].ceiling)
+        self.assertIn("cannot be parsed as Python", unsupported_caps[0].reason)
+        self.assertNotIn("every configuration", unsupported_caps[0].reason)
+        self.assertNotIn("found candidate settings", unsupported_caps[0].reason)
+        self.assertIn("every configuration", known_caps[0].reason)
+
+    def test_a_disconnected_python_setting_still_receives_no_credit(self):
+        source = self.SOURCE.replace("MODELS[model]", '"fixed"')
+        facts = self.facts(source, knobs=self.options())
+        self.assertIsNone(facts.source_unavailable_reason)
+        self.assertFalse(facts.discovered[0].credited)
+        self.assertTrue(facts.discovered[0].route_unverified)
+        pillar, caps, knobs = MODULE.score_agent(facts)
+        self.assertEqual(
+            next(s.value for s in pillar.subscores if s.name == "search-space"), 0
+        )
+        self.assertFalse(caps[0].blocks)
+        self.assertEqual(knobs, [])
+
+    def test_checker_context_does_not_expand_public_input_or_output_schema(self):
+        with self.assertRaisesRegex(MODULE.AgentDiscoveryInputError, "unknown field"):
+            MODULE.agent_facts_from_discovery(
+                {"knobs": {}, "source_unavailable_reason": "claimed"}
+            )
+        facts = self.facts("int call() { return 0; }\n", name="agent.cpp")
+        score = MODULE.score_run(
+            _routing_corpus(),
+            _passing_calibration(),
+            facts,
+            dict(MODULE.DEFAULT_WEIGHTS),
+        )
+        payload = asdict(score)
+        self.assertEqual(set(payload), set(asdict(_healthy_score())))
+        self.assertEqual(score.schema_version, _healthy_score().schema_version)
+        self.assertNotIn("source_unavailable_reason", json.dumps(payload))
+
+
+class RowReviewCoverageDescribesOnlyWhatWasReadTests(unittest.TestCase):
+    """#534: full coverage cannot invent an unread remainder or verify a result."""
+
+    @staticmethod
+    def reviewed_dataset(*, provided=28, generated=0, graded=28, reviewed=28):
+        total = provided + generated
+        ids = tuple(f"review-row-{index}" for index in range(total))
+        facts = _brought(
+            total,
+            collected_rows=provided,
+            synthesised_rows=generated,
+            tuning_rows=graded - 10 if graded is not None else None,
+            holdout_rows=10 if graded is not None else None,
+            tuning_labelled_rows=graded - 10 if graded is not None else None,
+            holdout_labelled_rows=10 if graded is not None else None,
+            row_id_digests=tuple(MODULE.row_id_digest(value) for value in ids),
+            run_row_id_digests=(
+                tuple(MODULE.row_id_digest(value) for value in ids[:graded])
+                if graded is not None
+                else None
+            ),
+        )
+        document = {
+            "reviewer": "assistant",
+            "rows": [
+                {
+                    "id": ids[index],
+                    "origin": "collected",
+                    "verdict": "yes",
+                    "note": "The expected answer follows from the input.",
+                    **({"in_run": index < graded} if graded is not None else {}),
+                }
+                for index in range(reviewed)
+            ],
+        }
+        return facts, MODULE.row_review_from_document(document, facts)
+
+    def test_every_provided_and_graded_row_has_no_unread_remainder(self):
+        facts, review = self.reviewed_dataset()
+        line = MODULE.row_review_evidence(review, facts)
+        self.assertEqual(
+            line,
+            "the coding assistant reviewed all 28 provided rows, 28 of them from "
+            "the 28 rows this run is graded on; none contradicts its own input; "
+            "that is every row this run is graded on; "
+            "this row review does not verify comparison results",
+        )
+        self.assertNotIn("sample", line)
+        self.assertNotIn("not read", line)
+        self.assertNotIn("not reviewed", line)
+        self.assertNotIn("nothing about the comparison is assumed", line)
+
+    def test_all_graded_rows_can_leave_other_provided_rows_unread(self):
+        facts, review = self.reviewed_dataset(provided=100)
+        line = MODULE.row_review_evidence(review, facts)
+        self.assertIn("sampled 28 of 100 provided rows", line)
+        self.assertIn("that is every row this run is graded on", line)
+        self.assertIn("72 other provided rows were not reviewed", line)
+        self.assertNotIn("unreviewed answers are assumed sound", line)
+        self.assertIn("this row review does not verify comparison results", line)
+
+    def test_partial_graded_coverage_keeps_the_unreviewed_answer_assumption(self):
+        facts, review = self.reviewed_dataset(reviewed=12)
+        line = MODULE.row_review_evidence(review, facts)
+        self.assertIn("sampled 12 of 28 provided rows", line)
+        self.assertIn("12 of them from the 28 rows this run is graded on", line)
+        self.assertIn("unreviewed answers are assumed sound rather than verified", line)
+        self.assertNotIn("that is every row", line)
+        self.assertIn("this row review does not verify comparison results", line)
+
+    def test_a_full_file_read_does_not_invent_an_undeclared_split(self):
+        facts, review = self.reviewed_dataset(graded=None)
+        line = MODULE.row_review_evidence(review, facts)
+        self.assertIn("reviewed all 28 provided rows", line)
+        self.assertNotIn("graded on", line)
+        self.assertNotIn("sample", line)
+        self.assertNotIn("not reviewed", line)
+        self.assertIn("this row review does not verify comparison results", line)
+
+    def test_generated_rows_remain_excluded_from_full_provided_coverage(self):
+        facts, review = self.reviewed_dataset(provided=18, generated=10, reviewed=18)
+        line = MODULE.row_review_evidence(review, facts, "generated")
+        self.assertIn("reviewed all 18 provided rows", line)
+        self.assertIn("18 of them from the 28 rows this run is graded on", line)
+        self.assertIn("10 generated rows not reviewed", line)
+        self.assertNotIn("that is every row", line)
+        self.assertNotIn("other provided rows", line)
+        self.assertIn("this row review does not verify comparison results", line)
+        self.assertTrue(
+            line.endswith(
+                "this run wrote the evaluation method they were judged against"
+            )
+        )
+
+    def test_split_row_counts_do_not_claim_coverage_of_unidentified_labelled_rows(self):
+        for reviewed in (18, 28):
+            with self.subTest(reviewed=reviewed):
+                facts, review = self.reviewed_dataset(reviewed=reviewed)
+                facts = replace(
+                    facts,
+                    labelled_rows=18,
+                    answerable_rows=18,
+                    tuning_labelled_rows=8,
+                )
+                line = MODULE.row_review_evidence(review, facts)
+                self.assertIn(
+                    f"{reviewed} of them from the 28 rows in the declared tuning/held-out split",
+                    line,
+                )
+                self.assertNotIn("from the 18 rows this run is graded on", line)
+                if reviewed == 28:
+                    self.assertIn("all 18 graded rows are among those reviewed", line)
+                else:
+                    self.assertNotIn("that is every row this run is graded on", line)
+                    self.assertNotIn("all 18 graded rows", line)
+
+    def test_findings_and_declined_verdicts_are_not_replaced_by_coverage(self):
+        facts, review = self.reviewed_dataset()
+        line = MODULE.row_review_evidence(replace(review, unsound=1, unsure=2), facts)
+        self.assertIn("1 expected answer contradicts its input, 2 undecided", line)
+        self.assertNotIn("none contradicts", line)
+        self.assertIn("this row review does not verify comparison results", line)
+        self.assertEqual(MODULE.row_review_evidence(MODULE.RowReview(), facts), "")
+
+    def test_only_evidence_changes_in_the_serialized_score(self):
+        facts, review = self.reviewed_dataset()
+        arguments = (
+            facts,
+            _passing_calibration(),
+            _wired_space(),
+            dict(MODULE.DEFAULT_WEIGHTS),
+            review,
+        )
+        score = MODULE.score_run(*arguments)
+        after = asdict(score)
+        with mock.patch.object(
+            MODULE, "row_review_evidence", return_value="prior wording"
+        ):
+            before = asdict(MODULE.score_run(*arguments))
+        before_labels = next(
+            sub
+            for pillar in before["pillars"]
+            if pillar["name"] == "dataset"
+            for sub in pillar["subscores"]
+            if sub["name"] == "labels"
+        )
+        after_labels = next(
+            sub
+            for pillar in after["pillars"]
+            if pillar["name"] == "dataset"
+            for sub in pillar["subscores"]
+            if sub["name"] == "labels"
+        )
+        self.assertNotEqual(before_labels["evidence"], after_labels["evidence"])
+        before_labels["evidence"] = after_labels["evidence"]
+        self.assertEqual(before, after)
+        self.assertIn("reviewed all 28 provided rows", after_labels["evidence"])
+        self.assertIn("reviewed all 28 provided rows", MODULE.render_markdown(score))

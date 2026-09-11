@@ -6404,7 +6404,8 @@ class TheWalkthroughSizeReachesTheCardTests(unittest.TestCase):
             "18 examples - at or above the 18 this walkthrough tunes on", card
         )
         self.assertEqual(
-            card.rstrip("\n").splitlines()[-1], "Action: review-answer-key"
+            card.rstrip("\n").splitlines()[-1],
+            f"Action: {MODULE.ACTION_DISPLAY_NAMES[score['recommended_action']]}",
         )
 
 
@@ -6533,7 +6534,7 @@ class ARowReviewIsMatchedToTheRowsPreflightReadTests(unittest.TestCase):
         )
         self.assertEqual(card.returncode, 0, card.stderr)
         self.assertIn(
-            "the coding assistant sampled 40 of 40 provided rows, 40 of them from "
+            "the coding assistant reviewed all 40 provided rows, 40 of them from "
             "the 40 rows this run is graded on",
             " ".join(card.stdout.split()),
         )
