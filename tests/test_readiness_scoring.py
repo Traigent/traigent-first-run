@@ -13313,16 +13313,23 @@ class TheWitnessDecidesTheScopeGateNotTheDeclarationTests(unittest.TestCase):
                 )
                 # What this run did, said plainly and without jargon.
                 self.assertIn("did not execute your evaluator", cap.reason)
-                # Why, in the customer's terms rather than in ours.
-                self.assertIn("opens your database", cap.reason)
-                self.assertIn("will not reach into it", cap.reason)
+                # Why, in the customer's terms rather than in ours - and as
+                # the CLASS the gate refuses, not one half of it. The witness
+                # fires on code execution as readily as on SQL, so a sentence
+                # naming only the database is false for half the customers it
+                # reaches (traigent-first-run#492).
+                self.assertIn("run candidate code or open your database", cap.reason)
+                self.assertIn("will not reach into either", cap.reason)
                 self.assertNotIn("does not accept a calibration", cap.reason)
                 # Not a verdict on their work.
                 self.assertIn("not a judgement of your evaluator", cap.reason)
                 self.assertIn("may well be sound", cap.reason)
-                # The route forward, performable by them, outside this guide.
+                # The route forward, performable by them, outside this guide
+                # - which means it may not name a database an evaluator that
+                # only shells out does not have.
                 self.assertIn("You can establish that yourself", cap.reason)
-                self.assertIn("against your own database", cap.reason)
+                self.assertIn("where it already runs", cap.reason)
+                self.assertNotIn("against your own database", cap.reason)
                 self.assertIn(
                     "answers you already know are right and wrong", cap.reason
                 )
@@ -13361,7 +13368,11 @@ class TheWitnessDecidesTheScopeGateNotTheDeclarationTests(unittest.TestCase):
             if c.condition == "evaluator-calibration-refused"
         ).reason
         self.assertNotIn("did not execute your evaluator", taken)
-        self.assertIn("does not accept a check that opens your database", taken)
+        self.assertIn(
+            "does not accept a check that runs candidate code or opens your "
+            "database",
+            taken,
+        )
         for shared in (
             "not a judgement of your evaluator",
             "You can establish that yourself",

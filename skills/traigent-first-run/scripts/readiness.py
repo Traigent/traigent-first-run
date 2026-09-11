@@ -7720,19 +7720,29 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
             # The witness rides along because a refusal a customer cannot
             # check is one they cannot usefully disagree with.
             witness = f" ({facts.execution_witness})" if facts.execution_witness else ""
+            # THE CLASS, and the witness beside it names the instance. This
+            # said "a check that opens your database", which is one half of
+            # what the gate refuses: `candidate_execution_witnesses` walks
+            # every import through `_execution_module_name` as well as its SQL
+            # branch, so an evaluator that shells out and touches no database
+            # raises this cap and was told it had opened one
+            # (traigent-first-run#492). Every other sentence in this module
+            # already says "a code or SQL engine"; only the two a customer
+            # reads did not.
             body = (
                 "the evaluator check was run on it, which this guide's "
                 f"evaluator-execution scope gate does not permit{witness}, so "
                 "this card cannot read that result. This guide does not "
-                "accept a check that opens your database, which is why it "
-                "will not read that one."
+                "accept a check that runs candidate code or opens your "
+                "database, which is why it will not read that one."
             )
         else:
             body = (
                 "this run did not run the evaluator check on it, because running it "
                 "here is outside the scope this guide permits. This run did "
-                "not execute your evaluator: doing so opens your database "
-                "from inside this guide, and it will not reach into it."
+                "not execute your evaluator: doing so would run candidate code "
+                "or open your database from inside this guide, and it will not "
+                "reach into either."
             )
         caps.append(
             Cap(
@@ -7752,10 +7762,13 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
                 # plain fact, because "this run did not execute your
                 # evaluator" is false of the run that calibrated anyway and
                 # true of the run that obeyed. Then the reason in their terms
-                # (it opens your database, and this guide will not reach into
-                # it), and then the one thing they can actually do, which is
-                # the check itself, against their own database, where they own
-                # the blast radius.
+                # (it would run candidate code or open their database, and
+                # this guide will not reach into either), and then the one
+                # thing they can actually do, which is the check itself, where
+                # it already runs and they own the blast radius. That last
+                # clause named the database alone until #492: the witness fires
+                # on code execution too, so half the refused customers were
+                # sent to a database they do not have.
                 #
                 # The ceiling sentence stays and stays last. It is the true
                 # part - nothing here established that this evaluator ranks
@@ -7764,7 +7777,7 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
                 declared + body + " That is a limit of this run and not a "
                 "judgement of your evaluator, which may well be sound. You can "
                 "establish that yourself, outside this guide, by running it "
-                "against your own database on answers you already know are "
+                "where it already runs, on answers you already know are "
                 "right and wrong, and confirming it separates them; the "
                 "containment review is where the boundary for doing that here "
                 "gets designed. Until "
