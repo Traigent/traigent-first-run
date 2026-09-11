@@ -24226,6 +24226,16 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
     # (decision, phrases asserting one answer, phrases asserting the opposite)
     CONTRADICTIONS = (
         (
+            "whether manual diagnostic approval waives the SDK usage prerequisite",
+            (
+                "diagnostic-call approval does not change that measurement contract",
+                "that approval does not bypass this wrapper's usage check",
+            ),
+            (
+                "before baseline/search - unless the customer has been told what that means and has approved continuing",
+            ),
+        ),
+        (
             "whether opening calibration evidence may already be measured",
             ("they can already be measured on the opening card",),
             (

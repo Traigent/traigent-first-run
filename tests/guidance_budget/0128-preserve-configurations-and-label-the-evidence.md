@@ -1,15 +1,15 @@
 # 0128 - compact the guide and preserve first-run paths
 
-follows: 0126
+follows: 0127
 follows-resident-measured: 108_167
-follows-total-measured: 518_520
+follows-total-measured: 525_912
 follows-document-measured: 134_261
 resident-ceiling: 50_563
 resident-measured: 50_559
-total-ceiling: 531_709
-total-measured: 531_705
-document-ceiling: 141_592
-document-measured: 141_588
+total-ceiling: 539_091
+total-measured: 539_087
+document-ceiling: 148_574
+document-measured: 148_570
 
 The resident skill now keeps ordered decisions and stage dispatch while its detailed opening,
 setup, calibration, recovery, and reporting procedures live in their existing reference owners.
@@ -31,3 +31,8 @@ Cleanup now names the walkthrough outputs it removes, and objective comparisons 
 direction and the available paired evidence instead of assuming a measured binary improvement. The
 new ceiling records the actual integrated documents, including the new run-record fields, rather
 than adding independent branch estimates.
+
+The composition includes the ownership clarification in its predecessor. Its manual diagnostic
+exception is bounded to those named calls: the existing SDK usage prerequisite remains required
+for baseline and search. The taxonomy no longer states a stale category count, and a runtime
+contract breach limits the affected claims without declaring unrelated measurements meaningless.

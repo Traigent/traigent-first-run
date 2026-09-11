@@ -1969,8 +1969,11 @@ fallback above reads OpenRouter's provider-reported response-cost header as surf
 When cost is absent but nonzero usage proves a real call, return `None`, report `not measured`, and
 deduct the approved estimate. Do not call
 `litellm.completion_cost()` here: a real OpenRouter response can be billable and valid even when a
-local model-price lookup fails. If neither public usage nor a provider-reported cost is available,
-stop before baseline/search instead of scaling an untracked path.
+local model-price lookup fails. If nonzero public usage is unavailable, stop before baseline/search;
+the wrapper cannot verify the call even when cost is reported. `references/run-safety.md` separately
+owns approval for named manual diagnostic calls outside SDK-managed searches when both cost and
+usage are missing. That approval does not bypass this wrapper's usage check or authorize an
+unmeasured baseline/search. Apply the existing budget-debit rules to every attempted call, and report what remains untracked; a reservation is not a measured provider charge.
 
 Do not include `expected` in the agent signature. Dataset inputs call the agent; expected output
 belongs only to evaluation.
