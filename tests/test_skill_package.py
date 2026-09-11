@@ -10425,7 +10425,7 @@ class SkillPackageTests(unittest.TestCase):
             # Each run's frontier is recorded: it is a result the user was
             # given, and after the fact this record is the only place it
             # survives.
-            "accuracy-cost frontier for each run - its points, the recommended "
+            "objective-cost frontier for each run - its points, the recommended "
             "one, and the score claim with paired outcome counts",
             # The safety half of the readiness re-score. The narrative half was
             # removed from this record; this field is what may not follow it,
@@ -19913,7 +19913,7 @@ class SkillPackageTests(unittest.TestCase):
         skill = " ".join(SKILL.read_text().casefold().split())
         safety = " ".join(RUN_SAFETY.read_text().casefold().split())
 
-        self.assertIn("pareto frontier over accuracy and cost", skill)
+        self.assertIn("pareto frontier over the declared objective and cost", skill)
         self.assertIn(
             "never show a frontier point that scored below the configuration "
             "the user is already running",
@@ -19952,13 +19952,13 @@ class SkillPackageTests(unittest.TestCase):
             (
                 "SKILL.md",
                 skill,
-                "report each measurement as a **pareto frontier over accuracy and cost**",
+                "report each measurement as a **pareto frontier over the declared objective and cost**",
                 "### 8. verify and report",
             ),
             (
                 "run-safety.md",
                 safety,
-                "### the accuracy-cost frontier",
+                "### the objective-cost frontier",
                 "## post-run verification",
             ),
         ):
@@ -20015,7 +20015,7 @@ class SkillPackageTests(unittest.TestCase):
 
         # The baseline reports one too, over the six trials it just paid for.
         self.assertIn(
-            "show this grid's own accuracy-cost frontier beside the winner, read "
+            "show this grid's own objective-cost frontier beside the winner, read "
             "from the trials it just paid for",
             skill,
         )
@@ -20032,7 +20032,7 @@ class SkillPackageTests(unittest.TestCase):
         )
 
         # Placement: details layer, never in place of the recommendation.
-        self.assertIn("each run's accuracy-cost frontier, in the details layer", skill)
+        self.assertIn("each run's objective-cost frontier, in the details layer", skill)
         self.assertIn(
             "a frontier put where the recommendation belongs is the menu this "
             "stage already refuses",
@@ -29840,7 +29840,7 @@ class OneShapeAndOneMarkForEveryChoiceTests(unittest.TestCase):
             skill,
         )
         self.assertIn(
-            "an accuracy-only search with walkthrough material requires a "
+            "a quality-only search with walkthrough material requires a "
             "workflow-demonstration label",
             skill,
         )

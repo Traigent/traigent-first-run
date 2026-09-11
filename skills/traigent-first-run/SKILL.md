@@ -939,7 +939,8 @@ Use the same tuning slice, evaluator, objectives, and agent call path for both m
    list above already does for a prepared baseline, and which a user-owned single-model baseline
    reaches through that same separate disclosure, never through another round.
 
-Report each measurement as a **Pareto frontier over accuracy and cost**, never as a single cheaper
+Report each measurement as a **Pareto frontier over the declared objective and cost**, naming that
+objective in the customer's own words, never as a single cheaper
 answer: a frontier carries the same score for less money and a higher score for the same money, and
 asserts neither. It costs nothing - it is arithmetic over trials already paid for. Never show a
 frontier point that scored below the configuration the user is already running.
@@ -972,7 +973,7 @@ account request:
 - Show the best configuration, the primary tuning metric by its actual name, cost, latency, and
   executed and failed trial counts. Report cost or latency as `not measured` when the provider or
   SDK does not supply it.
-- Show this grid's own accuracy-cost frontier beside the winner, read from the trials it just
+- Show this grid's own objective-cost frontier beside the winner, read from the trials it just
   paid for. A fixed grid is a small frontier, and it is still the user's own measured evidence
   rather than a note about whether the two happen to trade off.
 - Explain each baseline knob in one plain-language note.
@@ -987,9 +988,10 @@ limit on the claim - a ceiling effect remains a hypothesis - and name harder rea
 `traigent-dataset-curate` handoff after the run, never as a route. The routes in that state are
 `A.` the bounded connected run, offered as an optional no-lift-possible verification and never as
 an expected gain, carrying the mark on the two standing reasons below that rest on no number, and
-`B.` stop with the baseline-only result, preserved and reported. An accuracy-only search with
-walkthrough material requires a workflow-demonstration label. A cost objective may proceed at equal
-accuracy only when materially lower cost remains possible; report any gain as cost and still flag
+`B.` stop with the baseline-only result, preserved and reported. A quality-only search with
+walkthrough material requires a workflow-demonstration label. A cost objective may proceed at an
+equal objective score only when materially lower cost remains possible; report any gain as cost and
+still flag
 weak evidence.
 
 Where that repair is one this run can make for nothing - a fault in code this run wrote, or one
@@ -1127,7 +1129,7 @@ auditable:
 Include:
 
 - Best baseline configuration versus best enhanced configuration on the tuning set.
-- Each run's accuracy-cost frontier, in the details layer. One recommendation still leads; a
+- Each run's objective-cost frontier, in the details layer. One recommendation still leads; a
   frontier put where the recommendation belongs is the menu this stage already refuses.
 - The recommended configuration's held-out score and small-sample note, shown here first.
 - Cost, the configurations tested out of the space's total, failures, stop reason, and direct

@@ -63,7 +63,7 @@ lawfully never entered, keeping its `[ ]` checkbox. SKILL.md owns every stage's 
 - Exact-baseline sync - public sync ID, successful CLI URL, or `local-only` with reason:
 - Connected optimization run ID, configurations tested of the total, partial/final result, stop reason, and verified portal link:
 - Baseline-versus-enhanced comparison - measured tuning behavior and justified claim strength:
-- Accuracy-cost frontier for each run - its points, the recommended one, and the score claim with paired outcome counts:
+- Objective-cost frontier for each run - its points, the recommended one, and the score claim with paired outcome counts:
 
 ## Interpretation
 
