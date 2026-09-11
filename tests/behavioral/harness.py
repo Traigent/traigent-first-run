@@ -2123,10 +2123,14 @@ def run_safe_opening_calibration_once(
     # a relabelling. This project's evaluator was PROVED to reach an engine -
     # preflight read `exec(output)` out of the file above - so the card that
     # used to raise `evaluator-unvalidated` was recommending
-    # `complete-calibration`, which is the step this guide ends the run before,
-    # to the one project it is forbidden for (traigent-first-run#393). The
-    # ceiling is unchanged at 45; what changes is which remedy a customer is
-    # handed. The absence of `evaluator-unvalidated` is asserted beside it
+    # `complete-calibration`, which is the step this guide declines to take,
+    # to the one project it is forbidden for (traigent-first-run#393). What
+    # changes here is which remedy a customer is handed. The ceiling is NOT
+    # unchanged any more, and this comment said it was: preflight's walk PROVED
+    # this scenario's evaluator reaches an engine, which is the arm
+    # `evaluator-calibration-refused` now bounds with no ceiling at all. The
+    # assertions below check conditions rather than the number, so the comment
+    # drifted while the suite stayed green. The absence of `evaluator-unvalidated` is asserted beside it
     # because the two conditions are mutually exclusive by construction and a
     # card carrying both would mean the derivation had stopped being one
     # decision.
