@@ -13293,6 +13293,94 @@ class TheBuildHalfChargesNothingOnTheLiveRouteTests(unittest.TestCase):
                 )
 
 
+class SentencesThatOutlivedTheirRuleTests(unittest.TestCase):
+    """The sweep in traigent-first-run#493, pinned where it was fixed.
+
+    Each of these was a sentence that stayed true of a rule the code no longer
+    applies. They are pinned together because they share one failure mode - the
+    prose and the arithmetic drifting apart with nothing reading both - and
+    because the sweep that found them will be run again.
+    """
+
+    def test_the_held_band_prose_carries_the_cap_it_describes(self) -> None:
+        """Item 2: the prose said "all of them"; the predicate stops at 28."""
+        self.assertEqual(MODULE.ANSWER_KEY_DRAWN_ROWS, 28)
+        paragraph = MODULE.answer_key_hold_paragraph("WORKABLE", True)
+        self.assertIn(str(MODULE.ANSWER_KEY_DRAWN_ROWS), paragraph)
+        self.assertNotIn("all of them where the split is settled", paragraph)
+
+    def test_a_deterministic_method_that_deducts_says_so(self) -> None:
+        """Item 3: the label was flat and the arithmetic was not."""
+        for method in sorted(MODULE.DETERMINISTIC_METHODS):
+            with self.subTest(method=method):
+                factor = MODULE.METHOD_PROFILES[method].get("reproducibility")
+                spoken = MODULE.reproducibility_evidence(method)
+                if factor is not None and factor < 1.0:
+                    # The reader is looking at a deduction; the line has to
+                    # account for it rather than assert the opposite.
+                    self.assertIn("is not", spoken)
+                    self.assertNotEqual(spoken, "deterministic scoring rule")
+                else:
+                    self.assertEqual(spoken, "deterministic scoring rule")
+
+    def test_at_least_one_deterministic_method_deducts(self) -> None:
+        """Or the assertion above passes by having nothing to judge."""
+        deducting = [
+            method
+            for method in MODULE.DETERMINISTIC_METHODS
+            if (MODULE.METHOD_PROFILES[method].get("reproducibility") or 1.0) < 1.0
+        ]
+        self.assertTrue(deducting)
+
+    def test_a_card_that_offers_rows_never_also_says_it_writes_none(self) -> None:
+        """Item 4: the reconciliation followed the lead, not the offer."""
+        finding = MODULE.RepeatedInputs(
+            scoreable=24, distinct=20, side="in your dataset"
+        )
+        # Something blocks, so route A is correctly NOT offered - and the card
+        # still carries a size cap whose reason offers to write rows.
+        lines = MODULE.repeated_input_routes(
+            finding, offers_top_up=False, card_offers_rows=True
+        )
+        closing = lines[-1]
+        self.assertIn("read and never written to", closing)
+        self.assertIn("scored as the generated rows they are", closing)
+        self.assertFalse(
+            any("Answer the bounded top-up" in line for line in lines),
+            "a blocking cap leads, so the top-up must not be offered as route A",
+        )
+
+    def test_a_card_offering_nothing_keeps_the_flat_sentence(self) -> None:
+        """The non-firing half: no offer anywhere, no reconciliation."""
+        finding = MODULE.RepeatedInputs(
+            scoreable=24, distinct=20, side="in your dataset"
+        )
+        lines = MODULE.repeated_input_routes(
+            finding, offers_top_up=False, card_offers_rows=False
+        )
+        self.assertNotIn("scored as the generated rows", lines[-1])
+
+    def test_the_comparison_refusal_does_not_invent_a_file_it_never_read(
+        self,
+    ) -> None:
+        """Item 5: one sentence covered two states that must stay apart."""
+        read = MODULE.task_fit_unproven_comparison_evidence(
+            "sql-structure", None, None, True
+        )
+        unread = MODULE.task_fit_unproven_comparison_evidence(
+            "sql-structure", None, None, False
+        )
+        self.assertIn("the evaluator file read for this score", read)
+        self.assertIn("no evaluator file was read for this score", unread)
+        self.assertNotEqual(read, unread)
+
+    def test_the_three_source_flags_do_not_claim_to_be_required(self) -> None:
+        """Item 8: three help strings against the code's own capitals."""
+        source = Path(MODULE.__file__).read_text(encoding="utf-8")
+        self.assertNotIn("required with --agent-knobs", source)
+        self.assertIn("The three source flags are one unit, and that unit is", source)
+
+
 class TheCardDoesNotAssertAContradictionTests(unittest.TestCase):
     """Two claims from one document, printed as two claims.
 
