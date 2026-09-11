@@ -97,7 +97,7 @@ class StaticPreflightTests(unittest.TestCase):
         the approved figures it is launched with, so a reader told the SDK
         default governs is being told the walkthrough's ceiling does not.
         """
-        MODULE.check_cost_settings({}, {}, {})
+        MODULE.check_cost_settings({}, {}, {}, Path(".env"))
         cost_cap = next(
             result for result in MODULE.RESULTS if result.check == "cost-cap"
         )
@@ -117,7 +117,7 @@ class StaticPreflightTests(unittest.TestCase):
         ):
             with self.subTest(name=name):
                 MODULE.RESULTS.clear()
-                MODULE.check_cost_settings({}, {name: "500.00"}, {})
+                MODULE.check_cost_settings({}, {name: "500.00"}, {}, Path(".env"))
                 result = next(
                     item
                     for item in MODULE.RESULTS
@@ -137,7 +137,9 @@ class StaticPreflightTests(unittest.TestCase):
             env_path.write_text("TRAIGENT_RUN_COST_LIMIT=not-a-number\n")
             with mock.patch.dict(os.environ, {}, clear=True):
                 effective, file_values, process_values = MODULE.read_env(env_path)
-                MODULE.check_cost_settings(effective, file_values, process_values)
+                MODULE.check_cost_settings(
+                    effective, file_values, process_values, Path(".env")
+                )
         self.assertFalse(
             any(
                 item.check == "cost-cap" and item.status == MODULE.FAIL
@@ -159,14 +161,16 @@ class StaticPreflightTests(unittest.TestCase):
                 os.environ, {"TRAIGENT_RUN_COST_LIMIT": "3.75"}, clear=True
             ):
                 effective, file_values, process_values = MODULE.read_env(env_path)
-                MODULE.check_cost_settings(effective, file_values, process_values)
+                MODULE.check_cost_settings(
+                    effective, file_values, process_values, Path(".env")
+                )
         active_cap = next(item for item in MODULE.RESULTS if item.check == "cost-cap")
         self.assertEqual(active_cap.status, MODULE.SKIP)
         self.assertIn("inventory only", active_cap.detail)
         self.assertNotIn("$3.75", active_cap.detail)
 
         MODULE.RESULTS.clear()
-        MODULE.check_cost_settings({}, {}, {})
+        MODULE.check_cost_settings({}, {}, {}, Path(".env"))
         self.assertEqual(
             [item for item in MODULE.RESULTS if item.check == "cost-figures-in-file"],
             [],
@@ -684,7 +688,9 @@ class StaticPreflightTests(unittest.TestCase):
         ):
             with self.subTest(present=sorted(present)):
                 MODULE.RESULTS.clear()
-                MODULE.check_cost_settings(dict(present), {}, dict(present))
+                MODULE.check_cost_settings(
+                    dict(present), {}, dict(present), Path(".env")
+                )
                 result = next(
                     item for item in MODULE.RESULTS if item.check == "backend-url"
                 )
@@ -694,7 +700,7 @@ class StaticPreflightTests(unittest.TestCase):
                 self.assertIn("connected destination at its approval", result.detail)
 
         MODULE.RESULTS.clear()
-        MODULE.check_cost_settings({}, {}, {})
+        MODULE.check_cost_settings({}, {}, {}, Path(".env"))
         self.assertEqual(
             [item for item in MODULE.RESULTS if item.check == "backend-url"],
             [],
@@ -6877,6 +6883,61 @@ class OneRecordPerCheckTests(unittest.TestCase):
         )
 
 
+class TheUndeclaredClauseSaysWhatUndeclaredMeansTests(unittest.TestCase):
+    """One sentence, three copies, corrected in two of them.
+
+    The glossary first, `readiness.py` second, and this report third. Kept
+    beside each other here so the next correction has one place to land.
+    """
+
+    def setUp(self) -> None:
+        MODULE.RESULTS.clear()
+
+    def tearDown(self) -> None:
+        MODULE.RESULTS.clear()
+
+    def test_the_undeclared_clause_does_not_say_a_row_recorded_nothing(
+        self,
+    ) -> None:
+        """The third copy of a sentence corrected twice already.
+
+        "N of M rows record no provenance" is false of exactly the row this
+        clause most often describes. A row carrying `provenance: "n/a"` DID
+        record something - `n/a` is an undeclared token, not an absent field -
+        and the same report then prints that word back in `declared sources`,
+        so the reader was told the row recorded nothing directly beside what it
+        recorded.
+
+        The glossary was corrected first, `readiness.py:5443-5455` second - its
+        comment records both - and this copy kept the old sentence
+        (traigent-first-run#494 E). Pinned here so the three cannot drift apart
+        again, and asserted over all three undeclared shapes rather than the one
+        that made it obvious.
+        """
+        for label, rows in (
+            ("no field at all", [{"input": "q1"}]),
+            ("a non-answer", [{"input": "q1", "provenance": "n/a"}]),
+            ("an unknown word", [{"input": "q1", "provenance": "vibes"}]),
+        ):
+            with self.subTest(shape=label):
+                MODULE.RESULTS.clear()
+                MODULE.emit_dataset_provenance(rows, labelled=0)
+                detail = next(
+                    record.detail
+                    for record in MODULE.RESULTS
+                    if record.check == "dataset-provenance"
+                )
+                # The claim that was false of two of these three shapes.
+                self.assertNotIn("record no provenance", detail)
+                # And what replaces it covers all three, in readiness's words
+                # so the two reports say one thing about one row.
+                self.assertIn("name no real source this run can read", detail)
+                self.assertIn("no provenance field at all", detail)
+                self.assertIn("a non-answer such as n/a", detail)
+                self.assertIn("a word its vocabulary does not know", detail)
+        MODULE.RESULTS.clear()
+
+
 class TheCostApprovedWarningNamesItsSourceTests(unittest.TestCase):
     """Finding 32: the process view and the file view, read apart.
 
@@ -6893,9 +6954,68 @@ class TheCostApprovedWarningNamesItsSourceTests(unittest.TestCase):
     def _record(self) -> "MODULE.Result":
         return next(r for r in MODULE.RESULTS if r.check == "cost-approved")
 
+    def test_the_cost_findings_name_the_file_this_run_actually_read(self) -> None:
+        """The remedy has to point at the file, not at the habit.
+
+        Four cost findings said a value was "preserved in .env" whatever
+        `--env` pointed at. The handoff file is whichever local file the user
+        identified for the run, so a customer following one of these verbatim
+        was sent to a file this run never opened - and where a stale `.env`
+        happens to sit beside it, sent to the WRONG file rather than to none.
+
+        The sibling half of a fix already made: `check_shadowed_credentials`
+        takes `env_path` for exactly this reason and says so in its own
+        docstring, and `check_keys` has handed it on since. This function is
+        called from the next line of `main` and was never given it
+        (traigent-first-run#494 D).
+
+        All four arms, because fixing one of four leaves three saying it.
+        """
+        handoff = Path("/tmp/project/first-run.env")
+        for label, effective, file_values, process_values in (
+            (
+                "persisted-figures",
+                {},
+                {"TRAIGENT_FIRST_RUN_COST_CEILING_USD": "5.00"},
+                {},
+            ),
+            (
+                "approved-in-process-with-file-copy",
+                {"TRAIGENT_COST_APPROVED": "1"},
+                {"TRAIGENT_COST_APPROVED": "1"},
+                {"TRAIGENT_COST_APPROVED": "1"},
+            ),
+            (
+                "approved-in-file-truthy",
+                {"TRAIGENT_COST_APPROVED": "1"},
+                {"TRAIGENT_COST_APPROVED": "1"},
+                {},
+            ),
+            (
+                "approved-in-file-not-an-approval",
+                {"TRAIGENT_COST_APPROVED": "0"},
+                {"TRAIGENT_COST_APPROVED": "0"},
+                {},
+            ),
+        ):
+            with self.subTest(arm=label):
+                MODULE.RESULTS.clear()
+                MODULE.check_cost_settings(
+                    effective, file_values, process_values, handoff
+                )
+                detail = " ".join(record.detail for record in MODULE.RESULTS)
+                self.assertIn(str(handoff), detail)
+                # The bare literal is what sent the customer to the wrong file.
+                # It may not survive anywhere in a rendered finding, on any arm.
+                self.assertNotIn(" .env", detail)
+        MODULE.RESULTS.clear()
+
     def test_a_value_only_in_the_file_is_inventory_and_says_so(self) -> None:
         MODULE.check_cost_settings(
-            {"TRAIGENT_COST_APPROVED": "0"}, {"TRAIGENT_COST_APPROVED": "0"}, {}
+            {"TRAIGENT_COST_APPROVED": "0"},
+            {"TRAIGENT_COST_APPROVED": "0"},
+            {},
+            Path(".env"),
         )
         record = self._record()
         self.assertEqual(record.status, MODULE.SKIP)
@@ -6917,6 +7037,7 @@ class TheCostApprovedWarningNamesItsSourceTests(unittest.TestCase):
                     {"TRAIGENT_COST_APPROVED": "1"},
                     file_values,
                     {"TRAIGENT_COST_APPROVED": "1"},
+                    Path(".env"),
                 )
                 record = self._record()
                 self.assertEqual(record.status, MODULE.WARN)
@@ -6930,7 +7051,10 @@ class TheCostApprovedWarningNamesItsSourceTests(unittest.TestCase):
 
     def test_an_approval_value_in_the_file_is_still_inventory(self) -> None:
         MODULE.check_cost_settings(
-            {"TRAIGENT_COST_APPROVED": "true"}, {"TRAIGENT_COST_APPROVED": "true"}, {}
+            {"TRAIGENT_COST_APPROVED": "true"},
+            {"TRAIGENT_COST_APPROVED": "true"},
+            {},
+            Path(".env"),
         )
         record = self._record()
         self.assertEqual(record.status, MODULE.SKIP)
@@ -6944,14 +7068,18 @@ class TheCostApprovedWarningNamesItsSourceTests(unittest.TestCase):
             with mock.patch.dict(os.environ, {}, clear=True):
                 effective, file_values, process_values = MODULE.read_env(env_path)
                 self.assertNotIn("TRAIGENT_COST_APPROVED", process_values)
-                MODULE.check_cost_settings(effective, file_values, process_values)
+                MODULE.check_cost_settings(
+                    effective, file_values, process_values, Path(".env")
+                )
             self.assertEqual(self._record().status, MODULE.SKIP)
             MODULE.RESULTS.clear()
             with mock.patch.dict(
                 os.environ, {"TRAIGENT_COST_APPROVED": "1"}, clear=True
             ):
                 effective, file_values, process_values = MODULE.read_env(env_path)
-                MODULE.check_cost_settings(effective, file_values, process_values)
+                MODULE.check_cost_settings(
+                    effective, file_values, process_values, Path(".env")
+                )
             record = self._record()
         self.assertEqual(record.status, MODULE.WARN)
         self.assertIn("set in the process environment", record.detail)
