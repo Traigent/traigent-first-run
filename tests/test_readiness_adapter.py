@@ -6404,7 +6404,8 @@ class TheWalkthroughSizeReachesTheCardTests(unittest.TestCase):
             "18 examples - at or above the 18 this walkthrough tunes on", card
         )
         self.assertEqual(
-            card.rstrip("\n").splitlines()[-1], "Action: review-answer-key"
+            card.rstrip("\n").splitlines()[-1],
+            f"Action: {MODULE.ACTION_DISPLAY_NAMES[score['recommended_action']]}",
         )
 
 

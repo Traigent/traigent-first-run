@@ -28,13 +28,15 @@ SPEC.loader.exec_module(MODULE)
 
 def installed_sdk_fixture(site: Path) -> None:
     """Metadata is enough: preflight must never import the package itself."""
-    dist = site / "traigent-0.26.0.dist-info"
+    distribution, version = "traigent", "0.26.0"
+    dist = site / f"{distribution}-{version}.dist-info"
     dist.mkdir(parents=True)
-    (dist / "METADATA").write_text("Name: traigent\nVersion: 0.26.0\n")
+    (dist / "METADATA").write_text(f"Name: {distribution}\nVersion: {version}\n")
+    modules = ("traigent.api.decorators", "traigent.core.objectives")
     (dist / "RECORD").write_text(
-        "traigent/api/decorators.py,,\ntraigent/core/objectives.py,,\n"
+        "".join(f"{module.replace('.', '/')}.py,,\n" for module in modules)
     )
-    package = site / "traigent"
+    package = site / distribution
     package.mkdir()
     (package / "__init__.py").write_text(
         "raise AssertionError('the static bootstrap imported an SDK')\n"

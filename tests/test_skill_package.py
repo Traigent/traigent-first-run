@@ -3016,94 +3016,10 @@ def score_config_space(document: dict) -> tuple[object, list[str]]:
     return pillar, [cap.condition for cap in caps]
 
 
-# Three classifiers over ONE SENTENCE, used below to read a decision out of the
-# guidance instead of confirming that a phrase is still spelled the same way.
-#
-# The distinction is the whole point. A check built from `assertIn("candidate
-# to drop")` passes just as happily when the document has been changed to say
-# the opposite thing somewhere else in the same sentence, and it passes when
-# the sentence is reworded into nonsense as long as the fragment survives. So
-# each of these takes a sentence and returns WHICH ANSWER it gives, and the
-# tests below assert the answer. They are unit-tested against invented
-# sentences - phrasings this guide does not contain, in both directions - so
-# that a green result means the classifier can tell the directions apart,
-# rather than meaning the document happened to be quoted correctly.
-
+# Classify an asserted no-effect claim in one sentence; prohibiting a claim
+# must not be mistaken for making it. This remains useful independently of
+# the retired recipe that dropped preserved customer controls.
 _SENTENCE_BREAK = re.compile(r"(?<=[.;:])\s+")
-
-# "never X" and "not X" flip an assertion into its opposite, and this guidance
-# writes both on purpose - it names the wording it forbids in order to forbid
-# it. A classifier that ignored that would read every prohibition here as the
-# claim it prohibits, and would call the document wrong for being right.
-_IMMEDIATE_NEGATORS = ("never", "not", "than", "of", "no")
-
-
-def _words(text: str) -> list[str]:
-    """The alphabetic words of `text`, with punctuation and markup dropped."""
-    return re.sub(r"[^a-z]+", " ", text.casefold()).split()
-
-
-def _asserted(pattern: re.Pattern[str], sentence: str) -> int | None:
-    """Offset of the first match of `pattern` the sentence is not negating.
-
-    Negation here is the word immediately in front: `not preference` and
-    `never the one to keep` are the shapes this guide uses to rule an answer
-    out while still naming it.
-    """
-    for match in pattern.finditer(sentence):
-        before = _words(sentence[: match.start()])
-        if before and before[-1] in _IMMEDIATE_NEGATORS:
-            continue
-        return match.start()
-    return None
-
-
-_UNDER_MARGIN = re.compile(
-    r"\b(?:under|below|less than|smaller than|within)\b[^,.;:]{0,40}?"
-    r"\b(?:separation )?margin\b",
-    re.IGNORECASE,
-)
-_DROP_VERDICT = re.compile(
-    r"\b(?:candidate to drop|the one to drop|is droppable|drop(?:ped)? it)\b",
-    re.IGNORECASE,
-)
-_KEEP_VERDICT = re.compile(
-    r"\b(?:the one to keep|candidate to keep|must be kept|keep(?:s)? it|is kept)\b",
-    re.IGNORECASE,
-)
-
-
-def tie_verdict(sentence: str) -> str | None:
-    """For a knob whose values scored within the margin: drop it, or keep it?
-
-    `None` means this sentence does not reach that verdict at all, which is
-    itself a failing answer for the rule - a rule that stops before the verdict
-    leaves the assistant to guess.
-    """
-    trigger = _UNDER_MARGIN.search(sentence)
-    if trigger is None:
-        return None
-    tail = sentence[trigger.end() :]
-    drop = _asserted(_DROP_VERDICT, tail)
-    keep = _asserted(_KEEP_VERDICT, tail)
-    if drop is None and keep is None:
-        return None
-    if keep is None or (drop is not None and drop < keep):
-        return "drop"
-    return "keep"
-
-
-_BASELINE_AUTHORITY = re.compile(r"\bthe baseline'?s call\b", re.IGNORECASE)
-_PREFERENCE_AUTHORITY = re.compile(r"\bpreference\b", re.IGNORECASE)
-
-
-def selection_authority(sentence: str) -> str | None:
-    """Who decides which of the customer's knobs to keep: evidence, or taste?"""
-    baseline = _asserted(_BASELINE_AUTHORITY, sentence)
-    preference = _asserted(_PREFERENCE_AUTHORITY, sentence)
-    if (baseline is None) == (preference is None):
-        return None
-    return "baseline" if baseline is not None else "preference"
 
 
 # A claim that a knob has NO EFFECT, in the ways one gets written. Not a
@@ -5160,216 +5076,66 @@ class SkillPackageTests(unittest.TestCase):
                             PREFLIGHT.value_fingerprint(process_values[name]),
                         )
 
-    def test_the_knob_selection_rule_matches_the_arithmetic_it_cites(self) -> None:
-        """The guidance told the assistant to keep "a few" and stopped there.
+    def test_the_knob_selection_rule_preserves_customer_space(self) -> None:
+        """The generated limit cannot remove dimensions from a real baseline.
 
-        There was no rule for WHICH of a customer's own knobs to keep, no
-        statement of what the space may cost, and no gate anywhere if the
-        assistant kept all of them: a ten-knob space at 1024 configurations
-        against a 12-trial cap raises no cap and prints no note - it just
-        quietly loses points.
-
-        The cost of that is measured below rather than asserted here, because
-        the figures this docstring used to carry (49 and 60) could not be
-        reproduced against `readiness.py` on any shape tried, and an
-        unverifiable number in a docstring is exactly the drift the rest of
-        this test exists to stop. What IS reproducible is stated with its
-        inputs: ten wired knobs of a customer's own naming, two values each,
-        `agent_type` "general" and `max_trials` 12, against that same
-        customer's first four - the same knobs, the same agent, a gap made of
-        nothing but the ratio of space to budget.
-
-        The gap is what is asserted, and the absolute pair is not. Those
-        numbers were 49/60, then 44/55, and are 64/75 as this merges: #174
-        re-prices a categorical knob's two values as FULL breadth rather than
-        half, which lifts every space here without touching the decision this
-        test protects. A pillar's absolute value is a pricing choice branches
-        are free to revise - #168 hit exactly this and rewrote its own
-        assertion the same way after `85 != 77` failed a merge neither
-        branch's CI could see. A relation survives a re-pricing; an absolute
-        is a merge failure waiting for a date. The plateau and floor asserted
-        above are the control: without them `kept_four > kept_all` would hold
-        just as well for a scorer that had stopped responding to knob count.
-
-        So the rule names the numbers, and this asserts the scorer agrees about
-        the DIRECTION rather than about a pair. Guidance that cites arithmetic
-        it does not share with the code is guidance that goes stale silently,
-        which is the failure this file exists to catch.
-
-        The first version of this test was a list of `assertIn` calls, and it
-        was worth nothing: swapping the rule's `candidate to drop` for `the one
-        to keep` - the exact reversal of the decision it was written to protect
-        - left the whole suite green, and so did turning `the baseline's call,
-        not preference` around. It pinned VOCABULARY. What follows pins the
-        ANSWER, by reading it back out of the sentence with a classifier that
-        is itself unit-tested against invented sentences in both directions.
+        #533: the old prose dropped ten customer controls to three; the
+        documented subset assertion then raised KeyError (removed dimension)
+        or AssertionError (dimension pinned). Exercise that actual assertion,
+        and check the dispatched construction no longer instructs either.
         """
         require_stage_reference(7, RUN_SAFETY, "baseline-and-optimization")
-        text = RUN_SAFETY.read_text()
-        start = text.index("A customer who brings ten wired knobs")
         rule = " ".join(
-            text[start : text.index("The generated `reflect` control", start)].split()
+            section_text(RUN_SAFETY, "Space construction and request proof").split()
         )
-        parts = sentences(rule)
+        for phrase in (
+            "The three-control limit belongs to the generated walkthrough",
+            "A user-owned baseline retains every existing dimension and candidate value "
+            "in both spaces, even when it has more than three controls",
+            "Do not remove or pin baseline controls",
+            "This does not authorize more trials or spend",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, rule, document_states(rule, phrase))
 
-        # 1. Which way does the tie break? A knob whose values scored within
-        #    the margin is a CANDIDATE TO DROP. Reverse the document and this
-        #    reads "keep"; delete the verdict and this reads nothing at all.
-        verdicts = {tie_verdict(part) for part in parts} - {None}
-        self.assertEqual(
-            verdicts,
-            {"drop"},
-            "a knob whose values scored within the separation margin is a "
-            f"candidate to drop; the rule now reaches {verdicts or 'no verdict'}",
+        block = ast.parse(python_block_containing(SDK_EXECUTION, "BASELINE_SPACE ="))
+        subset_checks = [
+            node
+            for node in block.body
+            if isinstance(node, ast.Assert)
+            and isinstance(node.msg, ast.Constant)
+            and str(node.msg.value).startswith("the baseline must be a subset")
+        ]
+        self.assertEqual(len(subset_checks), 1)
+        check = compile(
+            ast.Module(body=subset_checks, type_ignores=[]), "<baseline-subset>", "exec"
         )
-
-        # 2. Who decides - the baseline's evidence, or the assistant's taste?
-        authorities = {selection_authority(part) for part in parts} - {None}
-        self.assertEqual(
-            authorities,
-            {"baseline"},
-            "which of the customer's knobs to keep is decided by baseline "
-            f"evidence, not preference; the rule now says {authorities or 'neither'}",
-        )
-
-        # 3. And the rule may not overclaim from six trials. This is the same
-        #    predicate the whole-guidance check below applies; it runs here too
-        #    because this paragraph is where the temptation lives.
-        overclaims = [part for part in parts if claims_no_effect(part)]
-        self.assertEqual(
-            overclaims,
-            [],
-            "six baseline trials cannot show a knob has no effect, only that "
-            "it did not move the baseline",
-        )
-
-        scripts = str(SKILL_ROOT / "scripts")
-        if scripts not in sys.path:
-            sys.path.insert(0, scripts)
-        readiness = importlib.import_module("readiness")
-        # #189 replaced `knob_count_points` - a ramp over how MANY knobs - with
-        # `search_space_points`, a ladder over how much of the space the run
-        # will actually compare. The rule's arithmetic is re-read against the
-        # function that now decides it, rather than against one that is gone.
-        points = readiness.search_space_points
-        best = points(readiness.SEARCH_SPACE_FULL, readiness.SEARCH_SPACE_FULL)
-        # Full credit starts at twelve reachable configurations, which is the
-        # number the rule quotes; one below it is a lower rung.
-        self.assertEqual(points(12, 12), best)
-        self.assertLess(points(11, 12), best)
-        # 240 is 20 x the default cap, and it is the threshold the rule quotes:
-        # a space at it is unpunished and a space past it is damped.
-        self.assertEqual(points(240, 12), best)
-        self.assertLess(points(241, 12), best)
-        # And an undeclared budget is damped where an oversized space is, which
-        # is what stops deleting the field from buying the top rung.
-        self.assertLess(points(1000, None), best)
-
-        # The cost the rule exists to prevent, run through the real scorer so
-        # the docstring's two numbers cannot go stale in silence. The knobs are
-        # a customer's own naming rather than the scorer's canonical ones,
-        # which is the case the rule is about: a customer arrives with their
-        # agent's controls, not with `temperature` and `top_p`.
-        declared = {f"knob_{index}": ["x", "y"] for index in range(10)}
-
-        def agent_pillar(knobs: dict[str, list[str]]) -> int:
-            pillar, caps = score_config_space(
-                {
-                    "knobs": knobs,
-                    "max_trials": 12,
-                    "wired": list(knobs),
+        for count in (4, 10):
+            with self.subTest(customer_controls=count):
+                baseline = {
+                    "model": ["customer-model"],
+                    **{f"control_{i}": ["off", "on"] for i in range(count)},
                 }
+                enhanced = {**baseline, "added_control": ["plain", "structured"]}
+                exec(check, {"BASELINE_SPACE": baseline, "ENHANCED_SPACE": enhanced})
+                removed = {key: baseline[key] for key in list(baseline)[:4]}
+                with self.assertRaises(KeyError):
+                    exec(check, {"BASELINE_SPACE": baseline, "ENHANCED_SPACE": removed})
+                pinned = {**baseline, "control_3": ["off"]}
+                with self.assertRaises(AssertionError):
+                    exec(check, {"BASELINE_SPACE": baseline, "ENHANCED_SPACE": pinned})
+
+        # A lower readiness score is a disclosure, not authority to change a
+        # preserved baseline. Both shapes remain scoreable without a cap.
+        def score(count):
+            knobs = {f"control_{i}": ["off", "on"] for i in range(count)}
+            pillar, caps = score_config_space(
+                {"knobs": knobs, "max_trials": 12, "wired": list(knobs)}
             )
-            self.assertEqual(caps, [], "neither space is capped; only scored")
+            self.assertEqual(caps, [])
             return pillar.score
 
-        kept_all = agent_pillar(declared)
-        kept_four = agent_pillar(dict(list(declared.items())[:4]))
-        self.assertGreater(
-            kept_four,
-            kept_all,
-            "keeping four of a customer's ten knobs must score ABOVE keeping "
-            "all ten, or the rule the guidance states is not the rule the "
-            "scorer applies",
-        )
-
-        # 4. The dispatched construction owns the exact three-slot bound.
-        # Read its count and the executable space independently: either a
-        # widened mandate or an oversized live space must still fail here.
-        stated = re.search(r"same (\w+)-slot enhanced space", rule)
-        self.assertIsNotNone(
-            stated, "the enhanced construction no longer bounds its slots"
-        )
-        spelled = {
-            "one": 1,
-            "two": 2,
-            "three": 3,
-            "four": 4,
-            "five": 5,
-            "six": 6,
-            "seven": 7,
-            "eight": 8,
-            "nine": 9,
-            "ten": 10,
-        }
-        slots = spelled[stated.group(1).casefold()]
-        widths = generated_space_widths()["enhanced"]
-        swept_behavior = {
-            name: width
-            for name, width in widths.items()
-            if name != "model" and width > 1
-        }
-        self.assertEqual(len(swept_behavior), slots)
-        size = generated_space_sizes()["enhanced"]
-        self.assertEqual(points(size, readiness.SEARCH_SPACE_FULL), best)
-        self.assertGreater(size, readiness.SEARCH_SPACE_FULL)
-        self.assertIn("twelve reachable", rule)
-        self.assertNotIn("aim at", rule.casefold())
-
-        # 5. The separation margin is calibration's, not a number invented for
-        #    the prose - two homes for one threshold is how they drift apart -
-        #    and the rule names where it lives so a reader can check it.
-        calibration = importlib.import_module("calibrate_evaluator")
-        self.assertIn(f"{calibration.SEPARATION_MARGIN} normalized", rule)
-        self.assertIn("`--separation-margin` default in", rule)
-        self.assertIn("calibrate_evaluator.py", rule)
-        # Two unrelated 0.05s now sit in this file - the config-space scorer's
-        # per-VALUE noise floor and this per-SCORE margin - so the rule has to
-        # say which one it is not.
-        self.assertIn("noise floor", rule)
-
-        # 6. The obligation to name what was left out has ONE home: the
-        #    approval preview's own checklist. It had two, each satisfiable
-        #    without the other, which is a rule that can be changed in one
-        #    place and still look enforced from the other.
-        preview = text[text.index("give the connected stage a preview") :]
-        self.assertIn("any knob of theirs left out and what the baseline", preview)
-        # `excluded` came out of this alternation on the merge, and the reason
-        # is a false positive rather than a narrowing. #149's routing bullet
-        # for `agent-no-varying-knobs` says "only knobs excluded from scoring",
-        # which is a statement about what the SCORER ignores - not about
-        # disclosing a customer's knob this run declined to carry. #169 wrote
-        # the alternation before that bullet existed, so the guard reported two
-        # homes for a mandate that still has one, and deleting #149's phrase to
-        # satisfy it would have removed load-bearing routing text to fix a
-        # regex. The three remaining spellings all describe leaving something
-        # OUT of the run, which is the mandate.
-        omission_mandate = re.compile(
-            r"\bknobs?\b[^.]{0,40}?\b(?:left out|omitted|not carried)\b",
-            re.IGNORECASE,
-        )
-        homes = {
-            path.name: len(omission_mandate.findall(path.read_text()))
-            for path in assistant_facing_documents()
-            if omission_mandate.search(path.read_text())
-        }
-        self.assertEqual(
-            homes,
-            {"run-safety.md": 1},
-            "the omitted-knob disclosure is stated in more than one place; a "
-            "rule with two homes can be changed in one and still look enforced "
-            "from the other. Restate the conclusion and point at the home.",
-        )
+        self.assertGreater(score(4), score(10))
 
     def test_the_no_effect_classifier_can_tell_the_two_directions_apart(self) -> None:
         """The guard above is only worth its green if this is true.
@@ -5417,53 +5183,6 @@ class SkillPackageTests(unittest.TestCase):
                     "this reports the measurement honestly, or forbids the "
                     "overclaim, and must be allowed",
                 )
-
-    def test_the_direction_classifiers_can_tell_the_two_directions_apart(self) -> None:
-        """Same argument, for the two answers the knob-selection rule gives.
-
-        Invented sentences again, and deliberately including the reversals that
-        the previous `assertIn` version of that test let through unchanged.
-        """
-        self.assertEqual(
-            tie_verdict(
-                "A spread under the separation margin did not move the "
-                "baseline, and that knob is a candidate to drop."
-            ),
-            "drop",
-        )
-        self.assertEqual(
-            tie_verdict(
-                "A spread under the separation margin did not move the "
-                "baseline, and that knob is the one to keep."
-            ),
-            "keep",
-        )
-        self.assertEqual(
-            tie_verdict(
-                "Where the values score within the margin, that knob is a "
-                "candidate to drop, never the one to keep."
-            ),
-            "drop",
-        )
-        # No margin test, or no verdict after it, is not an answer.
-        self.assertIsNone(tie_verdict("Keep a few of the most relevant knobs."))
-        self.assertIsNone(
-            tie_verdict("A spread under the separation margin is worth noting.")
-        )
-
-        self.assertEqual(
-            selection_authority(
-                "Which of theirs to keep is the baseline's call, not preference."
-            ),
-            "baseline",
-        )
-        self.assertEqual(
-            selection_authority(
-                "Which of theirs to keep is preference, not the baseline's call."
-            ),
-            "preference",
-        )
-        self.assertIsNone(selection_authority("Keep the knobs that look useful."))
 
     def test_no_guidance_document_claims_a_knob_has_no_effect(self) -> None:
         """The honesty rule, applied to the whole corpus rather than asserted.
@@ -11651,7 +11370,7 @@ class SkillPackageTests(unittest.TestCase):
         The executable example has one static `ENHANCED_SPACE`. Guidance that
         tells the assistant to narrow its values after the baseline describes a
         different experiment, and can produce a paid run the approval never
-        covered. Customer-owned knobs may be selected from baseline evidence;
+        covered. Customer-owned dimensions and values remain preserved;
         generated values are never rewritten between phases.
         """
         sdk = " ".join(SDK_EXECUTION.read_text().split())
@@ -11674,26 +11393,11 @@ class SkillPackageTests(unittest.TestCase):
             with self.subTest(stale=stale):
                 self.assertNotIn(stale, safety.casefold())
 
-    def test_the_reduced_space_is_stated_exactly_and_framed_honestly(self) -> None:
-        """Three owner decisions that only prose can carry.
+    def test_the_generated_space_is_stated_exactly_and_framed_honestly(self) -> None:
+        """The bounded three-control default belongs to generated material.
 
-        The counts are exact ON PURPOSE: "roughly 50" is a number nobody can
-        check against a run, and every other size claim in this guide is
-        checkable. So the mandate to state them exactly is asserted, not just
-        the numbers themselves.
-
-        The same target size applies to a customer who arrives with twenty
-        knobs of their own. The reduction is for the demonstration's sake, and
-        it is not a judgement about their knobs - the baseline-evidence rule
-        decides which of THEIRS fill the slots, and what was left out is named
-        in the approval preview.
-
-        And it must not read as though the improvement were bought by shrinking
-        the search. The honest framing is that the knobs are reduced to show the
-        principle cheaply and that Traigent has tens more to recommend - a
-        demonstration, not the ceiling. Deleting any of this left the suite
-        green, because a number can be tested and a frame cannot unless it is
-        pinned here.
+        Preserving customer controls does not enlarge the generated taste or
+        turn its result into a claim about all of Traigent's capabilities.
         """
         sizes = generated_space_sizes()
         sdk = SDK_EXECUTION.read_text()
@@ -11705,23 +11409,25 @@ class SkillPackageTests(unittest.TestCase):
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, sdk)
-
-        run_safety = " ".join(RUN_SAFETY.read_text().split())
+        widths = generated_space_widths()["enhanced"]
+        swept = [
+            name for name, width in widths.items() if name != "model" and width > 1
+        ]
+        self.assertEqual(len(swept), 3)
+        self.assertEqual(sizes, {"baseline": 12, "enhanced": 24})
+        require_stage_reference(7, RUN_SAFETY, "baseline-and-optimization")
+        rule = " ".join(
+            section_text(RUN_SAFETY, "Space construction and request proof").split()
+        )
         for phrase in (
-            "**The same small generated-space size whatever the customer brings.**",
-            "gets the same three-slot enhanced space, not a larger one",
-            "the three slots are filled from what they brought",
-            "baseline evidence decides which three",
-            "The resulting three-control choice reaches the enhanced run's "
-            "approval card with that evidence",
-            "The knobs are reduced to demonstrate the principle cheaply",
+            "The generated controls are limited to demonstrate the principle cheaply",
             "Traigent knows tens of knobs it can recommend",
             "This is a demonstration, not the ceiling of what Traigent can do",
-            "Never present the smaller space as though the improvement were "
-            "bought by shrinking the search",
+            "Never present the smaller generated space as though the improvement "
+            "were bought by shrinking a customer baseline",
         ):
             with self.subTest(phrase=phrase):
-                self.assertIn(phrase, run_safety)
+                self.assertIn(phrase, rule, document_states(rule, phrase))
 
     # "3 models x 2 prompt styles x 2 thinking shapes = 12 configurations", in
     # either document's multiplication sign and with markdown emphasis already
@@ -15378,7 +15084,7 @@ class SkillPackageTests(unittest.TestCase):
             "one *standard error*",
             "a 95% interval is roughly twice that",
             # Counts, at the size where a percentage lies.
-            "report counts, not percentages, while the split is this small",
+            "report counts, not percentages, for binary correctness while the split is this small",
             "can land lower, level, or higher",
             # Paired evidence belongs to the shared tuning sample, including
             # small runs; the held-out set scores only one selected candidate.
@@ -15895,11 +15601,10 @@ class SkillPackageTests(unittest.TestCase):
         legitimate: at equal score, prefer the cheaper configuration.
         """
         require_stage_reference(7, RUN_SAFETY, "baseline-and-optimization")
+        dataset_path = SKILL_ROOT / "references" / "evaluation-and-dataset.md"
+        require_stage_reference(7, dataset_path, "held-out-set-and-claims")
         dataset = " ".join(
-            (SKILL_ROOT / "references" / "evaluation-and-dataset.md")
-            .read_text()
-            .casefold()
-            .split()
+            section_text(dataset_path, "Held-out set and claims").casefold().split()
         )
         skill = " ".join(SKILL.read_text().casefold().split())
         # One configuration, selected on the tuning scores across both paid
@@ -15908,7 +15613,9 @@ class SkillPackageTests(unittest.TestCase):
             "score the held-out rows once, on one configuration: the one this run recommends",
             "select it on the **tuning** scores across both of them",
             "the enhanced search's winner is not the answer by position",
-            "when the baseline's best configuration still scores higher on the "
+            "compare the primary objective in its declared direction, "
+            "higher for `maximize` and lower for `minimize`",
+            "when the baseline's best configuration still scores better on the "
             "tuning rows, that is the one this run recommends",
         ):
             with self.subTest(phrase=phrase):
@@ -15918,7 +15625,7 @@ class SkillPackageTests(unittest.TestCase):
         self.assertIn("**the held-out rows arbitrate nothing.**", dataset)
         self.assertIn(
             "scoring two configurations on them and keeping whichever came back "
-            "higher is selection, and a set used for selection is not held out",
+            "better is selection, and a set used for selection is not held out",
             dataset,
         )
         self.assertIn("it does not choose one", dataset)
@@ -15945,6 +15652,38 @@ class SkillPackageTests(unittest.TestCase):
             "was scored on those rows",
             skill,
         )
+
+    def test_held_out_display_preserves_nonbinary_objective_meaning(self) -> None:
+        """A graded score or minimized error rate is never an accuracy count.
+
+        Read the dispatched owner: a correct custom-objective contract in the
+        SDK reference does not fix a later universal "N correct" instruction.
+        Both split summaries must keep the actual objective's meaning while
+        binary correctness retains its useful small-sample count format.
+        """
+        path = SKILL_ROOT / "references" / "evaluation-and-dataset.md"
+        require_stage_reference(7, path, "held-out-set-and-claims")
+        held_out = " ".join(
+            section_text(path, "Held-out set and claims").casefold().split()
+        )
+        for phrase in (
+            "for binary correctness, use correct counts",
+            "tuning set (<n> ex): <correct> of <n> correct",
+            "held-out set (<m> ex): <correct> of <m> correct",
+            "for graded or other objectives, replace correct counts with the run's "
+            "actual named metric, aggregation, and declared direction on both lines, "
+            "alongside each split's row count",
+            "do not invent a pass threshold to turn those scores into correct/incorrect counts",
+            "the small-sample note still applies",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, held_out)
+        for stale_instruction in (
+            "report counts, not percentages, while the split is this small",
+            "when the baseline's best configuration still scores higher on the tuning rows",
+        ):
+            with self.subTest(stale_instruction=stale_instruction):
+                self.assertNotIn(stale_instruction, held_out)
 
     def test_two_files_is_a_recorded_choice_not_an_sdk_limitation(self) -> None:
         """Why the reserved rows get a file, answered where the rule lives.
@@ -21045,6 +20784,32 @@ class FrontierAtOrAboveTests(unittest.TestCase):
         self.assertEqual(self.select([self.trial(0.95, None)]), [])
         self.assertEqual(self.select([self.trial(None, 0.0010)]), [])
 
+    def test_verified_zero_cost_remains_measured_under_the_reporting_rule(self) -> None:
+        """A real zero and an unknown-price placeholder need different evidence.
+
+        The function already accepts zero. The report's adjacent prose must
+        require its provenance rather than banning the number: a mixed-cost
+        frontier can contain a real free point, and an entirely free route
+        has no cost trade-off to plot. No measurement is inferred from 0 alone.
+        """
+        sdk = " ".join(section_text(SDK_EXECUTION, "Result checks").split())
+        for phrase in (
+            "needs measured cost provenance, as do the other points",
+            "provider-reported zero with nonzero token usage is valid",
+            "an unknown-pricing placeholder `0.0` is not a measurement",
+            "The metrics map alone cannot establish that distinction",
+            "when the route genuinely costs nothing, report that there is no cost trade-off to plot",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, sdk, document_states(sdk, phrase))
+        self.assertNotIn("must itself carry a reported, positive cost", sdk)
+        safety = " ".join(RUN_SAFETY.read_text().split())
+        self.assertIn("a route with no cost has no trade-off to plot", safety)
+        free = self.trial(0.80, 0.0)
+        paid = self.trial(0.90, 0.01)
+        unknown = self.trial(1.0, None)
+        self.assertEqual(self.select([paid, unknown, free]), [free, paid])
+
     def test_only_completed_trials_are_considered(self) -> None:
         for status in ("failed", SimpleNamespace(value="failed")):
             with self.subTest(status=status):
@@ -24226,6 +23991,19 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
     # (decision, phrases asserting one answer, phrases asserting the opposite)
     CONTRADICTIONS = (
         (
+            "whether installing elsewhere repairs an incomplete guided environment",
+            (
+                "installing elsewhere does not repair this run's environment or supply its missing setup evidence",
+                "recreating the incomplete dedicated environment still requires the user's explicit request",
+            ),
+            ("themselves, outside this run, and re-run",),
+        ),
+        (
+            "whether absent cost and usage prove a provider charge",
+            ("neither a cost nor usage for a call that was placed",),
+            ("neither a cost nor usage for a call it billed",),
+        ),
+        (
             "whether manual diagnostic approval waives the SDK usage prerequisite",
             (
                 "diagnostic-call approval does not change that measurement contract",
@@ -24234,6 +24012,24 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
             (
                 "before baseline/search - unless the customer has been told what that means and has approved continuing",
             ),
+        ),
+        (
+            "whether the generated three-control limit can narrow a customer baseline",
+            (
+                "a user-owned baseline retains every existing dimension and candidate value in both spaces",
+            ),
+            (
+                "a customer who brings ten wired knobs does not get all ten",
+                "gets the same three-slot enhanced space, not a larger one",
+                "the baseline can decide which customer-owned knobs fill the three slots",
+                "what the baseline result decides is which knobs a customer's own space keeps",
+                "any knob of theirs left out and what the baseline showed about it",
+            ),
+        ),
+        (
+            "whether verified zero cost excludes an incumbent from result arithmetic",
+            ("provider-reported zero with nonzero token usage is valid",),
+            ("must itself carry a reported, positive cost",),
         ),
         (
             "whether opening calibration evidence may already be measured",
@@ -31198,7 +30994,7 @@ class OneShapeAndOneMarkForEveryChoiceTests(unittest.TestCase):
         self.assertIn("it is never a reason to spend", safety)
         # The caution it inverts is still stated where it belongs.
         self.assertIn(
-            "several configurations are statistically indistinguishable at this "
+            "several configurations can be statistically indistinguishable at this "
             "size",
             safety,
         )

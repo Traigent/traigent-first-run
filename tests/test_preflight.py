@@ -288,6 +288,93 @@ class StaticPreflightTests(unittest.TestCase):
                 )
 
     @unittest.skipIf(os.name == "nt", "POSIX permissions are not available")
+    def test_empty_quoted_credentials_with_comments_remain_absent(self) -> None:
+        for quotes, comment, mode in itertools.product(
+            ("''", '""'), ("enter locally", 'enter your "key"'), (0o644, 0o600)
+        ):
+            with self.subTest(
+                quotes=quotes, comment=comment, mode=mode
+            ), tempfile.TemporaryDirectory() as directory:
+                env_path = Path(directory) / ".env"
+                contents = (
+                    f"export OPENAI_API_KEY={quotes} # {comment}\n"
+                    f"TRAIGENT_API_KEY={quotes} # {comment}\n"
+                )
+                env_path.write_text(contents)
+                env_path.chmod(mode)
+                completed = subprocess.run(
+                    [
+                        sys.executable,
+                        "-I",
+                        "-S",
+                        str(SCRIPT),
+                        "--env",
+                        str(env_path),
+                        "--defer-missing-sdk",
+                        "--json",
+                    ],
+                    cwd=directory,
+                    env={},
+                    text=True,
+                    capture_output=True,
+                    check=False,
+                )
+                records = {item["check"]: item for item in json.loads(completed.stdout)}
+                self.assertEqual(completed.returncode, 0, completed.stdout)
+                self.assertEqual(records["provider-credentials"]["status"], MODULE.WARN)
+                self.assertIn("not configured yet", records["traigent-key"]["detail"])
+                self.assertEqual(
+                    records["env-permissions"]["status"],
+                    MODULE.PASS if mode == 0o600 else MODULE.WARN,
+                )
+                self.assertEqual(env_path.read_text(), contents)
+                self.assertEqual(env_path.stat().st_mode & 0o777, mode)
+
+    def test_quoted_values_preserve_hashes_before_a_trailing_comment(self) -> None:
+        cases = (
+            ("plain-value", "plain-value"),
+            ("plain-value # annotation", "plain-value"),
+            ('"plain # retained"', "plain # retained"),
+            ("'plain # retained'", "plain # retained"),
+            ('"plain # retained" # annotation', "plain # retained"),
+            ("'plain # retained' # annotation", "plain # retained"),
+            ('"plain # retained" # a "comment"', "plain # retained"),
+            (r'"plain \" # retained" # annotation', r"plain \" # retained"),
+            (r"'plain \' # retained' # annotation", r"plain \' # retained"),
+        )
+        for raw, expected in cases:
+            with self.subTest(raw=raw), tempfile.TemporaryDirectory() as directory:
+                env_path = Path(directory) / ".env"
+                contents = f"OPENAI_API_KEY={raw}\n"
+                env_path.write_text(contents)
+                env_path.chmod(0o600)
+                self.assertEqual(
+                    MODULE.parse_env_file(env_path), {"OPENAI_API_KEY": expected}
+                )
+                completed = subprocess.run(
+                    [
+                        sys.executable,
+                        "-I",
+                        "-S",
+                        str(SCRIPT),
+                        "--env",
+                        str(env_path),
+                        "--defer-missing-sdk",
+                        "--json",
+                    ],
+                    cwd=directory,
+                    env={},
+                    text=True,
+                    capture_output=True,
+                    check=False,
+                )
+                records = {item["check"]: item for item in json.loads(completed.stdout)}
+                self.assertEqual(completed.returncode, 0, completed.stdout)
+                self.assertEqual(records["provider-credentials"]["status"], MODULE.PASS)
+                self.assertNotIn(expected, completed.stdout + completed.stderr)
+                self.assertEqual(env_path.read_text(), contents)
+
+    @unittest.skipIf(os.name == "nt", "POSIX permissions are not available")
     def test_env_permissions_accept_owner_only_access(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             env_path = Path(directory) / ".env"

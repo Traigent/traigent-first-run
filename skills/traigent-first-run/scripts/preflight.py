@@ -773,7 +773,15 @@ def parse_env_file(path: Path) -> dict[str, str | None]:
             invalid_name_lines.append(line_number)
             continue
         value = raw_value.strip()
-        if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+        # A comment begins outside a quoted value. Keep hashes and escaped
+        # quotes inside it, and recognize the empty value before inventorying
+        # credentials. Preserve this small parser's existing escape handling.
+        quoted_comment = re.fullmatch(
+            r"""(?:"((?:\\.|[^"\\])*)"|'((?:\\.|[^'\\])*)')[ \t]+#.*""", value
+        )
+        if quoted_comment:
+            value = next(part for part in quoted_comment.groups() if part is not None)
+        elif len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
             value = value[1:-1]
         elif " #" in value:
             value = value.split(" #", 1)[0].rstrip()

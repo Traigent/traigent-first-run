@@ -1372,13 +1372,14 @@ the disclosure note below stays free of one.
 Score the held-out rows once, on one configuration: the one this run recommends. This walkthrough
 pays for two measurements, the baseline grid and the enhanced search, so select it on the **tuning**
 scores across both of them - the tuning rows are the ones already spent on selection. The enhanced
-search's winner is not the answer by position: when the baseline's best configuration still scores
-higher on the tuning rows, that is the one this run recommends and the one that gets scored. Then
-run that configuration, and only that configuration, against the reserved rows. Include those calls
-in the combined paid-work approval alongside the enhanced search.
+search's winner is not the answer by position: compare the primary objective in its declared
+direction, higher for `maximize` and lower for `minimize`. When the baseline's best configuration
+still scores better on the tuning rows, that is the one this run recommends and the one that gets
+scored. Then run that configuration, and only that configuration, against the reserved rows. Include
+those calls in the combined paid-work approval alongside the enhanced search.
 
 **The held-out rows arbitrate nothing.** Scoring two configurations on them and keeping whichever
-came back higher is selection, and a set used for selection is not held out: its number would carry
+came back better is selection, and a set used for selection is not held out: its number would carry
 the same optimism as the tuning score, which is the single thing this split exists to avoid. It
 reports on a candidate that was already chosen; it does not choose one. So the choice is made where
 selection is already paid for, and only its outcome is measured here.
@@ -1390,8 +1391,8 @@ selection is allowed to use, so it costs the held-out set nothing.
 
 SKILL sections 7 and 8 own when that score is disclosed. The split itself does not change between
 the two checkpoints; only its disclosure moves, so the walkthrough shows one comparison, once,
-when the winner it is scoring actually exists. Report it as one line each, not as a statistics
-lesson:
+when the winner it is scoring actually exists. Report one line each. For binary correctness, use
+correct counts:
 
 ```text
 Tuning set (<n> ex):   <correct> of <n> correct
@@ -1401,13 +1402,18 @@ held-out number can land lower, level, or higher. <m> examples cannot settle
 which.
 ```
 
-Report counts, not percentages, while the split is this small: on ten rows only multiples of ten
-exist, so "60%" claims a resolution of one point where the truth is ten - and the static preflight
-already prints that arithmetic for whatever size the split actually is. Substitute the run's own
+Report counts, not percentages, for binary correctness while the split is this small: on ten rows
+only multiples of ten exist, so "60%" claims a resolution of one point where the truth is ten - and
+the static preflight already prints that arithmetic for whatever size the split actually is. Substitute the run's own
 `<n>` and `<m>`; a project that brought its own 500/120 split copies its numbers here, not the
 walkthrough's. Keep the note only while one row still moves the held-out figure materially. On a
 held-out set large enough that it does not, drop the note rather than pasting a caveat the
 numbers do not need.
+
+For graded or other objectives, replace correct counts with the run's actual named metric,
+aggregation, and declared direction on both lines, alongside each split's row count. Do not invent
+a pass threshold to turn those scores into correct/incorrect counts. The small-sample note still
+applies; an error rate or graded score is not a count of correct answers.
 
 Then say the forward half out loud instead of leaving it implied: at full capability this same check
 runs over the customer's whole dataset, and that is where real-world validation actually happens -
@@ -1484,7 +1490,7 @@ reason to pause the first walkthrough. Until then:
 In the comparison details, report paired outcomes from the shared **tuning rows** already scored
 by both runs. For binary correctness, count enhanced-only correct, baseline-only correct, and
 ties. For graded or other objectives, report paired per-row score changes using the declared
-direction; do not invent a pass threshold to turn those scores into correct/incorrect counts.
+direction, with the same metric meaning as the split summaries above.
 Label these as tuning comparisons, including on a small walkthrough. Use matching row ids and actual per-row results; if those results are not
 available, say the paired comparison was not measured rather than deriving it from aggregate
 scores or paying for another pass. The held-out line reports only the one configuration selected

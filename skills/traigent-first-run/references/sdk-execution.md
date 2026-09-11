@@ -2176,8 +2176,8 @@ may have come from another.
 The enhanced space carries no pre-baseline placeholder to replace. Every value in it is fixed
 before either run, because the three behaviour knobs are binary and temperature was selected once - there is
 no swept range to re-centre on the baseline's winner, and so no between-runs edit for anything to
-get wrong. What the baseline result decides is which knobs a customer's own space keeps, not which
-values this one sweeps.
+get wrong. A baseline observation can suggest a later experiment; the space-construction rules in
+`references/run-safety.md` preserve the customer's existing dimensions and values in this comparison.
 
 The config-space document is serialized from the space this call receives, so it records what the
 search actually got - but nothing is on disk while the search runs.
@@ -2401,9 +2401,11 @@ def frontier_at_or_above(trials, metric_name, floor):
 
 The incumbent is a point like any other and is reported as one: keeping what you already run is a
 choice the frontier is meant to show, not one it hides. The incumbent trial that supplies `floor`
-must itself carry a reported, positive cost: a `0.0` produced by unknown model pricing is
-indistinguishable in the metrics map from a genuine free route, and `references/run-safety.md`
-makes measured cost a precondition for the read.
+needs measured cost provenance, as do the other points: provider-reported zero with nonzero token
+usage is valid; an unknown-pricing placeholder `0.0` is not a measurement. The metrics map alone
+cannot establish that distinction. Apply `references/run-safety.md`'s measured-cost rule before
+this arithmetic; when the route genuinely costs nothing, report that there is no cost trade-off
+to plot.
 
 Do not pass `strategy=` or `strategy_params` to obtain this: the frontier is the function above and
 nothing else. The presets are unused here because a strategy can replace the objectives the

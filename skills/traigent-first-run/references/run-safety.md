@@ -54,7 +54,7 @@ service failures. A declined check does not explain all of them.
    produce a worse number, it produces a number that cannot mean anything - and then bills them for
    it. These are the stops that get stricter as the rule above gets more permissive, because
    "proceed on disclosure" assumes the run can still measure something.
-4. **Neither party's.** A provider that returns neither a cost nor usage for a call it billed:
+4. **Neither party's.** A provider that returns neither a cost nor usage for a call that was placed:
    nobody here owns the silence and no action of theirs makes it observable. These are the stops
    most often written as though they were the customer's fault. Where the exposure is bounded, one
    of these is an ASK rather than a stop - and the money carve-out above is what makes the ask
@@ -208,10 +208,13 @@ variable surviving the next tool call. This chooses a runtime, never an environm
   or code execution. **That stop is category 2 of the standing rule: an action this guide will not
   take on their machine.** A source build runs the package's own setup code on their computer,
   which is not a check we declined but a thing we refuse to do to them - so it owes them a route
-  rather than a number. Say which package needs building and offer both: install that one
-  themselves, outside this run, and re-run; or use an interpreter and platform the project
-  publishes wheels for. Nothing is deducted for it and no claim is bounded by it. A user or
-  environment install-approval policy still takes precedence.
+  rather than a number. Name the package and preserve the named incomplete environment. To
+  continue this guided run, recommend a supported interpreter and platform with published wheels;
+  recreating the incomplete dedicated environment still requires the user's explicit request under
+  the preserve-and-stop rule above. Installing the package themselves is an alternative for a
+  separate, user-managed workflow outside this guide; installing elsewhere does not repair this
+  run's environment or supply its missing setup evidence. Nothing is deducted for it and no claim
+  is bounded by it. A user or environment install-approval policy still takes precedence.
 - The setup sequence uses the tested pins, whatever the project declares for itself; the project's
   own pin is left alone rather than installed or edited. Dependency installation does not authorize
   importing or executing user/project modules.
@@ -970,8 +973,8 @@ where the card is explained instead, in the order
 
 After showing the baseline result, give the connected stage a preview and approval:
 
-- Search: added enhanced controls/combinations, any knob of theirs left out and what the baseline
-  showed about it, the configuration ceiling below, approximate calls,
+- Search: added enhanced controls/combinations and why they fit the observed failures,
+  the configuration ceiling below, approximate calls,
   how Traigent's managed search chooses trials while retaining baseline values, objective
   directions and weights, and the rule for recommending among tradeoffs.
 - Held-out check: once this run's recommended configuration is selected on the tuning scores, ten
@@ -1377,52 +1380,25 @@ any other model unless a separate model comparison is disclosed and approved. Fo
 agents, add only direct request parameters, such as context format or few-shot count; do not force
 the generated example's controls onto an unrelated task.
 
-A customer who brings ten wired knobs does not get all ten, and the reason is arithmetic. Ten knobs
-at two values each is 1024 configurations against a 12-trial cap - 1% of the space sampled - and
-the scorer damps the search-space points past 20x the cap, 240 configurations at that
-default. What it credits is how much of the space this run will actually compare -
-`min(configurations, trial cap)` - and it pays full credit only from twelve reachable
-configurations up. The three-slot enhanced construction below reaches that credit within the
-default cap.
+The three-control limit belongs to the generated walkthrough. A user-owned baseline retains every
+existing dimension and candidate value in both spaces, even when it has more than three controls.
+Do not remove or pin baseline controls to fit the generated shape or improve a readiness score.
+The automatic run bounds above still govern actual paid work; disclose limited coverage of a large
+preserved space rather than silently narrowing it. This does not authorize more trials or spend.
 
-Which of theirs to keep is the baseline's call, not preference. For each knob the baseline VARIED,
-compare the best score on each of its values: a spread under the evaluator's separation margin did
-not move the baseline, and that knob is a candidate to drop. That margin is 0.05 normalized, the
-`--separation-margin` default in `scripts/calibrate_evaluator.py` - a distance between two SCORES,
-never the same-sized noise floor above, which is a distance between two knob VALUES.
+In the generated walkthrough, all three controls and all their values are fixed before either run,
+exactly as `references/sdk-execution.md` shows. A baseline observation that suggests a different
+value or fewer controls is a hypothesis for a later run, not an undisclosed edit to the approved
+comparison. Read which knobs it varied off the space that actually ran. Small baseline samples
+cannot prove a knob has no effect. Say `did not move the baseline` or `the baseline's best
+combination used X`, never `does not matter` or `X is better`, and give a knob this baseline never
+ranked no verdict at all.
 
-A knob the baseline never varied is not a candidate: silence is not a null result. Read which knobs
-it varied off the space that actually ran rather than off a remembered list - a generated
-walkthrough's baseline axes follow the selected model rung, so it can rank only what it swept. The
-baseline's twelve trials across a knob's two values are six observations a side at most - enough to
-prefer one knob over another, never enough to prove one does nothing. Say `did not move the
-baseline` or `the baseline's best combination used X`, never `does not matter` or `X is better`,
-and give a knob this baseline never ranked no verdict at all.
-
-Fill the freed slots from the failure-mode levers below, once the customer's evidenced knobs are
-seated: where the evidence ties, the customer's own knob wins over one of this guide's suggestions
-- they know their agent. The connected-stage approval preview above is where that record reaches
-them, before they pay for a space that excluded it.
-
-The baseline can decide which customer-owned knobs fill the three slots; it does not narrow their
-values between runs. The generated walkthrough is simpler still: all three controls and all their
-values are fixed before either run, exactly as `references/sdk-execution.md` shows. A baseline
-observation that suggests a different value is a hypothesis for a later run, not an undisclosed
-edit to the approved comparison.
-
-**The same small generated-space size whatever the customer brings.** A customer who arrives with
-twenty of their own knobs gets the same three-slot enhanced space, not a larger one. The reduction
-is not a judgement about their knobs, and their knobs are not replaced by this guide's: the three
-slots are filled from what they brought, and baseline evidence decides which three. The resulting
-three-control choice reaches the enhanced run's approval card with that evidence - the one moment
-the customer can object before paying for the selected space.
-
-Say plainly what that is and is not. The knobs are reduced to demonstrate the principle cheaply -
-a first run has to finish, cost little, and be readable, never a wall of knobs added to
-manufacture a visible improvement - and Traigent knows tens of knobs it can recommend once the
-principle is shown. This is a demonstration, not the ceiling of what Traigent can do, and no
-result here should be read as the best the system could reach. Never present the smaller space as
-though the improvement were bought by shrinking the search.
+The generated controls are limited to demonstrate the principle cheaply: a first run has to finish,
+cost little, and be readable. Traigent knows tens of knobs it can recommend once the principle is
+shown. This is a demonstration, not the ceiling of what Traigent can do, and no result here should
+be read as the best the system could reach. Never present the smaller generated space as though
+the improvement were bought by shrinking a customer baseline.
 
 The generated `reflect` control ships as `off`/`on`; the pinned cloud session rejects bools, so the builder compares labels explicitly because `off` is a non-empty string. A generated walkthrough fixes the
 one task-selected temperature owned by `sdk-execution.md` across both phases and carries the search

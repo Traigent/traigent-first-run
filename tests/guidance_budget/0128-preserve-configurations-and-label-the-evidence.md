@@ -6,10 +6,10 @@ follows-total-measured: 525_912
 follows-document-measured: 134_261
 resident-ceiling: 50_563
 resident-measured: 50_559
-total-ceiling: 539_091
-total-measured: 539_087
-document-ceiling: 148_574
-document-measured: 148_570
+total-ceiling: 538_131
+total-measured: 538_127
+document-ceiling: 146_899
+document-measured: 146_895
 
 The resident skill now keeps ordered decisions and stage dispatch while its detailed opening,
 setup, calibration, recovery, and reporting procedures live in their existing reference owners.
@@ -36,3 +36,8 @@ The composition includes the ownership clarification in its predecessor. Its man
 exception is bounded to those named calls: the existing SDK usage prerequisite remains required
 for baseline and search. The taxonomy no longer states a stale category count, and a runtime
 contract breach limits the affected claims without declaring unrelated measurements meaningless.
+
+Customer-owned spaces now keep all original dimensions and values; the generated three-control
+limit cannot silently narrow them. Verified provider-zero cost remains measured. Source-build
+recovery names the incomplete environment and the explicit recreation request, instead of
+promising that installation elsewhere supplies the missing setup evidence.

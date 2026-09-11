@@ -5189,13 +5189,15 @@ class PowerBoundsTheBandTests(unittest.TestCase):
                         name.upper() if "values" in spec else f"{name.upper()}_BOUNDS"
                     )
                     call_arguments.append(f"{name}={binding}[choice]")
-            if call_arguments:
-                lines.extend(
-                    [
-                        "def selected(choice):",
-                        f"    return provider({', '.join(call_arguments)})",
-                    ]
-                )
+            # Even an inventory with no options names a real callable. A
+            # missing function would test unavailable source instead of the
+            # intended refusal to invent a range from a parameter name.
+            lines.extend(
+                [
+                    "def selected(choice):",
+                    f"    return provider({', '.join(call_arguments)})",
+                ]
+            )
             (root / "agent.py").write_text("\n".join(lines) + "\n")
             return MODULE.agent_facts_from_discovery(
                 {"source": "agent.py", "knobs": document_fields},
@@ -5434,6 +5436,7 @@ class PowerBoundsTheBandTests(unittest.TestCase):
         facts = self._knob(
             temperature={"evidence": "agent.py:9 temperature is passed through"}
         )
+        self.assertIsNone(facts.source_unavailable_reason)
         self.assertFalse(facts.discovered[0].credited)
         self.assertIn(
             "neither a list of options", facts.discovered[0].uncredited_reason
@@ -5794,8 +5797,9 @@ class PowerBoundsTheBandTests(unittest.TestCase):
         blocker = next(line for line in card.splitlines() if "BLOCKER" in line)
         self.assertIn("65/100 WORKABLE is what your evidence supports", blocker)
         # Names what happens next, or the keyword is only a louder tag.
-        self.assertIn("run this score again", card)
-        self.assertIn("the paid comparison can start", card)
+        normalized_card = " ".join(card.split())
+        self.assertIn("recheck readiness before any paid comparison", normalized_card)
+        self.assertNotIn("the paid comparison can start", normalized_card)
         # The reason itself is not repeated up here; one problem, one statement.
         self.assertEqual(card.count("Every row was written by a model."), 1)
 
