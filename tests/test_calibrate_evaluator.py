@@ -3692,6 +3692,105 @@ class TheSeamBetweenTheProbesAndTheAgentTests(unittest.TestCase):
                 self.assertIn("Reply transform could not be loaded", process.stderr)
                 self.assertNotIn("Evaluator execution failed", process.stderr)
 
+    def test_a_scorer_path_that_is_not_there_is_a_wrong_flag(self) -> None:
+        """#494 L: a missing parent component reached subprocess unvalidated.
+
+        `worker_cwd` is `Path(scorer_file).resolve().parent`, so a typo in a
+        directory name arrived at `subprocess.run(cwd=...)` and came back as
+        `FileNotFoundError` - exit 3, "a defect in the check rather than in
+        your project", printed over the customer's own typing.
+
+        `--import-root` has had `existing_directory` for exactly this; this is
+        the same guard reaching the flag that did not have it.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            missing = Path(directory) / "no-such-dir" / "scorer.py"
+            cases = Path(directory) / "cases.json"
+            cases.write_text(json.dumps(self.CASES))
+            process = subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPT),
+                    "--scorer",
+                    f"{missing}:task_score",
+                    "--cases",
+                    f"@{cases}",
+                    "--allow-execution",
+                ],
+                capture_output=True,
+                text=True,
+            )
+        self.assertEqual(process.returncode, 2, process.stderr)
+        self.assertIn("names a file that does not exist", process.stderr)
+        # Never the internal-error voice, which is what it used to reach.
+        self.assertNotIn("defect in the check", process.stderr)
+
+    def test_a_scorer_that_never_loaded_was_never_run(self) -> None:
+        """#494 N3: a wrong name exited 1, which means "the evaluator failed".
+
+        The contract in `EXIT_CODES_HELP` says 1 is "calibration ran and a
+        check failed" and 2 is "the evaluator was not run". A `--scorer` naming
+        a function that is not in the file was never run, so it was never 1 -
+        and reporting it as an evaluator failure sends the reader to debug code
+        nothing called. `--reply-transform` has drawn this line correctly for
+        longer; this is its sibling catching up.
+        """
+        # The helper asks for `task_score`; this file defines something else,
+        # which is exactly the shape of a mistyped function name.
+        other_name = (
+            "def not_the_name(*, output, expected, input_data, metadata):\n"
+            "    return 1.0\n"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            wrong_name, _ = self.calibrate(
+                directory, "--task-kind", "code-sql", scorer=other_name
+            )
+        self.assertEqual(wrong_name.returncode, 2, wrong_name.stderr)
+        self.assertIn("--scorer could not be loaded", wrong_name.stderr)
+        self.assertIn("is a wrong flag: fix it", wrong_name.stderr)
+
+    def test_a_scorer_that_exits_four_itself_is_not_called_unloadable(self) -> None:
+        """The worker runs CUSTOMER code, so its exit status is not ours alone.
+
+        `sys.exit(4)` from inside `score()` - loaded, called, running - matched
+        `WORKER_SCORER_UNLOADABLE` and was reported as a flag that could not be
+        loaded. False twice: it loaded, and it ran. The status is corroborated
+        against the marker the worker prints, so only our own refusal claims it.
+        """
+        exiting = (
+            "import sys\n\n\n"
+            "def task_score(*, output, expected, input_data, metadata):\n"
+            "    sys.exit(4)\n"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            process, _ = self.calibrate(
+                directory, "--task-kind", "code-sql", scorer=exiting
+            )
+        self.assertEqual(process.returncode, 1, process.stderr)
+        self.assertNotIn("could not be loaded", process.stderr)
+
+    def test_a_missing_scorer_dependency_is_not_a_wrong_flag(self) -> None:
+        """The non-firing half, and the reason the fix above is narrow.
+
+        A scorer whose own import fails is not a typo. SKILL stage 4 defers
+        that to stage 5, where the dependency is installed, so telling the
+        author to fix a flag that is already correct sends them to change the
+        one thing that is right. A first attempt at N3 caught every exception
+        and erased this distinction; `test_a_broken_scorer_is_not_reported_as_
+        a_broken_transform` failed, which is what it is there for.
+        """
+        broken_scorer = (
+            "import no_such_scorer_dependency\n\n\n"
+            "def task_score(*, output, expected, input_data, metadata):\n"
+            "    return 1.0\n"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            missing_dependency, _ = self.calibrate(
+                directory, "--task-kind", "code-sql", scorer=broken_scorer
+            )
+        self.assertEqual(missing_dependency.returncode, 1, missing_dependency.stderr)
+        self.assertNotIn("wrong flag", missing_dependency.stderr)
+
     def test_a_broken_scorer_is_not_reported_as_a_broken_transform(self) -> None:
         """The load probe used to inherit a scorer load it never uses.
 
