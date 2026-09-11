@@ -10131,8 +10131,9 @@ def blocker_lines(score: ReadinessScore, palette: Palette) -> list[str]:
     The two say different things about different questions. The band grades the
     EVIDENCE - how good what you brought is. The block answers whether the paid
     run may START. Both can be true at once, and routinely are: a project whose
-    dataset is absent scores in the thirties and is blocked by `dataset-absent`
-    while the agent pillar beside it reads perfectly well.
+    dataset is absent is held at `DATASET_ABSENT_CEILING` and blocked by
+    `dataset-absent`, while the agent pillar beside it reads perfectly well -
+    the band grades what arrived, the block answers whether to spend.
 
     The example given here used to be the generated-dataset walkthrough, blocked
     by `dataset-fully-synthetic`. That one does not occur: the condition routes
@@ -10573,8 +10574,18 @@ def render_card(
             repeated_input_routes(
                 score.repeated_inputs,
                 offers_top_up=score.recommended_action == ADD_EXAMPLES,
+                # `cap.asks`, not the routing label alone. `action_kind` says
+                # which remedy this condition routes to; whether the card
+                # actually PUTS the offer is `asks`, set from whether
+                # `top_up_offer` returned one. They part company on every size
+                # cap whose offer is empty - a file already at the bounded size
+                # has nothing to top up - and keying on the label alone printed
+                # "rows this run writes are scored as the generated rows they
+                # are" on a card that offers to write none. That is the
+                # sentence this fix removed from the other arm, reintroduced
+                # pointing the other way.
                 card_offers_rows=any(
-                    cap.action_kind == ADD_EXAMPLES for cap in score.caps
+                    cap.asks and cap.action_kind == ADD_EXAMPLES for cap in score.caps
                 ),
             )
         )
@@ -20770,8 +20781,9 @@ EXIT_CODES_HELP = f"""exit codes:
   1  the score is BLOCKED and --strict was passed
   2  an input was refused or the command line was wrong; the message on
      stderr says what was wrong, and names the flag where it can - a file
-     that cannot be read or parsed is reported by its path, not by the
-     option it arrived on
+     that cannot be READ is reported by its path, and one that cannot be
+     PARSED by the parser's own complaint, neither of them by the option
+     the file arrived on
   {INTERNAL_ERROR_EXIT}  this script failed on its own - a defect here, not in your project -
      and nothing was scored; re-run with {TRACEBACK_ENV}=1 to see where"""
 

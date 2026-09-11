@@ -13396,6 +13396,40 @@ class SentencesThatOutlivedTheirRuleTests(unittest.TestCase):
             "a blocking cap leads, so the top-up must not be offered as route A",
         )
 
+    def test_a_size_cap_with_no_offer_does_not_reconcile(self) -> None:
+        """The routing label is not the offer, and keying on it regressed.
+
+        `action_kind` says which remedy a condition routes to. Whether the card
+        actually PUTS the offer is `asks`, set from whether `top_up_offer`
+        returned one - and they part company on every size cap whose offer is
+        empty, which is what a file already at the bounded size gets.
+
+        Measured: 18 comparable rows out of 40 available gives
+        `dataset-coarse-resolution` with `asks=False` and
+        `action_kind == ADD_EXAMPLES`. Keyed on the label alone, that card
+        printed "rows this run writes are scored as the generated rows they
+        are" while offering to write none - the sentence this whole fix removed
+        from the other arm, pointing the other way.
+        """
+        no_offer = MODULE.power_ceiling(18, available_rows=40)
+        self.assertIsNotNone(no_offer)
+        self.assertEqual(no_offer.action_kind, MODULE.ADD_EXAMPLES)
+        self.assertFalse(no_offer.asks, "fixture must be a cap that offers nothing")
+
+        offers = MODULE.power_ceiling(18, available_rows=24)
+        self.assertIsNotNone(offers)
+        self.assertTrue(offers.asks, "fixture must be a cap that does offer")
+
+        # The predicate the card is built from, over both.
+        for cap, expected in ((no_offer, False), (offers, True)):
+            with self.subTest(asks=cap.asks):
+                self.assertEqual(
+                    cap.asks and cap.action_kind == MODULE.ADD_EXAMPLES, expected
+                )
+                # And the label alone cannot tell them apart, which is why it
+                # was the wrong signal.
+                self.assertTrue(cap.action_kind == MODULE.ADD_EXAMPLES)
+
     def test_a_card_offering_nothing_keeps_the_flat_sentence(self) -> None:
         """The non-firing half: no offer anywhere, no reconciliation."""
         finding = MODULE.RepeatedInputs(
