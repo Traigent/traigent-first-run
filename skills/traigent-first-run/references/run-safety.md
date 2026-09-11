@@ -264,7 +264,7 @@ SKILL's opening gate owns pre-section-5 interpreter selection and the timing of 
 readiness score. The dedicated environment created in SKILL section 5 remains authoritative for the
 connected run.
 
-Follow SKILL's opening gate and sections 4-7 for ordering; this reference does not define a second
+Follow SKILL's opening gate and sections 4-8 for ordering; this reference does not define a second
 flow.
 
 For SKILL's semantic-coverage review, use this outcome inventory rather than an unrecorded
@@ -862,8 +862,9 @@ does on the asks about material, and nothing follows it. Replying `continue` on 
 approves exactly what that card disclosed and priced - recipients, effects, bounds, and cost - and
 nothing more.
 
-The mark on `A` follows the pre-spend card's rule above. That rule is stated there once and is not
-restated here, and its moving conditions cannot hold at this preview: a dataset or evaluator that
+The mark on `A` follows the pre-spend card's rule above, which
+`references/component-creation.md` states in full and this file does not repeat, and its moving
+conditions cannot hold at this preview: a dataset or evaluator that
 fails the distinguishing check stopped before this card, as the paragraph above says. So the mark
 stays on `A.`, the bounded managed run - never on the evidenced repair, which is not one of this
 preview's routes at all. Stopping is never the marked route.
