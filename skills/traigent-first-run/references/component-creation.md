@@ -326,8 +326,8 @@ nothing else, and the number it gives is optimistic about exactly the material i
 
 When creating an agent:
 
-1. Prefer a small Python function using the user's selected provider through LiteLLM so mock
-   interception and cost accounting are observable.
+1. Prefer a small Python function using the user's selected provider through LiteLLM for its mock
+   interception and accounting support; verify which usage and cost measurements the route supplies.
 2. Give it one clear input contract and one clear output contract.
 3. Expose at least two meaningful, safe optimization variables. Include the initial values in the
    search space.

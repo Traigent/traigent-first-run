@@ -41,8 +41,7 @@ to name is measured by the same question.
 
 **And ownership is not a question with two answers.** A stop may be theirs, and it may be ours in
 either of two ways that are not the declined check this rule is about, and it may be neither
-party's. Four categories, because a rule stating one reason over three is how a sound stop comes to
-look like a violation:
+party's. Distinguish these categories so a rule for one does not erase a sound stop in another:
 
 1. **Theirs** - the list above. It waits on something only they can give, and their giving it clears
    the stop.
@@ -51,17 +50,16 @@ look like a violation:
    Executing arbitrary setup code during a dependency build is the live case. The corollary does not
    reach it - nothing is being deducted and no claim is being bounded - and the disclosure it owes
    is a ROUTE rather than a score: say what we will not run, and what they can do instead.
-3. **A broken instrument.** Where the thing measuring is itself untrustworthy, continuing does not
-   produce a worse number, it produces a number that cannot mean anything - and then bills them for
-   it. These are the stops that get stricter as the rule above gets more permissive, because
-   "proceed on disclosure" assumes the run can still measure something.
-4. **Neither party's.** A provider that returns neither a cost nor usage for a call it billed:
-   nobody here owns the silence and no action of theirs makes it observable. These are the stops
-   most often written as though they were the customer's fault. Where the exposure is bounded, one
-   of these is an ASK rather than a stop - and the money carve-out above is what makes the ask
-   legitimate, because the DECISION to accept a blind spend is theirs even though the blindness is
-   nobody's. That is the seam between this category and the first: category 1 asks who clears the
-   stop, this one asks who caused it, and a stop can honestly answer differently to each.
+3. **A broken instrument.** An untrustworthy measurement cannot justify optimizing on that
+   measurement. Stop the affected work, name what failed and which claims it prevents, and retain
+   independent evidence that remains valid. A privacy or delivery failure can require stopping
+   further calls without invalidating every quality observation already collected.
+4. **Neither party's.** A provider can return an answer without reporting cost or token usage.
+   That silence does not make a completed call fake or its quality unmeasurable. Continue the
+   bounded primary-criterion run on the disclosed approval under "Missing cost or usage telemetry"
+   below; repair is optional. Unknown charges remain unknown, and a conservative budget deduction
+   is not a measurement of them. Approval still belongs to the customer; missing telemetry does
+   not create approval or require them to repair the provider before onboarding.
 5. **Ours, and not a check we declined.** Our own service or its tracking failing - a portal rung
    that will not come up, a connected run degrading to local-only mid-flight. The run can still
    measure quality; what it cannot do is record, and this file stops paid work at once for it. No
@@ -176,11 +174,8 @@ sub-agents, which not every supported assistant provides.
   to authenticate; it is not a telemetry field or guide artifact, but do not say credentials are
   'not transmitted'. This guide neither inspects network packets nor proves every optional SDK
   feature follows that path; stop if observed runtime behavior contradicts the contract. **That
-  stop is category 3: a broken instrument.** It is one of the stops the standing rule makes stricter
-  rather than looser - "proceed on disclosure" assumes the run can still measure something, and a
-  stack behaving differently from its own contract is a run that cannot. Continuing would bill them
-  for numbers that cannot mean anything, and no disclosure makes that a choice worth offering. Stop
-  further calls, say that it is ours, and name the SPECIFIC contract observed to be breached and
+  stop is category 3: a broken instrument.** Further calls would continue the observed contract
+  breach, so stop them, say that it is ours, and name the SPECIFIC contract observed to be breached and
   what it actually affects - a payload or privacy contradiction does not by itself make every number
   meaningless, and claiming it does overstates in the other direction. Report spend as the evidence
   has it: preserve and report any charges already observed and any calls marked untracked, and say
@@ -523,12 +518,12 @@ Uniform mock scores can be expected for output-based evaluators. Plumbing succes
 execute without failures; it does not mean mock accuracy is meaningful.
 
 Mock results may contain a positive estimated `total_cost`. That is pricing metadata, not evidence
-that a provider billed the account. Real billing evidence requires a real provider call plus the
-provider/SDK usage record.
+that a provider billed the account. Report charges only from trustworthy cost records for real
+provider calls; SDK defaults and local token estimates are not provider observations.
 
 The converse also holds: OpenRouter `:free`-suffixed model ids genuinely cost `$0`, so judge a real
-run by trials executing and nonzero token usage, not by a zero cost - do not misflag a legitimate
-free-tier run as mocked.
+run by its actual provider path, completed trials and meaningful outputs, with reported token usage
+as corroboration when available. Neither a zero cost nor missing usage alone establishes a mock.
 
 ### Config-space document
 
@@ -831,12 +826,12 @@ After showing the baseline result, give the connected stage a preview and approv
 - Held-out check: once this run's recommended configuration is selected on the tuning scores, ten
   more agent calls score that configuration - and only that configuration - against the reserved
   held-out rows, joined by ten judge calls when an LLM judge grades them. Include those calls in
-  this same approval rather than asking again afterward, and add their tracked cost to the single
-  running total. The wrapper refuses the whole held-out pass rather than starting one the remaining
+  this same approval rather than asking again afterward, and add their known cost or conservative
+  deduction to the single running total. The wrapper refuses the whole held-out pass rather than starting one the remaining
   cannot fund to the last row; say that here, because a pass that is refused returns no held-out
   score at all. `references/sdk-execution.md` owns which of this run's paid calls no permit covers -
   a judge's are among them, on every scored row of the search as well as these.
-- Bounds and value: runtime, enhanced/spent cost and remaining ceiling; provider/Traigent recipients,
+- Bounds and value: runtime, known cost, budget debit and remaining ceiling; provider/Traigent recipients,
   zero-LLM probe, portal history/direct links, and exclusions. Dataset/configuration insights remain
   conditional on verified run-scoped SDK artifacts.
 
@@ -880,7 +875,7 @@ limitation the `traigent-dataset-curate` handoff below addresses after the run. 
 reason to spend. When the dataset and evaluator are sound but the baseline showed no measured
 quality or cost headroom, the bounded managed run stays the marked route, on the two standing
 reasons above, and is offered as an optional no-lift-possible verification run. On that preview,
-say that it is not expected to find a gain, that stopping is route `B`, and that
+say that it is not expected to find a gain, that stopping is route `B` on the standard preview, and that
 declining leaves the honest baseline-only result intact, and name the no-headroom finding beside
 it as a limit on the claim and that same handoff's limitation, never as a route; the operating
 contract in `SKILL.md` owns that bound. An invalid or non-discriminating dataset/evaluator has
@@ -894,7 +889,8 @@ route this guide names and prices is a route the customer can take by replying.
 Final reply-ready block, on both approval cards as to its position. Render it as its own block,
 after the disclosure prose, with nothing following it: a reply form sitting in the tail of a long
 paragraph is not an instruction. The route texts below are the connected preview's; the pre-spend
-card renders its own `A.` proceed and `B.` fix in that same position.
+card renders its own `A.` proceed and `B.` fix in that same position. When telemetry is the gap,
+use the continue/optional-repair routes under "Missing cost or usage telemetry" in this same block.
 
 > **A. <action>** *(recommended - <reason>)*
 > Reply `continue` and I will <next safe step>.
@@ -917,8 +913,8 @@ The mark on `A` follows the pre-spend card's rule above, which
 `references/component-creation.md` states in full and this file does not repeat, and its moving
 conditions cannot hold at this preview: a dataset or evaluator that
 fails the distinguishing check stopped before this card, as the paragraph above says. So the mark
-stays on `A.`, the bounded managed run - never on the evidenced repair, which is not one of this
-preview's routes at all. Stopping is never the marked route.
+stays on `A.`, the bounded managed run, including when `B.` offers optional telemetry repair.
+Stopping is never the marked route.
 
 Keep the default `$5.00` ceiling across both approvals. If a stage exceeds the remaining ceiling or
 is materially long, recommend a smaller slice or, for the search, a lower trial cap; expand only if the user prefers.
@@ -927,7 +923,8 @@ The approved total is not a number the assistant carries in its head between pha
 paid process with three figures in its environment, supplied by the process and never by `.env`,
 exactly as `TRAIGENT_FIRST_RUN_PHASE` is: `TRAIGENT_FIRST_RUN_COST_CEILING_USD` is the total
 approved above; `TRAIGENT_FIRST_RUN_COST_SPENT_USD` is the single running total at the moment that
-process starts, which is `0` only while nothing has been spent yet - a live probe or a judge
+process starts: despite its name it carries the cumulative budget debit, which is `0` only before
+any call has used the allowance - a live probe or a judge
 calibration that already ran is in it; and `TRAIGENT_FIRST_RUN_UNTRACKED_CALL_COST_USD` is the
 conservative amount one provider call is deducted for when its route reports no cost, rounded up
 from the observed per-call cost once the probe has one and from the estimate the approval card was
@@ -943,7 +940,8 @@ Do not persist `TRAIGENT_COST_APPROVED=true`; set approval only in the current p
 is what keeps the SDK's own prompt from offering to raise the approved total. The SDK enforces its
 optimization-call limit, but it does not yet share one cumulative budget with calibration and other
 calls. Until it does, keep a single running total rather than a phase ledger: each paid phase prints
-what it spent against the figures it was launched with, and the combined figure that line names -
+its budget debit and known cost separately against the figures it was launched with, and the
+cumulative debit that line names -
 not the SDK's tracked cost, which cannot see a conservative deduction or a refused trial - is the
 running total, passed to the next process as its `TRAIGENT_FIRST_RUN_COST_SPENT_USD`.
 Before the next phase, stop if its estimate does not fit the remaining total ceiling.
@@ -951,7 +949,7 @@ Never call the walkthrough ceiling a hard provider-billing cap, tracked cost or 
 
 A phase that reaches the remaining stops there and is reported as what it is: the trials it
 completed, its stop reason, and the work that did not run. The way past it is a fresh approval for
-a larger total, taken back to the user with what has been spent so far - never a larger figure
+a larger total, taken back to the user with known cost and budget debits so far - never a larger figure
 handed to the same process, and never a second attempt at the same phase on top of what the first
 one already spent. A phase that DIED having spent is the same arithmetic and not a fresh start:
 a paid process prints its ledger on every ending that runs `atexit` - finishing, `sys.exit` with
@@ -961,10 +959,9 @@ stopped part-way rather than as not having happened. An ending that never reache
 nothing at all, and that rule is what to hold rather than a list of two: measured, SIGTERM, SIGKILL
 - what `kill -9`, the out-of-memory killer and a container eviction send - SIGHUP, a dropped SSH
 session, SIGQUIT, `os._exit` and `os.abort` each printed no line. When no ledger line was printed,
-that phase's spend is not recoverable and the SDK's tracked cost is a floor rather than the figure
-- so carry the whole of what that phase was approved to spend forward as spent, say to the user
-that it was killed and its exact spend is unknown, and take any further work back to them as a
-fresh approval.
+that phase's complete accounting is not recoverable from the SDK's tracked cost. Carry the whole
+of its remaining approved allowance forward as a conservative budget debit, say that it was killed
+and its exact cost is unknown, and take any further work back to them as a fresh approval.
 
 The SDK already retries transient Traigent-backend requests and classifies provider failures.
 Do not layer another retry loop over it, expose retry counts to the user, or set
@@ -986,56 +983,64 @@ margin. These are implementation details, not user choices. If observation makes
 materially longer than the approved estimate, offer a smaller run or quote the additional
 time/cost. A timeout, with or without completed trials, follows the Recovery rules below.
 
-Verify selected model IDs are live and cost-tracked before scaling. If a model chosen by the
-assistant is unavailable or unpriced, replace it only with a working model from the same chosen
+Verify selected model IDs are live before scaling and inspect their cost coverage. Missing cost
+alone neither blocks the run nor authorizes replacing a model. If a model chosen by the
+assistant is unavailable, replace it only with a working model from the same chosen
 provider for the same task and data, with unchanged-or-lower call counts and combined worst-case
 spend. Record the replacement. Any other change requires revised approval. If the user chose the
 model, never replace it silently; present the limitation and one recommended alternative.
 
-For manual live-probe and other provider calls outside SDK-managed searches, prefer cost returned in the provider's public response or
-provider-reported response metadata. Do not recalculate a completed OpenRouter response with
-`litellm.completion_cost()`: a missing local model-map entry can raise after the provider has
-already billed the call. If cost is absent but usage proves a real call, mark it untracked and
-deduct the approved estimate.
+### Missing cost or usage telemetry
 
-If BOTH are absent, ask rather than stop. This is category 4 of the standing rule - neither party
-owns it. The provider reported no cost and no usage, so nothing the customer changes makes this run
-observable and nothing we declined caused it; a stop here reads as their fault for a silence that is
-not theirs. What makes asking legitimate rather than reckless is the money carve-out in section 0
-read together with the size of what is exposed - and the bound is the approved ceiling and the
-estimate deducted per call, not the dataset. This bullet covers the live probe and other calls
-outside SDK-managed searches, which is a handful rather than a pass over rows, so what they are
-being asked to accept is countable in advance even though what it costs is not.
+A successful provider response can support a quality measurement without cost or token metadata.
+Keep actual call-path, evaluator and truncation checks; missing usage alone is not evidence of a
+fake call. Retain trustworthy reported charges, including an explicit zero, even when usage is
+absent. For manual calls, prefer the provider's public response or response metadata. Do not
+recalculate a completed OpenRouter response with `litellm.completion_cost()`: a missing local
+model-map entry can raise after the call. An SDK `0.0` default or estimated token count does not
+establish a free call or provider-reported usage.
 
-Disclose all three parts and default to stopping: that this provider returned neither a cost nor
-usage for a call that was placed; that continuing means spending with no per-call accounting to show
-them afterwards, so **what they are actually charged is unknown to this run and stays unknown**; and
-what does still bound it, which is the run rather than the bill - each such call deducts the approved
-estimate from the remaining allowance, so the number of further calls is limited by what is left.
-Say the size of that estimate and how much allowance remains.
+Before each baseline or search operation, use cost as an SDK objective only when its cost coverage
+is trustworthy for the actual agent and evaluator call paths. Otherwise use the public SDK's
+primary-only objective path owned by `references/sdk-execution.md`. Keep the primary criterion and
+its direction unchanged. This is a quality-only comparison, with no cost-ranked recommendation,
+savings claim or objective-cost frontier. Missing usage by itself does not remove a trustworthy
+cost measurement; a provider cost field alone does not prove the SDK's cost objective consumed it.
+Repair before the first baseline may establish cost coverage normally. Once an operation has used
+primary-only objectives, keep that mode for the rest of this comparison. Recovered trustworthy
+cost can be reported with its source; adding a cost objective belongs to a separate future run.
 
-Put it as named routes, in the shape SKILL.md requires of every choice - lettered, one marked,
-each answerable by replying - and never as a bare yes/no:
+Put the telemetry limitation on the existing stage approval card: which cost or usage records are
+absent, the bounded rows/trials/calls and runtime, the credible conservative per-call estimate and
+remaining allowance, and that **actual charges for unpriced calls are unknown to this run and stay
+unknown**. Use the same final reply-ready block, not another setup question:
 
-- `A.` **Place no further calls on this route and report the ones already made**, marked
-  recommended, because it is the only route that leaves nothing unaccounted. The run does not end
-  here - what ends is spending where nothing can be counted - so this is a route rather than the
-  stop the preview paragraph below refuses to mark.
-- `B.` Continue on this route, each such call deducting the approved estimate from the remaining
-  allowance, every one of them recorded untracked.
+- `A.` **Continue the bounded run on the primary criterion**, marked recommended because it can
+  still show a meaningful quality comparison. Reply `continue`.
+- `B.` **Repair telemetry first**, an optional route for a user who wants cost comparisons or token
+  records before proceeding. Reply `repair`.
 
-Write the `blocked`/`approval` run-log line before waiting, as this file requires before every
-stop-and-wait. Silence takes `A.`; only their answer takes `B.` **And deduct on every call, not
-only mark it** - the debit is what the allowance is made of, and these calls sit outside the
-wrapper, so it is the assistant's to make. Without it nothing moves the running total, the
-remaining-allowance sentence above becomes untrue, and the bound this ask was sold on does not
-exist.
+Do not ask again when the existing explicit approval already covers these conditions and bounds.
+Otherwise record the `blocked`/`approval` line before waiting; silence is not approval. The user
+can still stop and keep completed results. Repair is not a prerequisite to the quality-only route.
+Every unpriced call deducts the approved estimate, including manual calls outside the wrapper;
+known charges are retained separately. The call gate, whole-holdout preflight, trial cap and timeout
+still apply. If a credible estimate cannot be established, the existing approval requirement is
+not satisfied. These controls bound execution and allowance, not the actual provider bill.
 
-At the close, say what could not be verified rather than reporting it verified. Post-run
-verification asks for nonzero token usage on provider calls, and these calls have none by
-definition - that item is not satisfied for them and must not be reported as though it were. Name
-them, say the run continued on an approval recorded above, and leave the claim where the evidence
-leaves it. The SDK result remains authoritative for SDK-managed baseline/search cost.
+If cost coverage is lost mid-run, retain that run and its quality observations, name its actual
+declared objectives, and mark its cost comparison and cost-based recommendation unavailable. The
+SDK does not atomically change objectives within that operation: do not relabel an earlier
+cost-aware search as quality-only or restart a paid baseline to repair metadata. Use primary-only
+objectives for the next already-planned phase under its valid approval, recording the removal of
+the unavailable secondary objective. Unchanged primary scoring still permits the disclosed quality
+comparison; the phases no longer establish a like-for-like cost-aware search comparison.
+
+At the close, show the quality result and its evidence limits, then name missing usage or cost,
+known cost subtotal, unknown-cost call count, cumulative budget debit and remaining allowance.
+Report provider usage as unverified where absent; never substitute SDK estimates or defaults.
+Include optional telemetry repair as a future action when cost comparison is the useful next step,
+without turning it into a required detour or adding another paid round.
 
 ## Connected-run readiness
 
@@ -1194,8 +1199,9 @@ Composite patterns are a later workflow, not a first-run paid dimension.
 
 SKILL section 7 owns when a frontier is reported and its score floor; `references/sdk-execution.md`
 owns the read. Owned here: what it may claim, and the wording of its two outcomes. It costs nothing
-and adds no stage - both runs priced every trial they completed, so this is arithmetic over trials
-already in hand. Report it whichever way it comes out.
+and adds no stage: where cost coverage is trustworthy, this is arithmetic over trials already in
+hand. Report it whichever way it comes out. A quality-only run reports its primary scores and
+evidence limits instead; no cost frontier does not mean no quality result.
 
 The floor is a number this run reads rather than a judgement it makes: the incumbent's score on
 this run's own metric, the incumbent being the configuration the user is already running.
@@ -1206,17 +1212,17 @@ told apart:
 - **Cost was not tracked.** An unpriced trial is not a cheap trial, and a `0.0` standing in for
   pricing the run could not resolve is an absent cost wearing a number - indistinguishable in the
   metrics map from a real one. Report no frontier, and say why.
-- **The route genuinely costs nothing.** A provider-reported `0.0` with nonzero token usage is a
-  real measurement rather than a missing one, and a route with no cost has no trade-off to plot.
-  Say that instead, rather than the reason above.
+- **The route genuinely costs nothing.** A trustworthy provider-reported `0.0` for an actual call
+  is a real measurement even when token usage is absent. A route with no cost has no trade-off to
+  plot. Say that instead, rather than the reason above.
 
 Each point is one configuration's measured cost beside its score on this run's own metric, over the
 same rows, evaluator, and agent call path as everything else it reports. Dominated points are
 dropped - a configuration that cost more and scored no higher than another on the same evidence is
 not a trade-off anyone would take.
 
-Cost is measured directly but not exactly: one configuration evaluated twice returns two different
-token counts, inside a single run as much as across two. Report each point's measured cost and let
+Known cost can vary when a configuration is evaluated again, inside one run or across two.
+Report each point's measured cost and let
 the reader see the gap; never present two points a few percent apart as a saving.
 
 A frontier asserts no win, so it needs no threshold to clear and states none. What it does need is
@@ -1244,8 +1250,8 @@ configuration the user runs now, then the rest of the frontier as the trade-offs
 
 > `<config>` scored `<value>` at `<measured cost>`, against `<value>` at `<measured cost>` for the
 > configuration you are running now, on the same rows, evaluator, and agent call path -
-> `<paired outcome counts>`. Cost here is arithmetic over reported token counts, so it is measured
-> directly. The score is not measured directly - it is a comparison over `<n>` rows - so `<the score
+> `<paired outcome counts>`. Cost here comes from `<the verified cost source>`; token usage is
+> `<reported or unavailable>`. The score is a comparison over `<n>` rows, so `<the score
 > statement the counts support>`. The whole frontier this run measured is `<points, cheapest
 > first>`, and two points a few percent apart in cost are inside what re-measuring one
 > configuration moves.
@@ -1276,14 +1282,17 @@ Before claiming success, verify:
 1. Trials exist and failed-trial count is understood.
 2. Baseline was actually evaluated.
 3. Best configuration exists.
-4. Declared objective measures appear and vary meaningfully.
+4. Primary objective measures appear and vary meaningfully. Record any unavailable secondary cost
+   objective as a limitation under "Missing cost or usage telemetry"; it does not erase quality.
 5. Real calls do not show the mock's constant response pattern.
-6. Provider calls have nonzero token usage. Report `total_cost` as positive, provider-reported zero
-   for a genuine free route, or untracked; cost alone does not prove whether a run was real.
+6. Verify the actual provider path and successful responses. Report provider token usage where
+   available and mark it unverified where absent; missing usage alone does not invalidate quality.
+   Separate known cost, including a trustworthy reported zero, from unknown cost and budget debits.
+   Do not present SDK default cost or estimated token counts as provider observations.
 7. No output was truncated. `require_untruncated_completion` raises on `finish_reason ==
    "length"`, so a truncated trial arrives as a failed trial rather than as a scored 0; confirm
-   none reached the comparison, and report `REFUSED_TRIAL_COSTS` beside the total - a refused
-   trial was still billed, and spend that bought no measurement is still spend.
+   none reached the comparison, and report `REFUSED_TRIAL_COSTS` as the known cost subtotal for
+   refused measurements. Unreported cost remains unknown even when the output was refused.
 8. Portal persistence status is complete or precisely described as degraded/failed.
 9. `cloud_url` exists before saying the result is on the portal.
 10. The pre-connected-run portal-tracking probe passed and tracking did not silently drop to
@@ -1294,10 +1303,11 @@ Before claiming success, verify:
     beside them.
 12. Every reported frontier carries measured costs, a score claim the paired counts support, and no
     point below the floor. Trials that came back without reported cost carry no cost claim: report
-    that, not a number.
+    that, not a number. Quality-only runs show primary scores and the telemetry limitation instead.
 13. Each paid process ran against the approved figures it was launched with, and the close reports
-    them: the approved total, what this run spent against it, and what is left. A phase that
-    refused to start, or stopped at the remaining, is named with the work it did not do.
+    them: the approved total, cumulative budget debit, known cost subtotal, unknown-cost calls and
+    remaining allowance. A phase that refused to start, or stopped at the remaining, is named with
+    the work it did not do. Name each phase's actual objectives if cost coverage changed.
 
 An optimized winner that does not beat the baseline is a valid no-lift result. Report the observed
 delta first, then separate verified facts, evidence-backed inferences, and untested hypotheses.
@@ -1324,9 +1334,11 @@ above answer a flat result by looking harder - another structural knob, or a sep
 stronger model - which is right when the level is low. When the paired analysis detects no
 difference between configurations and the level sits near the top of the run's own metric, "nothing
 we tried separated them" is a finding about the task rather than a failure of the search: these
-configurations are not what limits this result. Then the cheapest point the run measured is not
+configurations are not what limits this result. With trustworthy comparable cost, the cheapest point the run measured is not
 merely on the frontier, it is the answer, and the experiment worth running next is a tier BELOW
-anything tested rather than above it.
+anything tested rather than above it. Without that cost evidence, report the high-score tie without
+calling a configuration cheapest; telemetry repair is an optional next step if cost comparison is
+what the user wants to learn next.
 
 Two bounds it keeps, both already owned above. It is a statement about what this run tested and
 never about the space - a cheaper tier nobody ran is a hypothesis to test at full scale, exactly as

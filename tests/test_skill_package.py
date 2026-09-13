@@ -5573,7 +5573,6 @@ class SkillPackageTests(unittest.TestCase):
             "litellm": litellm_module(lambda **_: current),
             "assert_wiring_still_proven": lambda: None,
             "build_request": lambda message, config: {},
-            "require_nonzero_token_usage": lambda response: None,
             "provider_reported_cost": lambda response: 0.01,
             **spend_gate_bindings(),
         }
@@ -5641,14 +5640,8 @@ class SkillPackageTests(unittest.TestCase):
     def test_a_refused_trial_still_reports_the_money_it_spent(self) -> None:
         """Refusing a trial must not also lose the spend that bought it.
 
-        Both guards raise, and `provider_reported_cost` was read AFTER them, so
-        a truncated trial's cost was never read at all: the provider billed for
-        every token it generated up to the cut, and the run reported $0 for it.
-        The same ordering swallowed a zero-usage refusal.
-
-        Executed rather than read, and both refusal paths are driven, because a
-        reordering that fixes only the truncation branch looks identical in the
-        diff to one that fixes both.
+        A truncation refusal must retain its known cost. Missing usage is no
+        longer a refusal, and the same completed output remains evaluable.
         """
         text = SDK_EXECUTION.read_text()
         functions = {}
@@ -5680,15 +5673,10 @@ class SkillPackageTests(unittest.TestCase):
             if refuse == "truncated":
                 raise RuntimeError("The provider truncated this completion")
 
-        def usage_guard(response):
-            if refuse == "usage":
-                raise RuntimeError("did not report nonzero token usage")
-
         namespace = {
             "litellm": litellm_module(lambda **_: current),
             "assert_wiring_still_proven": lambda: None,
             "build_request": lambda message, config: {},
-            "require_nonzero_token_usage": usage_guard,
             "require_untruncated_completion": truncation_guard,
             "provider_reported_cost": lambda response: 0.02,
             **spend_gate_bindings(),
@@ -5705,7 +5693,7 @@ class SkillPackageTests(unittest.TestCase):
         self.assertEqual(call_agent("task", {}), ("a", 0.02))
         self.assertEqual(spent, [])
 
-        for reason in ("truncated", "usage"):
+        for reason in ("truncated",):
             with self.subTest(refused=reason):
                 refuse = reason
                 before = len(spent)
@@ -5731,7 +5719,13 @@ class SkillPackageTests(unittest.TestCase):
 
         # And the post-run checklist asks for the number, or nothing reads it.
         safety = " ".join(RUN_SAFETY.read_text().split())
-        self.assertIn("report `REFUSED_TRIAL_COSTS` beside the total", safety)
+        self.assertIn(
+            "report `REFUSED_TRIAL_COSTS` as the known cost subtotal for refused measurements",
+            safety,
+        )
+        self.assertIn(
+            "Unreported cost remains unknown even when the output was refused", safety
+        )
 
     def test_provider_mismatch_names_sources_before_requesting_a_key(self) -> None:
         skill_text = " ".join(SKILL.read_text().casefold().split())
@@ -8583,8 +8577,8 @@ class SkillPackageTests(unittest.TestCase):
         # stopping. Rows are never a route inside this run (the operating
         # contract), so the old "recommend harder realistic cases" is refused.
         for phrase in (
-            "report little or no measured quality or cost headroom as a limit "
-            "on the claim",
+            "report little or no measured quality headroom, and cost headroom "
+            "only where cost was measured, as a limit on the claim",
             "name harder realistic cases as the `traigent-dataset-curate` "
             "handoff after the run, never as a route",
             "`a.` the bounded connected run, offered as an optional "
@@ -10427,15 +10421,19 @@ class SkillPackageTests(unittest.TestCase):
         for phrase in (
             "the user does not fill it in",
             "calibration cases and results artifacts",
-            "total walkthrough ceiling (default `$5.00`)",
-            "tracked spend, or conservative deduction",
-            "remaining total ceiling",
+            "total walkthrough execution allowance (default `$5.00`)",
+            "known-cost subtotal, unknown calls, and cumulative measured-or-estimated budget debit, separately",
+            "remaining execution allowance",
             "partial/final result",
-            # Each run's frontier is recorded: it is a result the user was
-            # given, and after the fact this record is the only place it
-            # survives.
-            "objective-cost frontier for each run - its points, the recommended "
-            "one, and the score claim with paired outcome counts",
+            # Preserve the actual objective mode and the useful result even
+            # when the run cannot make a cost comparison.
+            "each operation's actual objective mode",
+            "recovered cost without re-enabling its objective",
+            "cost-aware frontier where costs are comparable, otherwise "
+            "primary-criterion observations and tuning-selected candidate",
+            "paired evidence, telemetry loss, and any unavailable cost "
+            "comparison or cost-based recommendation",
+            "unavailable usage, cost and cost optimization; optional telemetry repair",
             # The safety half of the readiness re-score. The narrative half was
             # removed from this record; this field is what may not follow it,
             # because a repair that was never rechecked is how a paid run gets
@@ -11637,7 +11635,6 @@ class SkillPackageTests(unittest.TestCase):
             "litellm": litellm_module(fake_completion),
             "assert_wiring_still_proven": lambda: None,
             "provider_reported_cost": lambda response: 0.01,
-            "require_nonzero_token_usage": lambda response: None,
             "require_untruncated_completion": lambda response: None,
             "build_prompt": lambda message, **_knobs: message,
             "SELECTED_STRONG_MODEL": "provider/strong",
@@ -11765,7 +11762,7 @@ class SkillPackageTests(unittest.TestCase):
             'name="cost", orientation="minimize"',
             "def require_current_route_credential()",
             "def provider_reported_cost(response)",
-            'usage.get("cost")',
+            'usage_field("cost")',
             "llm_provider-x-litellm-response-cost",
         ):
             self.assertIn(phrase, text)
@@ -12744,6 +12741,51 @@ class SkillPackageTests(unittest.TestCase):
             },
         )
         self.assertEqual(helper(header_response), 0.125)
+        # LiteLLM can synthesize hidden response_cost=0 when telemetry is
+        # absent. Explicit provider cost must win, including a genuine zero.
+        for usage, hidden, expected in (
+            ({"cost": 0.125}, {"response_cost": 0.0}, 0.125),
+            (SimpleNamespace(cost=0.0), {"response_cost": 0.25}, 0.0),
+            (
+                None,
+                {
+                    "response_cost": 0.0,
+                    "additional_headers": {
+                        "llm_provider-x-litellm-response-cost": "0.125"
+                    },
+                },
+                0.125,
+            ),
+            (
+                None,
+                {
+                    "response_cost": 0.25,
+                    "additional_headers": {"llm_provider-x-litellm-response-cost": "0"},
+                },
+                0.0,
+            ),
+            (None, {"response_cost": 0.25}, 0.25),
+            (None, {"response_cost": 0.0}, None),
+            ({"total_tokens": 0}, {"response_cost": 0.0}, None),
+            ({"total_tokens": 3}, {"response_cost": 0.0}, 0.0),
+        ):
+            with self.subTest(usage=usage, hidden=hidden):
+                self.assertEqual(
+                    helper(SimpleNamespace(usage=usage, _hidden_params=hidden)),
+                    expected,
+                )
+        # Invalid token metadata cannot establish the provenance of an
+        # ambiguous hidden zero. It does not invalidate the provider answer.
+        for invalid_tokens in (True, -1, "3", float("nan"), float("inf")):
+            with self.subTest(invalid_tokens=invalid_tokens):
+                self.assertIsNone(
+                    helper(
+                        SimpleNamespace(
+                            usage={"total_tokens": 3, "prompt_tokens": invalid_tokens},
+                            _hidden_params={"response_cost": 0.0},
+                        )
+                    )
+                )
         self.assertIsNone(helper(SimpleNamespace(usage=SimpleNamespace(cost=None))))
         with self.assertRaisesRegex(RuntimeError, "malformed response-cost metadata"):
             helper(SimpleNamespace(usage=SimpleNamespace(cost="not-a-number")))
@@ -12754,42 +12796,12 @@ class SkillPackageTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "malformed response-cost metadata"):
             helper(SimpleNamespace(usage=SimpleNamespace(cost=True)))
 
-        usage_module = ast.fix_missing_locations(
-            ast.Module(body=[functions["require_nonzero_token_usage"]], type_ignores=[])
-        )
-        usage_namespace = {"math": __import__("math")}
-        exec(compile(usage_module, "<provider-usage>", "exec"), usage_namespace)
-        require_usage = usage_namespace["require_nonzero_token_usage"]
-        require_usage(SimpleNamespace(usage=SimpleNamespace(total_tokens=1)))
-        require_usage(SimpleNamespace(usage={"total_tokens": 42}))
-        require_usage(
-            SimpleNamespace(usage=SimpleNamespace(prompt_tokens=2, completion_tokens=3))
-        )
-        require_usage(
-            SimpleNamespace(usage={"prompt_tokens": 1, "completion_tokens": 0})
-        )
-        for invalid in (None, 0, -1, True, float("nan"), float("inf")):
-            with self.subTest(total_tokens=invalid):
-                with self.assertRaisesRegex(RuntimeError, "nonzero token usage"):
-                    require_usage(
-                        SimpleNamespace(usage=SimpleNamespace(total_tokens=invalid))
-                    )
-        for invalid_components in (
-            {"prompt_tokens": 0, "completion_tokens": 0},
-            {"prompt_tokens": -1, "completion_tokens": 2},
-            {"prompt_tokens": True, "completion_tokens": 2},
-        ):
-            with self.subTest(components=invalid_components):
-                with self.assertRaisesRegex(RuntimeError, "nonzero token usage"):
-                    require_usage(SimpleNamespace(usage=invalid_components))
-
         call_module = ast.fix_missing_locations(
             ast.Module(
                 body=[
                     *sdk_wrapper_state_nodes(text),
                     *sdk_wrapper_spend_gate(text),
                     functions["provider_reported_cost"],
-                    functions["require_nonzero_token_usage"],
                     functions["require_untruncated_completion"],
                     functions["call_agent"],
                 ],
@@ -12828,11 +12840,20 @@ class SkillPackageTests(unittest.TestCase):
         self.assertEqual(call_agent("task", {}), ("answer", 0.2))
         current_response = response(usage=SimpleNamespace(cost=0.0, total_tokens=3))
         self.assertEqual(call_agent("task", {}), ("answer", 0.0))
-        current_response = response(usage=SimpleNamespace())
-        with self.assertRaisesRegex(RuntimeError, "nonzero token usage"):
-            call_agent("task", {})
-        current_response = response(usage=SimpleNamespace(cost=0.2))
-        with self.assertRaisesRegex(RuntimeError, "nonzero token usage"):
+        # Token metadata does not decide whether an answer can be evaluated.
+        # Missing cost remains None; an explicit known zero remains a zero.
+        for usage, expected_cost in (
+            (None, None),
+            (SimpleNamespace(), None),
+            (SimpleNamespace(cost=0.2), 0.2),
+            (SimpleNamespace(cost=0.0), 0.0),
+            ({"cost": 0.2}, 0.2),
+        ):
+            with self.subTest(usage=usage):
+                current_response = response(usage=usage)
+                self.assertEqual(call_agent("task", {}), ("answer", expected_cost))
+        current_response = response(usage=None, finish_reason="length")
+        with self.assertRaisesRegex(RuntimeError, "truncated"):
             call_agent("task", {})
 
     def test_sdk_holdout_uses_the_same_public_metric_contract(self) -> None:
@@ -15427,8 +15448,8 @@ class SkillPackageTests(unittest.TestCase):
         measurements now compete, on the rows already spent on selection, and
         exactly one configuration reaches the reserved rows.
 
-        The owner's Pareto instinct lands on the tuning side, where it is
-        legitimate: at equal score, prefer the cheaper configuration.
+        Price breaks a tuning tie only when the comparison includes cost and
+        the costs are comparable. Missing costs cannot select a winner.
         """
         dataset = " ".join(
             (SKILL_ROOT / "references" / "evaluation-and-dataset.md")
@@ -15443,7 +15464,7 @@ class SkillPackageTests(unittest.TestCase):
             "score the held-out rows once, on one configuration: the one this run recommends",
             "select it on the **tuning** scores across both of them",
             "the enhanced search's winner is not the answer by position",
-            "when the baseline's best configuration still scores higher on the "
+            "when the baseline's best configuration scores better on the "
             "tuning rows, that is the one this run recommends",
         ):
             with self.subTest(phrase=phrase):
@@ -15453,18 +15474,35 @@ class SkillPackageTests(unittest.TestCase):
         self.assertIn("**the held-out rows arbitrate nothing.**", dataset)
         self.assertIn(
             "scoring two configurations on them and keeping whichever came back "
-            "higher is selection, and a set used for selection is not held out",
+            "better is selection, and a set used for selection is not held out",
             dataset,
         )
         self.assertIn("it does not choose one", dataset)
-        # The tie-break the owner asked for, kept on the side that may have it.
+        # Measured-cost ties keep the priced behavior. Primary-only ties never
+        # infer equal or cheap costs from missing telemetry.
         self.assertIn(
-            "when two configurations score the same on the tuning rows, prefer "
-            "the cheaper one; at equal cost prefer the stronger model",
+            "in a cost-aware comparison, when two configurations score the same "
+            "on the tuning rows and have comparable measured costs, prefer the "
+            "cheaper one; at equal measured cost prefer the stronger model",
             dataset,
         )
         self.assertIn(
-            "that is a decision taken on the rows selection is allowed to use", dataset
+            "in a primary-only comparison or without comparable costs, do not "
+            "break the tie on price or treat unknown costs as equal",
+            dataset,
+        )
+        self.assertIn("retain the incumbent if it ties", dataset)
+        self.assertIn(
+            "otherwise retain the first tied configuration in recorded trial order",
+            dataset,
+        )
+        self.assertIn(
+            "use the primary metric in its declared direction, not a cost-aware `best_score`",
+            dataset,
+        )
+        self.assertIn(
+            "these are tuning-only choices; the held-out rows never select the candidate",
+            dataset,
         )
         # SKILL.md carries the ordering mandate, and says which rows may not
         # decide it.
@@ -16263,7 +16301,10 @@ class SkillPackageTests(unittest.TestCase):
         normalized = " ".join(SDK_EXECUTION.read_text().casefold().split())
         self.assertIn("an absent cost is `not measured`", normalized)
         self.assertIn("never turn absence into `$0.00`", normalized)
-        self.assertIn("provider-reported zero with nonzero token usage", normalized)
+        self.assertIn(
+            "explicit provider-reported zero is valid even without token counts",
+            normalized,
+        )
 
     def test_local_baseline_is_free_of_traigent_not_free_of_spend(self) -> None:
         """The preview needs no Traigent key but still spends real provider money."""
@@ -16294,7 +16335,10 @@ class SkillPackageTests(unittest.TestCase):
         # Identifiers only: `True` in the list is a value, not a site.
         for name in re.findall(r"`([A-Z_]+|[a-z_]+)`", adapt_list):
             with self.subTest(listed=name):
-                self.assertRegex(fence, rf"(?m)^(?:def )?{name}\b")
+                if name == "metric_functions":
+                    self.assertRegex(fence, r"(?m)^\s+metric_functions=\{")
+                else:
+                    self.assertRegex(fence, rf"(?m)^(?:def )?{name}\b")
         lines = fence.splitlines()
         anchors = []
         for index, line in enumerate(lines):
@@ -16313,6 +16357,7 @@ class SkillPackageTests(unittest.TestCase):
                 "BASELINE_IS_USER_OWNED = False",
                 "WIRED_KNOBS = [",
                 "def holdout_agent_input(input_data):",
+                "INCLUDE_COST_OBJECTIVE = False",
                 "def build_prompt(",
                 "def build_request(message: str, config: dict) -> dict:",
                 "SCORER_CALLS_PER_ROW: int = 0",
@@ -19139,7 +19184,6 @@ class SkillPackageTests(unittest.TestCase):
         namespace = {
             "litellm": litellm_module(completion),
             "provider_reported_cost": lambda response: 0.0,
-            "require_nonzero_token_usage": lambda response: None,
             "require_untruncated_completion": lambda response: None,
             "MODEL_REQUEST_TIMEOUT_SECONDS": 120.0,
             "SELECTED_CURRENT_MODEL": "provider/current",
@@ -19910,44 +19954,34 @@ class SkillPackageTests(unittest.TestCase):
         self.assertIn("only the controls the agent call really consumes", safety)
 
     def test_the_result_is_a_frontier_and_not_a_one_sided_saving(self) -> None:
-        """The shape of the claim, and the shape it may not slide back into.
-
-        A one-sided round can only report "cheaper at no lower score", which
-        needs a noise bar to separate a saving from measurement variance - and
-        this package had two unmeasured numbers holding one up. A frontier
-        asserts no win, so it needs no bar. The guard is therefore twofold: the
-        frontier vocabulary is required, and any threshold reappearing inside
-        these sections is a signal the framing slipped back.
-        """
+        """A measured-cost frontier is conditional and never proves savings."""
         skill = " ".join(SKILL.read_text().casefold().split())
         safety = " ".join(RUN_SAFETY.read_text().casefold().split())
 
-        self.assertIn("pareto frontier over the declared objective and cost", skill)
         self.assertIn(
-            "never show a frontier point that scored below the configuration "
-            "the user is already running",
+            "pareto frontier over the declared objective and cost** only for "
+            "cost-aware operations with comparable measured costs",
             skill,
         )
-        # both wins, which is the whole reason the frontier replaced a
-        # one-sided objective
+        self.assertIn("any frontier keeps the incumbent's score bound", skill)
         self.assertIn(
-            "the same score for less money and a higher score for the same money",
+            "otherwise report the primary-criterion observations and unavailable cost comparison",
             skill,
         )
+        self.assertIn("never rank a missing cost as zero or claim savings", skill)
         self.assertIn("a frontier asserts no win", safety)
-        # the floor is a number the run reads, defined once, where the run that
-        # reads it can find it
         self.assertIn("the floor is a number this run reads", safety)
         self.assertIn("def frontier_at_or_above(", SDK_EXECUTION.read_text())
 
-        # It is not a stage and buys nothing: arithmetic over trials both runs
-        # already paid for, which is also why there is no third run to gate,
-        # approve, or offer.
+        # Result reading spends no more, including when a cost frontier cannot
+        # be established from the completed observations.
         self.assertIn(
-            "it costs nothing - it is arithmetic over trials already paid for", skill
+            "it costs nothing and adds no stage: where cost coverage is trustworthy, "
+            "this is arithmetic over trials already in hand",
+            safety,
         )
         self.assertIn(
-            "it costs nothing and adds no stage - both runs priced every trial they completed",
+            "a quality-only run reports its primary scores and evidence limits instead",
             safety,
         )
 
@@ -19961,7 +19995,7 @@ class SkillPackageTests(unittest.TestCase):
             (
                 "SKILL.md",
                 skill,
-                "report each measurement as a **pareto frontier over the declared objective and cost**",
+                "report a **pareto frontier over the declared objective and cost**",
                 "### 8. verify and report",
             ),
             (
@@ -19984,20 +20018,7 @@ class SkillPackageTests(unittest.TestCase):
                 )
 
     def test_the_frontier_is_read_from_both_runs_and_costs_nothing(self) -> None:
-        """Two paid runs, and each reports its own frontier for free.
-
-        The round this replaced was a third paid stage with a gate, an
-        approval, and an offer, to answer a question the trials already bought
-        can answer: the baseline grid prices six configurations and the
-        enhanced search prices up to twelve, so accuracy against cost is
-        arithmetic either way. The cost-bearing controls therefore have to be
-        varied inside run 2, which for a prepared baseline the shared model
-        list above already does.
-
-        The frontier informs the close; it does not become the close. A menu
-        offered instead of a recommendation is the failure this stage already
-        names, and a frontier is exactly the shape that would do it.
-        """
+        """One free result reader serves both runs, with cost only when proven."""
         skill = " ".join(SKILL.read_text().casefold().split())
         safety = " ".join(RUN_SAFETY.read_text().casefold().split())
         sdk = " ".join(SDK_EXECUTION.read_text().casefold().split())
@@ -20022,10 +20043,13 @@ class SkillPackageTests(unittest.TestCase):
         self.assertNotIn("do not require a third optimization pass", skill)
         self.assertIn("this is the last run", skill)
 
-        # The baseline reports one too, over the six trials it just paid for.
+        # A baseline with unknown costs still has a result, but no cost frontier.
         self.assertIn(
-            "show this grid's own objective-cost frontier beside the winner, read "
-            "from the trials it just paid for",
+            "show this grid's own objective-cost frontier only when the measured-cost rule permits it",
+            skill,
+        )
+        self.assertIn(
+            "otherwise show its primary-criterion result and the missing cost/usage limitation",
             skill,
         )
         # ...and the enhanced run is where the cost-bearing controls live,
@@ -20035,13 +20059,22 @@ class SkillPackageTests(unittest.TestCase):
         )
         # One function, both reads - not a second implementation.
         self.assertIn(
-            "the same function reads the baseline grid's finished trials and the "
-            "enhanced search's, so one function serves both",
+            "the same adapter reads baseline and enhanced trials without a provider call",
+            sdk,
+        )
+        self.assertIn("its default compares the primary criterion alone", sdk)
+        self.assertIn("the recorded objective mode must also include cost", sdk)
+        self.assertIn("recovered telemetry does not reopen cost comparison", sdk)
+        self.assertIn(
+            "pass `compare_cost=true` only after establishing complete cost provenance",
             sdk,
         )
 
         # Placement: details layer, never in place of the recommendation.
-        self.assertIn("each run's objective-cost frontier, in the details layer", skill)
+        self.assertIn(
+            "each run's objective-cost frontier where measured, in the details layer",
+            skill,
+        )
         self.assertIn(
             "a frontier put where the recommendation belongs is the menu this "
             "stage already refuses",
@@ -20065,6 +20098,56 @@ class SkillPackageTests(unittest.TestCase):
             "under the rule the continuation handoff below already states", safety
         )
         self.assertIn("it does not earn another paid round here", safety)
+
+    def test_missing_telemetry_keeps_the_bounded_primary_only_route(self) -> None:
+        """Missing metadata changes cost claims, not valid quality observations."""
+        safety = " ".join(RUN_SAFETY.read_text().casefold().split())
+        telemetry = safety.split("### missing cost or usage telemetry", 1)[1].split(
+            "## connected-run readiness", 1
+        )[0]
+        for phrase in (
+            "missing usage alone is not evidence of a fake call",
+            "missing usage by itself does not remove a trustworthy cost measurement",
+            "a provider cost field alone does not prove the sdk's cost objective consumed it",
+            "once an operation has used primary-only objectives, keep that mode for the rest of this comparison",
+            "recovered trustworthy cost can be reported with its source",
+            "adding a cost objective belongs to a separate future run",
+            "`a.` **continue the bounded run on the primary criterion**, marked recommended",
+            "`b.` **repair telemetry first**, an optional route",
+            "do not ask again when the existing explicit approval already covers these conditions and bounds",
+            "every unpriced call deducts the approved estimate, including manual calls outside the wrapper",
+            "these controls bound execution and allowance, not the actual provider bill",
+            "name its actual declared objectives",
+            "mark its cost comparison and cost-based recommendation unavailable",
+            "do not relabel an earlier cost-aware search as quality-only or restart a paid baseline",
+            "use primary-only objectives for the next already-planned phase under its valid approval",
+            "never substitute sdk estimates or defaults",
+            "include optional telemetry repair as a future action",
+        ):
+            with self.subTest(policy=phrase):
+                self.assertIn(phrase, telemetry)
+        for obsolete in (
+            "this bullet covers the live probe and other calls outside sdk-managed searches",
+            "disclose all three parts and default to stopping",
+            "live and cost-tracked before scaling",
+        ):
+            with self.subTest(obsolete=obsolete):
+                self.assertNotIn(obsolete, safety)
+
+        sdk = SDK_EXECUTION.read_text()
+        self.assertNotIn("require_nonzero_token_usage", sdk)
+        dataset = " ".join(
+            (SKILL_ROOT / "references" / "evaluation-and-dataset.md")
+            .read_text()
+            .casefold()
+            .split()
+        )
+        self.assertIn(
+            "cost is the second objective only when trustworthy sdk/provider cost "
+            "coverage is established before the operation",
+            dataset,
+        )
+        self.assertNotIn("cost is always the second objective", dataset)
 
     def test_the_operating_contract_keeps_the_run_small_on_purpose(self) -> None:
         """The run is small so it finishes; it is not a search for the best number.
@@ -20217,10 +20300,10 @@ class FrontierAtOrAboveTests(unittest.TestCase):
             metrics["task_success"] = score
         if cost is not None:
             metrics["cost"] = cost
-        return SimpleNamespace(status=status, metrics=metrics)
+        return SimpleNamespace(status=status, metrics=metrics, config={})
 
     def select(self, trials, *, floor=0.80):
-        return FRONTIER_AT_OR_ABOVE(trials, "task_success", floor)
+        return FRONTIER_AT_OR_ABOVE(trials, "task_success", floor, compare_cost=True)
 
     def test_a_trial_reaches_the_frontier_only_at_or_above_the_floor(self) -> None:
         """Delete `score >= floor` and this fails: the cheap, bad trial is
@@ -20275,6 +20358,47 @@ class FrontierAtOrAboveTests(unittest.TestCase):
         self.assertEqual(
             self.select([dearest, cheapest, middle]), [cheapest, middle, dearest]
         )
+
+    def test_primary_only_keeps_unpriced_candidates_and_ignores_placeholder_cost(self):
+        strong = self.trial(0.95, None)
+        weak_with_sdk_zero = self.trial(0.81, 0.0)
+        weak_with_price = self.trial(0.85, 0.01)
+        self.assertEqual(
+            FRONTIER_AT_OR_ABOVE(
+                [weak_with_sdk_zero, weak_with_price, strong], "task_success", 0.80
+            ),
+            [strong],
+        )
+
+    def test_primary_only_preserves_minimize_direction_and_strict_floor(self):
+        best = self.trial(0.10, None)
+        worse = self.trial(0.30, 0.0)
+        at_floor = self.trial(0.20, 0.01)
+        self.assertEqual(
+            FRONTIER_AT_OR_ABOVE(
+                [worse, at_floor, best], "task_success", 0.20, orientation="minimize"
+            ),
+            [best],
+        )
+        self.assertEqual(
+            FRONTIER_AT_OR_ABOVE(
+                [self.trial(0.20 + 1e-11, None)],
+                "task_success",
+                0.20,
+                orientation="minimize",
+            ),
+            [],
+        )
+
+    def test_known_zero_remains_valid_on_the_cost_comparison(self):
+        free = self.trial(0.80, 0.0)
+        stronger = self.trial(0.90, 0.01)
+        unknown = self.trial(1.0, None)
+        self.assertEqual(self.select([stronger, unknown, free]), [free, stronger])
+
+    def test_invalid_primary_direction_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "orientation"):
+            FRONTIER_AT_OR_ABOVE([], "task_success", 0.80, orientation="sideways")
 
 
 class AFlatResultIsReadInBothDirectionsTests(unittest.TestCase):
@@ -20542,7 +20666,6 @@ class TheApprovedTotalReachesTheCodeTests(unittest.TestCase):
             "assert_wiring_still_proven": lambda: None,
             "build_request": lambda message, config: {"model": config.get("model")},
             "provider_reported_cost": lambda response: reported,
-            "require_nonzero_token_usage": lambda response: None,
             "require_untruncated_completion": lambda response: None,
             **spend_gate_bindings(**bindings),
         }
@@ -20607,7 +20730,6 @@ class TheApprovedTotalReachesTheCodeTests(unittest.TestCase):
         namespace = {
             "litellm": fake_litellm(placed, content="4", raises=raises),
             "provider_reported_cost": lambda response: reported_cost,
-            "require_nonzero_token_usage": lambda response: None,
             "require_untruncated_completion": lambda response: None,
             "MODEL_REQUEST_TIMEOUT_SECONDS": 120.0,
             **spend_gate_bindings(**bindings),
@@ -21159,11 +21281,9 @@ class TheApprovedTotalReachesTheCodeTests(unittest.TestCase):
     def test_the_exit_line_names_the_calls_it_refunded(self) -> None:
         """A run that lost most of its calls to a dead model id is a diagnosis.
 
-        Refunded, such a run reports almost nothing spent - which, on its own,
-        reads as a cheap success. The second line turns the figure into the
-        reason: how many calls were refused, and the first message. And a run
-        with nothing refunded prints the one line it always did, so nothing
-        that parses the ledger line meets a second one it was not shown.
+        The accounting lines distinguish budget debits from known costs. A
+        separate refusal line explains why charges were zero; a run without
+        refunded calls must not claim provider refusals.
         """
         error = self.provider_error(
             "NotFoundError", "No endpoints found for provider/gone"
@@ -21178,22 +21298,28 @@ class TheApprovedTotalReachesTheCodeTests(unittest.TestCase):
         with contextlib.redirect_stdout(out):
             namespace["report_run_spend"]()
         lines = out.getvalue().splitlines()
-        self.assertEqual(len(lines), 2, out.getvalue())
-        self.assertIn("placed 3 provider call(s) and spent $0.0000", lines[0])
-        self.assertIn("$0.0900 remains", lines[0])
+        self.assertEqual(len(lines), 3, out.getvalue())
+        self.assertIn("placed 3 provider call(s); budget debit $0.0000", lines[0])
+        self.assertIn("remaining budget $0.0900", lines[0])
+        self.assertIn("$0.0000 across 3 call(s) with known cost", lines[1])
+        self.assertIn("cost not reported for 0 call(s)", lines[1])
         self.assertIn(
-            "3 of those call(s) were refused by the provider before billing", lines[1]
+            "3 of those call(s) were refused by the provider before billing", lines[2]
         )
-        self.assertIn("NotFoundError: No endpoints found for provider/gone", lines[1])
+        self.assertIn("NotFoundError: No endpoints found for provider/gone", lines[2])
 
         namespace, placed = self.compiled_scorer_path(
-            ceiling=1.00, remaining=0.09, per_call=0.02
+            ceiling=1.00, remaining=0.09, per_call=0.02, reported_cost=0.04
         )
         namespace["litellm"].completion(model="provider/m", messages=[])
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
             namespace["report_run_spend"]()
-        self.assertEqual(len(out.getvalue().splitlines()), 1, out.getvalue())
+        lines = out.getvalue().splitlines()
+        self.assertEqual(len(lines), 2, out.getvalue())
+        self.assertIn("placed 1 provider call(s); budget debit $0.0400", lines[0])
+        self.assertIn("$0.0400 across 1 call(s) with known cost", lines[1])
+        self.assertNotIn("were refused by the provider", out.getvalue())
 
     def test_no_provider_call_reaches_litellm_by_a_name_the_door_is_not_on(
         self,
@@ -21552,7 +21678,6 @@ class TheApprovedTotalReachesTheCodeTests(unittest.TestCase):
             "assert_wiring_still_proven": lambda: None,
             "build_request": lambda message, config: {"model": config["model"]},
             "provider_reported_cost": lambda response: response.reported_usd,
-            "require_nonzero_token_usage": lambda response: None,
             "require_untruncated_completion": lambda response: None,
             "MODEL_REQUEST_TIMEOUT_SECONDS": 120.0,
             "HOLDOUT_DATASET": "/project/traigent-runs/holdout.jsonl",
@@ -21639,7 +21764,7 @@ class TheApprovedTotalReachesTheCodeTests(unittest.TestCase):
         routed one is, and the reported cost is the whole of what was spent.
 
         The routing rule survives, for what it is actually for - the judge's
-        own model and the two response checks - and not for the ledger.
+        own model and the truncation check - and not for the ledger.
         """
         namespace, placed = self.compiled_judged_holdout(rows=3, remaining=1.00)
 
@@ -23079,6 +23204,45 @@ class TheApprovedTotalReachesTheCodeTests(unittest.TestCase):
         )
         return prose
 
+    def test_budget_debits_are_distinct_from_unknown_and_known_call_costs(self) -> None:
+        namespace, _ = self.compiled_scorer_path(
+            ceiling=1.00, remaining=0.50, per_call=0.20, reported_cost=None
+        )
+        namespace["litellm"].completion(model="provider/m", messages=[])
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            namespace["report_run_spend"]()
+        unknown = out.getvalue()
+        self.assertIn("budget debit $0.2000", unknown)
+        self.assertIn("cumulative debit $0.7000", unknown)
+        self.assertIn("remaining budget $0.3000", unknown)
+        self.assertIn("Known call cost this process: not reported", unknown)
+        self.assertIn("cost not reported for 1 call(s)", unknown)
+        self.assertIn("known cost subtotal for refused measurements $0.0000", unknown)
+        self.assertNotIn("spent $", unknown)
+        self.assertNotIn("is gone", unknown)
+        self.assertAlmostEqual(namespace["run_remaining_usd"](), 0.30)
+
+        # A known zero is still shown, and a mixed total names only the known
+        # subtotal. The unknown call's debit remains in the approval handoff.
+        namespace["record_call_spend"](0.0)
+        namespace["record_call_spend"](0.04)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            namespace["report_run_spend"]()
+        self.assertIn("$0.0400 across 2 call(s) with known cost", out.getvalue())
+        self.assertIn("cost not reported for 1 call(s)", out.getvalue())
+        self.assertIn("cumulative debit $0.7400", out.getvalue())
+        self.assertAlmostEqual(namespace["run_remaining_usd"](), 0.26)
+
+        # The next phase must carry this allowance deduction, including the
+        # unknown call, without presenting it as measured provider charges.
+        handoff = " ".join(RUN_SAFETY.read_text().split())
+        self.assertIn("carries the cumulative budget debit", handoff)
+        self.assertIn("its budget debit and known cost separately", handoff)
+        self.assertIn("forward as a conservative budget debit", handoff)
+        self.assertNotIn("forward as spent", handoff)
+
 
 class TrackingLossStopsFurtherSpendingTests(unittest.TestCase):
     """The connected-run halt, executed rather than promised.
@@ -23130,7 +23294,6 @@ class TrackingLossStopsFurtherSpendingTests(unittest.TestCase):
             "assert_wiring_still_proven": lambda: None,
             "build_request": lambda message, config: {"model": config.get("model")},
             "provider_reported_cost": lambda response: 0.01,
-            "require_nonzero_token_usage": lambda response: None,
             "require_untruncated_completion": lambda response: None,
             **spend_gate_bindings(**bindings),
         }
@@ -23632,10 +23795,7 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
             # refuses to *report* a point below what the user already gets,
             # which is the floor named here.
             "whether a second run may hand back a worse-scoring configuration",
-            (
-                "never show a frontier point that scored below the "
-                "configuration the user is already running",
-            ),
+            ("any frontier keeps the incumbent's score bound",),
             (
                 "we accepted a lower score for a lower cost",
                 "the round bought a cheaper configuration at a small accuracy cost",
@@ -29975,11 +30135,9 @@ class OneShapeAndOneMarkForEveryChoiceTests(unittest.TestCase):
             # is owned once, in the preview paragraph above the block.
             (safety, "its moving conditions cannot hold at this preview"),
             (safety, "the mark stays on `a.`, the bounded managed run"),
-            # And the route it does NOT move onto. The paragraph above says an
-            # invalid or non-discriminating pair "has already stopped before
-            # this preview and gets the evidenced repair instead", so naming
-            # that repair as this preview's route `A` was the same document
-            # contradicting itself two paragraphs apart.
+            # Invalid grading still stops before this preview. Optional
+            # telemetry repair can appear here without taking the mark away
+            # from the bounded continuation.
             (
                 safety,
                 "has already stopped before this preview and gets the "
@@ -29987,8 +30145,12 @@ class OneShapeAndOneMarkForEveryChoiceTests(unittest.TestCase):
             ),
             (
                 safety,
-                "never on the evidenced repair, which is not one of this "
-                "preview's routes at all",
+                "including when `b.` offers optional telemetry repair",
+            ),
+            (
+                safety,
+                "when telemetry is the gap, use the continue/optional-repair "
+                'routes under "missing cost or usage telemetry" in this same block',
             ),
             (skill, "the connected-stage preview"),
         ):

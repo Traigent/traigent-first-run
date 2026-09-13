@@ -19,7 +19,7 @@ lawfully never entered, keeping its `[ ]` checkbox. SKILL.md owns every stage's 
 ## Objective and provenance
 
 - Target project and selected agent (absolute path plus function or command):
-- Task and primary success measure:
+- Task and primary success measure; primary criterion/direction and each operation's actual objective mode; any disclosed removal of unavailable secondary cost before a later planned operation:
 - Unacceptable failure:
 - Agent (`real`/`limited`/`demo`/`missing`/`invalid`) - source, wrapper, evidence, gap:
 - Dataset (`real`/`limited`/`demo`/`missing`/`invalid`) - source, generated copy, evidence, gap:
@@ -40,7 +40,7 @@ lawfully never entered, keeping its `[ ]` checkbox. SKILL.md owns every stage's 
 
 - Tuning rows and held-out rows (default 10, reserved at creation), coverage, and known limitations:
 - Agent and evaluator/judge calls per example:
-- Total walkthrough ceiling (default `$5.00`):
+- Total walkthrough execution allowance (default `$5.00`):
 
 ## Baseline plan and approval
 
@@ -50,8 +50,8 @@ lawfully never entered, keeping its `[ ]` checkbox. SKILL.md owns every stage's 
 
 ## Running state
 
-- Tracked spend, or conservative deduction where untracked:
-- Remaining total ceiling:
+- Usage/cost availability and provenance, including recovered cost without re-enabling its objective; quality-only disclosure and approval scope:
+- Known-cost subtotal, unknown calls, and cumulative measured-or-estimated budget debit, separately; remaining execution allowance:
 - Local baseline checkpoint - artifact, best config/score, trials/failures, cost, and limits:
 
 ## Connected-stage plan and approval
@@ -63,7 +63,7 @@ lawfully never entered, keeping its `[ ]` checkbox. SKILL.md owns every stage's 
 - Exact-baseline sync - public sync ID, successful CLI URL, or `local-only` with reason:
 - Connected optimization run ID, configurations tested of the total, partial/final result, stop reason, and verified portal link:
 - Baseline-versus-enhanced comparison - measured tuning behavior and justified claim strength:
-- Objective-cost frontier for each run - its points, the recommended one, and the score claim with paired outcome counts:
+- Cost-aware frontier where costs are comparable, otherwise primary-criterion observations and tuning-selected candidate; paired evidence, telemetry loss, and any unavailable cost comparison or cost-based recommendation:
 
 ## Interpretation
 
@@ -71,4 +71,4 @@ lawfully never entered, keeping its `[ ]` checkbox. SKILL.md owns every stage's 
 - Components that remain walkthrough substitutes:
 - What the result demonstrates:
 - What the result does not establish:
-- Recommended next real-world improvement:
+- Recommended next real-world improvement; unavailable usage, cost and cost optimization; optional telemetry repair for a later cost comparison:

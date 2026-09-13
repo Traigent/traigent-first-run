@@ -73,10 +73,15 @@ card and obtain explicit approval; the record alone grants no authority. Before 
 the current comparison invariants and compare them byte-for-byte with the pre-baseline invariants
 recorded after free validation; never rewrite the recorded invariants. They are the objective,
 agent/call behavior, exact tuning and held-out rows, evaluator, and baseline model/value set. The
-enhanced space is deliberately excluded because it must add controls; before a connected call,
+only permitted objective difference is a recorded removal of unavailable secondary cost before a
+later planned operation under `references/run-safety.md` § Missing cost or usage telemetry; the
+primary criterion and direction stay fixed, and the original objective history remains recorded.
+Validate that disclosed transition instead of restarting or repeating paid work. The enhanced
+space is deliberately excluded because it must add controls; before a connected call,
 verify separately that it retains every recorded baseline model/value and that its only additions
 exactly match the freshly rendered and approved enhanced card. If the invariants are incomplete or
-differ, do not resume this run: rename the old record to the next unused
+differ beyond that recorded cost-only transition, do not resume this run: rename the old record to
+the next unused
 `traigent-runs/run-plan-historical-<YYYYMMDDTHHMMSSZ>.md` (never overwrite), keep its spend and results
 historical or baseline-only, copy a fresh template to canonical `traigent-runs/run-plan.md`, start
 at section 1 with a new opening score; the operating contract owns re-running paid work. That
@@ -197,7 +202,7 @@ heading.
 >
 > 1. **Inspect** - preserve your agent, dataset, and evaluator.
 > 2. **Readiness** - run free readiness research and explain its score.
-> 3. **Baseline** - install the SDK, then measure today's setup with calls, cost, and time.
+> 3. **Baseline** - install the SDK, then measure today's setup and report available calls, cost, and time.
 > 4. **Optimize** - the paid baseline result comes first, your Traigent account after it, then a
 >    bounded managed search.
 > 5. **Results** - compare the runs, recommend one next step, and hand over the Traigent skills so
@@ -529,8 +534,8 @@ weakness are one decision about what this run will measure. That question carrie
    invisible unless it is said. Read it off their evaluator where the evaluator answers it - a
    scorer comparing an answer to an expected one is optimizing correctness and needs no question -
    and ask only where it does not, which is where the answer could be something this run would
-   never guess. Where they name nothing, proceed on accuracy and cost **and say that in those
-   words**, so a default nobody chose is not mistaken for a choice somebody made.
+   never guess. Where they name nothing, state the default: accuracy, with cost when measurable,
+   so a default nobody chose is not mistaken for a choice somebody made.
    `references/evaluation-and-dataset.md` owns what the answer becomes.
 Then stop and wait, and ask nothing else here; what this run writes is shown at the pre-spend
 approval in section 6, the other checkpoint. The question closes the message: the board and the
@@ -920,10 +925,18 @@ them stops before spending rather than falling back to a limit nobody approved.
 After the approved live provider probe, derive internal time bounds from observed latency and the
 baseline work. If they no longer fit the approval, offer a smaller run or quote the additional
 time/cost; do not ask the user to select implementation timeouts.
+When usage or cost is unavailable, follow
+[`references/run-safety.md` § Missing cost or usage telemetry](references/run-safety.md#missing-cost-or-usage-telemetry):
+recommend bounded primary-criterion continuation on the existing approval, with telemetry repair
+optional. Do not repeat an approval that already covers these limits and unknown costs.
 
 ### 7. Run the honest comparison
 
-Use the same tuning slice, evaluator, objectives, and agent call path for both measurements:
+Use the same tuning slice, evaluator, primary criterion and direction, and agent call path for both
+measurements. Select the supported objectives before each operation under the missing-telemetry
+rule above; record each operation's actual objectives without changing them while it runs. Once an
+operation starts primary-only, keep that mode for the remaining planned comparison; recovered cost
+is reportable evidence, not permission to add the cost objective:
 
 1. **Baseline** - preserve the user's existing baseline exactly, including its original configuration count;
    never pad it. Only when it is missing, prepare the credible twelve-configuration fixed sweep in
@@ -939,13 +952,12 @@ Use the same tuning slice, evaluator, objectives, and agent call path for both m
    list above already does for a prepared baseline, and which a user-owned single-model baseline
    reaches through that same separate disclosure, never through another round.
 
-Report each measurement as a **Pareto frontier over the declared objective and cost**, naming that
-objective in the customer's own words, never as a single cheaper
-answer: a frontier carries the same score for less money and a higher score for the same money, and
-asserts neither. It costs nothing - it is arithmetic over trials already paid for. Never show a
-frontier point that scored below the configuration the user is already running.
-`references/run-safety.md` owns what a frontier may claim and the wording of its two outcomes;
-`references/sdk-execution.md` owns the read itself.
+Report a **Pareto frontier over the declared objective and cost** only for cost-aware operations
+with comparable measured costs. Otherwise report the primary-criterion observations and unavailable
+cost comparison;
+never rank a missing cost as zero or claim savings. Name the criterion in the customer's own words.
+`references/run-safety.md` owns frontier claims and missing-telemetry outcomes;
+`references/sdk-execution.md` owns the read. Any frontier keeps the incumbent's score bound.
 
 The three-tier ladder applies only when this walkthrough supplies a missing baseline: one fast,
 one mid, and one strong tier one step below - never the vendor's newest flagship - with a reasoning
@@ -972,10 +984,11 @@ account request:
 - State what ran: a local fixed grid, not Traigent choosing the trials.
 - Show the best configuration, the primary tuning metric by its actual name, cost, latency, and
   executed and failed trial counts. Report cost or latency as `not measured` when the provider or
-  SDK does not supply it.
-- Show this grid's own objective-cost frontier beside the winner, read from the trials it just
-  paid for. A fixed grid is a small frontier, and it is still the user's own measured evidence
-  rather than a note about whether the two happen to trade off.
+  SDK does not establish it; a default zero is not cost evidence.
+- Show this grid's own objective-cost frontier only when the measured-cost rule permits it;
+  otherwise show its primary-criterion result and the missing cost/usage limitation. If telemetry
+  failed during a cost-aware operation, preserve that objective label and its quality observations;
+  do not describe it as a quality-only search or endorse its cost-based recommendation.
 - Explain each baseline knob in one plain-language note.
 - State that no generalization or production-improvement claim exists yet and that this phase
   created no portal experiment.
@@ -983,8 +996,9 @@ account request:
 
 Now check whether the dataset and evaluator distinguish configurations. If not, stop before the search
 and recommend the evidenced repair before any connected preview. If the baseline is nearly perfect
-with no informative failures, report little or no measured quality or cost headroom as a
-limit on the claim - a ceiling effect remains a hypothesis - and name harder realistic cases as the
+with no informative failures, report little or no measured quality headroom, and cost headroom only
+where cost was measured, as a limit on the claim - a ceiling effect remains a hypothesis - and name
+harder realistic cases as the
 `traigent-dataset-curate` handoff after the run, never as a route. The routes in that state are
 `A.` the bounded connected run, offered as an optional no-lift-possible verification and never as
 an expected gain, carrying the mark on the two standing reasons below that rest on no number, and
@@ -1029,8 +1043,8 @@ disclosure prose rather than inside it. Its explicit approval remains required b
 probe, sync, or calls.
 
 Present `Stage 4/5 · Optimize` with the checklist in `references/run-safety.md`: explain
-managed selection, portal history, bounded calls/cost, and deeper insights as conditional
-capabilities. Obtain explicit approval for this connected stage before its key, probe, sync, or
+managed selection, portal history, bounded calls and execution allowance, and deeper insights as
+conditional capabilities. Obtain explicit approval for this connected stage before its key, probe, sync, or
 calls. In the enhanced run card, repeat the baseline knobs, label every addition new, and give its
 total combination count; pair that count with this run's trial cap as a ceiling, never a range: how
 many configurations exist and how many of them Traigent will test. `references/run-safety.md` owns
@@ -1129,11 +1143,15 @@ auditable:
 Include:
 
 - Best baseline configuration versus best enhanced configuration on the tuning set.
-- Each run's objective-cost frontier, in the details layer. One recommendation still leads; a
-  frontier put where the recommendation belongs is the menu this stage already refuses.
+- Each run's objective-cost frontier where measured, in the details layer. One recommendation still
+  leads; a frontier put where the recommendation belongs is the menu this stage already refuses.
 - The recommended configuration's held-out score and small-sample note, shown here first.
 - Cost, the configurations tested out of the space's total, failures, stop reason, and direct
-  portal links.
+  portal links. Separate any known-cost subtotal from unknown calls and estimate-based budget
+  debits and remaining execution allowance under the missing-telemetry rule.
+- Unavailable usage, cost and cost optimization, and the actual objectives each operation used.
+  Retain quality observations after telemetry loss without presenting a cost-aware search as
+  quality-only. The missing-telemetry rule owns its comparison and recommendation limits.
 - Which components were `✅` real and which were walkthrough substitutes.
 - What this run created or repaired, and what that costs the claim: examples it wrote are weaker
   evidence than examples collected from the product, and an evaluation method it wrote is a
@@ -1237,6 +1255,9 @@ what closing it properly takes:
   meanwhile.
 - A thin evaluator, or one that was never calibrated - align the method with the product's own
   grading policy before trusting a comparison built on it.
+- Missing usage/cost reporting - note optional telemetry repair for a later cost comparison,
+  alongside the other limits. It need not precede this run's quality result or displace a more
+  important data/evaluator gap.
 
 Then the forward half, which is not a gap in anything. The run-scope statement already recorded the
 three bounds this walkthrough chose - rows scored, configurations tested, controls varied - so name
@@ -1299,6 +1320,8 @@ The first run is complete only when:
 - Each paid stage had explicit approval before its calls.
 - Each reported frontier carried measured costs, a score claim the paired counts support, and no
   point below the floor.
+- Missing telemetry was disclosed under the supported objective mode, with cost claims omitted
+  where unmeasured; it does not prevent completion of a valid bounded quality comparison.
 - Baseline and optimization used the same tuning data and evaluator.
 - Result claims match the provenance and validation evidence.
 - The user received a concise result, limitations, artifacts, and portal links that were
