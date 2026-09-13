@@ -8932,7 +8932,7 @@ class SkillPackageTests(unittest.TestCase):
         self.assertIn("first-run subset for a large dataset", dataset_text)
         for phrase in (
             "18 tuning questions by default",
-            "at least four from each of the four difficulty bands",
+            "at least four available questions from each difficulty band",
             "score the dataset, not the subset",
             "report the run's sample-size limitation separately",
             "sample within each split, never across it",
@@ -20560,8 +20560,8 @@ class SkillPackageTests(unittest.TestCase):
         )
         # One function, both reads - not a second implementation.
         self.assertIn(
-            "the same function reads the baseline grid's finished trials and the "
-            "enhanced search's, so one function serves both",
+            "the same adapter reads the baseline grid's finished trials and the "
+            "enhanced search's",
             sdk,
         )
 
@@ -20783,7 +20783,7 @@ class FrontierAtOrAboveTests(unittest.TestCase):
             metrics["task_success"] = score
         if cost is not None:
             metrics["cost"] = cost
-        return SimpleNamespace(status=status, metrics=metrics)
+        return SimpleNamespace(status=status, metrics=metrics, config={})
 
     def select(self, trials, *, floor=0.80):
         return FRONTIER_AT_OR_ABOVE(trials, "task_success", floor)
@@ -20867,6 +20867,44 @@ class FrontierAtOrAboveTests(unittest.TestCase):
         self.assertEqual(
             self.select([dearest, cheapest, middle]), [cheapest, middle, dearest]
         )
+
+    def test_minimized_objective_filters_and_compares_in_its_declared_direction(self):
+        incumbent = self.trial(0.20, 0.008)
+        better = self.trial(0.10, 0.012)
+        worse = self.trial(0.30, 0.001)
+        dominated = self.trial(0.15, 0.020)
+        result = FRONTIER_AT_OR_ABOVE(
+            [dominated, better, worse, incumbent],
+            "task_success",
+            0.20,
+            orientation="minimize",
+        )
+        self.assertEqual(result, [incumbent, better])
+        self.assertIs(result[0], incumbent)
+        self.assertIs(result[1], better)
+
+    def test_invalid_orientation_is_rejected_before_selection(self):
+        with self.assertRaisesRegex(ValueError, "orientation"):
+            FRONTIER_AT_OR_ABOVE([], "task_success", 0.80, orientation="sideways")
+
+    def test_sdk_precision_does_not_relax_the_incumbent_quality_filter(self):
+        for orientation, floor, near_better, just_worse in (
+            ("maximize", 0.80, 0.80 + 1e-11, 0.80 - 1e-11),
+            ("minimize", 0.20, 0.20 - 1e-11, 0.20 + 1e-11),
+        ):
+            with self.subTest(orientation=orientation):
+                incumbent = self.trial(floor, 0.010)
+                near = self.trial(near_better, 0.020)
+                worse = self.trial(just_worse, 0.001)
+                self.assertEqual(
+                    FRONTIER_AT_OR_ABOVE(
+                        [worse, near, incumbent],
+                        "task_success",
+                        floor,
+                        orientation=orientation,
+                    ),
+                    [incumbent],
+                )
 
 
 class AFlatResultIsReadInBothDirectionsTests(unittest.TestCase):
@@ -33036,7 +33074,15 @@ class TheBoundedDrawSpendsOnDifferentRowsTests(unittest.TestCase):
             ),
         ),
         (
-            "what happens when a band cannot reach four",
+            "how eighteen questions are allocated without repeating an input",
+            (
+                "4 easy, 5 medium, 5 hard and 4 very-hard questions",
+                "take up to each target from questions not already selected anywhere in the draw",
+            ),
+            ("take up to four questions each band has not already contributed",),
+        ),
+        (
+            "what happens when a band cannot reach its target",
             (
                 "the draw is short by that much",
                 "the shortfall is not made up from the bands that can",
@@ -33095,10 +33141,11 @@ class TheBoundedDrawSpendsOnDifferentRowsTests(unittest.TestCase):
         "two inputs are the same question only when they are **equal**",
     )
 
-    #: Ways a sentence says a band could not fill its four.
+    #: Ways a sentence says a band could not fill its target.
     SHORT_BAND = (
         "shortfall",
         "cannot reach four",
+        "cannot reach its target",
         "comes up empty",
         "band is short",
         "short band",

@@ -6,8 +6,8 @@ follows-total-measured: 525_912
 follows-document-measured: 134_261
 resident-ceiling: 50_939
 resident-measured: 50_935
-total-ceiling: 539_596
-total-measured: 539_592
+total-ceiling: 540_232
+total-measured: 540_228
 document-ceiling: 147_749
 document-measured: 147_745
 
@@ -56,3 +56,8 @@ Review of the published PR removed remaining scoring claims about source observa
 row-review explanations follow actual coverage and verdicts, and removed an unsupported causal
 reading and normal-interval approximation for the ten-row result. The score and execution stay
 unchanged; the existing owners and contradiction checks now carry the narrower claims.
+
+The public SDK now owns Pareto dominance while the guide keeps the strict incumbent-quality
+filter and measured-cost policy in both objective directions. The large-dataset draw assigns
+all eighteen tuning questions explicitly; a short band stays short without changing the generated
+dataset composition or its separate holdout.

@@ -1163,8 +1163,8 @@ the question wrote its band too, and the row already declares itself generated.
 A first run has to show the capability, not exhaust the dataset. With more than 100 usable rows,
 every trial pays for every row, so a large set turns the walkthrough into a long, expensive run
 that demonstrates nothing the smaller one would not. Select a bounded subset instead: **18 tuning
-questions by default**, at least four from each of the four difficulty bands (`easy`, `medium`,
-`hard`, `very-hard`), so the subset keeps the spread that makes a result informative rather than landing on
+questions by default**, with at least four available questions from each difficulty band (`easy`,
+`medium`, `hard`, `very-hard`), allocated by rule 6 below, so the subset keeps the spread rather than landing on
 one cluster - plus the held-out ten, drawn with it to their own composition; "Held-out set and
 claims" below owns when each source draws.
 
@@ -1224,8 +1224,9 @@ Six rules make the subset honest:
    `first_run_rows_fewest` to `first_run_rows_most`.
 
    Distinct **across the whole draw**, not within one band: a row already drawn under one band buys
-   nothing when another band offers the same input again. Work the bands in turn, take up to four
-   questions each band has not already contributed, and stop at eighteen or at the tuning split's
+   nothing when another band offers the same input again. Work the bands in order with targets of
+   **4 easy, 5 medium, 5 hard and 4 very-hard questions**. Take up to each target from questions not
+   already selected anywhere in the draw, and stop at eighteen or at the tuning split's
    different questions **among the rows this run can score**, whichever is smaller. Those are the
    labelled tuning rows, or every present tuning row under a method that scores without a
    reference. A count taken over the whole file, or over rows the comparison cannot reach, is the
@@ -1233,7 +1234,7 @@ Six rules make the subset honest:
    repeats this rule removes. Price and report the rows actually drawn, because they are what the
    run buys.
 
-   **When a band cannot reach four, the draw is short by that much, and the shortfall is not made up
+   **When a band cannot reach its target, the draw is short by that much, and the shortfall is not made up
    from the bands that can.** An extra `easy` input is not a `hard` one, so topping the count back
    to eighteen from elsewhere spends the budget on the spread the floor exists to protect.
    De-duplication removes no question - every distinct input a band holds stays eligible - so a band
@@ -1254,7 +1255,7 @@ Six rules make the subset honest:
    "Held-out set and claims" below, which is where a repeat among them is answered; this rule does
    not reach it.
 
-Keeping at least four rows from every band is what protects the spread: a careless trim to 18 that
+Keeping at least four available questions from every band protects the spread: a careless trim to 18 that
 drops a band costs difficulty points and prints a spread complaint about a dataset that has all four.
 
 When the rows carry no difficulty tags, work down the ladder in "Choosing rows when difficulty is

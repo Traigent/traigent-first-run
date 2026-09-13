@@ -4136,10 +4136,11 @@ class TheSubsetProposalCountsDifferentQuestionsTests(unittest.TestCase):
         difficulty, so where cost correlates with difficulty the arithmetic low
         end is below anything a compliant draw can reach.
 
-        30 easy questions of one row beside 90 harder ones of three:
+        30 questions in every difficulty band: easy questions have one row,
+        and each medium, hard, and very-hard question has three:
 
             arithmetic low end   : 18 questions x 1 row              = 18
-            cheapest COMPLIANT   : 4 easy x 1 + 14 harder x 3        = 46
+            cheapest COMPLIANT   : 4 easy x 1 + (5 + 5 + 4) x 3     = 46
             arithmetic high end  : 18 questions x 3 rows             = 54
 
         The interval is honest and neither end is a quote. What is asserted is
@@ -4161,13 +4162,14 @@ class TheSubsetProposalCountsDifferentQuestionsTests(unittest.TestCase):
         ]
         rows += [
             {
-                "id": f"hard-{index}-{gold}",
-                "input": f"expensive question {index}",
+                "id": f"{difficulty}-{index}-{gold}",
+                "input": f"{difficulty} expensive question {index}",
                 "output": gold,
-                "difficulty": "hard",
+                "difficulty": difficulty,
                 "split": "tuning",
             }
-            for index in range(90)
+            for difficulty in ("medium", "hard", "very-hard")
+            for index in range(30)
             for gold in ("p", "q", "r")
         ]
         rows += self.held_out()

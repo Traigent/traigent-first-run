@@ -49,6 +49,7 @@ signature you have not inspected, and treat an absent name as unavailable rather
 | `ObjectiveDefinition`, `ObjectiveSchema` | `traigent.core.objectives` |
 | Dataset loader and example fields (`.input_data` / `.expected_output` / `.metadata`) | `traigent.Dataset` (`Dataset.from_jsonl`) |
 | `optimize_sync(...)` and its result object | the decorated function (`agent.optimize_sync`) |
+| `ParetoFrontCalculator` - frontier over completed trials and declared objectives | `traigent` (`traigent.ParetoFrontCalculator`) |
 | Knob recommendations - `recommend_configuration_space(agent_type)`, agent_type `rag` or `code_gen` | `traigent.config_generator.recommendations` |
 
 Read outcomes from attributes on the result object rather than parsing the printed table; inspect
@@ -2343,13 +2344,14 @@ describe another invocation as "resume" unless the installed SDK exposes a publi
 
 ## Result checks
 
-**Read the frontier by hand, on the metric the run actually declared.** The same function reads the
-baseline grid's finished trials and the enhanced search's, so one function serves both. It is
-arithmetic over artifacts already in hand and makes no provider call:
+**Read the frontier through the public SDK, on the metric the run actually declared.** The same
+adapter reads the baseline grid's finished trials and the enhanced search's. It filters on the
+incumbent's quality before delegating dominance to the SDK, using artifacts already in hand and
+making no provider call:
 
 ```python
-def frontier_at_or_above(trials, metric_name, floor):
-    """Non-dominated completed trials scoring at or above `floor`, cheapest first.
+def frontier_at_or_above(trials, metric_name, floor, orientation="maximize"):
+    """Completed trials no worse than the incumbent, on the SDK frontier, cheapest first.
 
     `metric_name` is this run's own objective name - the key wired through
     `metric_functions`, which is `"accuracy"` in this reference's worked
@@ -2365,13 +2367,16 @@ def frontier_at_or_above(trials, metric_name, floor):
     trial is always on the frontier however badly it scored, and the report
     hands the user a configuration worse than the one they already run.
 
-    Higher-is-better is assumed, which is what this reference's
-    `orientation="maximize"` objective declares. For a run whose primary
-    metric is one where lower is better - an error rate, declared `minimize` -
-    reverse both score comparisons rather than passing the metric through
-    unchanged, or the frontier is built out of the worst-scoring trials.
+    Pass the primary objective's declared orientation. The worked accuracy
+    example maximizes; an error rate declared `minimize` admits scores at or
+    below the incumbent's value instead. The same direction reaches the SDK.
     """
-    priced = []
+    if orientation not in ("maximize", "minimize"):
+        raise ValueError("orientation must be 'maximize' or 'minimize'")
+    from traigent import ParetoFrontCalculator
+
+    upward = orientation == "maximize"
+    eligible = []
     for trial in trials:
         if getattr(trial.status, "value", trial.status) != "completed":
             continue
@@ -2382,22 +2387,23 @@ def frontier_at_or_above(trials, metric_name, floor):
         # unpriced trial on the frontier.
         if score is None or cost is None:
             continue
-        if score >= floor:
-            priced.append((cost, score, trial))
-    frontier = [
-        (cost, score, trial)
-        for cost, score, trial in priced
-        # Dominated: some other point is no dearer and no lower-scoring, and
-        # strictly better on one of the two. Nobody would take this one.
-        if not any(
-            other_cost <= cost
-            and other_score >= score
-            and (other_cost < cost or other_score > score)
-            for other_cost, other_score, _other in priced
-        )
+        meets_floor = score >= floor if upward else score <= floor
+        if meets_floor:
+            eligible.append(trial)
+    frontier = ParetoFrontCalculator(
+        maximize={metric_name: upward, "cost": False}
+    ).calculate_pareto_front(eligible, [metric_name, "cost"])
+    return [
+        point.trial
+        for point in sorted(frontier, key=lambda point: point.objectives["cost"])
     ]
-    return [trial for _cost, _score, trial in sorted(frontier, key=lambda row: row[0])]
 ```
+
+The SDK owns dominance and its numerical comparison tolerance (`1e-10` in the pinned SDK). Tiny
+score differences can therefore compare as tied; this is not exact parity with an exact-comparison
+frontier. The incumbent quality filter above stays strict, so that tolerance never admits a score
+worse than the incumbent. Pass the original SDK trials, including their `config`, rather than
+reconstructing points or changing the optimization's objectives.
 
 The incumbent is a point like any other and is reported as one: keeping what you already run is a
 choice the frontier is meant to show, not one it hides. The incumbent trial that supplies `floor`
@@ -2407,8 +2413,8 @@ cannot establish that distinction. Apply `references/run-safety.md`'s measured-c
 this arithmetic; when the route genuinely costs nothing, report that there is no cost trade-off
 to plot.
 
-Do not pass `strategy=` or `strategy_params` to obtain this: the frontier is the function above and
-nothing else. The presets are unused here because a strategy can replace the objectives the
+Do not pass `strategy=` or `strategy_params` to obtain this: use the public calculator through the
+adapter above. The presets are unused here because a strategy can replace the objectives the
 decorator declared without raising or warning, and because the cost-floor preset floors on built-in
 exact-match accuracy rather than the wired scorer - so the floor silently becomes `0.0` and it
 returns the cheapest configuration rather than the cheapest acceptable one. Both move the winner
