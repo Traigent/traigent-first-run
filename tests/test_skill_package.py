@@ -33084,10 +33084,12 @@ class TheBoundedDrawSpendsOnDifferentRowsTests(unittest.TestCase):
         (
             "what happens when a band cannot reach its target",
             (
+                "when a band cannot reach its target",
                 "the draw is short by that much",
                 "the shortfall is not made up from the bands that can",
             ),
             (
+                "when a band cannot reach four",
                 "make the shortfall up from the bands that can",
                 "so the draw is still eighteen",
                 "top the draw back up to eighteen",
