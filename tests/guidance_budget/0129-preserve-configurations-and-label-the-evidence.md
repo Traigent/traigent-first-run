@@ -1,15 +1,15 @@
-# 0128 - compact the guide and preserve first-run paths
+# 0129 - compact the guide and preserve first-run paths
 
-follows: 0127
-follows-resident-measured: 108_167
-follows-total-measured: 525_912
-follows-document-measured: 134_261
-resident-ceiling: 50_939
-resident-measured: 50_935
-total-ceiling: 540_232
-total-measured: 540_228
-document-ceiling: 147_749
-document-measured: 147_745
+follows: 0128
+follows-resident-measured: 110_297
+follows-total-measured: 532_602
+follows-document-measured: 136_253
+resident-ceiling: 52_480
+resident-measured: 52_476
+total-ceiling: 546_108
+total-measured: 546_104
+document-ceiling: 150_339
+document-measured: 150_335
 
 The resident skill now keeps ordered decisions and stage dispatch while its detailed opening,
 setup, calibration, recovery, and reporting procedures live in their existing reference owners.
@@ -32,10 +32,12 @@ direction and the available paired evidence instead of assuming a measured binar
 new ceiling records the actual integrated documents, including the new run-record fields, rather
 than adding independent branch estimates.
 
-The composition includes the ownership clarification in its predecessor. Its manual diagnostic
-exception is bounded to those named calls: the existing SDK usage prerequisite remains required
-for baseline and search. The taxonomy no longer states a stale category count, and a runtime
-contract breach limits the affected claims without declaring unrelated measurements meaningless.
+The composition now follows the parent's executable missing-telemetry continuation. The compact
+flow and its relocated stage procedures keep the same primary criterion, actual objective history,
+conservative call debits and explicit evidence limits. Primary-only comparisons stay in that mode;
+restored costs can be reported but cannot silently reopen cost ranking. SDK calls without provider
+usage remain usable, while genuine cost reporting and the existing execution guards stay intact.
+The taxonomy and scoped contract-breach interpretation are inherited from the parent.
 
 Customer-owned spaces now keep all original dimensions and values; the generated three-control
 limit cannot silently narrow them. Verified provider-zero cost remains measured. Source-build
@@ -61,3 +63,9 @@ The public SDK now owns Pareto dominance while the guide keeps the strict incumb
 filter and measured-cost policy in both objective directions. The large-dataset draw assigns
 all eighteen tuning questions explicitly; a short band stays short without changing the generated
 dataset composition or its separate holdout.
+
+
+This entry is the remeasured successor to the newly integrated parent entry. It replaces this
+child's unmerged sibling entry numbered 0128 rather than keeping two successors to 0127. The measured
+figures describe the resolved document set, including the compact telemetry handoff and existing
+same-run setup evidence. No customer-environment installation migration is introduced.

@@ -81,14 +81,14 @@ approval gates.
 
 ## Default run
 
-The default paid path uses two measurements with the same tuning data, evaluator, objectives, and
+The default paid path uses two measurements with the same tuning data, evaluator, primary criterion, and
 agent call path: a provider-paid **local fixed baseline**, preserving the user's configuration
 exactly, and then a zero-LLM portal probe and one **connected managed optimization** that contains
 every baseline value and tests up to 12 configurations from a materially larger space. SKILL.md's
 "Prepare the environment and finish free checks" and "Verify and report" sections own how each is
 prepared, what the user is shown and when they are asked; this document states none of that a
 second time. A completed baseline is uploaded without rerunning it only where the installed SDK
-exposes a public exact sync id. It discloses the enhanced winner's held-out score here, with a note
+exposes a public exact sync id. It discloses the selected configuration's held-out score here, with a note
 saying how little ten examples can settle.
 
 Do not expand, shrink, or weaken a user-owned baseline to reach a configuration count; one

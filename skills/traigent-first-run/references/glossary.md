@@ -119,7 +119,7 @@ Configuration (config, variant)
 
 Optimization (optimization run)
   Plain: the search where we try many configurations and find the ones that do
-  best on what you are optimizing for, at the lowest cost and latency.
+  best on what you are optimizing for. Cost is compared only when measured.
   Precise: a guided search over the configuration space, scored on the dataset
   by the evaluator, that returns the best non-dominated candidates.
 
@@ -154,7 +154,8 @@ Difficulty spread
 
 Pareto frontier (optimal frontier)
   Plain: the set of best trade-offs - each one is a config where you cannot do
-  better on what you are optimizing for without paying more cost or latency.
+  better on one measured objective without doing worse on another. A quality-only
+  comparison reports its primary criterion rather than a cost frontier.
 
 The lines under each pillar on the card
   Plain: each line is one question the score asked about your setup, with what

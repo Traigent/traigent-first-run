@@ -51,6 +51,8 @@ beside the record, and retire the two together. Keep stage status current at eac
 before every wait. A matching unfinished record starts Recovery's resume validation before free
 work continues. The record grants no approval: revalidate comparison invariants and current
 conversation authority before external calls; never restart a live process or finished run from it.
+Apply the missing-telemetry rule to any recorded cost-only objective transition; retain the
+original objective history.
 Every `<YYYYMMDDTHHMMSSZ>` this guide writes into a name - that rename, section 1's readiness
 directory, the run log's `ts` - is UTC when that file or directory is written, never one id minted
 per run and reused; the run supplies it because no bundled script reads a clock.
@@ -147,7 +149,7 @@ three-gap wording; do not render an additional board merely to explain this conv
 >
 > 1. **Inspect** - preserve your agent, dataset, and evaluator.
 > 2. **Readiness** - run free readiness research and explain its score.
-> 3. **Baseline** - install the SDK, then measure today's setup with calls, cost, and time.
+> 3. **Baseline** - install the SDK, then measure today's setup and report available calls, cost, and time.
 > 4. **Optimize** - the paid baseline result comes first, your Traigent account after it, then a
 >    bounded managed search.
 > 5. **Results** - compare the runs, recommend one next step, and hand over the Traigent skills so
@@ -276,9 +278,9 @@ can derive, and how substitutes limit the result. Offer bounded top-up only for 
 up to 28 rows, with its generated-data ceiling disclosed. Offer proceed; where material is only
 short, also offer keeping it. Always end with `I have it` and a path as an unnumbered alternative.
 Ask what they want optimized only where their evaluator and project do not establish it; if no
-objective is named, say the default is accuracy and cost. Then stop and wait. A supplied path
-reopens the opening gate before the run record is created. The zero-anchor task question carries
-these same terms, never an additional question; defects keep section 4's validation gates.
+objective is named, say the default is accuracy, with cost when measurable. Then stop and wait.
+A supplied path reopens the opening gate before the run record is created. The zero-anchor task
+question carries these same terms, never an additional question; defects keep section 4's validation gates.
 
 **Read next.** Required: [`references/component-creation.md` § The one ask, and the path that answers it](references/component-creation.md#the-one-ask-and-the-path-that-answers-it).
 If a dataset below this run's 28 puts a top-up on that same ask: [`references/evaluation-and-dataset.md` § Dataset construction](references/evaluation-and-dataset.md#dataset-construction).
@@ -411,13 +413,20 @@ figures and shared running total in every paid process; stop before the next cal
 After the approved provider probe, recheck observed time bounds and re-scope approval if needed.
 Report measured progress or phase milestones, never invented progress; preserve paid partial
 results through Recovery.
+When usage or cost is unavailable, follow
+[`references/run-safety.md` § Missing cost or usage telemetry](references/run-safety.md#missing-cost-or-usage-telemetry):
+recommend bounded primary-criterion continuation on the existing approval, with repair optional.
+Do not repeat an approval that already covers these limits and unknown costs.
 
 ### 7. Run the honest comparison
 
 Preserve the user's baseline exactly; generate the twelve-configuration baseline only when absent.
-Use the same tuning rows, evaluator, objectives, and agent call path for both measurements. Retain
-every baseline model/value in the enhancement, add only proven meaningful controls, and test up to
-12 configurations from a materially larger space. The generated model ladder never expands a
+Use the same tuning rows, evaluator, primary criterion and direction, and agent call path for both
+measurements. Record each operation's actual objectives under the missing-telemetry rule; never
+change them while it runs. Once an operation starts primary-only, keep that mode for the remaining
+comparison; recovered costs do not re-enable the cost objective. Retain every baseline model/value
+in the enhancement, add only proven meaningful controls, and test up to 12 configurations from a
+materially larger space. The generated model ladder never expands a
 customer-owned baseline without a separately disclosed experiment. This is a deliberately small
 enhancement; baseline and search are the only paid passes.
 Follow the comparison sequence for the baseline, checkpoint, connected approval, and search.
@@ -433,9 +442,10 @@ approved ceiling. Prepare the wrapper and fixed grid from the execution contract
 If the run wrapper is being written now: [`references/sdk-execution.md` § Decorator contract](references/sdk-execution.md#decorator-contract).
 
 Immediately after it returns, show a **Local baseline checkpoint** with target/agent identity,
-substitute limits, measured tuning results, cost/latency, trials/failures, and its objective-cost
-frontier. Explain knobs plainly; distinguish the local grid from managed search. Do not disclose
-the held-out score before section 8, and make no generalization or production-improvement claim.
+substitute limits, measured tuning results, available cost/latency and trials/failures. Show a cost
+frontier only when the measured-cost rule permits it; otherwise report the quality result and
+missing telemetry. Explain knobs plainly; distinguish the local grid from managed search. Do not
+disclose the held-out score before section 8, and make no generalization or production-improvement claim.
 If the signal cannot distinguish configurations, recommend the evidenced repair before search.
 A nearly perfect baseline may proceed as an optional verification with no expected gain, or stop
 with its baseline-only result. Recommend the sound continuing route without promising improvement;
@@ -482,13 +492,17 @@ If the search stopped, failed, or returned zero trials: [`references/run-safety.
 
 Report in five layers: outcome, what the evidence establishes, current state and limits, one next
 action, then auditable details. Compare baseline and enhanced tuning outcomes, show the selected
-configuration's one held-out result, and state sample limits, exclusions by id, measured costs,
-failed or incomplete work, and verified artifact/portal links. Name substitutes and their limits
-before interpreting them; keep every persisted experiment and label an unsynced baseline local-only.
+configuration's one held-out result, and state sample limits, exclusions by id, known-cost
+subtotal, unknown calls, budget debits and remaining allowance, failed or incomplete work, and
+verified artifact/portal links. Name substitutes and their limits before interpreting them; keep
+every persisted experiment and label an unsynced baseline local-only.
 A flat or negative result leads with its measured delta: separate facts, supported inferences, and
 hypotheses, using `cause not established by this run` where appropriate. Generated material cannot
 establish production performance or support promotion; later promotion requires separate approval
 and validation.
+Name each operation's actual objectives and any missing usage, cost or cost optimization. Report a
+cost frontier only for cost-aware operations with comparable measured costs; keep quality
+observations after telemetry loss without relabelling the completed search.
 Run the closing readiness gate on current post-run evidence to check the agent space actually
 searched. Record and route its findings internally; never display a second readiness number or
 compare it to the opening score. Post-run verification owns the evidence checklist, invocation,
@@ -509,7 +523,9 @@ measured limits. A substitute fills a gap provisionally; it does not close it. E
 action would improve and the bound that most limited this walkthrough, without promising what a
 larger run would find. Use the continuation handoff for the state-specific recommendation,
 reply-ready final block, and optional skills package. Handoff observations are hypotheses to test
-at full scale; `continue` never bypasses approval.
+at full scale; `continue` never bypasses approval. Include optional telemetry repair when cost
+comparison is unavailable; it need not precede the quality result or displace a more important
+data/evaluator gap.
 
 **Read next.** Required: [`references/run-safety.md` § Continuation handoff](references/run-safety.md#continuation-handoff).
 
@@ -530,9 +546,11 @@ and the evidence supports these checks:
   calibration, the recorded `containment` warning, disclosure, and any connection answer satisfy
   this criterion; that run is allowed to finish.
 - Free checks made no provider calls, and each paid stage had explicit approval before its calls.
-- Baseline and optimization used the same tuning data, evaluator, and objectives; each reported
-  frontier has measured costs, a score claim supported by the paired evidence, and no point worse
-  than the current baseline under the declared objective direction.
+- Baseline and optimization used the same tuning data, evaluator, primary criterion and direction.
+  Each operation's actual objective mode and missing telemetry were disclosed; a valid bounded
+  quality comparison can finish without cost optimization. Each reported frontier has comparable
+  measured costs, a score claim supported by paired evidence, and no point worse than the current
+  baseline under the declared objective direction.
 - The user received a concise truthful result, limitations, one next action, artifacts, and only
   verified portal links. Claims match component provenance and validation evidence; incomplete
   phases and remaining gaps remain visible.

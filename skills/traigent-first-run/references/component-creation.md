@@ -66,8 +66,9 @@ into the same decision. That question carries five things:
 5. **What they want optimized**, in one line, where this run cannot already tell. The SDK optimizes
    for their chosen objective. Read it off their evaluator where the evaluator answers it - a
    scorer comparing an answer to an expected one is optimizing correctness and needs no question -
-   and ask only where it does not. Where they name nothing, proceed on accuracy and cost **and say that in those
-   words**, so a default nobody chose is not mistaken for a choice somebody made.
+   and ask only where it does not. Where they name nothing, proceed on accuracy, with cost when
+   measurable, **and say that in those words**, so a default nobody chose is not mistaken for a
+   choice somebody made.
    `references/evaluation-and-dataset.md` owns what the answer becomes.
 Then stop and wait, and ask nothing else here; what this run writes is shown at the pre-spend
 approval in section 6, the other checkpoint. The question closes the message: the board and the
@@ -412,8 +413,8 @@ nothing else, and the number it gives is optimistic about exactly the material i
 
 When creating an agent:
 
-1. Prefer a small Python function using the user's selected provider through LiteLLM so mock
-   interception and cost accounting are observable.
+1. Prefer a small Python function using the user's selected provider through LiteLLM for its mock
+   interception and accounting support; verify which usage and cost measurements the route supplies.
 2. Give it one clear input contract and one clear output contract.
 3. Expose at least two meaningful, safe optimization variables. Include the initial values in the
    search space.

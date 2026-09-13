@@ -47,9 +47,9 @@ signature you have not inspected, and treat an absent name as unavailable rather
 | `optimize` decorator, `EvaluationOptions`, `InjectionOptions` | `traigent.api.decorators` |
 | `get_config()` - read the trial's chosen values inside the agent body | `traigent` (`traigent.get_config`) |
 | `ObjectiveDefinition`, `ObjectiveSchema` | `traigent.core.objectives` |
+| Primary-only or cost-aware candidate selection | `traigent.ParetoFrontCalculator` |
 | Dataset loader and example fields (`.input_data` / `.expected_output` / `.metadata`) | `traigent.Dataset` (`Dataset.from_jsonl`) |
 | `optimize_sync(...)` and its result object | the decorated function (`agent.optimize_sync`) |
-| `ParetoFrontCalculator` - frontier over completed trials and declared objectives | `traigent` (`traigent.ParetoFrontCalculator`) |
 | Knob recommendations - `recommend_configuration_space(agent_type)`, agent_type `rag` or `code_gen` | `traigent.config_generator.recommendations` |
 
 Read outcomes from attributes on the result object rather than parsing the printed table; inspect
@@ -102,7 +102,7 @@ Do not bound the enhanced optimization with a mid-run wall-clock cap. Pass
 progressing search is never cut off partway and forced to report a partial result - and so a large
 run is not truncated wholesale by a fixed clock. Its real bounds are the trial cap, the total cost
 ceiling, and the per-model-request timeout below: a stuck provider call is caught by the request
-timeout and total spend by the ceiling. Keep a first run from taking too long by sizing it up
+timeout; the ceiling bounds the execution allowance. Keep a first run from taking too long by sizing it up
 front, not by cutting it: if the runtime estimate is too high, reduce the run before starting - a
 smaller representative tuning slice for either phase, or a lower enhanced trial cap; the baseline
 grid is never reduced, because a grid that does not run its whole space has ranked nothing - and
@@ -123,7 +123,7 @@ reasonable internal fallback such as 120 seconds, adjusted automatically after t
 This is not a new retry policy.
 
 Use one total walkthrough ceiling, `$5.00` by default. Every paid process is launched with that
-total and with what earlier phases already spent, and the decorator contract below turns the pair
+total and with what earlier phases already debited, and the decorator contract below turns the pair
 into two things: the per-optimization limit the SDK enforces for that phase, and the gate every
 provider call the wrapper places itself has to pass. `references/run-safety.md` owns what the total
 covers, how it is approved, and how the figures are carried between processes.
@@ -178,8 +178,8 @@ baseline is a strict subset and the enhanced run never gets a model the baseline
 a measured difference cannot be explained by quietly upgrading the model. The coding assistant
 fixes every generated value before either run; the user is never asked to pick values or edit the
 wrapper. The assistant adds the disclosed
-controls; Traigent performs managed, cost-aware selection among them. Keep those actors separate
-in the report.
+controls; Traigent performs managed selection under the declared objectives, including cost only
+when its evidence supports comparison. Keep those actors separate in the report.
 
 ### The knob catalog - nine documented controls, seven eligible direct parameters
 
@@ -287,8 +287,8 @@ one family by default, and borrow a missing model from a second family only when
 lacks it, naming that extra provider in the approval.
 
 These three model slots are roles, not hardcoded ids: pick concrete model ids from what the
-selected route lists at run time, then verify each id is live and cost-tracked before scaling, as
-`run-safety.md` already requires.
+selected route lists at run time, then verify each id is live before scaling. Missing cost follows
+`run-safety.md`'s telemetry choice; it is not a reason to replace a working model automatically.
 
 ## Decorator contract
 
@@ -300,16 +300,18 @@ process variables it reads.
 - `WALKTHROUGH_TEMPERATURE` - the one task-selected value.
 - `ROUTE_ALIASES` - only for a route spelling litellm reads as one already in the table.
 - `BASELINE_IS_USER_OWNED` - `True` only for an inspected customer baseline.
+- `INCLUDE_COST_OBJECTIVE` and `OBJECTIVES` - the measured primary criterion and the supported
+  cost-comparison mode recorded for this operation.
 - `BASELINE_CONFIG`, `BASELINE_SPACE`, `ENHANCED_SPACE` and `WIRED_KNOBS`, always together.
 - `build_prompt` and `build_request` - how the customer's agent turns a configuration into one
   request.
 - `SCORER_CALLS_PER_ROW`, `JUDGE_MODEL` and the judge's sampling key - what the wired evaluator
   places.
 - The `task_score` body - the preserved evaluator's grade of one row.
-- The decorated function's signature and `holdout_agent_input` - the agent's own input contract,
-  and how a dataset row reaches it.
-- The objective/metric keys and the returned output or measures - preserve the chosen objective
-  and existing observations through baseline, search, and held-out scoring, as described below.
+- The decorator's `metric_functions` key, matching the primary objective; the function's signature
+  and `holdout_agent_input`, matching the agent's own input contract.
+- The returned output or measures - preserve existing observations through baseline, search,
+  and held-out scoring, as described below.
 
 ```python
 import atexit
@@ -404,7 +406,7 @@ def approved_usd(name: str) -> float:
     A default here would be a number nobody approved. Absent one of these, the
     SDK's own per-optimization default governs instead - built fresh per call,
     so every phase would get the whole of it and none of them would know what
-    the earlier phases already spent. Read out of the pre-dotenv capture above,
+    the earlier phases already debited. Read out of the pre-dotenv capture above,
     which is what makes "never in .env" a refusal rather than a request.
     """
     raw = (APPROVED_FIGURES.get(name) or "").strip()
@@ -779,14 +781,19 @@ assert set(WIRED_KNOBS) == set(ENHANCED_SPACE), (
     "cannot skip a searched key"
 )
 
-# ADAPT: `accuracy` is this exact-match walkthrough's objective. In a customer run,
+# `accuracy` is this exact-match walkthrough's objective. In a customer run,
 # use a meaningful metric name consistently in the objective, metric function,
 # result reading, and frontier; the portal is not an `accuracy`-only display.
+# ADAPT: from the approved probe evidence, not a new question or user setting.
+# Enable cost comparison only when the SDK's cost matches trustworthy response
+# metadata for this route. Missing telemetry keeps the primary criterion usable.
+INCLUDE_COST_OBJECTIVE = False
 OBJECTIVES = ObjectiveSchema.from_objectives(
-    [
-        ObjectiveDefinition(name="accuracy", orientation="maximize", weight=1.0),
-        ObjectiveDefinition(name="cost", orientation="minimize", weight=1.0),
-    ]
+    [ObjectiveDefinition(name="accuracy", orientation="maximize", weight=1.0)]
+    + (
+        [ObjectiveDefinition(name="cost", orientation="minimize", weight=1.0)]
+        if INCLUDE_COST_OBJECTIVE else []
+    )
 )
 
 
@@ -833,27 +840,25 @@ def build_prompt(
 
 
 def provider_reported_cost(response) -> float | None:
-    # `_hidden_params["response_cost"]` FIRST, because it is the field litellm
-    # actually populates and the one the SDK's own accounting reads. Measured
-    # against the installed client on five of the six routes this package
-    # supports - openai, anthropic, gemini, mistral and cohere - the two
-    # readings below it return None on every call, so a door that consulted
-    # only those was not a ledger at all: it debited the flat unpriced rate
-    # every time and became a call counter.
-    # Normalised once rather than guarded at the first reading alone: the
-    # header reading below reaches the same object, and raised on a non-mapping.
+    # Prefer explicit provider cost: LiteLLM can synthesize hidden cost=0.0
+    # when token counts are absent, including a cost-only usage block.
+    # Its hidden response_cost remains useful on routes reporting only tokens,
+    # but a computed cost is not a provider billing statement.
     hidden = getattr(response, "_hidden_params", None)
     hidden = hidden if isinstance(hidden, dict) else {}
-    reported = hidden.get("response_cost")
     usage = getattr(response, "usage", None)
-    if reported is None:
-        reported = getattr(usage, "cost", None)
-    if reported is None and isinstance(usage, dict):
-        reported = usage.get("cost")
+
+    def usage_field(name):
+        return usage.get(name) if isinstance(usage, dict) else getattr(usage, name, None)
+
+    reported = usage_field("cost")
     if reported is None:
         headers = hidden.get("additional_headers")
         if isinstance(headers, dict):
             reported = headers.get("llm_provider-x-litellm-response-cost")
+    explicit_cost = reported is not None
+    if reported is None:
+        reported = hidden.get("response_cost")
     if reported is None:
         return None
     if isinstance(reported, bool):
@@ -864,49 +869,22 @@ def provider_reported_cost(response) -> float | None:
         raise RuntimeError("The provider returned malformed response-cost metadata") from error
     if not math.isfinite(cost) or cost < 0:
         raise RuntimeError("The provider returned an invalid per-response cost")
-    return cost
-
-
-def require_nonzero_token_usage(response) -> None:
-    """Distinguish a real free-route response from a canned or missing call."""
-    usage = getattr(response, "usage", None)
-
-    def usage_field(name: str):
-        if isinstance(usage, dict):
-            return usage.get(name)
-        return getattr(usage, name, None)
-
-    total_tokens = usage_field("total_tokens")
-    if total_tokens is None:
-        # Some provider adapters expose only the two component counts. They
-        # still prove a real call when every reported component is valid and
-        # their sum is nonzero.
-        components = [
-            value
-            for value in (
-                usage_field("prompt_tokens"),
-                usage_field("completion_tokens"),
-            )
-            if value is not None
+    if cost == 0 and not explicit_cost:
+        counts = [
+            usage_field(name)
+            for name in ("total_tokens", "prompt_tokens", "completion_tokens")
+            if usage_field(name) is not None
         ]
-        if components and all(
+        valid_usage = counts and all(
             not isinstance(value, bool)
             and isinstance(value, (int, float))
             and math.isfinite(value)
             and value >= 0
-            for value in components
-        ):
-            total_tokens = sum(components)
-    if (
-        isinstance(total_tokens, bool)
-        or not isinstance(total_tokens, (int, float))
-        or not math.isfinite(total_tokens)
-        or total_tokens <= 0
-    ):
-        raise RuntimeError(
-            "The provider response did not report nonzero token usage; "
-            "stop before treating this as a real call"
-        )
+            for value in counts
+        ) and any(value > 0 for value in counts)
+        if not valid_usage:
+            return None
+    return cost
 
 
 def require_untruncated_completion(response) -> None:
@@ -966,8 +944,8 @@ def build_request(message: str, config: dict) -> dict:
     }
 
 
-# Spend on trials this wrapper refused. Both guards below raise, so reading the
-# cost after them dropped that money out of every total the run reports: a
+# Spend on trials this wrapper refused. The truncation guard raises, so reading
+# cost after it dropped that money out of every total the run reports: a
 # truncated trial was billed for every token generated up to the cut, and
 # surfaced as $0. It is spend that bought no measurement - report it, never add
 # it to the comparison.
@@ -1054,7 +1032,7 @@ def report_run_spend() -> None:
     the close nor the next phase's `TRAIGENT_FIRST_RUN_COST_SPENT_USD`. It is
     not the SDK's tracked cost and is not interchangeable with it: this carries
     the conservative debit for every call no route priced, and the spend on
-    trials the two response checks refused, and that figure carries neither.
+    trials the response check refused, and that figure carries neither.
 
     Registered with `atexit` below rather than written after the last call,
     because the phase that most needs this line is the one that did not finish:
@@ -1522,9 +1500,9 @@ def place_call(request: dict) -> tuple[str, float | None]:
     It no longer decides whether money may leave: the refusal and the
     reservation both happen inside the wrapped `litellm.completion` below, for
     this caller and every other one. What is left is what only a caller wanting a
-    MEASUREMENT needs - the two checks below turn a canned or truncated
-    response into a failed trial rather than a scored one - which is why this
-    is still worth calling and no longer worth requiring.
+    measurement needs: reject a truncated response rather than score it as an
+    ordinary wrong answer. Missing provider telemetry alone does not invalidate
+    the returned answer or this run's primary metric.
 
     The cost is read off the response rather than off the end of the ledger. It
     is a pure read of the same object the settlement read, so the two cannot
@@ -1533,7 +1511,6 @@ def place_call(request: dict) -> tuple[str, float | None]:
     response = litellm.completion(**request)
     cost = provider_reported_cost(response)
     try:
-        require_nonzero_token_usage(response)
         require_untruncated_completion(response)
     except RuntimeError:
         if cost is not None:
@@ -1855,7 +1832,7 @@ def assert_wiring_still_proven() -> None:
 
 
 # ADAPT: the input signature, primary metric key, and preserved output/measures.
-# holdout_agent_input must produce the input; held-out scoring keeps the same metric.
+# metric_functions must match the primary objective; holdout_agent_input produces the input.
 @traigent.optimize(
     objectives=OBJECTIVES,
     configuration_space=ENHANCED_SPACE,
@@ -1964,17 +1941,41 @@ repair, and multi-call controls require separately contained tracing outside thi
 space. Do not add no-op fields, recode a customer boolean, or add multi-call composite behavior
 merely to raise the trial count the portal shows.
 
-Require nonzero token usage for every provider call; cost metadata alone does not prove the model
-ran. Use public response cost when present. Reported `0` is valid with nonzero usage. The
-fallback above reads OpenRouter's provider-reported response-cost header as surfaced by LiteLLM.
-When cost is absent but nonzero usage proves a real call, return `None`, report `not measured`, and
-deduct the approved estimate. Do not call
-`litellm.completion_cost()` here: a real OpenRouter response can be billable and valid even when a
-local model-price lookup fails. If nonzero public usage is unavailable, stop before baseline/search;
-the wrapper cannot verify the call even when cost is reported. `references/run-safety.md` separately
-owns approval for named manual diagnostic calls outside SDK-managed searches when both cost and
-usage are missing. That approval does not bypass this wrapper's usage check or authorize an
-unmeasured baseline/search. Apply the existing budget-debit rules to every attempted call, and report what remains untracked; a reservation is not a measured provider charge.
+Missing usage does not invalidate an otherwise usable response. Use public response cost when
+present, including a genuine reported `0`; cost and token counts can arrive independently. The
+reader prefers explicit `usage.cost` or the provider's response-cost header over LiteLLM's hidden
+cost. LiteLLM can turn missing usage into zero token counts and hidden `response_cost=0.0`; that
+ambiguous zero stays `None` unless positive token usage corroborates it. An explicit provider zero
+needs no token corroboration. A hidden cost computed from usage is available pricing evidence,
+not a provider-reported charge: name its source when reporting it.
+When cost is absent, keep `None` and the existing conservative debit. Do not recalculate a completed
+response with `litellm.completion_cost()`: a missing local price entry can raise after a billable call.
+`references/run-safety.md` owns the bounded continuation choice and its disclosure.
+
+Select `INCLUDE_COST_OBJECTIVE` from the approved probe's evidence before constructing the
+operation's public `ObjectiveSchema`. Leave it false when trustworthy cost coverage is unavailable;
+the SDK then optimizes the customer's primary criterion alone. Set it true only when the SDK's
+costs have the expected response provenance and coverage. This is an agent-derived fact, not a
+user-facing knob. Once a started comparison is primary-only, keep that mode for its remaining
+planned phases; restored costs may be reported, while cost optimization belongs to a future run.
+Record the actual objectives for each phase in the run plan. Preserve the normal
+quality-and-cost path when its cost evidence is sound. The SDK's automatic missing-price approval
+remains separate: omitting the cost objective does not waive a native SDK preflight requirement.
+
+The pinned SDK can emit `cost=0.0` and estimated positive token counts when the provider reported
+neither. Those fields do not establish vendor telemetry or a free run. Keep any known call-cost
+subtotal separate from unknown calls and the allowance debit. A known provider cost without token
+counts is still useful evidence; enable a cost objective only if the installed public SDK adapter
+actually carries that cost into the result. The SDK's public `with_usage` supports cost without
+token counts, but validate its output shape with the preserved scorer before adapting a caller;
+do not invent SDK metadata fields or replace the customer's output contract.
+
+If cost coverage disappears during an operation, preserve its actual declared objectives and
+completed quality observations. Do not mutate objectives while it runs or call its cost-driven
+recommendation trustworthy. Read candidates by the primary criterion alone, label the cost
+comparison unavailable, and use primary-only objectives for the next already planned operation.
+Never repeat a paid baseline merely to restore telemetry or describe the earlier cost-aware search
+as a quality-only search. The approval and next-step wording stays in `run-safety.md`.
 
 Do not include `expected` in the agent signature. Dataset inputs call the agent; expected output
 belongs only to evaluation.
@@ -1997,7 +1998,7 @@ When that evaluator is an LLM judge - which `references/evaluation-and-dataset.m
 summary, explanation, writing, and story tasks - it grades with `call_judge`, and never with
 `call_agent`, whose request is built from the trial's own knobs. Reaching `litellm` around it is no
 longer a way to spend unseen money, but it still grades on whatever model that request names, and
-the two response checks do not run - so route it for those reasons rather than for the ledger's.
+the truncation check does not run - so route it for those reasons rather than for the ledger's.
 
 `SCORER_CALLS_PER_ROW`, set where the fence defines it and nowhere after, is the number of provider
 calls grading one row places. That number is the run's claim about its own evaluator, and the one
@@ -2109,9 +2110,9 @@ search if it cannot fit the remaining total ceiling. A completed baseline is nev
 better number, and nothing is widened, topped up or raised on the way to the search: SKILL.md's
 operating contract owns that rule and the newly scoped approval it takes.
 
-Read cost as a number only when the SDK reports one. An absent cost is `not measured`, while an
-explicit provider-reported zero with nonzero token usage is a genuine free-route result. Never turn
-absence into `$0.00`.
+Read cost as measured only when its provenance and coverage are established. An SDK number alone
+does not establish that. An absent cost is `not measured`; an explicit provider-reported zero is
+valid even without token counts. Never turn absence into `$0.00`.
 
 ## Reading the result for insight
 
@@ -2344,32 +2345,23 @@ describe another invocation as "resume" unless the installed SDK exposes a publi
 
 ## Result checks
 
-**Read the frontier through the public SDK, on the metric the run actually declared.** The same
-adapter reads the baseline grid's finished trials and the enhanced search's. It filters on the
-incumbent's quality before delegating dominance to the SDK, using artifacts already in hand and
-making no provider call:
+**Read candidates through the public SDK, on the metric the run actually declared.** The same
+adapter reads baseline and enhanced trials without a provider call. Its default compares the
+primary criterion alone. Pass `compare_cost=True` only after establishing complete cost provenance
+for the comparison, including the incumbent. The recorded objective mode must also include cost;
+recovered telemetry does not reopen cost comparison after primary-only execution. The SDK owns
+dominance in both cases:
 
 ```python
-def frontier_at_or_above(trials, metric_name, floor, orientation="maximize"):
-    """Completed trials no worse than the incumbent, on the SDK frontier, cheapest first.
+def frontier_at_or_above(
+    trials, metric_name, floor, orientation="maximize", *, compare_cost=False
+):
+    """SDK candidates no worse than the incumbent, with an optional measured-cost axis.
 
-    `metric_name` is this run's own objective name - the key wired through
-    `metric_functions`, which is `"accuracy"` in this reference's worked
-    example. Read that key and not `"exact_match_default"`, where the SDK
-    keeps its built-in exact match once a wired scorer has claimed `accuracy`.
-
-    `floor` is the incumbent trial's value under this same `metric_name`, so
-    both sides of the comparison are the same measurement. Never pass the
-    result's `best_score` - under the two-objective schema above it is the
-    weighted scalarization of score and cost, not the metric being compared.
-
-    The floor is what keeps the frontier honest. Without it the cheapest
-    trial is always on the frontier however badly it scored, and the report
-    hands the user a configuration worse than the one they already run.
-
-    Pass the primary objective's declared orientation. The worked accuracy
-    example maximizes; an error rate declared `minimize` admits scores at or
-    below the incumbent's value instead. The same direction reaches the SDK.
+    Use the actual primary metric key and orientation, not built-in exact match
+    or best_score (which may combine quality and cost). Unknown costs never
+    disqualify primary-only candidates or act as tie-breakers. The caller
+    establishes cost provenance before enabling the optional axis.
     """
     if orientation not in ("maximize", "minimize"):
         raise ValueError("orientation must be 'maximize' or 'minimize'")
@@ -2382,43 +2374,37 @@ def frontier_at_or_above(trials, metric_name, floor, orientation="maximize"):
             continue
         score = trial.metrics.get(metric_name)
         cost = trial.metrics.get("cost")
-        # An absent cost is not a zero. A trial the run could not price cannot
-        # take part in a cost comparison, and reading it as 0.0 puts every
-        # unpriced trial on the frontier.
-        if score is None or cost is None:
+        if score is None or (compare_cost and cost is None):
             continue
         meets_floor = score >= floor if upward else score <= floor
         if meets_floor:
             eligible.append(trial)
-    frontier = ParetoFrontCalculator(
-        maximize={metric_name: upward, "cost": False}
-    ).calculate_pareto_front(eligible, [metric_name, "cost"])
-    return [
-        point.trial
-        for point in sorted(frontier, key=lambda point: point.objectives["cost"])
-    ]
+    names = [metric_name, "cost"] if compare_cost else [metric_name]
+    directions = {metric_name: upward, **({"cost": False} if compare_cost else {})}
+    frontier = ParetoFrontCalculator(maximize=directions).calculate_pareto_front(
+        eligible, names
+    )
+    if compare_cost:
+        frontier = sorted(frontier, key=lambda point: point.objectives["cost"])
+    else:
+        frontier = sorted(
+            frontier, key=lambda point: point.objectives[metric_name], reverse=upward
+        )
+    return [point.trial for point in frontier]
 ```
 
-The SDK owns dominance and its numerical comparison tolerance (`1e-10` in the pinned SDK). Tiny
-score differences can therefore compare as tied; this is not exact parity with an exact-comparison
-frontier. The incumbent quality filter above stays strict, so that tolerance never admits a score
-worse than the incumbent. Pass the original SDK trials, including their `config`, rather than
-reconstructing points or changing the optimization's objectives.
-
-The incumbent is a point like any other and is reported as one: keeping what you already run is a
-choice the frontier is meant to show, not one it hides. The incumbent trial that supplies `floor`
-needs measured cost provenance, as do the other points: provider-reported zero with nonzero token
-usage is valid; an unknown-pricing placeholder `0.0` is not a measurement. The metrics map alone
-cannot establish that distinction. Apply `references/run-safety.md`'s measured-cost rule before
-this arithmetic; when the route genuinely costs nothing, report that there is no cost trade-off
-to plot.
+Keep the incumbent visible as the option to retain the current configuration. The quality floor
+stays strict in both directions; the public SDK's comparison tolerance (`1e-10` in the pinned SDK)
+does not admit a point worse than that floor. Pass original trials, preserving their configurations.
+For a cost comparison, the incumbent and every compared point need measured cost provenance;
+unknown-pricing `0.0` is not a free-route measurement. Without that evidence, compare the primary
+criterion alone, report cost comparison unavailable, and make no savings or cheapest-choice claim.
+`references/evaluation-and-dataset.md` owns choosing one candidate and handling a quality tie.
 
 Do not pass `strategy=` or `strategy_params` to obtain this: use the public calculator through the
-adapter above. The presets are unused here because a strategy can replace the objectives the
-decorator declared without raising or warning, and because the cost-floor preset floors on built-in
-exact-match accuracy rather than the wired scorer - so the floor silently becomes `0.0` and it
-returns the cheapest configuration rather than the cheapest acceptable one. Both move the winner
-without moving anything the report shows.
+adapter above. A strategy can replace the objectives the decorator declared, and the cost-floor
+preset uses built-in exact-match accuracy rather than the wired scorer. Neither should silently
+change the metric or winner this report describes.
 
 Score the reserved rows with the run's recommended configuration, when SKILL section 7 says to,
 against `HOLDOUT_DATASET` through the same loader and the same `task_score` the search used.
