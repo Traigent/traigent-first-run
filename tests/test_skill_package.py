@@ -14848,9 +14848,9 @@ class SkillPackageTests(unittest.TestCase):
         Israel's call: keep the held-out set (removing it hides the winner's-
         curse evidence, not the problem), but never claim Traigent prevents
         overfitting (holdout support is not yet a real SDK feature) and never
-        call a ten-row gap "overfitting" (it is inconclusive at that sample
-        size). The split is reserved at dataset creation - same as the tuning
-        rows - but its score stays undisclosed until stage 8's closing report,
+        call a ten-row gap "overfitting" (the gap alone establishes neither
+        overfitting nor its absence). The split is reserved at dataset creation,
+        like the tuning rows, but its score stays undisclosed until stage 8's closing report,
         never at the stage-7 local baseline checkpoint, so a first run shows
         one comparison once rather than an empty promise twice.
         """
@@ -14884,9 +14884,9 @@ class SkillPackageTests(unittest.TestCase):
             "10 held-out rows (2 easy, 3 medium, 3 hard, 2 very hard)",
             "held-out set and claims",
             "selecting on the tuning rows can inflate the tuning score",
-            "ten rows cannot resolve a small gap",
+            "ten rows give a coarse measurement",
             "do not say traigent prevents or corrects this",
-            'do not call a gap in this range "overfitting,"',
+            "the observed gap alone establishes neither overfitting nor its absence",
             "never surface a repository, issue, or tracker reference to the user",
             "tuning set (<n> ex)",
             "held-out set (<m> ex)",
@@ -15599,9 +15599,12 @@ class SkillPackageTests(unittest.TestCase):
             "will not fully repeat on a fresh sample",
         ):
             self.assertNotIn(retired, dataset)
-        # It sits beside the small-sample caveat and does not replace it: the
-        # backward-looking half stays exactly as it was.
-        self.assertIn("ten rows cannot resolve a small gap", dataset)
+        # The next action must not erase uncertainty about the completed run.
+        self.assertIn("ten rows give a coarse measurement", dataset)
+        self.assertIn(
+            "report the observed gap without assigning a cause this run did not establish",
+            dataset,
+        )
         self.assertLess(
             dataset.index("keep the note only while one row still moves"),
             dataset.index("then explain the next validation action"),

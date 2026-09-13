@@ -837,11 +837,12 @@ class OnlyAReportedMeasurementIsAskedTests(unittest.TestCase):
             with self.subTest(old=old):
                 self.assertNotIn(old, shipped)
 
-        # These are the issue's honest classes: uncertainty at ten rows and an
-        # effect that may reverse. Removing them would make the guide sound
-        # more certain than its evidence permits.
+        # Preserve uncertainty at ten rows and an effect that may reverse.
+        # The retired normal-interval figures did not provide the claimed
+        # coverage (#541); the caveat must survive without those figures.
         for honest in (
-            "roughly twice that, about +/-31 and +/-19 points",
+            "Ten rows give a coarse measurement.",
+            "the observed gap alone establishes neither overfitting nor its absence",
             "silently and often *raise* the score",
         ):
             with self.subTest(honest=honest):
