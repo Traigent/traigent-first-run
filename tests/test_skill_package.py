@@ -6003,7 +6003,14 @@ class SkillPackageTests(unittest.TestCase):
         )[0]
         for phrase in (
             # What the card does, in the words the card uses.
-            "the evaluator check is not made, so it earns nothing",
+            # That the guide DECLINES the check rather than forbidding it, and
+            # what follows for a project that made it anyway. This read "the
+            # evaluator check is not made, so it earns nothing" until
+            # traigent-first-run#506, which is false of a run that hands this
+            # score its own complete result: that result is read exactly as any
+            # other is.
+            "declines to perform, and never one the customer is forbidden to " "make",
+            "where no such result reaches the score, the check earns nothing",
             "`evaluator-calibration-refused`",
             # BOTH ARMS, because the ceiling has two of them now. Pinning only
             # "limits the readiness claim to 45" let this document state the

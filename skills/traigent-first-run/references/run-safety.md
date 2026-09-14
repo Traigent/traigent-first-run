@@ -522,12 +522,17 @@ handle it can reach, and that surface has no edge. A boundary the operating syst
 different proposition, and it is one this guide deliberately does not own. So the manual
 containment design and review above is still the whole of the route to that EVIDENCE - work a project
 can commission for itself, on its own time, and never a precondition of its first run - and a project
-whose evaluator runs the candidate's answer proceeds here with its calibration evidence uncollected.
+whose evaluator runs the candidate's answer proceeds here without this run having taken that check.
 
-That customer's card is a consequence of this decision rather than of their project. The evaluator
-check is not made, so it earns nothing and the probe spread is never measured, and `readiness.py`
-raises `evaluator-calibration-refused`, which **does not block** - nothing here says what the
-customer may do. **Whether it bounds the CLAIM depends on what preflight's walk found. Whether the
+That customer's card is a consequence of this decision rather than of their project. **The check is
+one this guide declines to PERFORM, and never one the customer is forbidden to make.** A project
+that measured its own evaluator and passes the result to `--calibration` is read exactly as any
+other project is, conviction included; what this guide will not do is take that measurement from
+inside a first run. Where no such result reaches the score, the check earns nothing and the probe
+spread is never measured. Either way `readiness.py` raises `evaluator-calibration-refused`, which
+**does not block** - nothing here says what the customer may do - and which carries the disclosure
+below whether or not a result arrived, because the paid run's hazard is unchanged by anyone having
+calibrated anything. **Whether it bounds the CLAIM depends on what preflight's walk found. Whether the
 check is CHARGED depends on nothing: it never is.** The corollary at the top of this file is
 unconditional, and this is the last place it was still being broken - a check this guide refused is
 never the customer's deduction, however the refusal was learned. Where the walk established the

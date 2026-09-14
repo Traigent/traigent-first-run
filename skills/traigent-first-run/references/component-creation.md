@@ -501,8 +501,12 @@ not a failed evaluator; the `evaluator-unvalidated` ceiling limits the readiness
 the evaluation method is actually checked, and the card's recommended action names that outstanding
 calibration rather than reading `proceed`. Where the deferral is the evaluator-execution scope gate
 rather than a step this run could take, pass `--calibration-scope-refused` so the card discloses the
-unmade check instead of asking for the calibration the gate forbids; it lifts no ceiling and changes
-neither the score nor the band the customer is given, though the evaluation pillar and the pre-cap
+unmade check instead of asking for the calibration this run may not take. Where the project already
+holds its own calibration result for that evaluator, pass it to `--calibration` and omit
+`--calibration-scope-refused`, which the two flags refuse each other over: the result is read exactly
+as any other is, and this run still does not take the measurement. Otherwise the flag discloses the
+unmade check; it lifts no ceiling and changes neither the score nor the band the customer is given,
+though the evaluation pillar and the pre-cap
 average both rise as the run stops losing points for a check this guide refused rather than one this
 project skipped, and it is the only route where preflight finds no engine.
 `calibrate_evaluator.py` refuses such an evaluator itself, naming the file and line, and
