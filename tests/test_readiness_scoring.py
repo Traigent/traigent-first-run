@@ -14107,6 +14107,147 @@ class TheCeilingPricedOurOwnBoundaryTests(unittest.TestCase):
         self.assertIn("two different files", str(raised.exception))
 
 
+class SuppliedCalibrationKeepsItsOrdinaryEvidenceStateTests(unittest.TestCase):
+    """Disclosure and a supplied result are independent inputs, even if incomplete."""
+
+    WITNESS = "calls .execute() (line 7)"
+
+    def _score(self, payload, *, witnessed=False, declared=False, weights="40,35,25"):
+        facts = MODULE.evaluation_facts_from_calibration(
+            payload,
+            method="execution",
+            task_kind="code-sql",
+            evaluator_present=True,
+            evaluator_parses=True,
+            origin="brought",
+            evaluator_executes=True if witnessed else None,
+            execution_witness=self.WITNESS if witnessed else None,
+            calibration_scope_refused=declared,
+        )
+        return MODULE.score_run(
+            _routing_corpus(),
+            facts,
+            _wired_space(),
+            MODULE.parse_weights(weights),
+            _review(reviewed=48),
+        )
+
+    @staticmethod
+    def _evaluation(score):
+        return next(p for p in score.pillars if p.name == "evaluation")
+
+    def test_supplied_incomplete_results_keep_ordinary_arithmetic_and_bound(self):
+        payloads = {
+            "empty": {},
+            "empty cases": {"cases": []},
+            "partial positive": {"passed": True, "checks": {"good_passes": True}},
+            "malformed optional": {
+                "passed": True,
+                "checks": {
+                    "good_passes": True,
+                    "bad_fails": True,
+                    "non_constant": True,
+                    "extra": "true",
+                },
+            },
+            "scores only": {"scores": {"good": 1.0, "bad": 0.0}},
+            "timeout": {"timed_out": True},
+        }
+        for label, payload in payloads.items():
+            for weights in ("40,35,25", "10,80,10", "0,100,0"):
+                ordinary = self._score(payload, weights=weights)
+                for route in ({"witnessed": True}, {"declared": True}):
+                    with self.subTest(payload=label, weights=weights, route=route):
+                        disclosed = self._score(payload, weights=weights, **route)
+                        plain_eval = self._evaluation(ordinary)
+                        actual_eval = self._evaluation(disclosed)
+                        self.assertEqual(actual_eval.score, plain_eval.score)
+                        self.assertEqual(actual_eval.confidence, plain_eval.confidence)
+                        self.assertEqual(
+                            disclosed.weighted_average, ordinary.weighted_average
+                        )
+                        self.assertEqual(disclosed.overall, ordinary.overall)
+                        self.assertEqual(disclosed.band, ordinary.band)
+                        calibration = next(
+                            s for s in actual_eval.subscores if s.name == "calibration"
+                        )
+                        self.assertTrue(calibration.withheld)
+                        self.assertFalse(calibration.measured)
+                        self.assertEqual(calibration.value, 0.0)
+                        if label == "timeout":
+                            self.assertEqual(disclosed.status, "BLOCKED")
+                            self.assertIn(
+                                "evaluator-timeout",
+                                [c.condition for c in disclosed.caps],
+                            )
+                        else:
+                            cap = next(
+                                c
+                                for c in disclosed.caps
+                                if c.condition == "evaluator-calibration-refused"
+                            )
+                            self.assertEqual(cap.ceiling, 45)
+                            self.assertIn("supplied result", cap.reason)
+                            self.assertIn(
+                                "during the paid run the MODEL writes", cap.reason
+                            )
+                            self.assertNotIn(
+                                "this card cannot read that result", cap.reason
+                            )
+                            self.assertNotIn("Your score is not reduced", cap.reason)
+                            self.assertNotIn(
+                                "no points are deducted", calibration.evidence
+                            )
+
+    def test_no_result_still_renormalizes_and_a_complete_result_keeps_disclosure(self):
+        no_result = self._score(None, witnessed=True)
+        missing_cal = next(
+            s for s in self._evaluation(no_result).subscores if s.name == "calibration"
+        )
+        self.assertFalse(missing_cal.withheld)
+        self.assertEqual(no_result.overall, 77)
+        self.assertIsNone(
+            next(
+                c.ceiling
+                for c in no_result.caps
+                if c.condition == "evaluator-calibration-refused"
+            )
+        )
+        payload = {
+            "passed": True,
+            "checks": {
+                "good_passes": True,
+                "bad_fails": True,
+                "non_constant": True,
+            },
+            "scores": {"good": 1.0, "equivalent_good": 1.0, "partial": 0.4, "bad": 0.0},
+        }
+        ordinary = self._score(payload)
+        disclosed = self._score(payload, witnessed=True)
+        self.assertEqual(disclosed.overall, ordinary.overall)
+        self.assertEqual(disclosed.overall, 85)
+        calibration = next(
+            s for s in self._evaluation(disclosed).subscores if s.name == "calibration"
+        )
+        self.assertEqual(calibration.value, 40.0)
+        self.assertTrue(calibration.measured)
+        cap = next(
+            c for c in disclosed.caps if c.condition == "evaluator-calibration-refused"
+        )
+        self.assertIsNone(cap.ceiling)
+        self.assertIn("during the paid run the MODEL writes", cap.reason)
+        self.assertIn("this score read that result", calibration.evidence)
+
+    def test_help_allows_the_payload_and_disclosure_together(self):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), self.assertRaises(SystemExit) as stop:
+            MODULE.parse_args(["--help"])
+        self.assertEqual(stop.exception.code, 0)
+        help_text = " ".join(out.getvalue().split())
+        self.assertIn("May be supplied together with --calibration", help_text)
+        self.assertNotIn("Refused beside --calibration", help_text)
+
+
 class TheWitnessDecidesTheScopeGateNotTheDeclarationTests(unittest.TestCase):
     """The gate reads what preflight proved, not what the run remembered to say.
 
@@ -14601,25 +14742,14 @@ class TheWitnessDecidesTheScopeGateNotTheDeclarationTests(unittest.TestCase):
         # reader to a ceiling this card does not carry.
         self.assertIn("every authored check passed", evidence)
 
-    def test_a_timed_out_refusal_names_no_ceiling_and_keeps_its_own_fact(
+    def test_a_timeout_payload_keeps_ordinary_evidence_and_its_own_ceiling(
         self,
     ) -> None:
-        """The other half of the same guard, and the sentence it must not take.
+        """A supplied timeout is incomplete evidence on every evaluator shape.
 
-        A run that timed out already carries `evaluator-timeout` at the same
-        45, so the refusal yields the ceiling to it rather than printing the
-        number twice. Two things follow, and both were wrong when the refusal
-        arm sat first in the chain and owned the tail unconditionally: the
-        card pointed at a containment review no ceiling on it named, and it
-        lost "calibration ran but did not finish", which is the one fact that
-        explains the timeout cap beside it.
-
-        Latent rather than live - `calibrate_evaluator.py` refuses a witnessed
-        scorer before it can run, so a witnessed evaluator never times out
-        through the bundled tools. That is exactly the status the comment this
-        seam replaced assigned to the bug it fixed, and it was fixed anyway:
-        a sentence that stays true only because a distant refusal stays in
-        place is one flag away from being wrong.
+        Its own blocking finding owns the 45 ceiling. The calibration line
+        keeps the ordinary timeout fact and denominator, without a refusal
+        tail claiming that the supplied result cannot be read.
         """
         score = self._score(
             MODULE.EvaluationFacts(
@@ -14638,26 +14768,12 @@ class TheWitnessDecidesTheScopeGateNotTheDeclarationTests(unittest.TestCase):
         # No ceiling on this card names a containment review, so the line does
         # not send the reader to look for one...
         self.assertNotIn("containment review", evidence)
-        # ...and it still may not ask for the calibration the gate forbids.
-        self.assertNotIn("complete calibration", evidence.casefold())
-        # A calibration RAN on this arm, so the tail may not say nobody made
-        # the measurement. This assertion pinned that contradiction verbatim
-        # before the review found it - a guard protecting the defect it was
-        # written beside.
-        self.assertTrue(
-            evidence.endswith(
-                "no points are deducted for it - this card may not read an "
-                "evaluator check this guide does not permit"
-            )
-        )
-        self.assertNotIn("was not the one to make that measurement", evidence)
-        # The credit is refused all the same: this is about what the card
-        # SAYS, not about paying for a calibration taken out of scope.
+        self.assertTrue(evidence.endswith("until a complete calibration is measured"))
+        self.assertNotIn("no points are deducted", evidence)
+        self.assertNotIn("this card may not read", evidence)
         self.assertEqual(self._calibration_subscore(score).value, 0.0)
-        # And the retirement itself was unpinned on this arm, which is how the
-        # contradictory tail reached it: a witnessed refusal does not charge,
-        # whether or not the calibration that was forbidden also timed out.
-        self.assertFalse(self._calibration_subscore(score).withheld)
+        self.assertTrue(self._calibration_subscore(score).withheld)
+        self.assertEqual(score.status, "BLOCKED")
 
     def test_the_refused_card_explains_itself_and_names_the_way_out(self) -> None:
         """An explanation, not an accusation, and it ends somewhere.
@@ -15166,6 +15282,20 @@ class TheWitnessDecidesTheScopeGateNotTheDeclarationTests(unittest.TestCase):
                     or facts.timed_out is True
                     or facts.checks
                 )
+                if engaged:
+                    # Supplied incomplete results use the ordinary evidence
+                    # state; only no-result refusals use this clause record.
+                    ordinary = self._score(
+                        replace(
+                            facts,
+                            executes_candidate=None,
+                            execution_witness=None,
+                            calibration_scope_refused=False,
+                        )
+                    )
+                    self.assertEqual(sub, self._calibration_subscore(ordinary))
+                    self.assertTrue(sub.withheld)
+                    continue
                 # The CEILING the cap carries, not the cap's presence. The
                 # refusal cap is raised on the witnessed arm too and carries
                 # `None` there, so "is the condition on the card" stopped

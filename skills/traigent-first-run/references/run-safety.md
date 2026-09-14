@@ -462,15 +462,17 @@ on our initiative. It is not their onboarding.
 in their own words, and do not soften any of it:
 
 - **what was not checked** - their evaluator, against their engine;
-- **that the reason is our boundary, not their defect, and - where no result reached the score -
-  that we therefore do not know whether their evaluator works**: we declined the check, so nothing
+- **that the reason is our boundary, not their defect, and - where neither a complete readable
+  result nor an observed failure reached the score - that we therefore do not know whether their
+  evaluator works**: we declined the check, so nothing
   here established that it is sound and nothing here established that it is broken. Their query may
   be wrong, their column types may not match, their cells may be null; this run has not looked. No
   step in this guide would change that, and that is a fact about the guide rather than about them.
   **Never say there is nothing for them to fix** - that says we looked, and we did not. Where the
-  project DID supply its own result, those two sentences are false and the card stops saying them:
-  say instead that their own measurement is being counted and that nothing here watched the run that
-  produced it. Keep the scope tight in the other direction too: an evaluator rewritten later to
+  project supplied a complete passing result, say instead that their own measurement is being
+  counted and that nothing here watched the run that produced it. Without an observed failure,
+  incomplete or unreadable evidence establishes neither success nor failure. An observed failure
+  and a timeout follow their own card findings and remedies. Keep the scope tight in the other direction too: an evaluator rewritten later to
   compare rather than execute is a different evaluator, out of this gate altogether, so "no change
   of yours could ever matter" is false as well;
 - **what proceeding concretely means** - during the paid run the *model* writes the statements and
@@ -535,26 +537,30 @@ That customer's card is a consequence of this decision rather than of their proj
 one this guide declines to PERFORM, and never one the customer is forbidden to make.** A project
 that measured its own evaluator and passes the result to `--calibration` is read exactly as any
 other project is, conviction included; what this guide will not do is take that measurement from
-inside a first run. Where no such result reaches the score, the check earns nothing and the probe
-spread is never measured. Either way `readiness.py` raises `evaluator-calibration-refused`, which
-**does not block** - nothing here says what the customer may do - and which carries the disclosure
-below whether or not a result arrived, because the paid run's hazard is unchanged by anyone having
-calibrated anything. **Whether it bounds the CLAIM depends on what preflight's walk found. Whether the
-check is CHARGED depends on nothing: it never is.** The corollary at the top of this file is
-unconditional, and this is the last place it was still being broken - a check this guide refused is
-never the customer's deduction, however the refusal was learned. Where the walk established the
-engine, the boundary is demonstrably ours: nothing is bounded either. Where this run holds only the
-declaration, the claim is held at 45, because a word about a file nobody read may bound a claim and
-may never lift one. The
-card carries the disclosure this section makes. It does not put the question: that happens once, at
-the pre-spend approval, for the reason given above.
+inside a first run. Where no result was supplied, the check earns nothing and the probe spread is
+never measured;
+those declined checks leave the denominator rather than deducting points. Without an observed
+failure or timeout, a supplied incomplete or unreadable result stays unestablished and keeps the
+ordinary incomplete-result deduction and 45 ceiling, including when preflight witnessed an engine. An observed failure raises
+`evaluator-invalid`, and a timeout raises `evaluator-timeout`; each keeps its own remedy instead of
+the refusal cap. Otherwise `readiness.py` raises `evaluator-calibration-refused`, which **does not
+block** and carries the execution disclosure. The pre-spend disclosure remains unconditional under
+Approval and budgets below, whatever finding the readiness card carries.
+
+With no result supplied or with a complete passing result, **whether the refusal bounds the CLAIM
+depends on what preflight's walk found**. Where the walk established the engine, the boundary is
+demonstrably ours: nothing is bounded either. Where this run holds only the declaration, the claim
+is held at 45: the declaration supplies no measurement of grading correctness. Without a supplied
+result, renormalization can raise a lower overall within that bound; it is not calibration credit.
+The card carries the disclosure this section makes. It does not put the question: that happens
+once, at the pre-spend approval, for the reason given above.
 The card says which case a run
 is in. The REFUSAL follows from nothing their evaluator did: its reason is the unbounded target
 above. What their evaluator did still shows on the card where a result reached the score - a passing
 one is counted and a failing one convicts - and the two are not in tension, because the refusal is
 about the check we did not make and the pillar is about the measurement somebody did. The card gives
-them no errand for the ceiling and no longer pretends to: the unmade check is ours, so nothing they
-do inside this run lifts it. That is a statement about THIS RUN, not about the containment review
+them no errand for the declined check: the unmade check is ours, so the refusal declaration alone
+lifts no ceiling. That is a statement about THIS RUN, not about the containment review
 above, which stays available to a project that wants the evidence for its own reasons - as does
 measuring their own evaluator themselves, which this run will read.
 
@@ -1962,8 +1968,8 @@ Each event names what its `class` may be.
   elsewhere says to surface without guessing a category among them.
 - `warning` - observed, and able to distort the result without stopping the run: `containment`,
   `refused-trial`, `untracked-cost`, `cap-standing`, or `uncategorized`. The first is the evaluator
-  check the scope gate skipped: THIS RUN measured nothing about that evaluator, which can distort the
-  result unless the project supplied a measurement of its own, and nothing about it stops the run. Recording it under the event above would say, in the artifact a
+  check the scope gate skipped: THIS RUN measured nothing about that evaluator, and any supplied
+  result is interpreted under the scope gate above. The warning itself stops no work. Recording it under the event above would say, in the artifact a
   user hands to somebody else, that a completed run had halted. Nothing that halts the run is one of these,
   however it presents: tracking that degrades to local-only stops paid work, so it is a `stopped`.
 

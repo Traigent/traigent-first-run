@@ -507,13 +507,13 @@ calibration rather than reading `proceed`. Where the deferral is the evaluator-e
 rather than a step this run could take, pass `--calibration-scope-refused` so the card discloses the
 unmade check instead of asking for the calibration this run may not take. Where the project already
 holds its own calibration result for that evaluator, pass it to `--calibration` **beside** that same
-flag, never instead of it: the result is read exactly as any other is, and the flag is what keeps the
-disclosure and the connection question on the card. Passing the result alone removes them, because on
-a project whose walk found no engine the declaration is the only thing that raises the refusal at
-all. The flag lifts no ceiling and changes neither the score nor the band the customer is given,
-though the evaluation pillar and the pre-cap average both rise as the run stops losing points for a
-check this guide refused rather than one this project skipped, and it is the only route where
-preflight finds no engine.
+flag, never instead of it: the result is read exactly as any other is. Where the result passes,
+the flag keeps the execution disclosure and connection question on the card. On a project whose
+walk found no engine the declaration is the only thing that raises the refusal at all; an observed
+failure or timeout follows its own finding. The flag lifts no ceiling. Without a supplied result,
+the evaluation pillar and pre-cap average can rise when the refused check leaves the denominator;
+an overall below 45 can rise within that bound. This is renormalization, not calibration credit,
+and the flag is the only route where preflight finds no engine.
 `calibrate_evaluator.py` refuses such an evaluator itself where its walk can see the execution,
 naming the file and line - finding none establishes nothing, so that refusal is not a clearance - and
 `references/run-safety.md` records why no in-process route replaces it. Apply the run-scoped
