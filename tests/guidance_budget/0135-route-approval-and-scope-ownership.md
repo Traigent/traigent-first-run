@@ -7,9 +7,9 @@ follows-document-measured: 171_231
 resident-ceiling: 54_346
 resident-measured: 54_331
 total-ceiling: 573_700
-total-measured: 573_466
+total-measured: 573_551
 document-ceiling: 173_500
-document-measured: 173_301
+document-measured: 173_386
 
 Environment planning now names the existing-project route before presenting
 its approval card. The two creation routes dispatch to their existing approval
@@ -36,3 +36,8 @@ environment choice, while permitting the recorded compatibility facts. Its ceili
 shrinks with it. The published 0134 record remains intact; this
 single follow-up entry measures the combined corrections, with modest headroom
 above the total and largest document rather than granting an unlimited reserve.
+
+Peer-review refinements forward the detector’s declared-version skip text,
+explain relocated startup caches, and recommend a compatible environment
+without suggesting a dependency downgrade. The same entry is re-measured
+for the final version of this unmerged PR; no historical record is changed.

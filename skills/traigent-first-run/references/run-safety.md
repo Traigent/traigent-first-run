@@ -203,13 +203,15 @@ In the commands below, `.../` is the absolute skill directory resolved under GUI
    and, only when the name is free, `create .venv for this project`.
    None: say `No virtual environment found directly under the project root.` An unsupported
    version is not an absent environment: say
-   `No supported virtual environment found directly under the project root`, followed by one
-   `<path> was skipped (Python <version>, not 3.11-3.13)` clause per verified candidate.
+   `No supported virtual environment found directly under the project root`, followed by each
+   reported `skipped` clause, such as `<path> was skipped (declared Python <version>, not
+   3.11-3.13; runtime identity unverified)`.
    A `pyvenv.cfg` declaration outside that range also rules out the candidate: report its declared
    version as unsupported and its runtime identity as unverified, preserving it; do not seek an
    unsupported host Python to verify it.
    For other unverified candidates, say `An environment exists at <path>, but this run could not verify
    its runtime or installed-package inventory`, followed by its remedy. Keep these distinct even when other candidates work.
+   A moved environment may be unverified because its cached startup code records its old path.
 
    In either case, when `<project root>/.venv` is absent, resolve the supported Python under
    Finding a supported interpreter and preview its absolute path and version, the absolute `.venv`
@@ -278,8 +280,8 @@ In the commands below, `.../` is the absolute skill directory resolved under GUI
    upgrade, downgrade, or reinstall an installed package. If planning fails, show
    `No install plan was produced; no installed packages changed. <observed resolver reason>.`
    Name any reported version conflict in the customer's terms; do not label a network or missing-wheel
-   failure a dependency conflict. Recommend a compatible project environment or review of an
-   explicitly disclosed version-change plan. Offer the throwaway route only with its compatibility
+   failure a dependency conflict. Recommend a compatible project environment.
+   Offer the throwaway route only with its compatibility
    consequence: for example, `Your agent uses openai 3.x; this SDK stack requires openai below 3.
    A throwaway environment preserves yours, but would run your agent with that older dependency;
    compatibility is unverified.` Never recommend that dependency downgrade as the remedy or enter
