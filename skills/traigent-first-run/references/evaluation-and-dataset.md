@@ -98,14 +98,18 @@ When building an evaluator:
   `accuracy`-only display. A customer whose evaluator scores tool-use compliance optimizes
   tool-use compliance, and calling it accuracy reports agreement with a word rather than with their
   task.
-- **Cost is always the second objective, and accuracy is never bolted on beside it.** Cost is
-  measured the same way whatever the primary is, so it is free information and never a claim about
-  their task. Accuracy is not: it means something only where their evaluator measures correctness,
-  and adding it to a run optimizing tool-use compliance reports a number that describes nothing -
-  which is the mislabel this rule exists to stop, one layer out.
-- Where the customer named nothing and the evaluator settles nothing, the run proceeds on accuracy
-  and cost and **says so in those words**. A hardcoded default that is never spoken reads as a
-  discovered one, and the customer cannot disagree with a choice they were not shown.
+- **Cost is the second objective only when trustworthy SDK/provider cost coverage is established
+  before the operation.** Otherwise use the same measurable primary criterion alone under
+  `references/run-safety.md` § Missing cost or usage telemetry. Accuracy is never bolted on beside
+  another primary criterion: it means something only where the evaluator measures correctness.
+  Missing cost cannot become zero or an estimated ranking input. If the primary criterion itself
+  needs unavailable telemetry, resolve that grading gap through the existing choice; do not invent
+  another metric. Once an operation starts primary-only, that mode stays for the rest of this
+  comparison under the same rule; telemetry repaired before the first baseline can still enable
+  proven cost normally.
+- Where the customer named nothing and the evaluator settles nothing, state the default: accuracy,
+  with cost when measurable. Say explicitly when the operation measures only the primary criterion;
+  the customer must be able to distinguish a default from a discovered objective.
 - When the scorer reads row metadata, prove the SDK delivers it: the 0.26.0 loader nests an
   explicit `metadata` object one level down, so `metadata["db_id"]` reads `None`. Read both shapes.
 
@@ -1172,21 +1176,27 @@ the disclosure note below stays free of one.
 Score the held-out rows once, on one configuration: the one this run recommends. This walkthrough
 pays for two measurements, the baseline grid and the enhanced search, so select it on the **tuning**
 scores across both of them - the tuning rows are the ones already spent on selection. The enhanced
-search's winner is not the answer by position: when the baseline's best configuration still scores
-higher on the tuning rows, that is the one this run recommends and the one that gets scored. Then
+search's winner is not the answer by position: compare the primary criterion in its declared
+direction. When the baseline's best configuration scores better on the tuning rows, that is the
+one this run recommends and the one that gets scored. Then
 run that configuration, and only that configuration, against the reserved rows. Include those calls
 in the combined paid-work approval alongside the enhanced search.
 
 **The held-out rows arbitrate nothing.** Scoring two configurations on them and keeping whichever
-came back higher is selection, and a set used for selection is not held out: its number would carry
+came back better is selection, and a set used for selection is not held out: its number would carry
 the same optimism as the tuning score, which is the single thing this split exists to avoid. It
 reports on a candidate that was already chosen; it does not choose one. So the choice is made where
 selection is already paid for, and only its outcome is measured here.
 
-Cost belongs in that choice, on the tuning side. When two configurations score the same on the
-tuning rows, prefer the cheaper one; at equal cost prefer the stronger model, whose headroom a
-wider search after this walkthrough is likelier to use. That is a decision taken on the rows
-selection is allowed to use, so it costs the held-out set nothing.
+In a cost-aware comparison, when two configurations score the same on the tuning rows and have
+comparable measured costs, prefer the cheaper one; at equal measured cost prefer the stronger model.
+In a primary-only comparison or without comparable costs, do not break the tie on price or treat
+unknown costs as equal: retain the incumbent if it ties, otherwise retain the first tied
+configuration in recorded trial order and report the tie.
+Use the primary metric in its declared direction, not a cost-aware `best_score`. These are
+tuning-only choices; the held-out rows never select the candidate. A cost-aware operation that
+lost telemetry retains its quality observations, with the cost-comparison and recommendation
+limits in `references/run-safety.md` § Missing cost or usage telemetry.
 
 SKILL sections 7 and 8 own when that score is disclosed. The split itself does not change between
 the two checkpoints; only its disclosure moves, so the walkthrough shows one comparison, once,
