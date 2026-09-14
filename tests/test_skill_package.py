@@ -13286,7 +13286,7 @@ class SkillPackageTests(unittest.TestCase):
             "$GITHUB_WORKSPACE:/repo:ro",
             "$RUNNER_TEMP/traigent-offline-evidence:/evidence",
             "python tests/behavioral/harness.py --all",
-            "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
+            "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
         ):
             self.assertIn(phrase, offline_job)
         self.assertNotIn("pip install", offline_job)
