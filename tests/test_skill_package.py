@@ -5967,20 +5967,11 @@ class SkillPackageTests(unittest.TestCase):
     def test_the_guide_says_what_the_refused_card_will_do_before_it_does_it(
         self,
     ) -> None:
-        """The consequence of a decision this guide makes has a home.
+        """The scope home distinguishes missing, passed, incomplete and failed evidence.
 
-        A project whose evaluator reaches a code or SQL engine has its
-        calibration refused, earns nothing for that check, never measures
-        probe spread, and carries a 45 ceiling whose recommended action is a
-        containment review. Every part of that follows from a decision this
-        guide makes on the customer's behalf, and no assistant-facing document
-        said any of it would happen - so the first they heard of it was the
-        card, which is the one place it reads as a verdict on their project.
-
-        One home, and it is `run-safety.md`: `SKILL.md` carries the mandate to
-        apply the gate, and the depth behind that stage belongs to the
-        reference, so the disclosure sits beside the argument it explains
-        rather than being restated in the flow.
+        Refusal belongs to the guide; a supplied result belongs to the
+        evaluator. The explanation must preserve both without promising a
+        refusal cap on a failure or timeout that carries its own finding.
         """
         require_stage_reference(
             4,
@@ -6003,7 +5994,20 @@ class SkillPackageTests(unittest.TestCase):
         )[0]
         for phrase in (
             # What the card does, in the words the card uses.
-            "the evaluator check is not made, so it earns nothing",
+            # That the guide DECLINES the check rather than forbidding it, and
+            # what follows for a project that made it anyway. This read "the
+            # evaluator check is not made, so it earns nothing" until
+            # traigent-first-run#506, which is false of a run that hands this
+            # score its own complete result: that result is read exactly as any
+            # other is.
+            "declines to perform, and never one the customer is forbidden to " "make",
+            "where no result was supplied, the check earns nothing",
+            "a supplied incomplete or unreadable result stays unestablished",
+            "ordinary incomplete-result deduction and 45 ceiling",
+            "observed failures and timeouts keep their own findings and remedies under",
+            "`evaluation-and-dataset.md`, instead of the refusal cap",
+            "instead of the refusal cap",
+            "the pre-spend disclosure remains unconditional",
             "`evaluator-calibration-refused`",
             # BOTH ARMS, because the ceiling has two of them now. Pinning only
             # "limits the readiness claim to 45" let this document state the
@@ -6023,29 +6027,41 @@ class SkillPackageTests(unittest.TestCase):
             # the file and finds no engine, and this document says twenty
             # lines above that a walk which finds none has still read the file.
             "depends on what preflight's walk found",
-            "whether the check is charged depends on nothing: it never is",
+            "those declined checks leave the denominator rather than deducting points",
             # That it is not a verdict on their evaluator. The MANDATE to
             # say so lives in `SKILL.md`'s cap-routing paragraph and may not
             # be restated here; what belongs here is the fact behind it.
-            "none of it follows from anything their evaluator did",
+            # Scoped to the REFUSAL, because what their evaluator did does
+            # show on the card once a result reaches the score - a passing one
+            # is counted and a failing one convicts (traigent-first-run#506).
+            # The unscoped form said the whole card followed from nothing they
+            # did, which stopped being true of the pillar beside it.
+            "the refusal follows from nothing their evaluator did",
             # The REASON is not restated here: this document argues the
             # unbounded target four paragraphs above, and a disclosure that
             # re-explains it is a second home inside one file.
-            "the reason is the unbounded target above",
+            "its reason is the unbounded target above",
             # AND THAT THERE IS NO ROUTE OUT TO GIVE THEM. This pinned "the
             # route out is the customer's own, stated on the card" while the
             # card was handing a customer an errand for a check nothing they
             # do reaches - the unmade check is ours (traigent-first-run#392).
             # A disclosure that ends by naming a remedy reads as a to-do, and
             # the whole reversal is that it is not one.
-            "gives them no route out of the ceiling",
-            "nothing they do inside\nthis run lifts it".replace("\n", " "),
+            "gives them no errand for the declined check",
+            "the refusal declaration alone lifts no ceiling",
             # And the block is gone, said here because this is the document
             # #393 cited when it added one.
             "does not block",
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, section)
+        self.assertIn("where the project supplied a complete passing result", section)
+        self.assertIn(
+            "the scoring command read the result and did not observe its production",
+            section,
+        )
+        self.assertNotIn("nothing here watched the run that produced it", section)
+        self.assertNotIn("whether or not a result arrived", section)
         self.assertNotIn("a file this run never read", section)
         self.assertNotIn("the route out is the customer's own", section)
         # And the containment review is reconciled rather than contradicted:
@@ -6115,39 +6131,12 @@ class SkillPackageTests(unittest.TestCase):
         self.assertNotIn("not a finding against their evaluator", safety_all)
 
     def test_no_document_says_the_scope_refusal_cannot_be_checked(self) -> None:
-        """The guide may not deny a check the module performs, or oversell it.
+        """The declaration discloses scope and supplies no calibration evidence.
 
-        `SKILL.md` and the flag's own `--help` both said the declaration
-        "moves no number, because nothing here can check it". The second half
-        was the load-bearing one and it is now false: `score_evaluation`
-        derives the same state from preflight's witness, independently, and
-        the card reaches it with no flag passed at all. "Moves no number"
-        survived that round, because the CLI refuses `--calibration` beside the
-        flag and the two arms scored identically without one.
-
-        #507 stopped charging either refusal arm. The declared arm keeps its
-        45 ceiling; renormalization can raise the evaluation pillar, pre-cap
-        average, and an overall below that bound. Both surfaces distinguish
-        this denominator change from measured calibration credit.
-
-        The first replacement over-corrected in the other direction. It read
-        "it moves no number, and preflight's witness reaches the same state
-        without it", which is true only where a witness exists and reads, in
-        the one place an assistant decides whether to pass a safety
-        declaration, as though the flag were redundant. Measured on an
-        evaluator reaching its engine through a helper module - one of the two
-        shapes `run-safety.md` names as invisible to the walk - the states are
-        not the same at all: without the flag the card raises
-        `evaluator-unvalidated` and recommends `complete-calibration`, the
-        step this guide forbids that project, and with it the card raises
-        `evaluator-calibration-refused` and sends the run to the containment
-        review. So the document says what the flag is FOR: the only route
-        where preflight finds no engine.
-
-        Both homes are asserted together on purpose. This is the repository's
-        named defect class - a rule stated in two places is a rule that can be
-        changed in one - and the two happen to be a guidance document and a
-        docstring-shaped help string in the very module whose behaviour moved.
+        Preflight can independently establish execution, but its silence does
+        not make the declaration redundant. Renormalization can raise an
+        overall below the declared ceiling, and a supplied result travels
+        beside that declaration so credit does not erase the disclosure.
         """
         require_stage_reference(
             1,
@@ -6177,12 +6166,26 @@ class SkillPackageTests(unittest.TestCase):
             with self.subTest(document=where):
                 self.assertNotIn("nothing here can check it", text)
                 self.assertNotIn("a declaration nothing here can check", text)
+        for phrase in (
+            "the flag lifts no ceiling",
+            "without a supplied result",
+            "an overall below 45 can rise within that bound",
+            "this is renormalization, not calibration credit",
+            "the flag is the only route where preflight finds no engine",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, skill)
+        self.assertNotIn("neither the score nor the band", skill)
+        # AND THAT THE RESULT GOES BESIDE THE FLAG, NEVER INSTEAD OF IT. The
+        # first version of this sentence said "instead", which on a project
+        # whose walk found no engine removes the only thing that raises the
+        # refusal: measured, 45 with the disclosure became 85 STRONG with no
+        # cap at all (traigent-first-run#506). Both halves are pinned, because
+        # the instruction is only safe as a pair.
+        self.assertIn("beside** that same flag, never instead of it", skill)
         self.assertIn(
-            "it lifts no ceiling. the evaluation pillar and pre-cap average "
-            "can rise when the refused check leaves the denominator; an overall "
-            "below 45 can rise within that bound. this is renormalization, not "
-            "calibration credit, and the flag is the only route where preflight "
-            "finds no engine",
+            "on a project whose walk found no engine the declaration is the "
+            "only thing that raises the refusal at all",
             skill,
         )
         # And the same claim in the other home, so neither can be corrected
@@ -6193,8 +6196,8 @@ class SkillPackageTests(unittest.TestCase):
         # NAMED, both of them, because "moves no number" was replaced once by
         # "moves no readiness figure" and the card prints a readiness figure
         # that moves: `Weighted average before caps`. A sentence that is right
-        # about the two numbers a customer is judged on and silent about the
-        # one they can watch move is the same defect one level down.
+        # about a default-weight score but silent about its moving components
+        # still misdescribes the card.
         for where, text in (("SKILL.md", skill), ("readiness.py --help", help_text)):
             with self.subTest(document=where, claim="what does move"):
                 self.assertIn("pre-cap average", text)
@@ -7647,8 +7650,15 @@ class SkillPackageTests(unittest.TestCase):
             "no settings document ever reaches an opening score",
             # The Agent pillar's own sentence, which is now about what IS read.
             "the assistant cites relative source lines below the local project root",
-            # And the point of the paragraph, which survives both corrections.
-            "neither is something the user was supposed to bring",
+            # And the point of the paragraph, which survives three
+            # corrections. Said as "required" rather than "supposed to" since
+            # traigent-first-run#506, because a project MAY now bring its own
+            # calibration result for an evaluator the gate declined - what
+            # stays true is that nothing here asked them for one.
+            "neither of which is something the user was required to bring",
+            "with no supplied result, two of four evaluation checks are measured",
+            "a complete passing result can establish all four checks and support strong",
+            "the card read the customer's measurement, it did not perform it",
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, glossary)
@@ -7657,6 +7667,8 @@ class SkillPackageTests(unittest.TestCase):
             "why two of them are usually blank",
             # And the count that is no longer true of the card.
             "why three lines are blank at the start",
+            "two, where this fires",
+            "there is no version of your project that scores higher for it",
         ):
             with self.subTest(hedge=hedge):
                 self.assertNotIn(hedge, glossary)

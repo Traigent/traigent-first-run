@@ -296,8 +296,11 @@ The lines under each pillar on the card
   When calibration lines are unmeasured: "tried on answers already known right
   and wrong" and "separates good answers from bad" need an executed calibration.
   They can already be measured on the opening card when the opening gate ran
-  that check. Otherwise explain the recorded reason it was deferred or declined;
-  neither is something the user was supposed to bring. Read the card's own
+  that check, or from a result the project took itself and handed this run for
+  an evaluator the gate declined - the card says it read that result rather
+  than taking the measurement. Otherwise explain the recorded reason it was
+  deferred or declined, neither of which is something the user was required to
+  bring. Read the card's own
   measured-check counts, deductions and claim limits rather than assigning one
   explanation to every missing result. `SKILL.md` owns the timing; the execution
   scope disclosure in `references/run-safety.md` owns a declined check.
@@ -384,7 +387,7 @@ Readiness score (the card, the three pillars, bands, caps, blocked)
 
 NOT CHECKED HERE
   Plain: a check this guide chose not to run on your project, said out loud.
-  It takes nothing off your score and asks nothing of you.
+  This label carries no numeric ceiling.
   It reads differently from every other label on the card, and the difference is
   the point. The others all describe something about YOUR material - a component
   that is missing, answers nobody read, rows that repeat - and each names
@@ -393,14 +396,13 @@ NOT CHECKED HERE
   carries it today is an evaluator that runs the model's answers as code or SQL:
   running it to check it would mean executing candidate code or opening your
   database from inside this guide, and
-  this guide will not do either. There is no version of your project that scores
-  higher for it, so no number is shown and none is deducted.
-  What it does cost is a claim rather than points. The evaluation pillar reports
-  how many of its four checks were measured - two, where this fires - and a run
-  whose evidence is that thin is held at Workable and may not present as Strong,
-  by the same rule described above. So the card stops short of saying your
-  evaluator grades correctly, because nothing here established that it does, and
-  it stops equally short of saying it does not.
+  this guide will not do either.
+  The label describes what this run did, not how much evidence the customer
+  supplied. With no supplied result, two of four evaluation checks are measured
+  and thin evidence holds the band at Workable. A complete passing result can
+  establish all four checks and support Strong while this same label stays:
+  the card read the customer's measurement, it did not perform it. Read the
+  actual check counts and band; run-safety.md owns the supplied-result cases.
 
 .env file
   Plain: a small text file in your project that holds settings and secrets -

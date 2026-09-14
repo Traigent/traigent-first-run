@@ -3158,13 +3158,12 @@ def witnessed_engine(facts: "EvaluationFacts") -> bool:
     the unsafe shape, so the cheapest way to a high score became claiming your
     evaluator opens a database.
 
-    The witness is what this file already says stops the claim being free. So
-    the ceiling comes off where the walk quoted something, and stays wherever
-    all this run holds is somebody's word. It is the only thing this refusal
-    still decides: no arm of it is charged (traigent-first-run#507), and the
-    card's "your score is not reduced" sentence is keyed on the ceiling this
-    predicate produces rather than on the predicate itself, because the two
-    differ by exactly the witness.
+    With no result or a complete passing result, the refusal's ceiling comes
+    off where the walk quoted something and stays wherever all this run holds
+    is somebody's word. Incomplete supplied evidence keeps its ordinary bound
+    even with a witness. The card's reassurance follows the resulting ceiling.
+    A refused check with no supplied result leaves the denominator on every
+    arm (traigent-first-run#507); the witness itself earns no calibration credit.
     """
     return (
         facts.executes_candidate is True
@@ -7285,6 +7284,34 @@ def dataset_integrity_reason(facts: DatasetFacts) -> str | None:
     return joined[0].upper() + joined[1:] + "."
 
 
+def calibration_result_established(facts: EvaluationFacts) -> bool:
+    """Whether a calibration RESULT reached this score, complete and decided.
+
+    Named because two places need it and one of them is a test. The sweep over
+    the refusal states has to skip the states where a result was credited, and
+    spelling the predicate again there is the "two spellings of one question"
+    defect `check_table_defect` was written against: the copy omitted the
+    check-table conjunct, so a payload declared complete over an unreadable
+    table would have been skipped by the test while the module still called it
+    unestablished.
+
+    Three conjuncts, and each one is a way a payload can fail to be evidence: a
+    table this score can read in EVERY value (not only the three required
+    names, which is how `"false"`, `1`, `[1]` and `{}` once earned full
+    credit), a boolean verdict, and the adapter's own completion flag where it
+    was set - because a direct caller can pass `calibration_complete=True`
+    beside an empty check set and must not clear a behavioral-evidence ceiling
+    with it.
+    """
+    established = bool(facts.checks) and all(
+        readable_check_table(checks) for checks in facts.checks
+    )
+    established = established and isinstance(facts.calibration_passed, bool)
+    if facts.calibration_complete is not None:
+        established = established and facts.calibration_complete
+    return established
+
+
 def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
     caps: list[Cap] = []
     subs: list[SubScore] = []
@@ -7441,24 +7468,12 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
         subs.append(SubScore("probe-spread", 0.0, 15.0, False, evidence))
         return combine("evaluation", subs), caps
 
-    calibration_complete = facts.calibration_complete
-    # The adapter's completion flag and the payload must agree. Direct callers
-    # can construct `EvaluationFacts` too, so `calibration_complete=True` beside
-    # an empty or partial check set cannot clear a behavioral-evidence ceiling.
-    # EVERY value, not only the three required names. The type check used to
-    # cover the required set and nothing else, so an optional check reported as
-    # `"false"`, `1`, `[1]` or `{}` was clamped to True by the adapter and
-    # earned the calibration its full forty points -- a malformed table scoring
-    # as a passing one. `--calibration` reads arbitrary JSON an assistant hands
-    # over, so this is the shape this function exists to survive.
-    #
-    # Malformed lands on incomplete, which is the honest third answer: not a
-    # pass, and not a failure either. Convicting on it would repeat the earlier
-    # mistake in the other direction, since a value nobody can read is not
-    # evidence that the evaluator is broken.
-    checks_complete = bool(facts.checks) and all(
-        readable_check_table(checks) for checks in facts.checks
-    )
+    # The adapter's completion flag, the check table and the verdict all have
+    # to agree before a payload is evidence, and they are read in one place:
+    # `calibration_result_established` above, which carries the argument for
+    # each conjunct. Malformed lands on incomplete, which is the honest third
+    # answer - not a pass, and not a failure either, since a value nobody can
+    # read is not evidence that the evaluator is broken.
     # `calibration_passed` belongs to this invariant too, but only one way
     # round, and the asymmetry is the whole point.
     #
@@ -7505,9 +7520,7 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
     observed_failure = any(
         value is False for checks in facts.checks for value in checks.values()
     ) or (facts.calibration_passed is False and any(checks for checks in facts.checks))
-    established = checks_complete and isinstance(facts.calibration_passed, bool)
-    if calibration_complete is not None:
-        established = established and calibration_complete
+    established = calibration_result_established(facts)
     # One expression, and `observed_failure` sits OUTSIDE every conjunct on
     # purpose. Folding it in beside the verdict left the adapter's own
     # structural flag still ANDed over the top, so the leniency survived a fix
@@ -7528,15 +7541,66 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
     # binary.
     disqualifying = observed_failure or established
 
-    # ...and therefore whether calibration credit is refused.
+    # ...and therefore whether this card owes the execution disclosure.
     #
     # `not observed_failure` is the one direction this is allowed to fail in.
-    # A calibration performed outside the scope this guide permits may not BUY
-    # anything with what it measured; it may still convict. Suppressing the
-    # conviction too would score an evaluator proved defective as merely
-    # unmeasured - leniency bought by breaking the rule, which is the exact
-    # inversion the refusal exists to prevent.
-    calibration_credit_refused = execution_scope_refused and not observed_failure
+    # A calibration whose result convicts routes to `evaluator-invalid` and a
+    # repair, and the repair is what that customer is being asked for; the
+    # refusal has nothing to add to it and yields.
+    execution_disclosure_due = execution_scope_refused and not observed_failure
+    # ...and, separately, whether a calibration RESULT may earn anything here.
+    #
+    # THESE WERE ONE VARIABLE AND THEY ARE TWO QUESTIONS
+    # (traigent-first-run#506). The refusal was written when this guide
+    # FORBADE the run, and "a calibration performed outside the scope this
+    # guide permits may not BUY anything with what it measured" was the right
+    # answer to it: crediting a check taken by breaking the rule is leniency
+    # bought by breaking the rule.
+    #
+    # The rule it describes is not there any more. `references/run-safety.md`
+    # section 0 says this guide declines to PERFORM the check; it forbids the
+    # customer nothing, and a customer who calibrated their own evaluator on
+    # their own machine broke no rule to do it.
+    #
+    # The two readings, taken on one fixture with one field varied, in
+    # tests/test_readiness_scoring.py by
+    # `test_a_calibration_this_guide_did_not_take_is_still_read`: an identical
+    # complete passing payload reads 82 on the evaluation pillar where nothing
+    # walked the evaluator, and before this change it read exactly what handing
+    # this run nothing reads where the walk proved an engine - so the customer
+    # who went and did the work was told it counted for nothing, while a
+    # FAILING payload from that same source still convicted them. Both arms
+    # now read 82, and that test is where the pair is held equal.
+    #
+    # THE OBJECTION THE OLD COMMENT WAS RIGHT ABOUT, AND WHERE IT IS ANSWERED.
+    #
+    # The customer broke no rule; an ASSISTANT that ran this check from inside
+    # the guide did, and this score cannot tell the two payloads apart - both
+    # arrive as JSON on `--calibration`. So crediting the result does pay for
+    # the forbidden route, and the answer is that paying for it is not this
+    # file's job to prevent. `calibrate_evaluator.py` refuses an evaluator that
+    # executes the candidate's answer, naming the file and the line, so for the
+    # shapes its walk can SEE the tool this guide ships will not produce that
+    # payload at all - and `references/run-safety.md` is explicit that finding
+    # none establishes nothing, so for an engine behind a helper module it will
+    # produce one happily. That residue is the same population the refusal has
+    # always been unable to reach, and the guidance forbids taking the check
+    # another way. A score is a reading of the
+    # evidence in front of it, and a scorer that withholds credit to enforce a
+    # rule is one that reports a lower number than it believes - which is the
+    # accusation traigent-first-run#507 has just finished removing from this
+    # same cap.
+    #
+    # What this file owes instead is provenance, and it is now said on every
+    # calibration line in both arms: this score read a result and did not take
+    # the measurement itself.
+    #
+    # Only a run with no supplied result renormalizes the refused check.
+    # A supplied result is read with the ordinary rules even when incomplete:
+    # missing or malformed checks do not become unavailable evidence merely
+    # because this evaluator has an execution hazard. Timeout and failure
+    # retain their own findings. Disclosure remains an independent question.
+    calibration_credit_refused = execution_disclosure_due and not calibration_engaged
     # ...and whether a ceiling SAYS so on the card, which is a second question
     # and has to be answered in the same place as the first.
     #
@@ -7562,25 +7626,14 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
     # `recommended_action: proceed` with no ceiling at all over a calibration
     # this card had just refused to read.
     calibration_refusal_capped = (
-        calibration_credit_refused and facts.timed_out is not True
+        execution_disclosure_due and facts.timed_out is not True
     )
-    # Whether this card PRINTS a refusal ceiling, which stopped being the same
-    # question as whether the refusal cap is raised.
-    #
-    # `calibration_refusal_capped` answers the second. The moment a witness
-    # started retiring the bound (traigent-first-run#507), the witnessed arm
-    # began raising that cap with `CALIBRATION_REFUSED_NO_CEILING` - no ceiling
-    # on the card at all - and every sentence that pointed at "the ceiling"
-    # there pointed at nothing. The same defect this seam already removed for
-    # `evaluator-timeout`, one predicate over.
-    #
-    # `witnessed_engine` is the predicate the cap itself branches on, so this
-    # is the fact rather than a stand-in for it. The two are held together by
-    # `test_no_line_points_at_a_ceiling_the_card_does_not_carry`, which reads
-    # the cap's actual `ceiling` and refuses any line naming one where it is
-    # `None`.
-    calibration_refusal_prints_ceiling = calibration_refusal_capped and not (
-        witnessed_engine(facts)
+    # An incomplete supplied result keeps the ordinary unvalidated ceiling.
+    # Otherwise the declared arm retains 45 and a readable engine witness
+    # removes that bound. The same value drives the cap and every reference
+    # to its ceiling, so incomplete evidence cannot inherit a no-ceiling claim.
+    calibration_refusal_prints_ceiling = calibration_refusal_capped and (
+        (calibration_engaged and not established) or not witnessed_engine(facts)
     )
     # There is deliberately no third boolean here for "the refusal rests on
     # evidence". There was one, and it was the generator of this seam's
@@ -7663,12 +7716,26 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
                 0.0 if disqualified else 40.0,
                 40.0,
                 True,
+                # PROVENANCE, ON BOTH ARMS (traigent-first-run#506). This
+                # score never runs a calibration; every payload it reads
+                # arrived on `--calibration` from something it did not watch,
+                # and that was true before this change and said nowhere.
+                #
+                # Naming it only where the shape is refused would have been
+                # the worse answer: it would mark the self-supplied result as
+                # the unverified one while an identically unverified payload
+                # in the ordinary arm said nothing, which reads as though the
+                # ordinary one had been observed. The clause is the same in
+                # both arms and on both verdicts, because the fact is.
                 (
                     f"{len(facts.checks)} calibration case(s); "
-                    f"the calibration did not establish this evaluator"
+                    f"the calibration did not establish this evaluator; "
+                    f"this score read that result and did not take the "
+                    f"measurement itself"
                     if disqualified
                     else f"{len(facts.checks)} calibration case(s); "
-                    f"every authored check passed"
+                    f"every authored check passed; this score read that "
+                    f"result and did not take the measurement itself"
                 ),
             )
         )
@@ -8175,16 +8242,18 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
                 asks=True,
             )
         )
-    # The derived predicate rather than the declaration, so this cap fires
-    # wherever the credit was refused - including the case a complete
-    # calibration WAS supplied for an evaluator preflight proved reaches an
-    # engine, where `established` is True and every condition above would have
-    # let the card report a clean 85/STRONG on evidence it may not accept.
+    # The derived predicate rather than the declaration, so this cap fires on
+    # the SHAPE and not on whether anything was credited. That distinction is
+    # the point of `execution_disclosure_due` (traigent-first-run#506): a
+    # complete calibration supplied for an evaluator preflight proved reaches
+    # an engine IS credited now - the card reads 85/STRONG on it - and the cap
+    # is raised over that score all the same, because the hazard it discloses
+    # is about the paid run rather than about the check.
     # It stays mutually exclusive with `evaluator-unvalidated` above, which is
     # what `CAP_SEVERITY_ORDER` records about the pair: the two conditions
     # read the same predicate in opposite directions. It also stays clear of
     # `evaluator-invalid`, because a calibration that observed a failure
-    # convicts and is never credit-refused, and of `evaluator-timeout`, which
+    # convicts and is never disclosure-due, and of `evaluator-timeout`, which
     # `calibration_refusal_capped` yields to.
     if calibration_refusal_capped:
         # The opening names what is connected, and it may not assert a
@@ -8196,31 +8265,28 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
             if facts.method is not None
             else "An evaluator is connected, and "
         )
-        if calibration_engaged:
-            # Said apart from the arm below, because the two runs did
-            # different things and only one of them can be told that nothing
-            # about its evaluator has been established. A complete calibration
-            # ran here; what is true is that this card may not read what it
-            # measured, and saying "nothing has been established either" over
-            # a passing result would be two sentences of one card disagreeing
-            # about the same run.
-            #
-            # The witness rides along because a refusal a customer cannot
-            # check is one they cannot usefully disagree with.
-            witness = f" ({facts.execution_witness})" if facts.execution_witness else ""
-            # THE CLASS, and the witness beside it names the instance. Naming
-            # only the database is half of what the gate refuses:
-            # `candidate_execution_witnesses` walks every import through
-            # `_execution_module_name` as well as its SQL branch, so an
-            # evaluator that shells out and touches no database raises this cap
-            # too, and a sentence about databases is unperformable for it
-            # (traigent-first-run#492).
+        if established:
+            # THE ARM WHERE A RESULT WAS SUPPLIED AND THIS CARD COUNTED IT
+            # (traigent-first-run#506). Every sentence in the two arms below
+            # is false here - "this card cannot read that result" after it
+            # read it, "we do not know whether your evaluator works" over a
+            # complete passing table - and the cap is still raised because the
+            # HAZARD is unchanged: the paid run still has their scorer execute
+            # statements the model wrote. What this arm discloses is the
+            # provenance, which is the whole of what this run can honestly say
+            # about a measurement it did not take.
+            witness = readable_execution_witness(facts.execution_witness)
             body = (
-                "the evaluator check was run on it, which this guide's "
-                f"evaluator-execution scope gate does not permit{witness}, so "
-                "this card cannot read that result. This guide does not "
-                "accept a check that runs candidate code or opens your "
-                "database, which is why it will not read that one."
+                "a passing calibration result was supplied. This card read "
+                "that result and did not observe the measurement."
+                + (f" The file check quoted: {witness}." if witness else "")
+            )
+        elif calibration_engaged:
+            body = (
+                "a calibration result was supplied, but this card could not "
+                "establish a complete result for this evaluator. The supplied "
+                "result remains incomplete evidence; this score read the "
+                "payload and did not take or observe the measurement."
             )
         else:
             body = (
@@ -8233,19 +8299,12 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
         caps.append(
             Cap(
                 "evaluator-calibration-refused",
-                # The witness decides the ceiling, and it is the only thing
-                # that decides anything here: no arm of this refusal is charged
-                # (traigent-first-run#507). A walk that PROVED the engine
-                # establishes that the unmade check is ours, so nothing is
-                # bounded either. A declaration on its own establishes nothing
-                # about any file, so the ceiling stays. Renormalization can
-                # raise an overall below 45 without establishing grading
-                # correctness; `calibration_scope_refused` documents that bound.
-                #
+                # The same bound drives the card prose. Supplied incomplete
+                # evidence keeps 45; otherwise the readable witness decides.
                 (
-                    CALIBRATION_REFUSED_NO_CEILING
-                    if witnessed_engine(facts)
-                    else CALIBRATION_REFUSED_CEILING
+                    CALIBRATION_REFUSED_CEILING
+                    if calibration_refusal_prints_ceiling
+                    else CALIBRATION_REFUSED_NO_CEILING
                 ),
                 # The order is the message: what we did, why, that it is not
                 # about them, and what they can do next.
@@ -8284,42 +8343,69 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
                 # What is true is narrower and is what it says now: we did not
                 # check, we therefore do not know, and no step in this guide
                 # would change that.
-                declared + body + " So we do not know whether your evaluator "
-                "works, and no step in this guide would change that - not "
-                "because you failed anything, but because this check is "
-                "outside what this guide performs. It is a limit of this run "
-                "and not a judgement of your evaluator, and THIS does not stop "
-                "your run. "
-                "What proceeding means: during the paid run the MODEL writes "
+                declared
+                + body
+                + (
+                    " That result says your evaluator marked the answers "
+                    "already known right as right and the ones already known "
+                    "wrong as wrong, and this card is counting it. What this "
+                    "score did not do is take the measurement: it did not "
+                    "watch the run that produced it. That is a limit on what "
+                    "this card witnessed and not a judgement of your "
+                    "evaluator, and THIS does not stop your run. "
+                    if established
+                    else (
+                        " The supplied result has not established whether "
+                        "your evaluator grades correctly. Supply a complete result "
+                        "from an eligible calibration before treating it as "
+                        "validation. This does not establish an evaluator failure, "
+                        "and THIS does not stop your run. "
+                        if calibration_engaged
+                        else " So we do not know whether your evaluator "
+                        "works, and no step in this guide would change that - not "
+                        "because you failed anything, but because this check is "
+                        "outside what this guide performs. It is a limit of this "
+                        "run and not a judgement of your evaluator, and THIS does "
+                        "not stop your run. "
+                    )
+                )
+                + "What proceeding means: during the paid run the MODEL writes "
                 "the statements and your evaluator runs them against whatever "
                 "it is configured to reach, many times over - generated "
                 "statements, not yours."
                 + CONNECTION_DISCLOSURE[facts.evaluator_connection]
-                + " Until some run measures this evaluator against answers "
-                "already known to be right and wrong, no card can claim it "
-                "grades correctly - so the evaluation pillar above reports "
-                "two of its four checks as measured, and this run cannot "
-                "present as STRONG."
-                # ARM-AWARE, and keyed on the CEILING THIS CAP CARRIES rather
-                # than on a fact that used to stand in for it.
-                #
-                # "Your score is not reduced for it" is true where no ceiling
-                # is printed. It is false on any arm still held at 45, and
-                # printing it there put "LIMITED TO 45" and "your score is not
-                # reduced" on one card. It was keyed on `executes_candidate is
-                # True` while the ceiling was decided by `witnessed_engine`,
-                # which is that same predicate AND a quoted witness - so a
-                # preflight document saying `executes` with no witness got both
-                # sentences at once. It is keyed on `witnessed_engine` now -
-                # the predicate the ceiling branches on, not a stand-in for it.
+                + (
+                    " A run did measure this evaluator against answers "
+                    "already known to be right and wrong, so the evaluation "
+                    "pillar above counts that check - and what it counts is a "
+                    "result this score did not observe."
+                    if established
+                    else (
+                        " The supplied result does not establish validation, "
+                        "so this card awards no calibration credit."
+                        if calibration_engaged
+                        else " Until some run measures this evaluator against "
+                        "answers already known to be right and wrong, no card can "
+                        "claim it grades correctly - so the evaluation pillar "
+                        "above reports two of its four checks as measured, and "
+                        "this run cannot present as STRONG."
+                    )
+                )
+                # The reassurance follows the actual ceiling. A readable
+                # witness alone cannot clear incomplete supplied evidence.
                 + (
                     " Your score is not reduced for it."
-                    if witnessed_engine(facts)
-                    else " The ceiling above stands for a different reason: no "
-                    "preflight report proved what this evaluator reaches, so "
-                    "nothing here established that the unmade check is ours "
-                    "rather than one no run has taken. That is a gap in what "
-                    "this run was given, not a finding about your file."
+                    if not calibration_refusal_prints_ceiling
+                    else (
+                        " The ceiling above remains because the supplied "
+                        "result has not established calibration."
+                        if calibration_engaged and not established
+                        else " The ceiling above stands for a different reason: no "
+                        "preflight report proved what this evaluator reaches, so "
+                        "nothing here established that the unmade check is ours "
+                        "rather than one no run has taken. That is a gap in what "
+                        "this run was given, not a finding about your file."
+                    )
                 ),
                 # DOES NOT BLOCK, and this REVERSES the half of
                 # traigent-first-run#393 that set `blocks=True` here. Written
@@ -20697,8 +20783,10 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
             "This is renormalization, not calibration credit. It is a declaration "
             "this score cannot verify on its own. Not the only route to that "
             "state - where --preflight witnessed an "
-            "engine the card reaches it with no declaration at all. Refused "
-            "beside --calibration, which says the opposite"
+            "engine the card reaches it with no declaration at all. May be "
+            "supplied together with --calibration when the project supplies "
+            "its own result; the declaration keeps the execution disclosure "
+            "while the payload is read with the ordinary scoring rules"
         ),
     )
     parser.add_argument(
@@ -20896,19 +20984,25 @@ def run(argv: Sequence[str] | None = None) -> int:
     # this is the one input allowed to move the score on nothing but its own
     # word. The planner half takes no evidence at all, so a review reaching it
     # is the same mistake spelled differently.
-    # A run cannot both have calibrated this evaluator and have been refused
-    # permission to. Accepting the pair would let a card carry the safety
-    # sentence over evidence produced by the very path that sentence says was
-    # not taken - which is the one way this declaration could be used to
-    # describe a run that did the opposite of what it claims.
-    if args.calibration and args.calibration_scope_refused:
-        print(
-            "cannot read scoring input: --calibration-scope-refused says this "
-            "run was not permitted to execute the evaluator, and --calibration "
-            "is the result of executing it. Pass one.",
-            file=sys.stderr,
-        )
-        return 2
+    # THE PAIR IS ACCEPTED, AND IT USED TO BE REFUSED (traigent-first-run#506).
+    #
+    # The refusal read "a run cannot both have calibrated this evaluator and
+    # have been refused permission to", which was true while `--calibration`
+    # meant "the result of executing it HERE". It does not mean that any more:
+    # a project may hand this run a result it took itself, on its own machine,
+    # for an evaluator this guide declines to calibrate. Those two facts are
+    # not opposites - they are the whole of that customer's situation, and
+    # refusing the pair made the assistant choose between them.
+    #
+    # What that choice cost is the reason this was lifted rather than left
+    # alone. On a project whose walk found no engine, the declaration is the
+    # ONLY thing that raises `evaluator-calibration-refused`, and that cap
+    # carries the execution disclosure and the connection question. An
+    # assistant told to pass the result instead therefore traded the entire
+    # hazard disclosure for the credit: measured, 45 PARTIAL with the
+    # disclosure became 85 STRONG with no cap at all. Passing both is the
+    # state that is true, and it scores as both: the pillar counts the result
+    # and the card still says what the paid run will do.
 
     # Refused rather than ignored, for the reason `--row-review` is refused
     # below: `scoring_requested` does not count this flag, so a run passing it
