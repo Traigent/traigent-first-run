@@ -19,8 +19,7 @@ Paste this into Claude Code, Cursor, Codex, Gemini CLI, or another coding assist
 
 ```text
 Help me run my first Traigent optimization.
-Clone https://github.com/Traigent/traigent-first-run beside my project, outside its root,
-and follow the clone's GUIDE.md while keeping my project as the working directory.
+Clone https://github.com/Traigent/traigent-first-run and follow GUIDE.md.
 ```
 
 The assistant performs the technical work and asks only when it needs:
