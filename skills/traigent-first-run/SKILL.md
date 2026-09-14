@@ -529,8 +529,8 @@ action would improve and the bound that most limited this walkthrough, without p
 larger run would find. Use the continuation handoff for the state-specific recommendation,
 reply-ready final block, and optional skills package. On the throwaway route only, add one
 reminder: `Traigent is installed in <absolute path>/.venv-traigent for this walkthrough; to keep
-using it, install it into your own environment.` Say nothing else about the environment choice;
-the customer made it. Handoff observations are hypotheses to test
+using it, install it into your own environment.` Do not reopen their environment choice.
+Handoff observations are hypotheses to test
 at full scale; `continue` never bypasses approval. Include optional telemetry repair when cost
 comparison is unavailable; it need not precede the quality result or displace a more important
 data/evaluator gap.

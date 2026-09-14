@@ -515,10 +515,8 @@ take. Where the project already holds its own calibration result or the copied-a
 one, pass it to `--calibration`. Retain the refusal flag **beside** that result whenever it records
 the original scope; never replace that declaration with the payload. Complete passing results earn credit while
 the execution disclosure and connection question remain; an observed failure or timeout follows
-its own finding. The flag lifts no ceiling. Without complete calibration and without an observed
-failure or timeout, the evaluation pillar and pre-cap average can rise when the refused check
-leaves the denominator; an overall below 45 can rise within that bound. This is renormalization,
-not calibration credit. The supplied-result and ceiling rules live in run-safety.md's scope section.
+its own finding. Apply the supplied-result, renormalization, and ceiling rules in
+[`run-safety.md` § Execution evaluators are out of scope](run-safety.md#execution-evaluators-are-out-of-scope).
 `calibrate_evaluator.py` refuses such an evaluator itself where its walk can see the execution,
 naming the file and line - finding none establishes nothing, so that refusal is not a clearance - and
 `references/run-safety.md` records why no in-process route replaces it. Apply the run-scoped
@@ -555,8 +553,9 @@ absolute path. The canonical `traigent-runs/calibration-cases.json` and
 creates them. Read both the agent's knobs and build when an agent was found.
 For a selected top-level Python function, include
 `--agent-source-root`, `--selected-agent`, and `--selected-agent-callable`; `source_lines` must show values on its
-verified selected-call path. Otherwise leave source credit unestablished and use the advisory route. A thin Python adapter is
-walkthrough material, not proof that the original agent was optimized.
+verified selected-call path. Otherwise leave source credit unestablished and use the advisory route.
+For a non-Python agent, explain its execution boundary beside that card under "Wording the offer"
+above. A thin Python adapter is walkthrough material, not proof that the original agent was optimized.
 Use the executable source-evidence rules below; comments and declarations do not establish values. Read the same source for how the agent is built and
 answer all four checks below: whether it carries a prompt and worked examples,
 whether anything pins down the

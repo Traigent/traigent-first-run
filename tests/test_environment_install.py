@@ -200,6 +200,32 @@ class IsolatedInstallerTests(unittest.TestCase):
         self.apply(plan)
         self.assertFalse((self.site / "pr545_example-2.0rc1.dist-info").exists())
 
+    def test_newer_agent_dependency_conflict_produces_no_install_plan(self):
+        wheel(self.wheels, "pr545-client", "3.13")
+        self.requirements.write_text("pr545-client==3.13\n")
+        self.apply(self.plan())
+        before = {
+            path.relative_to(self.target): path.read_bytes()
+            for path in self.target.rglob("*")
+            if path.is_file()
+        }
+        wheel(self.wheels, "pr545-client", "2.20")
+        wheel(self.wheels, "pr545-example", "2.0", ("pr545-client>=2.20,<3",))
+        self.requirements.write_text("pr545-example==2.0\n")
+        refused = self.plan(success=False)
+        self.assertIn("ResolutionImpossible", refused.stderr)
+        self.assertIn("pr545-client==3.13", refused.stderr)
+        self.assertIn("pr545-client<3", refused.stderr)
+        self.assertFalse((self.root / f"plan-{self.sequence}.json").exists())
+        self.assertEqual(
+            {
+                path.relative_to(self.target): path.read_bytes()
+                for path in self.target.rglob("*")
+                if path.is_file()
+            },
+            before,
+        )
+
     def test_modified_wheel_or_plan_cannot_use_old_approval(self):
         wheel(self.wheels, "pr545-example", "2.0")
         plan = self.plan()
@@ -246,6 +272,74 @@ class IsolatedInstallerTests(unittest.TestCase):
         )
         result = self.plan(success=False)
         self.assertIn("Only wheel artifacts", result.stderr)
+
+    def test_adapter_refuses_subprocess_creation_before_a_child_can_execute(self):
+        """Exercise the process boundary independently of wheel-only rejection."""
+        probe = self.root / "probe.py"
+        control = self.root / "control-child-ran"
+        forbidden = self.root / "forbidden-child-ran"
+        probe.write_text("""import importlib.util
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+script, candidate, control, forbidden = map(Path, sys.argv[1:])
+trusted = sys.executable
+child = [trusted, "-I", "-S", "-B", "-c",
+         "from pathlib import Path; import sys; Path(sys.argv[1]).write_text('child executed')"]
+subprocess.run([*child, str(control)], check=True, timeout=10)
+spec = importlib.util.spec_from_file_location("installer", script)
+installer = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(installer)
+sys.path.insert(0, str(installer.ENV.trusted_pip_wheel()))
+from pip._internal.cli import main as pip_main
+
+attempted = False
+def attempt_child(arguments):
+    global attempted
+    attempted = True
+    subprocess.run([*child, str(forbidden)], check=True, timeout=10)
+    return 0
+
+# Inject a request at the real adapter's pip dispatch boundary. Wheel-only
+# rejection must not prevent this test from reaching the process guard.
+pip_main.main = attempt_child
+try:
+    installer.pip_adapter(candidate, ["install", "--dry-run"])
+except RuntimeError as error:
+    print(json.dumps({"attempted": attempted, "error": str(error)}))
+    sys.exit(2)
+print(json.dumps({"attempted": attempted, "error": None}))
+""")
+        result = subprocess.run(
+            [
+                str(TRUSTED),
+                "-I",
+                "-S",
+                "-B",
+                str(probe),
+                str(SCRIPT),
+                str(self.target),
+                str(control),
+                str(forbidden),
+            ],
+            cwd=self.root,
+            text=True,
+            capture_output=True,
+            timeout=30,
+        )
+        self.assertEqual(control.read_text(), "child executed")
+        self.assertFalse(forbidden.exists(), "pip adapter started a child")
+        self.assertFalse(self.marker.exists(), "target or local pip.py executed")
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertEqual(
+            json.loads(result.stdout),
+            {
+                "attempted": True,
+                "error": "Package build/interpreter subprocesses are forbidden",
+            },
+        )
 
     @unittest.skipUnless(os.name == "posix", "requires symbolic links")
     def test_outward_package_symlink_is_refused_without_writes(self):

@@ -471,6 +471,75 @@ class SafeDiscoveryRegressionTests(unittest.TestCase):
 
 
 class StaticMetadataBoundaryTests(unittest.TestCase):
+    def test_replaced_interpreter_is_refused_with_unchanged_real_home(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            target = Path(temporary) / ".venv"
+            venv.EnvBuilder(with_pip=False, symlinks=False).create(target)
+            interpreter = target / INTERPRETER
+            self.assertFalse(interpreter.is_symlink())
+            self.assertNotIn("error", MODULE.probe(interpreter))
+            configuration = (target / "pyvenv.cfg").read_bytes()
+            with interpreter.open("ab") as stream:
+                stream.write(b"changed-fixture-bytes")
+            result = MODULE.probe(interpreter)
+            self.assertIn("error", result)
+            self.assertIn("Interpreter bytes do not match", result["error"])
+            self.assertEqual(result["verification"], "unverified")
+            self.assertEqual((target / "pyvenv.cfg").read_bytes(), configuration)
+
+    def test_changed_home_is_refused_with_unchanged_real_interpreter(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            target = Path(temporary) / ".venv"
+            venv.EnvBuilder(with_pip=False).create(target)
+            interpreter = target / INTERPRETER
+            self.assertNotIn("error", MODULE.probe(interpreter))
+            digest = MODULE.file_digest(interpreter)
+            configuration = target / "pyvenv.cfg"
+            configuration.write_text(
+                "\n".join(
+                    (
+                        f"home = {Path(temporary) / 'different-home'}"
+                        if line.startswith("home =")
+                        else line
+                    )
+                    for line in configuration.read_text().splitlines()
+                )
+                + "\n"
+            )
+            result = MODULE.probe(interpreter)
+            self.assertIn("error", result)
+            self.assertIn("Interpreter home does not match", result["error"])
+            self.assertEqual(result["verification"], "unverified")
+            self.assertEqual(MODULE.file_digest(interpreter), digest)
+
+    def test_unsupported_declaration_refuses_without_claiming_runtime_identity(self):
+        for version in ("3.10.14", "3.14.0rc1", "3.10.14.final.0"):
+            with self.subTest(
+                version=version
+            ), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                target = root / ".venv"
+                venv.EnvBuilder(with_pip=False).create(target)
+                configuration = target / "pyvenv.cfg"
+                configuration.write_text(
+                    f"home = {root / 'unavailable-base'}\nversion = {version}\n"
+                )
+                before = configuration.read_bytes()
+                result = MODULE.describe(root, REQUIREMENTS, {})
+                self.assertEqual(result["state"], "unsupported")
+                (candidate,) = result["candidates"]
+                self.assertIs(candidate["supported"], False)
+                self.assertEqual(candidate["verification"], "unverified")
+                self.assertEqual(candidate["declared_python_version"], version)
+                self.assertNotIn("python_version", candidate)
+                self.assertNotIn("guard", candidate)
+                self.assertIn("choose a verified Python 3.11-3.13", candidate["remedy"])
+                self.assertNotIn("matching", candidate["remedy"])
+                self.assertIn(f"declared Python {version}", result["skipped"][0])
+                with self.assertRaises(MODULE.UnsupportedDeclaredRuntime):
+                    MODULE.verified_environment(target / INTERPRETER)
+                self.assertEqual(configuration.read_bytes(), before)
+
     def test_missing_and_broken_interpreters_remain_visible(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -622,7 +691,10 @@ class StaticMetadataBoundaryTests(unittest.TestCase):
                 header
                 + marshal.dumps(compile(source, str(shim), "exec", dont_inherit=True))
             )
-            self.assertTrue(MODULE.trusted_shim_bytecode(shim, source))
+            with mock.patch.object(
+                MODULE.marshal, "loads", side_effect=AssertionError("candidate decoded")
+            ):
+                self.assertTrue(MODULE.trusted_shim_bytecode(shim, source))
             cache.write_bytes(
                 header
                 + marshal.dumps(

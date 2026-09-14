@@ -4817,17 +4817,22 @@ class SkillPackageTests(unittest.TestCase):
             "several: ask which one - lettered, each with its absolute path and python version",
             "`other path` and, only when the name is free, `create .venv for this project`",
             "`no virtual environment found directly under the project root.`",
-            "verified candidates exist but none has a supported python - is not none",
+            "an unsupported version is not an absent environment",
             "`no supported virtual environment found directly under the project root`",
             "`<path> was skipped (python <version>, not 3.11-3.13)`",
             "an environment exists at <path>, but this run could not verify its runtime or installed-package inventory",
             "when `<project root>/.venv` is absent",
             "both creation and that install (`new-project`)",
             "**one sdk install approval.**",
+            "use the route's approval: the combined preview above for `new-project`, "
+            "or the dependency-installation rule below for `throwaway`",
             "an existing environment uses the resolved card here",
             'scripts/environment_install.py" plan --candidate',
+            "planning ignores pip configuration and `pip_*` index settings",
+            '`plan --no-index --find-links "<absolute local wheel directory>"`',
             "changes no installed package and runs no customer startup hook or source build",
             "constrains every other installed distribution to its current version",
+            "for `existing-project`, show the resulting card",
             "this will change <package> <installed> to <new>",
             "install only on an explicit yes; a no takes the throwaway route",
             'scripts/environment_install.py" apply --plan',
@@ -4840,6 +4845,10 @@ class SkillPackageTests(unittest.TestCase):
             "including prerelease, development, post-release, local and epoch segments",
             "`this will change <package> <installed> to <pinned>` receives a yes",
             "including `python-dotenv` and transitive dependencies",
+            "no install plan was produced; no installed packages changed",
+            "a throwaway environment preserves yours, but would run your agent "
+            "with that older dependency; compatibility is unverified",
+            "never recommend that dependency downgrade as the remedy or enter the fallback automatically",
             "**throwaway route.**",
             "used only when the customer declines the project-environment install",
         )
@@ -4988,7 +4997,7 @@ class SkillPackageTests(unittest.TestCase):
             skill.index(reminder),
         )
         self.assertIn(
-            "say nothing else about the environment choice; the customer made it",
+            "do not reopen their environment choice",
             skill,
         )
         for path in assistant_facing_documents():
@@ -6414,9 +6423,20 @@ class SkillPackageTests(unittest.TestCase):
                 self.assertNotIn("a declaration nothing here can check", text)
                 self.assertNotIn("neither the score nor the band", text)
                 self.assertNotIn("it moves no number", text)
-                self.assertIn("pre-cap average", text)
-                self.assertIn("evaluation pillar", text)
-                self.assertIn("an overall below 45 can rise within that bound", text)
+        for phrase in (
+            "pre-cap average",
+            "evaluation pillar",
+            "an overall below 45 can rise within that bound",
+        ):
+            self.assertIn(phrase, help_text)
+        # The opening dispatches to the scope owner; it must not repeat
+        # the refusal arithmetic immediately before claiming it lives there.
+        for phrase in (
+            "leaves the denominator",
+            "an overall below 45 can rise within that bound",
+            "this is renormalization, not calibration credit",
+        ):
+            self.assertNotIn(phrase, opening)
         for phrase in (
             "the declared `--evaluator-method execution` or a positive preflight witness "
             "already carries that scope",
@@ -6424,9 +6444,8 @@ class SkillPackageTests(unittest.TestCase):
             "when neither records it",
             "retain the refusal flag **beside** that result whenever it records the original scope",
             "never replace that declaration with the payload",
-            "the flag lifts no ceiling",
-            "without complete calibration and without an observed failure or timeout",
-            "this is renormalization, not calibration credit",
+            "apply the supplied-result, renormalization, and ceiling rules in",
+            "(run-safety.md#execution-evaluators-are-out-of-scope)",
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, opening)

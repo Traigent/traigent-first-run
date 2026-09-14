@@ -162,7 +162,7 @@ list if its version is unsupported. This probe prints its absolute path and vers
 ```
 
 On Windows, list already installed paths with `py -0p`, then probe those executables directly in
-3.13, 3.12, 3.11 order with the same `-I -S -c` check. Never use a launcher mode that auto-installs.
+3.13, 3.12, 3.11 order with the same `-I -S -B -c` check. Never use a launcher mode that auto-installs.
 If the PATH/launcher search fails and `uv` is already present, use
 `uv python find --offline --no-python-downloads '>=3.11,<3.14'` and inspect then probe its returned
 host path too. The same known-host requirement applies to launcher and manager results.
@@ -201,11 +201,14 @@ In the commands below, `.../` is the absolute skill directory resolved under GUI
    Python 3.11-3.13: propose installing into it, by absolute path (`existing-project`). Several:
    ask which one - lettered, each with its absolute path and Python version - plus `other path`
    and, only when the name is free, `create .venv for this project`.
-   None: say `No virtual environment found directly under the project root.` Unsupported -
-   verified candidates exist but none has a supported Python - is not none: say
+   None: say `No virtual environment found directly under the project root.` An unsupported
+   version is not an absent environment: say
    `No supported virtual environment found directly under the project root`, followed by one
    `<path> was skipped (Python <version>, not 3.11-3.13)` clause per verified candidate.
-   For unverified candidates, say `An environment exists at <path>, but this run could not verify
+   A `pyvenv.cfg` declaration outside that range also rules out the candidate: report its declared
+   version as unsupported and its runtime identity as unverified, preserving it; do not seek an
+   unsupported host Python to verify it.
+   For other unverified candidates, say `An environment exists at <path>, but this run could not verify
    its runtime or installed-package inventory`, followed by its remedy. Keep these distinct even when other candidates work.
 
    In either case, when `<project root>/.venv` is absent, resolve the supported Python under
@@ -232,18 +235,22 @@ In the commands below, `.../` is the absolute skill directory resolved under GUI
    `A. Use a throwaway .venv-traigent (recommended). B. Use an existing environment - reply with
    its absolute path.` Wait for their explicit choice. An unsupported environment elsewhere does
    not occupy a free `.venv`; the normal new-project route still applies there.
-3. **One SDK install approval.** A fresh `new-project` environment uses the combined preview above;
-   do not ask again for the same installation. An existing environment uses the resolved card here,
-   because it already holds packages the resolver may change. Use the trusted runtime that verified
+3. **One SDK install approval.** Use the route's approval: the combined preview above for
+   `new-project`, or the dependency-installation rule below for `throwaway`.
+   An existing environment uses the resolved card here, because it already holds packages the
+   resolver may change. Use the trusted runtime that verified
    this environment; for a new environment, that is the host runtime that created it. Prepare the version guard's proposed
    set below, then run `"<trusted-python>" -I -S -B ".../scripts/environment_install.py"
    plan --candidate "<absolute environment path>" --requirements
    ".../assets/requirements-first-run.txt" --plan "<local plan.json>"`, adding `--change <package>==<pinned>` only for each proposed replacement.
+   Planning ignores pip configuration and `PIP_*` index settings; for private-index or offline
+   setup, use `plan --no-index --find-links "<absolute local wheel directory>"` with a
+   customer-supplied directory containing all required wheels.
    This fetches wheels and metadata into a temporary local plan directory; it changes no installed
    package and runs no customer startup hook or source build. It uses trusted bootstrap pip code,
    reads installed metadata as data, and constrains every other installed distribution to its
-   current version. A conflict stops planning; it never authorizes changing another dependency.
-   Show the resulting card, including every transitive addition and every replacement:
+   current version. A conflict stops planning; use the failed-plan route under Version guard below.
+   For `existing-project`, show the resulting card, including every transitive addition and every replacement:
    `Installing into <absolute path> (Python <version>) would add: <new packages with versions>.
    This will change <package> <installed> to <new> [one line per change, or changes: none].
    Only package artifacts were fetched; no installed packages changed. Proceed, or use a throwaway
@@ -267,9 +274,19 @@ In the commands below, `.../` is the absolute skill directory resolved under GUI
    A below-pin version is only a proposed replacement until the card's explicit
    `this will change <package> <installed> to <pinned>` receives a yes. The same exact-change rule
    covers every installed package, including `python-dotenv` and transitive dependencies. A
-   dependency conflict needs a revised disclosed plan or the throwaway route; never silently
-   upgrade, downgrade, or reinstall an installed package. Record the versions actually installed
-   as this run's setup evidence.
+   dependency conflict needs a revised disclosed plan; never silently
+   upgrade, downgrade, or reinstall an installed package. If planning fails, show
+   `No install plan was produced; no installed packages changed. <observed resolver reason>.`
+   Name any reported version conflict in the customer's terms; do not label a network or missing-wheel
+   failure a dependency conflict. Recommend a compatible project environment or review of an
+   explicitly disclosed version-change plan. Offer the throwaway route only with its compatibility
+   consequence: for example, `Your agent uses openai 3.x; this SDK stack requires openai below 3.
+   A throwaway environment preserves yours, but would run your agent with that older dependency;
+   compatibility is unverified.` Never recommend that dependency downgrade as the remedy or enter
+   the fallback automatically. After an explicit fallback choice, show its resolved dependency
+   versions and apply the existing static/mock checks to the selected agent before proposing a paid run.
+   Record the versions actually installed and any difference from the original agent's dependency
+   versions as this run's setup evidence.
 5. **Throwaway route.** `.venv-traigent` under the project root with Python 3.11-3.13 and the
    exact pins (`throwaway`) - used only when the customer declines the project-environment
    install, refuses the guard's change line, or explicitly chooses it because `.venv` is occupied
@@ -1396,7 +1413,14 @@ cost can be reported with its source; adding a cost objective belongs to a separ
 Put the telemetry limitation on the existing stage approval card: which cost or usage records are
 absent, the bounded rows/trials/calls and runtime, the credible conservative per-call estimate and
 remaining allowance, and that **actual charges for unpriced calls are unknown to this run and stay
-unknown**. Use the same final reply-ready block, not another setup question:
+unknown**.
+
+For direct provider calls outside the SDK ledger, say on that card: `The SDK's dollar stop target
+does not cover these calls; <separately verified call bound and debit coverage, or not established>.`
+Apply the call-accounting contract in `references/sdk-execution.md`; a path the controls cannot
+observe is not a dollar-limited path.
+
+Use the same final reply-ready block, not another setup question:
 
 - `A.` **Continue the bounded run on the primary criterion**, marked recommended because it can
   still show a meaningful quality comparison. Reply `continue`.
@@ -1962,6 +1986,10 @@ Keep it a scope statement. It reports what was measured and what was not; it doe
 a larger run would have won, attach a deadline, or supply a reason to act now.
 
 ### Continuation handoff
+
+If the throwaway route changed the agent's dependency versions, name the original and walkthrough
+versions beside the existing reinstall reminder, using setup evidence; compatibility with the
+original environment remains unmeasured unless this run established it separately.
 
 Close by saying what a further run would be worth. Name the gaps still open and what each is now
 costing; use the user's own measured evidence rather than encouragement. Say what this walkthrough
