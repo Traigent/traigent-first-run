@@ -3288,7 +3288,9 @@ class SkillPackageTests(unittest.TestCase):
         # (traigent-first-run#392).
         self.assertIn("comparison evaluators", description)
         self.assertNotIn("non-executing comparison evaluators", description)
-        self.assertIn("never by refusing the run", description)
+        self.assertIn("execution evaluators retain disclosure", description)
+        self.assertIn("may calibrate an eligible copy", description)
+        self.assertIn("without refusing onboarding", description)
         self.assertIn(
             "query or code text compared rather than run",
             description,
