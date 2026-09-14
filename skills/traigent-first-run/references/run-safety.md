@@ -591,8 +591,8 @@ belongs only to an evaluator that executes candidate code or SQL, under the scop
 
 When the resolved evaluator call path is an executing one, preserve the project, run only read-only
 static inspection that does not import or execute it, record a `containment` warning, and **do not
-calibrate**. What this guide declines is running the customer's scorer against the customer's engine
-on our initiative. It is not their onboarding.
+calibrate the original evaluator here**. What this guide declines is running the customer's scorer
+against the customer's engine on our initiative. It is not their onboarding.
 
 **The run continues, on full disclosure.** Under the standing rule at the top of this file, tell them
 in their own words, and do not soften any of it:
@@ -650,8 +650,8 @@ refused outside the copied-actor route below.
 `scripts/calibrate_evaluator.py` now enforces this rule instead of relying on it being read. Before
 it imports anything, it asks the same walk `preflight.py` reports through `evaluator-shape` of every
 file the run would import - the scorer, and the module behind `--reply-transform`, which is loaded
-and called in the same child on every probe and had never been looked at. A witness names its file
-and line and exits 2.
+and called in the same child on every probe and had never been looked at. Outside the copied-actor
+route, a witness names its file and line and exits 2.
 
 Read the direction of that check carefully, because it only goes one way. A witness establishes
 that a file reaches an engine; finding none establishes nothing at all, since a walk of one file
@@ -671,23 +671,21 @@ any of those routes, its calibration evidence remains uncollected.
 
 On the original target, that customer's card is a consequence of this decision rather than of
 their project. **The check is one this guide declines to PERFORM, and never one the customer is
-forbidden to make.** A project
-that measured its own evaluator and passes the result to `--calibration` is read exactly as any
-other project is, conviction included. This guide takes that measurement only through the
-copied-actor route below. Where no result was supplied, the check earns nothing and the probe spread is
-never measured;
-those declined checks leave the denominator rather than deducting points. Without an observed
-failure or timeout, a supplied incomplete or unreadable result stays unestablished and keeps the
-ordinary incomplete-result deduction and 45 ceiling, including when preflight witnessed an engine. Observed failures and timeouts keep their own findings and remedies under
-`evaluation-and-dataset.md`, instead of the refusal cap. Otherwise `readiness.py` raises `evaluator-calibration-refused`, which **does not
-block** and carries the execution disclosure. The pre-spend disclosure remains unconditional under
-Approval and budgets below, whatever finding the readiness card carries.
+forbidden to make.** A project's complete passing result earns ordinary calibration credit; an
+observed failure still convicts. This guide takes that measurement only through the copied-actor
+route below. Where no result was supplied, the check earns nothing. Without an observed failure
+or timeout, a supplied incomplete or unreadable result also stays unestablished: calibration and probe spread receive no measured
+credit. In both cases those declined checks leave the denominator rather than deducting points.
+Observed failures and timeouts keep their own findings and remedies under
+`evaluation-and-dataset.md`, instead of the refusal cap. Otherwise `readiness.py` raises
+`evaluator-calibration-refused`, which **does not block** and carries the execution disclosure.
+The pre-spend disclosure remains unconditional under Approval and budgets below, whatever finding
+the readiness card carries.
 
-With no result supplied or with a complete passing result, **whether the refusal bounds the CLAIM
-depends on what preflight's walk found**. Where the walk established the engine, the boundary is
-demonstrably ours: nothing is bounded either. Where this run holds only the declaration, the claim
-is held at 45: the declaration supplies no measurement of grading correctness. Without a supplied
-result, renormalization can raise a lower overall within that bound; it is not calibration credit.
+For all these refusal states, **whether the refusal bounds the CLAIM depends on what preflight's
+walk found**. Where the walk established the engine, the boundary is demonstrably ours: nothing is
+bounded either. Where this run holds only the declaration, the claim is held at 45: the declaration supplies no measurement of grading correctness. Without complete
+calibration, renormalization can raise a lower overall within that bound; it is not calibration credit.
 The card carries the disclosure this section makes. It does not put the question: that happens
 once, at the pre-spend approval, for the reason given above.
 The card says which case a run
@@ -2180,7 +2178,7 @@ Each event names what its `class` may be.
   elsewhere says to surface without guessing a category among them.
 - `warning` - observed, and able to distort the result without stopping the run: `containment`,
   `refused-trial`, `untracked-cost`, `cap-standing`, or `uncategorized`. The first is the evaluator
-  check the scope gate skipped: THIS RUN measured nothing about that evaluator, and any supplied
+  check of the original evaluator that the scope gate declined; any supplied or copied-actor
   result is interpreted under the scope gate above. The warning itself stops no work. Recording it under the event above would say, in the artifact a
   user hands to somebody else, that a completed run had halted. Nothing that halts the run is one of these,
   however it presents: tracking that degrades to local-only stops paid work, so it is a `stopped`.

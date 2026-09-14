@@ -390,11 +390,11 @@ NOT CHECKED HERE
   This label carries no numeric ceiling. It describes the execution boundary
   owned by run-safety.md, including that reference's copied-actor exception.
   The label does not establish who produced a supplied calibration result.
-  Without a supplied result, calibration and probe spread remain unmeasured;
-  thin evidence holds the band at Workable. A complete passing result can establish
-  all four checks and support Strong while this same label stays: the scoring
-  command read a supplied result, it did not observe its production. Read the
-  actual check counts and band; run-safety.md owns the supplied-result cases.
+  Without a complete result, and absent observed failure or timeout, calibration
+  and probe spread remain unmeasured; thin evidence holds the band at Workable.
+  A complete passing result can establish all four checks and support Strong
+  while this same label stays: the scoring command read a supplied result, it did
+  not observe its production. Read the actual check counts and band; run-safety.md owns the supplied-result cases.
 
 .env file
   Plain: a small text file in your project that holds settings and secrets -

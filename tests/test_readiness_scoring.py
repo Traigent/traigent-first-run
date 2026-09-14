@@ -11019,8 +11019,8 @@ class TheScoreStatesWhatItKnowsTests(unittest.TestCase):
         self.assertIn("did not finish", line)
         self.assertNotIn("was not calibrated", line)
 
-    def test_ran_with_no_checks_is_distinct_from_never_ran(self) -> None:
-        """Three states, three sentences - collapsing them loses the fact."""
+    def test_supplied_empty_result_is_distinct_from_an_absent_result(self) -> None:
+        """An empty payload establishes its presence, not a measurement."""
         supplied_empty = self.calibration_line(
             MODULE.evaluation_facts_from_calibration(
                 {"cases": [], "passed": False}, method="execution", task_kind="code-sql"
@@ -11031,7 +11031,9 @@ class TheScoreStatesWhatItKnowsTests(unittest.TestCase):
                 None, method="execution", task_kind="code-sql"
             )
         )
-        self.assertIn("ran but reported no checks", supplied_empty)
+        self.assertIn("a result was supplied", supplied_empty)
+        self.assertIn("does not establish a complete calibration", supplied_empty)
+        self.assertNotIn("calibration ran", supplied_empty)
         self.assertNotEqual(supplied_empty, never_ran)
 
     def test_no_unmeasured_line_claims_something_was_not_done(self) -> None:
@@ -12830,16 +12832,14 @@ class ADeferredCalibrationSaysSoInTheFieldConsumersReadTests(unittest.TestCase):
     def _outstanding(
         self, *, scope_refused: bool, weights: dict[str, float] | None = None
     ) -> "MODULE.ReadinessScore":
-        """A text-to-SQL project whose calibration has not happened.
+        """The flag reports a hidden execution path over a comparison declaration.
 
-        One base, one field varied, so the comparison below is about the
-        declaration and not about two differently-shaped fixtures. `execution`
-        over `code-sql` is the shape the scope gate is written for: a scorer
-        whose complete path runs the candidate's own SQL.
+        Vary only the scope flag. An execution method already declares scope,
+        so it cannot serve as the ordinary unvalidated control.
         """
         facts = MODULE.EvaluationFacts(
             present=True,
-            method="execution",
+            method="sql-structure",
             task_kind="code-sql",
             parses=True,
             origin="brought",
@@ -12859,8 +12859,8 @@ class ADeferredCalibrationSaysSoInTheFieldConsumersReadTests(unittest.TestCase):
         """The declaration preserves 45, not the earlier uncapped arithmetic."""
         for raw, expected in (
             ("40,35,25", (45, 45)),
-            ("10,80,10", (42, 45)),
-            ("0,100,0", (31, 45)),
+            ("10,80,10", (43, 45)),
+            ("0,100,0", (32, 45)),
         ):
             with self.subTest(weights=raw):
                 weights = MODULE.parse_weights(raw)
@@ -14226,10 +14226,18 @@ class SuppliedCalibrationKeepsItsOrdinaryEvidenceStateTests(unittest.TestCase):
 
     WITNESS = "calls .execute() (line 7)"
 
-    def _score(self, payload, *, witnessed=False, declared=False, weights="40,35,25"):
+    def _score(
+        self,
+        payload,
+        *,
+        witnessed=False,
+        declared=False,
+        method="execution",
+        weights="40,35,25",
+    ):
         facts = MODULE.evaluation_facts_from_calibration(
             payload,
-            method="execution",
+            method=method,
             task_kind="code-sql",
             evaluator_present=True,
             evaluator_parses=True,
@@ -14250,7 +14258,7 @@ class SuppliedCalibrationKeepsItsOrdinaryEvidenceStateTests(unittest.TestCase):
     def _evaluation(score):
         return next(p for p in score.pillars if p.name == "evaluation")
 
-    def test_supplied_incomplete_results_keep_ordinary_arithmetic_and_bound(self):
+    def test_incomplete_refused_evidence_matches_absence_without_measured_credit(self):
         payloads = {
             "empty": {},
             "empty cases": {"cases": []},
@@ -14265,53 +14273,182 @@ class SuppliedCalibrationKeepsItsOrdinaryEvidenceStateTests(unittest.TestCase):
                 },
             },
             "scores only": {"scores": {"good": 1.0, "bad": 0.0}},
-            "timeout": {"timed_out": True},
         }
         for label, payload in payloads.items():
             for weights in ("40,35,25", "10,80,10", "0,100,0"):
-                ordinary = self._score(payload, weights=weights)
-                for route in ({"witnessed": True}, {"declared": True}):
+                for route in ({"witnessed": True}, {"declared": True}, {}):
                     with self.subTest(payload=label, weights=weights, route=route):
-                        disclosed = self._score(payload, weights=weights, **route)
-                        plain_eval = self._evaluation(ordinary)
-                        actual_eval = self._evaluation(disclosed)
-                        self.assertEqual(actual_eval.score, plain_eval.score)
-                        self.assertEqual(actual_eval.confidence, plain_eval.confidence)
+                        absent = self._score(None, weights=weights, **route)
+                        incomplete = self._score(payload, weights=weights, **route)
                         self.assertEqual(
-                            disclosed.weighted_average, ordinary.weighted_average
+                            (
+                                incomplete.weighted_average,
+                                incomplete.overall,
+                                incomplete.band,
+                                incomplete.confidence,
+                            ),
+                            (
+                                absent.weighted_average,
+                                absent.overall,
+                                absent.band,
+                                absent.confidence,
+                            ),
                         )
-                        self.assertEqual(disclosed.overall, ordinary.overall)
-                        self.assertEqual(disclosed.band, ordinary.band)
-                        calibration = next(
-                            s for s in actual_eval.subscores if s.name == "calibration"
+                        self.assertEqual(
+                            incomplete.recommended_action, absent.recommended_action
                         )
-                        self.assertTrue(calibration.withheld)
-                        self.assertFalse(calibration.measured)
-                        self.assertEqual(calibration.value, 0.0)
-                        if label == "timeout":
-                            self.assertEqual(disclosed.status, "BLOCKED")
-                            self.assertIn(
-                                "evaluator-timeout",
-                                [c.condition for c in disclosed.caps],
-                            )
-                        else:
-                            cap = next(
-                                c
-                                for c in disclosed.caps
-                                if c.condition == "evaluator-calibration-refused"
-                            )
-                            self.assertEqual(cap.ceiling, 45)
-                            self.assertIn("supplied result", cap.reason)
-                            self.assertIn(
-                                "during the paid run the MODEL writes", cap.reason
-                            )
-                            self.assertNotIn(
-                                "this card cannot read that result", cap.reason
-                            )
-                            self.assertNotIn("Your score is not reduced", cap.reason)
-                            self.assertNotIn(
-                                "no points are deducted", calibration.evidence
-                            )
+                        for sub in self._evaluation(incomplete).subscores:
+                            if sub.name in ("calibration", "probe-spread"):
+                                self.assertFalse(sub.withheld)
+                                self.assertFalse(sub.measured)
+                                self.assertEqual(sub.value, 0.0)
+                                self.assertIn("no points are deducted", sub.evidence)
+                        cap = next(
+                            c
+                            for c in incomplete.caps
+                            if c.condition == "evaluator-calibration-refused"
+                        )
+                        self.assertEqual(
+                            cap.ceiling, None if route.get("witnessed") else 45
+                        )
+                        self.assertIn(
+                            "supplied result remains incomplete evidence", cap.reason
+                        )
+                        self.assertIn(
+                            "during the paid run the MODEL writes", cap.reason
+                        )
+                        self.assertNotIn(
+                            "this card may not read", str(self._evaluation(incomplete))
+                        )
+                        self.assertNotIn(
+                            "a calibration was run", str(self._evaluation(incomplete))
+                        )
+                ordinary = self._score(payload, method="sql-structure", weights=weights)
+                self.assertIn(
+                    "evaluator-unvalidated", [c.condition for c in ordinary.caps]
+                )
+                self.assertLessEqual(ordinary.overall, 45)
+                ordinary_cal = next(
+                    s
+                    for s in self._evaluation(ordinary).subscores
+                    if s.name == "calibration"
+                )
+                self.assertTrue(ordinary_cal.withheld)
+
+    def test_failures_and_timeouts_keep_their_ordinary_findings_and_arithmetic(self):
+        for payload, condition, ceiling in (
+            (
+                {"passed": False, "checks": {"good_passes": False}},
+                "evaluator-invalid",
+                25,
+            ),
+            ({"timed_out": True}, "evaluator-timeout", 45),
+        ):
+            for weights in ("40,35,25", "10,80,10", "0,100,0"):
+                ordinary = self._score(payload, weights=weights)
+                for route in ({"witnessed": True}, {"declared": True}, {}):
+                    with self.subTest(payload=payload, route=route, weights=weights):
+                        actual = self._score(payload, weights=weights, **route)
+                        self.assertEqual(actual.overall, ordinary.overall)
+                        self.assertEqual(
+                            actual.weighted_average, ordinary.weighted_average
+                        )
+                        self.assertEqual(
+                            actual.recommended_action, ordinary.recommended_action
+                        )
+                        self.assertEqual(actual.status, "BLOCKED")
+                        self.assertEqual(
+                            [(c.condition, c.ceiling) for c in actual.caps],
+                            [(condition, ceiling)],
+                        )
+                        self.assertEqual(
+                            self._evaluation(actual).subscores[0],
+                            self._evaluation(ordinary).subscores[0],
+                        )
+
+    def test_real_cli_execution_method_discloses_without_a_scope_flag(self):
+        """A method declaration is sufficient; payload presence alone is not."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            preflight, calibration = root / "preflight.json", root / "calibration.json"
+            preflight.write_text(
+                json.dumps(
+                    [
+                        *PREFLIGHT_RECORDS,
+                        {
+                            "check": "evaluator-shape",
+                            "status": "PASS",
+                            "metrics": {
+                                "exists": True,
+                                "parses": True,
+                                "executes": False,
+                                "execution_witnesses": [],
+                            },
+                        },
+                    ]
+                )
+            )
+            calibration.write_text(
+                json.dumps(
+                    {
+                        "passed": True,
+                        "checks": {
+                            "good_passes": True,
+                            "bad_fails": True,
+                            "non_constant": True,
+                        },
+                    }
+                )
+            )
+            for method, refused in (
+                ("execution", True),
+                ("sql-structure", False),
+                ("normalized-exact", False),
+                ("composite", False),
+            ):
+                with self.subTest(method=method):
+                    command = [
+                        sys.executable,
+                        "-I",
+                        "-B",
+                        str(SCRIPT),
+                        "--preflight",
+                        str(preflight),
+                        "--calibration",
+                        str(calibration),
+                        "--evaluator-method",
+                        method,
+                        "--task-kind",
+                        "code-sql",
+                        "--json",
+                    ]
+                    result = subprocess.run(
+                        command, capture_output=True, text=True, timeout=15
+                    )
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    score = json.loads(result.stdout)
+                    evaluation = next(
+                        p for p in score["pillars"] if p["name"] == "evaluation"
+                    )
+                    check = next(
+                        s for s in evaluation["subscores"] if s["name"] == "calibration"
+                    )
+                    self.assertEqual(check["value"], 40)
+                    self.assertTrue(check["measured"])
+                    caps = {c["condition"]: c for c in score["caps"]}
+                    self.assertEqual("evaluator-calibration-refused" in caps, refused)
+                    self.assertNotIn("evaluator-unvalidated", caps)
+                    if refused:
+                        cap = caps["evaluator-calibration-refused"]
+                        self.assertEqual(cap["ceiling"], 45)
+                        self.assertLessEqual(score["overall"], 45)
+                        self.assertIn(
+                            "during the paid run the MODEL writes", cap["reason"]
+                        )
+                        self.assertIn("--evaluator-connection read-only", cap["reason"])
+                        self.assertTrue(cap["asks"])
+                        self.assertFalse(cap["blocks"])
+                        self.assertIn("This card read that result", cap["reason"])
 
     def test_no_result_still_renormalizes_and_a_complete_result_keeps_disclosure(self):
         no_result = self._score(None, witnessed=True)
@@ -14336,7 +14473,7 @@ class SuppliedCalibrationKeepsItsOrdinaryEvidenceStateTests(unittest.TestCase):
             },
             "scores": {"good": 1.0, "equivalent_good": 1.0, "partial": 0.4, "bad": 0.0},
         }
-        ordinary = self._score(payload)
+        ordinary = self._score(payload, method="sql-structure")
         disclosed = self._score(payload, witnessed=True)
         self.assertEqual(disclosed.overall, ordinary.overall)
         self.assertEqual(disclosed.overall, 85)
@@ -14621,19 +14758,15 @@ class CopiedCalibrationProvenanceKeepsScoringTests(unittest.TestCase):
                             cap = caps["evaluator-calibration-refused"]
                             self.assertEqual(
                                 cap["ceiling"],
-                                (
-                                    None
-                                    if label == "passing"
-                                    and route.startswith("witnessed")
-                                    else 45
-                                ),
+                                (None if route.startswith("witnessed") else 45),
                             )
                             self.assertIn(
                                 "during the paid run the MODEL writes", cap["reason"]
                             )
                             self.assertNotIn("it was not this run", cap["reason"])
                             if label == "incomplete":
-                                self.assertTrue(check["withheld"])
+                                self.assertFalse(check["withheld"])
+                                self.assertFalse(check["measured"])
                                 self.assertIn(
                                     "supplied result remains incomplete evidence",
                                     cap["reason"],
@@ -14671,12 +14804,9 @@ class TheWitnessDecidesTheScopeGateNotTheDeclarationTests(unittest.TestCase):
     * and the refused state itself rested on a word nothing checked
       (traigent-first-run#394).
 
-    The direction is the load-bearing part and is pinned last: a walk that
-    found NO witness still refuses nothing, so a scorer reaching its engine
-    through a helper module calibrates and is paid for it exactly as before.
-    That residue is real, it is `traigent-first-run#416`'s, and a test that
-    quietly assumed it away would be claiming a boundary this walk does not
-    have.
+    A missing witness does not establish execution by itself. The existing
+    execution-method declaration also selects the scope gate, while ordinary
+    comparison methods without a declaration or positive report stay ordinary.
     """
 
     # A witness reads as the customer's card prints it: file and line.
@@ -14748,24 +14878,19 @@ class TheWitnessDecidesTheScopeGateNotTheDeclarationTests(unittest.TestCase):
             )
         )
 
-        # THE RESULT IS READ THE SAME WAY ON BOTH SIDES. Not "close enough":
-        # the same number, the same band, and both checks the payload feeds.
-        self.assertEqual(unseen.overall, 85.0)
-        self.assertEqual(witnessed.overall, unseen.overall)
-        self.assertEqual(witnessed.band, unseen.band)
+        # Both payloads earn the same measured credit. The unconfirmed
+        # execution declaration keeps 45; the readable witness lifts it.
+        self.assertEqual(unseen.overall, 45.0)
+        self.assertEqual(witnessed.overall, 85.0)
+        self.assertEqual(unseen.weighted_average, witnessed.weighted_average)
         for score in (unseen, witnessed):
             with self.subTest(score=score.overall):
                 self.assertEqual(self._calibration_subscore(score).value, 40.0)
                 self.assertTrue(self._calibration_subscore(score).measured)
                 self.assertEqual(self._spread_subscore(score).value, 15.0)
                 self.assertTrue(self._spread_subscore(score).measured)
-
-        # And what the refusal still does is DISCLOSE. The cap is raised, it
-        # bounds nothing, and it is what turns `proceed` into the connection
-        # question - because the paid run's hazard is unchanged by anyone
-        # having calibrated anything.
-        self.assertEqual([cap.condition for cap in unseen.caps], [])
-        self.assertEqual(unseen.recommended_action, MODULE.PROCEED)
+        self.assertEqual(self._refused_cap(unseen).ceiling, 45)
+        self.assertEqual(unseen.recommended_action, MODULE.CONFIRM_EVALUATOR_CONNECTION)
         self.assertEqual(
             [cap.condition for cap in witnessed.caps],
             ["evaluator-calibration-refused"],
@@ -15208,14 +15333,16 @@ class TheWitnessDecidesTheScopeGateNotTheDeclarationTests(unittest.TestCase):
                     if c.condition == "evaluator-calibration-refused"
                 )
                 # What this run did, said plainly and without jargon.
-                self.assertIn("did not execute your evaluator", cap.reason)
+                self.assertIn("did not execute your original evaluator", cap.reason)
                 # Why, in the customer's terms rather than in ours - and as
                 # the CLASS the gate refuses, not one half of it. The witness
                 # fires on code execution as readily as on SQL, so a sentence
                 # naming only the database is false for half the customers it
                 # reaches (traigent-first-run#492).
-                self.assertIn("run candidate code or open your database", cap.reason)
-                self.assertIn("will not reach into either", cap.reason)
+                self.assertIn(
+                    "run candidate code or open its configured target", cap.reason
+                )
+                self.assertIn("declines that direct route", cap.reason)
                 self.assertNotIn("does not accept a calibration", cap.reason)
                 # Not a verdict on their work.
                 self.assertIn("not a judgement of your evaluator", cap.reason)
@@ -15420,7 +15547,7 @@ class TheWitnessDecidesTheScopeGateNotTheDeclarationTests(unittest.TestCase):
         # The deferred and declared fixtures are already capped at 45; an
         # overall below that bound can rise with the same renormalization.
         self.assertEqual(declared.overall, deferred.overall)
-        self.assertGreater(
+        self.assertEqual(
             next(p for p in declared.pillars if p.name == "evaluation").score,
             next(p for p in deferred.pillars if p.name == "evaluation").score,
         )
@@ -15520,7 +15647,17 @@ class TheWitnessDecidesTheScopeGateNotTheDeclarationTests(unittest.TestCase):
                 )
                 # And it says one of the two, so a line that drifts into
                 # saying neither does not pass by being silent.
-                self.assertTrue(said_happened or said_not, line)
+                supplied_incomplete = (
+                    _facts.calibration_supplied
+                    and not MODULE.calibration_result_established(_facts)
+                    and _facts.timed_out is not True
+                )
+                if supplied_incomplete:
+                    self.assertIn("a result was supplied", line)
+                    self.assertIn("does not establish a complete calibration", line)
+                    self.assertFalse(said_happened or said_not, line)
+                else:
+                    self.assertTrue(said_happened or said_not, line)
 
     def test_no_line_claims_the_file_was_unread_when_the_walk_read_it(self) -> None:
         """The property the third defect broke, checked against the FACT.
@@ -15640,7 +15777,9 @@ class TheWitnessDecidesTheScopeGateNotTheDeclarationTests(unittest.TestCase):
                 # not describe. Derived from the same two inputs the module
                 # reads, not from the words on the line.
                 if not (
-                    facts.calibration_scope_refused or facts.executes_candidate is True
+                    facts.calibration_scope_refused
+                    or facts.executes_candidate is True
+                    or MODULE.METHOD_EXECUTES_CANDIDATE.get(facts.method or "") is True
                 ):
                     continue
                 # And the states where a COMPLETE result arrived, which this
@@ -15657,19 +15796,9 @@ class TheWitnessDecidesTheScopeGateNotTheDeclarationTests(unittest.TestCase):
                     or facts.timed_out is True
                     or facts.checks
                 )
-                if engaged:
-                    # Supplied incomplete results use the ordinary evidence
-                    # state; only no-result refusals use this clause record.
-                    ordinary = self._score(
-                        replace(
-                            facts,
-                            executes_candidate=None,
-                            execution_witness=None,
-                            calibration_scope_refused=False,
-                        )
-                    )
-                    self.assertEqual(sub, self._calibration_subscore(ordinary))
+                if facts.timed_out is True:
                     self.assertTrue(sub.withheld)
+                    self.assertIn("calibration ran but did not finish", sub.evidence)
                     continue
                 # The CEILING the cap carries, not the cap's presence. The
                 # refusal cap is raised on the witnessed arm too and carries
@@ -15683,15 +15812,15 @@ class TheWitnessDecidesTheScopeGateNotTheDeclarationTests(unittest.TestCase):
                 ]
                 refusal = MODULE.calibration_refusal_consequence(
                     walk=facts.executes_candidate,
-                    calibration_taken=engaged,
+                    result_supplied=engaged,
                     ceiling_printed=any(
                         cap.ceiling is not None for cap in refusal_caps
                     ),
                 )
                 self.assertEqual(
-                    refusal.calibration_happened,
+                    refusal.calibration_supplied,
                     engaged,
-                    "the line says a calibration happened and the run says "
+                    "the line says a result was supplied and the input says "
                     "otherwise, or the reverse",
                 )
                 self.assertEqual(
@@ -15742,7 +15871,7 @@ class TheWitnessDecidesTheScopeGateNotTheDeclarationTests(unittest.TestCase):
                 for printed in (True, False):
                     with self.subTest(walk=walk, taken=taken, ceiling=printed):
                         refusal = MODULE.calibration_refusal_consequence(
-                            walk=walk, calibration_taken=taken, ceiling_printed=printed
+                            walk=walk, result_supplied=taken, ceiling_printed=printed
                         )
                         self.assertEqual(refusal.text, refusal.composed())
                         self.assertEqual(refusal.names_ceiling, printed)
@@ -15846,20 +15975,10 @@ class TheWitnessDecidesTheScopeGateNotTheDeclarationTests(unittest.TestCase):
         )
 
     def test_a_walk_that_found_nothing_refuses_nothing(self) -> None:
-        """The residue, pinned rather than assumed away.
-
-        `False` is a walk that ran over one file and saw no engine in it, and
-        `None` is a file this run never opened. Neither establishes that the
-        scorer does not reach an engine - a helper module, a connection handed
-        in with the row, and a name bound at runtime all escape the walk - so
-        neither may refuse anything, and the incentive survives for exactly
-        those shapes. That is `traigent-first-run#416`'s residue and it is not
-        closed here; a test that expected a refusal on these two would be
-        claiming a boundary this walk does not have.
-        """
+        """No witness or execution declaration: passing comparison stays ordinary."""
         payload = {
             **_PASSING_CALIBRATION,
-            "method": "execution",
+            "method": "sql-structure",
             "task_kind": "code-sql",
         }
         for executes in (False, None):

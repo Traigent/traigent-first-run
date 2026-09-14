@@ -507,17 +507,18 @@ semantics, no defensible probe matrix, an uninstalled local dependency, a slow, 
 or executing path, or an LLM judge that needs paid approval. Missing calibration is then unmeasured,
 not a failed evaluator; the `evaluator-unvalidated` ceiling limits the readiness claim to 45 until
 the evaluation method is actually checked, and the card's recommended action names that outstanding
-calibration rather than reading `proceed`. Where the deferral is the evaluator-execution scope gate
-rather than a step this run could take, pass `--calibration-scope-refused` so the card discloses the
-unmade check instead of asking for the calibration this run may not take. Where the project already
-holds its own calibration result or the copied-actor route produces one, pass it to `--calibration` **beside** that same
-flag, never instead of it: the result is read exactly as any other is. Where the result passes,
-the flag keeps the execution disclosure and connection question on the card. On a project whose
-walk found no engine the declaration is the only thing that raises the refusal at all; an observed
-failure or timeout follows its own finding. The flag lifts no ceiling. Without a supplied result,
-the evaluation pillar and pre-cap average can rise when the refused check leaves the denominator;
-an overall below 45 can rise within that bound. This is renormalization, not calibration credit,
-and the flag is the only route where preflight finds no engine.
+calibration rather than reading `proceed`. Where the deferral is the evaluator-execution scope gate,
+the declared `--evaluator-method execution` or a positive preflight witness already carries that
+scope. Use `--calibration-scope-refused` for an executing helper/runtime path when neither records
+it, so the card discloses the unmade check instead of asking for the calibration this run may not
+take. Where the project already holds its own calibration result or the copied-actor route produces
+one, pass it to `--calibration`. Retain the refusal flag **beside** that result whenever it records
+the original scope; never replace that declaration with the payload. Complete passing results earn credit while
+the execution disclosure and connection question remain; an observed failure or timeout follows
+its own finding. The flag lifts no ceiling. Without complete calibration and without an observed
+failure or timeout, the evaluation pillar and pre-cap average can rise when the refused check
+leaves the denominator; an overall below 45 can rise within that bound. This is renormalization,
+not calibration credit. The supplied-result and ceiling rules live in run-safety.md's scope section.
 `calibrate_evaluator.py` refuses such an evaluator itself where its walk can see the execution,
 naming the file and line - finding none establishes nothing, so that refusal is not a clearance - and
 `references/run-safety.md` records why no in-process route replaces it. Apply the run-scoped

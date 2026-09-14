@@ -6255,8 +6255,8 @@ class SkillPackageTests(unittest.TestCase):
             # other is.
             "declines to perform, and never one the customer is forbidden to " "make",
             "where no result was supplied, the check earns nothing",
-            "a supplied incomplete or unreadable result stays unestablished",
-            "ordinary incomplete-result deduction and 45 ceiling",
+            "a supplied incomplete or unreadable result also stays unestablished",
+            "calibration and probe spread receive no measured credit",
             "observed failures and timeouts keep their own findings and remedies under",
             "`evaluation-and-dataset.md`, instead of the refusal cap",
             "instead of the refusal cap",
@@ -6384,19 +6384,13 @@ class SkillPackageTests(unittest.TestCase):
         self.assertNotIn("not a finding against their evaluator", safety_all)
 
     def test_no_document_says_the_scope_refusal_cannot_be_checked(self) -> None:
-        """The declaration discloses scope and supplies no calibration evidence.
-
-        Preflight can independently establish execution, but its silence does
-        not make the declaration redundant. Renormalization can raise an
-        overall below the declared ceiling, and a supplied result travels
-        beside that declaration so credit does not erase the disclosure.
-        """
+        """Execution declarations and supplied evidence remain independent inputs."""
         require_stage_reference(
             1,
             SKILL_ROOT / "references" / "component-creation.md",
             "reading-the-agent-for-the-opening-score",
         )
-        skill = " ".join(
+        opening = " ".join(
             section_text(
                 SKILL_ROOT / "references" / "component-creation.md",
                 "Opening readiness procedure",
@@ -6404,9 +6398,6 @@ class SkillPackageTests(unittest.TestCase):
             .casefold()
             .split()
         )
-        # The rendered help, not the source, because the sentence is split
-        # across adjacent string literals and only argparse joins them - a
-        # check over the file text would pass on a half-reworded pair.
         rendered = subprocess.run(
             [sys.executable, str(SKILL_ROOT / "scripts" / "readiness.py"), "--help"],
             capture_output=True,
@@ -6415,60 +6406,33 @@ class SkillPackageTests(unittest.TestCase):
             env={**os.environ, "COLUMNS": "200"},
         ).stdout
         help_text = " ".join(rendered.casefold().split())
-        for where, text in (("SKILL.md", skill), ("readiness.py --help", help_text)):
+        for where, text in (("opening procedure", opening), ("CLI help", help_text)):
             with self.subTest(document=where):
                 self.assertNotIn("nothing here can check it", text)
                 self.assertNotIn("a declaration nothing here can check", text)
-        for phrase in (
-            "the flag lifts no ceiling",
-            "without a supplied result",
-            "an overall below 45 can rise within that bound",
-            "this is renormalization, not calibration credit",
-            "the flag is the only route where preflight finds no engine",
-        ):
-            with self.subTest(phrase=phrase):
-                self.assertIn(phrase, skill)
-        self.assertNotIn("neither the score nor the band", skill)
-        # AND THAT THE RESULT GOES BESIDE THE FLAG, NEVER INSTEAD OF IT. The
-        # first version of this sentence said "instead", which on a project
-        # whose walk found no engine removes the only thing that raises the
-        # refusal: measured, 45 with the disclosure became 85 STRONG with no
-        # cap at all (traigent-first-run#506). Both halves are pinned, because
-        # the instruction is only safe as a pair.
-        self.assertIn("beside** that same flag, never instead of it", skill)
-        self.assertIn(
-            "on a project whose walk found no engine the declaration is the "
-            "only thing that raises the refusal at all",
-            skill,
-        )
-        # And the same claim in the other home, so neither can be corrected
-        # alone - which is the whole reason both are asserted here.
-        self.assertIn("retaining the declared arm's 45 ceiling", help_text)
-        self.assertIn("an overall below 45 can rise within that bound", help_text)
-        self.assertNotIn("neither the score nor the band", help_text)
-        # NAMED, both of them, because "moves no number" was replaced once by
-        # "moves no readiness figure" and the card prints a readiness figure
-        # that moves: `Weighted average before caps`. A sentence that is right
-        # about a default-weight score but silent about its moving components
-        # still misdescribes the card.
-        for where, text in (("SKILL.md", skill), ("readiness.py --help", help_text)):
-            with self.subTest(document=where, claim="what does move"):
+                self.assertNotIn("neither the score nor the band", text)
+                self.assertNotIn("it moves no number", text)
                 self.assertIn("pre-cap average", text)
                 self.assertIn("evaluation pillar", text)
-        for where, text in (("SKILL.md", skill), ("readiness.py --help", help_text)):
-            with self.subTest(document=where, claim="moves no number"):
-                self.assertNotIn("and no number:", text)
-                self.assertNotIn("it moves no number", text)
-        # The over-correction, refused by name: the flag is not redundant, and
-        # a document that implies it is costs the run its containment routing
-        # for every evaluator the walk cannot see.
-        self.assertNotIn("reaches the same state without it", skill)
-        self.assertIn("retaining the declared arm's 45 ceiling", help_text)
-        self.assertIn(
-            "where --preflight witnessed an engine the card reaches it with no "
-            "declaration at all",
-            help_text,
+                self.assertIn("an overall below 45 can rise within that bound", text)
+        for phrase in (
+            "the declared `--evaluator-method execution` or a positive preflight witness "
+            "already carries that scope",
+            "use `--calibration-scope-refused` for an executing helper/runtime path "
+            "when neither records it",
+            "retain the refusal flag **beside** that result whenever it records the original scope",
+            "never replace that declaration with the payload",
+            "the flag lifts no ceiling",
+            "without complete calibration and without an observed failure or timeout",
+            "this is renormalization, not calibration credit",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, opening)
+        self.assertNotIn(
+            "the flag is the only route where preflight finds no engine", opening
         )
+        self.assertIn("retaining the declared arm's 45 ceiling", help_text)
+        self.assertIn("--evaluator-method execution", help_text)
 
     def test_the_three_words_bind_every_calibration_not_only_the_first(
         self,
@@ -7909,7 +7873,8 @@ class SkillPackageTests(unittest.TestCase):
             # calibration result for an evaluator the gate declined - what
             # stays true is that nothing here asked them for one.
             "neither of which is something the user was required to bring",
-            "without a supplied result, calibration and probe spread remain unmeasured",
+            "without a complete result, and absent observed failure or timeout, calibration "
+            "and probe spread remain unmeasured",
             "a complete passing result can establish all four checks and support strong",
             "the scoring command read a supplied result, it did not observe its production",
         ):
@@ -9740,6 +9705,12 @@ class SkillPackageTests(unittest.TestCase):
         `evaluation-and-dataset.md` a conclusion.
         """
         require_stage_reference(4, RUN_SAFETY, "the-copied-actor-route")
+        description = SKILL.read_text().split("description:", 1)[1].split("\n", 1)[0]
+        self.assertIn(
+            "execution evaluators retain disclosure and may calibrate an eligible copy",
+            description,
+        )
+        self.assertNotIn("by skipping that one check", description)
         route = " ".join(
             section_text(RUN_SAFETY, "The copied-actor route").casefold().split()
         )
@@ -24843,30 +24814,14 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
             ),
         ),
         (
-            # Settled twice in opposite directions inside one branch, which is
-            # this registry's own criterion for an entry rather than a local
-            # assertion.
-            #
-            # It read "it moves no number, because nothing here can check it",
-            # which denied a check `score_evaluation` performs: the same state
-            # is derived from preflight's witness with no flag passed at all.
-            # Corrected to "preflight's witness reaches the same state without
-            # it", which over-corrected in the other direction - true only
-            # where a witness exists, and read, in the one place an assistant
-            # decides whether to pass a safety declaration, as though the flag
-            # were redundant. It is not: for an evaluator whose engine the
-            # walk cannot see, the run without the flag is told to complete
-            # the calibration this guide forbids it.
-            #
-            # Settled: the document says what the flag is FOR. The scoped
-            # claim - that a witness reaches the state too - stays in the
-            # flag's own `--help`, where the reader is deciding about the flag
-            # rather than about their run.
+            # The method declaration and a positive witness each establish
+            # execution scope. The flag still records an executing helper or
+            # runtime path when neither of those inputs does.
             "what the evaluator-execution scope-refusal declaration is for",
-            ("the only route where preflight finds no engine",),
+            ("use `--calibration-scope-refused` for an executing helper/runtime path",),
             (
                 "it moves no number, because nothing here can check it",
-                "preflight's witness reaches the same state without it",
+                "the flag is the only route where preflight finds no engine",
             ),
         ),
         (
