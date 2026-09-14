@@ -777,8 +777,8 @@ and the entry that cites it, inside the document's `knobs` map:
 4. the selected value reaches an argument named for the setting, either written into the call or
    through one plain local that nothing else rewrites
 5. and where the choice is read from a mapping rather than taken as a parameter, the call has to be a
-   provider client's own request; that client can be built at module level or inside the callable,
-   either reads
+   provider client's own request - that client can be built at module level or inside the callable,
+   either reads - or LiteLLM's own module-level request, imported under any name from litellm itself
 
 Three limits are worth knowing before you write the citation, because each one is silent in the
 code and costs a setting.
@@ -802,8 +802,9 @@ A builtin your file has rebound counts as your own function. `f"{tuple(TABLE)}"`
 **A range has no options to index, so it has its own route:** the setting passed straight to the
 request argument named for it, on the provider client's own request, as
 `temperature=config["temperature"]`, or, where that name is a parameter of the selected callable
-rather than of a helper, `temperature=temperature`. Do not build a mapping whose keys and values
-are the same numbers to satisfy the table route. It is worse code and it buys nothing.
+rather than of a helper, `temperature=temperature`. A `float(...)` around the read is followed,
+an `int(...)` is not. Do not build a mapping whose keys and values are the same numbers to
+satisfy the table route. It is worse code and it buys nothing.
 
 A setting outside all of these is still recorded with its options, and the card names it as one this
 read could not follow, says which of these rules it fell outside, and prints the followed count as a

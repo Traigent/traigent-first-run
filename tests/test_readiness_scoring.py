@@ -17758,6 +17758,87 @@ class StaticAgentSourceEvidenceTests(unittest.TestCase):
                 "    return parse(send(build(text, config)))\n",
                 ("plain", "rich"),
             ),
+            # LiteLLM's request is a module-level function, not a method on a
+            # client the file built. It is the library this guide pins and the
+            # one its own wrapper sends through, and an agent written the way
+            # LiteLLM documents it read as "could not follow to the request".
+            "a guarded setting reaches LiteLLM's module-level request": (
+                "model",
+                'MODELS = ("small", "large")\n'
+                "import litellm\n"
+                "def run(text, config):\n"
+                '    model = config.get("model", MODELS[0])\n'
+                "    if model not in MODELS:\n"
+                '        raise ValueError(f"unknown model: {model}")\n'
+                "    return litellm.completion(\n"
+                '        model=model, messages=[{"role": "user", "content": text}]\n'
+                "    )\n",
+                ("small", "large"),
+            ),
+            "the LiteLLM request imported by name": (
+                "model",
+                'MODELS = ("small", "large")\n'
+                "from litellm import completion as chat\n"
+                "def run(text, config):\n"
+                '    model = config.get("model", MODELS[0])\n'
+                "    if model not in MODELS:\n"
+                '        raise ValueError(f"unknown model: {model}")\n'
+                '    return chat(model=model, messages=[{"role": "user", "content": text}])\n',
+                ("small", "large"),
+            ),
+            "the LiteLLM request through an aliased import inside the callable": (
+                "model",
+                'MODELS = ("small", "large")\n'
+                "def run(text, config):\n"
+                "    import litellm as llm\n"
+                '    model = config.get("model", MODELS[0])\n'
+                "    if model not in MODELS:\n"
+                '        raise ValueError(f"unknown model: {model}")\n'
+                "    answer = llm.completion(\n"
+                '        model=model, messages=[{"role": "user", "content": text}]\n'
+                "    )\n"
+                "    return answer.choices[0].message.content\n",
+                ("small", "large"),
+            ),
+            # `float` is accepted around the read at the request argument; the
+            # local that holds the same read is the same route one line apart.
+            "a float cast on the local that holds a range read": (
+                "temperature",
+                "TEMPERATURES = (0.0, 0.7)\n"
+                "from vendor import Client\n"
+                "def run(text, config):\n"
+                '    temperature = float(config.get("temperature", 0.0))\n'
+                "    if temperature not in TEMPERATURES:\n"
+                '        raise ValueError("no")\n'
+                "    return Client().responses.create(\n"
+                '        model="m", temperature=temperature, input=text\n'
+                "    )\n",
+                (0.0, 0.7),
+            ),
+            # The mapping handed to a helper nested inside another call is
+            # still the mapping in a same-file helper, so the setting read
+            # AFTER the first one keeps its credit, as the reference promises.
+            "a second setting read survives handing the mapping to a nested helper": (
+                "temperature",
+                "TEMPERATURES = (0.0, 0.7)\n"
+                'MODELS = ("small", "large")\n'
+                "from vendor import Client\n"
+                "def call_model(model, text, temperature):\n"
+                "    return Client().responses.create(\n"
+                "        model=model, temperature=temperature, input=text\n"
+                "    )\n"
+                "def build(text, config):\n"
+                '    return text + config.get("suffix", "")\n'
+                "def run(text, config):\n"
+                '    model = config.get("model", MODELS[0])\n'
+                "    if model not in MODELS:\n"
+                '        raise ValueError("no")\n'
+                '    temperature = float(config.get("temperature", 0.0))\n'
+                "    if temperature not in TEMPERATURES:\n"
+                '        raise ValueError("no")\n'
+                "    return call_model(model, build(text, config), temperature)\n",
+                (0.0, 0.7),
+            ),
         }
         refused = {
             "a value read and never used": (
@@ -18511,6 +18592,120 @@ class StaticAgentSourceEvidenceTests(unittest.TestCase):
                 'DEFAULTS = {"style": "plain"}\n'
                 "def run(text, config):\n"
                 '    return STYLES[DEFAULTS.get("style", "plain")] + text\n',
+            ),
+            # The module-level request widening, refused at its edges: the
+            # spelling rebound, a LiteLLM function that sends nothing, and a
+            # same-file function wearing the request's name with no import.
+            "the LiteLLM spelling rebound after the import": (
+                "model",
+                ("small", "large"),
+                'MODELS = ("small", "large")\n'
+                "import litellm\n"
+                "litellm = object()\n"
+                "def run(text, config):\n"
+                '    model = config.get("model", MODELS[0])\n'
+                "    if model not in MODELS:\n"
+                '        raise ValueError("no")\n'
+                "    return litellm.completion(model=model, messages=[])\n",
+            ),
+            "a LiteLLM function that sends nothing": (
+                "model",
+                ("small", "large"),
+                'MODELS = ("small", "large")\n'
+                "import litellm\n"
+                "def run(text, config):\n"
+                '    model = config.get("model", MODELS[0])\n'
+                "    if model not in MODELS:\n"
+                '        raise ValueError("no")\n'
+                "    return litellm.token_counter(model=model, text=text)\n",
+            ),
+            "a same-file function named after the LiteLLM request": (
+                "model",
+                ("small", "large"),
+                'MODELS = ("small", "large")\n'
+                "def completion(**kwargs):\n"
+                '    return "fixed"\n'
+                "def run(text, config):\n"
+                '    model = config.get("model", MODELS[0])\n'
+                "    if model not in MODELS:\n"
+                '        raise ValueError("no")\n'
+                "    return completion(model=model, messages=[])\n",
+            ),
+            # The cast widening, refused at its edges: a non-injective cast, and
+            # the injective spelling rebound by the file.
+            "an int cast on the local that holds a range read": (
+                "temperature",
+                (0.0, 0.7),
+                "TEMPERATURES = (0.0, 0.7)\n"
+                "from vendor import Client\n"
+                "def run(text, config):\n"
+                '    temperature = int(config.get("temperature", 0.0))\n'
+                "    if temperature not in TEMPERATURES:\n"
+                '        raise ValueError("no")\n'
+                "    return Client().responses.create(\n"
+                '        model="m", temperature=temperature, input=text\n'
+                "    )\n",
+            ),
+            "a float cast where the file has rebound float": (
+                "temperature",
+                (0.0, 0.7),
+                "TEMPERATURES = (0.0, 0.7)\n"
+                "from vendor import Client\n"
+                "def float(value):\n"
+                "    return 0.5\n"
+                "def run(text, config):\n"
+                '    temperature = float(config.get("temperature", 0.0))\n'
+                "    if temperature not in TEMPERATURES:\n"
+                '        raise ValueError("no")\n'
+                "    return Client().responses.create(\n"
+                '        model="m", temperature=temperature, input=text\n'
+                "    )\n",
+            ),
+            # The nested-helper widening, refused where the helper is not a safe
+            # reader of the mapping: it writes to it, or hands it on to a call
+            # this read does not enter.
+            "a nested helper that writes the mapping": (
+                "temperature",
+                (0.0, 0.7),
+                "TEMPERATURES = (0.0, 0.7)\n"
+                'MODELS = ("small", "large")\n'
+                "from vendor import Client\n"
+                "def call_model(model, text, temperature):\n"
+                "    return Client().responses.create(\n"
+                "        model=model, temperature=temperature, input=text\n"
+                "    )\n"
+                "def build(text, config):\n"
+                '    config["temperature"] = 0.0\n'
+                "    return text\n"
+                "def run(text, config):\n"
+                '    model = config.get("model", MODELS[0])\n'
+                "    if model not in MODELS:\n"
+                '        raise ValueError("no")\n'
+                '    temperature = float(config.get("temperature", 0.0))\n'
+                "    if temperature not in TEMPERATURES:\n"
+                '        raise ValueError("no")\n'
+                "    return call_model(model, build(text, config), temperature)\n",
+            ),
+            "a nested helper that hands the mapping to an unknown call": (
+                "temperature",
+                (0.0, 0.7),
+                "TEMPERATURES = (0.0, 0.7)\n"
+                'MODELS = ("small", "large")\n'
+                "from vendor import Client\n"
+                "def call_model(model, text, temperature):\n"
+                "    return Client().responses.create(\n"
+                "        model=model, temperature=temperature, input=text\n"
+                "    )\n"
+                "def build(text, config):\n"
+                "    return text + str(inspect(config))\n"
+                "def run(text, config):\n"
+                '    model = config.get("model", MODELS[0])\n'
+                "    if model not in MODELS:\n"
+                '        raise ValueError("no")\n'
+                '    temperature = float(config.get("temperature", 0.0))\n'
+                "    if temperature not in TEMPERATURES:\n"
+                '        raise ValueError("no")\n'
+                "    return call_model(model, build(text, config), temperature)\n",
             ),
         }
 
