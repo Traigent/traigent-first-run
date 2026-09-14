@@ -19,7 +19,8 @@ Paste this into Claude Code, Cursor, Codex, Gemini CLI, or another coding assist
 
 ```text
 Help me run my first Traigent optimization.
-Clone https://github.com/Traigent/traigent-first-run and follow GUIDE.md.
+Clone https://github.com/Traigent/traigent-first-run beside my project, outside its root,
+and follow the clone's GUIDE.md while keeping my project as the working directory.
 ```
 
 The assistant performs the technical work and asks only when it needs:
@@ -33,12 +34,14 @@ The assistant performs the technical work and asks only when it needs:
 One thing it does without asking, announcing it first: it installs `traigent==0.26.0`,
 `litellm==1.93.0` and `python-dotenv==1.2.2` into a dedicated `.venv-traigent` environment - a
 package fetch only, with no provider or Traigent calls and none of your code executed. That
-environment preserves existing project, shared, and dependent environments. If that path already
-exists or its setup fails, the assistant stops with its path and recommends inspection; it removes
-and recreates that dedicated environment only on your explicit request.
+environment preserves existing project, shared, and dependent environments and remains after the
+run, ignored by Git when your project uses it. An unfinished run can continue its verified
+completed setup without installing again. If the
+path has no matching verified setup or a check fails, the assistant stops with its path and recommends
+inspection; it removes and recreates that dedicated environment only on your explicit request.
 
 No existing agent, dataset, or evaluator is required to see the walkthrough. When something is
-missing you are told before anything is written, in one question however many pieces are absent:
+missing you are told before any component is created or repaired, in one question however many pieces are absent:
 what it did not find, that material it writes is weaker evidence than examples out of your product
 and what that costs the result, and two ways to answer - go ahead, or point it at yours. If several
 credible agents are present, the assistant asks which one to optimize; if there is exactly one, it
@@ -161,7 +164,9 @@ evaluator's complete path is proven safe, local, and fast, the assistant also ru
 before showing the opening card. A check this tool could not compute is marked unmeasured and
 excluded rather than scored zero; a check the run was asked for and did not supply is marked
 unmeasured too, but keeps its weight and earns nothing, so withholding it can never pay. The card
-says how much of each pillar it actually observed. A deferred calibration leaves, for example,
+says how much of each pillar it actually observed. Confirming that a required component is absent
+is itself a completed structural check, recorded at zero; it is not a measurement of that
+component's quality. A deferred calibration leaves, for example,
 `EVALUATION 53/100 (2 of 4 checks measured)` and limits the readiness claim to 45 until the
 evaluation method is validated; a fresh passing calibration can measure all four checks before that first card. A low
 score never stops the run; it decides which gaps are worth explaining and which are worth fixing
@@ -271,6 +276,9 @@ because a symbol can be a legitimate class label; the guide does not silently re
 placeholders or claim they are unusable.
 
 ## Requirements
+
+The SDK optimizes a Python callable. A non-Python agent needs a thin Python adapter around its
+unchanged behavior; a generated Python substitute demonstrates the workflow, not that agent.
 
 - Python 3.11-3.13 in an isolated environment.
 - The tested first-run SDK stack pinned in

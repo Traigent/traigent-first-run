@@ -59,9 +59,11 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
+import textwrap
 import unittest
 from pathlib import Path
 
@@ -70,6 +72,7 @@ PROBE = ROOT / "tests" / "fixtures" / "offline_socket_probe.py"
 STORED_CREDENTIAL_PROBE = (
     ROOT / "tests" / "fixtures" / "baseline_stored_credential_probe.py"
 )
+MOCK_PLUMBING_PROBE = ROOT / "tests" / "fixtures" / "traigent_mock_plumbing_probe.py"
 REQUIREMENTS = (
     ROOT / "skills" / "traigent-first-run" / "assets" / "requirements-first-run.txt"
 )
@@ -184,6 +187,52 @@ def _run_stored_credential_probe(*, offline: bool) -> dict:
             ) from error
 
 
+def _run_mock_plumbing_probe(mode: str) -> dict:
+    safety = (
+        ROOT / "skills" / "traigent-first-run" / "references" / "run-safety.md"
+    ).read_text()
+    preludes = [
+        textwrap.dedent(block)
+        for block in re.findall(r"```python\n(.*?)\n\s*```", safety, re.DOTALL)
+        if "enable_mock_mode_for_quickstart" in block
+    ]
+    if len(preludes) != 1:
+        raise AssertionError(
+            "the mock recipe must have one executable activation prelude"
+        )
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        prelude = root / "mock-prelude.py"
+        prelude.write_text(preludes[0])
+        overrides = {
+            "TRAIGENT_OFFLINE_MODE": "true",
+            "LITELLM_LOCAL_MODEL_COST_MAP": "true",
+            "TRAIGENT_MOCK_LLM": "false",
+            "PROBE_MOCK_MODE": mode,
+            "PROBE_MOCK_PRELUDE_PATH": str(prelude),
+            "TRAIGENT_RESULTS_FOLDER": str(root / "results"),
+            "TRAIGENT_DATASET_ROOT": str(root),
+            # Never read the developer's stored CLI key, even if SDK lookup changes.
+            "TRAIGENT_API_KEY": "offline-test-not-a-real-key",
+            "ENVIRONMENT": "development",
+        }
+        process = subprocess.run(
+            [sys.executable, str(MOCK_PLUMBING_PROBE)],
+            cwd=root,
+            env=_credential_stripped_environment(overrides),
+            capture_output=True,
+            text=True,
+            timeout=45,
+            check=False,
+        )
+        if process.returncode:
+            raise AssertionError(
+                f"mock probe failed: exit={process.returncode} "
+                f"stdout={process.stdout!r} stderr={process.stderr!r}"
+            )
+        return json.loads(process.stdout)
+
+
 class OfflineSocketContractTests(unittest.TestCase):
     def setUp(self) -> None:
         if importlib.util.find_spec("litellm") is None:
@@ -255,6 +304,55 @@ class OfflineSocketContractTests(unittest.TestCase):
             [],
             "the documented local mock path must attempt zero outbound sockets",
         )
+
+    def test_documented_sdk_mock_recipe_runs_real_interception_without_sockets(
+        self,
+    ) -> None:
+        self._require_traigent()
+        result = _run_mock_plumbing_probe("api")
+        self.assertIsNone(result["error"], result)
+        self.assertTrue(result["active"], result)
+        self.assertEqual(result["attempts"], [], result)
+        self.assertEqual(len(result["trials"]), 2, result)
+        self.assertTrue(all(trial["successful"] for trial in result["trials"]), result)
+        self.assertEqual(len(result["responses"]), 2, result)
+        self.assertEqual(
+            {response["id"] for response in result["responses"]},
+            {"mock-response-id"},
+        )
+        self.assertEqual(
+            {call["style"] for call in result["calls"]}, {"plain", "careful"}
+        )
+        self.assertEqual(
+            len({call["messages"][0]["content"] for call in result["calls"]}),
+            2,
+            "the configurations must reach distinct actual completion requests",
+        )
+        self.assertTrue(
+            all(trial["metrics"]["score"] == 0 for trial in result["trials"])
+        )
+
+    def test_old_offline_flags_do_not_activate_sdk_mock_responses(self) -> None:
+        self._require_traigent()
+        result = _run_mock_plumbing_probe("old-flags")
+        self.assertIsNone(result["error"], result)
+        self.assertFalse(result["active"], result)
+        self.assertTrue(result["attempts"], result)
+        self.assertEqual(result["responses"], [])
+        self.assertEqual(len(result["calls"]), 2, result)
+        self.assertEqual(len(result["trials"]), 2, result)
+        self.assertFalse(any(trial["successful"] for trial in result["trials"]), result)
+
+    def test_sdk_mock_mode_does_not_cover_raw_provider_calls(self) -> None:
+        self._require_traigent()
+        result = _run_mock_plumbing_probe("raw")
+        self.assertIsNone(result["error"], result)
+        self.assertTrue(result["active"], result)
+        self.assertTrue(result["attempts"], result)
+        self.assertEqual(result["responses"], [])
+        self.assertEqual(len(result["calls"]), 2, result)
+        self.assertEqual(len(result["trials"]), 2, result)
+        self.assertFalse(any(trial["successful"] for trial in result["trials"]), result)
 
     def test_baseline_offline_mode_blocks_a_stored_cli_key_from_the_backend(
         self,

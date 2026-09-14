@@ -32,6 +32,9 @@ run time; never substitute a path, agent, dataset, or result from this guide or 
 workspace, or a prior run. Where the guide clone and that project are separate, use the chosen
 agent's project root for inspection, environments, `traigent-runs/`, tests, and every baseline or
 enhanced run, and do not treat an old result beside the guide as a result for the user's agent.
+If the guide source is already inside that project, exclude its complete checkout root containing
+this `GUIDE.md` from customer material; for an installed skill, exclude its installed package
+directory instead. Announce that exact exclusion and leave the existing source in place.
 
 Before showing readiness, a baseline, or an optimization result, identify the target in one line:
 `Target project: <absolute path> · Agent: <absolute path>:<function or command>`. On a resumed
@@ -85,7 +88,7 @@ every baseline value and tests up to 12 configurations from a materially larger 
 "Prepare the environment and finish free checks" and "Verify and report" sections own how each is
 prepared, what the user is shown and when they are asked; this document states none of that a
 second time. A completed baseline is uploaded without rerunning it only where the installed SDK
-exposes a public exact sync id. It discloses the enhanced winner's held-out score here, with a note
+exposes a public exact sync id. It discloses the selected configuration's held-out score here, with a note
 saying how little ten examples can settle.
 
 Do not expand, shrink, or weaken a user-owned baseline to reach a configuration count; one

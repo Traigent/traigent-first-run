@@ -310,6 +310,8 @@ process variables it reads.
 - The `task_score` body - the preserved evaluator's grade of one row.
 - The decorator's `metric_functions` key, matching the primary objective; the function's signature
   and `holdout_agent_input`, matching the agent's own input contract.
+- The returned output or measures - preserve existing observations through baseline, search,
+  and held-out scoring, as described below.
 
 ```python
 import atexit
@@ -748,7 +750,7 @@ BEHAVIOUR_KNOBS = ["prompt_style", "thinking_shape", "reflect"]
 assert set(BASELINE_CONFIG) == set(BASELINE_SPACE), (
     "every baseline config key must be a grid dimension, or exact trial lookup fails"
 )
-# These four pin the generated walkthrough's counts; only a preserved customer
+# These pin the generated walkthrough's counts; only a preserved customer
 # baseline (BASELINE_IS_USER_OWNED above) skips them - a generated one is never reduced.
 if not BASELINE_IS_USER_OWNED:
     assert len(set(BASELINE_SPACE["model"])) == 3
@@ -756,10 +758,10 @@ assert ENHANCED_SPACE["model"] == BASELINE_SPACE["model"]
 assert all(
     set(BASELINE_SPACE[knob]) <= set(ENHANCED_SPACE[knob]) for knob in BASELINE_SPACE
 ), "the baseline must be a subset, or it ranks levers the enhanced run will not use"
-assert (
-    len(BASELINE_SPACE["temperature"]) == 1 and len(ENHANCED_SPACE["temperature"]) == 1
-), "temperature is fixed once, never swept - behaviour knobs carry the search"
 if not BASELINE_IS_USER_OWNED:
+    assert (
+        len(BASELINE_SPACE["temperature"]) == 1 and len(ENHANCED_SPACE["temperature"]) == 1
+    ), "temperature is fixed once, never swept - behaviour knobs carry the search"
     assert all(len(ENHANCED_SPACE[knob]) == 2 for knob in BEHAVIOUR_KNOBS)
     # 3 models × 2 prompt styles × 2 thinking shapes, and 3 models × 3 binary
     # behaviour knobs - both holding whether or not the strong tier reasons.
@@ -978,7 +980,7 @@ RUN_SPEND_USD: list[float] = []
 # unpriced call, which is the right number to bound spending by and the wrong
 # one to report as measured cost.
 RUN_CALL_COSTS: list[float | None] = []
-# Calls the provider refused before billing, as `ClassName: message`. Their
+# Calls the provider refused before billing, recorded by class name only. Their
 # reservations were returned to the total by `release_call_spend`, so they are
 # absent from the spend above and would otherwise leave a run reporting fewer
 # calls' worth of money than it placed calls, with nothing saying why.
@@ -1068,13 +1070,13 @@ def report_run_spend() -> None:
     )
     if REJECTED_CALLS:
         # A run that lost most of its calls to a dead model id or a rejected
-        # key otherwise reads as a cheap success. Naming the count and one
-        # message turns "spent almost nothing" into the diagnosis.
+        # key otherwise reads as a cheap success. The count and class names
+        # identify the failure without exposing provider text.
         print(
             f"{len(REJECTED_CALLS)} of those call(s) were refused by the "
             f"provider before billing and cost nothing - their reservations "
-            f"were returned to the remaining total. First: "
-            f"{REJECTED_CALLS[0]}"
+            f"were returned to the remaining total. Failure types: "
+            f"{', '.join(sorted(set(REJECTED_CALLS)))}. Raw provider text omitted."
         )
 
 
@@ -1343,7 +1345,7 @@ def release_call_spend(slot: int, error: BaseException) -> bool:
         return False
     RUN_SPEND_USD[slot] = 0.0
     RUN_CALL_COSTS[slot] = 0.0
-    REJECTED_CALLS.append(f"{type(error).__name__}: {str(error)[:120]}")
+    REJECTED_CALLS.append(type(error).__name__)
     return True
 
 
@@ -1829,8 +1831,8 @@ def assert_wiring_still_proven() -> None:
         )
 
 
-# ADAPT: the metric_functions key must match the primary objective; the
-# signature is the agent's input contract, produced by holdout_agent_input.
+# ADAPT: the input signature, primary metric key, and preserved output/measures.
+# metric_functions must match the primary objective; holdout_agent_input produces the input.
 @traigent.optimize(
     objectives=OBJECTIVES,
     configuration_space=ENHANCED_SPACE,
@@ -2020,6 +2022,30 @@ once**, and which one applies is decided by reading the evaluator's own call pat
   that this evaluator's spend is deducted rather than reported, and that it is bounded one call late
   - a hand debit lands after the call, where the door refuses before it.
 
+### Numeric measures beyond the answer
+
+The pinned SDK accepts a decorated function returning `(output, measures)`: an exact two-element
+tuple whose second element maps ASCII names such as `tool_call_count` or `tool_use_compliance` to
+finite `int`/`float` values, excluding booleans. Preserve observations the real agent already
+produces through this channel instead of encoding them in answer text. The SDK passes `output`
+alone to `metric_functions` and averages supplied measures over examples into `trial.metrics`.
+Evaluator-computed keys win collisions, so supplied measures cannot replace `cost`, `latency`, or
+a key also registered in `metric_functions`. A malformed metrics tuple remains raw output; verify
+the return shape before using it for evaluation.
+
+When a supplied measure is the chosen objective, use its exact key and direction in
+`ObjectiveDefinition`; reporting a measure alone does not make it an optimization objective.
+When the evaluator needs the underlying trace, preserve that structured trace in `output` or use
+the installed public custom evaluator. The tuple's measures are not an extra argument to the
+three-argument scorer. Adapt held-out scoring to use the same measurement source and aggregation
+as the two searches; the text-only `task_score` example cannot grade telemetry it never receives.
+
+For an existing multi-agent configuration, `agent_measures={agent_id: [measure_name, ...]}` and
+`global_measures=[measure_name, ...]` associate measures with agents or the whole workflow. These
+decorator options describe supplied measurements; they do not observe tool calls or compute a
+score. Retain the existing agent mapping and verify the emitted names on the installed SDK.
+This channel does not enlarge the paid execution or knob scope defined above.
+
 ## Small baseline sweep
 
 For the generated walkthrough, run the credible small space as one local fixed grid containing its
@@ -2074,7 +2100,7 @@ real single fixed configuration remains one configuration; never manufacture var
 
 The baseline process prints its ledger on the way out; `report_run_spend` above owns which endings
 reach it, and `references/run-safety.md` owns what to carry forward when the line is missing. The
-figure to carry forward is the cumulative debit - this process's debit plus the earlier phases'
+figure to carry forward is the **cumulative debit** - this process's debit plus the earlier phases'
 debits, including the conservative reservation for any unpriced call. It is a budget figure, not
 measured billing. That total is what the connected process is launched with as
 `TRAIGENT_FIRST_RUN_COST_SPENT_USD`, so the number the baseline actually produced is the number the
@@ -2152,8 +2178,8 @@ may have come from another.
 The enhanced space carries no pre-baseline placeholder to replace. Every value in it is fixed
 before either run, because the three behaviour knobs are binary and temperature was selected once - there is
 no swept range to re-centre on the baseline's winner, and so no between-runs edit for anything to
-get wrong. What the baseline result decides is which knobs a customer's own space keeps, not which
-values this one sweeps.
+get wrong. A baseline observation can suggest a later experiment; the space-construction rules in
+`references/run-safety.md` preserve the customer's existing dimensions and values in this comparison.
 
 The config-space document is serialized from the space this call receives, so it records what the
 search actually got - but nothing is on disk while the search runs.
@@ -2295,8 +2321,8 @@ Two shapes reach that handler and they cost differently. A session that cannot b
 before any provider trial, so nothing was spent and the honest report is "the managed run did not
 start", with the sanitized reason and the baseline still standing as the result. A managed run that
 loses the brain mid-flight raises after some trials are already paid for: recover what the SDK
-persisted, report the trials that completed, take the spend from the ledger line this process
-printed on its way out rather than from the SDK's tracked cost, and say plainly that the search
+persisted, report the trials that completed, take the cumulative budget debit and the separately
+reported known call cost from this process's exit report, and say plainly that the search
 stopped early rather than presenting a partial frontier as the answer. Neither shape is a
 reason to re-run the phase without the flag - that would buy back the exact result this prevents.
 
