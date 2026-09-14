@@ -15975,11 +15975,19 @@ def _external_import_target(
         return None
     member = None
     if isinstance(selected_import, ast.ImportFrom):
+        # The statement is in `matches` because one of its aliases binds this
+        # spelling, so the lookup cannot come back empty; read it fail closed
+        # all the same, as every other "did not find" in this module is.
         member = next(
-            alias.name
-            for alias in selected_import.names
-            if _import_binding_name(selected_import, alias) == name
+            (
+                alias.name
+                for alias in selected_import.names
+                if _import_binding_name(selected_import, alias) == name
+            ),
+            None,
         )
+        if member is None:
+            return None
     return imported_module, member
 
 
