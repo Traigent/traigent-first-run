@@ -4,11 +4,18 @@
 Every scorer must return a finite, normalized, higher-is-better score in ``[0,1]``.
 For deterministic calibration the child is credential-stripped, but process separation is not a
 sandbox. This first-run guide does not calibrate a scorer that executes candidate code or SQL
-at all - not because the probes are the model's, they are authored here, but because calling such a
-scorer opens an engine against a database this step cannot bound. ``references/run-safety.md``
-routes that work to a separate containment review and records why no in-process route replaces it.
-The gate below asks ``preflight.py``'s one-directional walk of every file this run would import,
-including the module behind ``--reply-transform``, and refuses on a witness.
+against the customer's own engine - not because the probes are the model's, they are authored here,
+but because calling such a scorer opens an engine against a database this step cannot bound.
+``references/run-safety.md`` routes that work to a separate containment review and records why no
+in-process route replaces it.
+The gate below asks ``preflight.py``'s one-directional walk of the two files it names - the scorer
+and the module behind ``--reply-transform`` - and refuses on a witness. It does not follow what
+those two files import, so a helper module they reach is a file nobody read. One contained route
+exists (``--calibrated-copy-of``): a self-contained copy of the evaluator under
+``traigent-runs/calibration/``, repointed to read the target the customer supplied as read-only or
+a duplicate from the environment, which the same walk admits only where every witness is an engine
+the target can bound - never a process, never more than one engine, never a local import, never
+the reply transform - and only after the repoint itself is established from the two files' trees.
 """
 
 from __future__ import annotations
@@ -192,6 +199,15 @@ SECRET_MARKERS = (
     "AUTHORIZATION",
     "COOKIE",
     "SESSION",
+    # Connection targets, since the copied-actor route: a copy repointed at
+    # the customer's safe target must not find their production `DATABASE_URL`
+    # or `PG*` still in the child's environment, where a surviving read or a
+    # library default would pick it up. `CONN` also covers `*_CONNECTION*`.
+    "URL",
+    "DSN",
+    "DATABASE",
+    "PG",
+    "CONN",
 )
 MATRIX_COVERAGE_NOTE = (
     "Distinct names and payloads are structural checks only; calibration relies on "
@@ -612,8 +628,8 @@ MAX_REPORTED_EXECUTION_WITNESSES = 5
 PREFLIGHT_MODULE_NAME = "traigent_first_run_preflight"
 
 
-def preflight_walk() -> Any:
-    """The one function that answers whether a file reaches an engine.
+def preflight_module() -> Any:
+    """The sibling `preflight.py`, loaded once by path.
 
     Loaded by path rather than by `import preflight`, because these scripts are
     run directly and copied into a bundle rather than installed as a package, so
@@ -624,7 +640,7 @@ def preflight_walk() -> Any:
     """
     existing = sys.modules.get(PREFLIGHT_MODULE_NAME)
     if existing is not None:
-        return existing.candidate_execution_witnesses
+        return existing
     path = Path(__file__).resolve().parent / "preflight.py"
     spec = importlib.util.spec_from_file_location(PREFLIGHT_MODULE_NAME, path)
     if spec is None or spec.loader is None:
@@ -636,7 +652,915 @@ def preflight_walk() -> Any:
     except BaseException:
         del sys.modules[PREFLIGHT_MODULE_NAME]
         raise
-    return module.candidate_execution_witnesses
+    return module
+
+
+def preflight_walk() -> Any:
+    """The one function that answers whether a file reaches an engine."""
+    return preflight_module().candidate_execution_witnesses
+
+
+def read_target_from_env_file(path: Path, name: str) -> str:
+    """The one value the copied-actor route hands to the child, read by name.
+
+    A plain `KEY=VALUE` read - an optional `export `, surrounding quotes
+    stripped - over the owner-only `.env` the guide's handoff creates, so the
+    value never rides a command line or an environment this process
+    inherited. Refused rather than defaulted when the name is absent: a copy
+    repointed at a variable nobody set would open whatever its library opens
+    when handed an empty target, which is the unbounded connection this route
+    exists to avoid.
+
+    The file's mode is checked first, on the same rule run-safety applies to
+    the `.env` it creates (`0600`): a target the customer was told to paste
+    into an owner-only file is not read out of a world-readable one.
+    """
+    # POSIX only: on Windows `os.stat` reports the DOS read-only bit as
+    # `0o666`/`0o444` for every file, so the check would refuse every file
+    # with a message about a permission model the platform does not have.
+    # `run-safety.md` § The copied-actor route says the same to the customer.
+    mode = path.stat().st_mode & 0o777
+    if os.name == "posix" and mode & 0o077:
+        raise ValueError(
+            f"{path} is readable by more than its owner (mode {mode:04o}); "
+            "the target belongs in an owner-only file"
+        )
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[len("export ") :].lstrip()
+        key, separator, value = line.partition("=")
+        if not separator or key.strip() != name:
+            continue
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+            value = value[1:-1]
+        if not value:
+            raise ValueError(f"{name} is set to nothing in {path}")
+        return value
+    raise ValueError(f"{name} is not set in {path}")
+
+
+# What `--target-name` may be. An environment variable name in the shape every
+# shell and `os.environ` agree on, and never one the interpreter or the loader
+# reads itself: a target handed in as `PYTHONPATH` or `LD_PRELOAD` is code
+# injection into the child, not a connection string.
+TARGET_NAME_PATTERN = re.compile(r"^[A-Z][A-Z0-9_]*$")
+TARGET_NAME_DENYLIST: frozenset[str] = frozenset(
+    {"PATH", "PYTHONPATH", "LD_PRELOAD", "PYTHONHOME", "PYTHONSTARTUP"}
+)
+
+
+def target_name_refusal(name: str) -> str | None:
+    """Why this `--target-name` may not be handed to the child, or None."""
+    if not TARGET_NAME_PATTERN.match(name):
+        return (
+            f"--target-name {name!r} is not an environment variable name "
+            "(upper-case letters, digits and underscores, starting with a letter)"
+        )
+    if name in TARGET_NAME_DENYLIST:
+        return f"--target-name {name} is read by the interpreter itself and may not carry a target"
+    return None
+
+
+def _is_under(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root.resolve())
+    except ValueError:
+        return False
+    return True
+
+
+# C: libraries whose purpose is to read settings from the environment or a
+# settings file. A copy that imports one can reach the original target
+# through it however the direct reads are policed, so the import is refused
+# by name. `run-safety.md` § The copied-actor route lists them for the reader.
+SETTINGS_READER_MODULES: tuple[str, ...] = (
+    "dotenv",
+    "python_dotenv",
+    "pydantic_settings",
+    "decouple",
+    "environs",
+    "dynaconf",
+    "envparse",
+    "starlette.config",
+    "django.conf",
+)
+
+
+def settings_reader_refusal(tree: ast.Module) -> str | None:
+    """Why this copy may reach the original target through a settings library."""
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            names = [alias.name for alias in node.names]
+        elif isinstance(node, ast.ImportFrom) and node.level == 0:
+            module = node.module or ""
+            names = [module] + [
+                f"{module}.{alias.name}" if module else alias.name
+                for alias in node.names
+            ]
+        else:
+            continue
+        for name in names:
+            for listed in SETTINGS_READER_MODULES:
+                if name == listed or name.startswith(f"{listed}."):
+                    return (
+                        f"the copy imports {listed} at line {node.lineno}, a settings "
+                        "reader that would reach the project's own .env or settings "
+                        "- and the original target with them"
+                    )
+    return None
+
+
+# B: the reflective and I/O constructs that let a file reach a target without
+# a read this gate can see. Each one is a witness for the ADMISSION route
+# only - the walk that guards ordinary calibration does not refuse `open()`,
+# because an evaluator reading a fixture is the common honest case - and a
+# copy the route runs has no business with any of them: its one job is to
+# open one engine with one named variable.
+_REFLECTION_BUILTINS: frozenset[str] = frozenset(
+    {"exec", "eval", "compile", "__import__", "vars", "open", "getattr", "globals"}
+)
+_REFLECTION_MODULES: frozenset[str] = frozenset(
+    {"socket", "builtins", "io", "pickle", "marshal", "codeop", "code"}
+)
+# `types` is ordinary; these two members build code objects and functions
+# out of data, which is `exec` by another spelling.
+_REFLECTION_ATTRIBUTES: frozenset[str] = frozenset({"FunctionType", "CodeType"})
+_READER_ATTRIBUTES: frozenset[str] = frozenset({"read_text", "read_bytes", "open"})
+
+
+def reflection_refusal(tree: ast.Module) -> str | None:
+    """Why this copy reaches the environment, a file, or code by a side door."""
+    imported: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                imported.add(alias.asname or alias.name.partition(".")[0])
+                root = alias.name.partition(".")[0]
+                if root in _REFLECTION_MODULES:
+                    return f"the copy imports {root} at line {node.lineno}"
+        elif isinstance(node, ast.ImportFrom):
+            root = (node.module or "").partition(".")[0]
+            if root in _REFLECTION_MODULES:
+                return f"the copy imports from {root} at line {node.lineno}"
+            for alias in node.names:
+                imported.add(alias.asname or alias.name)
+                if alias.name in _REFLECTION_BUILTINS and root == "builtins":
+                    return (
+                        f"the copy imports builtins.{alias.name} at line {node.lineno}"
+                    )
+                if alias.name in _REFLECTION_ATTRIBUTES and root == "types":
+                    return f"the copy imports types.{alias.name} at line {node.lineno}"
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and node.id in ("__builtins__", "__import__"):
+            return f"the copy touches {node.id} at line {node.lineno}"
+        if isinstance(node, ast.Attribute):
+            if node.attr in (
+                "__dict__",
+                "__builtins__",
+                "__globals__",
+                "__subclasses__",
+            ):
+                return f"the copy reads .{node.attr} at line {node.lineno}"
+            if node.attr in _REFLECTION_ATTRIBUTES:
+                return f"the copy reaches {node.attr} at line {node.lineno}"
+            if (
+                node.attr == "modules"
+                and isinstance(node.value, ast.Name)
+                and node.value.id == "sys"
+            ):
+                return f"the copy reaches sys.modules at line {node.lineno}"
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if isinstance(func, ast.Name):
+            if func.id in _REFLECTION_BUILTINS:
+                if func.id == "getattr" and node.args:
+                    first = node.args[0]
+                    attribute = node.args[1] if len(node.args) > 1 else None
+                    computed = not (
+                        isinstance(attribute, ast.Constant)
+                        and isinstance(attribute.value, str)
+                    )
+                    on_module = isinstance(first, ast.Name) and first.id in imported
+                    if not (computed or on_module):
+                        continue
+                return f"the copy calls {func.id}() at line {node.lineno}"
+        elif isinstance(func, ast.Attribute):
+            root = _attribute_root_name(func)
+            if func.attr in _READER_ATTRIBUTES:
+                return f"the copy calls .{func.attr}() at line {node.lineno}"
+            if root == "io" and func.attr == "open":
+                return f"the copy calls io.open() at line {node.lineno}"
+    return None
+
+
+# A: the two names the target read spells - `os` and `environ` - may be bound
+# by exactly two statements, `import os` and `from os import environ`. Any
+# other binding of either name (an assignment, a class, a function, a
+# parameter, an import alias, a `with`/`for` target) is a shadow that makes
+# `os.environ[NAME]` read something this gate did not check.
+_TARGET_SPELLING_NAMES: frozenset[str] = frozenset({"os", "environ"})
+
+
+def shadowing_refusal(tree: ast.Module) -> str | None:
+    """Why `os` or `environ` in this tree may not mean what the read assumes."""
+
+    def bound_names(target: ast.expr):
+        if isinstance(target, ast.Name):
+            yield target.id
+        elif isinstance(target, (ast.Tuple, ast.List)):
+            for element in target.elts:
+                yield from bound_names(element)
+        elif isinstance(target, ast.Starred):
+            yield from bound_names(target.value)
+
+    for node in ast.walk(tree):
+        names: list[str] = []
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                bound = alias.asname or alias.name.partition(".")[0]
+                if bound in _TARGET_SPELLING_NAMES and not (
+                    alias.name == "os" and alias.asname is None
+                ):
+                    names.append(bound)
+        elif isinstance(node, ast.ImportFrom):
+            for alias in node.names:
+                bound = alias.asname or alias.name
+                if bound in _TARGET_SPELLING_NAMES and not (
+                    node.module == "os"
+                    and node.level == 0
+                    and alias.name == "environ"
+                    and alias.asname is None
+                ):
+                    names.append(bound)
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            names.extend(n for n in (node.name,) if n in _TARGET_SPELLING_NAMES)
+            if not isinstance(node, ast.ClassDef):
+                arguments = node.args
+                for argument in (
+                    *arguments.posonlyargs,
+                    *arguments.args,
+                    *arguments.kwonlyargs,
+                    *([arguments.vararg] if arguments.vararg else []),
+                    *([arguments.kwarg] if arguments.kwarg else []),
+                ):
+                    if argument.arg in _TARGET_SPELLING_NAMES:
+                        names.append(argument.arg)
+        elif isinstance(node, ast.Assign):
+            for target in node.targets:
+                names.extend(
+                    n for n in bound_names(target) if n in _TARGET_SPELLING_NAMES
+                )
+        elif isinstance(node, (ast.AnnAssign, ast.AugAssign, ast.NamedExpr)):
+            names.extend(
+                n for n in bound_names(node.target) if n in _TARGET_SPELLING_NAMES
+            )
+        elif isinstance(node, (ast.For, ast.AsyncFor, ast.comprehension)):
+            names.extend(
+                n for n in bound_names(node.target) if n in _TARGET_SPELLING_NAMES
+            )
+        elif isinstance(node, (ast.With, ast.AsyncWith)):
+            for item in node.items:
+                if item.optional_vars is not None:
+                    names.extend(
+                        n
+                        for n in bound_names(item.optional_vars)
+                        if n in _TARGET_SPELLING_NAMES
+                    )
+        elif isinstance(node, (ast.Global, ast.Nonlocal)):
+            names.extend(n for n in node.names if n in _TARGET_SPELLING_NAMES)
+        elif (
+            isinstance(node, ast.ExceptHandler) and node.name in _TARGET_SPELLING_NAMES
+        ):
+            names.append(node.name)
+        if names:
+            return (
+                f"`{names[0]}` is bound at line {node.lineno} by something other than "
+                "`import os` / `from os import environ`, so the target read would not "
+                "read the environment"
+            )
+    return None
+
+
+def _ast_differences(
+    original: object,
+    copy: object,
+    path: str,
+    *,
+    atomic_copy_nodes: tuple[ast.expr, ...] = (),
+) -> list[tuple[str, object]]:
+    """Differing subtrees as (path, copy node), with target arguments atomic.
+
+    Locations are ignored; everything else counts. Two lists of different
+    length differ as a whole at their field, because there is no single node
+    to name for an insertion.
+    """
+    if isinstance(original, ast.AST) and isinstance(copy, ast.AST):
+        if type(original) is not type(copy):
+            return [(path, copy)]
+        if ast.dump(original, include_attributes=False) == ast.dump(
+            copy, include_attributes=False
+        ):
+            return []
+        # Replacing a constructor argument is one allowed subtree change even
+        # when both expressions share a type (for example two Subscripts).
+        if any(copy is node for node in atomic_copy_nodes):
+            return [(path, copy)]
+        # Recurse only into child nodes and lists. A primitive field that
+        # differs - a constant's value, a name's id - names its PARENT node,
+        # because the parent is the smallest thing a caller can point at and
+        # compare by identity to the admitted argument.
+        found: list[tuple[str, object]] = []
+        primitive_differs = False
+        for field in original._fields:
+            left, right = getattr(original, field, None), getattr(copy, field, None)
+            if isinstance(left, (ast.AST, list)) or isinstance(right, (ast.AST, list)):
+                found.extend(
+                    _ast_differences(
+                        left,
+                        right,
+                        f"{path}.{field}" if path else field,
+                        atomic_copy_nodes=atomic_copy_nodes,
+                    )
+                )
+            elif left != right:
+                primitive_differs = True
+        if primitive_differs:
+            return [(path, copy)]
+        return found or [(path, copy)]
+    if isinstance(original, list) and isinstance(copy, list):
+        if len(original) != len(copy):
+            return [(path, copy)]
+        found = []
+        for index, (left, right) in enumerate(zip(original, copy)):
+            found.extend(
+                _ast_differences(
+                    left, right, f"{path}[{index}]", atomic_copy_nodes=atomic_copy_nodes
+                )
+            )
+        return found
+    if original == copy:
+        return []
+    return [(path, copy)]
+
+
+def _without_lone_import_os(
+    copy_tree: ast.Module, original_tree: ast.Module
+) -> ast.Module:
+    """The copy's tree with one top-level `import os` removed where the original has none.
+
+    The read `os.environ[NAME]` needs `os` bound, and a customer's evaluator
+    that opened its engine from a literal never imported it. That one plain
+    statement is the only difference the single-site rule tolerates beside
+    the target argument, and only when the original lacks it.
+    """
+
+    def is_plain_import_os(node: ast.stmt) -> bool:
+        return (
+            isinstance(node, ast.Import)
+            and len(node.names) == 1
+            and node.names[0].name == "os"
+            and node.names[0].asname is None
+        )
+
+    if any(is_plain_import_os(node) for node in original_tree.body):
+        return copy_tree
+    extra = [node for node in copy_tree.body if is_plain_import_os(node)]
+    if len(extra) != 1:
+        return copy_tree
+    trimmed = ast.Module(
+        body=[node for node in copy_tree.body if node is not extra[0]],
+        type_ignores=list(copy_tree.type_ignores),
+    )
+    return trimmed
+
+
+def single_site_refusal(
+    *, original_tree: ast.Module, copy_tree: ast.Module, target_name: str
+) -> str | None:
+    """Why the copy is not the original with exactly one change.
+
+    The rule, whole: the copy is the original with the engine's target
+    argument replaced by `os.environ[NAME]` (or `.get(NAME)` / `os.getenv(NAME)`),
+    plus `import os` where the original lacked it, and nothing else - not an
+    import, not a binding, not a statement. Every earlier hole - a shadowed
+    `environ`, a second constructor reached by alias, code built from data -
+    was a copy carrying something the original did not, and this rule makes
+    that impossible rather than enumerable. What the copy may then contain is
+    exactly what the customer's original contains, which their own paid run
+    executes anyway.
+    """
+    preflight = preflight_module()
+    trimmed = _without_lone_import_os(copy_tree, original_tree)
+    calls = preflight.engine_constructor_calls(trimmed)
+    admitted = []
+    if len(calls) == 1:
+        (call,) = calls
+        admitted = [call.args[0]] if call.args else []
+        admitted += [
+            keyword.value
+            for keyword in call.keywords
+            if keyword.arg in _TARGET_KEYWORDS
+        ]
+    differences = _ast_differences(
+        original_tree, trimmed, "", atomic_copy_nodes=tuple(admitted)
+    )
+    if not differences:
+        return "the copy is byte-identical to the original, so it was never repointed"
+    if len(differences) > 1:
+        return (
+            "the copy differs from the original at more than one place - the "
+            "copy is the original with exactly one change, the engine's target "
+            "argument: " + ", ".join(path for path, _ in differences)
+        )
+    ((path, node),) = differences
+    if len(calls) != 1:
+        return (
+            f"the copy differs from the original at {path}, and the copy has "
+            f"{len(calls)} engine constructor calls where the one change must be "
+            "the single call's target argument"
+        )
+    if not any(node is candidate for candidate in admitted):
+        return (
+            f"the copy differs from the original at {path}, which is not the "
+            "engine constructor's target argument - the copy is the original "
+            "with exactly one change, and this is not it"
+        )
+    if not _is_environment_read_of(node, target_name):
+        return (
+            f"the copy's one change at {path} is not os.environ[{target_name!r}] "
+            f"(or .get / os.getenv of it)"
+        )
+    return None
+
+
+def _attribute_root_name(node: ast.expr) -> str | None:
+    while isinstance(node, ast.Attribute):
+        node = node.value
+    return node.id if isinstance(node, ast.Name) else None
+
+
+# A: what the engine constructor may be handed.
+#
+# The read on its own proves nothing - every survivor of the second review
+# kept a dead `os.environ[NAME]` and opened the engine from something else.
+# So the constructor's TARGET argument has to be the read itself, or a plain
+# name bound to it by exactly one assignment, and no other argument to that
+# call may be a string of any construction.
+_TARGET_KEYWORDS: tuple[str, ...] = (
+    "url",
+    "database",
+    "dsn",
+    "conninfo",
+    "uri",
+    "connection_string",
+    "filename",
+    "path",
+)
+
+
+def _is_environment_read_of(node: ast.expr, name: str) -> bool:
+    """Is this expression exactly `os.environ[name]`, `.get(name)` or `getenv(name)`?"""
+
+    def is_environ(value: ast.expr) -> bool:
+        return (isinstance(value, ast.Name) and value.id == "environ") or (
+            isinstance(value, ast.Attribute)
+            and value.attr == "environ"
+            and isinstance(value.value, ast.Name)
+            and value.value.id == "os"
+        )
+
+    def literal_is(value: ast.expr | None) -> bool:
+        return isinstance(value, ast.Constant) and value.value == name
+
+    if isinstance(node, ast.Subscript) and is_environ(node.value):
+        return literal_is(node.slice)
+    if isinstance(node, ast.Call):
+        func = node.func
+        first = node.args[0] if node.args else None
+        if isinstance(func, ast.Attribute) and (
+            (func.attr == "get" and is_environ(func.value))
+            or (
+                func.attr == "getenv"
+                and isinstance(func.value, ast.Name)
+                and func.value.id == "os"
+            )
+        ):
+            return literal_is(first) and len(node.args) == 1 and not node.keywords
+        if isinstance(func, ast.Name) and func.id == "getenv":
+            return literal_is(first) and len(node.args) == 1 and not node.keywords
+    return False
+
+
+def _is_string_typed(
+    node: ast.expr,
+    bindings: dict[str, list[ast.expr]],
+    visiting: frozenset[str] = frozenset(),
+) -> bool:
+    """Could this expression be a string built in the copy?"""
+    if isinstance(node, ast.Constant):
+        return isinstance(node.value, str)
+    if isinstance(node, ast.JoinedStr):
+        return True
+    if isinstance(node, ast.BinOp):
+        return _is_string_typed(node.left, bindings, visiting) or _is_string_typed(
+            node.right, bindings, visiting
+        )
+    if isinstance(node, ast.Call):
+        func = node.func
+        if isinstance(func, ast.Attribute) and func.attr in (
+            "format",
+            "join",
+            "replace",
+            "strip",
+            "lower",
+            "upper",
+            "expanduser",
+            "resolve",
+            "__str__",
+        ):
+            return True
+        if isinstance(func, ast.Name) and func.id in (
+            "str",
+            "Path",
+            "PurePath",
+            "PosixPath",
+            "WindowsPath",
+        ):
+            return True
+    if isinstance(node, ast.Name):
+        if node.id in visiting:
+            raise ValueError(f"cyclic or unresolved binding for `{node.id}`")
+        return any(
+            _is_string_typed(value, bindings, visiting | {node.id})
+            for value in bindings.get(node.id, ())
+        )
+    return False
+
+
+def engine_target_refusal(tree: ast.Module, target_name: str) -> str | None:
+    """Why the copy has not been shown to open its engine WITH the target read."""
+    preflight = preflight_module()
+    calls = preflight.engine_constructor_calls(tree)
+    if not calls:
+        return (
+            "the copy never calls the engine's constructor, so nothing here "
+            "shows what its connection is opened with"
+        )
+    if len(calls) > 1:
+        return "the copy opens its engine at more than one place: " + ", ".join(
+            f"line {call.lineno}" for call in calls
+        )
+    (call,) = calls
+    references = preflight.engine_constructor_references(tree)
+    stray = [node for node in references if node is not call.func]
+    if stray:
+        return (
+            "the copy refers to the engine's constructor without calling it at "
+            + ", ".join(f"line {node.lineno}" for node in stray)
+            + " - a reference that is not the one admitted call"
+        )
+    bindings: dict[str, list[ast.expr]] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    bindings.setdefault(target.id, []).append(node.value)
+        elif isinstance(node, (ast.AnnAssign, ast.AugAssign)) and isinstance(
+            node.target, ast.Name
+        ):
+            bindings.setdefault(node.target.id, []).append(node.value or node.target)
+        elif isinstance(node, (ast.For, ast.comprehension)) and isinstance(
+            node.target, ast.Name
+        ):
+            # Literal iterable elements can establish numeric options. An
+            # opaque iterable remains unresolved rather than recursing forever.
+            values = (
+                node.iter.elts
+                if isinstance(node.iter, (ast.List, ast.Tuple, ast.Set))
+                else [node.target]
+            )
+            bindings.setdefault(node.target.id, []).extend(values)
+    if call.args:
+        target, rest = call.args[0], list(call.args[1:])
+        rest_keywords = list(call.keywords)
+    else:
+        by_keyword = [kw for kw in call.keywords if kw.arg in _TARGET_KEYWORDS]
+        if len(by_keyword) != 1:
+            return (
+                f"the engine constructor at line {call.lineno} is not handed a "
+                "target this gate can see: pass the read as its first argument "
+                "or under one of " + ", ".join(_TARGET_KEYWORDS)
+            )
+        target, rest = by_keyword[0].value, []
+        rest_keywords = [kw for kw in call.keywords if kw is not by_keyword[0]]
+    if isinstance(target, ast.Name):
+        bound = bindings.get(target.id, [])
+        if len(bound) != 1 or not _is_environment_read_of(bound[0], target_name):
+            return (
+                f"the engine constructor at line {call.lineno} is handed `{target.id}`, "
+                f"which is not bound once and directly to the {target_name} read"
+            )
+    elif not _is_environment_read_of(target, target_name):
+        return (
+            f"the engine constructor at line {call.lineno} is not handed the "
+            f"{target_name} read - the read elsewhere in the copy is dead and the "
+            "engine opens from something else"
+        )
+    for other in rest + [kw.value for kw in rest_keywords]:
+        try:
+            string_typed = _is_string_typed(other, bindings)
+        except ValueError as error:
+            return (
+                f"the engine constructor at line {call.lineno} has a {error}; "
+                "its other arguments cannot be established"
+            )
+        if string_typed:
+            return (
+                f"the engine constructor at line {call.lineno} is handed a second "
+                "string-typed argument, which may be a target of its own"
+            )
+    return None
+
+
+def env_file_names(path: Path) -> set[str]:
+    """Every variable name the project's `.env` defines, for the child's strip."""
+    names: set[str] = set()
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[len("export ") :].lstrip()
+        key, separator, _ = line.partition("=")
+        if separator and key.strip():
+            names.add(key.strip())
+    return names
+
+
+def self_contained_import_refusal(tree: ast.Module, project_root: Path) -> str | None:
+    """Why this copy is not self-contained, or None.
+
+    The scope walk reads the scorer file and nothing it imports, so a helper
+    module beside the original - `from db import get_conn` - is a file nobody
+    read, and a connection it builds is a target this route cannot locate or
+    repoint. The copy therefore may import only the standard library, a
+    listed engine driver, or a package installed outside the project.
+    Relative imports are refused outright; an absolute import is refused when
+    its top-level name is unknown to the interpreter running this gate or
+    resolves to a file under the project root.
+    """
+    preflight = preflight_module()
+    stdlib = set(getattr(sys, "stdlib_module_names", ()))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.level:
+            return f"the copy has a relative import at line {node.lineno}; it must be self-contained"
+        if isinstance(node, ast.Import):
+            names = [alias.name for alias in node.names]
+        elif isinstance(node, ast.ImportFrom):
+            names = [node.module or ""]
+        else:
+            continue
+        for name in names:
+            root = name.partition(".")[0]
+            if not root or root in stdlib or preflight._execution_module_name(name):
+                continue
+            try:
+                spec = importlib.util.find_spec(root)
+            except (ImportError, ValueError):
+                spec = None
+            if spec is None:
+                return (
+                    f"the copy imports `{root}` at line {node.lineno}, which is "
+                    "neither the standard library, a listed engine driver, nor an "
+                    "installed package - a local module nobody read"
+                )
+            origin = getattr(spec, "origin", None)
+            if origin and origin not in ("built-in", "frozen"):
+                resolved = Path(origin).resolve()
+                # An in-tree virtual environment puts every third-party
+                # package under the project root. A package is not a local
+                # helper because the customer keeps their `.venv` beside their
+                # code: anything under a `site-packages`/`dist-packages`
+                # directory, or under the calibrating interpreter's own
+                # prefixes, is installed rather than written here.
+                if any(
+                    part in ("site-packages", "dist-packages")
+                    for part in resolved.parts
+                ):
+                    continue
+                if any(
+                    _is_under(resolved, Path(prefix))
+                    for prefix in (sys.prefix, sys.base_prefix)
+                ):
+                    continue
+                if not _is_under(resolved, project_root):
+                    continue
+                return (
+                    f"the copy imports `{root}` at line {node.lineno}, which "
+                    f"resolves inside the project ({origin}) - a local module "
+                    "nobody read"
+                )
+    return None
+
+
+def repoint_refusal(
+    *, original_tree: ast.Module, copy_tree: ast.Module, target_name: str
+) -> str | None:
+    """Why the copy has not been shown to read `target_name` and nothing else.
+
+    A byte-identical copy under `traigent-runs/calibration/` passes every
+    structural check and runs against the ORIGINAL target, with the card then
+    saying the opposite - which is the one thing this route exists never to
+    do. So the repoint is established from the two trees rather than assumed
+    from the flag: the copy holds exactly one environment read, it names the
+    target, the original does not read that name, no connection literal of
+    the original survives in the copy, and nothing in the copy can reload the
+    original target - no `dotenv`, no second read under any other name.
+    """
+    preflight = preflight_module()
+    reflection = reflection_refusal(copy_tree)
+    if reflection is not None:
+        return (
+            reflection
+            + " - the copy may open one engine with one named variable and nothing else"
+        )
+    reads = preflight.environment_reads(copy_tree)
+    named = [(line, name) for line, name in reads if name == target_name]
+    others = [(line, name) for line, name in reads if name != target_name]
+    if not named:
+        return (
+            f"the copy never reads {target_name} from the environment, so it "
+            "was not repointed - it would run against the original target"
+        )
+    if len(named) > 1:
+        return (
+            f"the copy reads {target_name} at more than one place ("
+            + ", ".join(f"line {line}" for line, _ in named)
+            + "); the route repoints exactly one"
+        )
+    if others:
+        return (
+            "the copy reads the environment somewhere other than "
+            f"{target_name} - a second connection site: "
+            + ", ".join(
+                f"line {line} ({name if name is not None else 'a name computed at run time'})"
+                for line, name in others
+            )
+        )
+    if any(
+        name == target_name for _, name in preflight.environment_reads(original_tree)
+    ):
+        return (
+            f"the original already reads {target_name}, so the copy's read is "
+            "not a repoint - choose a name the original does not use"
+        )
+    # The original's own target - the literal at its constructor site - may
+    # not survive anywhere in the copy. Not every path literal the two files
+    # share: under the single-site rule the copy holds exactly what the
+    # original holds, and an original may name a log file or a fixture.
+    original_calls = preflight.engine_constructor_calls(original_tree)
+    if len(original_calls) == 1:
+        (original_call,) = original_calls
+        targets = ([original_call.args[0]] if original_call.args else []) + [
+            keyword.value
+            for keyword in original_call.keywords
+            if keyword.arg in _TARGET_KEYWORDS
+        ]
+        original_targets = {
+            node.value
+            for node in targets
+            if isinstance(node, ast.Constant) and isinstance(node.value, str)
+        }
+        surviving = {
+            node.value
+            for node in ast.walk(copy_tree)
+            if isinstance(node, ast.Constant) and node.value in original_targets
+        }
+        if surviving:
+            return (
+                "the original's connection target survives in the copy: "
+                + ", ".join(repr(value) for value in sorted(surviving))
+            )
+    return engine_target_refusal(copy_tree, target_name)
+
+
+# Where a copy of the evaluator has to live for the copied-actor route: the
+# ignored run directory, like everything else the run writes, under a name
+# that says what it is. Two consecutive path components, checked as such, so
+# a project that happens to be called `calibration` does not qualify.
+COPIED_ACTOR_DIRECTORY: tuple[str, str] = ("traigent-runs", "calibration")
+
+
+def copied_actor_refusal(
+    scan: dict[str, Any], *, copy: Path, original: Path, target_name: str
+) -> str | None:
+    """Why `--calibrated-copy-of` may not admit this scorer, or None.
+
+    The route `references/run-safety.md` describes is narrow on purpose, and
+    every condition below is one of its refusals, said in the words the
+    reference uses so the customer can match the message to the rule:
+
+    * the copy is not under `traigent-runs/calibration/` - the route never
+      edits or moves the customer's original file, and a "copy" anywhere else
+      is one this tool cannot tell from the original;
+    * the original is missing, is the copy itself, or is itself under
+      `traigent-runs/` - the route copies the customer's actor, not the run's;
+    * a witness sits in the reply transform - the route repoints one place in
+      one file, and the transform is a second file this run imports;
+    * the copy reaches a PROCESS - `subprocess`, `exec()`, `os.system()` - which
+      a read-only target bounds nothing about;
+    * the copy imports more than one engine, or none - the run has to be able to
+      name the one place the target is set, and a connection handed in from a
+      helper module is set somewhere this copy does not show;
+    * the copy is not self-contained - a relative or local import is a file the
+      walk never read (`self_contained_import_refusal`);
+    * the repoint is not established - the copy is byte-identical to the
+      original, reads the environment under any name but `--target-name` or
+      under it more than once, imports `dotenv`, or still holds a connection
+      literal of the original (`repoint_refusal`).
+
+    A copy with NO witness at all is refused too, one level up: the route is for
+    a scorer the gate refuses, and a scorer it does not refuse is calibrated as
+    itself. The flag on that file would only make the card say a copy was run.
+    """
+    parts = copy.parts
+    if not any(
+        parts[i : i + 2] == COPIED_ACTOR_DIRECTORY and i + 2 < len(parts)
+        for i in range(len(parts) - 1)
+    ):
+        return (
+            "the copy must live under traigent-runs/calibration/ inside the "
+            f"project; {copy} does not"
+        )
+    if not original.is_file():
+        return f"the original evaluator named by --calibrated-copy-of is not a file: {original}"
+    if original == copy:
+        return "--calibrated-copy-of names the copy itself; name the customer's original file"
+    if COPIED_ACTOR_DIRECTORY[0] in original.parts:
+        return (
+            "the original evaluator named by --calibrated-copy-of is inside "
+            "traigent-runs/, which holds only what this run writes; name the "
+            f"customer's own file: {original}"
+        )
+    transform_sites = [site for site in scan["witnesses"] if site["role"] != "scorer"]
+    if transform_sites:
+        return (
+            "the reply transform reaches an engine or a process, and the route "
+            "repoints one place in the scorer copy only: "
+            + "; ".join(f"{s['file']}: {s['witness']}" for s in transform_sites)
+        )
+    preflight = preflight_module()
+    # Parsed from BYTES on both sides, so an encoding cookie is honoured the
+    # way the interpreter honours it and the gate reads the file the child
+    # will run rather than a utf-8 reading of it.
+    tree = ast.parse(copy.read_bytes(), filename=str(copy))
+    # THE RULE, before every finer check, so a wrong copy is told the one
+    # thing to fix. What follows guards what the ORIGINAL may contain, since
+    # the copy may contain nothing else.
+    original_tree = ast.parse(original.read_bytes(), filename=str(original))
+    single_site = single_site_refusal(
+        original_tree=original_tree, copy_tree=tree, target_name=target_name
+    )
+    if single_site is not None:
+        return single_site
+    shadowed = shadowing_refusal(tree)
+    if shadowed is not None:
+        return shadowed
+    processes = preflight.process_execution_witnesses(tree)
+    if processes:
+        return (
+            "the evaluator shells out or executes arbitrary code, which a "
+            "read-only or duplicate target bounds nothing about: "
+            + "; ".join(processes)
+        )
+    engines = preflight.engine_modules_imported(tree)
+    if len(engines) > 1:
+        return "the evaluator opens more than one engine: " + ", ".join(engines)
+    if not engines:
+        return (
+            "the copy imports no engine, so the place its connection target is "
+            "set is not in this file and cannot be repointed here"
+        )
+    run_directory = next(
+        i for i in range(len(parts) - 1) if parts[i : i + 2] == COPIED_ACTOR_DIRECTORY
+    )
+    project_root = Path(*parts[:run_directory])
+    # Named before the self-contained check, which would otherwise call a
+    # settings reader that is not installed here "a local module".
+    settings = settings_reader_refusal(tree)
+    if settings is not None:
+        return settings
+    contained = self_contained_import_refusal(tree, project_root)
+    if contained is not None:
+        return contained
+    return repoint_refusal(
+        original_tree=original_tree, copy_tree=tree, target_name=target_name
+    )
 
 
 def execution_scope_scan(files: dict[str, Path]) -> dict[str, Any]:
@@ -653,8 +1577,9 @@ def execution_scope_scan(files: dict[str, Path]) -> dict[str, Any]:
     unread: list[str] = []
     for role, path in files.items():
         try:
-            source = Path(path).read_text(encoding="utf-8")
-            tree = ast.parse(source, filename=str(path))
+            # Bytes, so an encoding cookie is honoured as the interpreter
+            # honours it: the walk reads the file the child will run.
+            tree = ast.parse(Path(path).read_bytes(), filename=str(path))
         except (
             OSError,
             UnicodeDecodeError,
@@ -703,8 +1628,12 @@ def scope_refusal_message(scan: dict[str, Any]) -> str:
             "There is no route here that makes running it safe. This guide "
             "does not own an execution boundary, and an in-process one is not "
             "a boundary at all: see the containment section of "
-            "references/run-safety.md, which now records why. Design "
-            "containment separately if you want that evidence, and tell "
+            "references/run-safety.md, which now records why. The one route "
+            "this guide offers is the copied-actor route that reference "
+            "describes - a copy of the evaluator under "
+            "traigent-runs/calibration/, repointed at a read-only or duplicate "
+            "target the customer supplies, passed here with "
+            "--calibrated-copy-of ORIGINAL. Where that route is refused, tell "
             "readiness.py what happened with --calibration-scope-refused so "
             "the card discloses the unmade check instead of asking for it. "
             "Your run carries on either way - nothing here stops it.",
@@ -1208,6 +2137,41 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--calibrated-copy-of",
+        metavar="ORIGINAL",
+        help=(
+            "the copied-actor route: --scorer is a copy of the customer's "
+            "evaluator ORIGINAL, placed under traigent-runs/calibration/ and "
+            "repointed to read the read-only or duplicate target they "
+            "supplied from the environment under --target-name, per "
+            "references/run-safety.md. Admits the engine witnesses the gate "
+            "would otherwise refuse, records original, copy and target name "
+            "in the result as `calibrated_copy`, and refuses a copy that "
+            "reaches a process, imports more than one engine or none, or sits "
+            "anywhere else. Never for a scorer the gate does not refuse"
+        ),
+    )
+    parser.add_argument(
+        "--target-name",
+        metavar="NAME",
+        help=(
+            "with --calibrated-copy-of: the environment variable the copy "
+            "reads its connection target from. Its value is read from "
+            "--target-env-file by this process and handed to the child alone "
+            "- it never appears on a command line, in this output, or in "
+            "the JSON"
+        ),
+    )
+    parser.add_argument(
+        "--target-env-file",
+        metavar="PATH",
+        help=(
+            "with --calibrated-copy-of: the owner-only .env file the customer "
+            "pasted the target into under --target-name. Refused unless it is "
+            "readable by its owner alone"
+        ),
+    )
+    parser.add_argument(
         "--paid-approved",
         action="store_true",
         help="confirm explicit approval for LLM-judge provider calls",
@@ -1520,6 +2484,70 @@ def unavailable_supplemental_attempt(reason: str, detail: str) -> dict[str, Any]
     }
 
 
+COPIED_ACTOR_DIAGNOSTIC = (
+    "[redacted calibration target] Diagnostic text withheld because a driver "
+    "can disclose parts of the target; inspect the evaluator and its "
+    "dependencies locally."
+)
+_WORKER_DIAGNOSTIC_FIELDS = frozenset({"error", "detail", "captured_stdout"})
+
+
+def withhold_worker_diagnostics(value: Any) -> Any:
+    """Withhold diagnostic fields without rewriting protocol or authored facts.
+
+    The worker returns numeric scores, authored case/source identifiers and an
+    optional transform's delivered value. Exception text and captured prints
+    have their own fields. Ordinary driver diagnostics are withheld there;
+    arbitrary disclosure as data by original customer code is not sandboxed.
+    """
+    if isinstance(value, dict):
+        return {
+            key: (
+                COPIED_ACTOR_DIAGNOSTIC
+                if key in _WORKER_DIAGNOSTIC_FIELDS and isinstance(item, str) and item
+                else withhold_worker_diagnostics(item)
+            )
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [withhold_worker_diagnostics(item) for item in value]
+    return value
+
+
+def run_calibration_worker(
+    command: list[str], *, copied_actor: bool = False, **kwargs: Any
+) -> subprocess.CompletedProcess[str]:
+    """The shared parent boundary for authored, load, supplemental and seam output.
+
+    The customer's original is not a sandboxed program. Ordinary driver errors
+    may contain normalized targets or DSN components, so substring replacement
+    cannot make their diagnostics safe to forward. Withhold that text in full.
+    """
+    process = subprocess.run(command, **kwargs)
+    if not copied_actor:
+        return process
+    try:
+        payload = json.loads(process.stdout)
+    except json.JSONDecodeError:
+        stdout = COPIED_ACTOR_DIAGNOSTIC if process.stdout else ""
+    else:
+        stdout = json.dumps(withhold_worker_diagnostics(payload))
+    stderr = COPIED_ACTOR_DIAGNOSTIC if process.stderr else ""
+    if (
+        process.returncode == WORKER_SCORER_UNLOADABLE
+        and process.stderr.lstrip().startswith(SCORER_UNLOADABLE_MARKER)
+    ):
+        # Preserve only the protocol marker used to distinguish an unchecked
+        # scorer (exit2) from an evaluator execution failure (exit1).
+        stderr = f"{SCORER_UNLOADABLE_MARKER} {stderr}"
+    return subprocess.CompletedProcess(
+        process.args,
+        process.returncode,
+        stdout,
+        stderr,
+    )
+
+
 def run_supplemental_attempt(
     request: dict[str, Any],
     *,
@@ -1527,6 +2555,7 @@ def run_supplemental_attempt(
     total_budget_seconds: int,
     environment: dict[str, str],
     cwd: Path,
+    copied_actor: bool = False,
 ) -> dict[str, Any]:
     """Run one advisory attempt in a disposable worker process.
 
@@ -1542,8 +2571,9 @@ def run_supplemental_attempt(
             "was spent before this supplemental probe could run",
         )
     try:
-        process = subprocess.run(
+        process = run_calibration_worker(
             [sys.executable, str(Path(__file__).resolve()), "--_worker"],
+            copied_actor=copied_actor,
             input=json.dumps(request),
             text=True,
             # A child that writes bytes no codec reads is the evaluator's
@@ -1607,6 +2637,7 @@ def run_seam_batch(
     total_budget_seconds: int,
     environment: dict[str, str],
     cwd: Path,
+    copied_actor: bool = False,
 ) -> list[dict[str, Any]]:
     """Score the whole seam family in one worker, and report per probe.
 
@@ -1642,8 +2673,9 @@ def run_seam_batch(
             "was spent before the seam probes could run",
         )
     try:
-        process = subprocess.run(
+        process = run_calibration_worker(
             [sys.executable, str(Path(__file__).resolve()), "--_worker"],
+            copied_actor=copied_actor,
             input=json.dumps(request),
             text=True,
             # A child that writes bytes no codec reads is the evaluator's
@@ -1877,9 +2909,68 @@ def run() -> int:
             args.reply_transform.partition(":")[0]
         ).resolve()
     scope = execution_scope_scan(scanned)
-    if scope["witnesses"]:
+    calibrated_copy: dict[str, str] | None = None
+    target_value: str | None = None
+    if scope["witnesses"] and args.calibrated_copy_of is None:
         print(scope_refusal_message(scope), file=sys.stderr)
         return 2
+    if args.calibrated_copy_of is None and (
+        args.target_name is not None or args.target_env_file is not None
+    ):
+        print(
+            "--target-name and --target-env-file describe the copied-actor "
+            "route and mean nothing without --calibrated-copy-of.",
+            file=sys.stderr,
+        )
+        return 2
+    if args.calibrated_copy_of is not None:
+        if args.target_name is None or args.target_env_file is None:
+            print(
+                "--calibrated-copy-of needs --target-name and --target-env-file: "
+                "the copy reads its target from the environment under that "
+                "name, and this process is what puts it there.",
+                file=sys.stderr,
+            )
+            return 2
+        # The route, gated as narrowly as the reference describes it. Checked
+        # BEFORE the first child for the same reason the refusal above is: a
+        # copy this read will not admit is never imported.
+        if not scope["witnesses"]:
+            print(
+                "--calibrated-copy-of is the route for a scorer the gate "
+                "refuses, and this one reaches no engine the walk can see: "
+                "calibrate the original as itself, without the flag.",
+                file=sys.stderr,
+            )
+            return 2
+        copy_path = Path(scorer_file).resolve()
+        original_path = Path(args.calibrated_copy_of).resolve()
+        refusal = target_name_refusal(args.target_name) or copied_actor_refusal(
+            scope, copy=copy_path, original=original_path, target_name=args.target_name
+        )
+        if refusal is not None:
+            print(
+                "Refusing the copied-actor route: " + refusal + "\n\n"
+                "Keep the disclosure route instead - tell readiness.py what "
+                "happened with --calibration-scope-refused.",
+                file=sys.stderr,
+            )
+            return 2
+        try:
+            target_value = read_target_from_env_file(
+                Path(args.target_env_file).resolve(), args.target_name
+            )
+        except (OSError, UnicodeDecodeError, ValueError) as error:
+            print(f"Refusing the copied-actor route: {error}", file=sys.stderr)
+            return 2
+        # Witnesses stay in the record. They were admitted, not cleared: the
+        # copy still reaches an engine, and what changed is whose engine.
+        scope["acknowledged_by"] = "--calibrated-copy-of"
+        calibrated_copy = {
+            "original": str(original_path),
+            "copy": str(copy_path),
+            "target_name": args.target_name,
+        }
     # Attached once, here, rather than inside each of the two case-building
     # paths: one expected answer must not be able to acquire two permutations.
     #
@@ -1902,6 +2993,16 @@ def run() -> int:
     worker_environment = subprocess_environment(
         allow_provider_access=args.kind == "llm-judge"
     )
+    if target_value is not None:
+        # Every name the project's own .env defines leaves the child too - the
+        # original target commonly lives there under a name no marker list
+        # anticipates (`DB_FILE`, `SQLITE_PATH`) - and then the one variable
+        # the child is handed on purpose goes in, after both strips so a
+        # marker in its name cannot remove it. The value goes to the child
+        # and nowhere else in this process.
+        for defined in env_file_names(Path(args.target_env_file).resolve()):
+            worker_environment.pop(defined, None)
+        worker_environment[args.target_name] = target_value
     worker_cwd = Path(scorer_file).resolve().parent
     # One deadline for the whole calibration, opened before the FIRST child
     # this run starts and shared by every one after it, so `--timeout` is the
@@ -1931,8 +3032,9 @@ def run() -> int:
         # being out of its domain. A typo silently disabled the whole check and
         # told the reader not to worry about it.
         try:
-            loaded = subprocess.run(
+            loaded = run_calibration_worker(
                 [sys.executable, str(Path(__file__).resolve()), "--_worker"],
+                copied_actor=target_value is not None,
                 input=json.dumps(
                     {
                         "operation": "load",
@@ -1993,8 +3095,9 @@ def run() -> int:
     # handed out after it - "one timeout at five minutes" was two at ten, and
     # `--help` disclosed that instead of fixing it.
     try:
-        process = subprocess.run(
+        process = run_calibration_worker(
             [sys.executable, str(Path(__file__).resolve()), "--_worker"],
+            copied_actor=target_value is not None,
             input=json.dumps(authored_request),
             text=True,
             # A child that writes bytes no codec reads is the evaluator's
@@ -2160,6 +3263,7 @@ def run() -> int:
                     total_budget_seconds=args.timeout,
                     environment=worker_environment,
                     cwd=worker_cwd,
+                    copied_actor=target_value is not None,
                 )
             for kind in EXCEPTION_PROBE_KINDS:
                 attempt = run_supplemental_attempt(
@@ -2171,6 +3275,7 @@ def run() -> int:
                     total_budget_seconds=args.timeout,
                     environment=worker_environment,
                     cwd=worker_cwd,
+                    copied_actor=target_value is not None,
                 )
                 supplemental_results[index]["exception_probes"].append(
                     {"kind": kind, **attempt}
@@ -2211,6 +3316,7 @@ def run() -> int:
             total_budget_seconds=args.timeout,
             environment=worker_environment,
             cwd=worker_cwd,
+            copied_actor=target_value is not None,
         )
         for probe, attempt in zip(seam_queue, seam_attempts, strict=True):
             supplemental_results[probe["case_index"]]["seam_probes"].append(
@@ -2352,6 +3458,11 @@ def run() -> int:
     # What the key is for is the opposite of reassurance - it names the files
     # that were read, so a reader can see which ones were not.
     result["execution_scope"] = scope
+    if calibrated_copy is not None:
+        # The route, in the payload, so `readiness.py` can name it on the
+        # card. The two paths and the target's NAME. Driver diagnostics can echo
+        # the value; the worker boundary withholds that text before forwarding.
+        result["calibrated_copy"] = calibrated_copy
 
     # One list, both shapes, so neither can answer this differently.
     #

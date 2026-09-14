@@ -68,12 +68,16 @@ Open with the five-stage journey under "Opening message" in
 
 Proceed with read-only inspection after stating the plan. Do not make the user approve safe
 discovery. Stop only for: a genuine choice between agent candidates, one task-intent question when
-nothing anchors the walkthrough, secrets pasted into a preserved or newly created owner-only local
+nothing anchors the walkthrough, the environment choice and install approval below, secrets pasted
+into a preserved or newly created owner-only local
 `.env`, paid/provider calls or private-data egress, judgment-dependent changes to real expected
 answers or grading policy, and destructive or production-affecting changes.
 
-Create the isolated first-run environment and minimal `.env` as separate actions. SKILL.md's
-"Action authorization" table states what a dependency install may do without another approval;
+Choose the environment the SDK installs into and create the minimal `.env` as separate actions.
+The environment procedure covers an existing customer environment, a persistent project `.venv`
+when one is missing, and the throwaway fallback.
+SKILL.md's "Action authorization" table states what a dependency install may do without another
+approval, and which install waits for the customer's yes;
 `references/run-safety.md` owns the environment, failure, and pinned-requirements rules beneath it,
 and the run never edits your own dependency files. This document states neither rule a second time.
 Provider, connected Traigent, private-data, and all other external calls remain behind their stated

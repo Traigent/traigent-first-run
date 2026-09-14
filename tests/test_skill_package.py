@@ -3288,7 +3288,9 @@ class SkillPackageTests(unittest.TestCase):
         # (traigent-first-run#392).
         self.assertIn("comparison evaluators", description)
         self.assertNotIn("non-executing comparison evaluators", description)
-        self.assertIn("never by refusing the run", description)
+        self.assertIn("execution evaluators retain disclosure", description)
+        self.assertIn("may calibrate an eligible copy", description)
+        self.assertIn("without refusing onboarding", description)
         self.assertIn(
             "query or code text compared rather than run",
             description,
@@ -3964,6 +3966,8 @@ class SkillPackageTests(unittest.TestCase):
             "scripts/preflight.py",
             "scripts/readiness.py",
             "scripts/calibrate_evaluator.py",
+            "scripts/find_environments.py",
+            "scripts/environment_install.py",
             "scripts/validate_run_log.py",
             "assets/run-plan.md",
             "assets/requirements-first-run.txt",
@@ -4356,8 +4360,8 @@ class SkillPackageTests(unittest.TestCase):
         )
         for action in (
             "create `traigent-runs/` artifacts",
-            "create an isolated environment",
-            "install dependencies",
+            "create the selected project environment",
+            "install the sdk into the chosen environment",
         ):
             action_row = next(
                 (row for row in authorization_rows if action in row),
@@ -4700,26 +4704,36 @@ class SkillPackageTests(unittest.TestCase):
             with self.subTest(policy=phrase):
                 self.assertIn(phrase, contributor_policy)
 
-    def test_first_run_environment_is_dedicated_and_preserves_existing_environments(
+    def test_first_run_environment_is_the_customers_and_the_throwaway_is_the_fallback(
         self,
     ) -> None:
+        """#518: the run ends with Traigent installed where they will keep it.
+
+        Reuse a supported environment after approval, or create the project's
+        persistent `.venv` when none exists. An absent environment alone never
+        selects the throwaway route. That fallback remains for a declined
+        install, refused version change, or an occupied conventional path -
+        and its preservation and same-run recovery rules remain intact.
+        """
         require_stage_reference(5, RUN_SAFETY, "environment-and-privacy")
         skill_text = " ".join(SKILL.read_text().casefold().split())
         safety_text = " ".join(RUN_SAFETY.read_text().casefold().split())
         readme_text = " ".join((ROOT / "README.md").read_text().casefold().split())
 
         for text in (skill_text, safety_text):
+            self.assertIn("`.venv`", text)
             self.assertIn("`.venv-traigent`", text)
-            self.assertIn("preserve every existing", text)
+            self.assertIn("preserve every", text)
         self.assertIn("shared or dependent environment", safety_text)
         self.assertIn("never fall back", safety_text)
-        self.assertIn("dedicated first-run environment", skill_text)
-        self.assertIn("environment this run created", skill_text)
+        self.assertIn("throwaway environment this run created", skill_text)
+        self.assertIn("into an existing customer environment", skill_text)
         self.assertIn("only on the user's explicit request", safety_text)
-        self.assertIn("if that path already exists", safety_text)
+        self.assertIn("if the throwaway path already exists", safety_text)
         self.assertIn("stop with its path and evidence", safety_text)
         self.assertIn(
-            "never adopt an environment from a different or unverified run", safety_text
+            "never adopt a throwaway environment from a different or unverified run",
+            safety_text,
         )
         self.assertIn("on a matching unfinished run", safety_text)
         self.assertIn(
@@ -4744,18 +4758,30 @@ class SkillPackageTests(unittest.TestCase):
             "path has no matching verified setup or a check fails", readme_text
         )
         self.assertIn("only on your explicit request", readme_text)
-        self.assertIn('"<resolved-python>" -m venv .venv-traigent', safety_text)
+        self.assertIn(
+            '"<resolved-python>" -i -s -b -m venv "<project root>/.venv-traigent"',
+            safety_text,
+        )
+        self.assertIn(
+            '"<resolved-python>" -i -s -b -m venv "<project root>/.venv"` for `new-project`',
+            safety_text,
+        )
         resume = " ".join(
             section_text(RUN_SAFETY, "Run record and resuming").casefold().split()
         )
         self.assertIn("first apply the same-run environment verification", resume)
         setup = " ".join(section_text(RUN_SAFETY, "Setup sequence").casefold().split())
         self.assertIn("if resume validation verified this run's completed setup", setup)
-        self.assertIn("skip creation and installation", setup)
-        self.assertIn("for a new environment, install", setup)
+        self.assertIn("skip selection and installation", setup)
+        self.assertIn(
+            "install the declared dependencies under skill.md's narrow authorization",
+            setup,
+        )
         record = (SKILL_ROOT / "assets" / "run-plan.md").read_text().casefold()
         for field in (
-            "dedicated setup created for this run",
+            "environment setup for this run",
+            "route taken",
+            "not the tested versions",
             "sys.prefix",
             "requirements-file sha-256",
             "setup completion evidence",
@@ -4763,6 +4789,224 @@ class SkillPackageTests(unittest.TestCase):
             self.assertIn(field, record)
         self.assertNotIn(
             "reuse an existing compatible isolated environment", safety_text
+        )
+
+    def test_the_environment_choice_is_ordered_and_asks_once(self) -> None:
+        """#518: detect, propose or ask, one approval card, then install.
+
+        Pinned as an order because each step exists to make the next one
+        honest: the card can only show a dry-run against an environment the
+        customer named, and the throwaway route is only a fallback if it is
+        offered after theirs. The customer-facing sentences are pinned
+        verbatim; they are what a customer reads, and every one of them names
+        the choice as theirs.
+        """
+        require_stage_reference(5, RUN_SAFETY, "environment-and-privacy")
+        choice = " ".join(
+            section_text(RUN_SAFETY, "Choosing the environment").casefold().split()
+        )
+        ordered = (
+            "**detect.**",
+            'scripts/find_environments.py" --project-root',
+            "without executing candidate interpreters",
+            "`pyvenv.cfg` plus `bin/python`",
+            "reachable only by a path the customer types",
+            "**unverified**, not absent or supported",
+            "**choose an existing environment or create the project's own.**",
+            "exactly one candidate on python 3.11-3.13: propose installing into it",
+            "several: ask which one - lettered, each with its absolute path and python version",
+            "`other path` and, only when the name is free, `create .venv for this project`",
+            "`no virtual environment found directly under the project root.`",
+            "verified candidates exist but none has a supported python - is not none",
+            "`no supported virtual environment found directly under the project root`",
+            "`<path> was skipped (python <version>, not 3.11-3.13)`",
+            "an environment exists at <path>, but this run could not verify its runtime or installed-package inventory",
+            "when `<project root>/.venv` is absent",
+            "both creation and that install (`new-project`)",
+            "**one sdk install approval.**",
+            "an existing environment uses the resolved card here",
+            'scripts/environment_install.py" plan --candidate',
+            "changes no installed package and runs no customer startup hook or source build",
+            "constrains every other installed distribution to its current version",
+            "this will change <package> <installed> to <new>",
+            "install only on an explicit yes; a no takes the throwaway route",
+            'scripts/environment_install.py" apply --plan',
+            "--approved-plan-sha256",
+            "without resolving again",
+            "**version guard.**",
+            "not a requirement for their environment",
+            "`traigent` at or above `0.26.0` and `litellm` at or above its pin are kept",
+            "`not the tested versions`",
+            "including prerelease, development, post-release, local and epoch segments",
+            "`this will change <package> <installed> to <pinned>` receives a yes",
+            "including `python-dotenv` and transitive dependencies",
+            "**throwaway route.**",
+            "used only when the customer declines the project-environment install",
+        )
+        positions = [choice.index(phrase) for phrase in ordered]
+        self.assertEqual(positions, sorted(positions))
+        self.assertIn('"<trusted-python>" -i -s -b', choice)
+        self.assertIn("never substitute the candidate's `-m pip`", choice)
+        self.assertNotIn('"<their interpreter>" -m pip', choice)
+        # Three rules the choice feeds, each stated in its owner and dispatched
+        # from the flow: the chosen interpreter runs every later command, the
+        # ignore rule exists only when its new environment does, and a
+        # resume verifies the route the record names.
+        rules = " ".join(section_text(RUN_SAFETY, "Rules").casefold().split())
+        skill = " ".join(SKILL.read_text().casefold().split())
+        self.assertIn(
+            "every later command - installed preflight, calibration, the mock check, "
+            "baseline, enhanced run, and held-out scoring - runs through that same "
+            "interpreter",
+            rules,
+        )
+        self.assertIn(
+            "through the chosen interpreter, which every later step uses", skill
+        )
+        self.assertIn(
+            "add only the rule for the directory this run creates; adopting an existing "
+            "environment adds neither rule",
+            rules,
+        )
+        self.assertIn(
+            "that procedure selects the persistent `.venv` or fallback `.venv-traigent`, "
+            "preserves occupied paths, and owns the corresponding `/.venv/` or "
+            "`/.venv-traigent/` git ignore rule",
+            skill,
+        )
+        self.assertIn(
+            "the resolved environment must still be the one the record names, on the "
+            "recorded route",
+            rules,
+        )
+        # The card's flags exist on the script that renders it.
+        source = (SKILL_ROOT / "scripts" / "find_environments.py").read_text()
+        for flag in (
+            "--project-root",
+            "--requirements",
+            "--candidate",
+            "--dry-run-report",
+        ):
+            with self.subTest(flag=flag):
+                self.assertIn(f'"{flag}"', source)
+        # The tested floor the guard names is the requirements file's pin.
+        pinned = dict(
+            line.strip().split("==")
+            for line in REQUIREMENTS.read_text().splitlines()
+            if "==" in line
+        )
+        self.assertIn(f"`traigent` at or above `{pinned['traigent']}`", choice)
+
+    def test_no_environment_creates_a_persistent_project_environment_after_one_approval(
+        self,
+    ) -> None:
+        """Absence, an occupied name, and a declined install are different routes.
+
+        The original #518 policy sent an otherwise empty project to a
+        throwaway environment and a reinstall reminder. Pin the creation
+        branch, its occupied-path boundary, and its final handoff together so
+        changing only the directory name cannot leave that old behavior behind.
+        """
+        choice = " ".join(
+            section_text(RUN_SAFETY, "Choosing the environment").casefold().split()
+        )
+        creation = choice.split("when `<project root>/.venv` is absent", 1)[1].split(
+            "check the name independently", 1
+        )[0]
+        ordered = (
+            "preview its absolute path and version, the absolute `.venv` path",
+            "the exact top-level pins in `assets/requirements-first-run.txt`",
+            "their package-declared dependencies",
+            "the customer's persistent project environment",
+            "continued use",
+            "a. create .venv and install the sdk for this project (recommended)",
+            "b. use an existing environment - reply with its absolute path",
+            "both creation and that install (`new-project`)",
+            "silence or elapsed time never selects it",
+            "after that yes, create the empty environment",
+            "use the isolated plan/apply procedure in step 3",
+            "show the resolved additions before installation",
+            "information rather than a second approval",
+            "install only the previewed pins and their package-declared dependencies",
+            "a scope change, unexpected installed-version change, source-build requirement, "
+            "or inconsistent plan stops this sequence",
+        )
+        positions = [creation.index(phrase) for phrase in ordered]
+        self.assertEqual(positions, sorted(positions))
+        for phrase in (
+            "any existing `.venv` entry, including a file, an unsupported or broken "
+            "environment, or a symlink (even dangling), occupies it",
+            "never overwrite it or follow a `.venv` symlink into automatic selection",
+            "a usable ordinary `.venv` remains an existing candidate",
+            "wait for their explicit choice",
+            "an unsupported environment elsewhere does not occupy a free `.venv`",
+            "having no environment alone selects `new-project`, never this fallback",
+        ):
+            with self.subTest(boundary=phrase):
+                self.assertIn(phrase, choice)
+        rules = " ".join(section_text(RUN_SAFETY, "Rules").casefold().split())
+        for phrase in (
+            "`.gitignore` excludes `/.venv/` for `new-project` or `/.venv-traigent/` "
+            "for `throwaway`",
+            "recheck that the chosen directory is wholly absent, including any dangling symlink",
+            "if the name became occupied, preserve it and return to the path choice",
+            "a persistent `.venv` this run created is never removed or recreated by "
+            "walkthrough cleanup or recovery",
+        ):
+            with self.subTest(preservation=phrase):
+                self.assertIn(phrase, rules)
+        record = (SKILL_ROOT / "assets" / "run-plan.md").read_text().casefold()
+        for route in ("existing-project", "new-project", "throwaway"):
+            with self.subTest(route=route):
+                self.assertIn(f"`{route}`", record)
+        closing = " ".join(
+            (SKILL_ROOT / "references" / "evaluation-and-dataset.md")
+            .read_text()
+            .casefold()
+            .split()
+        )
+        self.assertIn("keep the persistent `.venv` for continued use", closing)
+
+    def test_the_throwaway_reminder_is_stated_once_and_only_for_that_route(
+        self,
+    ) -> None:
+        """#518: the reminder belongs to the route that needs it.
+
+        A customer whose existing or newly-created persistent environment
+        received the SDK has nothing to reinstall. The sentence is conditional
+        where it is stated, stated in exactly one document, and the
+        continuation handoff that owns the rest of the close does not repeat it.
+        """
+        skill = " ".join(SKILL.read_text().casefold().split())
+        reminder = (
+            "`traigent is installed in <absolute path>/.venv-traigent for this "
+            "walkthrough; to keep using it, install it into your own environment.`"
+        )
+        self.assertIn(reminder, skill)
+        self.assertLess(
+            skill.index("on the throwaway route only, add one reminder"),
+            skill.index(reminder),
+        )
+        self.assertIn(
+            "say nothing else about the environment choice; the customer made it",
+            skill,
+        )
+        for path in assistant_facing_documents():
+            if path == SKILL:
+                continue
+            with self.subTest(document=path.name):
+                self.assertNotIn(
+                    "install it into your own environment",
+                    " ".join(path.read_text().casefold().split()),
+                )
+        handoff = " ".join(
+            section_text(RUN_SAFETY, "Continuation handoff").casefold().split()
+        )
+        self.assertNotIn(".venv-traigent", handoff)
+        readme = " ".join((ROOT / "README.md").read_text().casefold().split())
+        self.assertIn(
+            "only the throwaway route ends with a reminder to install the sdk into your own environment",
+            readme,
         )
 
     def test_opening_gate_uses_one_compatible_project_environment(self) -> None:
@@ -4782,15 +5026,17 @@ class SkillPackageTests(unittest.TestCase):
         )
         safety = " ".join(RUN_SAFETY.read_text().casefold().split())
         for phrase in (
-            "exactly one compatible",
+            "whose read-only detector owns interpreter provenance",
+            "an unverified candidate is never launched",
+            "exactly one verified compatible",
             "inside the user's project root",
-            "use its resolved interpreter",
+            "use the trusted matching host runtime for these checks",
             "`python-version` as measured",
             "otherwise resolve an already installed supported interpreter",
             "provisional",
             "multiple compatible candidates",
             "use that same lookup",
-            "bootstrap preflight and readiness with `-i -s`",
+            "bootstrap preflight and readiness with `-i -s -b`",
             "never replaces section 5's required post-install check",
         ):
             with self.subTest(phrase=phrase):
@@ -4799,7 +5045,7 @@ class SkillPackageTests(unittest.TestCase):
         self.assertIn("section 5 remains authoritative", safety)
         self.assertIn("environments outside the project", skill)
         self.assertIn(
-            "never select an existing project, shared, dependent, external, or assistant-owned environment as a fallback",
+            "never install into a shared, dependent, external, or assistant-owned environment as a fallback",
             safety,
         )
         joined = f"{skill} {safety}"
@@ -5694,8 +5940,8 @@ class SkillPackageTests(unittest.TestCase):
             self.assertIn(phrase, normalized_local)
 
         ordered_environment_phrases = (
-            "resolve and prepare the dedicated first-run environment",
-            "install the exact declared dependencies",
+            "choose the environment under choosing the environment below",
+            "install the declared dependencies",
             "verify capabilities and public signatures",
             "run a fresh-process traigent mock plumbing check",
             "create or minimally update `.env`",
@@ -5708,7 +5954,7 @@ class SkillPackageTests(unittest.TestCase):
         self.assertEqual(positions, sorted(positions))
         resident_local = " ".join(local_section.casefold().split())
         for boundary in (
-            "before creating an isolated environment",
+            "before choosing or creating an environment",
             "before installing dependencies",
             "before creating `.env`",
             "before asking for a provider key",
@@ -5742,9 +5988,16 @@ class SkillPackageTests(unittest.TestCase):
         for label, text, phrase in (
             ("skill", stage_five, "never the project's own declarations"),
             ("skill", stage_five, "which the run never edits"),
-            ("safety", safety, "whatever the project declares for itself"),
-            ("safety", safety, "the project's own pin is left alone"),
-            ("safety", safety, "rather than installed or edited"),
+            (
+                "safety",
+                safety,
+                "leave the project's own dependency declarations unchanged",
+            ),
+            (
+                "safety",
+                safety,
+                "choosing the environment's version guard owns what is installed",
+            ),
             ("guide", guide, "never edits your own dependency files"),
         ):
             with self.subTest(document=label, phrase=phrase):
@@ -5833,7 +6086,7 @@ class SkillPackageTests(unittest.TestCase):
         """The deferred SKIP promises a verification that has to land somewhere.
 
         `--defer-missing-sdk` reports an absent SDK as `sdk-version: SKIP`
-        with the words "verify it in the isolated environment after
+        with the words "verify it in the chosen environment after
         installation". Both flagged invocations run before the install, so
         that promise had nowhere to land: an install that fetched nothing, or
         that landed a release other than the pinned one, reached the SDK
@@ -5856,13 +6109,14 @@ class SkillPackageTests(unittest.TestCase):
             section_text(RUN_SAFETY, "Setup sequence").casefold().split()
         )
         ordered = (
-            "install the exact declared dependencies",
+            "install the declared dependencies",
             "re-run `scripts/preflight.py`",
             "without `--defer-missing-sdk`",
             "`sdk-version: pass` is required before continuing",
             "preserve that environment",
             "report its path and the concrete failure",
-            "recreate it only on the user's explicit request",
+            "recovery below owns the next action",
+            "a persistent project environment is never recreated as walkthrough recovery",
             "verify capabilities and public signatures",
         )
         for phrase in ordered:
@@ -5884,15 +6138,15 @@ class SkillPackageTests(unittest.TestCase):
             "nothing.",
         )
 
-    def test_the_install_is_announced_with_its_pins_and_never_asked(self) -> None:
-        """Owner decision: the pinned SDK install is a notice, not a question.
+    def test_the_throwaway_install_is_announced_without_a_second_approval(self) -> None:
+        """The fallback's pinned install notice does not replace route approval.
 
-        The install is free, pinned and isolated, and the authorization table
-        already permits it; what the user was missing was being told. The
+        Existing and new persistent environments take the install-approval
+        card. A customer who chose the throwaway fallback already approved
+        that route, and its pinned fetch is announced without another ask. The
         notice names the packages and exact versions, the absolute environment
         path, and that nothing is called and nothing of theirs runs - and then
-        the run proceeds. A consent question here would be a stop the owner
-        declined to add, so its absence is pinned as firmly as the notice.
+        the run proceeds. Keep that notice conditional on the fallback.
         """
         require_stage_reference(5, RUN_SAFETY, "environment-and-privacy")
         skill = " ".join(SKILL.read_text().casefold().split())
@@ -5946,6 +6200,7 @@ class SkillPackageTests(unittest.TestCase):
         for heading in (
             "## static and mock validation",
             "### execution evaluators are out of scope",
+            "### the copied-actor route",
             "### deterministic calibration and mock plumbing",
             "### config-space document",
             "## approval and budgets",
@@ -6002,8 +6257,8 @@ class SkillPackageTests(unittest.TestCase):
             # other is.
             "declines to perform, and never one the customer is forbidden to " "make",
             "where no result was supplied, the check earns nothing",
-            "a supplied incomplete or unreadable result stays unestablished",
-            "ordinary incomplete-result deduction and 45 ceiling",
+            "a supplied incomplete or unreadable result also stays unestablished",
+            "calibration and probe spread receive no measured credit",
             "observed failures and timeouts keep their own findings and remedies under",
             "`evaluation-and-dataset.md`, instead of the refusal cap",
             "instead of the refusal cap",
@@ -6131,19 +6386,13 @@ class SkillPackageTests(unittest.TestCase):
         self.assertNotIn("not a finding against their evaluator", safety_all)
 
     def test_no_document_says_the_scope_refusal_cannot_be_checked(self) -> None:
-        """The declaration discloses scope and supplies no calibration evidence.
-
-        Preflight can independently establish execution, but its silence does
-        not make the declaration redundant. Renormalization can raise an
-        overall below the declared ceiling, and a supplied result travels
-        beside that declaration so credit does not erase the disclosure.
-        """
+        """Execution declarations and supplied evidence remain independent inputs."""
         require_stage_reference(
             1,
             SKILL_ROOT / "references" / "component-creation.md",
             "reading-the-agent-for-the-opening-score",
         )
-        skill = " ".join(
+        opening = " ".join(
             section_text(
                 SKILL_ROOT / "references" / "component-creation.md",
                 "Opening readiness procedure",
@@ -6151,9 +6400,6 @@ class SkillPackageTests(unittest.TestCase):
             .casefold()
             .split()
         )
-        # The rendered help, not the source, because the sentence is split
-        # across adjacent string literals and only argparse joins them - a
-        # check over the file text would pass on a half-reworded pair.
         rendered = subprocess.run(
             [sys.executable, str(SKILL_ROOT / "scripts" / "readiness.py"), "--help"],
             capture_output=True,
@@ -6162,60 +6408,33 @@ class SkillPackageTests(unittest.TestCase):
             env={**os.environ, "COLUMNS": "200"},
         ).stdout
         help_text = " ".join(rendered.casefold().split())
-        for where, text in (("SKILL.md", skill), ("readiness.py --help", help_text)):
+        for where, text in (("opening procedure", opening), ("CLI help", help_text)):
             with self.subTest(document=where):
                 self.assertNotIn("nothing here can check it", text)
                 self.assertNotIn("a declaration nothing here can check", text)
-        for phrase in (
-            "the flag lifts no ceiling",
-            "without a supplied result",
-            "an overall below 45 can rise within that bound",
-            "this is renormalization, not calibration credit",
-            "the flag is the only route where preflight finds no engine",
-        ):
-            with self.subTest(phrase=phrase):
-                self.assertIn(phrase, skill)
-        self.assertNotIn("neither the score nor the band", skill)
-        # AND THAT THE RESULT GOES BESIDE THE FLAG, NEVER INSTEAD OF IT. The
-        # first version of this sentence said "instead", which on a project
-        # whose walk found no engine removes the only thing that raises the
-        # refusal: measured, 45 with the disclosure became 85 STRONG with no
-        # cap at all (traigent-first-run#506). Both halves are pinned, because
-        # the instruction is only safe as a pair.
-        self.assertIn("beside** that same flag, never instead of it", skill)
-        self.assertIn(
-            "on a project whose walk found no engine the declaration is the "
-            "only thing that raises the refusal at all",
-            skill,
-        )
-        # And the same claim in the other home, so neither can be corrected
-        # alone - which is the whole reason both are asserted here.
-        self.assertIn("retaining the declared arm's 45 ceiling", help_text)
-        self.assertIn("an overall below 45 can rise within that bound", help_text)
-        self.assertNotIn("neither the score nor the band", help_text)
-        # NAMED, both of them, because "moves no number" was replaced once by
-        # "moves no readiness figure" and the card prints a readiness figure
-        # that moves: `Weighted average before caps`. A sentence that is right
-        # about a default-weight score but silent about its moving components
-        # still misdescribes the card.
-        for where, text in (("SKILL.md", skill), ("readiness.py --help", help_text)):
-            with self.subTest(document=where, claim="what does move"):
+                self.assertNotIn("neither the score nor the band", text)
+                self.assertNotIn("it moves no number", text)
                 self.assertIn("pre-cap average", text)
                 self.assertIn("evaluation pillar", text)
-        for where, text in (("SKILL.md", skill), ("readiness.py --help", help_text)):
-            with self.subTest(document=where, claim="moves no number"):
-                self.assertNotIn("and no number:", text)
-                self.assertNotIn("it moves no number", text)
-        # The over-correction, refused by name: the flag is not redundant, and
-        # a document that implies it is costs the run its containment routing
-        # for every evaluator the walk cannot see.
-        self.assertNotIn("reaches the same state without it", skill)
-        self.assertIn("a declaration this score cannot verify on its own", help_text)
-        self.assertIn(
-            "where --preflight witnessed an engine the card reaches it with no "
-            "declaration at all",
-            help_text,
+                self.assertIn("an overall below 45 can rise within that bound", text)
+        for phrase in (
+            "the declared `--evaluator-method execution` or a positive preflight witness "
+            "already carries that scope",
+            "use `--calibration-scope-refused` for an executing helper/runtime path "
+            "when neither records it",
+            "retain the refusal flag **beside** that result whenever it records the original scope",
+            "never replace that declaration with the payload",
+            "the flag lifts no ceiling",
+            "without complete calibration and without an observed failure or timeout",
+            "this is renormalization, not calibration credit",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, opening)
+        self.assertNotIn(
+            "the flag is the only route where preflight finds no engine", opening
         )
+        self.assertIn("retaining the declared arm's 45 ceiling", help_text)
+        self.assertIn("--evaluator-method execution", help_text)
 
     def test_the_three_words_bind_every_calibration_not_only_the_first(
         self,
@@ -7656,9 +7875,10 @@ class SkillPackageTests(unittest.TestCase):
             # calibration result for an evaluator the gate declined - what
             # stays true is that nothing here asked them for one.
             "neither of which is something the user was required to bring",
-            "with no supplied result, two of four evaluation checks are measured",
+            "without a complete result, and absent observed failure or timeout, calibration "
+            "and probe spread remain unmeasured",
             "a complete passing result can establish all four checks and support strong",
-            "the card read the customer's measurement, it did not perform it",
+            "the scoring command read a supplied result, it did not observe its production",
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, glossary)
@@ -8255,7 +8475,7 @@ class SkillPackageTests(unittest.TestCase):
         # (what the flow does, promise item, words that item must carry)
         ("perform safe, read-only discovery", 1, "inspect"),
         ("render the initial real-world readiness board", 2, "readiness"),
-        ("announce and install the exact pinned stack", 3, "install the sdk"),
+        ("follow that route's single install approval", 3, "install the sdk"),
         ("### 6. approve and run the baseline", 3, "measure today's setup"),
         # The promise says ACCOUNT, so the flow phrase has to be the sentence
         # that establishes one. Pinning "ask for the traigent key" instead
@@ -9248,23 +9468,15 @@ class SkillPackageTests(unittest.TestCase):
             "the kinds a customer hears have to include one that scores here, "
             "or the list is a menu of routes that all end the run",
         )
-        # Not merely present somewhere in the entry: the two refused families
-        # carry the consequence in their own sentence, so neither can be read
-        # off this list as an available choice.
-        refusing = next(
-            (part for part in entry.split(".") if "execution match" in part), ""
-        )
+        # The glossary names the execution-policy owner, including its copy
+        # exception, and distinguishes the original target from result evidence.
         for phrase in (
-            "unit tests",
-            "a check this guide skips rather than one that stops you",
+            "execution match and unit tests",
+            "run-safety.md's execution scope and copied-actor route",
+            "the original target left unchecked from any calibration result it read",
         ):
             with self.subTest(phrase=phrase):
-                self.assertIn(
-                    phrase,
-                    refusing,
-                    "a method this guide stops for is named to the customer "
-                    "without saying so in the same breath",
-                )
+                self.assertIn(phrase, entry)
 
     def test_execution_evaluators_stop_before_first_run_execution(self) -> None:
         """The scope boundary is explicit, early, and does not invent a product feature."""
@@ -9378,8 +9590,11 @@ class SkillPackageTests(unittest.TestCase):
             "an in-process envelope is not a route to that evidence",
             "that surface has no edge",
             "a boundary the operating system enforces",
-            "the manual containment design and review above is still the whole "
-            "of the route",
+            # Two routes since #517, and the second is the guide's own. The
+            # sentence used to say the manual review was "the whole of the
+            # route", which the copied-actor route made false.
+            "the manual containment design and review remains work a project can commission for itself",
+            "the copied-actor route below bounds the target instead of the process",
         ):
             with self.subTest(envelope_phrase=envelope_phrase):
                 self.assertIn(envelope_phrase, normalized)
@@ -9473,6 +9688,157 @@ class SkillPackageTests(unittest.TestCase):
             normalized_doc,
         )
         self.assertNotIn("isolated", normalized_doc)
+
+    def test_the_copied_actor_route_is_narrow_asks_once_and_names_its_words(
+        self,
+    ) -> None:
+        """#517: copy the actor, not the data, and every edge of the route.
+
+        The refusal above it argues that the target is unbounded; this route
+        bounds the target and leaves the refusal everywhere else. Pinned as
+        an order because each step makes the next honest - the copy before
+        the read, the read before the question, the question before the
+        repoint - and pinned verbatim where the words are what a customer or
+        a tool reads: the one lettered question, the flags the gate takes, the
+        refusal conditions, and the sentence the card prints.
+
+        One home: the six steps live in `run-safety.md`; `SKILL.md` carries
+        the dispatch and the authorization row's clause, and
+        `evaluation-and-dataset.md` a conclusion.
+        """
+        require_stage_reference(4, RUN_SAFETY, "the-copied-actor-route")
+        description = SKILL.read_text().split("description:", 1)[1].split("\n", 1)[0]
+        self.assertIn(
+            "execution evaluators retain disclosure and may calibrate an eligible copy",
+            description,
+        )
+        self.assertNotIn("by skipping that one check", description)
+        route = " ".join(
+            section_text(RUN_SAFETY, "The copied-actor route").casefold().split()
+        )
+        ordered = (
+            "the refusal above stays everywhere it does not apply",
+            "**copy the evaluator - the actor, never the data.**",
+            "`traigent-runs/calibration/`",
+            "never edit or move their original",
+            "never changes the customer's agent, dataset, or evaluator in place",
+            "**locate the connection target statically, in the copy.**",
+            "the one place is the target argument of the engine's constructor call",
+            "a config-file key, a `dotenv` read, a connection handed in from a helper",
+            "cannot take the route; it is refused under step 5",
+            "file and line",
+            "**ask the customer for a safe target - one question, lettered, and this is its wording:**",
+            "`your evaluator sets its connection target at <copy path>:<line> (<what is there>). "
+            "this run can calibrate a copy of it against a target you choose, without opening "
+            "the one your original uses. a. use a read-only connection or a duplicate of the "
+            "data you made with a proper tool: paste its value into <.env path> under <name> - "
+            "there, never here in chat - and reply a. b. skip the calibration; the run continues "
+            "on the disclosure above.`",
+            "never make the duplicate yourself, never read rows to build one, never guess a target",
+            "`b` and silence take the disclosure route above",
+            "**repoint only that one place**",
+            "--calibrated-copy-of <original path> --target-name <name> --target-env-file <.env path>",
+            # The rule, in one sentence, ahead of everything it makes
+            # unnecessary to enumerate (third review of the route).
+            "the copy is the original with exactly one change - the engine's target argument "
+            'becomes `os.environ["<name>"]` (plus a plain `import os` where the original '
+            "lacks it) - and the tool refuses any other difference, naming where it found one",
+            "records them as admitted rather than clearing them",
+            "the rest of what it refuses bounds the original",
+            "a second binding of `os` or `environ`",
+            "a reference to the engine's constructor that is not the one call",
+            "a settings reader (`dotenv`, `pydantic_settings`",
+            "a side door to the environment, a file, or code",
+            "`pickle`, `marshal`",
+            "while a package under `site-packages` is not local",
+            "every other name that `.env` defines is stripped from it",
+            "must be a complete dsn - libpq fills an omitted host, user or password from `~/.pgpass` and `pg*` defaults",
+            "on posix the `.env` must be readable by its owner alone; on windows",
+            "the target's *name* - never its value",
+            "**refuse the route, keep the disclosure**, and say which of these applied",
+            "cannot be located at exactly one place in the copy",
+            "shells out or executes arbitrary code",
+            "opens more than one engine",
+            "your read is the first pass and decides whether to ask; the gate's refusal is the proof",
+            "refuses every one of these shapes itself",
+            "**the result is evidence like any other calibration payload.**",
+            "opening readiness procedure for the result and the original evaluator's scope declaration",
+            "calibration of a copy does not remove the original evaluator's execution disclosure",
+            "a passing payload credits and a failing one convicts, exactly as on any other shape",
+            '"calibrated a copy of your evaluator against the target you supplied as read-only or a duplicate"',
+            "only when that calibration completed",
+            "remains the customer's declaration, not something the scoring command verified",
+        )
+        positions = [route.index(phrase) for phrase in ordered]
+        self.assertEqual(positions, sorted(positions))
+        self.assertIn(
+            "record in `traigent-runs/run-plan.md` the original path, the copy path, "
+            "the located line, what was changed, and the target's *name* - never its value",
+            route,
+        )
+        self.assertNotIn("record in the run log the original path", route)
+        self.assertIn("the run log's event and detail contract", route)
+        record = " ".join(
+            (SKILL_ROOT / "assets" / "run-plan.md").read_text().casefold().split()
+        )
+        self.assertIn(
+            "copy provenance (original/copy paths, connection line and change, "
+            "target variable name)",
+            record,
+        )
+        scope = " ".join(
+            section_text(RUN_SAFETY, "Execution evaluators are out of scope")
+            .casefold()
+            .split()
+        )
+        for phrase in (
+            "comparison evaluators are calibrated on the customer's original, through an "
+            "unchanged callable adapter when needed",
+            "an llm judge likewise calibrates the original",
+            "its provider calls remain behind the approval gate in approval and budgets",
+            "neither uses `--calibrated-copy-of`",
+            "that route belongs only to an evaluator that executes candidate code or sql",
+        ):
+            with self.subTest(calibration_subject=phrase):
+                self.assertIn(phrase, scope)
+        # The words a tool reads exist on the tool.
+        calibrator = (SKILL_ROOT / "scripts" / "calibrate_evaluator.py").read_text()
+        for flag in ("--calibrated-copy-of", "--target-name", "--target-env-file"):
+            with self.subTest(flag=flag):
+                self.assertIn(f'"{flag}"', calibrator)
+        self.assertIn("traigent-runs", calibrator)
+        # The scoring card attributes the copy claim to the supplied payload;
+        # the guide can report its own calibration only from a completed run.
+        readiness = (SKILL_ROOT / "scripts" / "readiness.py").read_text()
+        self.assertIn(
+            "the supplied result reports calibration on a copy of your "
+            '"\n            "evaluator against a target supplied as read-only or a duplicate',
+            readiness,
+        )
+        # The authorization row carries the clause, and only the clause.
+        authorization = " ".join(
+            SKILL.read_text()
+            .split("## Action authorization", 1)[1]
+            .split("## Status language", 1)[0]
+            .casefold()
+            .split()
+        )
+        self.assertIn(
+            "where that reference's copied-actor route applies", authorization
+        )
+        self.assertIn(
+            "never their original file and never a target this run chose", authorization
+        )
+        # The steps are stated once. The repoint imperative is the route's
+        # most specific sentence, so it is the one checked for a second home.
+        for path in assistant_facing_documents():
+            if path == RUN_SAFETY:
+                continue
+            with self.subTest(document=path.name):
+                self.assertNotIn(
+                    "repoint only that one place",
+                    " ".join(path.read_text().casefold().split()),
+                )
 
     def test_product_grading_question_is_an_ambiguity_only_gate(self) -> None:
         require_stage_reference(
@@ -13326,7 +13692,7 @@ class SkillPackageTests(unittest.TestCase):
             "$GITHUB_WORKSPACE:/repo:ro",
             "$RUNNER_TEMP/traigent-offline-evidence:/evidence",
             "python tests/behavioral/harness.py --all",
-            "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
+            "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
         ):
             self.assertIn(phrase, offline_job)
         self.assertNotIn("pip install", offline_job)
@@ -15446,16 +15812,22 @@ class SkillPackageTests(unittest.TestCase):
             ),
             (
                 "the virtual environment this run created and its ignore rule",
-                "Create an isolated environment",
-                ("`.venv-traigent`", "`/.venv-traigent/`"),
+                "Create the selected project environment",
+                ("`.venv`", "`/.venv/`", "`.venv-traigent`", "`/.venv-traigent/`"),
+            ),
+            (
+                # #518: the install may land in the customer's own environment
+                # now, which is a write outside the run folder that survives
+                # deleting it.
+                "the packages installed into the customer's own environment",
+                "Install the SDK into the chosen environment",
+                ("packages this run installed into the customer's own environment",),
             ),
         )
         # Rows that write nothing the close has to hand over: nothing at all,
-        # only inside `traigent-runs/`, only where the user already decided,
-        # or only inside the already-disclosed dedicated first-run environment.
+        # only inside `traigent-runs/`, or only where the user already decided.
         writes_nothing_to_disclose_here = {
             "Read-only discovery and static validation",
-            "Install dependencies in the isolated environment",
             "Repair a working copy after the user chooses repair",
             "Change real labels, expected answers, examples, or rubric policy",
             "Execute an evaluator or mock check",
@@ -24342,9 +24714,21 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
             "whether installing elsewhere repairs an incomplete guided environment",
             (
                 "installing elsewhere does not repair this run's environment or supply its missing setup evidence",
-                "recreating the incomplete dedicated environment still requires the user's explicit request",
+                "recreating the incomplete throwaway environment still requires the user's explicit request",
             ),
             ("themselves, outside this run, and re-run",),
+        ),
+        (
+            # #518 reversed the always-create-`.venv-traigent` policy: the
+            # customer's own environment is proposed first and the throwaway
+            # is the fallback. The two sentences below are the old policy.
+            "whether the sdk installs into the customer's own environment",
+            ("installed where they will keep using it",),
+            (
+                "do not replace the project's interpreter or install into an existing environment",
+                "never select an existing project, shared, dependent, external, or assistant-owned environment as a fallback",
+                "one thing it does without asking",
+            ),
         ),
         (
             "whether absent cost and usage prove a provider charge",
@@ -24432,30 +24816,14 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
             ),
         ),
         (
-            # Settled twice in opposite directions inside one branch, which is
-            # this registry's own criterion for an entry rather than a local
-            # assertion.
-            #
-            # It read "it moves no number, because nothing here can check it",
-            # which denied a check `score_evaluation` performs: the same state
-            # is derived from preflight's witness with no flag passed at all.
-            # Corrected to "preflight's witness reaches the same state without
-            # it", which over-corrected in the other direction - true only
-            # where a witness exists, and read, in the one place an assistant
-            # decides whether to pass a safety declaration, as though the flag
-            # were redundant. It is not: for an evaluator whose engine the
-            # walk cannot see, the run without the flag is told to complete
-            # the calibration this guide forbids it.
-            #
-            # Settled: the document says what the flag is FOR. The scoped
-            # claim - that a witness reaches the state too - stays in the
-            # flag's own `--help`, where the reader is deciding about the flag
-            # rather than about their run.
+            # The method declaration and a positive witness each establish
+            # execution scope. The flag still records an executing helper or
+            # runtime path when neither of those inputs does.
             "what the evaluator-execution scope-refusal declaration is for",
-            ("the only route where preflight finds no engine",),
+            ("use `--calibration-scope-refused` for an executing helper/runtime path",),
             (
                 "it moves no number, because nothing here can check it",
-                "preflight's witness reaches the same state without it",
+                "the flag is the only route where preflight finds no engine",
             ),
         ),
         (
@@ -24627,7 +24995,7 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
         (
             "which interpreter runs the unambiguous opening gate",
             (
-                "if there is exactly one compatible python 3.11-3.13 isolated-environment candidate overall and its resolved path is inside the user's project root",
+                "if there is exactly one verified compatible python 3.11-3.13 isolated-environment candidate overall and its resolved path is inside the user's project root",
             ),
             (
                 "use the host `python3` interpreter as a narrow bootstrap for every bundled script",
@@ -25044,6 +25412,53 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
                 "or harder rows, before the search rather than instead of it",
             ),
         ),
+        (
+            # #506 reversed the tie between "we refused the shape" and "may
+            # this payload earn credit". The guide declines to run the check
+            # itself and forbids nothing; a payload handed through
+            # `--calibration` is trusted the same way on every arm. The
+            # forbidden wordings are the old asymmetry's.
+            "whether a calibration payload on a refused evaluator shape earns credit",
+            (
+                "a passing payload credits and a failing one convicts, exactly as on any other",
+            ),
+            (
+                "may not buy anything with what it measured",
+                "leniency bought by breaking the rule",
+                "this card cannot read that result",
+                "earns no credit here",
+            ),
+        ),
+        (
+            # #507 settled the charge the same way as the ceiling: both
+            # no-result refusal arms leave the check out of the denominator, and only
+            # the declared arm keeps the 45. The forbidden wordings said the
+            # declared arm still paid.
+            "whether the declared refusal arm is charged for the unmade calibration check",
+            (
+                "those declined checks leave the denominator rather than deducting points",
+            ),
+            (
+                "the claim is held at 45 and the check is charged",
+                "the same witness decides both",
+                "charges for it and keeps the bound",
+                "it costs points because no preflight report",
+            ),
+        ),
+        (
+            # #517 added the copied-actor route, so the guide now offers one
+            # route to calibration evidence for an execution evaluator. The
+            # forbidden wordings said it offered none.
+            "whether this guide offers any route to calibrating an execution evaluator",
+            ("### the copied-actor route",),
+            (
+                "it is the only route to the calibration evidence itself",
+                "is still the whole of the route to that evidence",
+                "and that no step here would change that",
+                "no run inside this guide makes that check",
+                "no step in this guide would change that, and that is a fact",
+            ),
+        ),
     )
 
     # Our own release history, in the words a customer reads. Every one of
@@ -25131,6 +25546,8 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
             [path.name for path in scripts],
             [
                 "calibrate_evaluator.py",
+                "environment_install.py",
+                "find_environments.py",
                 "preflight.py",
                 "readiness.py",
                 "validate_run_log.py",

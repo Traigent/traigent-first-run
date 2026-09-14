@@ -242,17 +242,20 @@ class OpeningBootstrapTests(unittest.TestCase):
     os.name == "posix" and shutil.which("sh"), "the documented POSIX probe"
 )
 class InstalledInterpreterLookupTests(unittest.TestCase):
-    def test_the_published_probe_rejects_both_unsupported_version_boundaries(self):
+    def test_the_published_probe_accepts_supported_versions_and_rejects_boundaries(
+        self,
+    ):
         section = SAFETY.read_text().split("### Finding a supported interpreter", 1)[1]
         probe = re.search(r"-c '([^']+)'", section)
         self.assertIsNotNone(probe)
-        for minor in (10, 14):
+        for minor in (10, 11, 12, 13, 14):
             with self.subTest(minor=minor):
                 completed = subprocess.run(
                     [
                         sys.executable,
                         "-I",
                         "-S",
+                        "-B",
                         "-c",
                         f"import sys; sys.version_info = (3, {minor}); "
                         + probe.group(1),
@@ -261,15 +264,43 @@ class InstalledInterpreterLookupTests(unittest.TestCase):
                     capture_output=True,
                     timeout=15,
                 )
-                self.assertEqual(completed.returncode, 1, completed.stderr)
-                self.assertEqual(completed.stdout, "")
+                supported = 11 <= minor <= 13
+                self.assertEqual(completed.returncode, 0 if supported else 1)
+                self.assertEqual(completed.stderr, "")
+                if supported:
+                    self.assertEqual(
+                        completed.stdout.strip(),
+                        f"{sys.executable} {sys.version.split()[0]}",
+                    )
+                else:
+                    self.assertEqual(completed.stdout, "")
 
-    def probe(self, directory: Path) -> subprocess.CompletedProcess[str]:
+    def probe(
+        self, directory: Path, *, minor: int | None = None
+    ) -> subprocess.CompletedProcess[str]:
+        import shlex
+
         section = SAFETY.read_text().split("### Finding a supported interpreter", 1)[1]
         script = re.search(r"```sh\n(.*?)\n```", section, re.DOTALL)
         self.assertIsNotNone(script)
+        command = script.group(1)
+        placeholder = '"<trusted-host-python>"'
+        self.assertEqual(command.count(placeholder), 1)
+        # The guide requires inspecting a known host path before execution;
+        # substitute this test runner's host, never one from the project PATH.
+        host = Path(sys.executable).resolve()
+        self.assertTrue(host.is_absolute())
+        self.assertNotIn(directory, host.parents)
+        command = command.replace(placeholder, shlex.quote(str(host)))
+        if minor is not None:
+            probe = re.search(r"-c '([^']+)'", command)
+            self.assertIsNotNone(probe)
+            command = command.replace(
+                probe.group(1),
+                f"import sys; sys.version_info = (3, {minor}); " + probe.group(1),
+            )
         return subprocess.run(
-            [shutil.which("sh"), "-c", script.group(1)],
+            [shutil.which("sh"), "-c", command],
             cwd=directory,
             env={"PATH": str(directory)},
             text=True,
@@ -277,33 +308,44 @@ class InstalledInterpreterLookupTests(unittest.TestCase):
             timeout=15,
         )
 
-    def test_failed_host_uses_a_working_alternate_path_and_stops_searching(self):
+    def project_wrappers(self, directory: Path) -> set[Path]:
+        wrappers = set()
+        for name in ("python3", "python3.13", "python3.12", "python3.11", "uv"):
+            wrapper = directory / name
+            wrapper.write_text('#!/bin/sh\nprintf reached > "$0.ran"\nexit 0\n')
+            wrapper.chmod(0o755)
+            wrappers.add(wrapper)
+        return wrappers
+
+    def test_known_absolute_host_ignores_project_path_wrappers(self):
         with tempfile.TemporaryDirectory(prefix="interpreter paths ") as temporary:
             root = Path(temporary)
-            bad_host = root / "python3"
-            bad_host.write_text("#!/bin/sh\nexit 1\n")
-            bad_host.chmod(0o755)
-            alternate = root / "python3.13"
-            alternate.symlink_to(sys.executable)
-            later = root / "python3.12"
-            later.write_text("#!/bin/sh\nprintf 'wrong later interpreter'\nexit 0\n")
-            later.chmod(0o755)
+            wrappers = self.project_wrappers(root)
             completed = self.probe(root)
             self.assertEqual(completed.returncode, 0, completed.stderr)
-            self.assertIn(str(alternate), completed.stdout)
-            self.assertNotIn("wrong later interpreter", completed.stdout)
+            self.assertEqual(
+                completed.stdout.strip(),
+                f"{Path(sys.executable).resolve()} {sys.version.split()[0]}",
+            )
+            self.assertEqual(set(root.iterdir()), wrappers)
 
-    def test_no_supported_command_returns_failure_without_installing(self):
+    def test_unsupported_host_returns_failure_without_searching_or_installing(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            completed = self.probe(root)
-            self.assertEqual(completed.returncode, 1)
+            wrappers = self.project_wrappers(root)
+            completed = self.probe(root, minor=14)
+            self.assertEqual(completed.returncode, 1, completed.stderr)
             self.assertEqual(completed.stdout, "")
-            self.assertEqual(list(root.iterdir()), [])
+            self.assertEqual(set(root.iterdir()), wrappers)
             instructions = SAFETY.read_text().split(
                 "### Finding a supported interpreter", 1
             )[1]
-            instructions = " ".join(instructions.split("### Rules", 1)[0].split())
+            instructions = " ".join(
+                instructions.split("### Choosing the environment", 1)[0].split()
+            )
+            self.assertIn(
+                "Skip project-contained executables and unknown wrappers", instructions
+            )
             self.assertIn("--offline --no-python-downloads", instructions)
             self.assertIn("install Python 3.13 locally", instructions)
             self.assertIn("readiness as not yet measured", instructions)

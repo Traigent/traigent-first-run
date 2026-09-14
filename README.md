@@ -31,14 +31,24 @@ The assistant performs the technical work and asks only when it needs:
 - Approval before judgment-dependent changes to real examples, expected answers, or grading policy,
   and before destructive or production-affecting actions.
 
-One thing it does without asking, announcing it first: it installs `traigent==0.26.0`,
-`litellm==1.93.0` and `python-dotenv==1.2.2` into a dedicated `.venv-traigent` environment - a
-package fetch only, with no provider or Traigent calls and none of your code executed. That
-environment preserves existing project, shared, and dependent environments and remains after the
-run, ignored by Git when your project uses it. An unfinished run can continue its verified
-completed setup without installing again. If the
-path has no matching verified setup or a check fails, the assistant stops with its path and recommends
-inspection; it removes and recreates that dedicated environment only on your explicit request.
+One more approval, and it is about your environment: the run ends with Traigent installed where
+you will keep using it. The assistant looks for a virtual environment inside your project - one
+proposes itself, several are offered as a lettered choice - and before adding anything shows you
+exactly what the isolated installer resolved: which packages are new and which installed ones
+would change version. A `traigent` or `litellm` you already have at or above the tested pin is
+kept. If no usable virtual environment exists and the project-root `.venv` path is free, it offers
+to create that normal environment for you to keep, or use a path you supply. One approval covers
+creation and the declared SDK install; the fresh environment's resolved additions are shown before
+installation. A throwaway `.venv-traigent` is the fallback
+when you decline installation into your own environment or a version change, or the `.venv` name
+is already occupied and you approve that alternative. Existing files and environments are preserved.
+Only the throwaway route ends with a reminder to install the SDK into your own environment.
+Either way the install is a package fetch only, with no provider or Traigent calls and none of your
+code executed; a newly created environment is ignored by Git when your project uses it.
+An unfinished run can continue its verified completed setup without
+installing again. If the throwaway path has no matching verified setup or a check fails, the
+assistant stops with its path and recommends inspection; it removes and recreates that
+environment only on your explicit request.
 
 No existing agent, dataset, or evaluator is required to see the walkthrough. When something is
 missing you are told before any component is created or repaired, in one question however many pieces are absent:
@@ -94,8 +104,11 @@ flowchart TD
    repaired.
 2. Diagnoses material dataset/evaluator limitations and offers repair, demonstration, or pause.
 3. Creates only missing agent/dataset/evaluation components as temporary walkthrough substitutes.
-4. Validates compatibility and every safely local evaluator-discrimination check; any LLM-judge or
-   external calibration remains inside the paid/data-egress approval.
+4. Validates compatibility and every safely local evaluator-discrimination check directly on your
+   evaluator. Comparison scorers and LLM judges do not need a calibration copy; an LLM judge still
+   needs paid/data-egress approval. Only a scorer that executes candidate code or SQL against an
+   engine needs the copied-actor route and a target you supply as read-only or a duplicate;
+   unsupported execution paths keep their disclosure and skip that calibration.
 5. Shows a concise baseline preview immediately before its paid calls, with runtime, estimated
    spend, a total execution stop target (`$5.00` by default), and data egress. That target is a
    conservative control, not a guaranteed provider-billing cap. When this run had to write the
@@ -280,9 +293,12 @@ placeholders or claim they are unusable.
 The SDK optimizes a Python callable. A non-Python agent needs a thin Python adapter around its
 unchanged behavior; a generated Python substitute demonstrates the workflow, not that agent.
 
-- Python 3.11-3.13 in an isolated environment.
+- Python 3.11-3.13, in your existing environment, the normal project `.venv` the run creates for
+  you to keep, or the approved throwaway fallback.
 - The tested first-run SDK stack pinned in
-  [`skills/traigent-first-run/assets/requirements-first-run.txt`](skills/traigent-first-run/assets/requirements-first-run.txt).
+  [`skills/traigent-first-run/assets/requirements-first-run.txt`](skills/traigent-first-run/assets/requirements-first-run.txt):
+  the recommendation and the throwaway environment's exact install; your own environment keeps a
+  `traigent` or `litellm` at or above those pins.
 - One supported LLM-provider key with a small amount of credit for the real run. When the assistant
   must prepare a missing baseline, that generated sweep uses one model family available through the
   selected route by default - a fast tier, a mid tier, and a strong tier one step below that

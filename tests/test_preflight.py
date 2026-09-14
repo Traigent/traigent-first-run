@@ -7729,3 +7729,215 @@ class NoInputMakesOneCheckSpeakTwiceTests(unittest.TestCase):
         env_records = [r for r in records if r["check"] == "env-file"]
         self.assertEqual(len(env_records), 1)
         self.assertIn("2 lines at source lines [1, 3]", env_records[0]["detail"])
+
+
+class ExecutionWitnessKindsTests(unittest.TestCase):
+    """The two reads the copied-actor route asks of the walk (#517).
+
+    `process_execution_witnesses` is the subset of `candidate_execution_witnesses`
+    a read-only or duplicate target bounds nothing about, and
+    `engine_modules_imported` is how many engines a copy opens. Both derive
+    from the one table; neither is a second one.
+    """
+
+    SOURCES = {
+        "engine": "import sqlite3\nc = sqlite3.connect(':memory:')\nc.execute(q)\n",
+        "two engines": "import sqlite3\nimport duckdb\nfrom sqlalchemy.orm import x\n",
+        "shells out": "import subprocess\nsubprocess.run(q)\n",
+        "os process": "import os\nos.system(q)\nfrom os import popen\n",
+        "builtins": "exec(q)\nfrom builtins import eval\n",
+        "handed in": "from helpers import conn\nconn.execute(q)\n",
+        "plain": "def score(*, output, expected):\n    return output == expected\n",
+        "mixed": "import subprocess\nimport psycopg2\nc = psycopg2.connect(u)\n",
+        "composed engine": "from google.cloud import bigquery\nfrom mysql import connector\n",
+    }
+
+    ENGINE_WORDS = ("sql", "execute", "duckdb", "psycopg2", "bigquery", "connector")
+
+    def test_the_walks_process_witnesses_are_all_reported_here(self) -> None:
+        """Every process witness the walk reports, this read reports too.
+
+        The other direction stopped holding when the admission-only names
+        arrived: `multiprocessing`, `ctypes`, `asyncio.create_subprocess_*`
+        and `importlib.import_module` are witnesses for the copied-actor
+        route and deliberately NOT for the walk, which would otherwise refuse
+        ordinary evaluators that reach no engine. Both halves are pinned.
+        """
+        for label, source in self.SOURCES.items():
+            with self.subTest(source=label):
+                tree = ast.parse(source)
+                every = set(MODULE.candidate_execution_witnesses(tree))
+                processes = set(MODULE.process_execution_witnesses(tree))
+                walk_processes = {
+                    w for w in every if not any(word in w for word in self.ENGINE_WORDS)
+                }
+                self.assertTrue(walk_processes <= processes, walk_processes - processes)
+        for label, source in self.ADMISSION_ONLY.items():
+            with self.subTest(admission_only=label):
+                tree = ast.parse(source)
+                self.assertEqual(MODULE.candidate_execution_witnesses(tree), ())
+                self.assertTrue(MODULE.process_execution_witnesses(tree), label)
+
+    ADMISSION_ONLY = {
+        "multiprocessing": "import multiprocessing\n",
+        "multiprocessing pool": "from multiprocessing import Pool\n",
+        "ctypes": "import ctypes\nctypes.CDLL('x')\n",
+        "asyncio exec": "import asyncio\nasyncio.create_subprocess_exec(q)\n",
+        "asyncio shell from": "from asyncio import create_subprocess_shell\n",
+        "asyncio bare": "create_subprocess_shell(q)\n",
+        "importlib": "import importlib\nimportlib.import_module(q)\n",
+        "importlib from": "from importlib import import_module\nimport_module(q)\n",
+    }
+
+    def test_admission_only_witnesses_name_the_construct(self) -> None:
+        expect = {
+            "multiprocessing": "imports multiprocessing (line 1)",
+            "multiprocessing pool": "imports from multiprocessing (line 1)",
+            "ctypes": "imports ctypes (line 1)",
+            "asyncio exec": "calls asyncio.create_subprocess_exec() (line 2)",
+            "asyncio shell from": "imports asyncio.create_subprocess_shell (line 1)",
+            "asyncio bare": "calls create_subprocess_shell() (line 1)",
+            "importlib": "calls importlib.import_module() (line 2)",
+            "importlib from": "imports importlib.import_module (line 1)",
+        }
+        for label, witness in expect.items():
+            with self.subTest(source=label):
+                found = MODULE.process_execution_witnesses(
+                    ast.parse(self.ADMISSION_ONLY[label])
+                )
+                self.assertIn(witness, found)
+        # Plain asyncio and importlib are not witnesses.
+        for benign in (
+            "import asyncio\nasyncio.run(main())\n",
+            "import importlib\nimportlib.reload(m)\n",
+        ):
+            self.assertEqual(MODULE.process_execution_witnesses(ast.parse(benign)), ())
+
+    def test_environment_reads_are_found_in_every_spelling(self) -> None:
+        source = (
+            "import os\nfrom os import environ, getenv\n"
+            "a = os.environ['A']\nb = os.environ.get('B')\nc = environ['C']\n"
+            "d = environ.get('D', '')\ne = os.getenv('E')\nf = getenv('F')\n"
+            "g = os.environ[name]\nh = os.environ.get\n"
+        )
+        reads = MODULE.environment_reads(ast.parse(source))
+        self.assertEqual(
+            reads,
+            ((3, "A"), (4, "B"), (5, "C"), (6, "D"), (7, "E"), (8, "F"), (9, None)),
+        )
+        self.assertEqual(MODULE.environment_reads(ast.parse("x = 1\n")), ())
+
+    def test_connection_literals_are_read_widely(self) -> None:
+        windows = "C:\\\\data\\\\prod.duckdb"
+        source = (
+            "u = 'postgresql://ro@host/db'\np = '/var/lib/x/prod.sqlite'\n"
+            f"m = ':memory:'\nw = {windows!r}\nh = '~/data.db'\n"
+            "s = 'select 1'\nn = 'plain words'\nq = 'query'\n"
+        )
+        found = MODULE.connection_literals(ast.parse(source))
+        self.assertEqual(
+            found,
+            frozenset(
+                {
+                    "postgresql://ro@host/db",
+                    "/var/lib/x/prod.sqlite",
+                    ":memory:",
+                    windows,
+                    "~/data.db",
+                }
+            ),
+        )
+
+    def test_process_witnesses_name_processes_and_never_engines(self) -> None:
+        expect = {
+            "engine": (),
+            "two engines": (),
+            "shells out": ("imports subprocess (line 1)", "calls subprocess.run()"),
+            "os process": ("calls os.system() (line 2)", "imports os.popen (line 3)"),
+            "builtins": ("calls exec() (line 1)", "imports builtins.eval (line 2)"),
+            "handed in": (),
+            "plain": (),
+            "mixed": ("imports subprocess (line 1)",),
+            "composed engine": (),
+        }
+        for label, expected in expect.items():
+            with self.subTest(source=label):
+                found = MODULE.process_execution_witnesses(
+                    ast.parse(self.SOURCES[label])
+                )
+                for item in expected:
+                    if item.endswith(")") and "(line" in item:
+                        self.assertIn(item, found)
+                if not expected:
+                    self.assertEqual(found, ())
+
+    def test_engine_modules_are_counted_by_listed_name(self) -> None:
+        expect = {
+            "engine": ("sqlite3",),
+            "two engines": ("sqlite3", "duckdb", "sqlalchemy"),
+            "shells out": (),
+            "os process": (),
+            "builtins": (),
+            "handed in": (),
+            "plain": (),
+            "mixed": ("psycopg2",),
+            "composed engine": ("google.cloud.bigquery", "mysql.connector"),
+        }
+        for label, expected in expect.items():
+            with self.subTest(source=label):
+                self.assertEqual(
+                    MODULE.engine_modules_imported(ast.parse(self.SOURCES[label])),
+                    expected,
+                )
+
+    def test_the_process_names_are_a_subset_of_the_one_table(self) -> None:
+        self.assertTrue(MODULE._PROCESS_MODULE_NAMES <= MODULE._EXECUTION_MODULE_NAMES)
+        self.assertEqual(MODULE._PROCESS_MODULE_NAMES, {"runpy", "subprocess", "pty"})
+
+
+class EngineConstructorCallsTests(unittest.TestCase):
+    """The copied-actor route's first structural question: which call opens the engine."""
+
+    def lines(self, source: str) -> tuple[int, ...]:
+        return tuple(
+            call.lineno for call in MODULE.engine_constructor_calls(ast.parse(source))
+        )
+
+    def test_every_import_form_resolves(self) -> None:
+        cases = {
+            "plain": ("import sqlite3\nc = sqlite3.connect(u)\n", (2,)),
+            "aliased": ("import sqlite3 as s\nc = s.connect(u)\n", (2,)),
+            "dotted": (
+                "import snowflake.connector\nc = snowflake.connector.connect(u)\n",
+                (2,),
+            ),
+            "from module": (
+                "from google.cloud import bigquery\nc = bigquery.Client(p)\n",
+                (2,),
+            ),
+            "bare constructor": (
+                "from psycopg2 import connect\nc = connect(u)\n",
+                (2,),
+            ),
+            "bare aliased": (
+                "from duckdb import connect as open_db\nc = open_db(u)\n",
+                (2,),
+            ),
+            "sqlalchemy": (
+                "import sqlalchemy\ne = sqlalchemy.create_engine(u)\n",
+                (2,),
+            ),
+            "two calls": (
+                "import sqlite3\na = sqlite3.connect(u)\nb = sqlite3.connect(v)\n",
+                (2, 3),
+            ),
+            "project helper named connect": (
+                "from helpers import connect\nc = connect(u)\n",
+                (),
+            ),
+            "no engine": ("import json\nc = json.loads(u)\n", ()),
+            "process module": ("import subprocess\nsubprocess.connect(u)\n", ()),
+        }
+        for label, (source, expected) in cases.items():
+            with self.subTest(source=label):
+                self.assertEqual(self.lines(source), expected)

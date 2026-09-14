@@ -459,17 +459,20 @@ never ask. Omit a flag only while that component does not exist, and update it t
 creates the component. The dataset takes no such flag: its origin is counted per row from declared
 provenance.
 
-Before any component creation or repair, choose from the recorded inventory. If there is exactly
-one compatible Python 3.11-3.13 isolated-environment candidate overall and its resolved path is
-inside the user's project root, use its resolved interpreter and report `python-version` as
-measured. Otherwise resolve an already installed supported interpreter using
+Before any component creation or repair, choose from the recorded inventory. Verify candidates
+through [`run-safety.md` § Choosing the environment](run-safety.md#choosing-the-environment),
+whose read-only detector owns interpreter provenance; an unverified candidate is never launched.
+If there is exactly one verified compatible Python 3.11-3.13 isolated-environment candidate overall
+and its resolved path is inside the user's project root, use the trusted matching host runtime
+for these checks and report `python-version` as measured. Read candidate metadata through the
+detector; do not launch a customer's interpreter before setup approval. Otherwise resolve an already installed supported interpreter using
 [`run-safety.md` § Finding a supported interpreter](run-safety.md#finding-a-supported-interpreter)
 as a provisional, no-install bootstrap. Multiple compatible candidates and environments outside
 the project wait for section 5; if the sole candidate fails, record why and use that same lookup.
-Run bootstrap preflight and readiness with `-I -S`, excluding user-site packages and `PYTHONPATH`.
+Run bootstrap preflight and readiness with `-I -S -B`, excluding user-site packages and `PYTHONPATH`.
 Name its executable and version; its SDK availability is unmeasured, not evidence that the run
 environment is ready. An opening SDK finding from either interpreter never replaces section 5's
-required post-install check in the dedicated environment, which remains authoritative for the run.
+required post-install check in the chosen environment, which remains authoritative for the run.
 
 Run the bundled static preflight with `--defer-missing-sdk` over whatever dataset was discovered,
 omitting `--dataset` when none exists. Then include every safe measurement that can finish now in
@@ -494,26 +497,28 @@ after the inspection above; the flag is not safety evidence and bypasses no scop
 adds no stop-and-wait. The evaluator-method name and `--kind deterministic` are not safety evidence.
 Never reuse a result from an earlier run or a pre-existing artifact **for a calibration this run may
 take**: where the path is eligible, the check is cheap and a stale result says nothing about the file
-in front of you. The one exception is the path below, where this run may not take the check at all
-and the project's own result is the only measurement there will be; pass it as that reference says,
-with the declaration beside it, never as though this run had made the check.
+in front of you. The exception below is the execution path this guide declines against the original
+target. A project's own result remains evidence; the copied-actor route may later measure a copy.
+Use the procedure below for either result and its scope declaration; attribute who measured it only
+where this run has that evidence.
 
 Otherwise run readiness without `--calibration` and name the concrete deferral: unresolved
 semantics, no defensible probe matrix, an uninstalled local dependency, a slow, uncertain, external,
 or executing path, or an LLM judge that needs paid approval. Missing calibration is then unmeasured,
 not a failed evaluator; the `evaluator-unvalidated` ceiling limits the readiness claim to 45 until
 the evaluation method is actually checked, and the card's recommended action names that outstanding
-calibration rather than reading `proceed`. Where the deferral is the evaluator-execution scope gate
-rather than a step this run could take, pass `--calibration-scope-refused` so the card discloses the
-unmade check instead of asking for the calibration this run may not take. Where the project already
-holds its own calibration result for that evaluator, pass it to `--calibration` **beside** that same
-flag, never instead of it: the result is read exactly as any other is. Where the result passes,
-the flag keeps the execution disclosure and connection question on the card. On a project whose
-walk found no engine the declaration is the only thing that raises the refusal at all; an observed
-failure or timeout follows its own finding. The flag lifts no ceiling. Without a supplied result,
-the evaluation pillar and pre-cap average can rise when the refused check leaves the denominator;
-an overall below 45 can rise within that bound. This is renormalization, not calibration credit,
-and the flag is the only route where preflight finds no engine.
+calibration rather than reading `proceed`. Where the deferral is the evaluator-execution scope gate,
+the declared `--evaluator-method execution` or a positive preflight witness already carries that
+scope. Use `--calibration-scope-refused` for an executing helper/runtime path when neither records
+it, so the card discloses the unmade check instead of asking for the calibration this run may not
+take. Where the project already holds its own calibration result or the copied-actor route produces
+one, pass it to `--calibration`. Retain the refusal flag **beside** that result whenever it records
+the original scope; never replace that declaration with the payload. Complete passing results earn credit while
+the execution disclosure and connection question remain; an observed failure or timeout follows
+its own finding. The flag lifts no ceiling. Without complete calibration and without an observed
+failure or timeout, the evaluation pillar and pre-cap average can rise when the refused check
+leaves the denominator; an overall below 45 can rise within that bound. This is renormalization,
+not calibration credit. The supplied-result and ceiling rules live in run-safety.md's scope section.
 `calibrate_evaluator.py` refuses such an evaluator itself where its walk can see the execution,
 naming the file and line - finding none establishes nothing, so that refusal is not a clearance - and
 `references/run-safety.md` records why no in-process route replaces it. Apply the run-scoped

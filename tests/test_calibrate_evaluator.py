@@ -5,12 +5,14 @@ import contextlib
 import importlib.util
 import io
 import json
+import os
 import re
 import subprocess
 import sys
 import tempfile
 import time
 import unittest
+import unittest.mock
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -4650,3 +4652,1201 @@ class TheCommandLineDocumentsItsExitCodesTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CopiedActorRouteTests(unittest.TestCase):
+    """The one contained route past the scope gate, and every edge of it.
+
+    `references/run-safety.md` § The copied-actor route (traigent-first-run#517):
+    a copy of the customer's evaluator under `traigent-runs/calibration/`,
+    repointed to read a read-only or duplicate target they supplied, calibrated
+    through this same gate with `--calibrated-copy-of`. The gate admits the
+    engine witnesses it would otherwise refuse - it does not clear them, and the
+    record says so - and refuses everything the reference says it refuses,
+    naming which condition applied. The target value reaches the child alone.
+    """
+
+    @staticmethod
+    def _module():
+        spec = importlib.util.spec_from_file_location("first_run_copied_actor", SCRIPT)
+        module = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        sys.modules[spec.name] = module
+        spec.loader.exec_module(module)
+        return module
+
+    TARGET_NAME = "DB_PASSWORD_TARGET"  # carries a secret marker on purpose
+    ORIGINAL = (
+        "import sqlite3\n\n\n"
+        "def score(*, output, expected, input_data, metadata):\n"
+        "    del input_data, metadata\n"
+        "    connection = sqlite3.connect('/var/lib/customer/production.sqlite')\n"
+        "    try:\n"
+        "        connection.execute(str(output))\n"
+        "    except Exception:\n"
+        "        return 0.0\n"
+        "    finally:\n"
+        "        connection.close()\n"
+        "    return 1.0\n"
+    )
+    COPY = ORIGINAL.replace(
+        "import sqlite3\n",
+        "import os\nimport sqlite3\n",
+    ).replace(
+        "sqlite3.connect('/var/lib/customer/production.sqlite')",
+        f"sqlite3.connect(os.environ[{TARGET_NAME!r}])",
+    )
+    PLAIN = (
+        "def score(*, output, expected, input_data, metadata):\n"
+        "    del input_data, metadata\n"
+        "    return float(str(output).strip() == str(expected).strip())\n"
+    )
+
+    def project(
+        self,
+        directory: str,
+        copy_source: str = COPY,
+        original_source: str | None = None,
+    ) -> dict[str, Path]:
+        """A project with the customer's original and the run's copy.
+
+        `original_source` defaults to the standard original. Since the
+        single-site rule, a construct under test has to be in BOTH files -
+        the copy may hold nothing the original does not - so the finer
+        refusals are exercised with the construct planted in each.
+        """
+        root = Path(directory)
+        original = root / "evaluator.py"
+        original.write_text(
+            self.ORIGINAL if original_source is None else original_source
+        )
+        copy_dir = root / "traigent-runs" / "calibration"
+        copy_dir.mkdir(parents=True)
+        copy = copy_dir / "evaluator.py"
+        copy.write_text(copy_source)
+        duplicate = root / "duplicate.sqlite"
+        env = root / ".env"
+        env.write_text(f"OPENAI_API_KEY=example_key\n{self.TARGET_NAME}={duplicate}\n")
+        env.chmod(0o600)
+        return {"original": original, "copy": copy, "env": env, "duplicate": duplicate}
+
+    def calibrate(self, scorer: Path, *extra: str):
+        return subprocess.run(
+            [
+                sys.executable,
+                str(SCRIPT),
+                "--scorer",
+                f"{scorer}:score",
+                "--import-root",
+                str(scorer.parent),
+                "--allow-execution",
+                "--score-mode",
+                "binary",
+                "--expected",
+                "select 1",
+                "--good",
+                "select 1",
+                "--equivalent-good",
+                " select 1 ",
+                "--partial",
+                "select",
+                "--bad",
+                "not sql at all",
+                "--json",
+                *extra,
+            ],
+            capture_output=True,
+            text=True,
+        )
+
+    def route(self, files: dict[str, Path], *extra: str):
+        return self.calibrate(
+            files["copy"],
+            "--calibrated-copy-of",
+            str(files["original"]),
+            "--target-name",
+            self.TARGET_NAME,
+            "--target-env-file",
+            str(files["env"]),
+            *extra,
+        )
+
+    # -- the route, taken -------------------------------------------------
+    def test_the_copy_is_calibrated_and_the_record_says_which_files(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            files = self.project(directory)
+            process = self.route(files)
+            self.assertEqual(process.returncode, 0, process.stderr)
+            result = json.loads(process.stdout)
+            self.assertTrue(result["passed"], result)
+            self.assertEqual(
+                result["calibrated_copy"],
+                {
+                    "original": str(files["original"].resolve()),
+                    "copy": str(files["copy"].resolve()),
+                    "target_name": self.TARGET_NAME,
+                },
+            )
+            scope = result["execution_scope"]
+            # Admitted, not cleared: the witnesses are still in the record.
+            self.assertTrue(scope["witnesses"])
+            self.assertEqual(scope["acknowledged_by"], "--calibrated-copy-of")
+            self.assertTrue(scope["witnesses_are_one_directional"])
+            # The copy really ran against the supplied target, which is the
+            # only way `passed` could be true - `os.environ[...]` raises
+            # otherwise - and the child was handed the value despite the
+            # secret marker in its name.
+            self.assertTrue(files["duplicate"].exists())
+            # And the VALUE is nowhere in the output.
+            self.assertNotIn(str(files["duplicate"]), process.stdout)
+            self.assertNotIn(str(files["duplicate"]), process.stderr)
+
+    def test_the_original_is_never_touched(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            files = self.project(directory)
+            before = files["original"].read_text()
+            self.route(files)
+            self.assertEqual(files["original"].read_text(), before)
+            self.assertEqual(before, self.ORIGINAL)
+
+    # -- refusals, each naming its condition ------------------------------
+    def test_a_copy_outside_the_run_directory_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            files = self.project(directory)
+            elsewhere = Path(directory) / "elsewhere.py"
+            elsewhere.write_text(self.COPY)
+            files["copy"] = elsewhere
+            process = self.route(files)
+            self.assertEqual(process.returncode, 2, process.stdout)
+            self.assertIn("must live under traigent-runs/calibration/", process.stderr)
+
+    def test_a_directory_merely_named_calibration_does_not_qualify(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            files = self.project(directory)
+            lookalike = Path(directory) / "calibration"
+            lookalike.mkdir()
+            copy = lookalike / "evaluator.py"
+            copy.write_text(self.COPY)
+            files["copy"] = copy
+            process = self.route(files)
+            self.assertEqual(process.returncode, 2)
+            self.assertIn("must live under traigent-runs/calibration/", process.stderr)
+
+    def test_a_missing_original_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            files = self.project(directory)
+            files["original"] = Path(directory) / "nowhere.py"
+            process = self.route(files)
+            self.assertEqual(process.returncode, 2)
+            self.assertIn("is not a file", process.stderr)
+
+    def test_naming_the_copy_as_its_own_original_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            files = self.project(directory)
+            files["original"] = files["copy"]
+            process = self.route(files)
+            self.assertEqual(process.returncode, 2)
+            self.assertIn("names the copy itself", process.stderr)
+
+    def test_an_original_inside_the_run_directory_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            files = self.project(directory)
+            inside = Path(directory) / "traigent-runs" / "generated_evaluator.py"
+            inside.write_text(self.ORIGINAL)
+            files["original"] = inside
+            process = self.route(files)
+            self.assertEqual(process.returncode, 2)
+            self.assertIn("inside traigent-runs/", process.stderr)
+
+    def test_a_scorer_the_gate_does_not_refuse_gets_no_route(self) -> None:
+        """The flag on a plain scorer would only make the card say a copy ran."""
+        with tempfile.TemporaryDirectory() as directory:
+            files = self.project(directory, copy_source=self.PLAIN)
+            process = self.route(files)
+            self.assertEqual(process.returncode, 2, process.stdout)
+            self.assertIn("calibrate the original as itself", process.stderr)
+
+    def test_a_copy_that_shells_out_is_refused_before_import(self) -> None:
+        """A read-only target bounds nothing about a subprocess."""
+        with tempfile.TemporaryDirectory() as directory:
+            marker = Path(directory) / "imported.marker"
+            prelude = (
+                "import pathlib\n"
+                f"pathlib.Path({str(marker)!r}).write_text('ran')\n"
+                "import subprocess\n"
+            )
+            files = self.project(
+                directory,
+                copy_source=prelude + self.COPY,
+                original_source=prelude + self.ORIGINAL,
+            )
+            process = self.route(files)
+            self.assertEqual(process.returncode, 2, process.stdout)
+            self.assertIn("shells out or executes arbitrary code", process.stderr)
+            self.assertIn("imports subprocess", process.stderr)
+            self.assertFalse(marker.exists(), "the copy was imported before refusal")
+
+    def test_a_copy_that_opens_two_engines_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            files = self.project(
+                directory,
+                copy_source="import duckdb\n" + self.COPY,
+                original_source="import duckdb\n" + self.ORIGINAL,
+            )
+            process = self.route(files)
+            self.assertEqual(process.returncode, 2, process.stdout)
+            self.assertIn("opens more than one engine", process.stderr)
+            self.assertIn("duckdb", process.stderr)
+            self.assertIn("sqlite3", process.stderr)
+
+    def test_a_copy_whose_connection_is_handed_in_is_refused(self) -> None:
+        """No engine import means the target is set somewhere the copy does not show."""
+        handed_in = (
+            "from helpers import connection\n\n\n"
+            "def score(*, output, expected, input_data, metadata):\n"
+            "    del input_data, metadata\n"
+            "    connection.execute(str(output))\n"
+            "    return 1.0\n"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            # The single-site rule reaches this first: with no constructor
+            # call in the copy there is no admitted place for a change.
+            files = self.project(
+                directory,
+                copy_source=handed_in.replace("return 1.0", "return 0.9"),
+                original_source=handed_in,
+            )
+            process = self.route(files)
+            self.assertEqual(process.returncode, 2, process.stdout)
+            self.assertIn("engine constructor", process.stderr)
+
+    def test_a_transform_that_reaches_an_engine_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            files = self.project(directory)
+            transform = Path(directory) / "transform.py"
+            transform.write_text(
+                "import sqlite3\n\n\ndef strip(reply):\n    return str(reply).strip()\n"
+            )
+            process = self.route(
+                files,
+                "--reply-transform",
+                f"{transform}:strip",
+                "--task-kind",
+                "code-sql",
+            )
+            self.assertEqual(process.returncode, 2, process.stdout)
+            self.assertIn("reply transform reaches an engine", process.stderr)
+
+    # -- the target, read from the owner-only file ------------------------
+    def test_a_world_readable_env_file_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            files = self.project(directory)
+            files["env"].chmod(0o644)
+            process = self.route(files)
+            self.assertEqual(process.returncode, 2, process.stdout)
+            self.assertIn("readable by more than its owner", process.stderr)
+
+    def test_a_target_nobody_set_is_refused_rather_than_defaulted(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            files = self.project(directory)
+            files["env"].write_text("OPENAI_API_KEY=example_key\n")
+            process = self.route(files)
+            self.assertEqual(process.returncode, 2, process.stdout)
+            self.assertIn(f"{self.TARGET_NAME} is not set", process.stderr)
+
+    def test_the_target_flags_travel_together(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            files = self.project(directory)
+            without_target = self.calibrate(
+                files["copy"], "--calibrated-copy-of", str(files["original"])
+            )
+            self.assertEqual(without_target.returncode, 2)
+            self.assertIn(
+                "needs --target-name and --target-env-file", without_target.stderr
+            )
+            # On a scorer the gate does not refuse, so the pairing check is
+            # what fires rather than the scope refusal that precedes it.
+            plain = Path(directory) / "plain.py"
+            plain.write_text(self.PLAIN)
+            without_route = self.calibrate(
+                plain,
+                "--target-name",
+                self.TARGET_NAME,
+                "--target-env-file",
+                str(files["env"]),
+            )
+            self.assertEqual(without_route.returncode, 2)
+            self.assertIn(
+                "mean nothing without --calibrated-copy-of", without_route.stderr
+            )
+
+    def test_the_env_reader_takes_the_shapes_a_dotenv_holds(self) -> None:
+        module = self._module()
+        with tempfile.TemporaryDirectory() as directory:
+            env = Path(directory) / ".env"
+            env.write_text(
+                "# comment\n"
+                "export QUOTED='postgresql://ro@host/db'\n"
+                'DOUBLE="x=y"\n'
+                "BARE=plain \n"
+                "EMPTY=\n"
+            )
+            env.chmod(0o600)
+            self.assertEqual(
+                module.read_target_from_env_file(env, "QUOTED"),
+                "postgresql://ro@host/db",
+            )
+            self.assertEqual(module.read_target_from_env_file(env, "DOUBLE"), "x=y")
+            self.assertEqual(module.read_target_from_env_file(env, "BARE"), "plain")
+            with self.assertRaises(ValueError):
+                module.read_target_from_env_file(env, "EMPTY")
+            with self.assertRaises(ValueError):
+                module.read_target_from_env_file(env, "ABSENT")
+
+    # -- the refusal message names the route ------------------------------
+    def test_the_plain_refusal_names_the_route_and_its_flag(self) -> None:
+        module = self._module()
+        message = module.scope_refusal_message(
+            {
+                "witnesses": [
+                    {"role": "scorer", "file": "s.py", "witness": "imports sqlite3"}
+                ]
+            }
+        )
+        flat = " ".join(message.casefold().split())
+        self.assertIn("copied-actor route", flat)
+        self.assertIn("--calibrated-copy-of", flat)
+        self.assertIn("traigent-runs/calibration/", flat)
+        self.assertIn("where that route is refused", flat)
+        self.assertIn("--calibration-scope-refused", flat)
+
+
+class CopiedActorSingleSiteTests(CopiedActorRouteTests):
+    """The rule, whole: the copy is the original with exactly one change.
+
+    Every earlier hole was a copy carrying something the original did not.
+    `single_site_refusal` compares the two trees and admits one differing
+    node - the engine constructor's target argument, which in the copy must
+    be `os.environ[NAME]` - plus a plain `import os` where the original lacks
+    it. The finer refusals stay and now bound what the ORIGINAL may contain,
+    so each of their tests plants its construct in both files.
+    """
+
+    def __getattribute__(self, name):
+        if name.startswith("test_") and name in CopiedActorRouteTests.__dict__:
+            return lambda: None
+        return super().__getattribute__(name)
+
+    ORIGINAL_KW = CopiedActorRouteTests.ORIGINAL.replace(
+        "sqlite3.connect('/var/lib/customer/production.sqlite')",
+        "sqlite3.connect(database='/var/lib/customer/production.sqlite')",
+    )
+    COPY_KW = CopiedActorRouteTests.COPY.replace(
+        f"sqlite3.connect(os.environ[{CopiedActorRouteTests.TARGET_NAME!r}])",
+        f"sqlite3.connect(database=os.environ[{CopiedActorRouteTests.TARGET_NAME!r}])",
+    )
+
+    def attempt(self, copy_source: str, original_source: str, target=None, *extra):
+        with tempfile.TemporaryDirectory() as directory:
+            files = self.project(
+                directory, copy_source=copy_source, original_source=original_source
+            )
+            if target is not None:
+                files["env"].write_text(f"{target}={files['duplicate']}\n")
+                files["env"].chmod(0o600)
+            return self.calibrate(
+                files["copy"],
+                "--calibrated-copy-of",
+                str(files["original"]),
+                "--target-name",
+                target or self.TARGET_NAME,
+                "--target-env-file",
+                str(files["env"]),
+                *extra,
+            )
+
+    def both(self, prelude: str, *extra: str, copy: str | None = None):
+        """The construct planted in both files, the copy otherwise repointed."""
+        return self.attempt(
+            prelude + (copy or self.COPY), prelude + self.ORIGINAL, None, *extra
+        )
+
+    # -- the rule ------------------------------------------------------------
+    def test_target_replacement_is_atomic_for_existing_expressions(self) -> None:
+        for target in (
+            "os.environ['DATABASE_URL']",
+            "{'database': '/unused'}['database']",
+            "os.environ.get('DATABASE_URL')",
+        ):
+            original = "import os\n" + self.ORIGINAL.replace(
+                "'/var/lib/customer/production.sqlite'", target
+            )
+            for keyword in (False, True):
+                with self.subTest(target=target, keyword=keyword):
+                    copy = self.COPY
+                    before = original
+                    if keyword:
+                        before = before.replace(
+                            "sqlite3.connect(", "sqlite3.connect(database="
+                        )
+                        copy = copy.replace(
+                            "sqlite3.connect(", "sqlite3.connect(database="
+                        )
+                    process = self.attempt(copy, before)
+                    self.assertEqual(process.returncode, 0, process.stderr)
+                    self.assertTrue(json.loads(process.stdout)["passed"])
+                    changed_elsewhere = copy.replace("return 1.0", "return 0.9")
+                    refused = self.attempt(changed_elsewhere, before)
+                    self.assertEqual(refused.returncode, 2, refused.stdout)
+                    self.assertIn("more than one place", refused.stderr)
+
+    def test_numeric_options_and_cycles_never_crash_admission(self) -> None:
+        for prelude, expected_exit in (
+            ("    for timeout in [1, 2]:\n        pass\n", 0),
+            ("    timeout = 1\n    timeout: float\n", 2),
+            ("    timeout = 1\n    timeout = timeout\n", 2),
+            ("    timeout = 1\n    other = timeout\n    timeout = other\n", 2),
+        ):
+            with self.subTest(prelude=prelude):
+                original = self.ORIGINAL.replace(
+                    "    connection = sqlite3.connect(",
+                    prelude + "    connection = sqlite3.connect(",
+                ).replace("production.sqlite')", "production.sqlite', timeout=timeout)")
+                copy = "import os\n" + original.replace(
+                    "'/var/lib/customer/production.sqlite'",
+                    f"os.environ[{self.TARGET_NAME!r}]",
+                )
+                process = self.attempt(copy, original)
+                self.assertEqual(process.returncode, expected_exit, process.stderr)
+                if expected_exit:
+                    self.assertIn("cyclic or unresolved binding", process.stderr)
+                else:
+                    self.assertTrue(json.loads(process.stdout)["passed"])
+
+    def test_driver_errors_redact_raw_and_repr_target_diagnostics(self) -> None:
+        for expression in ("database", "repr(database)"):
+            with self.subTest(
+                expression=expression
+            ), tempfile.TemporaryDirectory() as directory:
+                original = self.ORIGINAL.replace(
+                    "def score(",
+                    "def fail_connection(database, **kwargs):\n"
+                    f"    raise sqlite3.OperationalError('Cannot open database ' + {expression})\n\n"
+                    "def score(",
+                ).replace(
+                    "production.sqlite')",
+                    "production.sqlite', factory=fail_connection)",
+                )
+                copy = "import os\n" + original.replace(
+                    "'/var/lib/customer/production.sqlite'",
+                    f"os.environ[{self.TARGET_NAME!r}]",
+                )
+                files = self.project(
+                    directory, copy_source=copy, original_source=original
+                )
+                target = str(Path(directory) / "private-'quoted'-\\-caf\u00e9.sqlite")
+                files["env"].write_text(f"{self.TARGET_NAME}={target}\n")
+                process = self.route(files)
+                self.assertEqual(process.returncode, 1, process.stderr)
+                self.assertNotIn(target, process.stdout + process.stderr)
+                self.assertNotIn(repr(target)[1:-1], process.stdout + process.stderr)
+                self.assertIn("Diagnostic text withheld", process.stderr)
+                self.assertIn("[redacted calibration target]", process.stderr)
+
+    def test_supplemental_target_errors_are_redacted_in_result_json(self) -> None:
+        original = self.ORIGINAL.replace(
+            "    try:\n",
+            "    if type(output) is not str:\n"
+            "        target = connection.execute('pragma database_list').fetchone()[2]\n"
+            "        connection.close()\n"
+            "        raise ValueError('Database unavailable: ' + target)\n"
+            "    try:\n",
+        )
+        copy = "import os\n" + original.replace(
+            "'/var/lib/customer/production.sqlite'", f"os.environ[{self.TARGET_NAME!r}]"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            files = self.project(directory, copy_source=copy, original_source=original)
+            # SQLite reports the normalized path, without the supplied /./.
+            files["env"].write_text(
+                f"{self.TARGET_NAME}={directory}/./duplicate.sqlite\n"
+            )
+            process = self.route(files)
+            self.assertEqual(process.returncode, 0, process.stderr)
+            payload = json.loads(process.stdout)
+            self.assertTrue(payload["passed"])
+            self.assertNotIn(str(files["duplicate"]), process.stdout + process.stderr)
+            errors = [probe["error"] for probe in payload["exception_probes"]]
+            self.assertTrue(
+                all("[redacted calibration target]" in error for error in errors)
+            )
+
+    def test_driver_diagnostics_with_only_target_components_are_withheld(self) -> None:
+        original = self.ORIGINAL.replace(
+            "def score(",
+            "def fail_connection(database, **kwargs):\n"
+            "    raise sqlite3.OperationalError('Database unavailable: ' + "
+            "database.rsplit('/', 1)[-1])\n\n"
+            "def score(",
+        ).replace("production.sqlite')", "production.sqlite', factory=fail_connection)")
+        copy = "import os\n" + original.replace(
+            "'/var/lib/customer/production.sqlite'", f"os.environ[{self.TARGET_NAME!r}]"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            files = self.project(directory, copy_source=copy, original_source=original)
+            process = self.route(files)
+            self.assertEqual(process.returncode, 1, process.stderr)
+            self.assertNotIn("duplicate.sqlite", process.stdout + process.stderr)
+            self.assertIn("[redacted calibration target]", process.stderr)
+            self.assertIn("inspect", process.stderr)
+
+    def test_withheld_diagnostics_preserve_unloadable_scorer_exit(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            files = self.project(directory)
+            process = self.route(files, "--scorer", f"{files['copy']}:missing_function")
+            self.assertEqual(process.returncode, 2, process.stderr)
+            self.assertIn(
+                "Nothing about this evaluator has been established", process.stderr
+            )
+            self.assertIn("Diagnostic text withheld", process.stderr)
+
+    def test_target_words_never_change_protocol_or_readiness_credit(self) -> None:
+        spec = importlib.util.spec_from_file_location(
+            "copied_protocol_readiness", SCRIPT.with_name("readiness.py")
+        )
+        readiness = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        sys.modules[spec.name] = readiness
+        spec.loader.exec_module(readiness)
+
+        def established(payload):
+            facts = readiness.evaluation_facts_from_calibration(
+                payload, method="execution", task_kind="code-sql"
+            )
+            pillar, caps = readiness.score_evaluation(facts)
+            calibration = next(s for s in pillar.subscores if s.name == "calibration")
+            self.assertEqual(calibration.value, 40.0)
+            self.assertTrue(calibration.measured)
+            self.assertNotIn("evaluator-invalid", [c.condition for c in caps])
+            return {
+                "score_mode": payload["score_mode"],
+                "scores": payload["scores"],
+                "checks": payload["checks"],
+                "exceptions": [
+                    (p["kind"], p["outcome"], p["score"])
+                    for p in payload["exception_probes"]
+                ],
+                "seams": [
+                    (p["source"], p["outcome"], p["score"])
+                    for p in payload["seam_probes"]
+                ],
+                "walk": payload["execution_scope"]["walk"],
+                "acknowledged_by": payload["execution_scope"]["acknowledged_by"],
+            }
+
+        with tempfile.TemporaryDirectory() as directory:
+            files = self.project(directory)
+            baseline = self.route(files, "--task-kind", "code-sql")
+            self.assertEqual(baseline.returncode, 0, baseline.stderr)
+            expected = established(json.loads(baseline.stdout))
+            for target in (
+                "binary",
+                "value-error",
+                "returned-zero",
+                "refused",
+                "fence",
+                "preflight.candidate_execution_witnesses",
+                "--calibrated-copy-of",
+            ):
+                with self.subTest(target=target):
+                    files["env"].write_text(f"{self.TARGET_NAME}={target}\n")
+                    process = self.route(files, "--task-kind", "code-sql")
+                    self.assertEqual(process.returncode, 0, process.stderr)
+                    self.assertEqual(established(json.loads(process.stdout)), expected)
+
+    def test_the_single_site_copy_is_accepted(self) -> None:
+        for label, copy, original in (
+            ("positional", self.COPY, self.ORIGINAL),
+            ("keyword", self.COPY_KW, self.ORIGINAL_KW),
+            (
+                "original already imports os",
+                self.COPY,
+                self.ORIGINAL.replace(
+                    "import sqlite3\n", "import os\nimport sqlite3\n"
+                ),
+            ),
+            (
+                "getenv spelling",
+                self.COPY.replace(
+                    f"os.environ[{self.TARGET_NAME!r}]",
+                    f"os.getenv({self.TARGET_NAME!r})",
+                ),
+                self.ORIGINAL,
+            ),
+            (
+                "Connection as the constructor",
+                self.COPY.replace("sqlite3.connect(", "sqlite3.Connection("),
+                self.ORIGINAL.replace("sqlite3.connect(", "sqlite3.Connection("),
+            ),
+        ):
+            with self.subTest(shape=label):
+                process = self.attempt(copy, original)
+                self.assertEqual(process.returncode, 0, process.stderr)
+                self.assertTrue(json.loads(process.stdout)["passed"])
+
+    def test_an_extra_statement_anywhere_is_refused_and_the_path_named(self) -> None:
+        for label, copy in (
+            (
+                "module level",
+                self.COPY.replace("def score(", "LIMIT = 1\n\n\ndef score("),
+            ),
+            (
+                "inside the function",
+                self.COPY.replace("    try:\n", "    limit = 1\n    try:\n"),
+            ),
+            ("trailing", self.COPY + "\nAFTER = True\n"),
+        ):
+            with self.subTest(where=label):
+                process = self.attempt(copy, self.ORIGINAL)
+                self.assertEqual(process.returncode, 2, process.stdout)
+                self.assertIn("exactly one change", process.stderr)
+                self.assertIn("body", process.stderr)
+
+    def test_a_changed_import_is_refused(self) -> None:
+        for label, copy in (
+            (
+                "added name",
+                self.COPY.replace("import sqlite3\n", "import sqlite3\nimport json\n"),
+            ),
+            (
+                "aliased engine",
+                self.COPY.replace("import sqlite3\n", "import sqlite3 as db\n").replace(
+                    "sqlite3.connect(", "db.connect("
+                ),
+            ),
+            (
+                "second import os",
+                self.COPY.replace("import os\n", "import os\nimport os\n"),
+            ),
+        ):
+            with self.subTest(change=label):
+                process = self.attempt(copy, self.ORIGINAL)
+                self.assertEqual(process.returncode, 2, process.stdout)
+                self.assertIn("exactly one change", process.stderr)
+
+    def test_a_copy_differing_at_two_sites_is_refused(self) -> None:
+        original = self.ORIGINAL.replace(
+            "def score(", "LOG = '/var/log/x.log'\n\n\ndef score("
+        )
+        copy = self.COPY.replace("def score(", "LOG = '/tmp/x.log'\n\n\ndef score(")
+        process = self.attempt(copy, original)
+        self.assertEqual(process.returncode, 2, process.stdout)
+        self.assertIn("more than one place", process.stderr)
+        self.assertIn("body[", process.stderr)
+
+    def test_a_change_that_is_not_the_target_argument_is_refused(self) -> None:
+        # One difference, at the wrong node: the return value.
+        copy = self.ORIGINAL.replace("    return 1.0\n", "    return 0.5\n")
+        process = self.attempt(copy, self.ORIGINAL)
+        self.assertEqual(process.returncode, 2, process.stdout)
+        self.assertIn("not the engine constructor's target argument", process.stderr)
+
+    def test_a_change_at_the_target_that_is_not_the_read_is_refused(self) -> None:
+        copy = self.ORIGINAL.replace(
+            "'/var/lib/customer/production.sqlite'", "'/tmp/other.sqlite'"
+        )
+        process = self.attempt(copy, self.ORIGINAL)
+        self.assertEqual(process.returncode, 2, process.stdout)
+        self.assertIn(f"is not os.environ[{self.TARGET_NAME!r}]", process.stderr)
+
+    def test_a_byte_identical_copy_is_refused(self) -> None:
+        for label, copy in (
+            ("identical", self.ORIGINAL),
+            ("comment only", "# copy\n" + self.ORIGINAL),
+        ):
+            with self.subTest(shape=label):
+                process = self.attempt(copy, self.ORIGINAL)
+                self.assertEqual(process.returncode, 2, process.stdout)
+                self.assertIn("byte-identical to the original", process.stderr)
+
+    def test_an_original_that_already_reads_the_name_is_refused(self) -> None:
+        # The read is at the site in both: no difference, so byte-identical.
+        process = self.attempt(self.COPY, self.COPY)
+        self.assertEqual(process.returncode, 2, process.stdout)
+        self.assertIn("byte-identical", process.stderr)
+
+    def test_the_original_is_never_touched(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            files = self.project(directory)
+            self.route(files)
+            self.assertEqual(files["original"].read_text(), self.ORIGINAL)
+
+    def test_an_encoding_cookie_is_read_the_way_the_interpreter_reads_it(self) -> None:
+        """Both files are parsed from bytes, so a cookie decides the same text.
+
+        A copy that adds `# -*- coding: latin-1 -*-` above an otherwise
+        single-site change parses to the same tree as the original - a
+        comment is not a node - and is admitted; a copy whose cookie changes
+        what a non-ASCII literal MEANS is a difference and is refused. Pinned
+        both ways so the gate can never read a file the child will not.
+        """
+        cookie = "# -*- coding: latin-1 -*-\n"
+        with tempfile.TemporaryDirectory() as directory:
+            files = self.project(directory, copy_source=cookie + self.COPY)
+            same_tree = self.route(files)
+            # A latin-1 byte in a literal the original holds as utf-8: the
+            # copy's constant decodes to a different string, so it differs.
+            original = self.ORIGINAL.replace(
+                "def score(", "NOTE = 'caf\u00e9'\n\n\ndef score("
+            )
+            files["original"].write_text(original, encoding="utf-8")
+            files["copy"].write_bytes(
+                (
+                    cookie
+                    + self.COPY.replace(
+                        "def score(", "NOTE = 'caf\u00e9'\n\n\ndef score("
+                    )
+                ).encode("latin-1")
+            )
+            same_bytes_different_meaning = self.route(files)
+        self.assertEqual(same_tree.returncode, 0, same_tree.stderr)
+        # latin-1 `caf\xe9` decodes to the same `caf\u00e9`, so the trees agree
+        # only because the cookie was honoured; without it the utf-8 read of
+        # the copy would fail or differ.
+        self.assertEqual(
+            same_bytes_different_meaning.returncode,
+            0,
+            same_bytes_different_meaning.stderr,
+        )
+
+    # -- A: no second binding of os or environ --------------------------------
+    def test_a_shadowed_os_or_environ_is_refused(self) -> None:
+        for label, prelude in (
+            ("environ dict", "environ = {}\n"),
+            ("class os", "class os:\n    environ = {}\n\n\n"),
+            ("import alias", "import types as os\n"),
+            ("from-import", "from types import SimpleNamespace as environ\n"),
+            ("function", "def environ():\n    return {}\n\n\n"),
+            ("parameter", "def helper(os):\n    return os\n\n\n"),
+            ("for target", "for os in ():\n    pass\n"),
+            (
+                "with target",
+                "import contextlib\nwith contextlib.nullcontext() as os:\n    pass\n",
+            ),
+        ):
+            with self.subTest(binding=label):
+                process = self.both(prelude)
+                self.assertEqual(process.returncode, 2, process.stdout)
+                self.assertIn("bound at line", process.stderr)
+                self.assertIn("`import os` / `from os import environ`", process.stderr)
+
+    def test_from_os_import_environ_is_the_one_other_allowed_binding(self) -> None:
+        copy = self.COPY.replace("import os\n", "from os import environ\n").replace(
+            f"os.environ[{self.TARGET_NAME!r}]", f"environ[{self.TARGET_NAME!r}]"
+        )
+        original = self.ORIGINAL.replace(
+            "import sqlite3\n", "from os import environ\nimport sqlite3\n"
+        )
+        process = self.attempt(copy, original)
+        self.assertEqual(process.returncode, 0, process.stderr)
+
+    # -- B: a constructor reference that is not the one call ------------------
+    def test_a_stray_constructor_reference_is_refused(self) -> None:
+        for label, prelude in (
+            ("bound to a name", "_open = sqlite3.connect\n"),
+            ("__call__", "_c = sqlite3.connect.__call__\n"),
+            ("Connection", "_k = sqlite3.Connection\n"),
+        ):
+            with self.subTest(reference=label):
+                process = self.both("import sqlite3\n" + prelude)
+                self.assertEqual(process.returncode, 2, process.stdout)
+                self.assertIn("without calling it", process.stderr)
+
+    def test_a_second_constructor_call_in_both_files_is_refused(self) -> None:
+        process = self.both("import sqlite3\n_other = sqlite3.connect(':memory:')\n")
+        self.assertEqual(process.returncode, 2, process.stdout)
+        self.assertIn("engine constructor", process.stderr)
+
+    # -- C: code built from data ----------------------------------------------
+    def test_code_from_data_constructs_are_refused(self) -> None:
+        for label, prelude in (
+            ("pickle", "import pickle\n"),
+            ("marshal", "import marshal\n"),
+            ("codeop", "import codeop\n"),
+            ("code", "import code\n"),
+            ("types.FunctionType", "import types\n_f = types.FunctionType\n"),
+            ("from types import CodeType", "from types import CodeType\n"),
+        ):
+            with self.subTest(construct=label):
+                process = self.both(prelude)
+                self.assertEqual(process.returncode, 2, process.stdout)
+                self.assertIn("one engine with one named variable", process.stderr)
+
+    # -- the finer refusals, now bounding the original ------------------------
+    def test_settings_readers_and_dotenv_are_refused_by_name(self) -> None:
+        for spelling in (
+            "import dotenv\n",
+            "from dotenv import load_dotenv\n",
+            "import pydantic_settings\n",
+            "from decouple import config\n",
+            "import environs\n",
+            "import dynaconf\n",
+            "import python_dotenv\n",
+            "import envparse\n",
+            "from starlette.config import Config\n",
+            "from starlette import config\n",
+            "from django.conf import settings\n",
+        ):
+            with self.subTest(spelling=spelling.strip()):
+                process = self.both(spelling)
+                self.assertEqual(process.returncode, 2, process.stdout)
+                self.assertIn("a settings reader", process.stderr)
+
+    def test_other_environment_reads_are_a_second_connection_site(self) -> None:
+        for label, prelude in (
+            ("named", "LEGACY = os.environ.get('DATABASE_URL')\n"),
+            ("computed", "OTHER = os.environ[__name__.upper()]\n"),
+        ):
+            with self.subTest(read=label):
+                process = self.attempt(
+                    "import os\n" + prelude + self.COPY.replace("import os\n", ""),
+                    "import os\n" + prelude + self.ORIGINAL,
+                )
+                self.assertEqual(process.returncode, 2, process.stdout)
+                self.assertIn("a second connection site", process.stderr)
+
+    def test_reflection_and_io_constructs_are_refused(self) -> None:
+        constructs = {
+            "getattr on a module": "_x = getattr(sqlite3, 'connect')\n",
+            "getattr with a computed attribute": "_n = 'version'\n_x = getattr(sqlite3, _n)\n",
+            "__dict__": "_x = sqlite3.__dict__\n",
+            "vars()": "_x = vars(sqlite3)\n",
+            "sys.modules": "import sys\n_x = sys.modules['subprocess']\n",
+            "open()": "_x = open('/etc/hostname')\n",
+            "Path.read_text": "import pathlib\n_x = pathlib.Path('/etc/hostname').read_text()\n",
+            "Path.open": "import pathlib\n_x = pathlib.Path('/etc/hostname').open()\n",
+            "io.open": "import io\n_x = io.open('/etc/hostname')\n",
+            "builtins import": "import builtins\n",
+            "__builtins__": "_x = __builtins__\n",
+            "socket": "import socket\n",
+            "exec": "exec('pass')\n",
+            "eval": "_x = eval('1')\n",
+            "compile": "_x = compile('1', '<s>', 'eval')\n",
+            "exec through getattr": "_x = getattr(__builtins__, 'exec')\n",
+            "globals()": "_x = globals()\n",
+        }
+        for label, prelude in constructs.items():
+            with self.subTest(construct=label):
+                process = self.both("import sqlite3\n" + prelude)
+                self.assertEqual(process.returncode, 2, f"{label}: {process.stdout}")
+                self.assertTrue(
+                    "one engine with one named variable" in process.stderr
+                    or "shells out or executes arbitrary code" in process.stderr,
+                    process.stderr,
+                )
+
+    def test_admission_only_process_constructs_are_refused(self) -> None:
+        for label, prelude in (
+            ("multiprocessing", "import multiprocessing\n"),
+            ("ctypes", "import ctypes\n"),
+            (
+                "asyncio subprocess",
+                "import asyncio\n\n\nasync def _x():\n    await asyncio.create_subprocess_exec('ls')\n\n\n",
+            ),
+            (
+                "importlib.import_module",
+                "import importlib\n_m = importlib.import_module('json')\n",
+            ),
+        ):
+            with self.subTest(construct=label):
+                process = self.both(prelude)
+                self.assertEqual(process.returncode, 2, process.stdout)
+                self.assertIn("shells out or executes arbitrary code", process.stderr)
+
+    def test_local_and_relative_imports_are_refused_and_site_packages_are_not(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            (Path(directory) / "db.py").write_text("def get_conn():\n    return None\n")
+            site = Path(directory) / ".venv" / "lib" / "python3.12" / "site-packages"
+            (site / "fakepkg").mkdir(parents=True)
+            (site / "fakepkg" / "__init__.py").write_text("VERSION = 1\n")
+            files = self.project(
+                directory,
+                copy_source="from db import get_conn\n" + self.COPY,
+                original_source="from db import get_conn\n" + self.ORIGINAL,
+            )
+            local = self.route(files)
+            files["copy"].write_text("from . import helpers\n" + self.COPY)
+            files["original"].write_text("from . import helpers\n" + self.ORIGINAL)
+            relative = self.route(files)
+            files["copy"].write_text("import fakepkg\n" + self.COPY)
+            files["original"].write_text("import fakepkg\n" + self.ORIGINAL)
+            with unittest.mock.patch.dict(os.environ, {"PYTHONPATH": str(site)}):
+                installed = self.route(files)
+        self.assertEqual(local.returncode, 2, local.stdout)
+        self.assertIn("a local module nobody read", local.stderr)
+        self.assertEqual(relative.returncode, 2, relative.stdout)
+        self.assertIn("relative import", relative.stderr)
+        self.assertEqual(installed.returncode, 0, installed.stderr)
+
+    def test_connection_target_names_are_stripped_from_the_child(self) -> None:
+        module = self._module()
+        for marker in ("URL", "DSN", "DATABASE", "PG", "CONN"):
+            with self.subTest(marker=marker):
+                self.assertIn(marker, module.SECRET_MARKERS)
+        with unittest.mock.patch.dict(
+            os.environ,
+            {
+                "DATABASE_URL": "x",
+                "PGHOST": "x",
+                "MY_DSN": "x",
+                "DB_CONNECTION": "x",
+                "HOME_DIR": "keep",
+            },
+        ):
+            child = module.subprocess_environment(allow_provider_access=False)
+        for gone in ("DATABASE_URL", "PGHOST", "MY_DSN", "DB_CONNECTION"):
+            self.assertNotIn(gone, child)
+        self.assertEqual(child["HOME_DIR"], "keep")
+
+    def test_every_name_the_env_file_defines_leaves_the_child(self) -> None:
+        module = self._module()
+        with tempfile.TemporaryDirectory() as directory:
+            marker = Path(directory) / "seen.txt"
+            prelude = (
+                "import pathlib\n"
+                f"pathlib.Path({str(marker)!r}).write_text(','.join(k for k in "
+                f"('DB_FILE', 'SQLITE_PATH', {self.TARGET_NAME!r}) if k in os.environ))\n\n\n"
+            )
+            files = self.project(
+                directory,
+                copy_source=self.COPY.replace("def score(", prelude + "def score("),
+                original_source=self.ORIGINAL.replace(
+                    "import sqlite3\n", "import os\nimport sqlite3\n"
+                ).replace("def score(", prelude + "def score("),
+            )
+            files["env"].write_text(
+                f"DB_FILE=/srv/prod.sqlite\nexport SQLITE_PATH='/srv/x.db'\n"
+                f"{self.TARGET_NAME}={files['duplicate']}\n# note\n"
+            )
+            self.assertEqual(
+                module.env_file_names(files["env"]),
+                {"DB_FILE", "SQLITE_PATH", self.TARGET_NAME},
+            )
+            with unittest.mock.patch.dict(
+                os.environ, {"DB_FILE": "/srv/prod.sqlite", "SQLITE_PATH": "/srv/x.db"}
+            ):
+                process = self.route(files)
+            self.assertEqual(process.returncode, 0, process.stderr)
+            self.assertEqual(marker.read_text(), self.TARGET_NAME)
+
+    def test_target_names_outside_the_shape_are_refused(self) -> None:
+        for bad in (
+            "lower",
+            "1ABC",
+            "HAS-DASH",
+            "HAS SPACE",
+            "PATH",
+            "PYTHONPATH",
+            "LD_PRELOAD",
+            "PYTHONHOME",
+            "PYTHONSTARTUP",
+        ):
+            with self.subTest(name=bad):
+                process = self.attempt(self.COPY, self.ORIGINAL, bad)
+                self.assertEqual(process.returncode, 2, process.stdout)
+                self.assertIn("--target-name", process.stderr)
+
+    def test_the_env_reader_takes_the_shapes_a_dotenv_holds(self) -> None:
+        module = self._module()
+        with tempfile.TemporaryDirectory() as directory:
+            env = Path(directory) / ".env"
+            env.write_text(
+                "# comment\nexport QUOTED='postgresql://ro@host/db'\nDOUBLE=\"x=y\"\nBARE=plain \nEMPTY=\n"
+            )
+            env.chmod(0o600)
+            self.assertEqual(
+                module.read_target_from_env_file(env, "QUOTED"),
+                "postgresql://ro@host/db",
+            )
+            self.assertEqual(module.read_target_from_env_file(env, "DOUBLE"), "x=y")
+            self.assertEqual(module.read_target_from_env_file(env, "BARE"), "plain")
+            with self.assertRaises(ValueError):
+                module.read_target_from_env_file(env, "EMPTY")
+            with self.assertRaises(ValueError):
+                module.read_target_from_env_file(env, "ABSENT")
+
+
+class EngineTargetRefusalUnitTests(unittest.TestCase):
+    """`engine_target_refusal` on its own: the finer messages the single-site
+    rule now reaches only when the original already carries the shape."""
+
+    NAME = "DB_PASSWORD_TARGET"
+
+    @staticmethod
+    def _module():
+        spec = importlib.util.spec_from_file_location("first_run_engine_target", SCRIPT)
+        module = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        sys.modules[spec.name] = module
+        spec.loader.exec_module(module)
+        return module
+
+    def refusal(self, source: str) -> str | None:
+        return self._module().engine_target_refusal(ast.parse(source), self.NAME)
+
+    def test_comprehension_options_are_bounded_and_string_options_stay_refused(
+        self,
+    ) -> None:
+        for iterable, expected in (
+            ("[1, 2]", None),
+            ("[1, 'another database']", "second string-typed argument"),
+            ("range(2)", "cyclic or unresolved binding"),
+        ):
+            with self.subTest(iterable=iterable):
+                source = (
+                    "import os, sqlite3\n"
+                    f"connections = [sqlite3.connect(os.environ[{self.NAME!r}], "
+                    f"timeout=timeout) for timeout in {iterable}]\n"
+                )
+                refusal = self.refusal(source)
+                if expected is None:
+                    self.assertIsNone(refusal)
+                else:
+                    self.assertIn(expected, refusal or "")
+
+    def test_the_read_must_be_the_constructor_target(self) -> None:
+        read = f"os.environ[{self.NAME!r}]"
+        cases = {
+            "dead read, literal target": (
+                f"import os, sqlite3\nT = {read}\nc = sqlite3.connect('/tmp/o.sqlite')\n",
+                "is not handed the",
+            ),
+            "split literal": (
+                f"import os, sqlite3\nT = {read}\nc = sqlite3.connect('/var/' + 'x.sqlite')\n",
+                "is not handed the",
+            ),
+            "f-string": (
+                f"import os, sqlite3\nT = {read}\nc = sqlite3.connect(f'{{T}}')\n",
+                "is not handed the",
+            ),
+            "relative path": (
+                f"import os, sqlite3\nT = {read}\nc = sqlite3.connect('data/x.sqlite')\n",
+                "is not handed the",
+            ),
+            "name bound twice": (
+                f"import os, sqlite3\nT = {read}\nT = '/tmp/o.sqlite'\nc = sqlite3.connect(T)\n",
+                "not bound once and directly",
+            ),
+            "second string argument": (
+                f"import os, sqlite3\nc = sqlite3.connect({read}, isolation_level='DEFERRED')\n",
+                "second string-typed argument",
+            ),
+            "no constructor": (
+                f"import os, sqlite3\nT = {read}\n",
+                "never calls the engine's constructor",
+            ),
+            "two constructors": (
+                f"import os, sqlite3\na = sqlite3.connect({read})\nb = sqlite3.connect(':memory:')\n",
+                "more than one place",
+            ),
+            "stray reference": (
+                f"import os, sqlite3\nf = sqlite3.connect\nc = sqlite3.connect({read})\n",
+                "without calling it",
+            ),
+        }
+        for label, (source, expected) in cases.items():
+            with self.subTest(shape=label):
+                self.assertIn(expected, self.refusal(source) or "", label)
+        for label, source in {
+            "positional read": f"import os, sqlite3\nc = sqlite3.connect({read})\n",
+            "keyword read": f"import os, sqlite3\nc = sqlite3.connect(database={read})\n",
+            "name bound once": f"import os, sqlite3\nT = {read}\nc = sqlite3.connect(T)\n",
+            "numeric keyword beside the read": f"import os, sqlite3\nc = sqlite3.connect(os.getenv({self.NAME!r}), timeout=5)\n",
+        }.items():
+            with self.subTest(shape=label):
+                self.assertIsNone(self.refusal(source), label)
+
+
+class CopiedActorWorkerOutputTests(unittest.TestCase):
+    """Exercise the real subprocess transport, including malformed replies."""
+
+    def test_parent_budget_details_remain_concrete_in_final_artifacts(self) -> None:
+        module = CopiedActorRouteTests._module()
+        options = {
+            "deadline": 0.0,
+            "total_budget_seconds": 9,
+            "environment": {},
+            "cwd": ROOT,
+            "copied_actor": True,
+        }
+        attempt = module.run_supplemental_attempt({}, **options)
+        seam = module.run_seam_batch({"probes": [{"source": "fenced"}]}, **options)
+        artifact = json.loads(json.dumps({"permutation_probe": attempt, "seam": seam}))
+        for result in (artifact["permutation_probe"], artifact["seam"][0]):
+            self.assertEqual(result["unavailable"]["reason"], "budget-exhausted")
+            self.assertIn("9-second total budget", result["unavailable"]["detail"])
+            self.assertNotIn(
+                "Diagnostic text withheld", result["unavailable"]["detail"]
+            )
+
+    def test_withholding_preserves_json_protocol_and_authored_values(self) -> None:
+        module = CopiedActorRouteTests._module()
+        for target in ("score", "1", "/private/'quoted'/\\/caf\u00e9.sqlite"):
+            with self.subTest(target=target):
+                payload = {
+                    "score": 1.0,
+                    "passed": True,
+                    "error": f"Cannot open {target}",
+                    "captured_stdout": "Driver connected to a private DSN component",
+                    "seam": [{"delivered": target}],
+                }
+                process = module.run_calibration_worker(
+                    [
+                        sys.executable,
+                        "-I",
+                        "-S",
+                        "-c",
+                        "import sys; print(sys.stdin.read())",
+                    ],
+                    copied_actor=True,
+                    input=json.dumps(payload),
+                    text=True,
+                    capture_output=True,
+                )
+                self.assertEqual(process.returncode, 0, process.stderr)
+                result = json.loads(process.stdout)
+                self.assertEqual(result["score"], 1.0)
+                self.assertIs(result["passed"], True)
+                self.assertEqual(result["error"], module.COPIED_ACTOR_DIAGNOSTIC)
+                self.assertEqual(
+                    result["captured_stdout"], module.COPIED_ACTOR_DIAGNOSTIC
+                )
+                self.assertEqual(result["seam"][0]["delivered"], target)
+
+    def test_malformed_worker_output_and_stderr_are_redacted_before_forwarding(
+        self,
+    ) -> None:
+        module = CopiedActorRouteTests._module()
+        target = "/private/'quoted'/\\/caf\u00e9.sqlite"
+        process = module.run_calibration_worker(
+            [
+                sys.executable,
+                "-I",
+                "-S",
+                "-c",
+                "import sys; value = sys.stdin.read(); "
+                "print('driver stdout: ' + value); "
+                "print('driver stderr: ' + repr(value), file=sys.stderr); sys.exit(1)",
+            ],
+            copied_actor=True,
+            input=target,
+            text=True,
+            capture_output=True,
+        )
+        self.assertEqual(process.returncode, 1)
+        for stream in (process.stdout, process.stderr):
+            self.assertNotIn(target, stream)
+            self.assertNotIn(repr(target)[1:-1], stream)
+            self.assertIn("[redacted calibration target]", stream)
