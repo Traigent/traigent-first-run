@@ -10645,6 +10645,52 @@ class TheCardSpeaksTheUsersLanguageTests(unittest.TestCase):
             texts.append(MODULE.render_markdown(score))
             texts.append(MODULE.render_markdown(score, timestamp="2026-01-01"))
 
+        # AND THE SCORED EVALUATION STATES, sub-score lines included.
+        #
+        # The two scans above miss this whole class and a banned phrase got
+        # through it. `_customer_facing_strings` reads `SubScore` arguments off
+        # the AST, so an evidence sentence built into a local and passed by
+        # name is invisible to it; `_scores_the_renderers_branch_on` builds its
+        # scores by hand, so no sentence `score_evaluation` composes is in
+        # there either. Between them sat every line the refusal states print -
+        # which is the part of this file most rewritten and least swept.
+        #
+        # Scored rather than constructed, because the point is that the words
+        # reached a reader.
+        witness = "scorer.py line 6: calls .execute() on the candidate's SQL"
+        case = {"good_passes": True, "bad_fails": True, "non_constant": True}
+        payloads = (
+            {},
+            dict(
+                calibration_present=True,
+                calibration_supplied=True,
+                calibration_complete=True,
+                calibration_passed=True,
+                checks=(case, case),
+                probe_scores=((1.0, 0.0), (1.0, 0.0)),
+            ),
+            dict(calibration_present=True, calibration_supplied=True, timed_out=True),
+            dict(calibration_supplied=True),
+        )
+        for walk in (True, False, None):
+            for payload in payloads:
+                for flag in (True, False):
+                    pillar, caps = MODULE.score_evaluation(
+                        MODULE.EvaluationFacts(
+                            present=True,
+                            method="execution",
+                            task_kind="code-sql",
+                            parses=True,
+                            origin="brought",
+                            executes_candidate=walk,
+                            execution_witness=witness if walk else None,
+                            calibration_scope_refused=flag,
+                            **payload,
+                        )
+                    )
+                    texts.extend(sub.evidence for sub in pillar.subscores)
+                    texts.extend(cap.reason for cap in caps)
+
         # Two sentence builders whose fallback arm no state in this tree can
         # reach: both are total functions guarding a table a completeness test
         # keeps full, so they are called directly rather than left unread.
@@ -12950,7 +12996,10 @@ class ADeferredCalibrationSaysSoInTheFieldConsumersReadTests(unittest.TestCase):
         self.assertIn(
             "nobody asked this run to make that check", refused_calibration.evidence
         )
-        self.assertIn("known-good answer right", refused_calibration.evidence)
+        self.assertIn(
+            "try your evaluator on answers already known right and wrong",
+            refused_calibration.evidence,
+        )
         self.assertNotIn("scope gate", refused_calibration.evidence)
         # The whole sentence is built inside the arm that owns this state. An
         # earlier draft appended its tail after the branch, keyed on the flag

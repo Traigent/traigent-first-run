@@ -7847,10 +7847,16 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
                 # consequence on the witnessed arm - the same defect as the
                 # shared tail this seam already removed, one clause earlier.
                 # What it costs is said once, in the half that knows.
+                # SAID IN THE WORDS THE CHECK'S OWN LABEL USES. An earlier
+                # draft of this sentence read "marks a known-good answer right
+                # and a known-bad answer wrong", which is the tester's phrase
+                # the owner has struck twice, and the sweep that bans it could
+                # not see this line: it reads `SubScore` arguments off the AST,
+                # and this one arrives as a name.
                 evidence = (
-                    "we wanted to check that your evaluator marks a known-good "
-                    "answer right and a known-bad answer wrong, and nobody "
-                    "asked this run to make that check"
+                    "we wanted to try your evaluator on answers already known "
+                    "right and wrong, and nobody asked this run to make that "
+                    "check"
                 )
         elif defects := [
             reason
