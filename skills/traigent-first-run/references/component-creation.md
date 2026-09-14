@@ -492,7 +492,11 @@ what the run can actually establish. Before launching it, tell the user that thi
 the inspected evaluator. Pass `--allow-execution` as the assistant's explicit acknowledgement only
 after the inspection above; the flag is not safety evidence and bypasses no scope gate. This notice
 adds no stop-and-wait. The evaluator-method name and `--kind deterministic` are not safety evidence.
-Never reuse a result from an earlier run or a pre-existing artifact.
+Never reuse a result from an earlier run or a pre-existing artifact **for a calibration this run may
+take**: where the path is eligible, the check is cheap and a stale result says nothing about the file
+in front of you. The one exception is the path below, where this run may not take the check at all
+and the project's own result is the only measurement there will be; pass it as that reference says,
+with the declaration beside it, never as though this run had made the check.
 
 Otherwise run readiness without `--calibration` and name the concrete deferral: unresolved
 semantics, no defensible probe matrix, an uninstalled local dependency, a slow, uncertain, external,
@@ -502,14 +506,16 @@ the evaluation method is actually checked, and the card's recommended action nam
 calibration rather than reading `proceed`. Where the deferral is the evaluator-execution scope gate
 rather than a step this run could take, pass `--calibration-scope-refused` so the card discloses the
 unmade check instead of asking for the calibration this run may not take. Where the project already
-holds its own calibration result for that evaluator, pass it to `--calibration` and omit
-`--calibration-scope-refused`, which the two flags refuse each other over: the result is read exactly
-as any other is, and this run still does not take the measurement. Otherwise the flag discloses the
-unmade check; it lifts no ceiling and changes neither the score nor the band the customer is given,
-though the evaluation pillar and the pre-cap
-average both rise as the run stops losing points for a check this guide refused rather than one this
-project skipped, and it is the only route where preflight finds no engine.
-`calibrate_evaluator.py` refuses such an evaluator itself, naming the file and line, and
+holds its own calibration result for that evaluator, pass it to `--calibration` **beside** that same
+flag, never instead of it: the result is read exactly as any other is, and the flag is what keeps the
+disclosure and the connection question on the card. Passing the result alone removes them, because on
+a project whose walk found no engine the declaration is the only thing that raises the refusal at
+all. The flag lifts no ceiling and changes neither the score nor the band the customer is given,
+though the evaluation pillar and the pre-cap average both rise as the run stops losing points for a
+check this guide refused rather than one this project skipped, and it is the only route where
+preflight finds no engine.
+`calibrate_evaluator.py` refuses such an evaluator itself where its walk can see the execution,
+naming the file and line - finding none establishes nothing, so that refusal is not a clearance - and
 `references/run-safety.md` records why no in-process route replaces it. Apply the run-scoped
 evaluator-method rule above to both scripts, and apply the run-scoped task-kind rule to readiness
 only here - narrower than its destination rule in `references/evaluation-and-dataset.md`, because

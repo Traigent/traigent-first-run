@@ -7369,6 +7369,34 @@ def dataset_integrity_reason(facts: DatasetFacts) -> str | None:
     return joined[0].upper() + joined[1:] + "."
 
 
+def calibration_result_established(facts: EvaluationFacts) -> bool:
+    """Whether a calibration RESULT reached this score, complete and decided.
+
+    Named because two places need it and one of them is a test. The sweep over
+    the refusal states has to skip the states where a result was credited, and
+    spelling the predicate again there is the "two spellings of one question"
+    defect `check_table_defect` was written against: the copy omitted the
+    check-table conjunct, so a payload declared complete over an unreadable
+    table would have been skipped by the test while the module still called it
+    unestablished.
+
+    Three conjuncts, and each one is a way a payload can fail to be evidence: a
+    table this score can read in EVERY value (not only the three required
+    names, which is how `"false"`, `1`, `[1]` and `{}` once earned full
+    credit), a boolean verdict, and the adapter's own completion flag where it
+    was set - because a direct caller can pass `calibration_complete=True`
+    beside an empty check set and must not clear a behavioral-evidence ceiling
+    with it.
+    """
+    established = bool(facts.checks) and all(
+        readable_check_table(checks) for checks in facts.checks
+    )
+    established = established and isinstance(facts.calibration_passed, bool)
+    if facts.calibration_complete is not None:
+        established = established and facts.calibration_complete
+    return established
+
+
 def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
     caps: list[Cap] = []
     subs: list[SubScore] = []
@@ -7525,24 +7553,12 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
         subs.append(SubScore("probe-spread", 0.0, 15.0, False, evidence))
         return combine("evaluation", subs), caps
 
-    calibration_complete = facts.calibration_complete
-    # The adapter's completion flag and the payload must agree. Direct callers
-    # can construct `EvaluationFacts` too, so `calibration_complete=True` beside
-    # an empty or partial check set cannot clear a behavioral-evidence ceiling.
-    # EVERY value, not only the three required names. The type check used to
-    # cover the required set and nothing else, so an optional check reported as
-    # `"false"`, `1`, `[1]` or `{}` was clamped to True by the adapter and
-    # earned the calibration its full forty points -- a malformed table scoring
-    # as a passing one. `--calibration` reads arbitrary JSON an assistant hands
-    # over, so this is the shape this function exists to survive.
-    #
-    # Malformed lands on incomplete, which is the honest third answer: not a
-    # pass, and not a failure either. Convicting on it would repeat the earlier
-    # mistake in the other direction, since a value nobody can read is not
-    # evidence that the evaluator is broken.
-    checks_complete = bool(facts.checks) and all(
-        readable_check_table(checks) for checks in facts.checks
-    )
+    # The adapter's completion flag, the check table and the verdict all have
+    # to agree before a payload is evidence, and they are read in one place:
+    # `calibration_result_established` above, which carries the argument for
+    # each conjunct. Malformed lands on incomplete, which is the honest third
+    # answer - not a pass, and not a failure either, since a value nobody can
+    # read is not evidence that the evaluator is broken.
     # `calibration_passed` belongs to this invariant too, but only one way
     # round, and the asymmetry is the whole point.
     #
@@ -7589,9 +7605,7 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
     observed_failure = any(
         value is False for checks in facts.checks for value in checks.values()
     ) or (facts.calibration_passed is False and any(checks for checks in facts.checks))
-    established = checks_complete and isinstance(facts.calibration_passed, bool)
-    if calibration_complete is not None:
-        established = established and calibration_complete
+    established = calibration_result_established(facts)
     # One expression, and `observed_failure` sits OUTSIDE every conjunct on
     # purpose. Folding it in beside the verdict left the adapter's own
     # structural flag still ANDed over the top, so the leniency survived a fix
@@ -7650,9 +7664,13 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
     # arrive as JSON on `--calibration`. So crediting the result does pay for
     # the forbidden route, and the answer is that paying for it is not this
     # file's job to prevent. `calibrate_evaluator.py` refuses an evaluator that
-    # executes the candidate's answer, naming the file and the line, so the
-    # tool this guide ships will not produce that payload at all; the guidance
-    # forbids taking the check another way. A score is a reading of the
+    # executes the candidate's answer, naming the file and the line, so for the
+    # shapes its walk can SEE the tool this guide ships will not produce that
+    # payload at all - and `references/run-safety.md` is explicit that finding
+    # none establishes nothing, so for an engine behind a helper module it will
+    # produce one happily. That residue is the same population the refusal has
+    # always been unable to reach, and the guidance forbids taking the check
+    # another way. A score is a reading of the
     # evidence in front of it, and a scorer that withholds credit to enforce a
     # rule is one that reports a lower number than it believes - which is the
     # accusation traigent-first-run#507 has just finished removing from this
@@ -8323,16 +8341,18 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
                 asks=True,
             )
         )
-    # The derived predicate rather than the declaration, so this cap fires
-    # wherever the credit was refused - including the case a complete
-    # calibration WAS supplied for an evaluator preflight proved reaches an
-    # engine, where `established` is True and every condition above would have
-    # let the card report a clean 85/STRONG on evidence it may not accept.
+    # The derived predicate rather than the declaration, so this cap fires on
+    # the SHAPE and not on whether anything was credited. That distinction is
+    # the point of `execution_disclosure_due` (traigent-first-run#506): a
+    # complete calibration supplied for an evaluator preflight proved reaches
+    # an engine IS credited now - the card reads 85/STRONG on it - and the cap
+    # is raised over that score all the same, because the hazard it discloses
+    # is about the paid run rather than about the check.
     # It stays mutually exclusive with `evaluator-unvalidated` above, which is
     # what `CAP_SEVERITY_ORDER` records about the pair: the two conditions
     # read the same predicate in opposite directions. It also stays clear of
     # `evaluator-invalid`, because a calibration that observed a failure
-    # convicts and is never credit-refused, and of `evaluator-timeout`, which
+    # convicts and is never disclosure-due, and of `evaluator-timeout`, which
     # `calibration_refusal_capped` yields to.
     if calibration_refusal_capped:
         # The opening names what is connected, and it may not assert a
@@ -21082,19 +21102,25 @@ def run(argv: Sequence[str] | None = None) -> int:
     # this is the one input allowed to move the score on nothing but its own
     # word. The planner half takes no evidence at all, so a review reaching it
     # is the same mistake spelled differently.
-    # A run cannot both have calibrated this evaluator and have been refused
-    # permission to. Accepting the pair would let a card carry the safety
-    # sentence over evidence produced by the very path that sentence says was
-    # not taken - which is the one way this declaration could be used to
-    # describe a run that did the opposite of what it claims.
-    if args.calibration and args.calibration_scope_refused:
-        print(
-            "cannot read scoring input: --calibration-scope-refused says this "
-            "run was not permitted to execute the evaluator, and --calibration "
-            "is the result of executing it. Pass one.",
-            file=sys.stderr,
-        )
-        return 2
+    # THE PAIR IS ACCEPTED, AND IT USED TO BE REFUSED (traigent-first-run#506).
+    #
+    # The refusal read "a run cannot both have calibrated this evaluator and
+    # have been refused permission to", which was true while `--calibration`
+    # meant "the result of executing it HERE". It does not mean that any more:
+    # a project may hand this run a result it took itself, on its own machine,
+    # for an evaluator this guide declines to calibrate. Those two facts are
+    # not opposites - they are the whole of that customer's situation, and
+    # refusing the pair made the assistant choose between them.
+    #
+    # What that choice cost is the reason this was lifted rather than left
+    # alone. On a project whose walk found no engine, the declaration is the
+    # ONLY thing that raises `evaluator-calibration-refused`, and that cap
+    # carries the execution disclosure and the connection question. An
+    # assistant told to pass the result instead therefore traded the entire
+    # hazard disclosure for the credit: measured, 45 PARTIAL with the
+    # disclosure became 85 STRONG with no cap at all. Passing both is the
+    # state that is true, and it scores as both: the pillar counts the result
+    # and the card still says what the paid run will do.
 
     # Refused rather than ignored, for the reason `--row-review` is refused
     # below: `scoring_requested` does not count this flag, so a run passing it

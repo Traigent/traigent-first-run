@@ -6034,18 +6034,23 @@ class SkillPackageTests(unittest.TestCase):
             # That it is not a verdict on their evaluator. The MANDATE to
             # say so lives in `SKILL.md`'s cap-routing paragraph and may not
             # be restated here; what belongs here is the fact behind it.
-            "none of it follows from anything their evaluator did",
+            # Scoped to the REFUSAL, because what their evaluator did does
+            # show on the card once a result reaches the score - a passing one
+            # is counted and a failing one convicts (traigent-first-run#506).
+            # The unscoped form said the whole card followed from nothing they
+            # did, which stopped being true of the pillar beside it.
+            "the refusal follows from nothing their evaluator did",
             # The REASON is not restated here: this document argues the
             # unbounded target four paragraphs above, and a disclosure that
             # re-explains it is a second home inside one file.
-            "the reason is the unbounded target above",
+            "its reason is the unbounded target above",
             # AND THAT THERE IS NO ROUTE OUT TO GIVE THEM. This pinned "the
             # route out is the customer's own, stated on the card" while the
             # card was handing a customer an errand for a check nothing they
             # do reaches - the unmade check is ours (traigent-first-run#392).
             # A disclosure that ends by naming a remedy reads as a to-do, and
             # the whole reversal is that it is not one.
-            "gives them no route out of the ceiling",
+            "gives them no errand for the ceiling",
             "nothing they do inside\nthis run lifts it".replace("\n", " "),
             # And the block is gone, said here because this is the document
             # #393 cited when it added one.
@@ -6189,11 +6194,23 @@ class SkillPackageTests(unittest.TestCase):
                 self.assertNotIn("nothing here can check it", text)
                 self.assertNotIn("a declaration nothing here can check", text)
         self.assertIn(
-            "it lifts no ceiling and changes neither the score nor the band the "
-            "customer is given, though the evaluation pillar and the pre-cap "
-            "average both rise as the run stops losing points for a check this "
-            "guide refused rather than one this project skipped, and it is the "
-            "only route where preflight finds no engine",
+            "the flag lifts no ceiling and changes neither the score nor the "
+            "band the customer is given, though the evaluation pillar and the "
+            "pre-cap average both rise as the run stops losing points for a "
+            "check this guide refused rather than one this project skipped, "
+            "and it is the only route where preflight finds no engine",
+            skill,
+        )
+        # AND THAT THE RESULT GOES BESIDE THE FLAG, NEVER INSTEAD OF IT. The
+        # first version of this sentence said "instead", which on a project
+        # whose walk found no engine removes the only thing that raises the
+        # refusal: measured, 45 with the disclosure became 85 STRONG with no
+        # cap at all (traigent-first-run#506). Both halves are pinned, because
+        # the instruction is only safe as a pair.
+        self.assertIn("beside** that same flag, never instead of it", skill)
+        self.assertIn(
+            "on a project whose walk found no engine the declaration is the "
+            "only thing that raises the refusal at all",
             skill,
         )
         # And the same claim in the other home, so neither can be corrected
@@ -7659,8 +7676,12 @@ class SkillPackageTests(unittest.TestCase):
             "no settings document ever reaches an opening score",
             # The Agent pillar's own sentence, which is now about what IS read.
             "the assistant cites relative source lines below the local project root",
-            # And the point of the paragraph, which survives both corrections.
-            "neither is something the user was supposed to bring",
+            # And the point of the paragraph, which survives three
+            # corrections. Said as "required" rather than "supposed to" since
+            # traigent-first-run#506, because a project MAY now bring its own
+            # calibration result for an evaluator the gate declined - what
+            # stays true is that nothing here asked them for one.
+            "neither of which is something the user was required to bring",
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, glossary)

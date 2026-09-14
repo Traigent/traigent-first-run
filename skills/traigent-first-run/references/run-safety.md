@@ -462,14 +462,17 @@ on our initiative. It is not their onboarding.
 in their own words, and do not soften any of it:
 
 - **what was not checked** - their evaluator, against their engine;
-- **that the reason is our boundary, not their defect, and that we therefore do not know whether
-  their evaluator works** - we declined the check, so nothing here established that it is sound and
-  nothing here established that it is broken. Their query may be wrong, their column types may not
-  match, their cells may be null; this run has not looked. No step in this guide would change that,
-  and that is a fact about the guide rather than about them. **Never say there is nothing for them
-  to fix** - that says we looked, and we did not. Keep the scope tight in the other direction too:
-  an evaluator rewritten later to compare rather than execute is a different evaluator, out of this
-  gate altogether, so "no change of yours could ever matter" is false as well;
+- **that the reason is our boundary, not their defect, and - where no result reached the score -
+  that we therefore do not know whether their evaluator works**: we declined the check, so nothing
+  here established that it is sound and nothing here established that it is broken. Their query may
+  be wrong, their column types may not match, their cells may be null; this run has not looked. No
+  step in this guide would change that, and that is a fact about the guide rather than about them.
+  **Never say there is nothing for them to fix** - that says we looked, and we did not. Where the
+  project DID supply its own result, those two sentences are false and the card stops saying them:
+  say instead that their own measurement is being counted and that nothing here watched the run that
+  produced it. Keep the scope tight in the other direction too: an evaluator rewritten later to
+  compare rather than execute is a different evaluator, out of this gate altogether, so "no change
+  of yours could ever matter" is false as well;
 - **what proceeding concretely means** - during the paid run the *model* writes the statements and
   their evaluator executes them against whatever it is configured to reach, many times over. The
   statements are generated, not theirs, so their trust in their own code is not the trust being
@@ -484,7 +487,9 @@ Record the answer there. **Silence proceeds**, and a `no` proceeds too: the disc
 already done its work.
 
 A separate manual containment design and review remains available outside this guide, and it is the
-only route to the calibration evidence itself; it must decide the execution boundary, mounted
+only route by which THIS RUN could reach the calibration evidence; it is not the only way the
+evidence can exist, because a project may take that measurement itself and hand the result back. It
+must decide the execution boundary, mounted
 inputs, credentials, network, limits, cleanup, and SQL data scope. Do not describe that manual work
 as available through this guide, imply that a local subprocess fulfils it, or present it as
 something the customer must complete before their first run.
@@ -523,6 +528,8 @@ different proposition, and it is one this guide deliberately does not own. So th
 containment design and review above is still the whole of the route to that EVIDENCE - work a project
 can commission for itself, on its own time, and never a precondition of its first run - and a project
 whose evaluator runs the candidate's answer proceeds here without this run having taken that check.
+That is the whole of the route for US. It is not the whole of the route: a project that measures its
+own evaluator, on its own machine, has taken a measurement this guide will read.
 
 That customer's card is a consequence of this decision rather than of their project. **The check is
 one this guide declines to PERFORM, and never one the customer is forbidden to make.** A project
@@ -541,13 +548,15 @@ declaration, the claim is held at 45, because a word about a file nobody read ma
 may never lift one. The
 card carries the disclosure this section makes. It does not put the question: that happens once, at
 the pre-spend approval, for the reason given above.
-The card says which case a run is
-in. None of it follows from
-anything their evaluator did: the reason is the unbounded target above. The card gives them no route
-out of the ceiling, and no longer pretends to - the unmade check is ours, so nothing they do inside
-this run lifts it, and saying otherwise handed them an errand instead of a disclosure. That is a
-statement about THIS RUN, not about the containment review above, which stays available to a project
-that wants the evidence for its own reasons.
+The card says which case a run
+is in. The REFUSAL follows from nothing their evaluator did: its reason is the unbounded target
+above. What their evaluator did still shows on the card where a result reached the score - a passing
+one is counted and a failing one convicts - and the two are not in tension, because the refusal is
+about the check we did not make and the pillar is about the measurement somebody did. The card gives
+them no errand for the ceiling and no longer pretends to: the unmade check is ours, so nothing they
+do inside this run lifts it. That is a statement about THIS RUN, not about the containment review
+above, which stays available to a project that wants the evidence for its own reasons - as does
+measuring their own evaluator themselves, which this run will read.
 
 ### A replay that changes the customer's world asks first
 
@@ -1953,8 +1962,8 @@ Each event names what its `class` may be.
   elsewhere says to surface without guessing a category among them.
 - `warning` - observed, and able to distort the result without stopping the run: `containment`,
   `refused-trial`, `untracked-cost`, `cap-standing`, or `uncategorized`. The first is the evaluator
-  check the scope gate skipped: nothing measured that evaluator, which can distort the result, and
-  nothing about it stops the run. Recording it under the event above would say, in the artifact a
+  check the scope gate skipped: THIS RUN measured nothing about that evaluator, which can distort the
+  result unless the project supplied a measurement of its own, and nothing about it stops the run. Recording it under the event above would say, in the artifact a
   user hands to somebody else, that a completed run had halted. Nothing that halts the run is one of these,
   however it presents: tracking that degrades to local-only stops paid work, so it is a `stopped`.
 

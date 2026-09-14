@@ -152,7 +152,10 @@ Follow this order:
 4. Before calibration, apply `references/run-safety.md`'s execution-evaluator scope gate. If the
    resolved evaluator call path identifies code/SQL execution, record the `containment` warning, skip
    calibration, and continue the run on the disclosure that reference sets out - the run does not
-   end, and a `stopped` identity would say in the durable log that it had. Otherwise, run deterministic calibration only after a `sufficient`
+   end, and a `stopped` identity would say in the durable log that it had. Where the project holds
+   its own calibration result for that evaluator, pass it to readiness beside
+   `--calibration-scope-refused` under component-creation.md's Opening readiness procedure: this run
+   still takes no such measurement, and the flag is what keeps the disclosure on the card. Otherwise, run deterministic calibration only after a `sufficient`
    semantic-coverage verdict. Its path must be fully inspected, must not execute
    candidate-generated code or SQL, and must be local-only and
    side-effect-free, and runs in the credential-stripped calibration subprocess. Where the agent has
@@ -659,10 +662,11 @@ disclosure `references/run-safety.md` sets out. Where it bounds the claim at all
 owns which arm does - the bound is on what the card may say and never on what the customer may do. Its one ask is whether their evaluator connects read-only, and the
 pre-spend approval in section 6 is where it is put - the moment the answer bears on, and the one
 place it is asked - never a stop of its own; silence proceeds. Say that what is missing is evidence
-and not a finding against their evaluator, that because the check was not made
-this run does not know whether their evaluator works - neither that it does nor that it does not -
-and that no step here would change that. Never say there is nothing for them to fix: that claims a
-look this run did not take. Never present the unsafe route as the way to lift it.
+and not a finding against their evaluator. What follows from that - whether this run knows anything
+about the evaluator, and what to say where the project handed it their own result instead - is owned
+by `references/run-safety.md` and stated once there. This paragraph carried a second copy, and when
+the card stopped saying those sentences the copy went on instructing the assistant to say them.
+Never present the unsafe route as the way to lift it.
 `evaluator-timeout` is neither a repair to route nor the invalid-evaluator
 paragraph: calibration ran and did not finish, which establishes nothing about this evaluator and
 does not make it invalid - slow and broken look identical from here. Settle it while gaps are still

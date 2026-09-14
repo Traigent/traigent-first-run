@@ -13130,20 +13130,46 @@ class ADeferredCalibrationSaysSoInTheFieldConsumersReadTests(unittest.TestCase):
             ["evaluator-calibration-refused"],
         )
 
-    def test_the_cli_refuses_a_run_claiming_both_at_once(self) -> None:
-        """Calibrating and being refused permission to calibrate are opposites.
+    def test_the_cli_takes_a_supplied_result_beside_the_refusal(self) -> None:
+        """The pair is the whole of that customer's situation, not a claim.
 
-        Accepting the pair would let a card carry the containment sentence
-        over evidence produced by the very path that sentence says was not
-        taken.
+        This pinned the opposite - "calibrating and being refused permission
+        to calibrate are opposites" - which was true while `--calibration`
+        meant the result of executing the evaluator HERE. Under
+        traigent-first-run#506 it can be a result the project took itself, for
+        an evaluator this guide declines to calibrate, and the two facts sit
+        together.
+
+        Refusing the pair was not neutral. On a project whose walk found no
+        engine the declaration is the ONLY thing that raises
+        `evaluator-calibration-refused`, and that cap carries the execution
+        disclosure and the connection question - so an assistant told to pass
+        the result instead traded the disclosure for the credit. Both halves
+        are asserted here: the run is accepted, and the card still says what
+        the paid run will do.
         """
         with tempfile.TemporaryDirectory() as directory:
             calibration = Path(directory) / "calibration.json"
-            calibration.write_text(json.dumps({"cases": [], "passed": True}))
+            calibration.write_text(
+                json.dumps(
+                    {
+                        "passed": True,
+                        "cases": [
+                            {
+                                "checks": {
+                                    "good_passes": True,
+                                    "bad_fails": True,
+                                    "non_constant": True,
+                                }
+                            }
+                        ],
+                    }
+                )
+            )
             preflight = Path(directory) / "preflight.json"
             preflight.write_text(json.dumps([]))
-            errors = io.StringIO()
-            with contextlib.redirect_stderr(errors):
+            out, errors = io.StringIO(), io.StringIO()
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(errors):
                 code = MODULE.run(
                     [
                         "--preflight",
@@ -13156,9 +13182,18 @@ class ADeferredCalibrationSaysSoInTheFieldConsumersReadTests(unittest.TestCase):
                         "--json",
                     ]
                 )
-        self.assertEqual(code, 2)
-        self.assertIn("--calibration-scope-refused", errors.getvalue())
-        self.assertIn("Pass one.", errors.getvalue())
+        self.assertEqual(code, 0, errors.getvalue())
+        payload = json.loads(out.getvalue())
+        conditions = [cap["condition"] for cap in payload["caps"]]
+        self.assertIn("evaluator-calibration-refused", conditions)
+        reason = next(
+            cap["reason"]
+            for cap in payload["caps"]
+            if cap["condition"] == "evaluator-calibration-refused"
+        )
+        # The disclosure the refusal exists to carry, still carried.
+        self.assertIn("during the paid run the MODEL writes", reason)
+        self.assertIn("--evaluator-connection read-only", reason)
 
     def test_un_asking_it_returns_proceed_and_no_table_notices(self) -> None:
         """The mutation, executed, on the pattern the sibling remedy test set.
@@ -15122,9 +15157,7 @@ class TheWitnessDecidesTheScopeGateNotTheDeclarationTests(unittest.TestCase):
                 # there is the credited one and the refusal has nothing to say
                 # about a check that was made (traigent-first-run#506).
                 # Derived from the same two facts the module reads.
-                if facts.calibration_complete and isinstance(
-                    facts.calibration_passed, bool
-                ):
+                if MODULE.calibration_result_established(facts):
                     continue
                 sub = self._calibration_subscore(score)
                 engaged = bool(
@@ -15168,7 +15201,10 @@ class TheWitnessDecidesTheScopeGateNotTheDeclarationTests(unittest.TestCase):
                 # is its CEILING, which is what carries "no claim". The two are
                 # a package - see `calibration_refusal_consequence` - and the
                 # arm-by-arm proof that the flag still buys nothing lives in
-                # `test_the_declaration_still_buys_nothing` below.
+                # `test_the_declaration_moves_the_pillar_and_never_the_overall`
+                # and `test_only_evidence_retires_the_ceiling_never_the_declaration`
+                # above, which is where the pair was actually written - the
+                # name this comment used has never existed in this file.
                 self.assertFalse(
                     refusal.charged,
                     "a check this run did not make is never a deduction",
@@ -15272,12 +15308,16 @@ class TheWitnessDecidesTheScopeGateNotTheDeclarationTests(unittest.TestCase):
     def test_a_calibration_that_failed_still_convicts(self) -> None:
         """The one direction this refusal may fail in.
 
-        A calibration performed outside the scope this guide permits may not
-        BUY anything with what it measured. It may still convict: suppressing
-        the conviction as well would score an evaluator proved defective as
-        merely unmeasured, moving it from `evaluator-invalid` at 25 up to the
-        refusal's 45 - leniency bought by breaking the rule, which is the
-        inversion this whole seam exists to refuse.
+        The rest of this docstring described a rule that is gone: a complete
+        result now BUYS what it measured, wherever it was taken, because the
+        check is one this guide declines to perform rather than one the
+        customer is forbidden to make (traigent-first-run#506).
+
+        Conviction was never the same question, and it is the half that does
+        not move. Suppressing it would score an evaluator proved defective as
+        merely unmeasured, lifting it from `evaluator-invalid` at 25 up to the
+        refusal's 45 - a worse evaluator reported as a better one, on evidence
+        that says so in the payload this card just read.
         """
         failing = MODULE.EvaluationFacts(
             **{
