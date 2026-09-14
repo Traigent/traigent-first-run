@@ -2,7 +2,14 @@ name: Validate
 
 on:
   pull_request:
+  # `push` is limited to the trunk. Without the filter every push to a pull
+  # request branch started two identical runs of this workflow on the same
+  # commit, a `push` and a `pull_request`, seconds apart - about 14 minutes
+  # of runner time each, and GitHub cancelling one of them at random. The
+  # merged result on `first-run-guide` is the one commit no `pull_request`
+  # event tests, so that push is kept.
   push:
+    branches: [first-run-guide]
 
 jobs:
   offline-contract:
