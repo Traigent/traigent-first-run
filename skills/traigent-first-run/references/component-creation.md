@@ -459,17 +459,20 @@ never ask. Omit a flag only while that component does not exist, and update it t
 creates the component. The dataset takes no such flag: its origin is counted per row from declared
 provenance.
 
-Before any component creation or repair, choose from the recorded inventory. If there is exactly
-one compatible Python 3.11-3.13 isolated-environment candidate overall and its resolved path is
-inside the user's project root, use its resolved interpreter and report `python-version` as
-measured. Otherwise resolve an already installed supported interpreter using
+Before any component creation or repair, choose from the recorded inventory. Verify candidates
+through [`run-safety.md` § Choosing the environment](run-safety.md#choosing-the-environment),
+whose read-only detector owns interpreter provenance; an unverified candidate is never launched.
+If there is exactly one verified compatible Python 3.11-3.13 isolated-environment candidate overall
+and its resolved path is inside the user's project root, use the trusted matching host runtime
+for these checks and report `python-version` as measured. Read candidate metadata through the
+detector; do not launch a customer's interpreter before setup approval. Otherwise resolve an already installed supported interpreter using
 [`run-safety.md` § Finding a supported interpreter](run-safety.md#finding-a-supported-interpreter)
 as a provisional, no-install bootstrap. Multiple compatible candidates and environments outside
 the project wait for section 5; if the sole candidate fails, record why and use that same lookup.
-Run bootstrap preflight and readiness with `-I -S`, excluding user-site packages and `PYTHONPATH`.
+Run bootstrap preflight and readiness with `-I -S -B`, excluding user-site packages and `PYTHONPATH`.
 Name its executable and version; its SDK availability is unmeasured, not evidence that the run
 environment is ready. An opening SDK finding from either interpreter never replaces section 5's
-required post-install check in the dedicated environment, which remains authoritative for the run.
+required post-install check in the chosen environment, which remains authoritative for the run.
 
 Run the bundled static preflight with `--defer-missing-sdk` over whatever dataset was discovered,
 omitting `--dataset` when none exists. Then include every safe measurement that can finish now in
@@ -494,9 +497,10 @@ after the inspection above; the flag is not safety evidence and bypasses no scop
 adds no stop-and-wait. The evaluator-method name and `--kind deterministic` are not safety evidence.
 Never reuse a result from an earlier run or a pre-existing artifact **for a calibration this run may
 take**: where the path is eligible, the check is cheap and a stale result says nothing about the file
-in front of you. The one exception is the path below, where this run may not take the check at all
-and the project's own result is the only measurement there will be; pass it as that reference says,
-with the declaration beside it, never as though this run had made the check.
+in front of you. The exception below is the execution path this guide declines against the original
+target. A project's own result remains evidence; the copied-actor route may later measure a copy.
+Use the procedure below for either result and its scope declaration; attribute who measured it only
+where this run has that evidence.
 
 Otherwise run readiness without `--calibration` and name the concrete deferral: unresolved
 semantics, no defensible probe matrix, an uninstalled local dependency, a slow, uncertain, external,
@@ -506,7 +510,7 @@ the evaluation method is actually checked, and the card's recommended action nam
 calibration rather than reading `proceed`. Where the deferral is the evaluator-execution scope gate
 rather than a step this run could take, pass `--calibration-scope-refused` so the card discloses the
 unmade check instead of asking for the calibration this run may not take. Where the project already
-holds its own calibration result for that evaluator, pass it to `--calibration` **beside** that same
+holds its own calibration result or the copied-actor route produces one, pass it to `--calibration` **beside** that same
 flag, never instead of it: the result is read exactly as any other is. Where the result passes,
 the flag keeps the execution disclosure and connection question on the card. On a project whose
 walk found no engine the declaration is the only thing that raises the refusal at all; an observed

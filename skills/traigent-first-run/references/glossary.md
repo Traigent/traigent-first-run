@@ -82,9 +82,9 @@ Evaluator (evaluation method, scorer)
   Kinds: exact match, comparison over canonical form - how a query or code
   answer is graded here, with aliases, case and spacing resolved before
   matching - overlap metrics (F1), or an LLM-as-judge that reads a rubric.
-  Running the answer to grade it, as execution match and unit tests do, is a
-  check this guide skips rather than one that stops you: the run carries on
-  and the card says what went unchecked.
+  Running the answer to grade it, as execution match and unit tests do, follows
+  run-safety.md's execution scope and copied-actor route. The card distinguishes
+  the original target left unchecked from any calibration result it read.
   Ask like this: "How do you (or should we) decide whether an answer is correct?"
 
 Evaluation (grading)
@@ -296,9 +296,9 @@ The lines under each pillar on the card
   When calibration lines are unmeasured: "tried on answers already known right
   and wrong" and "separates good answers from bad" need an executed calibration.
   They can already be measured on the opening card when the opening gate ran
-  that check, or from a result the project took itself and handed this run for
-  an evaluator the gate declined - the card says it read that result rather
-  than taking the measurement. Otherwise explain the recorded reason it was
+  that check, or from the project's own result or a completed copied-actor
+  calibration under run-safety.md. The scoring command reads the result rather
+  than observing the measurement. Otherwise explain the recorded reason it was
   deferred or declined, neither of which is something the user was required to
   bring. Read the card's own
   measured-check counts, deductions and claim limits rather than assigning one
@@ -386,22 +386,14 @@ Readiness score (the card, the three pillars, bands, caps, blocked)
 
 
 NOT CHECKED HERE
-  Plain: a check this guide chose not to run on your project, said out loud.
-  This label carries no numeric ceiling.
-  It reads differently from every other label on the card, and the difference is
-  the point. The others all describe something about YOUR material - a component
-  that is missing, answers nobody read, rows that repeat - and each names
-  something you could change, whether it stops the run or only bounds what the
-  card may claim. This one describes a boundary of OURS. The only case that
-  carries it today is an evaluator that runs the model's answers as code or SQL:
-  running it to check it would mean executing candidate code or opening your
-  database from inside this guide, and
-  this guide will not do either.
-  The label describes what this run did, not how much evidence the customer
-  supplied. With no supplied result, two of four evaluation checks are measured
-  and thin evidence holds the band at Workable. A complete passing result can
-  establish all four checks and support Strong while this same label stays:
-  the card read the customer's measurement, it did not perform it. Read the
+  Plain: the evaluator was not checked against its original target by this guide.
+  This label carries no numeric ceiling. It describes the execution boundary
+  owned by run-safety.md, including that reference's copied-actor exception.
+  The label does not establish who produced a supplied calibration result.
+  Without a supplied result, calibration and probe spread remain unmeasured;
+  thin evidence holds the band at Workable. A complete passing result can establish
+  all four checks and support Strong while this same label stays: the scoring
+  command read a supplied result, it did not observe its production. Read the
   actual check counts and band; run-safety.md owns the supplied-result cases.
 
 .env file

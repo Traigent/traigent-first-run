@@ -154,7 +154,8 @@ Follow this order:
    calibration, and continue the run on the disclosure that reference sets out - the run does not
    end, and a `stopped` identity would say in the durable log that it had. For a project-supplied
    calibration result, follow component-creation.md's Opening readiness procedure; run-safety.md
-   owns what the resulting card establishes. Otherwise, run deterministic calibration only after a `sufficient`
+   owns what the resulting card establishes and when its copied-actor route can be offered.
+   Otherwise, run deterministic calibration only after a `sufficient`
    semantic-coverage verdict. Its path must be fully inspected, must not execute
    candidate-generated code or SQL, and must be local-only and
    side-effect-free, and runs in the credential-stripped calibration subprocess. Where the agent has
@@ -395,7 +396,9 @@ For deterministic calibration, the helper runs authored probes in a credential-s
 Each deterministic supplemental attempt gets a fresh child, also stripped of credentials, isolating
 process-local scorer and dependency state from other attempts. This is process separation, not
 sandbox isolation. Its supplemental phase shares the single `--timeout` budget. SKILL's scope gate skips
-the evaluator check rather than executing candidate code or SQL, and the run continues without it.
+the evaluator check rather than executing candidate code or SQL, and the run continues without it;
+the copied-actor route in `references/run-safety.md` is the one exception, and it runs through the
+same helper under `--calibrated-copy-of`.
 
 Read `exception_probe_advisory` as an advisory, not a verdict. The probe family exercises common
 `ValueError`, `TypeError`, and runtime-error operations, plus malformed Python and JSON text that
@@ -1456,13 +1459,15 @@ SDK run logs that exist. Name only what was actually written. Deleting this igno
 the original customer components untouched, but removes walkthrough components, results, repairs,
 and resume evidence stored only there. Retain anything the user wants before optional cleanup;
 never promise that deleting it loses nothing. Other writes sit outside the folder and are not
-covered by it: the `/traigent-runs/` and `/.venv-traigent/` rules added to the project `.gitignore`;
+covered by it: the `/traigent-runs/` rule and the `/.venv/` or `/.venv-traigent/` rule added to the project `.gitignore`;
 the provider key line in `.env`, or the
-whole file when this run created it; the dedicated first-run virtual environment at the project
-root, `.venv-traigent`; and any changes to a credential handoff file the user named, wherever that
+whole file when this run created it; the packages this run installed into the customer's own
+environment, the persistent project `.venv` created for them with its installed packages, or the
+throwaway `.venv-traigent`, whichever route was taken. Keep the persistent `.venv` for continued
+use. Also name any changes to a credential handoff file the user named, wherever that
 file lives. Name only the ones this run actually performed, giving absolute paths for the
 environment and selected credential file so the user can find what deleting `traigent-runs/`
-leaves behind. Existing environments and their site-packages are not
+leaves behind. Environments the customer did not approve, and their site-packages, are not
 first-run writes: this guide preserves them.
 
 Skills installed during this run are the one item the list cannot hand over ready to use. Name the

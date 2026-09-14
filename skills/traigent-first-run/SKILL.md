@@ -109,12 +109,12 @@ approval.
 |---|---|
 | Read-only discovery and static validation | Proceed without approval; do not import or execute user code. |
 | Create `traigent-runs/` artifacts; when the project root is inside a Git worktree, add `/traigent-runs/` to the project-root `.gitignore` | Proceed only after inspection and once task intent is anchored; when the Git probe fails, do not create `.gitignore`; preserve source material and provenance. |
-| Create an isolated environment | Proceed only after task intent is anchored and the available standard-library-only component checks have run; in a Git worktree, ensure the project-root `.gitignore` excludes `/.venv-traigent/` as the environment procedure directs. Do not fetch or install packages as part of environment creation. |
-| Install dependencies in the isolated environment | Proceed only after task intent is anchored and the available standard-library-only component checks have run, and only in the dedicated first-run environment this run created, for the exact packages and versions declared for the run, as a package-artifact fetch/install with no provider or Traigent calls, private-data transfer, or user/project code execution. Name its absolute path before touching it. Preserve every existing, shared, or dependent environment; do not install into or fall back to one. A user or environment policy that requires install approval still takes precedence. |
+| Create the selected project environment | Proceed only after task intent is anchored and the available standard-library-only component checks have run, through the creation choice in `references/run-safety.md`; that procedure selects the persistent `.venv` or fallback `.venv-traigent`, preserves occupied paths, and owns the corresponding `/.venv/` or `/.venv-traigent/` Git ignore rule. Do not fetch or install project dependencies as part of environment creation. |
+| Install the SDK into the chosen environment | Proceed only after task intent is anchored and the available standard-library-only component checks have run. Into an existing customer environment: only on their yes to the approval card showing the isolated installer's resolved plan, for what the version guard allows. Into the new persistent project environment: the single creation-and-install approval in `references/run-safety.md` covers the declared package scope; that procedure owns the fresh-environment plan and stops for a changed scope. Into the throwaway environment this run created: without another approval, for the exact packages and versions declared for the run. Either way a package-artifact fetch/install with no provider or Traigent calls, private-data transfer, or user/project code execution. Name its absolute path before touching it. Preserve every other existing, shared, or dependent environment; never install into one as a fallback. A user or environment policy that requires install approval still takes precedence. |
 | Create or update a minimal `.env` | Proceed only after free checks, and only through `references/run-safety.md`'s ordered handoff, which selects the file. Preserve existing values and comments, append only its missing provider key, and set mode `0600` before opening as that handoff directs. Before writing, run that reference's git-tracked-file safety check and its ignore verification; it owns the exact commands and exit-code handling, and stop before secret entry if either check fails. Outside Git, do not create `.gitignore`. Never copy or request a duplicate key. Add or request the Traigent key only after the baseline checkpoint. |
 | Repair a working copy after the user chooses repair | Proceed only within the agreed repair scope, then revalidate as section 4's post-repair rule states. |
 | Change real labels, expected answers, examples, or rubric policy | Show the exact judgment-dependent change and obtain explicit approval. |
-| Execute an evaluator or mock check | Proceed without provider approval only after inspection proves a non-executing evaluator path is local-only or every mock model call is intercepted, with no external side effects. A path that executes or imports candidate output as code, shells out with it, or submits it to a code/SQL engine is one this guide will not run on its own initiative; what is out of scope is that path, never the task whose answer is code or SQL, and never the customer's onboarding: skip that execution, disclose it per `run-safety.md`, and continue. |
+| Execute an evaluator or mock check | Proceed without provider approval only after inspection proves a non-executing evaluator path is local-only or every mock model call is intercepted, with no external side effects. A path that executes or imports candidate output as code, shells out with it, or submits it to a code/SQL engine is one this guide will not run on its own initiative; what is out of scope is that path, never the task whose answer is code or SQL, and never the customer's onboarding: skip that execution, disclose it per `run-safety.md`, and continue - or, where that reference's copied-actor route applies, calibrate a copy of the evaluator under `traigent-runs/calibration/` against the read-only or duplicate target the customer supplied, never their original file and never a target this run chose. |
 | Make provider, private-data, connected Traigent, or external calls other than the narrow dependency fetch | Obtain stage-specific approval for recipients/data, scope, runtime, and ceiling: baseline first; connected optimization after its checkpoint. |
 | Perform destructive or production-affecting actions | Obtain separate explicit approval for the exact action. |
 
@@ -314,12 +314,13 @@ cross-validate and calibrate the finished trio.
 ### 4. Validate components locally
 
 Immediately after completing the system, run every available bundled component check whose full
-path needs only the Python standard library and local project files. Do this before creating an
-isolated environment, before installing dependencies, before creating `.env`, before asking for a
+path needs only the Python standard library and local project files. Do this before choosing or
+creating an environment, before installing dependencies, before creating `.env`, before asking for a
 provider key, and before any SDK-specific check.
 
 **Read next.** Required: [`references/evaluation-and-dataset.md` § Mandatory calibration](references/evaluation-and-dataset.md#mandatory-calibration).
 If the resolved evaluator call path executes or imports candidate output: [`references/run-safety.md` § Static and mock validation](references/run-safety.md#static-and-mock-validation).
+If the scope gate refused an evaluator and a copy of it could be calibrated against a target the customer supplies: [`references/run-safety.md` § The copied-actor route](references/run-safety.md#the-copied-actor-route).
 If the evaluator replays the customer's own workflow: [`references/run-safety.md` § A replay that changes the customer's world asks first](references/run-safety.md#a-replay-that-changes-the-customers-world-asks-first).
 If calibration reaches its timeout: [`references/evaluation-and-dataset.md` § When calibration runs long](references/evaluation-and-dataset.md#when-calibration-runs-long).
 If a check reports that the dataset or evaluator cannot separate configurations: [`references/evaluation-and-dataset.md` § Quality diagnosis and repair choice](references/evaluation-and-dataset.md#quality-diagnosis-and-repair-choice).
@@ -332,7 +333,9 @@ resolve only material grading ambiguity with one question; run deferred-SDK stat
 both splits; apply the evaluator-execution scope gate; calibrate eligible inspected paths; then
 score readiness from fresh evidence. Reuse a valid opening calibration unless its inputs or path
 changed. Keep external or paid calibration behind its stage approval. A skipped execution-evaluator
-check records `containment` and its disclosure; it does not end the run. Preflight-only evidence is
+check records `containment` and its disclosure; it does not end the run, and where the copied-actor
+route applies the check is made on a copy against the customer's own safe target and its result is
+calibration evidence like any other. Preflight-only evidence is
 recorded now and refreshed after any deferred calibration.
 Keep limited real components `❗`, with a repair recommendation or explicitly labeled demonstration.
 An invalid evaluator, schema, required row set, or unverified call path cannot support paid work:
@@ -361,9 +364,11 @@ establish every selected direct dimension; otherwise report the stop and zero tr
 ### 5. Prepare the environment and finish free checks
 
 After standard-library-only component checks, follow the environment procedure in order: inventory
-the selected route and credential presence without values; prepare the dedicated `.venv-traigent`
-while preserving existing environments; announce and install the exact pinned stack; require the
-installed preflight’s `sdk-version: PASS`; inspect SDK capabilities; finish deferred calibration and isolated
+the selected route and credential presence without values; choose the environment through the
+reference's procedure - an existing customer environment, a new persistent project `.venv`, or
+the fallback `.venv-traigent`; follow that route's single install approval or, on the throwaway route, the announced exact
+pinned stack; require the installed preflight’s `sdk-version: PASS` through the chosen interpreter,
+which every later step uses; inspect SDK capabilities; finish deferred calibration and isolated
 mock plumbing. Then, if genuinely missing, stop once for the selected provider credential through
 the ordered local handoff. Route changes require recipient disclosure and approval. The Traigent
 key waits for section 7's baseline checkpoint. Installation stays foregrounded and subject to the
@@ -522,7 +527,10 @@ Close with one recommended next action grounded in the recorded opening caps and
 measured limits. A substitute fills a gap provisionally; it does not close it. Explain what that
 action would improve and the bound that most limited this walkthrough, without promising what a
 larger run would find. Use the continuation handoff for the state-specific recommendation,
-reply-ready final block, and optional skills package. Handoff observations are hypotheses to test
+reply-ready final block, and optional skills package. On the throwaway route only, add one
+reminder: `Traigent is installed in <absolute path>/.venv-traigent for this walkthrough; to keep
+using it, install it into your own environment.` Say nothing else about the environment choice;
+the customer made it. Handoff observations are hypotheses to test
 at full scale; `continue` never bypasses approval. Include optional telemetry repair when cost
 comparison is unavailable; it need not precede the quality result or displace a more important
 data/evaluator gap.

@@ -34,7 +34,7 @@ where the obstacle is ours and nothing the customer does reaches it. It does not
 waits on something only they can give.
 
 Those are theirs, and among them: secret entry, a key this run has not been handed, a tracked
-credential file, a modified ignore file, a dedicated environment, a replay that changes their world,
+credential file, a modified ignore file, an environment they have not approved, a replay that changes their world,
 spending their money without approval, or a readiness cap that blocks because a component is absent
 rather than because a check was declined. Read the test, not the list - a stop this list happens not
 to name is measured by the same question.
@@ -82,8 +82,10 @@ Stated here, ahead of every gate below, because it is the rule each of them is m
 ### Why the install sits where it does
 
 The opening gate establishes every scoreable fact available without installation, SKILL section 4 finishes
-deferred local validation, and SKILL section 5 creates the dedicated first-run environment. After that point, the remaining capability and mock checks need the installed SDK, so
-no useful independent work overlaps the install. Keep this one foreground command with its complete
+deferred local validation, and SKILL section 5 installs the SDK into the environment the customer
+approved - an existing project environment or a new persistent `.venv`, because a first run should
+end with Traigent installed where they will keep using it. After that point, the remaining capability and mock checks
+need the installed SDK, so no useful independent work overlaps the install. Keep this one foreground command with its complete
 resolver diagnostic; explain the wait and do not delegate it.
 
 ### Setup sequence
@@ -100,23 +102,31 @@ Only after the standard-library-only component checks:
    recipient disclosure and approval; never rewrite a route merely to match a key. With no route,
    use the sole available vendor, or carry that choice to the same stop. Generated baselines need
    their model ladder; a user-owned baseline requires only its existing route and credential.
-2. Resolve and prepare the dedicated first-run environment `.venv-traigent` under the rules below, naming its absolute path before touching it. Preserve every existing
-   environment. The reference owns creation, recovery, and activation mechanics; never fall back
-   to a shared or dependent environment. If resume validation verified this run's completed setup,
-   skip creation and installation and continue with the remaining free checks or credential handoff.
-3. For a new environment, install the exact declared dependencies under SKILL.md's narrow authorization: the exact pins in
+2. Choose the environment under Choosing the environment below, naming its absolute path before
+   touching it: detect the candidates inside the project root, then propose the one, ask which of
+   several, or offer to create the project's persistent `.venv` when none is usable. Preserve every
+   existing environment until its owner says yes to the install; `.venv-traigent` is a fallback,
+   not the no-environment default. The rules
+   below own detection, the version guard, creation, recovery, and activation mechanics; never fall
+   back to a shared or dependent environment the customer did not name. If resume validation
+   verified this run's completed setup, skip selection and installation and continue with the
+   remaining free checks or credential handoff.
+3. Install the declared dependencies under SKILL.md's narrow authorization.
+   Into an existing project environment: only what the version guard allows, after their yes to
+   the resolved approval card. A new persistent `.venv` uses the combined creation/install approval
+   below. Into the throwaway environment: the exact pins in
    `assets/requirements-first-run.txt`, never the project's own declarations, which the run never
-   edits. Never use an unversioned `pip install traigent`.
-   Say first: `Installing traigent==0.26.0, litellm==1.93.0 and python-dotenv==1.2.2 into
+   edits. Never use an unversioned `pip install traigent`. On the throwaway route,
+   say first: `Installing traigent==0.26.0, litellm==1.93.0 and python-dotenv==1.2.2 into
    <absolute path>/.venv-traigent - a package fetch only: no provider or Traigent calls, and none
    of your project's code runs.` Then proceed: the notice is not a question, and the
    install-approval policy clause in the authorization table still governs. Keep this unattended
-   step foregrounded, explain the wait, and do not delegate it; Why the install sits where it does above explains the wait. Then re-run `scripts/preflight.py` in that environment without
+   step foregrounded, explain the wait, and do not delegate it; Why the install sits where it does above explains the wait. Then re-run `scripts/preflight.py` through the chosen interpreter without
    `--defer-missing-sdk`; `sdk-version: PASS` is required before continuing. On `sdk-version: FAIL`,
    preserve that environment, report its path and the concrete failure, and stop. Handle other
    failed records at their own gates; a credential-file mode finding is not an installation failure.
-   Recreate it only on the
-   user's explicit request; nothing else catches a silent or partial install.
+   Recovery below owns the next action; a persistent project environment is never recreated as
+   walkthrough recovery. Nothing else catches a silent or partial install.
 4. Verify capabilities and public signatures from the installed SDK. Use its public dataset
    loader/validator, decorator, and evaluation models; use a public no-execution contract validator
    when available, otherwise finish with safe mock plumbing and do not claim exhaustive static
@@ -133,90 +143,211 @@ Only after the standard-library-only component checks:
    already chose the other vendor; `B.` change to <available vendor> - and nothing follows it: one
    reply pastes the key or changes the route. Do not request or route the Traigent key before the
    section-7 baseline checkpoint.
+7. Where the copied-actor route in Static and mock validation was taken and the customer replied
+   `A`, run that calibration once they have pasted the target into the file step 6 selected, under
+   the name the question stated - the copy reads it there and nowhere else. It is the one
+   calibration this sequence runs after the credential handoff, because its target lives in the
+   same owner-only file.
 
 ### Finding a supported interpreter
 
-Use only locally installed Python 3.11-3.13. On POSIX, try the host `python3`, then `python3.13`,
-`python3.12`, and `python3.11`; accept the first executable that actually reports a supported
-version, not merely a matching command name. This probe prints its absolute path and version:
+Use only locally installed Python 3.11-3.13 whose host installation is trusted. On POSIX, locate
+`python3`, then `python3.13`, `python3.12`, and `python3.11` with `command -v`; inspect the returned
+absolute paths before launching anything. Skip project-contained executables and unknown wrappers;
+a command name is not provenance. Probe the first known host installation, continuing through that
+list if its version is unsupported. This probe prints its absolute path and version:
 
 ```sh
-first_run_python_found=false
-for first_run_python in python3 python3.13 python3.12 python3.11; do
-  if "$first_run_python" -I -S -c 'import sys; ok = (3, 11) <= sys.version_info[:2] < (3, 14); print(sys.executable, sys.version.split()[0]) if ok else None; sys.exit(0 if ok else 1)' 2>/dev/null; then
-    first_run_python_found=true
-    break
-  fi
-done
-test "$first_run_python_found" = true
+"<trusted-host-python>" -I -S -B -c 'import sys; ok = (3, 11) <= sys.version_info[:2] < (3, 14); print(sys.executable, sys.version.split()[0]) if ok else None; sys.exit(0 if ok else 1)'
 ```
 
 On Windows, list already installed paths with `py -0p`, then probe those executables directly in
 3.13, 3.12, 3.11 order with the same `-I -S -c` check. Never use a launcher mode that auto-installs.
 If the PATH/launcher search fails and `uv` is already present, use
-`uv python find --offline --no-python-downloads '>=3.11,<3.14'` and probe its returned path too.
+`uv python find --offline --no-python-downloads '>=3.11,<3.14'` and inspect then probe its returned
+host path too. The same known-host requirement applies to launcher and manager results.
 Do not install a manager or download a runtime during this lookup. If none works, report readiness
 as not yet measured and give one remedy: install Python 3.13 locally, then provide its executable
 path to resume. An unsupported project environment remains untouched and is named as such.
 Use the chosen executable's literal absolute path for later commands; do not depend on a shell
-variable surviving the next tool call. This chooses a runtime, never an environment to install into.
+variable surviving the next tool call. This chooses a runtime for creating a new project or
+throwaway environment, never an existing environment to install into.
+
+### Choosing the environment
+
+A first run ends with Traigent installed where the customer will keep using it.
+In the commands below, `.../` is the absolute skill directory resolved under GUIDE.md. In this order:
+
+1. **Detect.** Use the trusted host interpreter found above, by absolute path, to run
+   `"<trusted-python>" -I -S -B ".../scripts/find_environments.py" --project-root
+   "<project root>" --requirements ".../assets/requirements-first-run.txt"`.
+   Keep the customer-project working directory under GUIDE.md's location rule. The detector reads
+   candidate files and installed distribution metadata without executing candidate interpreters,
+   importing project modules, or writing files. It recognizes directly contained names with `env`
+   in any case, `pyvenv.cfg` plus `bin/python` or `Scripts/python.exe`, and `$VIRTUAL_ENV` or
+   `$UV_PROJECT_ENVIRONMENT` when contained in the project. A config-bearing environment with a
+   missing or broken interpreter, or a directory symlink, stays visible as unverified and preserved.
+   Anything outside the project, or deeper
+   than the root, is reachable only by a path the customer types. A matching executable and runtime
+   version establish a candidate against the trusted host runtime; an unfamiliar executable is
+   **unverified**, not absent or supported. Report that path and the detector's remedy, including
+   rerunning with a matching trusted installed runtime where appropriate. Never run the unfamiliar
+   candidate merely to find out what it is. Installed-package inventory also stays unverified when
+   startup customization cannot be matched to trusted bootstrap code or a path entry exposes
+   additional distributions outside the inventoried sites. Never execute those hooks to settle
+   the uncertainty or remove them; use a verified environment under the choices below.
+2. **Choose an existing environment or create the project's own.** Apply the path-preservation
+   rules below before counting usable candidates. Exactly one candidate on
+   Python 3.11-3.13: propose installing into it, by absolute path (`existing-project`). Several:
+   ask which one - lettered, each with its absolute path and Python version - plus `other path`
+   and, only when the name is free, `create .venv for this project`.
+   None: say `No virtual environment found directly under the project root.` Unsupported -
+   verified candidates exist but none has a supported Python - is not none: say
+   `No supported virtual environment found directly under the project root`, followed by one
+   `<path> was skipped (Python <version>, not 3.11-3.13)` clause per verified candidate.
+   For unverified candidates, say `An environment exists at <path>, but this run could not verify
+   its runtime or installed-package inventory`, followed by its remedy. Keep these distinct even when other candidates work.
+
+   In either case, when `<project root>/.venv` is absent, resolve the supported Python under
+   Finding a supported interpreter and preview its absolute path and version, the absolute `.venv`
+   path, the exact top-level pins in `assets/requirements-first-run.txt` and their package-declared
+   dependencies. Explain that this creates the customer's persistent project environment and
+   installs that SDK stack for continued use. Offer `A. Create .venv and install the SDK for this
+   project (recommended). B. Use an existing environment - reply with its absolute path.` An
+   explicit reply such as `A`, `create it`, or `I have no environment` to this preview authorizes
+   both creation and that install (`new-project`); silence or elapsed time never selects it.
+   After that yes, create the empty environment under Rules below. Use the isolated plan/apply
+   procedure in step 3 to resolve the agreed pins and show the resolved additions before
+   installation, as information rather than a second approval. Install only the previewed pins and
+   their package-declared dependencies. A scope change, unexpected installed-version change,
+   source-build requirement, or inconsistent plan stops
+   this sequence; report it and obtain approval for any revised scope rather than extending that yes.
+   The source-build refusal under Rules still applies.
+
+   Check the name independently of the detector before offering creation: any existing `.venv`
+   entry, including a file, an unsupported or broken environment, or a symlink (even dangling),
+   occupies it. Never overwrite it or follow a `.venv` symlink into automatic selection. A usable
+   ordinary `.venv` remains an existing candidate. When a new environment is needed but that name
+   is occupied, name the preserved path and offer
+   `A. Use a throwaway .venv-traigent (recommended). B. Use an existing environment - reply with
+   its absolute path.` Wait for their explicit choice. An unsupported environment elsewhere does
+   not occupy a free `.venv`; the normal new-project route still applies there.
+3. **One SDK install approval.** A fresh `new-project` environment uses the combined preview above;
+   do not ask again for the same installation. An existing environment uses the resolved card here,
+   because it already holds packages the resolver may change. Use the trusted runtime that verified
+   this environment; for a new environment, that is the host runtime that created it. Prepare the version guard's proposed
+   set below, then run `"<trusted-python>" -I -S -B ".../scripts/environment_install.py"
+   plan --candidate "<absolute environment path>" --requirements
+   ".../assets/requirements-first-run.txt" --plan "<local plan.json>"`, adding `--change <package>==<pinned>` only for each proposed replacement.
+   This fetches wheels and metadata into a temporary local plan directory; it changes no installed
+   package and runs no customer startup hook or source build. It uses trusted bootstrap pip code,
+   reads installed metadata as data, and constrains every other installed distribution to its
+   current version. A conflict stops planning; it never authorizes changing another dependency.
+   Show the resulting card, including every transitive addition and every replacement:
+   `Installing into <absolute path> (Python <version>) would add: <new packages with versions>.
+   This will change <package> <installed> to <new> [one line per change, or changes: none].
+   Only package artifacts were fetched; no installed packages changed. Proceed, or use a throwaway
+   .venv-traigent instead?` Install only on an explicit yes; a no takes the throwaway route.
+   Silence or elapsed time is never installation approval. That single yes covers each exact
+   change line; no generic approval substitutes for a missing line.
+
+   Apply that same plan with `"<trusted-python>" -I -S -B ".../scripts/environment_install.py"
+   apply --plan "<local plan.json>" --approved-plan-sha256 <the displayed plan_sha256>`. The helper checks
+   the environment's runtime, configuration and installed metadata and the plan's wheel hashes,
+   then installs only those wheels without resolving again. A change to those inputs stops application;
+   regenerate the card and obtain a new yes for changed scope. Keep the plan and hash in this run's
+   local setup evidence. Never substitute the candidate's `-m pip`, a console `pip`, or a fresh
+   unbound resolver call: startup hooks and a second resolution are outside this approval.
+4. **Version guard.** The pins in `assets/requirements-first-run.txt` are the tested versions and
+   the recommendation, not a requirement for their environment. `traigent` at or above `0.26.0`
+   and `litellm` at or above its pin are kept as they are and only what is missing is installed;
+   the setup evidence then carries the one-line note `not the tested versions`, naming them.
+   Compare complete package versions, including prerelease, development, post-release, local and
+   epoch segments, and canonical package names; malformed or ambiguous metadata stops the plan.
+   A below-pin version is only a proposed replacement until the card's explicit
+   `this will change <package> <installed> to <pinned>` receives a yes. The same exact-change rule
+   covers every installed package, including `python-dotenv` and transitive dependencies. A
+   dependency conflict needs a revised disclosed plan or the throwaway route; never silently
+   upgrade, downgrade, or reinstall an installed package. Record the versions actually installed
+   as this run's setup evidence.
+5. **Throwaway route.** `.venv-traigent` under the project root with Python 3.11-3.13 and the
+   exact pins (`throwaway`) - used only when the customer declines the project-environment
+   install, refuses the guard's change line, or explicitly chooses it because `.venv` is occupied
+   and cannot be used. Having no environment alone selects `new-project`, never this fallback.
+   On this route only, the
+   closing handoff carries the reminder SKILL.md states.
 
 ### Rules
 
-- Preserve every existing environment, including an otherwise-compatible project environment and
-  every shared or dependent environment. Create the dedicated `.venv-traigent` under the project
-  root with Python 3.11-3.13; do not replace the project's interpreter or install into an existing
-  environment.
-- Before creating that environment, when the project is a Git worktree, ensure the project-root
-  `.gitignore` excludes `/.venv-traigent/`, preserving its existing rules. Do not initialize Git
-  just for this. The environment stays available after the walkthrough without entering commits.
-- Name the dedicated environment by absolute path before creating or touching it. If that path
-  already exists without the verified same-run setup below, inspect it without changing it, stop
-  with its path and evidence, and recommend inspection. Remove and recreate the existing dedicated
-  environment only on the user's explicit request. Never adopt an environment from a different or
-  unverified run. Never select an existing project, shared, dependent, external, or assistant-owned
-  environment as a fallback.
-- **Continue this run's completed setup.** After successful creation, installation, and `sdk-version: PASS` from installed
+- Preserve every existing environment the customer did not approve for the install, including
+  every shared or dependent environment. An install lands only in the environment they said yes
+  to, or in the throwaway `.venv-traigent`; never replace a project interpreter, and never install
+  into a shared, dependent, external, or assistant-owned environment as a fallback. Only a path
+  the customer typed reaches an environment outside the project.
+- Before creating an environment, when the project is a Git worktree, ensure the project-root
+  `.gitignore` excludes `/.venv/` for `new-project` or `/.venv-traigent/` for `throwaway`, preserving
+  its existing rules. Add only the rule for the directory this run creates; adopting an existing
+  environment adds neither rule. Do not initialize Git just for this. Both remain available after
+  the walkthrough; `.venv` is the customer's persistent project environment, never cleanup material.
+- Name the chosen environment by absolute path before creating or touching it. If the throwaway
+  path already exists without the verified same-run setup below, inspect it without changing it,
+  stop with its path and evidence, and recommend inspection. Remove and recreate the existing
+  throwaway environment only on the user's explicit request. Never adopt a throwaway environment
+  from a different or unverified run; it is not an automatic `existing-project` candidate.
+  A persistent `.venv` this run created is never removed or
+  recreated by walkthrough cleanup or recovery; preserve an incomplete one and offer inspection
+  or the explicitly chosen fallback.
+- **Continue this run's completed setup.** After successful selection or creation, installation, and `sdk-version: PASS` from installed
   preflight, record the setup evidence in `traigent-runs/run-plan.md` before any credential wait:
-  the dedicated absolute path,
+  the route taken (`existing-project`, `new-project`, or `throwaway`) and the environment's absolute path,
   its interpreter and Python version, `sys.prefix`, installed top-level versions, the requirements
   file's SHA-256, and the creation/install/preflight results. On a matching unfinished run, including
   a stage-5 wait for a missing credential, treat that evidence as a hint and independently verify
-  it before continuing. The resolved environment must still be the project's `.venv-traigent`,
-  and its named interpreter must report that environment as `sys.prefix` and the recorded supported
-  Python version. Read installed versions through that interpreter's `importlib.metadata`; they
-  must match both the recorded versions and the unchanged `assets/requirements-first-run.txt`.
+  it before continuing. The resolved environment must still be the one the record names, on the
+  recorded route, and its named interpreter must report that environment as `sys.prefix` and the
+  recorded supported Python version. Read installed versions through that interpreter's
+  `importlib.metadata`; they must match the recorded versions, and on the throwaway route the
+  unchanged `assets/requirements-first-run.txt` too.
   Re-run installed preflight without `--defer-missing-sdk` and require `sdk-version: PASS`; other
   failed records retain their own remedies. Only a verified completed setup continues
   at the remaining free checks or credential handoff: do not recreate the environment or repeat
   installation. A finished or historical record, missing creation/completion evidence, path or pin
   drift, or a failed setup or environment verification keeps the preserve-and-stop rule above. This exception grants no
   provider, data-transfer, or paid authority; the resume approval rules still apply.
-- Create and activate the named dedicated environment before installing. Confirm `sys.prefix`
-  points inside it before `pip install`, or the install silently lands in global Python and the
-  run cannot find `traigent`.
-- Resolve its supported interpreter using Finding a supported interpreter above, then run
-  `"<resolved-python>" -m venv .venv-traigent`. The bootstrap's `-I -S` flags belong only to its
-  static preflight/readiness checks; omit them from the dedicated environment's post-install SDK
-  check so it measures that environment's installed packages.
-- Keep dependency installation as its own action class. It may proceed without another approval
-  only inside that environment, from the exact packages and versions recorded for the top-level
-  requirements plus their package-declared dependencies, as a package-artifact-only fetch/install
-  with no provider or Traigent calls, private-data transfer, or user/project code execution. Prefer
-  wheels; stop if fulfilling it requires source builds, additional undeclared top-level packages,
-  or code execution. **That stop is category 2 of the standing rule: an action this guide will not
+- Installation uses the trusted plan/apply helper above, which binds its destination to the
+  verified environment without importing that environment's startup files. Every later command - installed preflight,
+  calibration, the mock check, baseline, enhanced run, and held-out scoring - runs through that
+  same interpreter.
+- For either creation route, resolve its supported interpreter using Finding a supported interpreter
+  above. Recheck that the chosen directory is wholly absent, including any dangling symlink, before
+  running `"<resolved-python>" -I -S -B -m venv "<project root>/.venv"` for `new-project` or
+  `"<resolved-python>" -I -S -B -m venv "<project root>/.venv-traigent"` for `throwaway`.
+  Both target paths are absolute. Creation uses only the standard-library
+  venv/ensurepip bootstrap; fetch no SDK packages or project dependencies during it. If the name
+  became occupied, preserve it and return to the path choice instead of running venv over it.
+  Isolation also applies to creation, so a project module named `venv` or a startup hook cannot shadow the
+  standard-library bootstrap. Omit `-I -S` from the chosen environment's post-install SDK check so
+  that check measures its installed packages.
+- Keep dependency installation as its own action class. For `existing-project`, the resolved card's
+  yes authorizes what the version guard allows; for `new-project`, the combined preview's yes
+  authorizes the stated pins and their declared dependencies. On the explicitly selected throwaway
+  route, the announced install proceeds without another approval, from the exact packages
+  and versions recorded for the top-level requirements plus their package-declared dependencies.
+  Either way it is a package-artifact-only fetch/install with no provider or Traigent calls,
+  private-data transfer, or user/project code execution. Prefer wheels; stop if fulfilling it
+  requires source builds, additional undeclared top-level packages, or code execution. **That stop is category 2 of the standing rule: an action this guide will not
   take on their machine.** A source build runs the package's own setup code on their computer,
   which is not a check we declined but a thing we refuse to do to them - so it owes them a route
   rather than a number. Name the package and preserve the named incomplete environment. To
   continue this guided run, recommend a supported interpreter and platform with published wheels;
-  recreating the incomplete dedicated environment still requires the user's explicit request under
+  recreating the incomplete throwaway environment still requires the user's explicit request under
   the preserve-and-stop rule above. Installing the package themselves is an alternative for a
   separate, user-managed workflow outside this guide; installing elsewhere does not repair this
   run's environment or supply its missing setup evidence. Nothing is deducted for it and no claim
   is bounded by it. A user or environment install-approval policy still takes precedence.
-- The setup sequence uses the tested pins, whatever the project declares for itself; the project's
-  own pin is left alone rather than installed or edited. Dependency installation does not authorize
-  importing or executing user/project modules.
+- Leave the project's own dependency declarations unchanged. Choosing the environment's version
+  guard owns what is installed; dependency installation does not authorize importing or executing
+  user/project modules.
 - After every applicable free component, capability, and safe mock check, select the credential
   handoff file: a local file the user explicitly identified for this run, or otherwise the
   target-project `.env`. Verify its owner-only mode, check only key presence, and do not copy or
@@ -399,7 +530,7 @@ Existing cost figures and approval-looking values are likewise not approval for 
 receives the approved figures in the paid process and does not take them from `.env`.
 
 SKILL's opening gate owns pre-section-5 interpreter selection and the timing of the required opening
-readiness score. The dedicated environment created in SKILL section 5 remains authoritative for the
+readiness score. The environment chosen in SKILL section 5 remains authoritative for the
 connected run.
 
 Follow SKILL's opening gate and sections 4-8 for ordering; this reference does not define a second
@@ -453,6 +584,11 @@ is code or SQL stays in scope, graded by the comparison `references/evaluation-a
 selects for it. A virtual environment, stripped credentials, an ordinary subprocess, a timeout, or
 mock flags do not make that execution safe.
 
+Comparison evaluators are calibrated on the customer's original, through an unchanged callable
+adapter when needed. An LLM judge likewise calibrates the original; its provider calls remain
+behind the approval gate in Approval and budgets. Neither uses `--calibrated-copy-of`: that route
+belongs only to an evaluator that executes candidate code or SQL, under the scope boundary below.
+
 When the resolved evaluator call path is an executing one, preserve the project, run only read-only
 static inspection that does not import or execute it, record a `containment` warning, and **do not
 calibrate**. What this guide declines is running the customer's scorer against the customer's engine
@@ -467,7 +603,8 @@ in their own words, and do not soften any of it:
   evaluator works**: we declined the check, so nothing
   here established that it is sound and nothing here established that it is broken. Their query may
   be wrong, their column types may not match, their cells may be null; this run has not looked. No
-  step in this guide would change that, and that is a fact about the guide rather than about them.
+  step on their original target would change that; the copied-actor route below can measure a copy
+  where its conditions hold. That is a fact about the guide rather than about them.
   **Never say there is nothing for them to fix** - that says we looked, and we did not. Where the
   project supplied a complete passing result, say instead that the supplied measurement is being
   counted: the scoring command read the result and did not observe its production. Without an observed failure,
@@ -488,13 +625,12 @@ and on nothing before it, and an optional question asked twice is a question tha
 Record the answer there. **Silence proceeds**, and a `no` proceeds too: the disclosure above has
 already done its work.
 
-A separate manual containment design and review remains available outside this guide, and it is the
-only route by which THIS RUN could reach the calibration evidence; it is not the only way the
-evidence can exist, because a project may take that measurement itself and hand the result back. It
-must decide the execution boundary, mounted
-inputs, credentials, network, limits, cleanup, and SQL data scope. Do not describe that manual work
-as available through this guide, imply that a local subprocess fulfils it, or present it as
-something the customer must complete before their first run.
+A separate manual containment design and review remains available outside this guide. It must
+decide the execution boundary, mounted inputs, credentials, network, limits, cleanup, and SQL data
+scope. The copied-actor route below is the one route this guide performs itself; a project may also
+supply a result from its own measurement. Do not describe that manual work as available through this
+guide, imply that a local subprocess fulfils it, or present it as something the customer must
+complete before their first run.
 
 Two moments sit behind that stop and only one of them is about the model's output, so each is
 refused on its own reason rather than both on the stronger-sounding one. Calibration runs the four
@@ -508,7 +644,8 @@ than a claim about where the statements came from. A trial is the other moment -
 writes the query and the scorer runs it - and this guide neither opens it nor stands in front of it:
 it is the customer's own run against the customer's own engine, and the disclosure above is what
 makes it a decision they took rather than one taken for them. What this guide will not do is
-initiate that execution on its own account, which is the calibration step and stays refused.
+initiate that execution against the original target on its own account; that calibration stays
+refused outside the copied-actor route below.
 
 `scripts/calibrate_evaluator.py` now enforces this rule instead of relying on it being read. Before
 it imports anything, it asks the same walk `preflight.py` reports through `evaluator-shape` of every
@@ -526,18 +663,18 @@ complete call path is still the instruction above, and it is still yours.
 An in-process envelope is not a route to that evidence: bounding Python from inside the same
 interpreter means bounding it against every extension module, every constructor and every native
 handle it can reach, and that surface has no edge. A boundary the operating system enforces is a
-different proposition, and it is one this guide deliberately does not own. So the manual
-containment design and review above is still the whole of the route to that EVIDENCE - work a project
-can commission for itself, on its own time, and never a precondition of its first run - and a project
-whose evaluator runs the candidate's answer proceeds here without this run having taken that check.
-That is the whole of the route for US. It is not the whole of the route: a project that measures its
-own evaluator, on its own machine, has taken a measurement this guide will read.
+different proposition, and it is one this guide deliberately does not own. The manual containment
+design and review remains work a project can commission for itself, on its own time, and never a
+precondition of its first run. The copied-actor route below bounds the target instead of the
+process. A project may also measure its own evaluator and supply the result; without a result from
+any of those routes, its calibration evidence remains uncollected.
 
-That customer's card is a consequence of this decision rather than of their project. **The check is
-one this guide declines to PERFORM, and never one the customer is forbidden to make.** A project
+On the original target, that customer's card is a consequence of this decision rather than of
+their project. **The check is one this guide declines to PERFORM, and never one the customer is
+forbidden to make.** A project
 that measured its own evaluator and passes the result to `--calibration` is read exactly as any
-other project is, conviction included; what this guide will not do is take that measurement from
-inside a first run. Where no result was supplied, the check earns nothing and the probe spread is
+other project is, conviction included. This guide takes that measurement only through the
+copied-actor route below. Where no result was supplied, the check earns nothing and the probe spread is
 never measured;
 those declined checks leave the denominator rather than deducting points. Without an observed
 failure or timeout, a supplied incomplete or unreadable result stays unestablished and keeps the
@@ -562,6 +699,79 @@ them no errand for the declined check: the unmade check is ours, so the refusal 
 lifts no ceiling. That is a statement about THIS RUN, not about the containment review
 above, which stays available to a project that wants the evidence for its own reasons - as does
 measuring their own evaluator themselves, which this run will read.
+
+### The copied-actor route
+
+One contained route to the calibration evidence exists inside this guide, and the refusal above
+stays everywhere it does not apply. What the refusal argues is that the target is unbounded. A
+target the customer bounds is a different proposition, and a copy of the actor pointed at it is one
+this run can calibrate without opening the connection their original opens. Offer it where every
+step below can be made honest; where one cannot, say which, and keep the disclosure route.
+
+1. **Copy the evaluator - the actor, never the data.** Copy the evaluator file into
+   `traigent-runs/calibration/` inside the customer's project. Never edit or move their original;
+   the copy is walkthrough material under the ignored run directory, like everything else the run
+   writes. The reduced dataset and config space the walkthrough already builds stay where they are,
+   and this route never changes the customer's agent, dataset, or evaluator in place.
+2. **Locate the connection target statically, in the copy.** The one place is the target argument
+   of the engine's constructor call - `sqlite3.connect(...)`, `psycopg2.connect(...)`,
+   `create_engine(...)`, `duckdb.connect(...)` and their kin - whether it holds a literal or an
+   expression. An original whose target arrives some other way - a config-file key, a `dotenv`
+   read, a connection handed in from a helper - has no such argument to replace and cannot take
+   the route; it is refused under step 5. The run must be able to name that one place - file and
+   line.
+3. **Ask the customer for a safe target - one question, lettered, and this is its wording:**
+
+   `Your evaluator sets its connection target at <copy path>:<line> (<what is there>). This run can calibrate a copy of it against a target you choose, without opening the one your original uses. A. Use a read-only connection or a duplicate of the data you made with a proper tool: paste its value into <.env path> under <NAME> - there, never here in chat - and reply A. B. Skip the calibration; the run continues on the disclosure above.`
+
+   `<NAME>` is a name this run states, such as `TRAIGENT_CALIBRATION_TARGET`; `<.env path>` is the
+   owner-only `.env` the Setup sequence's step 6 handoff selects, which is why this calibration
+   runs at that sequence's step 7, after the handoff. Never make the duplicate yourself, never
+   read rows to build one, never guess a target. `B` and silence take the disclosure route above.
+4. **Repoint only that one place**, then calibrate the copy through the same gate, which hands the
+   child that one value and nothing else: `scripts/calibrate_evaluator.py --calibrated-copy-of
+   <original path> --target-name <NAME> --target-env-file <.env path>`. The rule the gate proves:
+   the copy is the original with exactly one change - the engine's target argument becomes
+   `os.environ["<NAME>"]` (plus a plain `import os` where the original lacks it) - and the tool
+   refuses any other difference, naming where it found one. The gate admits the engine witnesses
+   it would otherwise refuse and records them as admitted rather than clearing them. Because the
+   copy may then hold only what the original holds, the rest of what it refuses bounds the
+   original: a second binding of `os` or `environ`; a reference to the engine's constructor that
+   is not the one call, or more than one engine; a settings reader (`dotenv`,
+   `pydantic_settings`, `decouple`, `environs`, `dynaconf`, `envparse`, `starlette.config`,
+   `django.conf`), each of which reaches their own `.env` or settings; a side door to the
+   environment, a file, or code - `getattr` on a module, `sys.modules`, `vars`, `open`,
+   `read_text`, `socket`, `builtins`, `pickle`, `marshal`, `exec`/`eval`/`compile` in any
+   spelling; any other environment read; a process; and any relative or local import - the walk
+   reads the scorer file and nothing it imports, while a package under `site-packages` is not
+   local. The child is handed `<NAME>` alone: every other name that `.env` defines is stripped
+   from it, so the value they paste must be a complete DSN - libpq fills an omitted host, user
+   or password from `~/.pgpass` and `PG*` defaults, which is their original target by another
+   road. On POSIX the `.env` must be readable by its owner alone; on Windows, which has no such
+   mode, the gate does not check it. Record in `traigent-runs/run-plan.md` the original path,
+   the copy path, the located line, what was changed, and the target's *name* - never its value.
+   Any run-log event follows The run log's event and detail contract below; that shareable event
+   does not carry this local provenance. Code already present in the customer's original is outside
+   this route's threat model: this gate checks the copy and its supplied target, not a sandbox for
+   the original program. On this route the tool withholds worker diagnostics, including driver
+   errors that may expose target components, and supplies a local-inspection remedy. Numeric
+   calibration evidence remains available; a failure still fails and never earns credit.
+5. **Refuse the route, keep the disclosure**, and say which of these applied: the target cannot be
+   located at exactly one place in the copy (no constructor argument to replace, or more than
+   one - a connection handed in from a helper module is set somewhere the copy does not show); the
+   evaluator shells out or executes arbitrary code rather than submitting SQL to an engine (a
+   read-only target bounds nothing about `subprocess` or `exec`); or it opens more than one
+   engine. Your read is the first pass and decides whether to ask; the gate's refusal is the
+   proof, and it refuses every one of these shapes itself - a copy whose one change is anywhere
+   but the constructor's target argument does not run.
+6. **The result is evidence like any other calibration payload.** Use component-creation.md's
+   Opening readiness procedure for the result and the original evaluator's scope declaration.
+   Calibration of a copy does not remove the original evaluator's execution disclosure or establish
+   what its target reaches. A passing payload credits and a failing one convicts, exactly as on any
+   other shape. The card records the payload's copied-route declaration; the run's own evidence may
+   say "calibrated a copy of your evaluator against the target you supplied as read-only or a
+   duplicate" only when that calibration completed. The target's read-only or duplicate property
+   remains the customer's declaration, not something the scoring command verified.
 
 ### A replay that changes the customer's world asks first
 
@@ -604,7 +814,8 @@ module does - the flag waits with it rather than pulling an install into this st
 calibration is outside these three words and Environment and privacy's Setup sequence step 5 runs it: its path carries
 the installed dependency by construction, so the inspection that declared it is what binds it
 there. An execution evaluator had its evaluator check skipped at the scope gate above and the run
-continued; nothing is owed here either. Run either
+continued; nothing is owed here either, unless the copied-actor route was taken, whose calibration
+the Setup sequence's step 7 runs once the target is in place. Run non-executing calibration
 before creating `.env` or requesting a provider key. A generic outside-review wait is not a gate;
 pause only when one unresolved product-grading ambiguity would materially change correctness or
 ranking. Do not execute an LLM judge or an uncertain or external evaluator without explicit
@@ -1780,7 +1991,7 @@ what closing it properly takes:
 - One difficulty band, or answers that are nearly all the same - add examples where the agent
   currently fails, which is also where a search has room to win.
 - A substitute component still standing in for a real one - connect the production agent, dataset or
-  evaluator it replaced, and say which of the reported numbers would change. Where there is nothing
+  evaluator it replaced, and say which reported measurements would need to be repeated. Where there is nothing
   yet to connect, a person checking that the substitute does what the product does is what stands in
   meanwhile.
 - A thin evaluator, or one that was never calibrated - align the method with the product's own
@@ -1869,10 +2080,12 @@ not in that repository, and no `npx skills add` flag beyond `--list` and `--skil
   calibration, under a newly scoped approval that carries what was already spent.
 - Dataset examples that fail under every configuration: inspect gold/reference and evaluator
   policy before blaming the model.
-- Dedicated first-run environment creation, installation, or preflight failure: preserve every
-  existing environment and stop with the dedicated environment's absolute path and the concrete
-  failure. Recommend inspecting it, or remove and recreate only that dedicated environment after
-  explicit user approval; never fall back to a shared or dependent environment.
+- Environment creation, installation, or installed-preflight failure: preserve every existing
+  environment and stop with the chosen environment's absolute path and the concrete failure,
+  quoting pip's own message for a failed install. Recommend inspecting it, or remove and recreate
+  only the throwaway environment after explicit user approval; a failed install into the
+  customer's own environment offers the throwaway route instead, and nothing falls back to a
+  shared or dependent environment.
 
 For generated wrappers, set the process-only SDK results folder to a child of `traigent-runs/`
 before importing Traigent so its local optimization logs and state remain inside the ignored
@@ -1891,7 +2104,7 @@ verify the target and agent, rerun the cheap read-only/free gates required by th
 including execution-evaluator scope and call-path checks, and verify a paid artifact before quoting
 it.
 After that verification, continue through free work at the first stage neither marked done nor
-skipped. For this unfinished run's completed dedicated setup, first apply the same-run environment
+skipped. For this unfinished run's completed setup, first apply the same-run environment
 verification in Environment and privacy. Continue the remaining setup without repeating creation
 or installation only when that verification passes. The record may avoid repeating paid work,
 never waive a safety precondition.

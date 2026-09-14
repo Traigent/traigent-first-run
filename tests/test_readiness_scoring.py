@@ -9,6 +9,7 @@ import io
 import itertools
 import json
 import re
+import subprocess
 import symtable
 import sys
 import tempfile
@@ -14361,6 +14362,295 @@ class SuppliedCalibrationKeepsItsOrdinaryEvidenceStateTests(unittest.TestCase):
         self.assertNotIn("Refused beside --calibration", help_text)
 
 
+class CopiedCalibrationProvenanceKeepsScoringTests(unittest.TestCase):
+    """The copy marker attributes the payload without buying a different score."""
+
+    def test_refusal_claim_tracks_optional_task_kind_without_inventing_a_count(self):
+        """Omitting task kind leaves task-fit unmeasured; the cap cannot claim two."""
+        with tempfile.TemporaryDirectory() as directory:
+            preflight = Path(directory) / "preflight.json"
+            preflight.write_text(
+                json.dumps(
+                    [
+                        {
+                            "check": "evaluator-shape",
+                            "status": "PASS",
+                            "metrics": {
+                                "exists": True,
+                                "parses": True,
+                                "executes": True,
+                                "execution_witnesses": ["calls .execute() (line 7)"],
+                            },
+                        }
+                    ]
+                )
+            )
+            for task_kind, count in ((None, 1), ("code-sql", 2)):
+                with self.subTest(task_kind=task_kind):
+                    command = [
+                        sys.executable,
+                        "-I",
+                        "-B",
+                        str(SCRIPT),
+                        "--preflight",
+                        str(preflight),
+                        "--evaluator-method",
+                        "execution",
+                        "--json",
+                    ]
+                    if task_kind:
+                        command.extend(["--task-kind", task_kind])
+                    result = subprocess.run(
+                        command, capture_output=True, text=True, timeout=15
+                    )
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    score = json.loads(result.stdout)
+                    evaluation = next(
+                        p for p in score["pillars"] if p["name"] == "evaluation"
+                    )
+                    self.assertEqual(
+                        sum(sub["measured"] for sub in evaluation["subscores"]), count
+                    )
+                    cap = next(
+                        c
+                        for c in score["caps"]
+                        if c["condition"] == "evaluator-calibration-refused"
+                    )
+                    self.assertIn("reports which checks were measured", cap["reason"])
+                    self.assertNotIn("two of its four checks", cap["reason"])
+                    self.assertIn("this run cannot present as STRONG", cap["reason"])
+
+    def test_copy_provenance_is_inert_for_passing_failing_and_incomplete_results(self):
+        passing = {
+            "passed": True,
+            "checks": {"good_passes": True, "bad_fails": True, "non_constant": True},
+            "scores": {"good": 1.0, "equivalent_good": 1.0, "partial": 0.4, "bad": 0.0},
+        }
+        for payload in (
+            passing,
+            {**passing, "passed": False},
+            {"passed": True, "checks": {"good_passes": True}},
+            {"timed_out": True},
+        ):
+            for marker in (
+                None,
+                False,
+                "false",
+                {},
+                {"original": "scorer.py", "copy": "copy.py"},
+            ):
+                with self.subTest(payload=payload, marker=marker):
+                    base = MODULE.evaluation_facts_from_calibration(
+                        payload,
+                        method="execution",
+                        task_kind="code-sql",
+                        evaluator_present=True,
+                        evaluator_parses=True,
+                        evaluator_executes=True,
+                        execution_witness="calls .execute() (line 7)",
+                        calibration_scope_refused=True,
+                    )
+                    copied = MODULE.evaluation_facts_from_calibration(
+                        {**payload, "calibrated_copy": marker},
+                        method="execution",
+                        task_kind="code-sql",
+                        evaluator_present=True,
+                        evaluator_parses=True,
+                        evaluator_executes=True,
+                        execution_witness="calls .execute() (line 7)",
+                        calibration_scope_refused=True,
+                    )
+                    self.assertEqual(copied.calibrated_copy, isinstance(marker, dict))
+                    ordinary = MODULE.score_run(
+                        _routing_corpus(),
+                        base,
+                        _wired_space(),
+                        dict(MODULE.DEFAULT_WEIGHTS),
+                        _review(reviewed=48),
+                    )
+                    marked = MODULE.score_run(
+                        _routing_corpus(),
+                        copied,
+                        _wired_space(),
+                        dict(MODULE.DEFAULT_WEIGHTS),
+                        _review(reviewed=48),
+                    )
+                    for field in (
+                        "overall",
+                        "weighted_average",
+                        "band",
+                        "status",
+                        "confidence",
+                        "recommended_action",
+                        "caps",
+                    ):
+                        self.assertEqual(
+                            getattr(marked, field), getattr(ordinary, field)
+                        )
+                    for left, right in zip(marked.pillars, ordinary.pillars):
+                        self.assertEqual(
+                            (left.score, left.confidence),
+                            (right.score, right.confidence),
+                        )
+                        for a, b in zip(left.subscores, right.subscores):
+                            self.assertEqual(
+                                (a.name, a.value, a.measured, a.withheld),
+                                (b.name, b.value, b.measured, b.withheld),
+                            )
+                    check = next(
+                        sub
+                        for pillar in marked.pillars
+                        for sub in pillar.subscores
+                        if sub.name == "calibration"
+                    )
+                    has_measurement = MODULE.calibration_result_established(copied)
+                    if isinstance(marker, dict) and has_measurement:
+                        self.assertIn(
+                            "the supplied result reports calibration on a copy",
+                            check.evidence,
+                        )
+                        self.assertIn(
+                            "target supplied as read-only or a duplicate",
+                            check.evidence,
+                        )
+                    else:
+                        self.assertNotIn(
+                            "reports calibration on a copy", check.evidence
+                        )
+
+    def test_real_cli_keeps_copy_credit_disclosure_and_incomplete_bounds(self):
+        checks = {"good_passes": True, "bad_fails": True, "non_constant": True}
+        payloads = {
+            "passing": {"passed": True, "checks": checks},
+            "incomplete": {"passed": True, "checks": {"good_passes": True}},
+            "failed": {"passed": False, "checks": {**checks, "good_passes": False}},
+            "timeout": {"timed_out": True},
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            preflight, calibration = root / "preflight.json", root / "calibration.json"
+            for route, shape, declared in (
+                (
+                    "witnessed",
+                    {
+                        "executes": True,
+                        "execution_witnesses": ["calls .execute() (line 7)"],
+                    },
+                    False,
+                ),
+                (
+                    "witnessed-and-declared",
+                    {
+                        "executes": True,
+                        "execution_witnesses": ["calls .execute() (line 7)"],
+                    },
+                    True,
+                ),
+                ("declared", {"executes": False, "execution_witnesses": []}, True),
+                (
+                    "unquoted",
+                    {"executes": True, "execution_witnesses": [" ", None]},
+                    False,
+                ),
+            ):
+                preflight.write_text(
+                    json.dumps(
+                        [
+                            *PREFLIGHT_RECORDS,
+                            {
+                                "check": "evaluator-shape",
+                                "status": "PASS",
+                                "metrics": {"exists": True, "parses": True, **shape},
+                            },
+                        ]
+                    )
+                )
+                for label, payload in payloads.items():
+                    with self.subTest(route=route, payload=label):
+                        calibration.write_text(
+                            json.dumps(
+                                {
+                                    **payload,
+                                    "calibrated_copy": {
+                                        "original": "scorer.py",
+                                        "copy": "copy.py",
+                                    },
+                                }
+                            )
+                        )
+                        command = [
+                            sys.executable,
+                            "-I",
+                            "-B",
+                            str(SCRIPT),
+                            "--preflight",
+                            str(preflight),
+                            "--calibration",
+                            str(calibration),
+                            "--evaluator-method",
+                            "execution",
+                            "--json",
+                        ]
+                        if declared:
+                            command.append("--calibration-scope-refused")
+                        result = subprocess.run(
+                            command, capture_output=True, text=True, timeout=15
+                        )
+                        self.assertEqual(result.returncode, 0, result.stderr)
+                        score = json.loads(result.stdout)
+                        check = next(
+                            sub
+                            for pillar in score["pillars"]
+                            for sub in pillar["subscores"]
+                            if sub["name"] == "calibration"
+                        )
+                        caps = {cap["condition"]: cap for cap in score["caps"]}
+                        if label == "passing":
+                            self.assertEqual(check["value"], 40)
+                            self.assertTrue(check["measured"])
+                            self.assertFalse(check["withheld"])
+                            self.assertIn(
+                                "reports calibration on a copy", check["evidence"]
+                            )
+                            self.assertIn(
+                                "did not take the measurement itself", check["evidence"]
+                            )
+                        else:
+                            self.assertEqual(check["value"], 0)
+                        if label in ("passing", "incomplete"):
+                            cap = caps["evaluator-calibration-refused"]
+                            self.assertEqual(
+                                cap["ceiling"],
+                                (
+                                    None
+                                    if label == "passing"
+                                    and route.startswith("witnessed")
+                                    else 45
+                                ),
+                            )
+                            self.assertIn(
+                                "during the paid run the MODEL writes", cap["reason"]
+                            )
+                            self.assertNotIn("it was not this run", cap["reason"])
+                            if label == "incomplete":
+                                self.assertTrue(check["withheld"])
+                                self.assertIn(
+                                    "supplied result remains incomplete evidence",
+                                    cap["reason"],
+                                )
+                        else:
+                            self.assertNotIn("evaluator-calibration-refused", caps)
+                            self.assertIn(
+                                (
+                                    "evaluator-invalid"
+                                    if label == "failed"
+                                    else "evaluator-timeout"
+                                ),
+                                caps,
+                            )
+                            self.assertEqual(score["status"], "BLOCKED")
+
+
 class TheWitnessDecidesTheScopeGateNotTheDeclarationTests(unittest.TestCase):
     """The gate reads what preflight proved, not what the run remembered to say.
 
@@ -14938,14 +15228,11 @@ class TheWitnessDecidesTheScopeGateNotTheDeclarationTests(unittest.TestCase):
                 # cannot restore the comfortable one on its own.
                 self.assertIn("we do not know whether your evaluator works", cap.reason)
                 self.assertNotIn("may well be sound", cap.reason)
-                # THERE IS NO ROUTE FORWARD, and saying there was one was the
-                # defect. The card used to hand them "You can establish that
-                # yourself, outside this guide" - a task, for a check nothing
-                # they do reaches, because the unmade check is OURS. The
-                # standing rule in `references/run-safety.md` says the run
-                # proceeds and the customer is told what was not checked, so
-                # the sentence that replaces it is a disclosure, not an
-                # errand.
+                # The original stays refused; an eligible copy has the one
+                # route #517 permits, without promising every actor qualifies.
+                self.assertIn("copied-actor route", cap.reason)
+                self.assertIn("where the run can offer it", cap.reason)
+                self.assertNotIn("no step in this guide would change that", cap.reason)
                 self.assertIn("we do not know whether your evaluator works", cap.reason)
                 self.assertNotIn("nothing here for you to fix", cap.reason)
                 # WHAT THIS CAP DOES, never what the run will do. A cap sees

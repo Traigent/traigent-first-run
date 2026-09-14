@@ -3953,6 +3953,10 @@ class EvaluationFacts:
     # out an engine behind a helper or a runtime binding, so those runs still
     # need this declaration and never receive an all-clear from its absence.
     calibration_scope_refused: bool = False
+    # Payload-declared copied-actor route (#517). This score does not verify
+    # the paths or the target's read-only/duplicate status. The marker changes
+    # provenance wording only; the checks, verdict and witness decide scoring.
+    calibrated_copy: bool = False
     # HOW THE CUSTOMER'S EVALUATOR CONNECTS, when they said - and `None` when
     # nobody asked or nobody answered.
     #
@@ -7572,24 +7576,12 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
     # FAILING payload from that same source still convicted them. Both arms
     # now read 82, and that test is where the pair is held equal.
     #
-    # THE OBJECTION THE OLD COMMENT WAS RIGHT ABOUT, AND WHERE IT IS ANSWERED.
-    #
-    # The customer broke no rule; an ASSISTANT that ran this check from inside
-    # the guide did, and this score cannot tell the two payloads apart - both
-    # arrive as JSON on `--calibration`. So crediting the result does pay for
-    # the forbidden route, and the answer is that paying for it is not this
-    # file's job to prevent. `calibrate_evaluator.py` refuses an evaluator that
-    # executes the candidate's answer, naming the file and the line, so for the
-    # shapes its walk can SEE the tool this guide ships will not produce that
-    # payload at all - and `references/run-safety.md` is explicit that finding
-    # none establishes nothing, so for an engine behind a helper module it will
-    # produce one happily. That residue is the same population the refusal has
-    # always been unable to reach, and the guidance forbids taking the check
-    # another way. A score is a reading of the
-    # evidence in front of it, and a scorer that withholds credit to enforce a
-    # rule is one that reports a lower number than it believes - which is the
-    # accusation traigent-first-run#507 has just finished removing from this
-    # same cap.
+    # Direct calibration of the execution evaluator remains outside this
+    # guide's scope. The copied-actor route (#517) permits an eligible copy
+    # against the customer's read-only or duplicate target. A supplied result
+    # may come from that route or from the customer's own calibration; this
+    # scorer cannot identify its producer. The copied marker records the
+    # payload's claim and does not alter credit or execution disclosure.
     #
     # What this file owes instead is provenance, and it is now said on every
     # calibration line in both arms: this score read a result and did not take
@@ -7710,6 +7702,12 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
             )
         else:
             disqualified = None
+        route = (
+            "; the supplied result reports calibration on a copy of your "
+            "evaluator against a target supplied as read-only or a duplicate"
+            if facts.calibrated_copy
+            else ""
+        )
         subs.append(
             SubScore(
                 "calibration",
@@ -7731,11 +7729,11 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
                     f"{len(facts.checks)} calibration case(s); "
                     f"the calibration did not establish this evaluator; "
                     f"this score read that result and did not take the "
-                    f"measurement itself"
+                    f"measurement itself{route}"
                     if disqualified
                     else f"{len(facts.checks)} calibration case(s); "
                     f"every authored check passed; this score read that "
-                    f"result and did not take the measurement itself"
+                    f"result and did not take the measurement itself{route}"
                 ),
             )
         )
@@ -8362,11 +8360,14 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
                         "and THIS does not stop your run. "
                         if calibration_engaged
                         else " So we do not know whether your evaluator "
-                        "works, and no step in this guide would change that - not "
-                        "because you failed anything, but because this check is "
-                        "outside what this guide performs. It is a limit of this "
-                        "run and not a judgement of your evaluator, and THIS does "
-                        "not stop your run. "
+                        "works - not because you failed anything, but because "
+                        "this check is outside what this guide performs on your "
+                        "original file. The one step in this guide that could "
+                        "change that is the copied-actor route: a copy of your "
+                        "evaluator, calibrated against a read-only or duplicate "
+                        "target you supply, where the run can offer it. It is a "
+                        "limit of this run and not a judgement of your evaluator, "
+                        "and THIS does not stop your run. "
                     )
                 )
                 + "What proceeding means: during the paid run the MODEL writes "
@@ -8387,7 +8388,7 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
                         else " Until some run measures this evaluator against "
                         "answers already known to be right and wrong, no card can "
                         "claim it grades correctly - so the evaluation pillar "
-                        "above reports two of its four checks as measured, and "
+                        "above reports which checks were measured, and "
                         "this run cannot present as STRONG."
                     )
                 )
@@ -12471,6 +12472,9 @@ def evaluation_facts_from_calibration(
         # rule as `calibration_passed` directly above, which this should always
         # have matched -- one field over, in the same constructor.
         timed_out=reported_bool(payload.get("timed_out")),
+        # The calibrator emits a mapping for the copied-actor route; strings
+        # and booleans are not that marker. It is provenance, not extra credit.
+        calibrated_copy=isinstance(payload.get("calibrated_copy"), dict),
         parses=evaluator_parses,
         origin=origin,
         executes_candidate=evaluator_executes,

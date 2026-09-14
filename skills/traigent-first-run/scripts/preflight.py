@@ -971,9 +971,9 @@ def check_sdk(*, defer_missing: bool = False) -> None:
                 SKIP,
                 (
                     "SDK availability is unmeasured in the standard-library bootstrap; "
-                    "verify it in the dedicated environment after installation"
+                    "verify it in the chosen environment after installation"
                     if sys.flags.isolated and sys.flags.no_site
-                    else "traigent is not installed yet; verify it in the isolated environment after installation"
+                    else "traigent is not installed yet; verify it in the chosen environment after installation"
                 ),
             )
         else:
@@ -1031,7 +1031,7 @@ def check_existing_traigent_use(root: Path) -> None:
       SDK is invisible to it, and a machine-wide install shows up identically
       whether or not it has anything to do with this project.
     * Its provenance only holds before this run installs anything. After the
-      dedicated environment exists, "the SDK is here" is as likely to be our
+      chosen environment exists, "the SDK is here" is as likely to be our
       doing as theirs.
 
     A declaration has neither problem. It belongs to the project rather than
@@ -3549,6 +3549,325 @@ def candidate_execution_witnesses(tree: ast.Module) -> tuple[str, ...]:
                 witnesses.append((node.lineno, description))
     ordered = sorted(dict.fromkeys(witnesses))
     return tuple(f"{description} (line {line})" for line, description in ordered)
+
+
+# The process half of `_EXECUTION_MODULE_NAMES`, named once so the two reads
+# below can tell "submits a statement to an engine" from "runs the candidate as
+# a program". It is a SUBSET of that table, never a second table: an entry
+# here that is not there would be a witness one walk reports and the other
+# does not, and tests/test_preflight.py pins the containment.
+#
+# Why the split exists at all: `calibrate_evaluator.py`'s copied-actor route
+# (`--calibrated-copy-of`, and `references/run-safety.md` § the copied-actor
+# route) calibrates a COPY of an evaluator against a read-only or duplicate
+# target the customer supplied. A safe target bounds an engine. It bounds
+# nothing about `subprocess.run(candidate)` or `exec(candidate)`, so the route
+# is refused for a file that reaches a process, and the refusal has to come
+# from the same walk that found the witness.
+_PROCESS_MODULE_NAMES: frozenset[str] = frozenset({"runpy", "subprocess", "pty"})
+# What the ADMISSION route refuses on top of the walk's own process branches.
+# `candidate_execution_witnesses` deliberately does not list these: an
+# ordinary comparison evaluator that imports `multiprocessing` for a pool or
+# `ctypes` for a checksum reaches no engine, and refusing its calibration would
+# be the false refusal the walk is built to avoid. The copied-actor route is
+# the opposite situation - it runs a file that DOES reach an engine, on
+# purpose, against a target the customer bounded - and a bounded target says
+# nothing about a child process, a foreign function, or a module loaded by
+# name at run time. So the route reads these too, and only the route.
+_ADMISSION_PROCESS_MODULE_NAMES: frozenset[str] = frozenset(
+    {"multiprocessing", "ctypes"}
+)
+# Attribute forms, keyed by the module they hang off. `asyncio` is not a
+# process module - it is how most async scorers are written - so only its
+# `create_subprocess_*` family is a witness; likewise `importlib` is ordinary
+# and `import_module` is the one member that loads code by a run-time name.
+_ADMISSION_PROCESS_ATTRIBUTES: dict[str, tuple[str, ...]] = {
+    "asyncio": ("create_subprocess_exec", "create_subprocess_shell"),
+    "importlib": ("import_module",),
+}
+_ADMISSION_PROCESS_BARE_NAMES: frozenset[str] = frozenset(
+    name for names in _ADMISSION_PROCESS_ATTRIBUTES.values() for name in names
+)
+
+
+def _admission_module(name: str) -> str | None:
+    """The admission-only process module this dotted name reaches, if any."""
+    for listed in _ADMISSION_PROCESS_MODULE_NAMES:
+        if name == listed or name.startswith(f"{listed}."):
+            return listed
+    return None
+
+
+def process_execution_witnesses(tree: ast.Module) -> tuple[str, ...]:
+    """The witnesses in this tree that run candidate text as a program.
+
+    The process and code-execution branches of `candidate_execution_witnesses`,
+    in the same words and the same order - every process witness that walk
+    returns is returned here - plus the admission-only names above, which that
+    walk does not report and this read does. The engine branches - a listed
+    driver import, a DB-API call, a data-frame SQL surface - are deliberately
+    absent: those are the shapes a read-only or duplicate target can bound,
+    and this read exists to name the ones it cannot.
+    """
+    witnesses: list[tuple[int, str]] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if (
+                    _execution_module_name(alias.name) in _PROCESS_MODULE_NAMES
+                    or _admission_module(alias.name) is not None
+                ):
+                    witnesses.append((node.lineno, f"imports {alias.name}"))
+        elif isinstance(node, ast.ImportFrom):
+            module = node.module or ""
+            if (
+                _execution_module_name(module) in _PROCESS_MODULE_NAMES
+                or _admission_module(module) is not None
+            ):
+                witnesses.append((node.lineno, f"imports from {module}"))
+                continue
+            for alias in node.names:
+                composed = f"{module}.{alias.name}" if module else alias.name
+                if node.level == 0 and (
+                    _execution_module_name(composed) in _PROCESS_MODULE_NAMES
+                    or _admission_module(composed) is not None
+                ):
+                    witnesses.append((node.lineno, f"imports {composed}"))
+                elif (
+                    (module == "os" and _is_process_attribute(alias.name))
+                    or (module == "builtins" and alias.name in _EXECUTION_BUILTIN_CALLS)
+                    or alias.name in _ADMISSION_PROCESS_ATTRIBUTES.get(module, ())
+                ):
+                    witnesses.append((node.lineno, f"imports {module}.{alias.name}"))
+        elif isinstance(node, ast.Call):
+            func = node.func
+            if isinstance(func, ast.Name) and (
+                func.id in _EXECUTION_BUILTIN_CALLS
+                or func.id in _ADMISSION_PROCESS_BARE_NAMES
+            ):
+                witnesses.append((node.lineno, f"calls {func.id}()"))
+            elif isinstance(func, ast.Attribute):
+                root = _attribute_root(func)
+                if root == "os" and _is_process_attribute(func.attr):
+                    witnesses.append((node.lineno, f"calls os.{func.attr}()"))
+                elif (
+                    root is not None
+                    and func.attr in _ADMISSION_PROCESS_ATTRIBUTES.get(root, ())
+                ):
+                    witnesses.append((node.lineno, f"calls {root}.{func.attr}()"))
+    ordered = sorted(dict.fromkeys(witnesses))
+    return tuple(f"{description} (line {line})" for line, description in ordered)
+
+
+# The environment reads a file makes, for the copied-actor route's repoint
+# check. `(line, name)` per read, `name` None where it is not a string literal
+# - a name computed at run time is a read this walk cannot account for, and
+# the route refuses it rather than guessing. Recognised: `os.environ[...]`,
+# `os.environ.get(...)`, `environ[...]`/`environ.get(...)` after `from os
+# import environ`, `os.getenv(...)`, and a bare `getenv(...)`.
+def environment_reads(tree: ast.Module) -> tuple[tuple[int, str | None], ...]:
+    """Every environment-variable read in this tree, by line."""
+
+    def is_environ(node: ast.expr) -> bool:
+        return (isinstance(node, ast.Name) and node.id == "environ") or (
+            isinstance(node, ast.Attribute)
+            and node.attr == "environ"
+            and isinstance(node.value, ast.Name)
+            and node.value.id == "os"
+        )
+
+    def literal(node: ast.expr | None) -> str | None:
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            return node.value
+        return None
+
+    reads: list[tuple[int, str | None]] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Subscript) and is_environ(node.value):
+            reads.append((node.lineno, literal(node.slice)))
+        elif isinstance(node, ast.Call):
+            func = node.func
+            first = node.args[0] if node.args else None
+            if isinstance(func, ast.Attribute) and (
+                (func.attr == "get" and is_environ(func.value))
+                or (
+                    func.attr == "getenv"
+                    and isinstance(func.value, ast.Name)
+                    and func.value.id == "os"
+                )
+            ):
+                reads.append((node.lineno, literal(first)))
+            elif isinstance(func, ast.Name) and func.id == "getenv":
+                reads.append((node.lineno, literal(first)))
+    return tuple(sorted(dict.fromkeys(reads)))
+
+
+# What a string literal has to look like to be read as a connection target,
+# for the copied-actor route's "the original's target survives in the copy"
+# refusal. Deliberately wide: a URL of any scheme, an absolute or home path,
+# a file with a database suffix, or `:memory:`. Wide costs a refusal of a
+# copy that happened to keep an unrelated URL; narrow costs a calibration
+# run against the customer's production engine.
+_DATABASE_SUFFIXES: tuple[str, ...] = (".db", ".sqlite", ".sqlite3", ".duckdb")
+
+
+def connection_literals(tree: ast.Module) -> frozenset[str]:
+    """String constants in this tree that read as a connection target."""
+    found: set[str] = set()
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Constant) and isinstance(node.value, str)):
+            continue
+        value = node.value.strip()
+        if not value:
+            continue
+        if (
+            "://" in value
+            or value == ":memory:"
+            or value.startswith(("/", "~", "\\\\"))
+            or (len(value) > 2 and value[1] == ":" and value[2] in "\\/")
+            or value.lower().endswith(_DATABASE_SUFFIXES)
+        ):
+            found.add(node.value)
+    return frozenset(found)
+
+
+# The names under which a listed engine module opens its connection. Matched
+# on the attribute or imported name against a module the tree imported from
+# the engine table, so `sqlite3.connect`, `sqlalchemy.create_engine`,
+# `bigquery.Client`, `duckdb.connect` and `from psycopg2 import connect` all
+# resolve, and a project helper that happens to be called `connect` does not.
+_ENGINE_CONSTRUCTOR_NAMES: frozenset[str] = frozenset(
+    {
+        "connect",
+        "create_engine",
+        "create_async_engine",
+        "Client",
+        "connect_async",
+        "Connection",
+        "engine_from_config",
+        "create_engine_from_config",
+    }
+)
+
+
+def _collect_engine_bindings(
+    tree: ast.Module, module_aliases: dict[str, str], bare_constructors: set[str]
+) -> None:
+    """The names this tree binds to engine modules and to their constructors.
+
+    Alias-aware in both import forms - `import sqlite3 as s` binds `s`,
+    `import snowflake.connector` binds `snowflake`, `from google.cloud import
+    bigquery` binds `bigquery`, and `from psycopg2 import connect as c` binds
+    the bare name `c`.
+    """
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                listed = _execution_module_name(alias.name)
+                if listed is not None and listed not in _PROCESS_MODULE_NAMES:
+                    bound = alias.asname or alias.name.partition(".")[0]
+                    module_aliases[bound] = listed
+        elif isinstance(node, ast.ImportFrom) and node.level == 0:
+            module = node.module or ""
+            from_engine = _execution_module_name(module)
+            if from_engine in _PROCESS_MODULE_NAMES:
+                from_engine = None
+            for alias in node.names:
+                # The constructor itself, imported by name, before the
+                # composed-name check: `psycopg2.connect` also prefix-matches
+                # the module and would otherwise bind `connect` as an alias.
+                if from_engine is not None and alias.name in _ENGINE_CONSTRUCTOR_NAMES:
+                    bare_constructors.add(alias.asname or alias.name)
+                    continue
+                composed = f"{module}.{alias.name}" if module else alias.name
+                listed = _execution_module_name(composed)
+                if listed is not None and listed not in _PROCESS_MODULE_NAMES:
+                    module_aliases[alias.asname or alias.name] = listed
+
+
+def _is_constructor_reference(
+    node: ast.expr, module_aliases: dict[str, str], bare_constructors: set[str]
+) -> bool:
+    if isinstance(node, ast.Name):
+        return node.id in bare_constructors
+    return (
+        isinstance(node, ast.Attribute)
+        and node.attr in _ENGINE_CONSTRUCTOR_NAMES
+        and _attribute_root(node) in module_aliases
+    )
+
+
+def engine_constructor_references(tree: ast.Module) -> tuple[ast.expr, ...]:
+    """Every reference to a listed engine's constructor, called or not.
+
+    `f = sqlite3.connect`, `sqlite3.connect.__call__`, `attrgetter("connect")
+    (sqlite3)` and a bare `connect` handed to a helper are all references
+    that are not the one admitted call, and the copied-actor route refuses a
+    copy that holds any reference it did not admit. Same alias resolution as
+    `engine_constructor_calls`, so the two agree about what a constructor is.
+    """
+    module_aliases: dict[str, str] = {}
+    bare_constructors: set[str] = set()
+    _collect_engine_bindings(tree, module_aliases, bare_constructors)
+    found = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.Name, ast.Attribute))
+        and _is_constructor_reference(node, module_aliases, bare_constructors)
+    ]
+    return tuple(sorted(found, key=lambda node: (node.lineno, node.col_offset)))
+
+
+def engine_constructor_calls(tree: ast.Module) -> tuple[ast.Call, ...]:
+    """Every call in this tree that constructs a listed engine's connection.
+
+    For the copied-actor route's structural check: the copy has to open its
+    engine WITH the target read, and the first step of proving that is
+    knowing which call opens the engine.
+    """
+    module_aliases: dict[str, str] = {}
+    bare_constructors: set[str] = set()
+    _collect_engine_bindings(tree, module_aliases, bare_constructors)
+    calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and _is_constructor_reference(node.func, module_aliases, bare_constructors)
+    ]
+    return tuple(sorted(calls, key=lambda call: (call.lineno, call.col_offset)))
+
+
+def engine_modules_imported(tree: ast.Module) -> tuple[str, ...]:
+    """Every listed engine module this tree imports, once each, by first line.
+
+    The listed name rather than the spelling - `sqlalchemy` for `import
+    sqlalchemy.orm` and `google.cloud.bigquery` for `from google.cloud import
+    bigquery` - so two spellings of one driver count as one engine. What it
+    is for is the copied-actor route's "opens more than one engine" refusal
+    and its "the copy shows no engine to repoint" refusal: a file whose only
+    witness is `.execute()` on a connection handed in from elsewhere imports
+    no driver, and the place its target is set is not in this file.
+    """
+    found: list[tuple[int, str]] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            names = [alias.name for alias in node.names]
+        elif isinstance(node, ast.ImportFrom) and node.level == 0:
+            module = node.module or ""
+            names = [module] + [
+                f"{module}.{alias.name}" if module else alias.name
+                for alias in node.names
+            ]
+        else:
+            continue
+        for name in names:
+            listed = _execution_module_name(name)
+            if listed is not None and listed not in _PROCESS_MODULE_NAMES:
+                found.append((node.lineno, listed))
+    ordered: dict[str, None] = {}
+    for _line, listed in sorted(found):
+        ordered.setdefault(listed, None)
+    return tuple(ordered)
 
 
 # The comparison an evaluator PROVABLY performs, for the half of #380 that a
