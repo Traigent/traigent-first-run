@@ -7558,7 +7558,7 @@ _TIED_PAIRS_WITH_NO_WITNESS: dict[tuple[str, str], str] = {
         "DECLARED arm of the refusal, which is the arm a ceiling still applies "
         "to: a run resting on the declaration alone has the same absent "
         "behavioural evidence as one that simply has not calibrated, so it is "
-        "bounded the same way and the flag buys nothing. The witnessed arm "
+        "bounded by the same 45 ceiling. The witnessed arm "
         "carries no ceiling at all and so joins no tie."
     ),
     ("evaluator-absent", "evaluator-unresolved"): (
@@ -10645,6 +10645,52 @@ class TheCardSpeaksTheUsersLanguageTests(unittest.TestCase):
             texts.append(MODULE.render_markdown(score))
             texts.append(MODULE.render_markdown(score, timestamp="2026-01-01"))
 
+        # AND THE SCORED EVALUATION STATES, sub-score lines included.
+        #
+        # The two scans above miss this whole class and a banned phrase got
+        # through it. `_customer_facing_strings` reads `SubScore` arguments off
+        # the AST, so an evidence sentence built into a local and passed by
+        # name is invisible to it; `_scores_the_renderers_branch_on` builds its
+        # scores by hand, so no sentence `score_evaluation` composes is in
+        # there either. Between them sat every line the refusal states print -
+        # which is the part of this file most rewritten and least swept.
+        #
+        # Scored rather than constructed, because the point is that the words
+        # reached a reader.
+        witness = "scorer.py line 6: calls .execute() on the candidate's SQL"
+        case = {"good_passes": True, "bad_fails": True, "non_constant": True}
+        payloads = (
+            {},
+            dict(
+                calibration_present=True,
+                calibration_supplied=True,
+                calibration_complete=True,
+                calibration_passed=True,
+                checks=(case, case),
+                probe_scores=((1.0, 0.0), (1.0, 0.0)),
+            ),
+            dict(calibration_present=True, calibration_supplied=True, timed_out=True),
+            dict(calibration_supplied=True),
+        )
+        for walk in (True, False, None):
+            for payload in payloads:
+                for flag in (True, False):
+                    pillar, caps = MODULE.score_evaluation(
+                        MODULE.EvaluationFacts(
+                            present=True,
+                            method="execution",
+                            task_kind="code-sql",
+                            parses=True,
+                            origin="brought",
+                            executes_candidate=walk,
+                            execution_witness=witness if walk else None,
+                            calibration_scope_refused=flag,
+                            **payload,
+                        )
+                    )
+                    texts.extend(sub.evidence for sub in pillar.subscores)
+                    texts.extend(cap.reason for cap in caps)
+
         # Two sentence builders whose fallback arm no state in this tree can
         # reach: both are total functions guarding a table a completeness test
         # keeps full, so they are called directly rather than left unread.
@@ -12780,7 +12826,9 @@ class ADeferredCalibrationSaysSoInTheFieldConsumersReadTests(unittest.TestCase):
             MODULE.COMPLETE_CALIBRATION, ("repair-evaluator", MODULE.PROCEED)
         )
 
-    def _outstanding(self, *, scope_refused: bool) -> "MODULE.ReadinessScore":
+    def _outstanding(
+        self, *, scope_refused: bool, weights: dict[str, float] | None = None
+    ) -> "MODULE.ReadinessScore":
         """A text-to-SQL project whose calibration has not happened.
 
         One base, one field varied, so the comparison below is about the
@@ -12800,9 +12848,40 @@ class ADeferredCalibrationSaysSoInTheFieldConsumersReadTests(unittest.TestCase):
             _routing_corpus(),
             facts,
             _wired_space(),
-            dict(MODULE.DEFAULT_WEIGHTS),
+            dict(MODULE.DEFAULT_WEIGHTS) if weights is None else weights,
             _review(reviewed=48),
         )
+
+    def test_refusal_renormalization_can_raise_an_overall_below_the_ceiling(
+        self,
+    ) -> None:
+        """The declaration preserves 45, not the earlier uncapped arithmetic."""
+        for raw, expected in (
+            ("40,35,25", (45, 45)),
+            ("10,80,10", (42, 45)),
+            ("0,100,0", (31, 45)),
+        ):
+            with self.subTest(weights=raw):
+                weights = MODULE.parse_weights(raw)
+                plain = self._outstanding(scope_refused=False, weights=weights)
+                refused = self._outstanding(scope_refused=True, weights=weights)
+                self.assertEqual((plain.overall, refused.overall), expected)
+                self.assertEqual(refused.confidence, plain.confidence)
+                self.assertEqual(refused.overall, min(refused.weighted_average, 45))
+                self.assertEqual(refused.band, "PARTIAL")
+                self.assertGreater(refused.weighted_average, plain.weighted_average)
+                self.assertEqual(
+                    next(
+                        c.ceiling
+                        for c in refused.caps
+                        if c.condition == "evaluator-calibration-refused"
+                    ),
+                    45,
+                )
+                sub = self._calibration_subscore(refused)
+                self.assertEqual(sub.value, 0.0)
+                self.assertFalse(sub.measured)
+                self.assertFalse(sub.withheld)
 
     def _scope_refused(self) -> "MODULE.ReadinessScore":
         return self._outstanding(scope_refused=True)
@@ -12860,20 +12939,15 @@ class ADeferredCalibrationSaysSoInTheFieldConsumersReadTests(unittest.TestCase):
         self.assertTrue(cap.asks)
         self.assertNotEqual(refused.status, "BLOCKED")
 
-    def test_the_declaration_changes_the_ask_and_never_the_number(self) -> None:
-        """An unverified declaration may bound a claim; it may not earn credit.
+    def test_the_declaration_changes_the_ask_while_this_fixture_stays_capped(
+        self,
+    ) -> None:
+        """Default weights put both sides of this fixture above the ceiling.
 
-        The flag ALONE, with no witness beside it, is a claim about the run:
-        nothing in this module reads the scorer's complete call path, and the
-        fixtures below leave `executes_candidate` at `None` on purpose so that
-        is the state under test. If the flag moved a score, claiming a refusal
-        would be cheaper than doing the work - the same inversion
-        `SubScore.withheld` exists to refuse, and the same rule the row review
-        is held to.
-
-        What preflight's walk proves is a different input and is measured in
-        `TheWitnessDecidesTheScopeGateNotTheDeclarationTests`. A witness may
-        raise this state on its own; the flag still may not raise anything.
+        The declaration changes the remedy and removes the unmade check from
+        the denominator. Here the same 45 ceiling binds both runs. The custom-
+        weight regression covers an overall below it, which can rise without
+        earning calibration credit or lifting the ceiling.
         """
         plain = self._outstanding(scope_refused=False)
         refused = self._outstanding(scope_refused=True)
@@ -12884,16 +12958,32 @@ class ADeferredCalibrationSaysSoInTheFieldConsumersReadTests(unittest.TestCase):
         self.assertEqual(
             [cap.condition for cap in refused.caps], ["evaluator-calibration-refused"]
         )
+        # The shared 45 ceiling already binds both sides of this fixture.
+        # A pre-cap score below it can rise, as the custom-weight test shows.
         self.assertEqual(refused.overall, plain.overall)
-        self.assertEqual(refused.weighted_average, plain.weighted_average)
         self.assertEqual(refused.band, plain.band)
-        self.assertEqual(
-            [(p.name, p.score, p.confidence) for p in refused.pillars],
-            [(p.name, p.score, p.confidence) for p in plain.pillars],
-        )
+        # And the figure the card PRINTS beside it, which is not the same
+        # claim and used to be pinned equal here. It is not equal any more,
+        # and a deleted assertion would have left that unsaid: the pre-cap
+        # average rises because the refused arm stopped being charged, and the
+        # ceiling is the only thing keeping it off `overall`. Pinned as the
+        # inequality rather than dropped, so "the flag moves no number" cannot
+        # come back as a claim about this one.
+        self.assertGreater(refused.weighted_average, plain.weighted_average)
         self.assertEqual(
             MODULE.CAP_CEILING["evaluator-calibration-refused"],
             MODULE.CAP_CEILING["evaluator-unvalidated"],
+        )
+        # Every pillar but evaluation is identical; evaluation rises because
+        # calibration leaves its denominator rather than scoring zero in it.
+        refused_pillars = {p.name: (p.score, p.confidence) for p in refused.pillars}
+        plain_pillars = {p.name: (p.score, p.confidence) for p in plain.pillars}
+        for name in refused_pillars:
+            if name != "evaluation":
+                with self.subTest(pillar=name):
+                    self.assertEqual(refused_pillars[name], plain_pillars[name])
+        self.assertGreater(
+            refused_pillars["evaluation"][0], plain_pillars["evaluation"][0]
         )
 
     def _calibration_subscore(self, score: "MODULE.ReadinessScore"):
@@ -12911,21 +13001,32 @@ class ADeferredCalibrationSaysSoInTheFieldConsumersReadTests(unittest.TestCase):
         check must not be run here - two lines of one card disagreeing about
         what had happened.
 
-        What is NOT done about it: the flag is not cleared. Clearing it would
-        renormalize the check out of the denominator and lift the evaluation
-        pillar from 51 to about 97 on the strength of a declaration nothing
-        verifies, which would make claiming a refusal cheaper than doing the
-        work. The next test pins that nothing moved.
+        Since #507, calibration leaves the denominator without earning
+        measured credit on both refusal arms. The declared arm retains its
+        45 ceiling. The next test isolates that renormalization, and the
+        custom-weight test covers a lower overall rising within the bound.
         """
         refused = self._outstanding(scope_refused=True)
         plain = self._outstanding(scope_refused=False)
         refused_calibration = self._calibration_subscore(refused)
         plain_calibration = self._calibration_subscore(plain)
 
-        self.assertTrue(refused_calibration.withheld)
+        # FALSE, which is what this test's own docstring has always said the
+        # state is: `withheld` means asked and not answered, and this run was
+        # never asked. It asserted True until #507 - pinning the contradiction
+        # it describes - because the charge was doing the ceiling's job.
+        self.assertFalse(refused_calibration.withheld)
         self.assertFalse(refused_calibration.measured)
-        self.assertIn("never asked", refused_calibration.evidence)
-        self.assertIn("scope gate refused it", refused_calibration.evidence)
+        # And the line says it in the customer's words rather than in this
+        # package's: what we meant to check, and that nobody asked us to.
+        self.assertIn(
+            "nobody asked this run to make that check", refused_calibration.evidence
+        )
+        self.assertIn(
+            "try your evaluator on answers already known right and wrong",
+            refused_calibration.evidence,
+        )
+        self.assertNotIn("scope gate", refused_calibration.evidence)
         # The whole sentence is built inside the arm that owns this state. An
         # earlier draft appended its tail after the branch, keyed on the flag
         # rather than on which arm fired, so it also attached to the
@@ -12941,12 +13042,20 @@ class ADeferredCalibrationSaysSoInTheFieldConsumersReadTests(unittest.TestCase):
             "until a complete calibration is measured",
         )
 
-    def test_only_the_sentence_moves_and_the_arithmetic_does_not(self) -> None:
-        """The legibility fix must be provably free.
+    def test_the_declaration_renormalizes_only_the_calibration_subscore(self) -> None:
+        """What the flag may and may not move, after #507.
 
-        One base, one field varied, compared sub-score by sub-score rather than
-        pillar by pillar - a pillar total can stay put while two checks trade
-        weight, and the claim here is stronger than that.
+        It used to move NOTHING but the sentence, because the declared arm was
+        charged exactly as a run that had simply not calibrated. #507 stopped
+        charging a check this guide did not make, so the flag now renormalizes
+        calibration out of the evaluation pillar and that pillar rises.
+
+        The 45 ceiling stays, and it binds both sides of this default-weight
+        fixture. Overall and band can differ below that bound; confidence
+        remains unchanged because no additional check was measured.
+
+        Compared sub-score by sub-score rather than pillar by pillar, because a
+        pillar total can stay put while two checks trade weight.
         """
         refused = self._outstanding(scope_refused=True)
         plain = self._outstanding(scope_refused=False)
@@ -12972,11 +13081,29 @@ class ADeferredCalibrationSaysSoInTheFieldConsumersReadTests(unittest.TestCase):
                 for pillar in score.pillars
             ]
 
-        self.assertEqual(arithmetic(refused), arithmetic(plain))
+        # This default-weight fixture is already capped at 45 on both sides.
         self.assertEqual(refused.overall, plain.overall)
-        self.assertEqual(refused.weighted_average, plain.weighted_average)
         self.assertEqual(refused.band, plain.band)
         self.assertEqual(refused.confidence, plain.confidence)
+        # The printed pre-cap average does move, and the documents that
+        # describe this flag say so rather than claiming no number moves.
+        self.assertGreater(refused.weighted_average, plain.weighted_average)
+        # The evaluation pillar DOES move, and only by calibration leaving its
+        # own denominator - every other sub-score is identical.
+        refused_arithmetic = {p[0]: p for p in arithmetic(refused)}
+        plain_arithmetic = {p[0]: p for p in arithmetic(plain)}
+        for name in refused_arithmetic:
+            if name != "evaluation":
+                with self.subTest(pillar=name):
+                    self.assertEqual(refused_arithmetic[name], plain_arithmetic[name])
+        self.assertGreater(
+            refused_arithmetic["evaluation"][1], plain_arithmetic["evaluation"][1]
+        )
+        refused_calibration = self._calibration_subscore(refused)
+        plain_calibration_sub = self._calibration_subscore(plain)
+        self.assertFalse(refused_calibration.withheld)
+        self.assertTrue(plain_calibration_sub.withheld)
+        self.assertEqual(refused_calibration.value, plain_calibration_sub.value)
         # And the two evidence strings really are different, so the comparison
         # above is not passing because nothing changed at all.
         self.assertNotEqual(
@@ -13801,6 +13928,90 @@ class TheCeilingPricedOurOwnBoundaryTests(unittest.TestCase):
         # whole reason the hold has to be the thing keeping it out.
         self.assertGreaterEqual(score.overall, 75)
 
+    def test_unreadable_witnesses_keep_the_ceiling_and_its_explanation(self) -> None:
+        """A report claiming execution is not a quoted engine witness."""
+        for fields in (
+            {},
+            {"execution_witnesses": None},
+            {"execution_witnesses": []},
+            {"execution_witnesses": ["", " ", "\t"]},
+            {"execution_witnesses": [None, 1, False, {}]},
+            {"execution_witnesses": self.WITNESS},
+            {"execution_witnesses": [self.WITNESS]},
+        ):
+            with self.subTest(fields=fields):
+                executes, witness = MODULE.evaluator_execution_from_preflight(
+                    [
+                        {
+                            "check": "evaluator-shape",
+                            "status": "WARN",
+                            "metrics": {"executes": True, **fields},
+                        }
+                    ]
+                )
+                self.assertIs(executes, True)
+                score = MODULE.score_run(
+                    _routing_corpus(),
+                    MODULE.EvaluationFacts(
+                        present=True,
+                        method="execution",
+                        task_kind="code-sql",
+                        parses=True,
+                        origin="brought",
+                        executes_candidate=executes,
+                        execution_witness=witness,
+                    ),
+                    _wired_space(),
+                    dict(MODULE.DEFAULT_WEIGHTS),
+                    _review(reviewed=48),
+                )
+                cap = self._cap(score)
+                card = MODULE.render_card(score)
+                if witness is None:
+                    self.assertEqual(cap.ceiling, 45)
+                    self.assertEqual(score.overall, 45)
+                    self.assertIn("LIMITED TO 45", card)
+                    self.assertNotIn("Your score is not reduced for it", card)
+                    self.assertNotIn("the evaluator file runs the answer", card)
+                    self.assertIn("the file check reported execution", card)
+                    self.assertIn("no readable quoted construct", card)
+                    self.assertNotIn(
+                        "no preflight report for this evaluator reached", cap.reason
+                    )
+                else:
+                    self.assertIsNone(cap.ceiling)
+                    self.assertEqual(score.overall, 77)
+                    self.assertIn("Your score is not reduced for it", card)
+                    self.assertNotIn("LIMITED TO", card)
+
+    def test_direct_callers_need_a_readable_string_witness(self) -> None:
+        """The fact API must preserve the adapter's witness requirement."""
+        for witness in (None, "", " ", "\t", 1, True, [], {}, self.WITNESS):
+            with self.subTest(witness=witness):
+                facts = MODULE.EvaluationFacts(
+                    present=True,
+                    method="execution",
+                    task_kind="code-sql",
+                    parses=True,
+                    origin="brought",
+                    executes_candidate=True,
+                    execution_witness=witness,
+                )
+                score = MODULE.score_run(
+                    _routing_corpus(),
+                    facts,
+                    _wired_space(),
+                    dict(MODULE.DEFAULT_WEIGHTS),
+                    _review(reviewed=48),
+                )
+                readable = witness == self.WITNESS
+                self.assertEqual(self._cap(score).ceiling, None if readable else 45)
+                self.assertEqual(score.overall, 77 if readable else 45)
+                if not readable:
+                    self.assertNotIn(
+                        "the evaluator file runs the answer", MODULE.render_card(score)
+                    )
+
     def test_a_claim_with_no_witness_buys_nothing(self) -> None:
         """The thirty-two points are bought by EVIDENCE, never by a word.
 
@@ -13895,7 +14106,12 @@ class TheCeilingPricedOurOwnBoundaryTests(unittest.TestCase):
         self.assertIn("LIMITED TO 45", card)
         self.assertNotIn("Your score is not reduced for it", card)
         # And it says why the ceiling stands, without handing them an errand.
-        self.assertIn("no preflight report for this evaluator reached", card)
+        #
+        # Worded against the WITNESS rather than against the report, because
+        # the branch is keyed on `witnessed_engine` and a preflight document
+        # saying `executes` with no quoted witness lands here too - a run that
+        # did have a report reach it.
+        self.assertIn("no preflight report proved what this evaluator reaches", card)
 
     def test_the_card_shows_no_ceiling_it_does_not_have(self) -> None:
         card = MODULE.render_card(self._refused())
@@ -14022,6 +14238,11 @@ class TheWitnessDecidesTheScopeGateNotTheDeclarationTests(unittest.TestCase):
         pillar = next(p for p in score.pillars if p.name == "evaluation")
         return next(s for s in pillar.subscores if s.name == "probe-spread")
 
+    def _refused_cap(self, score: "MODULE.ReadinessScore"):
+        return next(
+            c for c in score.caps if c.condition == "evaluator-calibration-refused"
+        )
+
     def test_a_calibration_the_gate_forbids_earns_nothing(self) -> None:
         """The forty points that paid for breaking the rule.
 
@@ -14121,42 +14342,32 @@ class TheWitnessDecidesTheScopeGateNotTheDeclarationTests(unittest.TestCase):
         # remedy - and they no longer agree about the NUMBER, which is the
         # ceiling's removal making a difference visible that it used to flatten.
         #
-        # Both arms were pinned to 45 by `evaluator-calibration-refused`, so the
-        # charge that separates them could not be seen on the card: the
-        # witnessed arm has its calibration renormalized away, and the declared
-        # arm is charged for it, because finding no engine settles nothing and a
-        # word about a file this run never read may not retire a deduction. With
-        # nothing capping either, that charge is the ten points between them.
-        #
-        # What is asserted is the DIRECTION, which is the invariant that
-        # actually matters and the one the old equality was standing in for: a
-        # declaration may never raise a score. It does not, and it never could
-        # once the ceiling stopped hiding which way the two ran.
+        # Both arms renormalize calibration; only the declared arm retains
+        # the 45 ceiling. Default weights put this fixture above that bound.
         self.assertLess(declared.overall, witnessed.overall)
         self.assertEqual(witnessed.recommended_action, declared.recommended_action)
         self.assertEqual(
             [cap.condition for cap in witnessed.caps],
             [cap.condition for cap in declared.caps],
         )
-        # They part on exactly one thing, and it is the thing the two arms
-        # know differently: whether THIS RUN established that the measurement
-        # was not its to make. The witnessed arm did, so its check is
-        # renormalized away rather than charged; the declared arm rests on a
-        # word about a file this run never read, and a declaration may not
-        # retire a deduction any more than it may earn a point. Both sentences
-        # open on the same fact.
+        # NEITHER IS CHARGED (traigent-first-run#507): a check this guide did
+        # not make is not a deduction on any arm. What the two arms still know
+        # differently is WHY the check is missing, and the sentences say that -
+        # one had its file walked and the engine found, the other has no
+        # preflight report at all. Both open on the same fact.
         witnessed_line = self._calibration_subscore(witnessed).evidence
         declared_line = self._calibration_subscore(declared).evidence
         for line in (witnessed_line, declared_line):
-            self.assertIn("evaluator-execution scope gate refused it", line)
-        self.assertIn("no points are deducted for it", witnessed_line)
-        self.assertIn(
-            "it costs points because no preflight report for your evaluator "
-            "reached this score",
-            declared_line,
-        )
+            self.assertIn("nobody asked this run to make that check", line)
+            self.assertIn("no points are deducted for it", line)
+            self.assertNotIn("it costs points", line)
+        self.assertIn("no preflight report for your evaluator", declared_line)
         self.assertFalse(self._calibration_subscore(witnessed).withheld)
-        self.assertTrue(self._calibration_subscore(declared).withheld)
+        self.assertFalse(self._calibration_subscore(declared).withheld)
+        # The declaration leaves the 45 ceiling in place; this default-weight
+        # fixture reaches it after calibration leaves the denominator.
+        self.assertEqual(declared.overall, 45)
+        self.assertLess(declared.overall, witnessed.overall)
 
     def test_the_refused_card_never_points_at_the_check_it_forbids(self) -> None:
         """Whatever is appended to every arm has to be true of every arm.
@@ -14199,22 +14410,32 @@ class TheWitnessDecidesTheScopeGateNotTheDeclarationTests(unittest.TestCase):
                 score = self._score(facts)
                 evidence = self._calibration_subscore(score).evidence
                 self.assertNotIn("complete calibration", evidence.casefold())
-                # Every arm ends on a route the run can actually take, but
-                # not on the same one: the charged arm names what would lift
-                # its own charge, and only an arm with nothing else to offer
-                # sends the reader to the containment review. Asserting one
-                # phrase across both is what let a route clause be appended
-                # to a sentence that already carried one.
-                self.assertRegex(
-                    evidence,
-                    r"nothing here asks you for it|preflight\.py --evaluator|"
-                    r"establish the evaluator as the ceiling describes",
-                )
                 cap = next(
                     c
                     for c in score.caps
                     if c.condition == "evaluator-calibration-refused"
                 )
+                # An arm that PRINTS a ceiling ends on a route the run can
+                # actually take, and not on the same one: the arm whose file
+                # was never read names the read that would settle it, and the
+                # arm that has nothing else to offer explains what the ceiling
+                # reports. Asserting one phrase across both is what let a
+                # route clause be appended to a sentence that already carried
+                # one.
+                #
+                # An arm that prints NO ceiling ends on no route, and that is
+                # the correct ending rather than a missing one: the walk has
+                # already run, nothing is bounded, and a line naming "the
+                # ceiling" there points at something the reader cannot find.
+                if cap.ceiling is None:
+                    self.assertNotIn("the ceiling", evidence)
+                    self.assertNotIn("preflight.py --evaluator", evidence)
+                else:
+                    self.assertRegex(
+                        evidence,
+                        r"nothing here asks you for it|preflight\.py --evaluator|"
+                        r"establish the evaluator as the ceiling describes",
+                    )
                 self.assertNotIn("complete calibration", cap.reason.casefold())
                 # And it no longer points at the containment review either.
                 # That was the route named when this cap BLOCKED and the
@@ -14314,17 +14535,28 @@ class TheWitnessDecidesTheScopeGateNotTheDeclarationTests(unittest.TestCase):
         )
         self.assertIn(self.WITNESS, taken_cap.reason)
         self.assertIn("does not permit", taken_cap.reason)
-        self.assertIn("the evaluator check was run", taken_cap.reason)
+        # The cap keeps its own vocabulary and the sub-score line keeps the
+        # plain-English one; what is pinned is that BOTH say the calibration
+        # happened, on the arm where it did.
+        self.assertIn("the evaluator check was run on it", taken_cap.reason)
         self.assertIn(
-            "the evaluator check was run", self._calibration_subscore(taken).evidence
+            "a calibration was run on this evaluator",
+            self._calibration_subscore(taken).evidence,
         )
 
         never_cap = next(
             c for c in never.caps if c.condition == "evaluator-calibration-refused"
         )
         self.assertIn("did not run the evaluator check on it", never_cap.reason)
-        self.assertNotIn("the evaluator check was run", never_cap.reason)
-        self.assertIn("never asked", self._calibration_subscore(never).evidence)
+        self.assertNotIn("the evaluator check was run on it", never_cap.reason)
+        self.assertNotIn(
+            "a calibration was run on this evaluator",
+            self._calibration_subscore(never).evidence,
+        )
+        self.assertIn(
+            "nobody asked this run to make that check",
+            self._calibration_subscore(never).evidence,
+        )
 
     def test_the_ceiling_the_line_points_at_is_on_the_card_with_no_method(
         self,
@@ -14376,15 +14608,18 @@ class TheWitnessDecidesTheScopeGateNotTheDeclarationTests(unittest.TestCase):
         # It used to agree by pointing at "the containment review named in the
         # ceiling" - and then the ceiling was rewritten to name no review at
         # all, so the pointer survived while its target did not
-        # (traigent-first-run#392). The clause now says what is true on this
-        # arm, which is that nothing is being asked of them.
-        self.assertIn(
-            "nothing here asks you for it",
-            self._calibration_subscore(score).evidence,
-        )
-        self.assertNotIn(
-            "containment review", self._calibration_subscore(score).evidence
-        )
+        # (traigent-first-run#392).
+        #
+        # This arm now carries NO ceiling, so they agree by the line naming
+        # none: no route clause, no errand, and nothing for the reader to look
+        # up and fail to find. The line is complete without one - it says what
+        # was not checked and that no points were lost for it - and the route
+        # clause is appended only where a ceiling is actually printed.
+        evidence = self._calibration_subscore(score).evidence
+        self.assertNotIn("the ceiling", evidence)
+        self.assertNotIn("preflight.py --evaluator", evidence)
+        self.assertNotIn("containment review", evidence)
+        self.assertIn("no points are deducted for it", evidence)
 
     def test_a_timed_out_refusal_names_no_ceiling_and_keeps_its_own_fact(
         self,
@@ -14643,22 +14878,24 @@ class TheWitnessDecidesTheScopeGateNotTheDeclarationTests(unittest.TestCase):
             witnessed.recommended_action, MODULE.CONFIRM_EVALUATOR_CONNECTION
         )
 
-    def test_only_evidence_retires_the_charge_never_the_declaration(self) -> None:
-        """Why the declared arm still pays, and what it would cost to change.
+    def test_only_evidence_retires_the_ceiling_never_the_declaration(self) -> None:
+        """The two halves of one rule, and the line between them.
 
-        Retiring a deduction is raising a number, and `--calibration-scope-
-        refused` is a customer's word about a file this run never read. The
-        rule this module applies to every unverified input - a declaration may
-        bound a claim and may never raise one - is the rule this whole seam
-        exists to enforce, so the charge is retired by evidence and only by
-        evidence.
+        Neither arm is CHARGED. The check this card declines to make is one
+        this guide refused on the customer's behalf, and a run is never
+        deducted for our own boundary - that is traigent-first-run#507, and it
+        holds however the refusal was learned.
 
-        The asymmetry that leaves is real and is the point: the way a project
-        gets it retired is to hand its evaluator to preflight and let the walk
-        read it, which is what `SKILL.md` asks of them anyway. Where the walk
-        can see nothing - an engine behind a helper module - the charge stands
-        and no rerun lifts it. That is honest about what this score knows, and
-        it is the half of traigent-first-run#394 that stays open.
+        What evidence still buys is the CEILING. A witness establishes, from a
+        file this run actually read, that the unmade check is ours; that
+        retires the bound as well. `--calibration-scope-refused` is a
+        customer's word about a file this run never read, and the rule this
+        module applies here keeps the 45 ceiling in place. Renormalization
+        can still raise an overall below that ceiling.
+
+        So the declared arm keeps its ceiling and loses its silence, and the
+        way a project lifts the ceiling is to hand its evaluator to preflight
+        and let the walk read it, which is what `SKILL.md` asks of them anyway.
 
         Pinned as a comparison so neither half can drift alone.
         """
@@ -14672,28 +14909,24 @@ class TheWitnessDecidesTheScopeGateNotTheDeclarationTests(unittest.TestCase):
                 )
             )
         )
-        self.assertTrue(self._calibration_subscore(declared).withheld)
+        # Neither arm is charged a silence it did not choose.
+        self.assertFalse(self._calibration_subscore(declared).withheld)
         self.assertFalse(self._calibration_subscore(witnessed).withheld)
-        # Same remedy, and deliberately NOT the same number.
-        #
-        # These two used to agree on everything, because a 45 ceiling sat over
-        # both and flattened them. It now sits over the declared arm only, and
-        # the two halves of one rule are visible at last: a WITNESS establishes
-        # that the unmade check is ours, so it retires the charge AND the
-        # ceiling; a DECLARATION establishes nothing about any file, so it
-        # retires neither.
-        #
-        # The equality was standing in for "the declaration buys no readiness".
-        # That is asserted directly below instead, which is stronger: the
-        # declared arm scores exactly what the run that never calibrated scores.
+        # The ceiling is what the witness retires, and only the witness.
+        self.assertEqual(
+            self._refused_cap(declared).ceiling,
+            MODULE.CALIBRATION_REFUSED_CEILING,
+        )
+        self.assertIsNone(self._refused_cap(witnessed).ceiling)
+        # Both arms renormalize the unmade check. The witness also removes
+        # the 45 ceiling, so these default-weight fixtures differ overall.
         self.assertEqual(declared.recommended_action, witnessed.recommended_action)
         self.assertLess(declared.overall, witnessed.overall)
-        # And it buys nothing against the run that simply has not calibrated
-        # yet, either: the flag changes the sentence and the remedy, not the
-        # number, exactly as its own help text says.
         deferred = self._score(MODULE.EvaluationFacts(**self._executing()))
+        # The deferred and declared fixtures are already capped at 45; an
+        # overall below that bound can rise with the same renormalization.
         self.assertEqual(declared.overall, deferred.overall)
-        self.assertEqual(
+        self.assertGreater(
             next(p for p in declared.pillars if p.name == "evaluation").score,
             next(p for p in deferred.pillars if p.name == "evaluation").score,
         )
@@ -14765,7 +14998,7 @@ class TheWitnessDecidesTheScopeGateNotTheDeclarationTests(unittest.TestCase):
         """
         happened = (
             "a calibration was taken",
-            "the evaluator check was run",
+            "a calibration was run on this evaluator",
             "calibration ran",
             "calibration reported",
             "may not read an evaluator check",
@@ -14777,6 +15010,9 @@ class TheWitnessDecidesTheScopeGateNotTheDeclarationTests(unittest.TestCase):
             "never asked for a calibration",
             "was not the one to make that measurement",
             "no calibration result was provided",
+            # The plain-English form of the same voice: the question this
+            # check would have answered, and the reason nobody answered it.
+            "nobody asked this run to make that check",
         )
         for label, score, _facts in self._every_refused_state():
             with self.subTest(state=label):
@@ -14860,6 +15096,22 @@ class TheWitnessDecidesTheScopeGateNotTheDeclarationTests(unittest.TestCase):
                         f"{label}: a line names the ceiling and the card "
                         f"carries {sorted(conditions)}: {line}",
                     )
+                    # AND THAT THE CAP ACTUALLY CARRIES ONE. Asserting the
+                    # condition alone stopped being enough when a witness
+                    # started retiring the bound: the refusal cap is raised on
+                    # the witnessed arm too, with `ceiling=None`, so a card
+                    # with no ceiling at all passed this guard while printing
+                    # a line that points at one.
+                    refusal = next(
+                        cap
+                        for cap in score.caps
+                        if cap.condition == "evaluator-calibration-refused"
+                    )
+                    self.assertIsNotNone(
+                        refusal.ceiling,
+                        f"{label}: a line names the ceiling and the refusal "
+                        f"cap carries none: {line}",
+                    )
 
     def test_the_refusal_line_reports_the_run_that_produced_it(self) -> None:
         """The record against the RUN - the check three phrase guards were not.
@@ -14904,11 +15156,22 @@ class TheWitnessDecidesTheScopeGateNotTheDeclarationTests(unittest.TestCase):
                     or facts.timed_out is True
                     or facts.checks
                 )
+                # The CEILING the cap carries, not the cap's presence. The
+                # refusal cap is raised on the witnessed arm too and carries
+                # `None` there, so "is the condition on the card" stopped
+                # answering "does this card print a ceiling" - which is the
+                # question the route clause depends on.
+                refusal_caps = [
+                    cap
+                    for cap in score.caps
+                    if cap.condition == "evaluator-calibration-refused"
+                ]
                 refusal = MODULE.calibration_refusal_consequence(
                     walk=facts.executes_candidate,
                     calibration_taken=engaged,
-                    ceiling_printed="evaluator-calibration-refused"
-                    in {cap.condition for cap in score.caps},
+                    ceiling_printed=any(
+                        cap.ceiling is not None for cap in refusal_caps
+                    ),
                 )
                 self.assertEqual(
                     refusal.calibration_happened,
@@ -14922,10 +15185,16 @@ class TheWitnessDecidesTheScopeGateNotTheDeclarationTests(unittest.TestCase):
                     "the line and the run disagree about whether preflight "
                     "read the evaluator",
                 )
-                self.assertEqual(
+                # NOTHING retires it, because nothing charges it any more
+                # (traigent-first-run#507). A check this guide did not make is
+                # not deducted on any arm; what the declared arm keeps instead
+                # is its CEILING, which is what carries "no claim". The two are
+                # a package - see `calibration_refusal_consequence` - and the
+                # ceiling and custom-weight regressions pin the bound while
+                # allowing the renormalized overall to rise below it.
+                self.assertFalse(
                     refusal.charged,
-                    facts.executes_candidate is not True,
-                    "only a walk that found the engine retires the charge",
+                    "a check this run did not make is never a deduction",
                 )
                 self.assertEqual(
                     sub.withheld,
@@ -14977,7 +15246,10 @@ class TheWitnessDecidesTheScopeGateNotTheDeclarationTests(unittest.TestCase):
         that is what the key asserts and all this can honestly hold prose to.
         """
         for key, clause in MODULE.CALIBRATION_REFUSAL_CORE.items():
-            charged, happened, read = key
+            # Two-tuple now: `charged` left the key when it stopped varying.
+            # Every arm of this condition is uncharged, so the polarity it used
+            # to select on is asserted once, below, for all of them.
+            happened, read = key
             with self.subTest(clause=clause[:50]):
                 # Whether a calibration happened, which is the claim round
                 # two's defect got wrong: a clause filed under "one was taken"
@@ -15001,12 +15273,12 @@ class TheWitnessDecidesTheScopeGateNotTheDeclarationTests(unittest.TestCase):
                         "a calibration was taken",
                     ):
                         self.assertNotIn(assertion, clause)
-                if charged:
-                    self.assertIn("it costs points", clause)
-                    self.assertNotIn("no points are deducted", clause)
-                else:
-                    self.assertIn("no points are deducted", clause)
-                    self.assertNotIn("it costs points", clause)
+                # EVERY arm, not a branch: the condition deducts nothing, so
+                # a clause that says it costs points is wrong whatever else it
+                # says. This is what the removed `charged` dimension asserted
+                # per-row, kept as one rule over the whole table.
+                self.assertIn("no points are deducted", clause)
+                self.assertNotIn("it costs points", clause)
                 if read:
                     for unread in (
                         "no preflight report",
@@ -24183,7 +24455,11 @@ class TaskFitIsEarnedFromTheEvaluatorFileTests(unittest.TestCase):
         # A missing witness must not leave a dangling colon on the card.
         without = MODULE.task_fit_execution_scope_evidence("execution", None)
         self.assertNotIn(":", without)
-        self.assertIn("runs the answer", without)
+        self.assertIn("reported execution", without)
+        self.assertIn("no readable quoted construct", without)
+        self.assertNotIn("the evaluator file runs the answer", without)
+        self.assertNotIn("preflight", without)
+        self.assertNotIn("task-fit", without)
 
 
 class TheEvaluatorExecutionReadIsThreeStatedTests(unittest.TestCase):
@@ -27617,6 +27893,33 @@ class UnguardedInputShapesAreInputErrorsTests(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertIn("cannot read scoring input", err.getvalue())
         self.assertIn("--calibration", err.getvalue())
+
+    def test_a_null_calibration_is_not_an_omitted_document(self) -> None:
+        """An explicitly supplied null must not enter the no-payload refusal arm."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            preflight = root / "preflight.json"
+            preflight.write_text(json.dumps(PREFLIGHT_RECORDS))
+            calibration = root / "calibration.json"
+            for document in (None, "{}", "null"):
+                with self.subTest(document=document):
+                    args = ["--preflight", str(preflight), "--json"]
+                    if document is not None:
+                        calibration.write_text(document)
+                        args.extend(["--calibration", str(calibration)])
+                    out, err = io.StringIO(), io.StringIO()
+                    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(
+                        err
+                    ):
+                        code = MODULE.main(args)
+                    if document == "null":
+                        self.assertEqual(code, 2)
+                        self.assertEqual(out.getvalue(), "")
+                        self.assertIn("--calibration", err.getvalue())
+                        self.assertIn("null", err.getvalue())
+                    else:
+                        self.assertEqual(code, 0, err.getvalue())
+                        self.assertIsInstance(json.loads(out.getvalue()), dict)
 
     def test_a_repeated_check_keeps_its_worst_status_and_every_metric(self) -> None:
         records = [
