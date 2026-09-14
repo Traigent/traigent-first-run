@@ -6125,14 +6125,10 @@ class SkillPackageTests(unittest.TestCase):
         survived that round, because the CLI refuses `--calibration` beside the
         flag and the two arms scored identically without one.
 
-        It did not survive traigent-first-run#507, which stopped charging the
-        declared arm for a check this guide refused. The readiness figure and
-        the 45 are still untouched, and the evaluation pillar is not: it is
-        renormalized rather than credited. So the compact form is gone from
-        both homes and what replaced it says which numbers hold still and why
-        the pillar does not - as ownership, not as arithmetic, because an
-        assistant told only that a number rises has been handed a reason to
-        pass a safety declaration.
+        #507 stopped charging either refusal arm. The declared arm keeps its
+        45 ceiling; renormalization can raise the evaluation pillar, pre-cap
+        average, and an overall below that bound. Both surfaces distinguish
+        this denominator change from measured calibration credit.
 
         The first replacement over-corrected in the other direction. It read
         "it moves no number, and preflight's witness reaches the same state
@@ -6182,19 +6178,18 @@ class SkillPackageTests(unittest.TestCase):
                 self.assertNotIn("nothing here can check it", text)
                 self.assertNotIn("a declaration nothing here can check", text)
         self.assertIn(
-            "it lifts no ceiling and changes neither the score nor the band the "
-            "customer is given, though the evaluation pillar and the pre-cap "
-            "average both rise as the run stops losing points for a check this "
-            "guide refused rather than one this project skipped, and it is the "
-            "only route where preflight finds no engine",
+            "it lifts no ceiling. the evaluation pillar and pre-cap average "
+            "can rise when the refused check leaves the denominator; an overall "
+            "below 45 can rise within that bound. this is renormalization, not "
+            "calibration credit, and the flag is the only route where preflight "
+            "finds no engine",
             skill,
         )
         # And the same claim in the other home, so neither can be corrected
         # alone - which is the whole reason both are asserted here.
-        self.assertIn(
-            "neither the score nor the band",
-            help_text,
-        )
+        self.assertIn("retaining the declared arm's 45 ceiling", help_text)
+        self.assertIn("an overall below 45 can rise within that bound", help_text)
+        self.assertNotIn("neither the score nor the band", help_text)
         # NAMED, both of them, because "moves no number" was replaced once by
         # "moves no readiness figure" and the card prints a readiness figure
         # that moves: `Weighted average before caps`. A sentence that is right

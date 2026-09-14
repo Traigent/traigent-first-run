@@ -532,8 +532,8 @@ check is CHARGED depends on nothing: it never is.** The corollary at the top of 
 unconditional, and this is the last place it was still being broken - a check this guide refused is
 never the customer's deduction, however the refusal was learned. Where the walk established the
 engine, the boundary is demonstrably ours: nothing is bounded either. Where this run holds only the
-declaration, the claim is held at 45, because a word about a file nobody read may bound a claim and
-may never lift one. The
+declaration, the claim is held at 45: the declaration supplies no measurement of grading
+correctness. Renormalization can raise a lower overall within that bound. The
 card carries the disclosure this section makes. It does not put the question: that happens once, at
 the pre-spend approval, for the reason given above.
 The card says which case a run is
