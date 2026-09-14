@@ -6120,8 +6120,17 @@ class SkillPackageTests(unittest.TestCase):
         was the load-bearing one and it is now false: `score_evaluation`
         derives the same state from preflight's witness, independently, and
         the card reaches it with no flag passed at all. "Moves no number"
-        survives, because the CLI refuses `--calibration` beside the flag and
-        the two arms score identically without one.
+        survived that round, because the CLI refuses `--calibration` beside the
+        flag and the two arms scored identically without one.
+
+        It did not survive traigent-first-run#507, which stopped charging the
+        declared arm for a check this guide refused. The readiness figure and
+        the 45 are still untouched, and the evaluation pillar is not: it is
+        renormalized rather than credited. So the compact form is gone from
+        both homes and what replaced it says which numbers hold still and why
+        the pillar does not - as ownership, not as arithmetic, because an
+        assistant told only that a number rises has been handed a reason to
+        pass a safety declaration.
 
         The first replacement over-corrected in the other direction. It read
         "it moves no number, and preflight's witness reaches the same state
@@ -6171,10 +6180,22 @@ class SkillPackageTests(unittest.TestCase):
                 self.assertNotIn("nothing here can check it", text)
                 self.assertNotIn("a declaration nothing here can check", text)
         self.assertIn(
-            "it moves no number, and it is the only route where preflight finds "
-            "no engine",
+            "it lifts no ceiling and moves no readiness figure, though the "
+            "evaluation pillar stops charging a check this guide refused rather "
+            "than one this project skipped, and it is the only route where "
+            "preflight finds no engine",
             skill,
         )
+        # And the same claim in the other home, so neither can be corrected
+        # alone - which is the whole reason both are asserted here.
+        self.assertIn(
+            "neither the readiness figure nor the 45 it is held to",
+            help_text,
+        )
+        for where, text in (("SKILL.md", skill), ("readiness.py --help", help_text)):
+            with self.subTest(document=where, claim="moves no number"):
+                self.assertNotIn("and no number:", text)
+                self.assertNotIn("it moves no number", text)
         # The over-correction, refused by name: the flag is not redundant, and
         # a document that implies it is costs the run its containment routing
         # for every evaluator the walk cannot see.

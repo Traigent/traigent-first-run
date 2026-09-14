@@ -3002,32 +3002,27 @@ def task_fit_declared_evidence(
 # calibration ran does not change why a charged run is charged, and the table
 # says that by holding the same string rather than by leaving a gap somebody
 # has to reason about.
-CALIBRATION_REFUSAL_CORE: dict[tuple[bool, bool, bool], str] = {
-    (False, True, True): (
+CALIBRATION_REFUSAL_CORE: dict[tuple[bool, bool], str] = {
+    # Keyed on (calibration_happened, file_was_read). Nothing here is charged
+    # any more, so every clause says so - what differs is WHY the check is
+    # missing, which is the half a customer can act on or not.
+    (True, True): (
         "no points are deducted for it - this card may not read an evaluator "
         "check this guide does not permit"
     ),
-    (False, False, True): (
+    (False, True): (
         "no points are deducted for it - this run was not the one to make "
         "that measurement"
     ),
-    (True, True, True): (
-        "it costs points because the walk over your evaluator found no engine "
-        "in it, so nothing here confirms the refusal"
+    (True, False): (
+        "no points are deducted for it - no preflight report for your "
+        "evaluator reached this score, so nothing here read the file this "
+        "check would have run"
     ),
-    (True, False, True): (
-        "it costs points because the walk over your evaluator found no engine "
-        "in it, so nothing here confirms the refusal"
-    ),
-    (True, True, False): (
-        "it costs points because no preflight report for your evaluator "
-        "reached this score - run `preflight.py --evaluator` over it and pass "
-        "the report to `--preflight`"
-    ),
-    (True, False, False): (
-        "it costs points because no preflight report for your evaluator "
-        "reached this score - run `preflight.py --evaluator` over it and pass "
-        "the report to `--preflight`"
+    (False, False): (
+        "no points are deducted for it - no preflight report for your "
+        "evaluator reached this score, so nothing here read the file this "
+        "check would have run"
     ),
 }
 # What follows the core clause when, and only when, the refusal ceiling is
@@ -3103,35 +3098,33 @@ CONNECTION_DISCLOSURE: dict[str | None, str] = {
         "connection. Not answering is fine and changes nothing."
     ),
 }
-CALIBRATION_REFUSAL_ROUTE: dict[tuple[bool, bool, bool], str] = {
-    # THE CEILING NO LONGER NAMES A CONTAINMENT REVIEW, so these two rows may
-    # not point at one. They read ", and the containment review named in the
-    # ceiling is where a run that could make that check gets designed" while
-    # the ceiling beside them was rewritten to name no review at all - a
-    # pointer to something the reader cannot find, which is the exact failure
-    # the paragraph above this constant exists to prevent, and it landed on
-    # the `charged=False` arms: the customer who obeyed and lost no points
-    # (traigent-first-run#392).
+CALIBRATION_REFUSAL_ROUTE: dict[tuple[bool, bool], str] = {
+    # Appended only where a ceiling is printed, and it follows the CEILING
+    # rather than the refusal: a line naming "the ceiling" on a card whose only
+    # cap is a timeout points at nothing.
     #
-    # What is true on these two arms is that nothing is owed and nothing is
-    # charged, so the clause says that instead of sending them somewhere.
-    (False, True, True): (
-        ", and nothing here asks you for it - no run inside this guide makes "
-        "that check"
+    # No arm asks the customer to change their evaluator. The ceiling is about
+    # evidence this score does not have, never about their file.
+    # The walk already ran on these two, so there is no step left to name:
+    # it either found the engine - and then nothing is bounded at all - or it
+    # read the file and settled nothing, which no action of theirs changes.
+    # An uncharged arm that hands out an errand is the defect this clause was
+    # rewritten for once already.
+    (True, True): (
+        ": nothing here asks you for it, and the ceiling reports the evidence "
+        "no run has taken rather than anything about your file"
     ),
-    (False, False, True): (
-        ", and nothing here asks you for it - no run inside this guide makes "
-        "that check"
+    (False, True): (
+        ": nothing here asks you for it, and the ceiling reports the evidence "
+        "no run has taken rather than anything about your file"
     ),
-    (True, True, True): " - establish the evaluator as the ceiling describes",
-    (True, False, True): " - establish the evaluator as the ceiling describes",
-    (True, True, False): (
-        ": if that walk finds the engine this check stops costing points, and "
-        "if it finds none, establish the evaluator as the ceiling describes"
+    (True, False): (
+        ": run `preflight.py --evaluator` over it and pass the report to "
+        "`--preflight`, and this card can say which case you are in"
     ),
-    (True, False, False): (
-        ": if that walk finds the engine this check stops costing points, and "
-        "if it finds none, establish the evaluator as the ceiling describes"
+    (False, False): (
+        ": run `preflight.py --evaluator` over it and pass the report to "
+        "`--preflight`, and this card can say which case you are in"
     ),
 }
 
@@ -3159,8 +3152,12 @@ class CalibrationRefusalLine:
     names_ceiling: bool
 
     @property
-    def core_key(self) -> tuple[bool, bool, bool]:
-        return (self.charged, self.calibration_happened, self.file_was_read)
+    def core_key(self) -> tuple[bool, bool]:
+        # `charged` LEFT THIS KEY when it stopped varying. Every arm of this
+        # condition is now uncharged - see `calibration_refusal_consequence` -
+        # so keying on it left half the table unreachable, and a table with rows
+        # no input selects is the shape this module refuses everywhere else.
+        return (self.calibration_happened, self.file_was_read)
 
     def composed(self) -> str:
         """The text this record says it is, rebuilt from the tables.
@@ -3243,7 +3240,23 @@ def calibration_refusal_consequence(
     """
     claims = CalibrationRefusalLine(
         text="",
-        charged=walk is not True,
+        # FALSE ON EVERY ARM (traigent-first-run#507).
+        #
+        # The model, once: cannot check -> no deduction, but no claim either.
+        # Checked and fine -> full points. Checked and broken -> deducts. The
+        # declared arm used to be charged AND capped, which bills one fact
+        # twice - the run did not make this check, said as forty lost points
+        # and again as a ceiling.
+        #
+        # THE CEILING AND THE NON-CHARGE ARE A PACKAGE. The declared arm keeps
+        # its 45 precisely because it stops being charged: the ceiling is what
+        # carries "no claim", and without it the flag would start buying
+        # points, which is the one thing `--calibration-scope-refused` must
+        # never do. Overall is 45 either way, so the flag buys nothing.
+        # Source: tests/test_readiness_scoring.py, produced by
+        # `ADeferredCalibrationSaysSoInTheFieldConsumersReadTests`.
+        # ANYONE REMOVING THAT CEILING MUST BRING THE CHARGE BACK.
+        charged=False,
         calibration_happened=calibration_taken,
         file_was_read=walk is not None,
         names_ceiling=ceiling_printed,
@@ -7766,14 +7779,30 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
                 # it with no witness anywhere - CLI-unreachable, since the two
                 # options refuse each other, and reachable by a direct caller,
                 # which is the shape this scorer exists to survive.
+                # SAID IN THE CUSTOMER'S TERMS, not in this package's.
+                #
+                # These lines used to name "the evaluator-execution scope
+                # gate", which is machinery only this repository knows about.
+                # A reader learns from it that something refused something,
+                # and not one word about what we wanted to find out or why we
+                # stopped. What a `?` owes them is exactly that: the question
+                # we meant to answer, and the reason we did not.
+                # THIS ARM IS THE ONE WHERE A CALIBRATION DID HAPPEN, so it
+                # may not say the check was not run - it was, and this score is
+                # declining to count it. An earlier draft of this rewrite said
+                # "we did not run that check" on both arms and was false here,
+                # which the suite caught.
                 evidence = (
-                    "the evaluator check was run on a file this run proved "
-                    "reaches a code or SQL engine, which is the measurement "
-                    "the evaluator-execution scope gate refuses, so it earns "
-                    "no credit here"
+                    "a calibration was run on this evaluator and this score is "
+                    "not counting it: making that check here means running "
+                    "your scorer, which on this file would run the model's "
+                    "answers as code or as SQL against whatever it is set up "
+                    "to reach, and we will not do that to your system from "
+                    "inside this guide"
                     if facts.executes_candidate is True
-                    else "the evaluator check was run on a file this run was "
-                    "told the scope gate refuses, so it earns no credit here"
+                    else "a calibration was run on this evaluator and this "
+                    "score is not counting it: this run was told your scorer "
+                    "runs the model's answers rather than comparing them"
                 )
             else:
                 # "...and the weight stays because the evidence is absent
@@ -7784,8 +7813,9 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
                 # shared tail this seam already removed, one clause earlier.
                 # What it costs is said once, in the half that knows.
                 evidence = (
-                    "this run was never asked for a calibration - the "
-                    "evaluator-execution scope gate refused it"
+                    "we wanted to check that your evaluator marks a known-good "
+                    "answer right and a known-bad answer wrong, and nobody "
+                    "asked this run to make that check"
                 )
         elif defects := [
             reason
@@ -20706,8 +20736,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
             "declare that this run did not calibrate because the evaluator-"
             "execution scope gate refused it, rather than because the step was "
             "skipped. Changes the condition, the sentence and the remedy on the "
-            "card, and no number: it is a declaration this score cannot verify "
-            "on its own, so it may bound a claim and may not earn credit. Not "
+            "card, and neither the readiness figure nor the 45 it is held to: "
+            "it is a declaration this score cannot verify on its own, so it may "
+            "bound a claim and may not earn credit. What it does change is that "
+            "the evaluation pillar stops charging a check this guide refused "
+            "rather than one this project skipped. Not "
             "the only route to that state - where --preflight witnessed an "
             "engine the card reaches it with no declaration at all. Refused "
             "beside --calibration, which says the opposite"

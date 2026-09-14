@@ -501,14 +501,15 @@ not a failed evaluator; the `evaluator-unvalidated` ceiling limits the readiness
 the evaluation method is actually checked, and the card's recommended action names that outstanding
 calibration rather than reading `proceed`. Where the deferral is the evaluator-execution scope gate
 rather than a step this run could take, pass `--calibration-scope-refused` so the card discloses the
-unmade check instead of asking for the calibration the gate forbids; it moves no number, and it is
-the only route where preflight finds no engine. `calibrate_evaluator.py` refuses such an
-evaluator itself, naming the file and line, and `references/run-safety.md` records why no
-in-process route replaces it. Apply the run-scoped evaluator-method rule above to both
-scripts, and apply the run-scoped task-kind rule to readiness only here - narrower than its
-destination rule in `references/evaluation-and-dataset.md`, because this gate's calibration takes no
-seam flags and so establishes nothing about delivery for section 4 to reuse - and the origin rule with
-it.
+unmade check instead of asking for the calibration the gate forbids; it lifts no ceiling and moves no
+readiness figure, though the evaluation pillar stops charging a check this guide refused rather than
+one this project skipped, and it is the only route where preflight finds no engine.
+`calibrate_evaluator.py` refuses such an evaluator itself, naming the file and line, and
+`references/run-safety.md` records why no in-process route replaces it. Apply the run-scoped
+evaluator-method rule above to both scripts, and apply the run-scoped task-kind rule to readiness
+only here - narrower than its destination rule in `references/evaluation-and-dataset.md`, because
+this gate's calibration takes no seam flags and so establishes nothing about delivery for section 4
+to reuse - and the origin rule with it.
 **Opening dataset sequencing.** The opening preflight reads a discovered dataset with its default
 `input`/`output` fields, before any explicit field mapping; do not pass `--input-field` or
 `--expected-field` to that opening call. A request/response log or accepted trace is a **source**
