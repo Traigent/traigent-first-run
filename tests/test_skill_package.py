@@ -6004,8 +6004,8 @@ class SkillPackageTests(unittest.TestCase):
             "where no result was supplied, the check earns nothing",
             "a supplied incomplete or unreadable result stays unestablished",
             "ordinary incomplete-result deduction and 45 ceiling",
-            "an observed failure raises `evaluator-invalid`",
-            "a timeout raises `evaluator-timeout`",
+            "observed failures and timeouts keep their own findings and remedies under",
+            "`evaluation-and-dataset.md`, instead of the refusal cap",
             "instead of the refusal cap",
             "the pre-spend disclosure remains unconditional",
             "`evaluator-calibration-refused`",
@@ -6056,6 +6056,11 @@ class SkillPackageTests(unittest.TestCase):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, section)
         self.assertIn("where the project supplied a complete passing result", section)
+        self.assertIn(
+            "the scoring command read the result and did not observe its production",
+            section,
+        )
+        self.assertNotIn("nothing here watched the run that produced it", section)
         self.assertNotIn("whether or not a result arrived", section)
         self.assertNotIn("a file this run never read", section)
         self.assertNotIn("the route out is the customer's own", section)

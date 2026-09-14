@@ -469,8 +469,8 @@ in their own words, and do not soften any of it:
   be wrong, their column types may not match, their cells may be null; this run has not looked. No
   step in this guide would change that, and that is a fact about the guide rather than about them.
   **Never say there is nothing for them to fix** - that says we looked, and we did not. Where the
-  project supplied a complete passing result, say instead that their own measurement is being
-  counted and that nothing here watched the run that produced it. Without an observed failure,
+  project supplied a complete passing result, say instead that the supplied measurement is being
+  counted: the scoring command read the result and did not observe its production. Without an observed failure,
   incomplete or unreadable evidence establishes neither success nor failure. An observed failure
   and a timeout follow their own card findings and remedies. Keep the scope tight in the other direction too: an evaluator rewritten later to
   compare rather than execute is a different evaluator, out of this gate altogether, so "no change
@@ -541,9 +541,8 @@ inside a first run. Where no result was supplied, the check earns nothing and th
 never measured;
 those declined checks leave the denominator rather than deducting points. Without an observed
 failure or timeout, a supplied incomplete or unreadable result stays unestablished and keeps the
-ordinary incomplete-result deduction and 45 ceiling, including when preflight witnessed an engine. An observed failure raises
-`evaluator-invalid`, and a timeout raises `evaluator-timeout`; each keeps its own remedy instead of
-the refusal cap. Otherwise `readiness.py` raises `evaluator-calibration-refused`, which **does not
+ordinary incomplete-result deduction and 45 ceiling, including when preflight witnessed an engine. Observed failures and timeouts keep their own findings and remedies under
+`evaluation-and-dataset.md`, instead of the refusal cap. Otherwise `readiness.py` raises `evaluator-calibration-refused`, which **does not
 block** and carries the execution disclosure. The pre-spend disclosure remains unconditional under
 Approval and budgets below, whatever finding the readiness card carries.
 
