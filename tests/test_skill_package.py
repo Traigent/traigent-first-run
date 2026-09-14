@@ -4852,6 +4852,8 @@ class SkillPackageTests(unittest.TestCase):
             "never recommend that dependency downgrade as the remedy or enter the fallback automatically",
             "**throwaway route.**",
             "used only when the customer declines the project-environment install",
+            "before offering this route, apply the version guard's compatibility disclosure, "
+            "including when it is the alternative to an installed-version change",
         )
         positions = [choice.index(phrase) for phrase in ordered]
         self.assertEqual(positions, sorted(positions))

@@ -6,10 +6,10 @@ follows-total-measured: 571_514
 follows-document-measured: 171_231
 resident-ceiling: 54_346
 resident-measured: 54_331
-total-ceiling: 573_700
-total-measured: 573_551
-document-ceiling: 173_500
-document-measured: 173_386
+total-ceiling: 573_900
+total-measured: 573_706
+document-ceiling: 173_750
+document-measured: 173_541
 
 Environment planning now names the existing-project route before presenting
 its approval card. The two creation routes dispatch to their existing approval
@@ -41,3 +41,7 @@ Peer-review refinements forward the detector’s declared-version skip text,
 explain relocated startup caches, and recommend a compatible environment
 without suggesting a dependency downgrade. The same entry is re-measured
 for the final version of this unmerged PR; no historical record is changed.
+
+The fallback choice now dispatches the same compatibility disclosure before
+it is offered, including a declined installed-version change. This closes the
+successful-plan refusal route without repeating the warning or adding an approval.

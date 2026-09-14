@@ -293,6 +293,8 @@ In the commands below, `.../` is the absolute skill directory resolved under GUI
    exact pins (`throwaway`) - used only when the customer declines the project-environment
    install, refuses the guard's change line, or explicitly chooses it because `.venv` is occupied
    and cannot be used. Having no environment alone selects `new-project`, never this fallback.
+   Before offering this route, apply the Version guard's compatibility disclosure, including when
+   it is the alternative to an installed-version change.
    On this route only, the
    closing handoff carries the reminder SKILL.md states.
 
