@@ -6010,18 +6010,20 @@ class SkillPackageTests(unittest.TestCase):
             # bound unconditionally after the scorer stopped applying it where
             # the walk witnessed the engine - wrong by thirty-two points for
             # the arm this whole section is written about.
-            "the claim is held at 45 and the check is charged",
-            "nothing is bounded and nothing is deducted",
-            # That whether the check is CHARGED depends on the walk, which is
-            # the half a disclosure naming only the free outcome would leave
-            # out. Said in terms of what preflight found, because the earlier
-            # wording - "a declaration about a file this run never read" - was
-            # false of the state `SKILL.md` names as the flag's population:
-            # preflight walks the file and finds no engine, and this document
-            # says twenty lines above that a walk which finds none has still
-            # read the file.
+            "the claim is held at 45",
+            "nothing is bounded either",
+            # That the walk decides the BOUND and decides nothing else. This
+            # document used to say the charge rode on the same witness, which
+            # was true when it was written and became the last statement of a
+            # deduction traigent-first-run#507 removed - in the one file the
+            # other two defer to for which arm carries what. Said in terms of
+            # what preflight found, because the earlier wording - "a
+            # declaration about a file this run never read" - was false of the
+            # state `SKILL.md` names as the flag's population: preflight walks
+            # the file and finds no engine, and this document says twenty
+            # lines above that a walk which finds none has still read the file.
             "depends on what preflight's walk found",
-            "the same witness decides both",
+            "whether the check is charged depends on nothing: it never is",
             # That it is not a verdict on their evaluator. The MANDATE to
             # say so lives in `SKILL.md`'s cap-routing paragraph and may not
             # be restated here; what belongs here is the fact behind it.
@@ -6180,18 +6182,28 @@ class SkillPackageTests(unittest.TestCase):
                 self.assertNotIn("nothing here can check it", text)
                 self.assertNotIn("a declaration nothing here can check", text)
         self.assertIn(
-            "it lifts no ceiling and moves no readiness figure, though the "
-            "evaluation pillar stops charging a check this guide refused rather "
-            "than one this project skipped, and it is the only route where "
-            "preflight finds no engine",
+            "it lifts no ceiling and changes neither the score nor the band the "
+            "customer is given, though the evaluation pillar and the pre-cap "
+            "average both rise as the run stops losing points for a check this "
+            "guide refused rather than one this project skipped, and it is the "
+            "only route where preflight finds no engine",
             skill,
         )
         # And the same claim in the other home, so neither can be corrected
         # alone - which is the whole reason both are asserted here.
         self.assertIn(
-            "neither the readiness figure nor the 45 it is held to",
+            "neither the score nor the band",
             help_text,
         )
+        # NAMED, both of them, because "moves no number" was replaced once by
+        # "moves no readiness figure" and the card prints a readiness figure
+        # that moves: `Weighted average before caps`. A sentence that is right
+        # about the two numbers a customer is judged on and silent about the
+        # one they can watch move is the same defect one level down.
+        for where, text in (("SKILL.md", skill), ("readiness.py --help", help_text)):
+            with self.subTest(document=where, claim="what does move"):
+                self.assertIn("pre-cap average", text)
+                self.assertIn("evaluation pillar", text)
         for where, text in (("SKILL.md", skill), ("readiness.py --help", help_text)):
             with self.subTest(document=where, claim="moves no number"):
                 self.assertNotIn("and no number:", text)

@@ -12889,6 +12889,14 @@ class ADeferredCalibrationSaysSoInTheFieldConsumersReadTests(unittest.TestCase):
         # what holds this equal now that #507 stopped charging the refused arm.
         self.assertEqual(refused.overall, plain.overall)
         self.assertEqual(refused.band, plain.band)
+        # And the figure the card PRINTS beside it, which is not the same
+        # claim and used to be pinned equal here. It is not equal any more,
+        # and a deleted assertion would have left that unsaid: the pre-cap
+        # average rises because the refused arm stopped being charged, and the
+        # ceiling is the only thing keeping it off `overall`. Pinned as the
+        # inequality rather than dropped, so "the flag moves no number" cannot
+        # come back as a claim about this one.
+        self.assertGreater(refused.weighted_average, plain.weighted_average)
         self.assertEqual(
             MODULE.CAP_CEILING["evaluator-calibration-refused"],
             MODULE.CAP_CEILING["evaluator-unvalidated"],
@@ -13005,6 +13013,9 @@ class ADeferredCalibrationSaysSoInTheFieldConsumersReadTests(unittest.TestCase):
         self.assertEqual(refused.overall, plain.overall)
         self.assertEqual(refused.band, plain.band)
         self.assertEqual(refused.confidence, plain.confidence)
+        # The printed pre-cap average does move, and the documents that
+        # describe this flag say so rather than claiming no number moves.
+        self.assertGreater(refused.weighted_average, plain.weighted_average)
         # The evaluation pillar DOES move, and only by calibration leaving its
         # own denominator - every other sub-score is identical.
         refused_arithmetic = {p[0]: p for p in arithmetic(refused)}
@@ -13939,7 +13950,12 @@ class TheCeilingPricedOurOwnBoundaryTests(unittest.TestCase):
         self.assertIn("LIMITED TO 45", card)
         self.assertNotIn("Your score is not reduced for it", card)
         # And it says why the ceiling stands, without handing them an errand.
-        self.assertIn("no preflight report for this evaluator reached", card)
+        #
+        # Worded against the WITNESS rather than against the report, because
+        # the branch is keyed on `witnessed_engine` and a preflight document
+        # saying `executes` with no quoted witness lands here too - a run that
+        # did have a report reach it.
+        self.assertIn("no preflight report proved what this evaluator reaches", card)
 
     def test_the_card_shows_no_ceiling_it_does_not_have(self) -> None:
         card = MODULE.render_card(self._refused())
@@ -14247,22 +14263,32 @@ class TheWitnessDecidesTheScopeGateNotTheDeclarationTests(unittest.TestCase):
                 score = self._score(facts)
                 evidence = self._calibration_subscore(score).evidence
                 self.assertNotIn("complete calibration", evidence.casefold())
-                # Every arm ends on a route the run can actually take, but
-                # not on the same one: the charged arm names what would lift
-                # its own charge, and only an arm with nothing else to offer
-                # sends the reader to the containment review. Asserting one
-                # phrase across both is what let a route clause be appended
-                # to a sentence that already carried one.
-                self.assertRegex(
-                    evidence,
-                    r"nothing here asks you for it|preflight\.py --evaluator|"
-                    r"establish the evaluator as the ceiling describes",
-                )
                 cap = next(
                     c
                     for c in score.caps
                     if c.condition == "evaluator-calibration-refused"
                 )
+                # An arm that PRINTS a ceiling ends on a route the run can
+                # actually take, and not on the same one: the arm whose file
+                # was never read names the read that would settle it, and the
+                # arm that has nothing else to offer explains what the ceiling
+                # reports. Asserting one phrase across both is what let a
+                # route clause be appended to a sentence that already carried
+                # one.
+                #
+                # An arm that prints NO ceiling ends on no route, and that is
+                # the correct ending rather than a missing one: the walk has
+                # already run, nothing is bounded, and a line naming "the
+                # ceiling" there points at something the reader cannot find.
+                if cap.ceiling is None:
+                    self.assertNotIn("the ceiling", evidence)
+                    self.assertNotIn("preflight.py --evaluator", evidence)
+                else:
+                    self.assertRegex(
+                        evidence,
+                        r"nothing here asks you for it|preflight\.py --evaluator|"
+                        r"establish the evaluator as the ceiling describes",
+                    )
                 self.assertNotIn("complete calibration", cap.reason.casefold())
                 # And it no longer points at the containment review either.
                 # That was the route named when this cap BLOCKED and the
@@ -14435,15 +14461,18 @@ class TheWitnessDecidesTheScopeGateNotTheDeclarationTests(unittest.TestCase):
         # It used to agree by pointing at "the containment review named in the
         # ceiling" - and then the ceiling was rewritten to name no review at
         # all, so the pointer survived while its target did not
-        # (traigent-first-run#392). The clause now says what is true on this
-        # arm, which is that nothing is being asked of them.
-        self.assertIn(
-            "nothing here asks you for it",
-            self._calibration_subscore(score).evidence,
-        )
-        self.assertNotIn(
-            "containment review", self._calibration_subscore(score).evidence
-        )
+        # (traigent-first-run#392).
+        #
+        # This arm now carries NO ceiling, so they agree by the line naming
+        # none: no route clause, no errand, and nothing for the reader to look
+        # up and fail to find. The line is complete without one - it says what
+        # was not checked and that no points were lost for it - and the route
+        # clause is appended only where a ceiling is actually printed.
+        evidence = self._calibration_subscore(score).evidence
+        self.assertNotIn("the ceiling", evidence)
+        self.assertNotIn("preflight.py --evaluator", evidence)
+        self.assertNotIn("containment review", evidence)
+        self.assertIn("no points are deducted for it", evidence)
 
     def test_a_timed_out_refusal_names_no_ceiling_and_keeps_its_own_fact(
         self,
@@ -14936,6 +14965,22 @@ class TheWitnessDecidesTheScopeGateNotTheDeclarationTests(unittest.TestCase):
                         f"{label}: a line names the ceiling and the card "
                         f"carries {sorted(conditions)}: {line}",
                     )
+                    # AND THAT THE CAP ACTUALLY CARRIES ONE. Asserting the
+                    # condition alone stopped being enough when a witness
+                    # started retiring the bound: the refusal cap is raised on
+                    # the witnessed arm too, with `ceiling=None`, so a card
+                    # with no ceiling at all passed this guard while printing
+                    # a line that points at one.
+                    refusal = next(
+                        cap
+                        for cap in score.caps
+                        if cap.condition == "evaluator-calibration-refused"
+                    )
+                    self.assertIsNotNone(
+                        refusal.ceiling,
+                        f"{label}: a line names the ceiling and the refusal "
+                        f"cap carries none: {line}",
+                    )
 
     def test_the_refusal_line_reports_the_run_that_produced_it(self) -> None:
         """The record against the RUN - the check three phrase guards were not.
@@ -14980,11 +15025,22 @@ class TheWitnessDecidesTheScopeGateNotTheDeclarationTests(unittest.TestCase):
                     or facts.timed_out is True
                     or facts.checks
                 )
+                # The CEILING the cap carries, not the cap's presence. The
+                # refusal cap is raised on the witnessed arm too and carries
+                # `None` there, so "is the condition on the card" stopped
+                # answering "does this card print a ceiling" - which is the
+                # question the route clause depends on.
+                refusal_caps = [
+                    cap
+                    for cap in score.caps
+                    if cap.condition == "evaluator-calibration-refused"
+                ]
                 refusal = MODULE.calibration_refusal_consequence(
                     walk=facts.executes_candidate,
                     calibration_taken=engaged,
-                    ceiling_printed="evaluator-calibration-refused"
-                    in {cap.condition for cap in score.caps},
+                    ceiling_printed=any(
+                        cap.ceiling is not None for cap in refusal_caps
+                    ),
                 )
                 self.assertEqual(
                     refusal.calibration_happened,

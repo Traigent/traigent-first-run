@@ -501,9 +501,10 @@ not a failed evaluator; the `evaluator-unvalidated` ceiling limits the readiness
 the evaluation method is actually checked, and the card's recommended action names that outstanding
 calibration rather than reading `proceed`. Where the deferral is the evaluator-execution scope gate
 rather than a step this run could take, pass `--calibration-scope-refused` so the card discloses the
-unmade check instead of asking for the calibration the gate forbids; it lifts no ceiling and moves no
-readiness figure, though the evaluation pillar stops charging a check this guide refused rather than
-one this project skipped, and it is the only route where preflight finds no engine.
+unmade check instead of asking for the calibration the gate forbids; it lifts no ceiling and changes
+neither the score nor the band the customer is given, though the evaluation pillar and the pre-cap
+average both rise as the run stops losing points for a check this guide refused rather than one this
+project skipped, and it is the only route where preflight finds no engine.
 `calibrate_evaluator.py` refuses such an evaluator itself, naming the file and line, and
 `references/run-safety.md` records why no in-process route replaces it. Apply the run-scoped
 evaluator-method rule above to both scripts, and apply the run-scoped task-kind rule to readiness
