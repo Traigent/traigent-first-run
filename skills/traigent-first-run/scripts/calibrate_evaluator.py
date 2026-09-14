@@ -599,7 +599,7 @@ def literal_or_file(value: str) -> Any:
 # file reaches an engine, and finding none establishes nothing whatever. An
 # engine behind a helper module, a connection handed in through `input_data`, or
 # a name bound at runtime all escape it (traigent-first-run#416). So this gate
-# only ever REFUSES. It never clears: a run with no witness is a run this tool
+# only ever REFUSES on the ordinary scope-walk route. It never clears: a run with no witness is a run this tool
 # had no grounds to stop, not a run it checked, and nothing here reports it as
 # an all-clear. The read of the complete call path that `SKILL.md` mandates is
 # still what covers the rest, and it is still a person's job.
@@ -610,7 +610,8 @@ def literal_or_file(value: str) -> Any:
 # classes of scorer that really execute their input and cleared it anyway, three
 # of them recording nothing at all about what the read had skipped. A clearing
 # branch that is unsound is worse than the prose rule it replaces, because it
-# tells the reader it checked. So there is no clearing branch here to be wrong.
+# tells the reader it checked. This ordinary witness walk has no clearing branch;
+# the copied-actor route below checks its separate eligibility conditions.
 #
 # BOTH FILES THE CHILD IMPORTS ARE READ, and the second one is the reason this
 # gate is worth having. The scorer is the obvious file. The module behind
@@ -1520,8 +1521,9 @@ def copied_actor_refusal(
     # will run rather than a utf-8 reading of it.
     tree = ast.parse(copy.read_bytes(), filename=str(copy))
     # THE RULE, before every finer check, so a wrong copy is told the one
-    # thing to fix. What follows guards what the ORIGINAL may contain, since
-    # the copy may contain nothing else.
+    # thing to fix. The remaining checks refuse recognizable ineligible shapes;
+    # they do not prove the original safe or sandbox it. Code already present
+    # in the customer's original is outside this route's threat model.
     original_tree = ast.parse(original.read_bytes(), filename=str(original))
     single_site = single_site_refusal(
         original_tree=original_tree, copy_tree=tree, target_name=target_name

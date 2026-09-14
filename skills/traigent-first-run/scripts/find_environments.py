@@ -30,6 +30,18 @@ ENVIRONMENT_VARIABLES = ("VIRTUAL_ENV", "UV_PROJECT_ENVIRONMENT")
 UNSUPPORTED_RANGE = "not 3.11-3.13"
 
 
+class UnsupportedDeclaredRuntime(ValueError):
+    """A configuration declaration can refuse eligibility, never prove identity."""
+
+    def __init__(self, version: str):
+        self.version = version
+        super().__init__(
+            f"pyvenv.cfg declares Python {version}, {UNSUPPORTED_RANGE}; "
+            "runtime identity remains unverified. Preserve this environment and "
+            "choose a verified Python 3.11-3.13 environment or create one at an unoccupied project path."
+        )
+
+
 def name_looks_like_environment(name: str) -> bool:
     """`venv`, `env`, `.venv-dev`, `projectX_venv`, `ENV`: the name test alone."""
     return "env" in name.casefold()
@@ -169,21 +181,17 @@ def trusted_shim_bytecode(shim: Path, source: bytes) -> bool:
         raw = cache.read_bytes()
         if len(raw) < 16 or raw[:4] != importlib.util.MAGIC_NUMBER:
             return False
-        try:
-            code = marshal.loads(raw[16:])
-        except (EOFError, TypeError, ValueError):
-            return False
-        if not isinstance(code, types.CodeType):
-            return False
         optimized = re.search(r"\.opt-([12])\.pyc$", cache.name)
-        expected = compile(
-            source,
-            code.co_filename,
-            "exec",
-            dont_inherit=True,
-            optimize=int(optimized[1]) if optimized else 0,
-        )
-        if code != expected:
+        # Compare against trusted compilation; never unmarshal candidate bytes.
+        # Marshal encodes references differently for a temporary code object
+        # and one retained by the compiler's caller. Both encodings are trusted.
+        options = {
+            "dont_inherit": True,
+            "optimize": int(optimized[1]) if optimized else 0,
+        }
+        temporary = marshal.dumps(compile(source, str(shim), "exec", **options))
+        expected = compile(source, str(shim), "exec", **options)
+        if raw[16:] not in (temporary, marshal.dumps(expected)):
             return False
     return True
 
@@ -276,6 +284,14 @@ def verified_environment(interpreter: Path) -> dict:
             cfg[key] = value.strip()
     base = trusted_interpreter()
     declared = cfg.get("version", cfg.get("version_info", "unknown"))
+    try:
+        declared_release = version_tuple(declared.removesuffix(".final.0")).release
+    except ValueError:
+        declared_release = ()
+    if len(declared_release) >= 2 and not (
+        SUPPORTED[0] <= declared_release[:2] < SUPPORTED[1]
+    ):
+        raise UnsupportedDeclaredRuntime(declared)
     remedy = f"Rerun discovery with a trusted Python matching this environment's declared version ({declared}), using -I -S -B; or choose another verified environment."
     if Path(cfg.get("home", "")).resolve() != base.parent:
         raise ValueError(
@@ -376,6 +392,13 @@ def probe(interpreter: Path) -> dict:
     """Read a candidate statically; failures stay explicit and never execute it."""
     try:
         return verified_environment(interpreter)
+    except UnsupportedDeclaredRuntime as error:
+        return {
+            "error": str(error),
+            "verification": "unverified",
+            "declared_python_version": error.version,
+            "supported": False,
+        }
     except (OSError, ValueError) as error:
         return {"error": str(error), "verification": "unverified"}
 
@@ -507,12 +530,13 @@ def describe(
             entry.update(
                 {
                     "probe_error": probed["error"],
-                    "supported": None,
+                    "supported": probed.get("supported"),
                     "verification": "unverified",
-                    "remedy": probed["error"]
-                    + " Use a matching trusted Python with -I -S -B or choose another environment.",
+                    "remedy": probed["error"],
                 }
             )
+            if "declared_python_version" in probed:
+                entry["declared_python_version"] = probed["declared_python_version"]
         else:
             entry.update(
                 {
@@ -548,7 +572,12 @@ def describe(
 def skipped_clause(entry: dict) -> str:
     """The `<path> was skipped (...)` clause the guide prints for a candidate
     it will not propose: an unsupported Python, or a probe that did not answer."""
-    if "python_version" in entry:
+    if "declared_python_version" in entry:
+        reason = (
+            f"declared Python {entry['declared_python_version']}, {UNSUPPORTED_RANGE}; "
+            "runtime identity unverified"
+        )
+    elif "python_version" in entry:
         reason = f"Python {entry['python_version']}, {UNSUPPORTED_RANGE}"
     else:
         reason = "unverified: " + entry["probe_error"]
