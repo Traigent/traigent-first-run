@@ -3,9 +3,10 @@ name: Validate
 on:
   pull_request:
   # `push` is limited to the trunk. Without the filter every push to a pull
-  # request branch started two identical runs of this workflow on the same
-  # commit, a `push` and a `pull_request`, seconds apart - about 14 minutes
-  # of runner time each, and GitHub cancelling one of them at random. The
+  # request branch started two runs of this workflow on the same commit, a
+  # `push` and a `pull_request`, within seconds of each other. Source: `gh run
+  # list --workflow validate.yml` on 2026-09-14, where each branch shows the
+  # pair, and run 20:50:34Z on `first-run-guide` took 14m56s end to end. The
   # merged result on `first-run-guide` is the one commit no `pull_request`
   # event tests, so that push is kept.
   push:
