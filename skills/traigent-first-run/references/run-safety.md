@@ -1226,9 +1226,9 @@ After showing the baseline result, give the connected stage a preview and approv
   the configuration ceiling below, approximate calls,
   how Traigent's managed search chooses trials while retaining baseline values, objective
   directions and weights, and the rule for recommending among tradeoffs.
-- Held-out check: once this run's recommended configuration is selected on the tuning scores, ten
-  more agent calls score that configuration - and only that configuration - against the reserved
-  held-out rows, joined by ten judge calls when an LLM judge grades them. Include those calls in
+- Held-out check: price the actual reserved rows after selecting one configuration on tuning
+  scores, including a judge call per row when needed. If no independent rows remain, report that
+  the check is unavailable and place no held-out calls. Include those calls in
   this same approval rather than asking again afterward, and add their known cost or conservative
   deduction to the single running total. The wrapper refuses the whole held-out pass rather than starting one the remaining
   cannot fund to the last row; say that here, because a pass that is refused returns no held-out
@@ -1252,17 +1252,17 @@ this agent's. Name this count in `configurations` rather than `trials`, and give
 never as a range; `trials` remains the right word for a failed-trial count or an SDK field. When
 the approved space's combination count cannot be computed - a preserved space whose values are not
 enumerable, for instance - state the ceiling on its own rather than estimating or rounding a total.
-Report the same pair afterwards as what actually ran, `Tested <executed trials> of <total
-combination count> configurations`, or the executed count alone when that total was unavailable.
+Report actual coverage afterwards as `Tested <distinct configurations> of <total combination count>
+configurations in <executed trials> trials`, omitting the total when unavailable.
 
 Do not manufacture urgency. If baseline and evaluator show a measured quality, cost, or latency
 opportunity, say `Recommended next: continue with Traigent optimization because <observed reason>.`
 That observed reason is one reason among several and never the whole of the case, and a preview
-resting on it alone has nothing left to say on a baseline that measured none. Two reasons hold on
-every sound baseline and neither is a number: continuing is the only way the customer sees managed
-selection run against their own agent, which a local fixed grid by definition does not show, and
-the held-out check reports whether the selected configuration holds up on rows it was not chosen
-on - a finding about their own dataset that no other part of this run produces. Name those where no
+resting on it alone has nothing left to say on a baseline that measured none. The workflow value remains on
+a sound baseline: continuing is the only way the customer sees managed
+selection run against their own agent, which a local fixed grid by definition does not show;
+when independent rows are available, the held-out check reports on rows the configuration was
+not chosen on - a finding about their own dataset that no other part of this run produces. Name those where no
 measured opportunity exists, so the preview still carries a stated reason instead of an unmarked
 pair. Neither may be written as an expected gain: they are what the run shows and what it tells
 them, never what it will improve, and the no-lift wording below is unchanged by them.
@@ -1277,8 +1277,7 @@ Name it as a limit on what the result may claim, and where it is the binding one
 limitation the `traigent-dataset-curate` handoff below addresses after the run. It is never a
 reason to spend. When the dataset and evaluator are sound but the baseline showed no measured
 quality headroom and, where cost was measured, no cost headroom, the bounded managed run stays the
-marked route, on the two standing
-reasons above, and is offered as an optional no-lift-possible verification run. On that preview,
+marked route, on the workflow value above, and is offered as an optional no-lift-possible verification run. On that preview,
 say that it is not expected to find a gain, that stopping is route `B` on the standard preview, and that
 declining leaves the honest baseline-only result intact, and name the no-headroom finding beside
 it as a limit on the claim and that same handoff's limitation, never as a route; the operating
@@ -1306,7 +1305,7 @@ use the continue/optional-repair routes under "Missing cost or usage telemetry" 
 > Or reply with a smaller trial cap or a lower ceiling and I will re-price this same step.
 
 Route `A` carries the reply-ready `Recommended next:` line above, whose reason is the observed
-opportunity where the baseline measured one and otherwise one of the two standing reasons; it
+opportunity where the baseline measured one and otherwise the workflow value above; it
 stays a direct evidence-based statement rather than a question. The last line is not a third route:
 it answers how big rather than what to do, so it rides last and unnumbered exactly as `I have it`
 does on the asks about material, and nothing follows it. Replying `continue` on an approval card
@@ -1569,8 +1568,7 @@ report any gain as cost and flag weak evidence.
 
 Recommend the sound continuing route: measured headroom can strengthen the case but is not its
 only basis. State what continuing produces: managed trial selection, a portal experiment/link,
-a recommendation across both runs, and a held-out score. Approval and budgets owns the two standing
-reasons that rest on no number. Declining stays available and plainly answerable. Stopping here
+a recommendation across both runs, and a held-out score when independent rows are available. Approval and budgets owns that workflow value. Declining stays available and plainly answerable. Stopping here
 leaves a real measured baseline, reported as baseline-only rather than a completed Traigent
 optimization. Never promise improvement or what the held-out score will be, or suggest stopping
 is a mistake.
@@ -1606,8 +1604,8 @@ Follow the freeze/remove/persist lifecycle: save `traigent-runs/config-space.jso
 search returns nonzero trials, from the exact space received. Only that current-run file enters
 the closing readiness `--config-space` score.
 Select the recommendation on tuning scores across both measurements, never on held-out rows, then
-score only that one against the ten held-out rows under the dataset reference's Held-out set and
-claims. Do not fabricate configurations to hit a count: a preserved baseline of one configuration
+score only that one against the reserved rows, when available, under the dataset reference's
+Held-out set and claims. Do not fabricate configurations to hit a count: a preserved baseline of one configuration
 stays one, while a generated walkthrough must supply twelve configurations.
 If provider, backend, or portal connectivity fails, stop with the concrete failure and one recovery;
 never substitute mock or synthetic results or call offline checks a completed optimization. Resume
@@ -1756,14 +1754,14 @@ configuration the user runs now, then the rest of the frontier as the trade-offs
 this run counted, never a property of the space: the space is larger than the run's trial cap, so
 any claim about the space quantifies over configurations the run never reached.
 
-> This run tested `<executed trials>` of `<total combination count>` configurations. On
+> This run tested `<distinct configurations>` of `<total combination count>` configurations
+> in `<executed trials>` trials. On
 > `<what you are optimizing for>` against cost, the configuration you are already running is still
 > the only point on the frontier:
 > nothing tested cost less at its score, and nothing scored better in the declared objective
 > direction at its cost. So keeping it is
-> the answer this run supports. A run this size reaches few configurations by design; widening the
-> search across your full dataset and your own controls is what the skills named at the close are
-> for.
+> the answer this run supports. A run this size reaches few configurations by design; the skills
+> named at the close help you apply what you learned to your own project.
 
 That is a measured answer to the question this run asked, and a service rather than a shrug: the
 user wanted to know whether a better trade-off was sitting there, and now they do instead of
@@ -1784,7 +1782,8 @@ auditable:
    persisted runs.
 3. **Current state and limits** - component provenance, exclusions, uncertainty, incomplete
    phases, missing cost/usage telemetry, and any small-sample held-out gap.
-4. **Next action** - one action the recorded opening state earns.
+4. **Next action** - apply the most useful lesson to the customer's own project through the
+   continuation handoff below.
 5. **Details** - configurations, objectives, trials, failures, cost, stop reason, artifacts, and
    verified links.
 
@@ -1795,7 +1794,8 @@ Include:
   comparable cost evidence; otherwise its primary scores and telemetry limitation. Keep these in
   the details layer. One recommendation still leads;
   a frontier put where the recommendation belongs is the menu this stage already refuses.
-- The recommended configuration's held-out score and small-sample note, shown here first.
+- The recommended configuration's held-out score and small-sample note when completed; otherwise
+  state why that check was unavailable.
 - Known cost subtotal with its source, unknown-cost calls, cumulative budget debit and remaining
   allowance; the configurations tested out of the space's total, failures, stop reason and direct
   portal links. Name each phase's actual objectives when cost coverage changed.
@@ -1805,7 +1805,8 @@ Include:
   starting point rather than the product's grading policy - one a person may want to move in
   either direction, so it rewards what their product values.
 - The run's scope, in this run's own recorded numbers: rows scored beside the dataset's usable
-  rows, trials executed beside the enhanced space's combination count, and knobs varied beside the
+  rows, distinct configurations measured beside the enhanced space's combination count, executed
+  trials separately, and knobs varied beside the
   controls this run identified on the agent. Say plainly that those bounds were the walkthrough's
   own choice - a getting-familiar run rather than the largest one available - and keep it a scope
   statement, never a pitch. Drop any clause this run did not measure instead of estimating it.
@@ -1862,7 +1863,7 @@ remaining gap to close first.
 
 Before claiming success, verify:
 
-1. Trials exist and failed-trial count is understood.
+1. Trials exist; distinguish failed examples, failed trials, and repeated configurations.
 2. Baseline was actually evaluated.
 3. Best configuration exists.
 4. Primary objective measures appear and vary meaningfully. Record any unavailable secondary cost
@@ -1871,19 +1872,22 @@ Before claiming success, verify:
 6. Verify the actual provider path and successful responses. Report provider token usage where
    available and mark it unverified where absent; missing usage alone does not invalidate quality.
    Separate known cost, including a trustworthy reported zero, from unknown cost and budget debits.
-   Do not present SDK default cost or estimated token counts as provider observations.
-7. No output was truncated. `require_untruncated_completion` raises on `finish_reason ==
-   "length"`, so a truncated trial arrives as a failed trial rather than as a scored 0; confirm
-   none reached the comparison, and report `REFUSED_TRIAL_COSTS` as the known cost subtotal for
-   refused measurements. Unreported cost remains unknown even when the output was refused.
+   Do not present SDK default cost or estimated token counts as provider observations. Attribute
+   discrepancies to their sources; one unpriced call does not make every trial unpriced. Use
+   retained final artifacts for durations and totals, not earlier progress estimates.
+7. Inspect per-example failures as well as trial status. The SDK can absorb a truncation exception
+   as a zero-scored example inside a completed trial. Exclude incomplete measurements from the
+   recommendation through the Result checks adapter; report affected trial/row ids and the
+   recorded denominator, never recompute a success-only average. Preserve their spend, including
+   `REFUSED_TRIAL_COSTS`; unreported cost remains unknown.
 8. Portal persistence status is complete or precisely described as degraded/failed.
 9. `cloud_url` exists before saying the result is on the portal.
 10. The pre-connected-run portal-tracking probe passed and tracking did not silently drop to
     local-only during the run; a degradation refused every provider call after it, and an absent
     `cloud_url` stopped the run before the next paid pass rather than at the end.
 11. Baseline and enhanced tuning results are shown side by side, with the tuning-data limitation
-    named before any generalization claim, and the held-out score SKILL section 8 discloses appears
-    beside them.
+    named before any generalization claim. Show the completed held-out score beside them, or
+    explain why that check was unavailable.
 12. Every reported frontier carries measured costs, a score claim supported by the available paired
     evidence or an explicit statement that the paired comparison was not measured, and no point
     worse than the incumbent under the declared objective direction. Trials that came back without
@@ -1893,7 +1897,8 @@ Before claiming success, verify:
     them: the approved total, cumulative budget debit, known cost subtotal, unknown-cost calls and
     remaining allowance. A conservative reservation is a budget deduction, not a measured charge.
     A phase that refused to start, or stopped at the remaining, is named with the work it did not do.
-    Name each phase's actual objectives if cost coverage changed.
+    Name each phase's actual objectives if cost coverage changed. Retain each phase's printed
+    ledger summary with the run artifacts so its totals can be checked after the process exits.
 
 An optimized winner that does not beat the baseline is a valid no-lift result. Report the observed
 delta first, then separate verified facts, evidence-backed inferences, and untested hypotheses.
@@ -1975,9 +1980,9 @@ dropped, never estimated to complete the sentence.
 - **Rows** - the scored row count beside the dataset's usable row count, both already recorded when
   the bounded subset was drawn. When no subset was drawn the two are the same number: say the run
   scored every usable row and let the other clauses carry the bound.
-- **Configurations** - trials executed beside the total combination count the enhanced run card
-  already showed. When the run stopped at the baseline checkpoint and no enhanced search ran, drop
-  this clause and say it stopped there instead.
+- **Configurations** - distinct configurations measured beside the enhanced space's total, with
+  executed trials stated separately; repeated trials do not expand coverage. With no enhanced
+  search, drop this clause and name the completed baseline instead.
 - **Knobs** - the controls the enhanced space varied, beside the candidate controls this run
   identified on the agent. When it never enumerated a wider candidate set there is no denominator
   to quote: say instead that the space varied only the controls whose wiring this run verified, and
@@ -1995,44 +2000,31 @@ If the throwaway route changed the agent's dependency versions, name the origina
 versions beside the existing reinstall reminder, using setup evidence; compatibility with the
 original environment remains unmeasured unless this run established it separately.
 
-Close by saying what a further run would be worth. Name the gaps still open and what each is now
-costing; use the user's own measured evidence rather than encouragement. Say what this walkthrough
-cannot close, and say what remains to validate before production use: the generated pillars, the
-answer key, and what this run built around what, under the evidence and promotion rules above.
-Use the run-scope terms above, including only the value this run actually established. Then give the one next action the **recorded opening state** earns: rank the opening
-score's caps and this run's own recorded limits, and name its value. A gap this run filled with a
-substitute is not cleared - it is filled provisionally, so it stays on this list and the action is
-what closing it properly takes:
+Close by connecting what the user learned to their own agent, dataset, and evaluation method.
+Use the run-scope terms above, and say what remains to validate before production use: which
+material was generated or repaired, what this run built around what, and which original material
+was never changed. A clean working copy does not establish that the customer's full dataset is
+clean. Readiness findings identify useful work; raising a score or clearing a ceiling is not the
+customer's goal, and accepting a substitute does not certify the product.
 
-- Generated or mostly generated data, or an evaluation method this run wrote - one move that closes
-  it and one worth making anyway, in this order. **Best:** collect or export real examples of the
-  same task, and build the evaluation method from them and from what their expected results actually
-  are. This is the only one of the two that lifts the ceiling. **Otherwise:** keep what this run
-  generated and have a person read and approve it - the rows and their expected
-  answers, and the generated method too, whose grading logic has to match what the agent is really
-  scored on and what its expected result is. Say plainly that this one does not lift the ceiling:
-  the score reads where the rows came from, and a person approving generated rows leaves them
-  generated. Address this binding gap first whenever it applies.
-- Real inputs with model-written answers - have a person review a sample of the answer key. Until
-  then the accuracy number measures agreement with a model, not correctness.
-- Rows without expected outputs when the evaluator requires references - label a representative
-  slice rather than the whole set. Symbol-only outputs are an explicit verification question, not
-  silently discarded labels.
-- One difficulty band, or answers that are nearly all the same - add examples where the agent
-  currently fails, which is also where a search has room to win.
-- A substitute component still standing in for a real one - connect the production agent, dataset or
-  evaluator it replaced, and say which reported measurements would need to be repeated. Where there is nothing
-  yet to connect, a person checking that the substitute does what the product does is what stands in
-  meanwhile.
-- A thin evaluator, or one that was never calibrated - align the method with the product's own
-  grading policy before trusting a comparison built on it.
+Recommend one concrete next action using the most important remaining evidence gap, with the
+relevant Traigent skill below as the way to do it on the customer's own material:
 
-Then the forward half, which is not a gap in anything. The run-scope statement already recorded the
-three bounds this walkthrough chose - rows scored, configurations tested, controls varied - so name
-whichever bound this run hardest and what lifting it would let the user do: more of the agent's
-controls, the whole dataset instead of the slice, a space wider than a first look needs. It is a
-clause on the recommendation above, not a second one, and it names an action they can take, never a
-result a wider run would find.
+- Generated data or model-written answers: collect representative real examples and check their
+  expected answers. Human review can improve the generated material, but does not change its origin.
+- A generated, repaired, thin, or uncalibrated evaluator: review its task fit and validate the
+  customer's evaluation policy on known right, equivalent, and wrong answers before adopting it.
+- Duplicates, leakage, uneven difficulty, or missing labels: apply the demonstrated check and
+  repair to the customer's own dataset, preserving a separate evaluation split.
+- A substitute agent: connect the real agent and verify its inputs, outputs, and evaluation method.
+- With those pieces sound, use the measured failure examples to choose a useful control or
+  analysis for their next optimization. A larger search is an option only when that evidence and
+  the user's objective support it.
+
+Name why the action matters to their project. The deliberately small walkthrough is complete;
+do not make another first-run walkthrough or an automatic full-dataset run the default next step.
+More rows alone do not fix a wrong answer key or evaluation policy. Keep any claim about a wider
+search as a hypothesis, not a promised improvement.
 
 A menu offered *instead of* a recommendation is the same as no recommendation; put extras later.
 
@@ -2044,8 +2036,8 @@ reuse the connected preview's baseline-only stop text here.
 
 After the state-specific recommendation and the result, these are available whenever the user wants them:
 
-- Hand over the Traigent optimization skills so the user can continue alone, at their full dataset,
-  more controls, and their own iterations. Tell the user first and remind them to restart the
+- Hand over the Traigent optimization skills so the user can continue alone on their own agent,
+  dataset, and evaluation method. Tell the user first and remind them to restart the
   session so the new skills load. List them with `npx skills add Traigent/traigent-skills --list`,
   install one with `npx skills add Traigent/traigent-skills --skill <name>`, or take all of them
   with `--skill '*'`. Then name the two or three this run's own evidence points at and what each
@@ -2060,14 +2052,13 @@ Choose the two or three skills from the run's observations using this map:
 |---|---|---|
 | One control accounted for most of the observed spread, or the search barely moved the others | `traigent-analyze-variable-importance` | rank which tuned variables mattered, at a sample size that can support the ranking |
 | Controls left out of the space, or a space barely larger than its trial cap | `traigent-optimize-config-space` | build the wider search space this run bounded away |
-| The row subset, a single difficulty band, or an unlabelled slice was the binding limit | `traigent-dataset-curate` | grow, label, and split the dataset the comparison was bounded by |
-| The evaluator was never calibrated, or a thin or judge-based method carried the ranking | `traigent-eval-audit` | audit whether the ruler this comparison trusted is reliable |
+| Dataset defects, generated examples, or limited coverage | `traigent-dataset-curate` | check, label, deduplicate, and split the customer's own dataset |
+| An evaluator was generated, repaired, uncalibrated, or too thin | `traigent-eval-audit` | validate the customer's evaluation policy before adopting a working copy |
 | The user wants to re-read this run's own result rather than pay for another | `traigent-analyze-results` | read the winner, trials, and trade-offs from the terminal |
 | The earned next move is a larger search | `traigent-optimize-run` | choose algorithm, trial count, and cost limit for a full-scale run |
 
-Every row is a hypothesis this run is too small to settle. At this run's row and trial counts a
-control that showed no effect was mostly not sampled enough to show one, so each entry is phrased
-as what is worth testing at full scale and never as an established finding. Name no skill that is
+Measured defects remain findings; causal claims about controls remain hypotheses this run is too
+small to settle. Recommend testing those hypotheses, never as an established finding. Name no skill that is
 not in that repository, and no `npx skills add` flag beyond `--list` and `--skill`.
 
 ## Recovery

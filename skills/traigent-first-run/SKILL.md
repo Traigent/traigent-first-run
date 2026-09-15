@@ -10,6 +10,25 @@ Help the user see a credible optimization quickly without overstating synthetic 
 Do the technical work. Ask only for information or approval that changes the result, cost,
 data egress, or project behavior.
 
+## Opening message
+
+For a new run, show the welcome below verbatim as the first run-facing message, before
+inspection or setup updates. A resumed unfinished run opens with where it stands instead.
+
+> **Welcome to Traigent Onboarding!**
+>
+> 1. **Inspect** - preserve your agent, dataset, and evaluator.
+> 2. **Readiness** - check your setup for free and explain the readiness score.
+> 3. **Baseline** - install the SDK, then measure today's setup and report available calls, cost, and time.
+> 4. **Optimize** - the paid baseline result comes first, your Traigent account after it, then a
+>    bounded managed search.
+> 5. **Results** - compare the runs, recommend one next step, and hand over the Traigent skills so
+>    you can keep going alone.
+>
+> I will mark each stage with measured numbers when available. The readiness score describes your
+> setup, not your agent's accuracy or an optimization result. I explain details only if action is needed.
+> Baseline evidence decides the next step.
+
 ## Bundled guidance index
 
 Load each reference when its stage begins:
@@ -83,13 +102,13 @@ per run and reused; the run supplies it because no bundled script reads a clock.
   `git -C "<project-root>" rev-parse --is-inside-work-tree` succeeds, add `/traigent-runs/` to the
   project-root `.gitignore`; otherwise do not create `.gitignore`. Never overwrite source material.
 - Do not put educational or advanced-skill links in the active run. Offer links after the result.
-- Keep internal check IDs, SDK internals, and optimization jargon out of user-facing progress.
+- Use the glossary's plain wording for progress; keep implementation details in the run record.
 - Named routes are lettered from `A`, exactly one marked recommended, and answerable by reply.
   No route carries a decision of its own. Keep the question last; a route list is never compressed into yes/no. `I have it` is unnumbered,
   last, and only on material questions. A single action without alternatives is not a route list.
 - An ask that follows a result sits below it. Never a marker, heading or summary of it above
   the card, board or evidence. An ask before any result may open the message.
-- Open with the five-stage journey in "Opening message" below. At boundaries/long work, use
+- At boundaries/long work, use
   `Stage <n>/5 · <name>` and `Done / Now / Next`. Show observed readiness score, rows checked,
   calls/trials, cost, or time; keep finished stages as compact checkmarks. Label estimates; never
   invent progress/ETA.
@@ -143,22 +162,6 @@ After creation, retain unresolved `❗` lines; list substitutes unmarked under w
 Mixed boards mark only validated real components `✅`. The zero-anchor procedure supplies the
 three-gap wording; do not render an additional board merely to explain this convention.
 
-## Opening message
-
-> **Welcome to Traigent Onboarding!**
->
-> 1. **Inspect** - preserve your agent, dataset, and evaluator.
-> 2. **Readiness** - run free readiness research and explain its score.
-> 3. **Baseline** - install the SDK, then measure today's setup and report available calls, cost, and time.
-> 4. **Optimize** - the paid baseline result comes first, your Traigent account after it, then a
->    bounded managed search.
-> 5. **Results** - compare the runs, recommend one next step, and hand over the Traigent skills so
->    you can keep going alone.
->
-> I will mark each stage with measured numbers when available. Readiness checks the score and
-> setup—not agent accuracy or an optimization result. I explain details only if action is needed.
-> Baseline evidence decides the next step.
-
 ## Guided flow
 
 Announce only the five stages above, as `Stage N/5`. The numbered sections below are
@@ -175,9 +178,7 @@ environment" names a section the customer was never given. This guide's own pros
 
 ### 1. Inspect quietly
 
-Unless this run is resuming - which opens with where it stands instead - print
-"Opening message" above verbatim before anything else. Then perform safe,
-read-only discovery without asking for approval:
+Follow "Opening message" above, then perform safe, read-only discovery without asking for approval:
 
 - Identify the checkout root of this guide's clone, or its installed package directory.
   If it is nested inside the target project, exclude that whole tree from discovery and scoring,
@@ -220,10 +221,9 @@ rows, calibrates an eligible local evaluator, and scores all three pillars from 
 evidence. Preserve the opening score before creating substitutes. An existing but unmeasured
 component is not absent, and historical readings or config spaces earn no current-run credit.
 On a zero-anchor run, keep evidence on stdout and the card in the conversation until the task
-answer permits writes. Otherwise name the fresh project-relative readiness directory and any row
-review or calibration artifacts before showing the card. Render the card verbatim, then explain
-its score, band, and reasons in the user's language using the glossary's presentation rules.
-The scoring command reads the project; name the evidence this run wrote before it.
+answer permits writes. Otherwise name the fresh project-relative readiness directory before
+showing the card. Render the card verbatim once, then use the glossary's presentation rules
+for its explanation.
 
 **Read next.** Required: [`references/component-creation.md` § Reading the agent for the opening score](references/component-creation.md#reading-the-agent-for-the-opening-score).
 If a component has to be classified `real`, `limited`, or `invalid`: [`references/component-creation.md` § Evidence and provenance](references/component-creation.md#evidence-and-provenance).
@@ -249,8 +249,8 @@ The gap-question procedure below owns the wording and path alternative.
 ### 2. Show readiness once
 
 For a zero-anchor project, the intent gate already rendered the initial readiness board; do not
-render it again before the user answers. For every other starting state, render the initial
-real-world readiness board after inspection. Show the rendered card beside that board, as printed.
+render it again before the user answers. For every other starting state, add the initial
+real-world readiness board after the opening card.
 State what the coding assistant will create for the walkthrough.
 Do not show external links. Do not ask the user to solve missing setup pieces - the ask below fills
 them and offers to use theirs, which is the opposite of delegating them. After a creation or
@@ -326,7 +326,7 @@ If calibration reaches its timeout: [`references/evaluation-and-dataset.md` § W
 If a check reports that the dataset or evaluator cannot separate configurations: [`references/evaluation-and-dataset.md` § Quality diagnosis and repair choice](references/evaluation-and-dataset.md#quality-diagnosis-and-repair-choice).
 If the agent and the evaluator have to be validated against each other before optimization: [`references/component-creation.md` § Compatibility contract](references/component-creation.md#compatibility-contract).
 If a repair is to move a component from `limited` or `invalid` to `real`: [`references/component-creation.md` § Readiness transitions](references/component-creation.md#readiness-transitions).
-If the dataset carries more than 100 usable rows: [`references/evaluation-and-dataset.md` § First-run subset for a large dataset](references/evaluation-and-dataset.md#first-run-subset-for-a-large-dataset).
+If dataset rows need selecting for the first run: [`references/evaluation-and-dataset.md` § First-run dataset scope](references/evaluation-and-dataset.md#first-run-dataset-scope).
 
 Follow the local validation sequence: record task-grounded calibration cases and semantic coverage;
 resolve only material grading ambiguity with one question; run deferred-SDK static preflight over
@@ -390,9 +390,8 @@ If a public signature or capability has to be confirmed on the installed SDK: [`
 
 ### 6. Approve and run the baseline
 
-Scope the run before pricing it. Where the dataset carries more than 100 usable rows, section 4
-already drew the bounded first-run subset; this stage prices it and never draws it. Estimate runtime
-and spend from the rows those questions bring, never from the full row count.
+Section 4 already selected and recorded the bounded run rows under the dataset reference; this
+stage prices them and never draws them. Estimate runtime and spend from the actual selected files.
 
 Report subset and full sizes from the ids section 4 recorded, and state that the small first-run
 sample limits the claim.
@@ -473,8 +472,8 @@ Persist `traigent-runs/config-space.json` only after nonzero search trials, from
 used; only that current-run document reaches closing readiness. Stop on provider, backend, or
 portal failure with the concrete reason and one recovery; preserve paid work and never replace it
 with mock or synthetic results. Do not fabricate configurations to reach a count.
-After search, recommend a configuration from tuning scores across both measurements and score
-only that one on the held-out rows. A frontier may contain no point worse than the current
+After search, recommend a configuration from tuning scores across both measurements. If independent
+held-out rows are available, score only that one on them; otherwise report that check unavailable. A frontier may contain no point worse than the current
 baseline under the declared objective direction; its conclusions must match measured evidence.
 
 **Read next.** Required: [`references/evaluation-and-dataset.md` § Held-out set and claims](references/evaluation-and-dataset.md#held-out-set-and-claims).
@@ -487,9 +486,9 @@ twelve-configuration default ran in full, its initial configuration among them -
 is never reduced, and an approved disclosure does not make it so; the enhanced run used real
 controls and either produced at least 10 of its 12 permitted trials, matched an explicitly approved
 and disclosed reduced target, or reports a concrete stop/failure reason; and a
-best configuration and non-degenerate measures exist. Verify the held-out score belongs to the one
-configuration this run recommends, chosen on the tuning scores, and that no other candidate was
-scored on those rows. Report truncation and persistence failures, require the portal
+best configuration and non-degenerate measures exist. When held-out scoring completed, verify its
+score belongs to the one configuration this run recommends, chosen on tuning scores, and that no
+other candidate was scored on those rows. Report truncation and persistence failures, require the portal
 probe to have stayed green, and verify each portal link before claiming visibility.
 
 **Read next.** Required: [`references/run-safety.md` § Post-run verification](references/run-safety.md#post-run-verification).
@@ -497,7 +496,7 @@ If the search stopped, failed, or returned zero trials: [`references/run-safety.
 
 Report in five layers: outcome, what the evidence establishes, current state and limits, one next
 action, then auditable details. Compare baseline and enhanced tuning outcomes, show the selected
-configuration's one held-out result, and state sample limits, exclusions by id, known-cost
+configuration's held-out result or why it is unavailable, and state sample limits, exclusions by id, known-cost
 subtotal, unknown calls, budget debits and remaining allowance, failed or incomplete work, and
 verified artifact/portal links. Name substitutes and their limits before interpreting them; keep
 every persisted experiment and label an unsynced baseline local-only.
@@ -523,15 +522,13 @@ over substitutes, every insight describes only the walkthrough.
 **Read next.** Required: [`references/sdk-execution.md` § Result checks](references/sdk-execution.md#result-checks).
 If the installed result exposes a per-example audit or an insights helper: [`references/sdk-execution.md` § Reading the result for insight](references/sdk-execution.md#reading-the-result-for-insight).
 
-Close with one recommended next action grounded in the recorded opening caps and this run's
-measured limits. A substitute fills a gap provisionally; it does not close it. Explain what that
-action would improve and the bound that most limited this walkthrough, without promising what a
-larger run would find. Use the continuation handoff for the state-specific recommendation,
+Close with one recommended next action for the customer's own agent, data, or evaluation method,
+grounded in this run's evidence. A substitute fills a gap provisionally; it does not close it.
+Use the continuation handoff for the state-specific recommendation,
 reply-ready final block, and optional skills package. On the throwaway route only, add one
 reminder: `Traigent is installed in <absolute path>/.venv-traigent for this walkthrough; to keep
 using it, install it into your own environment.` Do not reopen their environment choice.
-Handoff observations are hypotheses to test
-at full scale; `continue` never bypasses approval. Include optional telemetry repair when cost
+Causal interpretations remain hypotheses; `continue` never bypasses approval. Include optional telemetry repair when cost
 comparison is unavailable; it need not precede the quality result or displace a more important
 data/evaluator gap.
 

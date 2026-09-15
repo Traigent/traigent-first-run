@@ -888,12 +888,11 @@ def provider_reported_cost(response) -> float | None:
 
 
 def require_untruncated_completion(response) -> None:
-    """A trial the provider cut off is not a measurement, so refuse it.
+    """Reject a cut-off response before the task scorer reads it.
 
-    The evaluator cannot tell a cut-off answer from a wrong one, so it scores 0
-    rather than low and the model it happened to loses to one that had room.
-    Raising sends it to the failed-trial count instead. `run-safety.md` owns
-    why nothing here sets or predicts a cap.
+    The SDK can record this row failure as zero inside a completed trial.
+    Result selection below excludes incomplete measurements; the exception
+    alone does not remove them. `run-safety.md` owns output-limit policy.
     """
     choice = response.choices[0]
     finish_reason = getattr(choice, "finish_reason", None)
@@ -944,11 +943,8 @@ def build_request(message: str, config: dict) -> dict:
     }
 
 
-# Spend on trials this wrapper refused. The truncation guard raises, so reading
-# cost after it dropped that money out of every total the run reports: a
-# truncated trial was billed for every token generated up to the cut, and
-# surfaced as $0. It is spend that bought no measurement - report it, never add
-# it to the comparison.
+# Costs of refused responses, retained before raising even when the SDK records
+# zero for the failed row. They remain spend, not a clean measurement.
 REFUSED_TRIAL_COSTS: list[float] = []
 # Every provider call this PROCESS places, in the order it placed them - not
 # every call this wrapper places, which is a smaller set and was the defect. The
@@ -2354,7 +2350,8 @@ dominance in both cases:
 
 ```python
 def frontier_at_or_above(
-    trials, metric_name, floor, orientation="maximize", *, compare_cost=False
+    trials, metric_name, incumbent, orientation="maximize", *, expected_rows,
+    compare_cost=False,
 ):
     """SDK candidates no worse than the incumbent, with an optional measured-cost axis.
 
@@ -2365,16 +2362,43 @@ def frontier_at_or_above(
     """
     if orientation not in ("maximize", "minimize"):
         raise ValueError("orientation must be 'maximize' or 'minimize'")
+    if type(expected_rows) is not int or expected_rows <= 0:
+        raise ValueError("expected_rows must be the positive tuning row count")
+    import math
     from traigent import ParetoFrontCalculator
 
+    def measured_number(value):
+        return (
+            isinstance(value, (int, float)) and not isinstance(value, bool)
+            and math.isfinite(value)
+        )
+
+    def complete(trial):
+        rows = (getattr(trial, "metadata", None) or {}).get("example_results")
+        return (
+            getattr(trial.status, "value", trial.status) == "completed"
+            and measured_number(trial.metrics.get(metric_name))
+            and isinstance(rows, list) and len(rows) == expected_rows
+            and all(
+                isinstance(row, dict) and row.get("success") is True
+                and measured_number((row.get("metrics") or {}).get(metric_name))
+                for row in rows
+            )
+        )
+
+    if not complete(incumbent):
+        raise ValueError("The incumbent has no complete tuning measurement; no comparison is valid")
+    if compare_cost and not measured_number(incumbent.metrics.get("cost")):
+        raise ValueError("The incumbent has no measured cost for a cost comparison")
+    floor = incumbent.metrics[metric_name]
     upward = orientation == "maximize"
     eligible = []
     for trial in trials:
-        if getattr(trial.status, "value", trial.status) != "completed":
+        if not complete(trial):
             continue
         score = trial.metrics.get(metric_name)
         cost = trial.metrics.get("cost")
-        if score is None or (compare_cost and cost is None):
+        if compare_cost and not measured_number(cost):
             continue
         meets_floor = score >= floor if upward else score <= floor
         if meets_floor:
@@ -2396,6 +2420,9 @@ def frontier_at_or_above(
 Keep the incumbent visible as the option to retain the current configuration. The quality floor
 stays strict in both directions; the public SDK's comparison tolerance (`1e-10` in the pinned SDK)
 does not admit a point worse than that floor. Pass original trials, preserving their configurations.
+Pass the selected incumbent trial and `expected_rows=len(PROBE_INPUTS)`; missing per-example
+evidence does not establish a complete measurement. Inspect the installed result's public fields
+if its shape differs from the pinned SDK's `metadata["example_results"]` dictionaries.
 For a cost comparison, the incumbent and every compared point need measured cost provenance;
 unknown-pricing `0.0` is not a free-route measurement. Without that evidence, compare the primary
 criterion alone, report cost comparison unavailable, and make no savings or cheapest-choice claim.
@@ -2406,7 +2433,8 @@ adapter above. A strategy can replace the objectives the decorator declared, and
 preset uses built-in exact-match accuracy rather than the wired scorer. Neither should silently
 change the metric or winner this report describes.
 
-Score the reserved rows with the run's recommended configuration, when SKILL section 7 says to,
+When the recorded plan has no independent held-out rows, skip this pass and report no held-out
+measurement. Otherwise score the reserved rows with the run's recommended configuration, when SKILL section 7 says to,
 against `HOLDOUT_DATASET` through the same loader and the same `task_score` the search used.
 `references/evaluation-and-dataset.md` owns which configuration that is - one call of
 `evaluate_holdout`, never one per candidate, whatever the rounds returned. The returned
@@ -2420,6 +2448,8 @@ pass refuses to start unless the remaining funds every row and its grading, and 
 def evaluate_holdout(config: dict) -> tuple[float, float | None]:
     scores = []
     holdout = traigent.Dataset.from_jsonl(HOLDOUT_DATASET)
+    if not holdout.examples:
+        raise ValueError("No independent held-out rows; skip held-out scoring, no call was placed")
     # All of these rows or none of them, decided before the first one is paid
     # for. This is the run's most expensive configuration on rows nothing else
     # scores, and it is the last paid work in the walkthrough - so it is also

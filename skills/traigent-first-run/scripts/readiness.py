@@ -1215,6 +1215,8 @@ class SubScore:
     # prints it as the headline count, and any other statement of it is a copy
     # that can drift.
     applicable: bool = True
+    # A reported adverse finding can require attention without changing points.
+    warning: bool = False
 
 
 # What the user should DO about each cap, as a closed vocabulary.
@@ -1474,8 +1476,9 @@ ACTION_FOR_CONDITION: dict[str, str] = {
 # than observed. That table's keys are exactly `CAP_CEILING`'s - a test asserts
 # the two sets are equal - so a condition that caps nothing cannot be added
 # there without either a ceiling nobody chose or the invariant going. Keeping
-# them apart is also what makes an id answerable: a condition names a cap or an
-# ask, never both, and a reader of either table knows which shape it is holding.
+# them apart keeps non-capping questions out of the ceiling registry. Unsound
+# answers use their existing condition in either shape, according to the
+# reviewed share; aggregate refuses both shapes together in one score.
 #
 # THE REMEDIES ARE NOT NEW WORDS. `review-answer-key` is what
 # `ACTION_FOR_CONDITION` already routes for a generated or unsound answer key -
@@ -1514,6 +1517,7 @@ ACTION_FOR_CONDITION: dict[str, str] = {
 ANSWER_KEY_UNREAD = "answer_key_unread"
 ACTION_FOR_ASK: dict[str, str] = {
     ANSWER_KEY_UNREAD: "review-answer-key",
+    "dataset-unsound-expected-outputs": "review-answer-key",
 }
 ACTION_KINDS = frozenset(
     {PROCEED, *ACTION_FOR_CONDITION.values(), *ACTION_FOR_ASK.values()}
@@ -1644,12 +1648,8 @@ ROUTE_CATEGORY: dict[str, str] = {
     # below refuses any non-scoping route that does not block - so this is the
     # only category the merged behaviour admits.
     #
-    # #187 set both flags on its own cap only, and the two siblings that
-    # predate it kept `asks=False` - so the argument this comment makes was
-    # true of all three and implemented on one, and a wholly model-written
-    # answer key emitted `proceed`. All three now carry `asks=True`, and the
-    # remedy-keyed guard in `tests/test_readiness_scoring.py` is what stops the
-    # next cap from being added to one of these tables and not the other flag.
+    # Generated answer keys ask for review; unsound customer answers ask only
+    # when their selected-run membership is unknown or includes a flagged row.
     "dataset-unsound-expected-outputs": CLAIM_SCOPING,
     "evaluator-absent": CREATION_OR_REPAIR,
     # Both scope, for the reason the dataset provenance rungs do and for one
@@ -2555,11 +2555,8 @@ class Cap:
     # and an offer with nobody asked is a substitution made on the customer's
     # behalf, which is the thing the one ask at discovery exists to prevent.
     #
-    # It is still a property of the remedy and not a preference per cap: both
-    # `add-examples` conditions declare the same expression, so the ask arrives
-    # exactly while the top-up has somewhere to go. Consent removes the stop and
-    # never the score - answering it changes what the dataset IS, and the rows
-    # it writes are scored as the generated rows they are.
+    # The remedy's scope decides whether it asks: top-ups need room, and
+    # unsound answers known to be outside the selected run need no in-run repair.
     asks: bool = False
     # Derived, never passed: `init=False` means no call site can supply one, so
     # the table above is the only place a remedy is decided and a condition
@@ -3816,7 +3813,7 @@ class RowReview:
     reviewed_collected: int = 0
     reviewed_undeclared: int = 0
     # How many of the `unsound` rows are among the rows this run will actually
-    # tune and check on. The run reads 28 rows - 18 tuning and 10 held out - so
+    # tune and check on. The run reads up to 28 rows, so
     # a wrong answer outside them changes nothing that happens, and a wrong
     # answer inside them is what the search is about to be graded against.
     # Those are two different sentences to a customer, and the card can only
@@ -3825,9 +3822,7 @@ class RowReview:
     # Optional, and absent is not zero. At the opening gate on a large dataset
     # the subset has not been drawn yet, so nothing can honestly claim
     # membership; `None` is that state and the card then says only that the
-    # file has bad rows. On a dataset at or under the subset size, every
-    # provided row is a row the run uses, which is the case where this is worth
-    # saying and the case where it is knowable.
+    # file has bad rows. Once selection is recorded, membership is knowable.
     unsound_in_run: int | None = None
     # How many rows the review read that the run actually reads, on the same
     # `in_run` declaration `unsound_in_run` is read from and `None` in the same
@@ -3839,6 +3834,9 @@ class RowReview:
     # different questions, and one number answering both would make a review
     # that found nothing look like a review that read nothing.
     reviewed_in_run: int | None = None
+    # Complete selected provided-row population declared by selected_row_ids,
+    # independent of how many verdicts have arrived. Generated rows are excluded.
+    selected_run_rows: int | None = None
 
 
 @dataclass(frozen=True)
@@ -5961,7 +5959,7 @@ def provided_rows(facts: DatasetFacts) -> int:
 
 
 def graded_rows(facts: DatasetFacts) -> int | None:
-    """The labelled rows this run is graded on, when the split says which.
+    """The labelled rows in the declared tuning/held-out split, when known.
 
     `run_rows` counts the tuning and held-out rows; this counts the ones among
     them that carry an expected answer, which is the population an answer-key
@@ -6097,6 +6095,12 @@ def answer_key_read(facts: DatasetFacts, review: RowReview) -> bool:
     # of three graded rows cannot supply 28, and a file with three reviewable
     # rows cannot supply five. Asking either for more than it holds is how the
     # unsatisfiable hold looked from the other end of the scale.
+    # A recorded shorter draw is its own denominator; counting verdicts alone
+    # cannot establish how many selected answers remain unread.
+    if review.selected_run_rows is not None:
+        if review.selected_run_rows == 0:
+            return review.reviewed >= min(ANSWER_KEY_SAMPLE_ROWS, provided)
+        return review.reviewed_in_run == review.selected_run_rows
     if review.reviewed_in_run is not None and graded is not None:
         return review.reviewed_in_run >= min(ANSWER_KEY_DRAWN_ROWS, graded)
     return review.reviewed >= min(ANSWER_KEY_SAMPLE_ROWS, provided)
@@ -6139,12 +6143,8 @@ def row_review_evidence(
         line = f"the coding assistant reviewed all {provided} provided rows"
     else:
         line = f"the coding assistant sampled {review.reviewed} of {provided} provided rows"
-    # And what those rows COVER, where the review said which rows the run
-    # reads. Without this clause the card printed "read 60 of 4812 provided
-    # rows" beside a top band, because the sentence counts the file and the
-    # floor counts the rows the comparison is graded on - two denominators for
-    # one read, which is the class `provided_rows` was extracted to close and
-    # this is the same class in the other direction.
+    # The review declares run membership; preflight only counts the full split.
+    # Name that denominator without claiming it is the eventual paid draw.
     graded = graded_rows(facts)
     # `graded` of zero is left unsaid rather than printed. "covering 0 of the 0
     # rows this run is graded on" is a true arithmetic and a nonsense sentence:
@@ -6152,23 +6152,31 @@ def row_review_evidence(
     # run compares on carries no answer at all, which the dataset pillar's own
     # cap is the place that says so (traigent-first-run#395).
     split_rows = run_rows(facts)
-    # `in_run` counts all reviewed split rows, including unlabelled ones.
-    # Only when the populations coincide may that count name graded rows.
+    # `in_run` counts reviewed rows selected for the run, including unlabelled
+    # ones. Full-split coverage follows only when those populations coincide.
     all_split_rows_graded = split_rows is not None and split_rows == graded
-    if review.reviewed_in_run is not None and graded and all_split_rows_graded:
+    if review.selected_run_rows is not None:
         line += (
-            f", {review.reviewed_in_run} of them from the {graded} rows this "
-            "run is graded on"
+            f", {review.reviewed_in_run} of {review.selected_run_rows} selected "
+            "provided rows reviewed"
+            if review.selected_run_rows
+            else ", no provided rows selected for this run"
         )
-    elif review.reviewed_in_run is not None and split_rows:
+    elif (
+        review.reviewed_in_run is not None
+        and split_rows
+        and not (all_provided and review.reviewed_in_run >= split_rows)
+    ):
         line += (
-            f", {review.reviewed_in_run} of them from the {split_rows} rows "
-            "in the declared tuning/held-out split"
+            f", {review.reviewed_in_run} marked for this run by the row review "
+            f"(declared tuning/held-out split: {split_rows} rows)"
         )
     if review.unsound == 1:
         line += "; 1 expected answer contradicts its input"
     elif review.unsound:
         line += f"; {review.unsound} expected answers contradict their input"
+    elif review.unsure:
+        line += "; no contradiction confirmed"
     else:
         line += "; none contradicts its own input"
     if review.unsure:
@@ -6178,15 +6186,28 @@ def row_review_evidence(
     # A complete read of the graded rows is not necessarily a complete read
     # of the provided file. Report an unread remainder only when one exists.
     if (
+        review.selected_run_rows is not None
+        and review.reviewed_in_run == review.selected_run_rows
+    ):
+        if review.selected_run_rows:
+            line += "; that covers every selected provided row"
+        if not all_provided:
+            line += (
+                f"; {provided - review.reviewed} other provided rows were not reviewed"
+            )
+    elif (
         graded
         and review.reviewed_in_run is not None
         and split_rows is not None
         and review.reviewed_in_run >= split_rows
     ):
         if all_split_rows_graded:
-            line += "; that is every row this run is graded on"
+            line += "; that covers every row in the declared tuning/held-out split"
         else:
-            line += f"; all {graded} graded rows are among those reviewed"
+            line += (
+                f"; all {graded} rows with expected answers in the declared "
+                "tuning/held-out split are among those reviewed"
+            )
         if not all_provided:
             line += (
                 f"; {provided - review.reviewed} other provided rows were not reviewed"
@@ -6202,14 +6223,10 @@ def row_review_evidence(
 
 
 def run_rows(facts: DatasetFacts) -> int | None:
-    """How many rows this run will actually tune and check on, when it is known.
+    """The source's declared tuning/held-out rows, not the selected run size.
 
-    Read from the declared split rather than from the guide's default 28,
-    because the two are not the same claim: 28 is what this walkthrough creates
-    when it has to create a dataset, and a customer who brought their own split
-    has whatever they brought. `None` when no split has been declared yet -
-    which is the ordinary opening state on one undivided file, and the state in
-    which the card may not put a number on it.
+    A source split can be larger than the paid draw. The row review declares
+    selected IDs separately. None means no complete split was published.
     """
     if facts.tuning_rows is None or facts.holdout_rows is None:
         return None
@@ -6288,10 +6305,8 @@ def unsound_answer_cap(review: RowReview, run_rows: int | None = None) -> Cap | 
     """The one ceiling this judgement may set, and never a point of credit.
 
     Fires on the share of what was actually read, which is the only population
-    it has evidence about. A single wrong answer below that share is still
-    surfaced - it becomes the approval-gated question the action table already
-    requires, and it is counted in the evidence line above - it just does not
-    bound the whole run on its own.
+    it has evidence about. A finding below that share remains in the evidence
+    line; the guidance scopes any question to selected-run membership.
 
     An `unsure` never reaches here. Withholding a claim on evidence the
     assistant gathered is one thing; withholding it because the assistant could
@@ -6306,12 +6321,8 @@ def unsound_answer_cap(review: RowReview, run_rows: int | None = None) -> Cap | 
         if review.unsound == 1
         else f"{review.unsound} answers do not answer their own question"
     )
-    # Two different findings, and the reader has to be told which one this is.
-    # The run reads a bounded subset - the tuning rows plus the held-out ten -
-    # so a wrong answer outside it costs nothing: the file has a bad row and
-    # the run never opens it. A wrong answer inside it is the run being graded
-    # against something believed wrong, which is the whole reason to say any of
-    # this before the paid search rather than after.
+    # Attribute selected-run membership to the review. The declared split size
+    # does not establish the draw, and an excluded row can still be in that split.
     if review.unsound_in_run is None:
         consequence = (
             "somewhere in the file this run draws from. Whether the search "
@@ -6319,62 +6330,39 @@ def unsound_answer_cap(review: RowReview, run_rows: int | None = None) -> Cap | 
         )
     elif review.unsound_in_run == 0:
         consequence = (
-            "outside the rows this run tunes and checks on, so the search does "
-            "not read them"
+            "all marked outside this run by the row review; they may still "
+            "belong to the larger declared tuning/held-out split"
         )
     else:
-        scope = f"the {run_rows} rows" if run_rows else "the rows"
+        scope = (
+            f" (declared tuning/held-out split: {run_rows} rows)" if run_rows else ""
+        )
         consequence = (
-            f"{review.unsound_in_run} of them among {scope} this run tunes and "
-            "checks on, so the search is about to be graded against them"
+            f"{review.unsound_in_run} of them marked for this run by the row "
+            f"review{scope}"
+        )
+    if review.unsound_in_run == 0:
+        followup = (
+            "The full-dataset readiness ceiling remains because those findings "
+            "are unresolved; they are outside the selected rows, so they need "
+            "no repair for this run. The run is not stopped."
+        )
+    else:
+        followup = (
+            "It is put to you as a question with the row and the reason, and "
+            "nothing is edited until you answer. The run is not stopped; what "
+            "it may claim is bounded until the answer key is agreed."
         )
     return Cap(
         "dataset-unsound-expected-outputs",
         UNSOUND_ANSWER_CEILING,
         f"Reading each row's input beside its expected answer, {subject} "
         f"(of {review.reviewed} read) - {consequence}. This is the coding "
-        "assistant's reading, not a measurement, so it is put to you as a "
-        "question with the row and the reason, and nothing is edited until you "
-        "answer. The run is not stopped; what it may claim is bounded until "
-        "the answer key is agreed.",
-        # Bounds, never blocks - and the reason is not a preference about
-        # severity. Three things decide it, and they point the same way.
-        #
-        # The run only ever reads 28 rows (18 tuning, 10 held out). A customer
-        # with 28 sound rows has a run worth making whatever else is in the
-        # file; a broken row the search never opens stops nothing, and the
-        # `unsound_in_run` clause above is what lets the card say which case
-        # this is instead of asserting the worse one.
-        #
-        # On collected data this judgement can simply be wrong. A row that
-        # reads as contradictory to a model can be correct in the customer's
-        # domain - a refund approved outside the policy window because their
-        # goodwill rule says so - and an opinion that can be wrong may bound a
-        # claim and may not cancel the customer's run. (On model-generated rows
-        # the judgement is far more likely right, and those rows are refused by
-        # this input and bounded by the synthetic ceiling anyway.)
-        #
-        # And the remedy decides it, under the rule on `Cap.blocks`: a route
-        # that asks for a creation or a repair blocks, a route that scopes what
-        # the result may claim is advisory. `review-answer-key` is a question
-        # put to the customer - not a creation, not a repair.
-        # `dataset-generated-answer-key` carries that identical slug and is
-        # advisory for the same reason, and one remedy may not mean "stop" on
-        # one card and "proceed" on the next. Whether each provenance cap
-        # blocks is decided once, beside those caps; this one is decided here,
-        # and the two decisions have to agree.
+        f"assistant's reading, not a measurement. {followup}",
+        # The source-wide ceiling survives selection. An explicit outside-only
+        # finding needs no answer before this run; unknown membership still does.
         blocks=False,
-        # And ASKS, which is the half `blocks=False` alone deleted. The entire
-        # content of this condition is a question for the user, and with the
-        # block removed `recommended_action` returned `proceed` - a payload
-        # saying there is nothing to do about a finding whose only purpose is
-        # to be acted on before the run. Measured. Source:
-        # tests/test_readiness_scoring.py#AnswerKeyReviewTests. 89 STRONG / OK / proceed
-        # under the default `blocks=True` became 70 WORKABLE / BLOCKED /
-        # review-answer-key, and `blocks=False` on its own returned it to
-        # proceed with the remedy gone. The run proceeds, the ceiling stands,
-        # and the remedy is still named.
-        asks=True,
+        asks=review.unsound_in_run != 0,
     )
 
 
@@ -6861,6 +6849,8 @@ def score_dataset(
                 with_review(labels_evidence(labelled, rows, facts.placeholder_rows)),
             )
         )
+    if review.supplied and (review.unsound or review.unsure):
+        subs[-1] = replace(subs[-1], warning=True)
 
     # How many rows this run can actually compare configurations on. For a
     # reference-based scorer that is the labelled count: a row with no expected
@@ -9635,6 +9625,7 @@ def aggregate(
     agent_route_unverified: bool = False,
     agent_unfollowed_settings: Sequence[tuple[str, int]] = (),
     answers_read: bool = True,
+    open_asks: Sequence[Ask] = (),
 ) -> ReadinessScore:
     # Every declared weight stays in the denominator, and #201 is the reason
     # that sentence is worth writing down rather than assuming.
@@ -9692,7 +9683,16 @@ def aggregate(
     # ceiling has unread answers too, and nothing is held there - so there is no
     # verdict to lift and no ask to put, and routing one would hand a remedy to
     # a card whose band the read would not move.
-    open_asks = (ANSWER_KEY_UNREAD_ASK,) if held_for_answers else ()
+    open_asks = tuple(open_asks) + (
+        (ANSWER_KEY_UNREAD_ASK,) if held_for_answers else ()
+    )
+    ask_conditions = [ask.condition for ask in open_asks]
+    if len(set(ask_conditions)) != len(ask_conditions) or set(ask_conditions) & {
+        cap.condition for cap in ordered_caps
+    }:
+        raise ValueError(
+            "a condition cannot appear twice or as both a cap and an open ask"
+        )
     return ReadinessScore(
         schema_version=SCHEMA_VERSION,
         unmeasured=unmeasured_checks(pillars, ordered_caps),
@@ -9758,6 +9758,29 @@ def score_run(
         dataset_facts,
         reference_free=scores_without_a_reference(evaluation_facts.method),
     )
+    open_asks: tuple[Ask, ...] = ()
+    if (
+        review is not None
+        and review.supplied
+        and review.reviewed
+        and review.unsound
+        and review.unsound_in_run != 0
+        and not scores_without_a_reference(evaluation_facts.method)
+        and not any(
+            cap.condition == "dataset-unsound-expected-outputs" for cap in dataset_caps
+        )
+    ):
+        open_asks = (
+            Ask(
+                condition="dataset-unsound-expected-outputs",
+                reason=(
+                    "The coding assistant flagged expected answers this run "
+                    "uses or may use. Put those rows and reasons to the user "
+                    "before changing them; the finding changes no points and "
+                    "does not stop the run."
+                ),
+            ),
+        )
     return aggregate(
         [dataset_pillar, evaluation_pillar, agent_pillar],
         [
@@ -9811,6 +9834,7 @@ def score_run(
         # `score_run` is where both are in scope, and it is the one entry point
         # a customer's card is produced through.
         answers_read=answer_key_read(dataset_facts, review or RowReview()),
+        open_asks=open_asks,
     )
 
 
@@ -10017,7 +10041,7 @@ def marker_unmeasured(unicode_ok: bool) -> str:
 def marker(sub: SubScore, unicode_ok: bool) -> str:
     if not sub.measured:
         return marker_unmeasured(unicode_ok)
-    if sub.value >= sub.maximum * 0.8:
+    if not sub.warning and sub.value >= sub.maximum * 0.8:
         return "OK" if not unicode_ok else "✅"
     return "!!" if not unicode_ok else "❗"
 
@@ -10313,10 +10337,25 @@ def render_card(
     # replaces it.
     headline = f"{score.overall}/100  {score.band}"
     lines.append(f"TRAIGENT OPTIMIZATION READINESS{' ' * 8}{headline}")
+    lines.append(f"Action: {ACTION_DISPLAY_NAMES[score.recommended_action]}")
     lines.append("")
     lines.extend(blocker_lines(score, palette))
     if note := confirmed_absence_note(score):
         lines.extend([note, ""])
+    # Put the next step and its limits before the detailed pillar evidence.
+    # Reply-ready choices remain below that evidence.
+    if score.caps:
+        for cap in score.caps:
+            if cap.blocks:
+                label = f"{palette.bad}FIX BEFORE PAID RUN{palette.reset}"
+            elif cap.ceiling is None:
+                label = f"{palette.warn}NOT CHECKED HERE{palette.reset}"
+            elif binds(cap, score.overall):
+                label = f"{palette.warn}LIMITED TO {cap.ceiling}{palette.reset}"
+            else:
+                label = f"{palette.warn}WOULD LIMIT TO {cap.ceiling}{palette.reset}"
+            lines.append(f"  {label} {card_cap_reason(cap)}")
+        lines.append("")
     for pillar in score.pillars:
         colour = band_color(palette, pillar.score)
         headline_suffix = f"  {pillar.score}/100"
@@ -10483,7 +10522,9 @@ def render_card(
                 # marker is the worst of the group, for the reason the pillar
                 # headline takes the worst: a reader scanning markers must not
                 # be shown the most forgiving one of a set.
-                worst = min(subs, key=lambda sub: (sub.measured, sub.value))
+                worst = min(
+                    subs, key=lambda sub: (sub.measured, not sub.warning, sub.value)
+                )
                 lines.append(f"    {marker(worst, unicode_ok)} {evidence}")
                 lines.extend(
                     f"        {marker(sub, unicode_ok)} {display_name(sub.name)}"
@@ -10501,40 +10542,6 @@ def render_card(
             # forever, which would report a permanent gap in our reach as a
             # permanent gap in the customer's project.
             lines.append(f"    {palette.dim}{AGENT_NOT_COVERED}{palette.reset}")
-        lines.append("")
-    if score.caps:
-        for cap in score.caps:
-            # The label has to carry the difference the status already makes,
-            # or the card contradicts its own JSON: an advisory ceiling reported
-            # `status: OK` while this line printed BLOCKED next to it.
-            #
-            # "Cap" is the word the code and the schema use; it is not a word a
-            # first-time reader knows. What they need is the consequence, so the
-            # line says it: something to fix before paying, or a limit on the
-            # number - with the limit shown, since "why is this 89" is the
-            # question it answers.
-            #
-            # The number has to be conditioned too, not only the kind of label.
-            # A ceiling that is not the operative one is not what limits this
-            # score, and printing it flat states a number the card cannot
-            # reconcile: the reader is shown 89 beside a 25, with nothing on the
-            # card saying the lowest ceiling wins. The subjunctive is the whole
-            # fix - it says the ceiling is real without claiming it applies now.
-            if cap.blocks:
-                label = f"{palette.bad}FIX BEFORE PAID RUN{palette.reset}"
-            elif cap.ceiling is None:
-                # Nothing is limited, so no number is shown and none is
-                # implied. `NOT CHECKED HERE` is the whole claim: a check this
-                # run did not make, said in the customer's terms rather than
-                # in the scorer's. Printing `LIMITED TO` beside a cap that
-                # bounds nothing would be the defect this arm exists to
-                # remove, wearing the old label.
-                label = f"{palette.warn}NOT CHECKED HERE{palette.reset}"
-            elif binds(cap, score.overall):
-                label = f"{palette.warn}LIMITED TO {cap.ceiling}{palette.reset}"
-            else:
-                label = f"{palette.warn}WOULD LIMIT TO {cap.ceiling}{palette.reset}"
-            lines.append(f"  {label} {card_cap_reason(cap)}")
         lines.append("")
     if score.agent_route_unverified or any(
         card_check_evidence(score, pillar, sub) != sub.evidence
@@ -10667,12 +10674,6 @@ def render_card(
         f"  {palette.dim}Local pre-run planning estimate, not a probability or "
         f"measured optimization result.{palette.reset}"
     )
-    # Last, and in the same shape the declared-mode board ends on. Everything
-    # above is a finding; this is the one thing to do about them first, which
-    # `recommended_action` already decided for the payload and the card left
-    # the reader to re-derive from the ceilings. JSON retains the routing id;
-    # the card translates that same decision into the user's language.
-    lines.append(f"Action: {ACTION_DISPLAY_NAMES[score.recommended_action]}")
     return "\n".join(lines)
 
 
@@ -11331,6 +11332,21 @@ def previous_score_from_document(document: Any, reference: str) -> PreviousScore
             f"{where}: 'caps' must be the list of condition objects this script "
             "prints"
         )
+    open_asks = document.get("open_asks", [])
+    if not isinstance(open_asks, list) or not all(
+        isinstance(ask, dict) and isinstance(ask.get("condition"), str)
+        for ask in open_asks
+    ):
+        raise PreviousScoreInputError(
+            f"{where}: 'open_asks' must be a list of condition objects"
+        )
+    ask_conditions = [ask["condition"] for ask in open_asks]
+    if len(set(ask_conditions)) != len(ask_conditions) or set(ask_conditions) & {
+        cap["condition"] for cap in caps
+    }:
+        raise PreviousScoreInputError(
+            f"{where}: a condition cannot appear twice or as both a cap and an open ask"
+        )
     return PreviousScore(
         overall=overall,
         pillars=read,
@@ -11540,6 +11556,38 @@ def row_review_from_document(document: Any, facts: DatasetFacts) -> RowReview:
     in_run_known = (
         set(facts.run_row_id_digests) if facts.run_row_id_digests is not None else None
     )
+    selected_ids: set[str] | None = None
+    if "selected_row_ids" in document:
+        selected = document["selected_row_ids"]
+        if not isinstance(selected, list):
+            raise RowReviewInputError(
+                "selected_row_ids must be a list of row id strings"
+            )
+        selected_ids = set()
+        for row_id in selected:
+            if not isinstance(row_id, str) or not row_id.strip():
+                raise RowReviewInputError(
+                    "selected_row_ids must contain nonblank strings"
+                )
+            row_id = row_id.strip()
+            if row_id in selected_ids:
+                raise RowReviewInputError(f"selected_row_ids repeats id {row_id!r}")
+            digest = row_id_digest(row_id)
+            if digest not in known:
+                raise RowReviewInputError(
+                    f"selected_row_ids names id {row_id!r} preflight did not read"
+                )
+            if in_run_known and digest not in in_run_known:
+                raise RowReviewInputError(
+                    f"selected_row_ids names id {row_id!r} outside the declared "
+                    "tuning/held-out split"
+                )
+            selected_ids.add(row_id)
+        if len(selected_ids) > provided_rows(facts):
+            raise RowReviewInputError(
+                "selected_row_ids exceeds the provided-row count; list only "
+                "selected customer rows, excluding generated rows"
+            )
     seen: set[str] = set()
     #: Every id that names no row of this dataset, so one run names them all.
     unmatched: list[str] = []
@@ -11627,6 +11675,12 @@ def row_review_from_document(document: Any, facts: DatasetFacts) -> RowReview:
                 f"{where} has in_run {in_run!r}; it says whether this run reads "
                 "that row, so it is true or false or absent - and absent means "
                 "the rows have not been drawn yet, never 'no'"
+            )
+        if selected_ids is not None and (
+            in_run is None or in_run != (row_id in selected_ids)
+        ):
+            raise RowReviewInputError(
+                f"{where} in_run must match membership in selected_row_ids"
             )
         # The narrower claim, checked where a fact exists to check it against -
         # and that fact is the published list, not `run_rows`.
@@ -11719,6 +11773,7 @@ def row_review_from_document(document: Any, facts: DatasetFacts) -> RowReview:
         # set on the same all-or-nothing `in_run` condition its sibling uses:
         # a half-answered file cannot support either count.
         reviewed_in_run=marked_in_run if in_run_declared == {True} else None,
+        selected_run_rows=len(selected_ids) if selected_ids is not None else None,
     )
 
 

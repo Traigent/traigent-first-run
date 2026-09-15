@@ -12,8 +12,8 @@ demonstrate the workflow; it must never be presented as representative productio
 
 ## Start here
 
-Read and follow the self-contained
-[`skills/traigent-first-run/SKILL.md`](skills/traigent-first-run/SKILL.md).
+Start with the self-contained skill's
+[Opening message](skills/traigent-first-run/SKILL.md#opening-message), then follow its Guided flow.
 The skill routes its bundled references at the stage where each is needed; do not front-load them
 before starting inspection.
 
@@ -62,9 +62,6 @@ address each account state gets, and the two 10-day windows: the access code, th
 none of that a second time.
 
 ## User-facing promise
-
-Open with the five-stage journey under "Opening message" in
-[`skills/traigent-first-run/SKILL.md`](skills/traigent-first-run/SKILL.md), as written there.
 
 Proceed with read-only inspection after stating the plan. Do not make the user approve safe
 discovery. Stop only for: a genuine choice between agent candidates, one task-intent question when

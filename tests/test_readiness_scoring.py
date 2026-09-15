@@ -9089,45 +9089,11 @@ def cap_construction_field(source: str, field: str, default: object) -> dict[str
 
 
 class OneRemedyOneQuestionTests(unittest.TestCase):
-    """Conditions sharing a remedy must agree on whether that remedy is asked.
+    """Shared remedies ask consistently while their scope leaves work to settle.
 
-    The gap every existing table check is blind to. `CAP_CEILING`,
-    `ROUTE_CATEGORY`, `CAP_SEVERITY_ORDER` and `ACTION_FOR_CONDITION` are all
-    checked for membership and for order, and every one of those checks reads
-    a TABLE - so none of them can see a flag that lives on the cap rather than
-    in a table. `asks` is exactly that flag, and the state it hid was not
-    subtle: three conditions route to `review-answer-key`, one of them set
-    `asks=True`, and a dataset whose entire answer key was written by a model
-    emitted `recommended_action: "proceed"` beside SKILL.md's instruction to
-    have a person review a sample of the answers before a correctness claim.
-
-    So the assertion is at the level the flag is wrong at. `Cap.asks` says in
-    its own words that the flag "is a property of `review-answer-key` and not
-    of a size" - a property OF THE REMEDY - and `ACTION_FOR_CONDITION` is where
-    remedies are decided. Reading that table is therefore the whole guard, and
-    a fourth `review-answer-key` rung cannot ship asking nothing.
-
-    Detected, though, and not inherited - the distinction is worth stating
-    because the weaker word flatters this guard. `asks` is a per-`Cap` keyword
-    defaulting False, so an author adding a condition to `ACTION_FOR_CONDITION`
-    and omitting `asks=True` at the call site constructs a perfectly valid cap;
-    what happens next is that THIS test goes red, after the fact, rather than
-    the value arriving from the remedy. Making the omission unreachable instead
-    of caught means keying the flag off the remedy in a table beside
-    `ACTION_FOR_CONDITION` and deriving it in `__post_init__` - which changes
-    the `Cap` constructor's contract, retires the AST reading below along with
-    it, and hard-codes an asymmetry with `blocks` that is deliberately only
-    asserted today. That is its own change with its own regression story, and
-    it is filed rather than smuggled in here.
-
-    Deliberately `asks` and not every cap field. `blocks` disagrees under
-    `get-data` on purpose - `dataset-absent` waits, `dataset-coarse-resolution`
-    does not, and `dataset-below-measurable-size` decides at runtime - and
-    `ROUTE_CATEGORY`'s own comment records that disagreement as tracked and not
-    this rule's call. A ceiling is not remedy-keyed either, and that too is
-    written down beside `CAP_SEVERITY_ORDER`: `get-data` spans 20 to 89,
-    because "what should the user do" and "how much of the result survives"
-    are different questions. `asks` is the one cap field the remedy decides.
+    Generated answer keys always need review. The unsound-answer cap also
+    records source defects outside the selected run; that branch stays advisory
+    and its membership cases are exercised by the runtime tests below.
     """
 
     def _declared(self, field: str) -> dict[str, set]:
@@ -9147,6 +9113,10 @@ class OneRemedyOneQuestionTests(unittest.TestCase):
 
     def test_conditions_sharing_a_remedy_agree_on_whether_it_asks(self) -> None:
         declared = self._declared("asks")
+        self.assertEqual(
+            declared.pop("dataset-unsound-expected-outputs"),
+            {"review.unsound_in_run != 0"},
+        )
         by_remedy: dict[str, dict[str, set]] = {}
         for condition, values in declared.items():
             remedy = MODULE.ACTION_FOR_CONDITION[condition]
@@ -9232,7 +9202,12 @@ class OneRemedyOneQuestionTests(unittest.TestCase):
         )
         self.assertGreater(len(siblings), 1)
         self.assertEqual(
-            {value for condition in siblings for value in declared[condition]},
+            {
+                value
+                for condition in siblings
+                if condition != "dataset-unsound-expected-outputs"
+                for value in declared[condition]
+            },
             {False, True},
             "the mutation no longer un-ports the sibling it names",
         )
@@ -9744,8 +9719,15 @@ class TheCardSpeaksTheUsersLanguageTests(unittest.TestCase):
                     score, palette=MODULE.Palette(), unicode_ok=False
                 )
                 report = MODULE.render_markdown(score)
-                card_action = card.splitlines()[-1]
+                card_lines = card.splitlines()
+                self.assertTrue(
+                    card_lines[0].startswith("TRAIGENT OPTIMIZATION READINESS")
+                )
+                card_action = card_lines[1]
                 self.assertEqual(card_action, report.splitlines()[-1])
+                self.assertEqual(
+                    sum(line.startswith("Action: ") for line in card_lines), 1
+                )
                 self.assertTrue(card_action.startswith("Action: "))
                 self.assertGreater(len(card_action.split()), 4)
                 self.assertNotEqual(card_action, f"Action: {action}")
@@ -10914,10 +10896,9 @@ class TheCardSpeaksTheUsersLanguageTests(unittest.TestCase):
     def test_the_card_closing_line_is_inside_the_scan(self) -> None:
         """Named on its own, because it is the line that proved the gap.
 
-        `render_card` appends the estimate sentence unconditionally, one line
-        above the closing `Action:` line, so if any sentence is read by every
-        customer it is this one - and the declaration-side scan could not see
-        it.
+        `render_card` appends the estimate sentence unconditionally after the
+        evidence, so every customer meets it; the declaration-side scan could
+        not see it.
         """
         scanned = "\n".join(
             " ".join(text.split())
@@ -11326,6 +11307,80 @@ class RowLevelSanityTests(unittest.TestCase):
         labels = next(s for s in pillar.subscores if s.name == "labels")
         self.assertIn("9 undecided", labels.evidence)
 
+    def test_small_confirmed_findings_keep_the_question_without_a_ceiling(self):
+        facts = _brought(60, tuning_rows=18, holdout_rows=10)
+        weights = dict(MODULE.DEFAULT_WEIGHTS)
+        clean = MODULE.score_run(
+            facts,
+            _passing_calibration(),
+            _wired_space(),
+            weights,
+            _review(reviewed=60, reviewed_in_run=28),
+        )
+        condition = "dataset-unsound-expected-outputs"
+        for bad, unsure, in_run in (
+            (1, 0, 1),
+            (1, 0, None),
+            (1, 0, 0),
+            (0, 1, 0),
+            (6, 0, 1),
+            (6, 0, None),
+            (6, 0, 0),
+        ):
+            with self.subTest(bad=bad, unsure=unsure, in_run=in_run):
+                review = _review(
+                    reviewed=60,
+                    unsound=bad,
+                    unsure=unsure,
+                    unsound_in_run=in_run,
+                    reviewed_in_run=28 if in_run is not None else None,
+                    selected_run_rows=28 if in_run is not None else None,
+                )
+                score = MODULE.score_run(
+                    facts, _passing_calibration(), _wired_space(), weights, review
+                )
+                capped = bad == 6
+                asks = bool(bad) and in_run != 0
+                self.assertEqual(score.overall, 70 if capped else clean.overall)
+                self.assertEqual(score.status, "OK")
+                self.assertEqual(
+                    score.recommended_action, "review-answer-key" if asks else "proceed"
+                )
+                self.assertEqual(
+                    sum(c.condition == condition for c in score.caps), int(capped)
+                )
+                payload = json.loads(json.dumps(asdict(score)))
+                self.assertEqual(
+                    [a["condition"] for a in payload["open_asks"]],
+                    [condition] if asks and not capped else [],
+                )
+                self.assertEqual(payload["weighted_average"], clean.weighted_average)
+                for render in (MODULE.render_card, MODULE.render_markdown):
+                    self.assertIn(
+                        f"Action: {MODULE.ACTION_DISPLAY_NAMES[score.recommended_action]}",
+                        render(score),
+                    )
+                # The existing previous-score reader still accepts older payloads
+                # without open_asks and payloads carrying this advisory question.
+                for include_asks in (True, False):
+                    previous = dict(payload)
+                    if not include_asks:
+                        previous.pop("open_asks")
+                    self.assertEqual(
+                        MODULE.previous_score_from_document(
+                            previous, "fixture"
+                        ).overall,
+                        score.overall,
+                    )
+        reference_free = MODULE.score_run(
+            facts,
+            replace(_passing_calibration(), method="llm-judge-rubric"),
+            _wired_space(),
+            weights,
+            _review(reviewed=60, unsound=1, unsound_in_run=1, reviewed_in_run=28),
+        )
+        self.assertNotIn(condition, [a.condition for a in reference_free.open_asks])
+
     def test_the_review_never_moves_a_score_upwards(self) -> None:
         """Swept over every verdict mixture, at the sub-score and cap level.
 
@@ -11662,6 +11717,91 @@ class TheUnsoundAnswerCapBoundsRatherThanBlocksTests(unittest.TestCase):
         )
         self.assertFalse(self._cap(reviewed=28, unsound=3).blocks)
 
+    def test_only_selected_or_unplaced_findings_ask_before_the_run(self) -> None:
+        ids = [f"row-{index}" for index in range(60)]
+        selected = ids[:28]
+        facts = replace(
+            _brought(60, tuning_rows=18, holdout_rows=10),
+            row_id_digests=tuple(MODULE.row_id_digest(row_id) for row_id in ids),
+            run_row_id_digests=tuple(
+                MODULE.row_id_digest(row_id) for row_id in selected
+            ),
+        )
+        for membership in ("outside", "inside", "unknown"):
+            with self.subTest(membership=membership):
+                bad = set(ids[:6] if membership == "inside" else ids[-6:])
+                document = {
+                    "reviewer": "assistant",
+                    "rows": [
+                        {
+                            "id": row_id,
+                            "origin": "collected",
+                            "verdict": "no" if row_id in bad else "yes",
+                            "note": (
+                                "The expected answer contradicts its input."
+                                if row_id in bad
+                                else "The expected answer follows from its input."
+                            ),
+                            **(
+                                {"in_run": row_id in selected}
+                                if membership != "unknown"
+                                else {}
+                            ),
+                        }
+                        for row_id in ids
+                    ],
+                }
+                if membership != "unknown":
+                    document["selected_row_ids"] = selected
+                review = MODULE.row_review_from_document(
+                    json.loads(json.dumps(document)), facts
+                )
+                score = MODULE.score_run(
+                    facts,
+                    _passing_calibration(),
+                    _wired_space(),
+                    dict(MODULE.DEFAULT_WEIGHTS),
+                    review,
+                )
+                cap = next(
+                    c
+                    for c in score.caps
+                    if c.condition == "dataset-unsound-expected-outputs"
+                )
+                asking = membership != "outside"
+                action = "review-answer-key" if asking else "proceed"
+                self.assertEqual((score.overall, score.status), (70, "OK"))
+                self.assertEqual((cap.asks, cap.blocks), (asking, False))
+                self.assertEqual(score.recommended_action, action)
+                payload = json.loads(json.dumps(asdict(score)))
+                self.assertEqual(payload["recommended_action"], action)
+                self.assertEqual(
+                    next(c for c in payload["caps"] if c["condition"] == cap.condition)[
+                        "asks"
+                    ],
+                    asking,
+                )
+                card = MODULE.render_card(score, unicode_ok=False)
+                report = MODULE.render_markdown(score)
+                self.assertIn(f"Action: {MODULE.ACTION_DISPLAY_NAMES[action]}", card)
+                self.assertEqual("asks: `review-answer-key`" in report, asking)
+                if not asking:
+                    self.assertIn("outside the selected rows", cap.reason)
+                    self.assertIn("full-dataset readiness ceiling remains", report)
+                    self.assertNotIn("until you answer", card)
+                below_threshold = replace(
+                    review,
+                    unsound=5,
+                    unsound_in_run=(
+                        5 if membership == "inside" else review.unsound_in_run
+                    ),
+                )
+                self.assertIsNone(MODULE.unsound_answer_cap(below_threshold))
+                self.assertIn(
+                    "5 expected answers contradict their input",
+                    MODULE.row_review_evidence(below_threshold, facts),
+                )
+
     def test_a_flagged_row_outside_the_run_is_not_reported_as_one_inside_it(
         self,
     ) -> None:
@@ -11670,12 +11810,12 @@ class TheUnsoundAnswerCapBoundsRatherThanBlocksTests(unittest.TestCase):
         self.assertIn("somewhere in the file this run draws from", undrawn.reason)
 
         outside = self._cap(reviewed=28, unsound=3, unsound_in_run=0)
-        self.assertIn("outside the rows this run tunes and checks on", outside.reason)
+        self.assertIn("all marked outside this run by the row review", outside.reason)
         self.assertNotIn("about to be graded", outside.reason)
 
         inside = self._cap(reviewed=28, unsound=3, unsound_in_run=2)
-        self.assertIn("2 of them among the 28 rows this run tunes", inside.reason)
-        self.assertIn("about to be graded against them", inside.reason)
+        self.assertIn("2 of them marked for this run by the row review", inside.reason)
+        self.assertIn("declared tuning/held-out split: 28 rows", inside.reason)
 
     def test_the_row_count_comes_from_the_declared_split_and_never_from_28(
         self,
@@ -11691,7 +11831,8 @@ class TheUnsoundAnswerCapBoundsRatherThanBlocksTests(unittest.TestCase):
             _review(reviewed=28, unsound=3, unsound_in_run=2),
             MODULE.run_rows(_brought(400)),
         )
-        self.assertIn("among the rows this run tunes", cap.reason)
+        self.assertIn("2 of them marked for this run by the row review", cap.reason)
+        self.assertNotIn("declared tuning/held-out split:", cap.reason)
         self.assertNotIn("28 rows this run", cap.reason)
 
 
@@ -11918,6 +12059,20 @@ class TheTopBandsNeedAReadOfTheAnswersTests(unittest.TestCase):
         )
         self.assertFalse(undeclared.band_limited_by_unread_answers)
 
+    def test_a_declared_short_draw_lifts_only_after_every_selected_row_is_read(
+        self,
+    ) -> None:
+        scores = [
+            _healthy_score(
+                _review(reviewed=count, reviewed_in_run=count, selected_run_rows=24)
+            )
+            for count in (23, 24)
+        ]
+        self.assertTrue(scores[0].band_limited_by_unread_answers)
+        self.assertFalse(scores[1].band_limited_by_unread_answers)
+        self.assertGreaterEqual(MODULE.BAND_ORDER.index(scores[1].band), self._strong())
+        self.assertEqual(scores[0].overall, scores[1].overall)
+
     def test_the_evidence_line_says_coverage_where_it_covered_the_comparison(
         self,
     ) -> None:
@@ -11945,13 +12100,17 @@ class TheTopBandsNeedAReadOfTheAnswersTests(unittest.TestCase):
         whole = MODULE.row_review_evidence(
             _review(reviewed=28, reviewed_in_run=28), covered
         )
-        self.assertIn("that is every row this run is graded on", whole)
+        self.assertIn(
+            "that covers every row in the declared tuning/held-out split", whole
+        )
         self.assertNotIn("a sample, so unreviewed answers are assumed sound", whole)
         part = MODULE.row_review_evidence(
             _review(reviewed=12, reviewed_in_run=12), covered
         )
         self.assertIn("a sample, so unreviewed answers are assumed sound", part)
-        self.assertNotIn("that is every row this run is graded on", part)
+        self.assertNotIn(
+            "that covers every row in the declared tuning/held-out split", part
+        )
 
     def test_a_read_below_the_sample_lifts_nothing(self) -> None:
         """A sample is a floor, and one row under it is not a smaller sample.
@@ -12427,8 +12586,8 @@ class AnAskThatIsNotACapIsStillRoutedTests(unittest.TestCase):
     ceiling on the SCORE, and an entry in `caps` that caps nothing is a false
     row added to fix a silence somewhere else. `open_asks` is where an ask with
     no ceiling behind it lives, and these tests pin the class rather than the
-    one member - the registry is fail-closed, the ids may not overlap the caps',
-    and the arm that reads it sorts last.
+    one member - the registry is fail-closed, one score cannot carry a condition
+    as both a cap and an ask, and the arm that reads it sorts last.
     """
 
     def _blocking(self) -> "MODULE.Cap":
@@ -12554,18 +12713,41 @@ class AnAskThatIsNotACapIsStillRoutedTests(unittest.TestCase):
         self.assertEqual(MODULE.ANSWER_KEY_UNREAD, "answer_key_unread")
         self.assertEqual(remedy, "review-answer-key")
 
-    def test_no_id_names_both_a_cap_and_an_ask(self) -> None:
-        """One id, one shape, so a reader of either table knows what it holds.
-
-        `ACTION_FOR_CONDITION`'s keys are exactly `CAP_CEILING`'s, asserted
-        elsewhere in this file, so an id in both tables would be a condition
-        with a ceiling AND no ceiling.
-        """
+    def test_only_unsound_answers_can_take_either_cap_or_ask_shape(self) -> None:
         self.assertEqual(
-            set(MODULE.ACTION_FOR_ASK) & set(MODULE.ACTION_FOR_CONDITION), set()
+            set(MODULE.ACTION_FOR_ASK) & set(MODULE.ACTION_FOR_CONDITION),
+            {"dataset-unsound-expected-outputs"},
         )
-        for condition in MODULE.ACTION_FOR_ASK:
-            self.assertNotIn(condition, MODULE.CAP_CEILING)
+
+    def test_one_score_refuses_duplicate_or_conflicting_ask_evidence(self) -> None:
+        cap = MODULE.unsound_answer_cap(_review(reviewed=60, unsound=6))
+        ask = MODULE.Ask(condition=cap.condition, reason="Review the flagged answer.")
+        pillars = [MODULE.Pillar(name, 90, 1.0, ()) for name in MODULE.PILLAR_ORDER]
+        for caps, asks in (([cap], [ask]), ([], [ask, ask])):
+            with self.subTest(caps=len(caps), asks=len(asks)):
+                with self.assertRaisesRegex(
+                    ValueError, "a condition cannot appear twice"
+                ):
+                    MODULE.aggregate(
+                        pillars, caps, (), dict(MODULE.DEFAULT_WEIGHTS), open_asks=asks
+                    )
+        previous = json.loads(
+            json.dumps(
+                asdict(
+                    MODULE.aggregate(pillars, [cap], (), dict(MODULE.DEFAULT_WEIGHTS))
+                )
+            )
+        )
+        for caps, asks in (
+            ([asdict(cap)], [asdict(ask)]),
+            ([], [asdict(ask), asdict(ask)]),
+        ):
+            with self.subTest(loader_caps=len(caps), loader_asks=len(asks)):
+                document = dict(previous, caps=caps, open_asks=asks)
+                with self.assertRaisesRegex(
+                    MODULE.PreviousScoreInputError, "a condition cannot appear twice"
+                ):
+                    MODULE.previous_score_from_document(document, "fixture")
 
     def test_an_ask_nobody_mapped_cannot_be_constructed(self) -> None:
         """Fail-closed, on the footing every cap registry is.
@@ -28532,17 +28714,22 @@ class ThePreviousScoreAndTheActionLineTests(unittest.TestCase):
     def _lines(self, text: str) -> list[str]:
         return text.rstrip("\n").splitlines()
 
-    def test_the_card_ends_on_the_recommended_action_slug(self) -> None:
+    def test_the_card_places_its_only_action_immediately_after_the_headline(
+        self,
+    ) -> None:
         argv = ["--preflight", str(self.preflight)]
         code, card, _ = self._run([*argv, "--color", "never", "--ascii"])
         self.assertEqual(code, 0)
         _code, payload, _ = self._run([*argv, "--json"])
         score = json.loads(payload)
         self.assertEqual(score["status"], "BLOCKED")
+        lines = self._lines(card)
+        self.assertTrue(lines[0].startswith("TRAIGENT OPTIMIZATION READINESS"))
         self.assertEqual(
-            self._lines(card)[-1],
+            lines[1],
             f"Action: {MODULE.ACTION_DISPLAY_NAMES[score['recommended_action']]}",
         )
+        self.assertEqual(sum(line.startswith("Action: ") for line in lines), 1)
         self.assertIn(score["recommended_action"], MODULE.ACTION_KINDS)
 
     def test_previous_prints_what_changed_and_what_did_not(self) -> None:
@@ -28576,7 +28763,9 @@ class ThePreviousScoreAndTheActionLineTests(unittest.TestCase):
         )
         lines = self._lines(card)
         self.assertEqual(lines[-1], line)
-        self.assertTrue(lines[-2].startswith("Action: "), lines[-2])
+        self.assertTrue(lines[0].startswith("TRAIGENT OPTIMIZATION READINESS"))
+        self.assertTrue(lines[1].startswith("Action: "), lines[1])
+        self.assertEqual(sum(line.startswith("Action: ") for line in lines), 1)
         self.assertEqual(payload["delta"]["line"], line)
         self.assertEqual(payload["delta"]["changed"], ["evaluation"])
         self.assertEqual(payload["delta"]["unchanged"], ["dataset", "agent"])
@@ -28599,7 +28788,7 @@ class ThePreviousScoreAndTheActionLineTests(unittest.TestCase):
         self.assertNotIn("delta", json.loads(before))
 
     def test_the_report_ends_on_the_action_and_the_delta_too(self) -> None:
-        """P3-4: the durable copy carries the card's two closing lines."""
+        """The report closes with the action and delta the card also carries."""
         _code, before, _ = self._run(["--preflight", str(self.preflight), "--json"])
         previous = self.root / "previous.json"
         previous.write_text(before)
@@ -28620,14 +28809,16 @@ class ThePreviousScoreAndTheActionLineTests(unittest.TestCase):
         self.assertEqual(code, 0, err)
         card_lines = self._lines(card)
         report_lines = self._lines(report.read_text())
-        self.assertTrue(card_lines[-2].startswith("Action: "))
+        self.assertTrue(card_lines[0].startswith("TRAIGENT OPTIMIZATION READINESS"))
+        self.assertTrue(card_lines[1].startswith("Action: "))
+        self.assertEqual(sum(line.startswith("Action: ") for line in card_lines), 1)
         self.assertTrue(card_lines[-1].startswith("changed: evaluation "))
-        self.assertEqual(report_lines[-2:], card_lines[-2:])
+        self.assertEqual(report_lines[-2:], [card_lines[1], card_lines[-1]])
         # Without --previous the report ends on the action alone.
         code, card, err = self._run([*argv, "--color", "never", "--ascii"])
         self.assertEqual(code, 0, err)
         report_lines = self._lines(report.read_text())
-        self.assertEqual(report_lines[-1], self._lines(card)[-1])
+        self.assertEqual(report_lines[-1], self._lines(card)[1])
         self.assertTrue(report_lines[-1].startswith("Action: "))
         self.assertFalse(report_lines[-2].startswith("changed: "))
 
@@ -29354,9 +29545,9 @@ class RowReviewCoverageDescribesOnlyWhatWasReadTests(unittest.TestCase):
         line = MODULE.row_review_evidence(review, facts)
         self.assertEqual(
             line,
-            "the coding assistant reviewed all 28 provided rows, 28 of them from "
-            "the 28 rows this run is graded on; none contradicts its own input; "
-            "that is every row this run is graded on; "
+            "the coding assistant reviewed all 28 provided rows; "
+            "none contradicts its own input; "
+            "that covers every row in the declared tuning/held-out split; "
             "this row review does not verify comparison results",
         )
         self.assertNotIn("sample", line)
@@ -29368,7 +29559,9 @@ class RowReviewCoverageDescribesOnlyWhatWasReadTests(unittest.TestCase):
         facts, review = self.reviewed_dataset(provided=100)
         line = MODULE.row_review_evidence(review, facts)
         self.assertIn("sampled 28 of 100 provided rows", line)
-        self.assertIn("that is every row this run is graded on", line)
+        self.assertIn(
+            "that covers every row in the declared tuning/held-out split", line
+        )
         self.assertIn("72 other provided rows were not reviewed", line)
         self.assertNotIn("unreviewed answers are assumed sound", line)
         self.assertIn("this row review does not verify comparison results", line)
@@ -29377,9 +29570,12 @@ class RowReviewCoverageDescribesOnlyWhatWasReadTests(unittest.TestCase):
         facts, review = self.reviewed_dataset(reviewed=12)
         line = MODULE.row_review_evidence(review, facts)
         self.assertIn("sampled 12 of 28 provided rows", line)
-        self.assertIn("12 of them from the 28 rows this run is graded on", line)
+        self.assertIn(
+            "12 marked for this run by the row review (declared tuning/held-out split: 28 rows)",
+            line,
+        )
         self.assertIn("unreviewed answers are assumed sound rather than verified", line)
-        self.assertNotIn("that is every row", line)
+        self.assertNotIn("that covers every row", line)
         self.assertIn("this row review does not verify comparison results", line)
 
     def test_a_full_file_read_does_not_invent_an_undeclared_split(self):
@@ -29395,9 +29591,12 @@ class RowReviewCoverageDescribesOnlyWhatWasReadTests(unittest.TestCase):
         facts, review = self.reviewed_dataset(provided=18, generated=10, reviewed=18)
         line = MODULE.row_review_evidence(review, facts, "generated")
         self.assertIn("reviewed all 18 provided rows", line)
-        self.assertIn("18 of them from the 28 rows this run is graded on", line)
+        self.assertIn(
+            "18 marked for this run by the row review (declared tuning/held-out split: 28 rows)",
+            line,
+        )
         self.assertIn("10 generated rows not reviewed", line)
-        self.assertNotIn("that is every row", line)
+        self.assertNotIn("that covers every row", line)
         self.assertNotIn("other provided rows", line)
         self.assertIn("this row review does not verify comparison results", line)
         self.assertTrue(
@@ -29417,16 +29616,23 @@ class RowReviewCoverageDescribesOnlyWhatWasReadTests(unittest.TestCase):
                     tuning_labelled_rows=8,
                 )
                 line = MODULE.row_review_evidence(review, facts)
-                self.assertIn(
-                    f"{reviewed} of them from the 28 rows in the declared tuning/held-out split",
-                    line,
-                )
+                if reviewed < 28:
+                    self.assertIn(
+                        f"{reviewed} marked for this run by the row review (declared tuning/held-out split: 28 rows)",
+                        line,
+                    )
                 self.assertNotIn("from the 18 rows this run is graded on", line)
                 if reviewed == 28:
-                    self.assertIn("all 18 graded rows are among those reviewed", line)
+                    self.assertIn(
+                        "all 18 rows with expected answers in the declared tuning/held-out split are among those reviewed",
+                        line,
+                    )
                 else:
-                    self.assertNotIn("that is every row this run is graded on", line)
-                    self.assertNotIn("all 18 graded rows", line)
+                    self.assertNotIn(
+                        "that covers every row in the declared tuning/held-out split",
+                        line,
+                    )
+                    self.assertNotIn("all 18 rows with expected answers", line)
 
     def test_findings_and_declined_verdicts_are_not_replaced_by_coverage(self):
         facts, review = self.reviewed_dataset()

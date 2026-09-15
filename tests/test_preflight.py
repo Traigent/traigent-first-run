@@ -861,16 +861,9 @@ class StaticPreflightTests(unittest.TestCase):
         )
 
     def test_paid_first_run_rows_are_reported_from_usable_rows(self) -> None:
-        """Reads the pair now, because one number under the other's name was the defect.
-
-        Same two fixtures and the same detail substrings as before; the metric
-        it asserts changed because `first_run_rows` conflated a question cap
-        with a row count. Both fixtures ask one question per row, so the cap
-        and the rows coincide here and the old expectation is asserted twice
-        over - once as questions, once as the rows they bring - rather than
-        weakened.
-        """
-        for row_count, expected in ((40, 40), (101, 18)):
+        """The tuning row ceiling applies at every source size, including 29–100."""
+        for row_count in (1, 10, 18, 19, 28, 29, 60, 100, 101, 300):
+            expected = min(row_count, 18)
             with self.subTest(row_count=row_count):
                 MODULE.RESULTS.clear()
                 with tempfile.TemporaryDirectory() as directory:
@@ -3766,18 +3759,7 @@ class TheSubsetProposalCountsDifferentQuestionsTests(unittest.TestCase):
         ]
 
     def test_the_proposal_counts_the_tuning_split_and_not_the_file(self) -> None:
-        """The seam: a split IS declared and the proposal IS asserted.
-
-        The guide mandates the combined, split-labelled file as preflight's
-        input, so this is the ordinary path rather than a corner. The tuning
-        split asks twelve questions; the held-out ten ask ten more; the file
-        therefore holds twenty-two. Only one of those numbers may bound a draw
-        that never leaves the tuning split.
-
-        Both the count and the scope are asserted, because a count that is
-        right by accident and a count that says what it counted are different
-        guarantees, and only the second survives someone adding a third split.
-        """
+        """Twelve tuning rows beside 400 held-out rows still propose twelve tuning rows."""
         rows = [
             {
                 "id": f"tune-{index}",
@@ -3785,11 +3767,11 @@ class TheSubsetProposalCountsDifferentQuestionsTests(unittest.TestCase):
                 "output": f"answer {index % 12}",
                 "split": "tuning",
             }
-            for index in range(400)
+            for index in range(12)
         ]
-        rows += self.held_out()
+        rows += self.held_out(400)
         finding = self.scan(rows)["dataset-first-run-rows"]
-        self.assertEqual(finding.metrics["usable_rows"], 410)
+        self.assertEqual(finding.metrics["usable_rows"], 412)
         self.assertEqual(
             finding.metrics["first_run_distinct_rows"],
             12,
@@ -3858,14 +3840,7 @@ class TheSubsetProposalCountsDifferentQuestionsTests(unittest.TestCase):
         self.assertEqual(finding.metrics["first_run_questions"], 18)
 
     def test_a_multi_reference_split_counts_its_questions_not_its_rows(self) -> None:
-        """Sixty questions under two accepted golds are sixty questions.
-
-        The fixture is built from the shape rather than from any count this
-        script computes: 60 questions written out, each once per accepted gold.
-        The proposal is capped at eighteen QUESTIONS, and the rows those
-        questions bring are what the run pays for - which is rule 6's own
-        wording and the reason the cap is not a row count.
-        """
+        """Nine complete two-reference questions fit; eighteen would buy 36 calls."""
         rows = []
         for index in range(60):
             for gold in ("yes", "affirmative"):
@@ -3890,29 +3865,20 @@ class TheSubsetProposalCountsDifferentQuestionsTests(unittest.TestCase):
         self.assertEqual(proposal.metrics["first_run_distinct_rows"], 60)
         self.assertEqual(
             proposal.metrics["first_run_questions"],
-            18,
-            "the cap is in questions, and eighteen questions is what rule 6 caps",
+            9,
+            "eighteen actual rows fit nine complete two-reference questions",
         )
         self.assertEqual(
             (
                 proposal.metrics["first_run_rows_fewest"],
                 proposal.metrics["first_run_rows_most"],
             ),
-            (36, 36),
-            "eighteen questions under two accepted golds bring thirty-six rows, "
-            "and the run pays for the rows",
+            (18, 18),
+            "the proposal must preserve both accepted answers within the row limit",
         )
 
-    def test_the_subset_proposal_never_exceeds_the_questions_asked(self) -> None:
-        """A file of 400 rows asking 12 questions may not be proposed 18 rows.
-
-        Both numbers used to travel in one payload - `subset cap: 18` beside a
-        distinct count of 12 - with nothing saying which governed, while the
-        difference is six calls per configuration in every trial. No split is
-        declared here on purpose: the fallback population is the whole
-        scoreable set, because an undeclared split is a file the draw comes out
-        of entire.
-        """
+    def test_oversized_question_groups_are_not_cut_to_fit(self) -> None:
+        """No complete raw group fits; the scan must not price an impossible draw."""
         rows = [
             {
                 "id": f"row-{index}",
@@ -3927,11 +3893,40 @@ class TheSubsetProposalCountsDifferentQuestionsTests(unittest.TestCase):
         self.assertEqual(finding.metrics["first_run_distinct_scope"], "this dataset")
         self.assertEqual(
             finding.metrics["first_run_questions"],
-            12,
-            "the proposal is above the questions this file asks, so it prices "
-            "calls no comparison can use",
+            0,
+            "a group larger than the row limit cannot be partly selected",
         )
         self.assertIn("12 different inputs in this dataset", finding.detail)
+
+        self.assertEqual(finding.status, MODULE.WARN)
+        self.assertIn("no complete question group fits", finding.detail)
+        deduplicated = self.scan(rows[:12])["dataset-first-run-rows"]
+        self.assertEqual(deduplicated.metrics["first_run_questions"], 12)
+        self.assertEqual(deduplicated.metrics["first_run_rows_most"], 12)
+
+    def test_accepted_answer_groups_crossing_the_row_limit_stay_complete(self) -> None:
+        for answer_count, expected_questions in ((17, 1), (18, 1), (19, 0)):
+            with self.subTest(answer_count=answer_count):
+                rows = [
+                    {
+                        "id": f"reference-{index}",
+                        "input": "give one valid answer to the same question",
+                        "output": f"accepted answer {index}",
+                        "split": "tuning",
+                    }
+                    for index in range(answer_count)
+                ]
+                finding = self.scan(rows)["dataset-first-run-rows"]
+                self.assertEqual(
+                    finding.metrics["first_run_questions"], expected_questions
+                )
+                self.assertEqual(
+                    finding.metrics["first_run_rows_most"],
+                    answer_count if expected_questions else 0,
+                )
+                self.assertEqual(
+                    finding.status, MODULE.PASS if expected_questions else MODULE.WARN
+                )
 
     def test_a_file_of_different_questions_keeps_the_full_proposal(self) -> None:
         """The other direction: the bound may not shrink an honest dataset.
@@ -3971,7 +3966,7 @@ class TheSubsetProposalCountsDifferentQuestionsTests(unittest.TestCase):
                 "output": f"answer {index % questions}",
                 "split": "tuning",
             }
-            for index in range(150)
+            for index in range(12)
         ]
         rows += [
             {
@@ -3983,7 +3978,7 @@ class TheSubsetProposalCountsDifferentQuestionsTests(unittest.TestCase):
         ]
         rows += self.held_out()
         finding = self.scan(rows)["dataset-first-run-rows"]
-        self.assertEqual(finding.metrics["usable_rows"], 160)
+        self.assertEqual(finding.metrics["usable_rows"], 22)
         self.assertEqual(
             finding.metrics["first_run_distinct_rows"],
             questions,
@@ -4045,20 +4040,7 @@ class TheSubsetProposalCountsDifferentQuestionsTests(unittest.TestCase):
         )
 
     def test_the_card_prices_the_rows_the_capped_questions_bring(self) -> None:
-        """N2: the cap is in questions and the money is in rows. Say both.
-
-        The finding published one number, called it rows, and it was the
-        question cap. On a split of 400 rows asking 200 questions that card
-        read "18 usable rows" for a draw bringing 36, so the guide's twelve
-        trial default priced 216 provider calls against 432 bought. Three
-        vocabularies in one `min()`, which is the class this rule exists to
-        close, on a fourth axis.
-
-        What is asserted is what the numbers MEAN, not the sentence they sit
-        in. Every expected value below is computed from the fixture's own shape
-        - questions written out once per accepted answer - and never read off a
-        constant the script also reads, so a rename or a re-key fails here.
-        """
+        """The proposal quotes actual calls while keeping accepted answers together."""
         questions, golds = 200, ("yes", "affirmative")
         rows = [
             {
@@ -4085,23 +4067,8 @@ class TheSubsetProposalCountsDifferentQuestionsTests(unittest.TestCase):
         self.assertIn(f"{cap} questions", finding.detail)
         self.assertIn(f"{most} scoreable rows", finding.detail)
 
-    def test_an_uneven_file_is_priced_as_the_range_it_is(self) -> None:
-        """One row number would be an invention where questions differ in cost.
-
-        Which questions a draw takes is decided by the band floor and by the
-        author, not by this check, so where questions bring different numbers
-        of rows the honest answer is an interval. 150 questions of one row
-        beside 20 of two: eighteen questions bring 18 at the arithmetic
-        cheapest and 36 at the dearest.
-
-        Untagged on purpose, and named as such. With no difficulty tags there
-        is no band floor to forbid the cheapest questions, so both ends of the
-        interval are reachable HERE - which is a property of this fixture, not
-        of the method.
-        `test_the_range_is_an_outer_bound_not_a_reachable_floor` carries the
-        case where it is false, because a test that cannot break the claim it
-        is named for is not evidence for it.
-        """
+    def test_mixed_group_sizes_cannot_expand_the_row_cap(self) -> None:
+        """Choosing more multi-reference groups must reduce the question count."""
         rows = [
             {
                 "id": f"single-{index}",
@@ -4124,32 +4091,11 @@ class TheSubsetProposalCountsDifferentQuestionsTests(unittest.TestCase):
         finding = self.scan(rows)["dataset-first-run-rows"]
         self.assertEqual(finding.metrics["first_run_questions"], 18)
         self.assertEqual(finding.metrics["first_run_rows_fewest"], 18)
-        self.assertEqual(finding.metrics["first_run_rows_most"], 36)
-        self.assertIn("between 18 and 36 scoreable rows", finding.detail)
+        self.assertEqual(finding.metrics["first_run_rows_most"], 18)
+        self.assertIn("18 scoreable rows", finding.detail)
 
-    def test_the_range_is_an_outer_bound_not_a_reachable_floor(self) -> None:
-        """N5: the band floor can forbid the cheapest questions, and this cannot see it.
-
-        `rows_for` takes the cheapest and dearest questions by cost alone.
-        Rule 6 also requires at least four questions from each of four
-        difficulty bands, and nothing in `DrawableInputs` reads a row's
-        difficulty, so where cost correlates with difficulty the arithmetic low
-        end is below anything a compliant draw can reach.
-
-        30 questions in every difficulty band: easy questions have one row,
-        and each medium, hard, and very-hard question has three:
-
-            arithmetic low end   : 18 questions x 1 row              = 18
-            cheapest COMPLIANT   : 4 easy x 1 + (5 + 5 + 4) x 3     = 46
-            arithmetic high end  : 18 questions x 3 rows             = 54
-
-        The interval is honest and neither end is a quote. What is asserted is
-        exactly that: the compliant floor lies strictly inside the reported
-        interval, so the low end understates it. The 46 is computed here from
-        the fixture's own shape and the band floor rule 6 states, never from
-        anything the script returns, so a change that made `rows_for` band-aware
-        would fail this deliberately rather than pass by coincidence.
-        """
+    def test_the_question_proposal_is_not_a_difficulty_coverage_promise(self) -> None:
+        """Band-preserving draws can use fewer questions than the arithmetic cap."""
         rows = [
             {
                 "id": f"easy-{index}",
@@ -4177,18 +4123,22 @@ class TheSubsetProposalCountsDifferentQuestionsTests(unittest.TestCase):
         cap = finding.metrics["first_run_questions"]
         fewest = finding.metrics["first_run_rows_fewest"]
         most = finding.metrics["first_run_rows_most"]
-        self.assertEqual((cap, fewest, most), (18, 18, 54))
-
-        band_floor = 4
-        compliant_floor = band_floor * 1 + (cap - band_floor) * 3
-        self.assertEqual(compliant_floor, 46)
-        self.assertLess(
-            fewest,
-            compliant_floor,
-            "the reported low end is at or above the cheapest compliant draw, "
-            "so it is being quoted as a floor rather than as a bound",
-        )
-        self.assertLessEqual(compliant_floor, most)
+        self.assertEqual((cap, fewest, most), (18, 18, 18))
+        # Four easy rows and one complete three-answer group per harder band
+        # respect the row targets without pretending there are eighteen questions.
+        selected = [row for row in rows if row["id"] in {f"easy-{i}" for i in range(4)}]
+        selected += [
+            row
+            for row in rows
+            if any(
+                row["id"].startswith(f"{band}-0-")
+                for band in ("medium", "hard", "very-hard")
+            )
+        ]
+        self.assertEqual(len(selected), 13)
+        self.assertEqual(len({row["input"] for row in selected}), 7)
+        self.assertLessEqual(len(selected), most)
+        self.assertIn("difficulty coverage may require fewer questions", finding.detail)
 
     def test_a_reference_free_method_may_draw_an_unlabelled_row(self) -> None:
         """N3: the other branch of the labelled filter, which nothing pinned.
@@ -4238,35 +4188,17 @@ class TheSubsetProposalCountsDifferentQuestionsTests(unittest.TestCase):
             free["first_run_distinct_rows"], referenced["first_run_distinct_rows"]
         )
 
-    def test_the_bound_is_applied_only_where_the_subset_applies(self) -> None:
-        """The helper itself, at the two boundaries the emit cannot reach.
-
-        A caller with no question count gets the row-based answer rather than a
-        wrong one, and a caller with one is capped at eighteen only above
-        `BOUNDED_SUBSET_ABOVE_ROWS`, because below it the run scores the whole
-        dataset and there is no subset to cut.
-
-        Below the threshold the cap is the file's own question count, and that
-        is a correction rather than a relaxation: the previous spelling
-        returned the ROW count there and called it a cap, which is the same
-        two-vocabularies defect the emit above had. A 40-row file asking 7
-        questions has 7 questions and 40 rows, and both are now said.
-        """
-        # Above the threshold the eighteen governs, bounded by the questions.
-        self.assertEqual(MODULE.first_run_question_cap(400), 18)
-        self.assertEqual(MODULE.first_run_question_cap(400, 400), 18)
-        self.assertEqual(MODULE.first_run_question_cap(400, 12), 12)
-        self.assertEqual(MODULE.first_run_question_cap(101, 12), 12)
-        # At and below it there is no subset, so the cap is every question the
-        # file asks - not eighteen, and not the ROW count, which is what the
-        # previous spelling returned here and is a different quantity whenever
-        # a question carries more than one row.
-        self.assertEqual(MODULE.first_run_question_cap(100, 12), 12)
-        self.assertEqual(MODULE.first_run_question_cap(40, 40), 40)
-        self.assertEqual(MODULE.first_run_question_cap(40, 7), 7)
-        # And with nobody having counted, the row-based figure this check
-        # published before the count existed.
-        self.assertEqual(MODULE.first_run_question_cap(40), 40)
+    def test_the_tuning_limit_applies_below_the_old_large_dataset_threshold(
+        self,
+    ) -> None:
+        """Neither a small source nor a missing question count removes the cap."""
+        for size in (19, 28, 29, 40, 60, 100, 101, 400):
+            with self.subTest(size=size):
+                self.assertEqual(MODULE.first_run_question_cap(size), 18)
+                self.assertEqual(MODULE.first_run_question_cap(size, size), 18)
+                self.assertEqual(MODULE.first_run_question_cap(size, 12), 12)
+        self.assertEqual(MODULE.first_run_question_cap(7), 7)
+        self.assertEqual(MODULE.first_run_question_cap(7, 4), 4)
 
     def test_an_unmeasured_count_is_not_a_count_of_zero(self) -> None:
         """`None` means nobody counted. Reading it as 0 prices the run at nothing.

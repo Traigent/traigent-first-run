@@ -144,15 +144,16 @@ evaluator, and objectives, followed by the held-out set. A held-out set is calle
 its split and labels stayed hidden until the candidate was locked. Any later iteration is optional,
 not required.
 
-On a dataset larger than about 100 usable rows, the paid comparison is bounded to a small subset
-spread across the difficulty range - drawn inside each split so it cannot invent an overlap, with
+The paid comparison uses a small selected set under the skill's First-run dataset scope,
+drawn inside each existing split so it cannot invent an overlap, with
 the selected row ids recorded so the run can be repeated. The report names that subset size beside
 your full row count, and states the resulting sample-size limitation separately.
 
 Your readiness score is never taken on that subset. Every readiness run reads the whole dataset,
 because the score is a statement about your data and the subset is a limit on this one comparison -
 scoring the sample would report our sampling as though it were a property of your dataset. A first
-run shows the capability in one sitting; the full dataset is what a real optimization uses.
+run shows the capability in one sitting. The handoff helps you apply the useful checks to your
+own agent, dataset, and evaluation method with the Traigent optimization skills.
 
 ## The readiness score
 

@@ -4374,7 +4374,7 @@ class SkillPackageTests(unittest.TestCase):
         guide = (ROOT / "GUIDE.md").read_text()
         start_section = guide.split("## Start here", 1)[1].split("## ", 1)[0]
         links = re.findall(r"\[[^\]]+\]\(([^)]+)\)", start_section)
-        self.assertEqual(links, ["skills/traigent-first-run/SKILL.md"])
+        self.assertEqual(links, ["skills/traigent-first-run/SKILL.md#opening-message"])
         normalized = " ".join(start_section.casefold().split())
         self.assertIn(
             "the skill routes its bundled references at the stage where each is needed",
@@ -5657,9 +5657,7 @@ class SkillPackageTests(unittest.TestCase):
         # the reader is not left checking for something that cannot arrive.
         safety = " ".join(RUN_SAFETY.read_text().split())
         self.assertIn(
-            "`require_untruncated_completion` raises on `finish_reason == "
-            '"length"`, so a truncated trial arrives as a failed trial rather '
-            "than as a scored 0",
+            "The SDK can absorb a truncation exception as a zero-scored example inside a completed trial",
             safety,
         )
 
@@ -5746,12 +5744,10 @@ class SkillPackageTests(unittest.TestCase):
         # And the post-run checklist asks for the number, or nothing reads it.
         safety = " ".join(RUN_SAFETY.read_text().split())
         self.assertIn(
-            "report `REFUSED_TRIAL_COSTS` as the known cost subtotal for refused measurements",
+            "Preserve their spend, including `REFUSED_TRIAL_COSTS`",
             safety,
         )
-        self.assertIn(
-            "Unreported cost remains unknown even when the output was refused", safety
-        )
+        self.assertIn("unreported cost remains unknown", safety)
 
     def test_provider_mismatch_names_sources_before_requesting_a_key(self) -> None:
         require_stage_reference(5, RUN_SAFETY, "environment-and-privacy")
@@ -5855,9 +5851,9 @@ class SkillPackageTests(unittest.TestCase):
             "mandatory-calibration",
         )
         skill_text = " ".join(SKILL.read_text().casefold().split()).replace(" > ", " ")
-        self.assertIn("run free readiness research", skill_text)
+        self.assertIn("check your setup for free", skill_text)
         self.assertIn(
-            "score and setup—not agent accuracy or an optimization result", skill_text
+            "setup, not your agent's accuracy or an optimization result", skill_text
         )
         self.assertIn("i explain details", skill_text)
         self.assertIn("only if action is needed", skill_text)
@@ -7237,210 +7233,46 @@ class SkillPackageTests(unittest.TestCase):
         self.assertIn("does not block", str(refused.exception))
 
     def test_the_modelled_status_lines_use_the_documented_row_count(self) -> None:
-        """`component-creation.md`'s example is a line the customer sees.
+        """Generated defaults agree with the selection limits and band sums.
 
-        It showed "24 varied synthetic cases prepared" against the 18 every
-        other document states, so an assistant copying the model announced a
-        dataset size the run does not build. Read from the construction rule
-        rather than pinned here, so the two cannot drift apart again.
-
-        Swept over the whole corpus rather than over that one file, because
-        fixing the instance left the class open: the count is restated three
-        more times - SKILL.md's pricing scope, sdk-execution.md's walkthrough
-        paragraph, and the rule itself - and a guard naming one restatement
-        passed while another said something else. Probed: changing
-        sdk-execution.md's copy to 24 left the suite green (at the time that
-        took a relock of the behaviour lock too; with that lock retired, not
-        even a relock step would flag the edit, so this sweep is the only
-        guard).
-
-        The sweep is keyed on the PHRASINGS a row count is written in, not on a
-        list of files, so a document that gains one of those sentences is
-        covered without this test being edited.
-
-        Three of the seven statements are visible only because the pattern
-        below tolerates whitespace between the words of a phrase: two in
-        `references/evaluation-and-dataset.md` and one in `SKILL.md`. Which
-        document that tolerance was bought for, and how to re-derive the list,
-        is recorded at the pattern itself.
+        Example sentences may report fewer selected rows or questions; those
+        counts must not be mistaken for a second statement of the default.
         """
-        dataset_text = (
-            SKILL_ROOT / "references" / "evaluation-and-dataset.md"
-        ).read_text()
-        # The construction rule now states TWO numbers - the generated total and
-        # the tuning rows inside it - because the walkthrough reserves a
-        # held-out set at creation time. Both are read from the rule, and the
-        # rule is made to agree with itself, so neither can drift from the other
-        # or from the restatements swept below.
-        default = re.search(
-            r"create (\d+) examples by default: (\d+) tuning rows", dataset_text
+        dataset = " ".join(
+            (SKILL_ROOT / "references" / "evaluation-and-dataset.md")
+            .read_text()
+            .split()
         )
-        self.assertIsNotNone(default, "the generated dataset size is no longer stated")
-        generated_total = int(default.group(1))
-        expected = int(default.group(2))
-
-        # The held-out split's size and composition, also read from the rule
-        # rather than pinned here. Ten rows at 2/3/3/2 is settled; this reads it
-        # so that the sweep below can tell a held-out breakdown apart from a
-        # tuning one instead of demanding every breakdown sum to the same total.
+        generated = re.search(
+            r"create (\d+) examples by default: (\d+) tuning rows", dataset
+        )
         reserve = re.search(
-            r"Reserve (\d+) held-out rows "
-            r"\((\d+) easy, (\d+) medium, (\d+) hard, (\d+) very hard\)",
-            dataset_text,
+            r"Reserve up to (\d+) held-out rows, aiming for (\d+) easy, "
+            r"(\d+) medium, (\d+) hard and (\d+) very hard",
+            dataset,
         )
-        self.assertIsNotNone(
-            reserve, "the held-out split's composition is no longer stated"
+        tuning_bands = re.search(
+            r"aim for \*\*(\d+) easy, (\d+) medium, (\d+) hard and "
+            r"(\d+) very-hard rows\*\*",
+            dataset,
         )
-        held_out = int(reserve.group(1))
-        held_out_bands = [int(value) for value in reserve.groups()[1:]]
-        self.assertEqual(
-            sum(held_out_bands),
-            held_out,
-            "the held-out split's own breakdown does not sum to its stated size",
-        )
-        self.assertEqual(
-            generated_total,
-            expected + held_out,
-            f"the rule builds {generated_total} rows but describes {expected} "
-            f"tuning plus {held_out} held-out, which is {expected + held_out}",
-        )
-
-        # Whitespace-tolerant between words, because it was not and that hid a
-        # restatement. The hidden one was in
-        # `references/evaluation-and-dataset.md`, which had wrapped `18 tuning`
-        # onto the end of one line and `rows` onto the start of the next: the
-        # pattern matched six of the seven statements that existed and the
-        # seventh was uncovered by nothing more than a line break. A sweep whose
-        # misses look exactly like absences is the shape this file keeps finding
-        # elsewhere.
-        #
-        # `SKILL.md` was NOT that hidden site, and this comment said it was
-        # until #366. Its statement stood on one line and the old pattern read
-        # it, so the record of why the pin below moved from six to seven sent
-        # the next auditor of that constant to a file that had nothing to do
-        # with it. Re-derivable in one pass, which is how the misattribution was
-        # caught: replace each `\s+` between words below with a literal space,
-        # run both patterns over `assistant_facing_documents()`, and print the
-        # document each hit came from. The difference is the site the tolerance
-        # bought.
-        #
-        # Three of the seven depend on that tolerance today, not one, and they
-        # sit in two documents: this reference twice and `SKILL.md` once.
-        # `SKILL.md` earned its wrap in the very change that added the
-        # tolerance, when `18 rows by default` was rewritten to `18 questions by
-        # default` and reflowed across a line - so it does wrap now, just not
-        # for the reason and not at the moment the old wording claimed.
-        #
-        # `tuning questions` and `questions by default` are here because the
-        # subset rules now cap the draw in QUESTIONS: eighteen questions bring
-        # more than eighteen rows on a file whose questions carry several
-        # accepted answers, so a template quoting rows understates the price on
-        # exactly the datasets that rule is for. The generated walkthrough keeps
-        # the row spelling and keeps it honestly - it creates one accepted
-        # answer per row, so its eighteen is both numbers at once.
-        counted = re.compile(
-            r"(\d+)\s+(?:tuning\s+rows|tuning\s+questions|tuning\s+examples"
-            r"|varied\s+synthetic\s+cases|rows\s+by\s+default"
-            r"|questions\s+by\s+default)"
-        )
-        statements: list[tuple[str, int]] = []
+        self.assertIsNotNone(generated)
+        self.assertIsNotNone(reserve)
+        self.assertIsNotNone(tuning_bands)
+        total, tuning = map(int, generated.groups())
+        holdout, *bands = map(int, reserve.groups())
+        self.assertEqual(total, tuning + holdout)
+        self.assertEqual(sum(bands), holdout)
+        self.assertEqual(sum(map(int, tuning_bands.groups())), tuning)
+        self.assertEqual(tuning, PREFLIGHT.FIRST_RUN_TUNING_ROWS)
+        self.assertEqual(total, READINESS.WALKTHROUGH_DATASET_ROWS)
+        self.assertEqual(holdout, READINESS.WALKTHROUGH_HOLDOUT_ROWS)
         for path in assistant_facing_documents():
-            for match in counted.finditer(path.read_text()):
-                statements.append((path.name, int(match.group(1))))
-        # The rule plus its six restatements. Pinned so that DELETING a
-        # restatement is a decision someone makes, not a way for this sweep to
-        # quietly cover less than it did. Raised from four when the held-out
-        # split arrived - the sampling rule that draws the tuning rows from the
-        # tuning split states the count a fifth time - and from five when the
-        # row-level sanity check arrived, whose section states how many rows it
-        # reads. Each new statement is welded here rather than left uncovered.
-        #
-        # Six to seven is NOT a seventh statement arriving. It is the wrapped
-        # one in `references/evaluation-and-dataset.md` that the pattern above
-        # could not see until it was made whitespace-tolerant, counted now for
-        # the first time. (Recorded here as `SKILL.md` until #366, which is the
-        # one file it was not: that statement was on a single line and was
-        # already among the six.) Two
-        # statements also moved in the same change - the row review dropped its
-        # copy of the number entirely, and the line that names the bound to the
-        # user gained one - which is why the total holds while the membership
-        # does not.
-        #
-        # Seven to six is a deletion, accounted for: sdk-execution.md's
-        # walkthrough paragraph no longer restates the tuning count or the band
-        # composition and points at the construction rule instead, which is the
-        # one home the rule above already is.
-        #
-        # Six to five is the same shape one document over. `SKILL.md`'s pricing
-        # stage restated "18 questions by default" while it was the stage that
-        # SELECTED the subset; it no longer selects one - section 4 draws it
-        # (traigent-first-run#473) - so the sentence that named the size went
-        # with the sentence that used it. What the flow still owes is the
-        # price, and pricing needs the rows the draw brought rather than the
-        # question cap that bounded it.
-        self.assertEqual(
-            len(statements),
-            5,
-            f"the walkthrough row count is now stated {len(statements)} times "
-            f"({statements}); one home is better, but a new one must be welded "
-            "here and a removed one accounted for",
-        )
-        for name, stated in statements:
-            with self.subTest(document=name):
-                self.assertEqual(
-                    stated,
-                    expected,
-                    f"{name} states {stated} walkthrough rows against the "
-                    f"construction rule's {expected}",
-                )
-
-        # And the difficulty breakdown, which is restated beside two of them and
-        # has to add up to the same number. A breakdown summing to something
-        # else is the same defect one level down, and it is the half a count
-        # check cannot see.
-        #
-        # Two breakdowns are legitimate now, not one: the tuning rows' and the
-        # held-out set's. Requiring every breakdown to sum to the tuning count
-        # would report the settled ten-row split as an error - the split is
-        # correct and the guard would be wrong - so each breakdown is matched
-        # against whichever set it describes. A held-out-sized one must also BE
-        # the settled composition, which is stricter than the old sweep, not
-        # looser: before, the ten-row split escaped this check entirely by
-        # writing its bands without the word "and".
-        bands = re.compile(
-            r"(\d+) easy,\s*(\d+) medium,\s*(\d+) hard,?(?: and)? (\d+) very[ -]hard"
-        )
-        breakdowns = [
-            (path.name, [int(value) for value in match.groups()])
-            for path in assistant_facing_documents()
-            for match in bands.finditer(" ".join(path.read_text().split()))
-        ]
-        self.assertTrue(breakdowns, "the difficulty breakdown is no longer stated")
-        self.assertTrue(
-            any(sum(counts) == expected for _, counts in breakdowns),
-            "no document states the tuning rows' difficulty breakdown",
-        )
-        self.assertTrue(
-            any(counts == held_out_bands for _, counts in breakdowns),
-            "no document states the held-out split's difficulty breakdown",
-        )
-        for name, counts in breakdowns:
-            with self.subTest(document=name, breakdown=counts):
-                if sum(counts) == held_out:
-                    self.assertEqual(
-                        counts,
-                        held_out_bands,
-                        f"{name} states a {held_out}-row breakdown of {counts}, "
-                        f"but the held-out split is {held_out_bands}",
-                    )
-                    continue
-                self.assertEqual(
-                    sum(counts),
-                    expected,
-                    f"{name}'s difficulty breakdown sums to {sum(counts)}, "
-                    f"which is neither the {expected} tuning rows the rule "
-                    f"builds nor the {held_out} it holds out",
-                )
+            for match in re.finditer(
+                r"(\d+)\s+varied\s+synthetic\s+cases", path.read_text()
+            ):
+                with self.subTest(document=path.name):
+                    self.assertEqual(int(match.group(1)), tuning)
 
     def test_the_calibration_reject_list_states_what_actually_rejects(self) -> None:
         """Two of its items did not describe the helper that runs them.
@@ -7844,7 +7676,10 @@ class SkillPackageTests(unittest.TestCase):
         self.assertIn("finished stages as compact checkmarks", skill)
         # GUIDE.md keeps the cloned-repo reader pointed at it, and states it
         # only once: a second copy is a rule that can be changed in one place.
-        self.assertIn('five-stage journey under "opening message"', guide)
+        self.assertIn(
+            "[Opening message](skills/traigent-first-run/SKILL.md#opening-message)".casefold(),
+            guide,
+        )
 
         # "Only once" is asserted over the tracked tree, not over GUIDE.md.
         # Checking the one document the script just left proves it left; it says
@@ -8496,7 +8331,7 @@ class SkillPackageTests(unittest.TestCase):
     CUSTOMER_JOURNEY = (
         # (what the flow does, promise item, words that item must carry)
         ("perform safe, read-only discovery", 1, "inspect"),
-        ("render the initial real-world readiness board", 2, "readiness"),
+        ("add the initial real-world readiness board", 2, "readiness"),
         ("follow that route's single install approval", 3, "install the sdk"),
         ("### 6. approve and run the baseline", 3, "measure today's setup"),
         # The promise says ACCOUNT, so the flow phrase has to be the sentence
@@ -9185,139 +9020,71 @@ class SkillPackageTests(unittest.TestCase):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase.casefold(), procedure)
 
-    def test_large_dataset_is_bounded_after_the_score_not_before_it(self) -> None:
-        """The score describes the dataset; the subset describes the run.
-
-        A first run has to be bounded above ~100 rows, or every trial pays for
-        every row. But choosing the bound BEFORE a score makes the user's data
-        wear the run's limitation. On 500 labelled, difficulty-tagged production
-        rows the score sees 249 comparable examples, while the same dataset
-        scored as an 18-row subset sees 8 and calls it "a wiring check, not a
-        score" - a sentence
-        that is true of the run and false of the data. So the ordering is the
-        contract, not an implementation detail.
-        """
-        skill_text = " ".join(SKILL.read_text().casefold().split())
-        dataset_text = " ".join(
-            (SKILL_ROOT / "references" / "evaluation-and-dataset.md")
-            .read_text()
+    def test_every_dataset_uses_bounded_rows_while_readiness_reads_the_whole(
+        self,
+    ) -> None:
+        """The universal row limit belongs to selection, not dataset readiness."""
+        dataset = " ".join(
+            section_text(
+                SKILL_ROOT / "references" / "evaluation-and-dataset.md",
+                "First-run dataset scope",
+            )
             .casefold()
             .split()
         )
-
-        self.assertIn("first-run subset for a large dataset", dataset_text)
         for phrase in (
-            "18 tuning questions by default",
-            "at least four available questions from each difficulty band",
-            "score the dataset, not the subset",
+            "at most 28 actual rows: up to 18 tuning rows and up to 10 held-out rows",
+            "whether the source has 20, 60, or 4,812 rows",
+            "select 18 and 10 when enough eligible rows fit",
+            "run on the **whole** dataset",
+            "the drawn subset files are never that input, at any stage",
             "report the run's sample-size limitation separately",
             "sample within each split, never across it",
             "record what was chosen",
+            "report the actual selected counts beside the full count",
         ):
             with self.subTest(phrase=phrase):
-                self.assertIn(phrase, dataset_text)
-
-        # The inverted rule must not creep back in.
-        self.assertNotIn("select before preflight, not after", dataset_text)
-        # Both scores see the whole dataset, and the reason is stated.
-        self.assertIn("run on the **whole** dataset", dataset_text)
-        self.assertIn("a wiring check, not a score", dataset_text)
-        # A bounded run may never read as a full evaluation.
-        self.assertIn("beside the full row count", dataset_text)
-
-        # The position is the whole point of this test, and it is bounded on BOTH
-        # sides. After the section-4 re-score, because a score taken on our sample
-        # reports the run's limit as the dataset's. Before the spend estimate,
-        # because an estimate priced on 4,812 rows and run on 18 asks the user to
-        # approve a run that never happens - and a number that large may simply
-        # get a no.
-        self.assertIn("scope the run before pricing it", skill_text)
-        # "that subset" until the draw became distinct-preferring, at which
-        # point the drawn count and the 18-row default stopped being the same
-        # number and a sentence naming neither could price either - and then
-        # "the rows actually drawn", until eighteen was redefined from rows to
-        # questions and the rows a question brings became the figure that is
-        # paid. Which of them the estimate is built from is
-        # `TheBoundedDrawSpendsOnDifferentRowsTests`; the ordering below is this
-        # test's, and it only needs a stable anchor in that sentence.
+                self.assertIn(phrase, dataset)
+        for retired in (
+            "with more than 100 usable rows",
+            "18 tuning questions by default",
+        ):
+            self.assertNotIn(retired, dataset)
+        require_stage_reference(
+            4,
+            SKILL_ROOT / "references" / "evaluation-and-dataset.md",
+            "first-run-dataset-scope",
+        )
+        baseline = " ".join(
+            section_text(SKILL, "6. Approve and run the baseline").casefold().split()
+        )
+        self.assertIn("section 4 already selected and recorded", baseline)
+        self.assertIn("prices them and never draws them", baseline)
         self.assertIn(
-            "estimate runtime and spend from the rows those questions bring",
-            skill_text,
-        )
-        subset_at = skill_text.index("scope the run before pricing it")
-        self.assertGreater(
-            subset_at, skill_text.index("### 4. validate components locally")
-        )
-        self.assertLess(
-            subset_at,
-            skill_text.index(
-                "estimate runtime and spend from the rows those questions bring"
-            ),
+            "estimate runtime and spend from the actual selected files", baseline
         )
 
-    def test_closing_motivation_is_grounded_in_the_opening_gaps(self) -> None:
-        """Motivation for a further run must come from measured evidence.
-
-        The close ranks from the recorded opening score without reporting any
-        later one; what this pins is that it names the gaps still open and what
-        each costs, rather than offering encouragement or implying a further run
-        fixes a gap the walkthrough cannot close.
-        """
-        require_stage_reference(8, RUN_SAFETY, "post-run-verification")
-        skill_text = " ".join(
-            section_text(RUN_SAFETY, "Post-run verification").casefold().split()
+    def test_closing_motivation_is_grounded_in_the_remaining_project_gaps(self) -> None:
+        """The handoff recommends useful project work rather than another run."""
+        require_stage_reference(8, RUN_SAFETY, "continuation-handoff")
+        handoff = " ".join(
+            section_text(RUN_SAFETY, "Continuation handoff").casefold().split()
         )
-
-        self.assertIn("saying what a further run would be worth", skill_text)
-        self.assertIn(
-            "name the gaps still open and what each is now costing", skill_text
-        )
-        self.assertIn(
-            "the user's own measured evidence rather than encouragement", skill_text
-        )
-
-        # And it must land on ONE action earned by the latest state, with the
-        # reason attached. A menu of everything they could do is the same as no
-        # recommendation, so the anti-pattern is pinned too.
-        self.assertIn(
-            "give the one next action the **recorded opening state** earns", skill_text
-        )
-        self.assertIn(
+        for phrase in (
+            "one concrete next action using the most important remaining evidence gap",
+            "name why the action matters to their project",
             "a menu offered *instead of* a recommendation is the same as no recommendation",
-            skill_text,
-        )
-        # The generic menu that follows must not restate the state-specific
-        # moves: offering "connect the production agent" as an undifferentiated
-        # option, one line under a block that names it as THIS project's earned
-        # next action, is the contradiction this wording exists to remove.
-        menu = skill_text.split("these are available whenever the user wants them", 1)[
-            1
-        ]
-        for restated in (
-            "connect the production agent.",
-            "replace synthetic examples with reviewed real examples.",
-            "align the evaluation method with the product's grading policy.",
+            "generated data or model-written answers",
+            "a generated, repaired, thin, or uncalibrated evaluator",
+            "duplicates, leakage, uneven difficulty, or missing labels",
+            "a substitute agent",
         ):
-            with self.subTest(restated=restated):
-                self.assertNotIn(restated, menu)
-        for state in (
-            "generated or mostly generated data",
-            "real inputs with model-written answers",
-            "rows without expected outputs when the evaluator requires references",
-            "a substitute component still standing in for a real one",
-        ):
-            with self.subTest(state=state):
-                self.assertIn(state, skill_text)
-        # It ranks from the recorded opening score, and still has to follow the
-        # paragraph that settles what the post-run score is and is not for, and
-        # precede the optional next steps.
-        transition = skill_text.index("do not close on a second number")
-        motivation = skill_text.index("saying what a further run would be worth")
-        next_steps = skill_text.index(
-            "these are available whenever the user wants them"
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, handoff)
+        self.assertLess(
+            handoff.index("recommend one concrete next action"),
+            handoff.index("these are available whenever the user wants them"),
         )
-        self.assertLess(transition, motivation)
-        self.assertLess(motivation, next_steps)
 
     def test_semantic_coverage_review_is_assistant_directed(self) -> None:
         require_stage_reference(
@@ -9476,10 +9243,14 @@ class SkillPackageTests(unittest.TestCase):
         `references/evaluation-and-dataset.md`, one document further from the
         stage that would have corrected it.
         """
+        vocabulary = " ".join(
+            (SKILL_ROOT / "references" / "glossary.md").read_text().split()
+        )
+        self.assertIn('Say "evaluation method" in recommendations', vocabulary)
         entry = " ".join(
             (SKILL_ROOT / "references" / "glossary.md")
             .read_text()
-            .split("Evaluator (evaluation method, scorer)", 1)[1]
+            .split("Evaluation method (evaluator in the SDK)", 1)[1]
             .split("Evaluation (grading)", 1)[0]
             .casefold()
             .split()
@@ -13819,109 +13590,29 @@ class SkillPackageTests(unittest.TestCase):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, normalized)
 
-    def test_the_cta_is_ranked_from_the_state_the_customer_arrived_in(self) -> None:
-        """A gap this run filled with its own scaffolding is not a cleared gap.
-
-        The close used to re-rank the post-run caps and drop whatever had
-        cleared. On this walkthrough's commonest input - a customer with no
-        dataset, who is handed a generated one - `dataset-absent` reads as
-        cleared by then, so the re-rank dropped it and the recommendation never
-        mentioned the thing that customer most needs to do next. The re-rank
-        could not have known better: after the run there is a dataset on disk
-        either way, and no evidence there says who wrote it.
-
-        So the ranking comes from the opening score, which is the one reading
-        taken on material this run did not create, and a substitute-filled gap
-        stays on the list as provisionally filled with the move that closes it
-        properly attached. Both halves of that move are pinned, and so is their
-        order: real examples first, a human reading what we generated second.
-        """
-        require_stage_reference(8, RUN_SAFETY, "post-run-verification")
-        skill = " ".join(
-            section_text(RUN_SAFETY, "Post-run verification").casefold().split()
+    def test_the_cta_transfers_remaining_gaps_to_the_customers_own_material(
+        self,
+    ) -> None:
+        """Finishing a working copy does not certify the original product."""
+        require_stage_reference(8, RUN_SAFETY, "continuation-handoff")
+        handoff = " ".join(
+            section_text(RUN_SAFETY, "Continuation handoff").casefold().split()
         )
         for phrase in (
-            # ranked from the arrival state rather than from a post-run re-read
-            "give the one next action the **recorded opening state** earns",
-            "rank the opening score's caps and this run's own recorded limits",
-            # a substitute does not close a gap, and the close says so
-            "a gap this run filled with a substitute is not cleared - it is "
-            "filled provisionally, so it stays on this list",
-            # and why a post-run re-rank cannot see that for itself
-            "a gap this run filled with a substitute reads exactly like one "
-            "the customer closed themselves",
-            # the two ways to close it, in the owner's order
-            "**best:** collect or export real examples of the same task, and "
-            "build the evaluation method from them",
-            "**otherwise:** keep what this run generated and have a person "
-            "read and approve it",
-            "whose grading logic has to match what the agent is really scored "
-            "on and what its expected result is",
-            # and the forward half, which no cap raises because it is not a gap
-            "more of the agent's controls, the whole dataset instead of the "
-            "slice, a space wider than a first look needs",
-            "it names an action they can take, never a result a wider run would find",
-            # Only one of the two moves lifts the ceiling, and the bullet says
-            # which. It offered human review - the remedy for the LESSER gap,
-            # `dataset-generated-answer-key` at 74 - as a second route out of
-            # the greater one at 65, which it is not.
-            "this is the only one of the two that lifts the ceiling",
-            "say plainly that this one does not lift the ceiling",
-            "a person approving generated rows leaves them generated",
+            "connecting what the user learned to their own agent, dataset, and evaluation method",
+            "which material was generated or repaired",
+            "which original material was never changed",
+            "a clean working copy does not establish that the customer's full dataset is clean",
+            "raising a score or clearing a ceiling is not the customer's goal",
+            "accepting a substitute does not certify the product",
+            "recommend one concrete next action using the most important remaining evidence gap",
+            "the way to do it on the customer's own material",
+            "human review can improve the generated material, but does not change its origin",
+            "do not make another first-run walkthrough or an automatic full-dataset run the default next step",
+            "more rows alone do not fix a wrong answer key or evaluation policy",
         ):
             with self.subTest(phrase=phrase):
-                self.assertIn(phrase, skill)
-        # Derived, not restated. The row review is the mechanism a human verdict
-        # would travel on, and it refuses this run's own generated rows outright
-        # - `synthesised` is not a reviewable origin - so no amount of reading
-        # and approving what this run wrote can reach the provenance counts that
-        # `dataset-fully-synthetic` fires on. The ordering of the two ceilings
-        # is the other half: 65 is the greater finding and 74 the lesser, so the
-        # lesser one's remedy cannot be a route out of the greater.
-        self.assertNotIn(
-            "synthesised",
-            READINESS.ROW_REVIEW_ORIGINS,
-            "a review entry may now carry this run's own generated rows, so a "
-            "human verdict can reach the synthetic ceiling after all and this "
-            "bullet should stop saying it cannot",
-        )
-        self.assertLess(
-            READINESS.FULLY_SYNTHETIC_CEILING,
-            READINESS.GENERATED_ANSWER_KEY_CEILING,
-            "the generated-data ceiling is no longer the stricter of the two, "
-            "so 'the gap that ceilings the score' names the wrong one",
-        )
-        # Order is the argument. Reversed, the close recommends keeping our own
-        # rows first and getting real data reads as the afterthought. Located
-        # with `find` rather than `index` so a missing half is reported as the
-        # missing half and not as a bare ValueError from the ordering check.
-        best = skill.find("**best:**")
-        otherwise = skill.find("**otherwise:**")
-        recommendation = skill.find("give the one next action")
-        forward = skill.find("then the forward half, which is not a gap in anything")
-        for label, found in (
-            ("**best:**", best),
-            ("**otherwise:**", otherwise),
-            ("the one next action", recommendation),
-            ("the forward half", forward),
-        ):
-            with self.subTest(present=label):
-                self.assertNotEqual(found, -1, f"{label} is not in the close")
-        self.assertLess(
-            best,
-            otherwise,
-            "the close offers keeping this run's generated material before it "
-            "offers collecting real examples; the order is the recommendation, "
-            "and reversed it reads as real data being the afterthought",
-        )
-        # And the forward half is a clause on the one recommendation, so it
-        # follows the state-specific list rather than opening the close.
-        self.assertLess(
-            recommendation,
-            forward,
-            "the forward half opens the close, which makes it a second "
-            "recommendation rather than a clause on the one the state earned",
-        )
+                self.assertIn(phrase, handoff)
 
     def test_the_post_run_score_keeps_only_the_reading_nothing_else_takes(self) -> None:
         """Why the stage-8 re-run survives losing two of its three jobs.
@@ -14306,8 +13997,8 @@ class SkillPackageTests(unittest.TestCase):
             "do not close on a second number",
             "never show that score or set it beside the opening one",
             "which remaining gap to close first",
-            "one action the recorded opening state earns",
-            "rank the opening score's caps and this run's own recorded limits",
+            "one concrete next action using the most important remaining evidence gap",
+            "raising a score or clearing a ceiling is not the customer's goal",
             "npx skills add traigent/traigent-skills",
             "restart the session so the new skills load",
         ):
@@ -14331,7 +14022,8 @@ class SkillPackageTests(unittest.TestCase):
 
         for phrase in (
             "rows scored beside the dataset's usable rows",
-            "trials executed beside the enhanced space's combination count",
+            "distinct configurations measured beside the enhanced space's combination count",
+            "executed trials separately",
             "knobs varied beside the controls this run identified on the agent",
             "a getting-familiar run rather than the largest one available",
             "drop any clause this run did not measure instead of estimating it",
@@ -14343,7 +14035,7 @@ class SkillPackageTests(unittest.TestCase):
         # with an empty or invented number.
         for phrase in (
             "say the run scored every usable row",
-            "drop this clause and say it stopped there instead",
+            "drop this clause and name the completed baseline instead",
             "there is no denominator to quote",
         ):
             with self.subTest(phrase=phrase):
@@ -14368,12 +14060,14 @@ class SkillPackageTests(unittest.TestCase):
             skill_text.index("carry the run-scope statement above"),
         )
 
-    def test_the_handoff_names_real_skills_and_only_hypotheses(self) -> None:
+    def test_the_handoff_distinguishes_measured_defects_from_control_hypotheses(
+        self,
+    ) -> None:
         """The user leaves with tools, and with claims this run can support.
 
         At this run's row and trial counts a control that showed no effect was
         mostly not sampled enough to show one, so the handoff may recommend a
-        test and may not report a finding. Every skill it may name has to exist
+        test; measured dataset defects remain findings. Every named skill exists
         in Traigent/traigent-skills, and every flag has to be one that repo
         documents.
         """
@@ -14384,7 +14078,7 @@ class SkillPackageTests(unittest.TestCase):
         safety_text = " ".join(RUN_SAFETY.read_text().casefold().split())
 
         for phrase in (
-            "so the user can continue alone, at their full dataset",
+            "so the user can continue alone on their own agent, dataset, and evaluation method",
             "npx skills add traigent/traigent-skills --list",
             "npx skills add traigent/traigent-skills --skill <name>",
             "only which skills get named comes from this run's evidence",
@@ -14392,10 +14086,10 @@ class SkillPackageTests(unittest.TestCase):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, skill_text)
 
-        # Claim strength is gated in the mandate itself, not left to the map.
-        self.assertIn(
-            "every row is a hypothesis this run is too small to settle", skill_text
-        )
+        # A measured duplicate is a finding; a control's causal effect is not.
+        self.assertIn("measured defects remain findings", skill_text)
+        self.assertIn("causal claims about controls remain hypotheses", skill_text)
+        self.assertNotIn("every row is a hypothesis", skill_text)
         self.assertIn(
             "never as an established finding",
             skill_text,
@@ -15139,7 +14833,8 @@ class SkillPackageTests(unittest.TestCase):
             "traigent will test up to `<enhanced trial cap>` of them",
             "name this count in `configurations` rather than `trials`",
             "give it as a ceiling, never as a range",
-            "tested <executed trials> of <total combination count> configurations",
+            "tested <distinct configurations> of <total combination count> "
+            "configurations in <executed trials> trials",
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, safety)
@@ -15199,14 +14894,15 @@ class SkillPackageTests(unittest.TestCase):
         after the run, rather than leaving the assistant to improvise one.
         """
         safety = " ".join(RUN_SAFETY.read_text().casefold().split())
-        self.assertIn("cannot be computed", safety)
-        self.assertIn(
+        for statement in (
+            "cannot be computed",
             "state the ceiling on its own rather than estimating or rounding a total",
-            safety,
-        )
-        self.assertIn(
-            "or the executed count alone when that total was unavailable", safety
-        )
+            "report actual coverage afterwards as `tested <distinct configurations> "
+            "of <total combination count> configurations in <executed trials> trials`, "
+            "omitting the total when unavailable",
+        ):
+            with self.subTest(statement=statement):
+                self.assertIsNone(document_states(safety, statement))
 
     def test_the_ten_floor_is_an_internal_check_and_not_a_public_promise(self) -> None:
         """10 governs what the assistant may call the intended comparison.
@@ -15270,9 +14966,9 @@ class SkillPackageTests(unittest.TestCase):
             "**outcome** - baseline versus enhanced result",
             "**what the evidence establishes**",
             "**current state and limits**",
-            "**next action** - one action the recorded opening state earns",
+            "**next action** - apply the most useful lesson to the customer's own project",
             "**details** - configurations, objectives, trials, failures, cost",
-            "recorded opening state",
+            "one concrete next action using the most important remaining evidence gap",
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, skill)
@@ -15330,7 +15026,7 @@ class SkillPackageTests(unittest.TestCase):
         dataset = documents["dataset"]
         for phrase in (
             "create 28 examples by default: 18 tuning rows",
-            "10 held-out rows (2 easy, 3 medium, 3 hard, 2 very hard)",
+            "10 held-out rows, aiming for 2 easy, 3 medium, 3 hard and 2 very hard",
             "held-out set and claims",
             "selecting on the tuning rows can inflate the tuning score",
             "ten rows give a coarse measurement",
@@ -15386,7 +15082,7 @@ class SkillPackageTests(unittest.TestCase):
         )
         report_index = skill.find("### 8. verify and report")
         self.assertIn(
-            "the recommended configuration's held-out score and small-sample note, shown here first",
+            "the recommended configuration's held-out score and small-sample note when completed",
             " ".join(
                 section_text(RUN_SAFETY, "Reporting procedure").casefold().split()
             ),
@@ -15400,14 +15096,14 @@ class SkillPackageTests(unittest.TestCase):
             "8's actual disclosure, or the seamless ordering is not encoded",
         )
         self.assertIn(
-            "score only that one against the ten held-out rows",
+            "score only that one against the reserved rows, when available",
             " ".join(
                 section_text(RUN_SAFETY, "Comparison sequence").casefold().split()
             ),
         )
         self.assertIn(
-            "verify the held-out score belongs to the one configuration this run "
-            "recommends",
+            "when held-out scoring completed, verify its score belongs to the one "
+            "configuration this run recommends",
             skill,
         )
 
@@ -15439,51 +15135,28 @@ class SkillPackageTests(unittest.TestCase):
         require_stage_reference(3, dataset, "held-out-set-and-claims")
 
     def test_the_held_out_draw_has_one_timing_per_source(self) -> None:
-        """Three passages gave the timing three ways; one sentence owns it now.
-
-        The two sources now reach the same moment (traigent-first-run#473), so
-        what this pins is one sentence saying so rather than two timings kept
-        in step. The brought corpus used to draw immediately before the paid
-        comparison, which designed the evaluator over rows that were relabelled
-        held-out afterwards; the phrase that named that timing is refused here
-        so it cannot come back as a helpful clarification.
-        """
-        dataset = " ".join(
-            (SKILL_ROOT / "references" / "evaluation-and-dataset.md")
-            .read_text()
-            .casefold()
-            .split()
+        """Settle stable rows, select them, then repair answers or design components."""
+        document = SKILL_ROOT / "references" / "evaluation-and-dataset.md"
+        owner = " ".join(
+            section_text(document, "Held-out set and claims").casefold().split()
         )
-        owner = dataset.split("## held-out set and claims", 1)[1]
         for phrase in (
-            "when they are drawn follows the source, in two cases",
-            "a dataset this run generates, tops up, or splits itself reserves the "
-            "held-out split when its working copy is written",
-            "in two cases that now reach the same moment",
-            "as soon as its own working copy is settled",
-            "not at the opening card",
-            "a hold on the band, not a third timing of the draw",
+            "keep the same selected ids aside for the rest of the run",
+            "settle usable fields and stable ids first, then select both files before "
+            "judgment-dependent answer repairs, component design, calibration, or optimization",
+            "never choose or replace rows based on candidate scores or proposed replacement answers",
+            "selected ids are already settled, review the selected rows there",
+            "otherwise take the opening sample and review the selected rows at the section-4 re-score",
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, owner)
-        # The old INSTRUCTION, refused by its own words rather than by the
-        # phrase inside them: "immediately before the paid comparison" still
-        # appears in this section, correctly, in the sentence explaining what
-        # the collapse replaced. A guard that cannot tell an instruction from
-        # its own history refuses the history, which is the half worth keeping.
-        self.assertNotIn(
-            "draws the ten from that split with the tuning subset, immediately "
-            "before the paid comparison",
-            owner,
-            "the timing this change removed is back as an instruction",
+        self.assertNotIn("immediately before the paid comparison", owner)
+        subset = " ".join(
+            section_text(document, "First-run dataset scope").casefold().split()
         )
-        subset = dataset.split("## first-run subset for a large dataset", 1)[1]
-        self.assertIn(
-            '"held-out set and claims" below owns when each source draws', subset
-        )
+        self.assertIn('"held-out set and claims" owns when selection happens', subset)
 
     def test_the_tuning_size_only_shrinks(self) -> None:
-        """Downward only: the total and the ten are stated once, and pointed at."""
         dataset = " ".join(
             (SKILL_ROOT / "references" / "evaluation-and-dataset.md")
             .read_text()
@@ -15491,246 +15164,70 @@ class SkillPackageTests(unittest.TestCase):
             .split()
         )
         self.assertIn(
-            "reduce the tuning size when cost or task shape requires it - downward "
-            'only, with the "topping a real dataset up to that size" total as a '
-            "ceiling rather than a target",
+            "reduce the generated tuning size when cost or task shape requires it",
             dataset,
         )
         self.assertIn(
-            'the held-out ten do not move; "held-out set and claims" owns why', dataset
+            '"first-run dataset scope" owns the row limits for every source', dataset
         )
+        self.assertIn("use fewer supplied rows by default", dataset)
         self.assertNotIn("adjust the tuning size", dataset)
 
-    def test_ten_held_out_rows_are_the_design_not_a_placeholder(self) -> None:
-        """The owner's rule: ten rows, composed 2/3/3/2, topped up if needed.
-
-        The first reinstatement told the assistant that growing the split past
-        ten was tracked as a Traigent-owned follow-up, which made the size read
-        as a placeholder someone would fix. It is not. Every further row is
-        another paid call on the winner, and the honest answer to the noise
-        that leaves is to say so. The composition therefore applies wherever
-        the rows come from, real data is topped up rather than allowed to drop
-        a band, and the display quotes counts because a percentage on ten rows
-        claims ten times the resolution it has.
-
-        THE PUBLISHED REASON USED TO BE THE SCORER'S FLOOR, and it was wrong
-        twice over. The document said ten is "where the readiness score puts
-        its own floor: at nine comparable rows it raises
-        `dataset-below-measurable-size` and blocks the paid comparison". That
-        was true of the scorer on this branch and false on #149, which makes
-        the same cap advisory above zero scoreable rows - measured:
-        `power_ceiling(9).blocks` is True here and False there, while
-        `power_ceiling(0)` still blocks on both. So the customer-facing reason
-        for the owner's number was a scorer detail an open branch was already
-        changing, and the number is not changing.
-
-        The reason is difficulty coverage, which is a property of the split
-        itself and of nothing else: four bands, and the two that separate
-        configurations most carry three rows each. That is what is asserted
-        below - the arithmetic of the composition, executed, rather than the
-        presence of a slug in a sentence.
-
-        And that is the second half of the defect. This test used to prove the
-        rationale by finding the string `dataset-below-measurable-size` in the
-        prose. Greping a condition id out of a document asks whether somebody
-        WROTE the claim, never whether the code DOES it - so the document and
-        the scorer could disagree for as long as the sentence stayed put. The
-        scorer is called here instead, and the two things it is called about
-        are the two things the prose is now allowed to depend on.
-        """
+    def test_the_held_out_limit_allows_fewer_without_overstating_evidence(self) -> None:
+        """Ten caps paid rows; a short real split does not trigger generation."""
         dataset = " ".join(
-            (SKILL_ROOT / "references" / "evaluation-and-dataset.md")
-            .read_text()
+            section_text(
+                SKILL_ROOT / "references" / "evaluation-and-dataset.md",
+                "Held-out set and claims",
+            )
             .casefold()
             .split()
         )
         for phrase in (
-            # Ten is a decision, with the reason the guide previously promised
-            # and never gave.
-            "ten rows is the design, not a placeholder",
-            "ten is what the composition costs",
-            "a later workflow can investigate more representative rows and a wider knob space",
-            "that larger scope does not itself establish stronger results",
-            # One composition, applied wherever the rows come from.
-            "that composition holds wherever the rows come from",
-            # Top up rather than drop a band - with what it costs.
-            "top each set up to its composition with generated rows rather than "
-            "dropping a band",
-            "cannot show that the winner generalizes to real inputs",
-            # Ten outcomes do not justify a nominal normal interval or a
-            # causal diagnosis from the gap alone.
+            "reserve up to 10 held-out rows",
+            "when none fits, use fewer rows and report that count",
+            "if no independent rows remain, say the held-out check was not measured",
+            "do not score tuning rows under that name",
             "do not quote a 95% interval by doubling the plug-in standard error on ten rows",
             "a suitable small-sample method, and stated sampling assumptions",
             "the observed gap alone establishes neither overfitting nor its absence",
-            # Counts, at the size where a percentage lies.
             "report counts, not percentages, for binary correctness while the split is this small",
-            "can land lower, level, or higher",
-            # Paired evidence belongs to the shared tuning sample, including
-            # small runs; the held-out set scores only one selected candidate.
             "paired outcomes from the shared **tuning rows** already scored",
             "for graded or other objectives, report paired per-row score changes using the declared direction",
             "do not invent a pass threshold to turn those scores into correct/incorrect counts",
-            "label these as tuning comparisons, including on a small walkthrough",
             "it establishes no paired baseline-versus-enhanced improvement",
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, dataset)
-        self.assertNotIn("growing the holdout past the default ten rows", dataset)
-        # No minimum detectable effect, per the same decision: the guide still
-        # refuses to invent a threshold before paired outcomes exist.
-        self.assertIn(
-            "never invent a percentage-point threshold before those outcomes exist",
-            dataset,
-        )
-        # "Ten" and "at least ten" are different rules, and the file carried
-        # both shapes: a fixed composition beside a sentence about adjusting
-        # size. Say which of the two the number is.
-        self.assertIn("ten is therefore exact in both directions", dataset)
-
-        # 1. THE ARITHMETIC, EXECUTED. The composition is read out of the
-        # document the assistant follows, not restated here, and then it is
-        # made to do what the paragraph claims: it sums to ten, it covers all
-        # four bands, and removing any single row drops some band to one. That
-        # last is the whole argument for ten over nine, and it is a fact about
-        # the split rather than about any scorer.
-        composition = re.search(
-            r"reserve (\d+) held-out rows \((\d+) easy, (\d+) medium, "
-            r"(\d+) hard, (\d+) very hard\)",
-            dataset,
-        )
-        self.assertIsNotNone(
-            composition,
-            "the held-out composition is no longer stated where a reader meets "
-            "the split, so nothing here can check what ten buys",
-        )
-        total, *bands = (int(group) for group in composition.groups())
-        self.assertEqual(sum(bands), total)
-        self.assertEqual(total, 10)
-        self.assertEqual(len(bands), 4)
-        # No band has a spare row: the smallest is exactly two, which is the
-        # smallest a band can be and still be measured rather than sampled. If
-        # any band had three or more to give, ten would not be the cost of this
-        # composition and the paragraph's reason would be wrong.
-        self.assertEqual(
-            min(bands),
-            2,
-            f"the smallest band holds {min(bands)} rows, so the split has a "
-            "spare and ten is not what this composition costs",
-        )
-        outer, middle = (bands[0], bands[3]), (bands[1], bands[2])
-        self.assertTrue(
-            min(middle) > max(outer),
-            f"the middle bands hold {middle} against the outer {outer}; the "
-            "paragraph says the two that separate configurations most carry "
-            "more, and they do not",
-        )
-
-        # 2. THE SCORER, ASKED RATHER THAN QUOTED. The published rationale used
-        # to cite `dataset-below-measurable-size` blocking at nine. It must not
-        # again, because that is the scorer's decision and #149 changes it -
-        # the number here does not move when it does. What IS pinned is the
-        # only claim the paragraph still leans on: the designed split is not
-        # sitting on a blocking cap.
-        self.assertNotIn(
+        for retired in (
+            "ten is therefore exact in both directions",
+            "top each set up to its composition with generated rows rather than dropping a band",
+            "kept at the size it already has, whatever its composition",
             "dataset-below-measurable-size",
-            " ".join(
-                section_text(
-                    SKILL_ROOT / "references" / "evaluation-and-dataset.md",
-                    "Held-out set and claims",
-                )
-                .casefold()
-                .split()
-            ),
-        )
-        self.assertNotIn("blocks the paid comparison", dataset)
-        designed = READINESS.power_ceiling(total)
-        self.assertFalse(
-            designed is not None and designed.blocks,
-            f"the designed {total}-row split is itself blocked by "
-            f"{designed.condition if designed else None}; the composition and "
-            "the scorer disagree about the size this guide reserves",
-        )
-        self.assertIn("never a floor to grow from", dataset)
-        # The one split that is not ten is a project's own, and the document no
-        # longer tells the reader what the scorer will do to it. It used to -
-        # "a split under ten comparable rows blocks the paid comparison
-        # wherever it came from" - which is the same borrowed-threshold defect
-        # a second time in the same paragraph, and false on #149 in the same
-        # way. What is said instead is the only thing this guide decides about
-        # somebody else's split: it is used as it stands.
-        self.assertIn(
-            "kept at the size it already has, whatever its composition", dataset
-        )
+        ):
+            self.assertNotIn(retired, dataset)
+        self.assertFalse(READINESS.power_ceiling(1).blocks)
 
-    def test_real_rows_are_divided_between_both_sets_before_anything_is_generated(
-        self,
-    ) -> None:
-        """The customer's rows go to both splits, in proportion, first.
-
-        "Top up the shortfall" says how many generated rows to add and is
-        silent on which set gets the real ones - so both degenerate fills were
-        available and neither was refused. The reserved split is cut "at
-        creation time, before any component design", which reads as reserve the
-        real rows first; "user-provided examples expanded into additional
-        tuning candidates" reads as the opposite. One of those leaves a
-        held-out set of nothing but generated rows, which cannot say anything
-        about real inputs - it only shows the winner survives rows the search
-        never saw - and the other leaves the search optimizing a task the
-        customer does not have.
-
-        So the division is stated as a rule with an arithmetic the assistant
-        cannot read two ways, and both failure directions are named beside it.
-        The proportion is the sets' own: at the 18/10 default, roughly two real
-        rows to tuning for every one held back.
-        """
+    def test_supplied_rows_stay_real_and_short_splits_are_reported(self) -> None:
         dataset = " ".join(
             (SKILL_ROOT / "references" / "evaluation-and-dataset.md")
             .read_text()
             .casefold()
             .split()
         )
-        self.assertIn(
-            "**real rows reach both sets before either is topped up.**", dataset
-        )
         for phrase in (
-            # The rule, and the ordering that makes it a rule rather than a
-            # preference: divide before generating, not after.
-            "divide the real ones between them in the same proportion as the "
-            "sets themselves, rounding in the tuning set's favour, before a "
-            "single row is generated",
-            # The owner's own worked example, and the two smaller ones that
-            # pin the rounding direction.
-            "ten real rows split seven and three",
-            "four split three and one",
-            "two split one and one",
-            # Below two there is nothing to divide, and the tie-break is said
-            # rather than left to the reader.
-            "below two there is nothing to divide",
-            # Both degenerate fills are refused, not just the one that is
-            # easier to picture.
-            "in both directions",
-            "a held-out set of generated rows validates nothing about real inputs",
-            "a tuning set of generated rows searches a task the customer does not have",
-            # The composition survives the division.
-            "placing each real row in the band its own difficulty puts it in",
+            "use fewer supplied rows by default; generate a walkthrough dataset when none exists",
+            "a small real dataset is not permission to fill the remaining places with synthetic rows",
+            "generate it only if the customer chooses it",
+            "ten rows split seven and three, four split three and one, two split one and one",
+            "keep complete accepted-answer groups together",
+            "with only one group, keep it for tuning and report no independent held-out measurement",
+            "never fill tuning from an existing held-out split",
+            "when the split was topped up, say so on the same line as its score",
+            "how many rows are the customer's and how many this run generated",
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, dataset)
-        # And the closing report says the mixture out loud, because "held out"
-        # is a claim about what the search saw, not about where a row came
-        # from - a reader who is not told hears the second one.
-        self.assertIn(
-            "when the split was topped up, say so on the same line as its score",
-            dataset,
-        )
-        # The counts themselves are stated once, in the details layer that owns
-        # the whole mixture - see the row-provenance test below. The score line
-        # points at them rather than repeating them.
-        self.assertIn("the details layer below carries the counts", dataset)
-        self.assertIn(
-            "how many rows are the customer's and how many this run generated",
-            dataset,
-        )
 
     def test_the_close_says_where_the_two_written_files_are(self) -> None:
         """A user who wants the reserved rows gone has to be told where they are.
@@ -16023,7 +15520,7 @@ class SkillPackageTests(unittest.TestCase):
                 self.assertIn(phrase, dataset)
 
     def test_the_close_names_validation_without_promising_its_result(self) -> None:
-        """#536: a larger run is an action, not production-validation evidence."""
+        """The next step concerns the customer's own work, not another walkthrough."""
         require_stage_reference(
             7,
             SKILL_ROOT / "references" / "evaluation-and-dataset.md",
@@ -16038,15 +15535,13 @@ class SkillPackageTests(unittest.TestCase):
             .split()
         )
         for phrase in (
-            "a later run can use more representative examples and controls",
-            "keeping evaluation separate from tuning and winner selection as the intended claim requires",
-            "more rows or a wider search alone do not establish real-world performance",
-            "its evidence remains scoped to the rows and components actually used",
-            "without apologizing for the ten rows and without saying what a "
-            "larger run would find",
-            "the close's skills handoff is already the route to it",
+            "connect the limitation to the customer's own work",
+            "using the close's public skills handoff",
+            "fixing its copy does not fix the customer's full dataset",
+            "more rows or another walkthrough are not the goal",
+            "neither alone establishes real-world performance",
             "do not predict its value from selection alone",
-            "may be lower, level, or higher",
+            "report the observed gap without assigning a cause this run did not establish",
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, dataset)
@@ -16055,18 +15550,10 @@ class SkillPackageTests(unittest.TestCase):
             "will not fully repeat on a fresh sample",
         ):
             self.assertNotIn(retired, dataset)
-        # The next action must not erase uncertainty about the completed run.
-        self.assertIn("ten rows give a coarse measurement", dataset)
-        self.assertIn(
-            "report the observed gap without assigning a cause this run did not establish",
-            dataset,
-        )
         self.assertLess(
-            dataset.index("keep the note only while one row still moves"),
-            dataset.index("then explain the next validation action"),
+            dataset.index("report counts, not percentages"),
+            dataset.index("then connect the limitation"),
         )
-        # And it does not reopen the size decision it explains.
-        self.assertIn("ten is therefore exact in both directions", dataset)
 
     def test_one_configuration_is_selected_on_tuning_and_only_it_is_held_out_scored(
         self,
@@ -16147,15 +15634,15 @@ class SkillPackageTests(unittest.TestCase):
         # Comparison owns selection; the resident close verifies the same choice.
         self.assertIn(
             "select the recommendation on tuning scores across both measurements, "
-            "never on held-out rows, then score only that one against the ten held-out rows",
+            "never on held-out rows, then score only that one against the reserved rows, when available",
             " ".join(
                 section_text(RUN_SAFETY, "Comparison sequence").casefold().split()
             ),
         )
         self.assertIn(
-            "verify the held-out score belongs to the one configuration this run "
-            "recommends, chosen on the tuning scores, and that no other candidate "
-            "was scored on those rows",
+            "when held-out scoring completed, verify its score belongs to the one "
+            "configuration this run recommends, chosen on tuning scores, and that no "
+            "other candidate was scored on those rows",
             skill,
         )
 
@@ -16293,10 +15780,10 @@ class SkillPackageTests(unittest.TestCase):
         # One home: both call sites point at the ladder rather than restating
         # it, and the restatements they replaced must not come back.
         self.assertIn(
-            'work down the ladder in "choosing rows when difficulty is not labelled"',
+            'use "choosing rows when difficulty is not labelled"',
             dataset,
         )
-        self.assertIn("work down the same ladder the bounded subset uses", dataset)
+        self.assertIn("use the same difficulty ladder as the tuning draw", dataset)
         for restatement in (
             "spread the pick across the coverage/scenario tags instead",
             "fall back exactly as the bounded subset above does",
@@ -17385,6 +16872,8 @@ class SkillPackageTests(unittest.TestCase):
             "the same review",
             "put the flagged rows to the user",
             "approval-gated question",
+            '"A `no` is never a silent edit" below owns whether a question is needed '
+            "and how to settle it",
         ),
         "add-examples": (
             "more comparable examples is what lifts this",
@@ -18023,6 +17512,19 @@ class SkillPackageTests(unittest.TestCase):
         # 1. Unbilled, which is the whole reason it may sit at the opening gate.
         self.assertIn("your own read, not a billed call", normalized)
         self.assertIn("needs no approval", normalized)
+        self.assertIsNone(
+            document_states(
+                normalized,
+                "kept in the readiness directory named before the card under "
+                "`SKILL.md`'s opening gate",
+            )
+        )
+        self.assertIsNone(
+            document_states(
+                skill,
+                "name the fresh project-relative readiness directory before showing the card",
+            )
+        )
         self.assertIn(
             "--row-review",
             section_text(
@@ -18072,8 +17574,7 @@ class SkillPackageTests(unittest.TestCase):
         # stops a release reading as a clearance on the arm that is still a
         # sample.
         self.assertIn(
-            "every entry marked `in_run` where the split is drawn, capped at "
-            "the drawn 28",
+            "every provided row in `selected_row_ids` once drawn",
             normalized,
         )
         self.assertIn("released as a sample and never as a clearance", normalized)
@@ -18089,7 +17590,15 @@ class SkillPackageTests(unittest.TestCase):
         #    shape: every flagged row's id, its quoted content, the reason, and
         #    whether the run will actually read it. Then the user's answer
         #    decides, in both directions.
-        self.assertIn("never a silent edit, and it opens a conversation", normalized)
+        self.assertIn("never a silent edit", normalized)
+        self.assertIsNone(
+            document_states(
+                normalized,
+                "if every flagged row is explicitly outside this run, report those IDs as "
+                "unresolved, retain the full-dataset readiness limitation, and continue "
+                "without another repair question",
+            )
+        )
         self.assertIn(
             "I suspect this dataset has rows that need fixing before the run",
             normalized,
@@ -18101,6 +17610,10 @@ class SkillPackageTests(unittest.TestCase):
             normalized,
         )
         self.assertIn("repair the rows in the working copy", normalized)
+        self.assertIn(
+            "Scope repairs to the selected first-run rows",
+            normalized,
+        )
         self.assertIn("say in the run's own report what it was tuned on", normalized)
         # And the route says the same thing where routes live - as a ROUTE.
         # It stated all four of the mandates above at length, in a list where
@@ -18135,6 +17648,11 @@ class SkillPackageTests(unittest.TestCase):
         # 5. Declared as the assistant's judgement, never as the user's.
         self.assertIn("never as the user's ground truth", normalized)
         self.assertIn('"reviewer": "assistant"', dataset)
+        self.assertIn(
+            "Restoring unchanged customer answers to their inputs through verified "
+            "source IDs or a documented mapping preserves their answer provenance",
+            normalized,
+        )
         # And the scorer actually implements the three it can.
         self.assertEqual(READINESS.ROW_REVIEW_REVIEWER, "assistant")
         self.assertNotIn("synthesised", READINESS.ROW_REVIEW_ORIGINS)
@@ -18172,46 +17690,23 @@ class SkillPackageTests(unittest.TestCase):
             ),
         )
 
-    def test_the_scoring_input_is_the_combined_file_and_the_rule_says_so(
-        self,
-    ) -> None:
-        """The protection the earlier draw traded away, pinned as prose.
-
-        Rule 1 used to be kept by arithmetic. The subset was drawn immediately
-        before the paid comparison, so at every scoring gate there was no
-        subset in existence to score by mistake, and nobody had to remember
-        anything. Moving the draw to the moment the dataset settles buys
-        blindness - the evaluator is no longer designed while looking at rows
-        that are relabelled held-out afterwards - and it costs exactly that
-        structural guarantee (traigent-first-run#473).
-
-        What replaces it is a sentence, which is the trade this repository is
-        most suspicious of, so the sentence is pinned rather than trusted: the
-        combined split-labelled file stays the input to preflight and readiness,
-        and the drawn subset files are never that input at any stage. A test
-        cannot make an assistant read it. What it can do is refuse a later edit
-        that quietly drops it, which is how a rule kept by prose actually dies.
-        """
+    def test_the_scoring_input_is_the_combined_file_and_the_rule_says_so(self) -> None:
+        """Selecting early cannot make full-dataset readiness read a small draw."""
         dataset = " ".join(
             (SKILL_ROOT / "references" / "evaluation-and-dataset.md")
             .read_text()
             .split()
         )
         self.assertIn(
-            "the combined, split-labelled file stays the input to preflight "
-            "and readiness",
+            "the combined, split-labelled file stays the input to preflight and readiness",
             dataset,
         )
         self.assertIn(
             "The drawn subset files are never that input, at any stage", dataset
         )
-        # And the trade itself is recorded where the rule is, so the next
-        # author reads why the sentence is load-bearing before editing it.
-        self.assertIn("trades a structural guarantee for a sentence", dataset)
-        # One timing, not two: the moment the working copy settles, and
-        # explicitly not the opening card, where nothing is repaired yet.
-        self.assertIn("as soon as its own working copy is settled", dataset)
-        self.assertIn("Not at the opening card", dataset)
+        self.assertIn(
+            "The whole-file readiness rule above applies at both points", dataset
+        )
 
     def test_the_sample_is_declared_where_it_is_ordered(self) -> None:
         """What the read is, in the flow; what it means, in the reference.
@@ -18565,8 +18060,6 @@ class SkillPackageTests(unittest.TestCase):
             self.cap_routing_region(), self.constructed_cap_conditions()
         )
         for condition in sorted(conditions):
-            with self.subTest(condition=condition):
-                self.assert_the_route_is_written_for(condition, passages)
             with self.subTest(condition=condition):
                 self.assert_the_route_is_written_for(condition, passages)
         self.assertIn("present the reason rather than the condition id", normalized)
@@ -19396,6 +18889,18 @@ class SkillPackageTests(unittest.TestCase):
             "broken grading signal",
         ):
             self.assertIn(phrase, local)
+        self.assertIn(
+            "only with safe execution and usable grading under the "
+            "invalid-component rule above",
+            " ".join(
+                section_text(
+                    SKILL_ROOT / "references" / "evaluation-and-dataset.md",
+                    "Quality diagnosis and repair choice",
+                )
+                .casefold()
+                .split()
+            ),
+        )
 
     def test_unusable_rows_are_diagnosed_from_the_file_not_from_the_summary(
         self,
@@ -21251,13 +20756,12 @@ class SkillPackageTests(unittest.TestCase):
             "report what this run counted, never a property of the space", safety
         )
         for phrase in (
-            "this run tested `<executed trials>` of `<total combination count>` "
-            "configurations",
+            "this run tested `<distinct configurations>` of `<total combination count>` "
+            "configurations in `<executed trials>` trials",
             "the configuration you are already running is still the only point "
             "on the frontier",
             "so keeping it is the answer this run supports",
-            "widening the search across your full dataset and your own controls "
-            "is what the skills named at the close are for",
+            "the skills named at the close help you apply what you learned to your own project",
         ):
             with self.subTest(null_copy=phrase):
                 self.assertIn(phrase, quoted)
@@ -21311,10 +20815,26 @@ class FrontierAtOrAboveTests(unittest.TestCase):
             metrics["task_success"] = score
         if cost is not None:
             metrics["cost"] = cost
-        return SimpleNamespace(status=status, metrics=metrics, config={})
+        return SimpleNamespace(
+            status=status,
+            metrics=metrics,
+            config={},
+            metadata={
+                "example_results": [
+                    {"success": True, "metrics": {"task_success": score}}
+                    for _ in range(2)
+                ]
+            },
+        )
 
     def select(self, trials, *, floor=0.80):
-        return FRONTIER_AT_OR_ABOVE(trials, "task_success", floor, compare_cost=True)
+        return FRONTIER_AT_OR_ABOVE(
+            trials,
+            "task_success",
+            self.trial(floor, 0.02),
+            compare_cost=True,
+            expected_rows=2,
+        )
 
     def test_a_trial_reaches_the_frontier_only_at_or_above_the_floor(self) -> None:
         """Delete `score >= floor` and this fails: the cheap, bad trial is
@@ -21414,9 +20934,10 @@ class FrontierAtOrAboveTests(unittest.TestCase):
         result = FRONTIER_AT_OR_ABOVE(
             [dominated, better, worse, incumbent],
             "task_success",
-            0.20,
+            self.trial(0.20, 0.02),
             orientation="minimize",
             compare_cost=True,
+            expected_rows=2,
         )
         self.assertEqual(result, [incumbent, better])
         self.assertIs(result[0], incumbent)
@@ -21425,7 +20946,12 @@ class FrontierAtOrAboveTests(unittest.TestCase):
     def test_invalid_orientation_is_rejected_before_selection(self):
         with self.assertRaisesRegex(ValueError, "orientation"):
             FRONTIER_AT_OR_ABOVE(
-                [], "task_success", 0.80, orientation="sideways", compare_cost=True
+                [],
+                "task_success",
+                self.trial(0.80, 0.02),
+                orientation="sideways",
+                compare_cost=True,
+                expected_rows=2,
             )
 
     def test_sdk_precision_does_not_relax_the_incumbent_quality_filter(self):
@@ -21441,9 +20967,10 @@ class FrontierAtOrAboveTests(unittest.TestCase):
                     FRONTIER_AT_OR_ABOVE(
                         [worse, near, incumbent],
                         "task_success",
-                        floor,
+                        self.trial(floor, 0.02),
                         orientation=orientation,
                         compare_cost=True,
+                        expected_rows=2,
                     ),
                     [incumbent],
                 )
@@ -21454,7 +20981,10 @@ class FrontierAtOrAboveTests(unittest.TestCase):
         weak_with_price = self.trial(0.85, 0.01)
         self.assertEqual(
             FRONTIER_AT_OR_ABOVE(
-                [weak_with_sdk_zero, weak_with_price, strong], "task_success", 0.80
+                [weak_with_sdk_zero, weak_with_price, strong],
+                "task_success",
+                self.trial(0.80, 0.02),
+                expected_rows=2,
             ),
             [strong],
         )
@@ -21465,7 +20995,11 @@ class FrontierAtOrAboveTests(unittest.TestCase):
         at_floor = self.trial(0.20, 0.01)
         self.assertEqual(
             FRONTIER_AT_OR_ABOVE(
-                [worse, at_floor, best], "task_success", 0.20, orientation="minimize"
+                [worse, at_floor, best],
+                "task_success",
+                self.trial(0.20, 0.02),
+                orientation="minimize",
+                expected_rows=2,
             ),
             [best],
         )
@@ -21473,8 +21007,9 @@ class FrontierAtOrAboveTests(unittest.TestCase):
             FRONTIER_AT_OR_ABOVE(
                 [self.trial(0.20 + 1e-11, None)],
                 "task_success",
-                0.20,
+                self.trial(0.20, 0.02),
                 orientation="minimize",
+                expected_rows=2,
             ),
             [],
         )
@@ -21487,7 +21022,72 @@ class FrontierAtOrAboveTests(unittest.TestCase):
 
     def test_invalid_primary_direction_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "orientation"):
-            FRONTIER_AT_OR_ABOVE([], "task_success", 0.80, orientation="sideways")
+            FRONTIER_AT_OR_ABOVE(
+                [],
+                "task_success",
+                self.trial(0.80, 0.02),
+                orientation="sideways",
+                expected_rows=2,
+            )
+
+    def test_completed_status_cannot_hide_failed_or_partial_examples(self) -> None:
+        for orientation, baseline, better in (
+            ("maximize", 0.8, 0.9),
+            ("minimize", 0.2, 0.1),
+        ):
+            for defect in ("failed-zero", "missing-metric", "short", "missing-results"):
+                with self.subTest(orientation=orientation, defect=defect):
+                    candidate = self.trial(better, 0.001)
+                    rows = candidate.metadata["example_results"]
+                    if defect == "failed-zero":
+                        rows[0].update(success=False, metrics={"task_success": 0.0})
+                    elif defect == "missing-metric":
+                        rows[0]["metrics"] = {}
+                    elif defect == "short":
+                        rows.pop()
+                    else:
+                        candidate.metadata = {}
+                    self.assertEqual(
+                        FRONTIER_AT_OR_ABOVE(
+                            [candidate],
+                            "task_success",
+                            self.trial(baseline, None),
+                            orientation=orientation,
+                            expected_rows=2,
+                        ),
+                        [],
+                    )
+
+    def test_an_incomplete_incumbent_cannot_supply_the_quality_floor(self) -> None:
+        incumbent = self.trial(0.8, 0.01)
+        incumbent.metadata["example_results"][0]["success"] = False
+        with self.assertRaisesRegex(ValueError, "incumbent"):
+            FRONTIER_AT_OR_ABOVE(
+                [self.trial(0.9, 0.01)], "task_success", incumbent, expected_rows=2
+            )
+        with self.assertRaisesRegex(ValueError, "incumbent"):
+            FRONTIER_AT_OR_ABOVE(
+                [self.trial(0.9, 0.01)],
+                "task_success",
+                self.trial(0.8, None),
+                expected_rows=2,
+                compare_cost=True,
+            )
+
+    def test_a_successfully_scored_zero_is_a_valid_primary_measurement(self) -> None:
+        zero = self.trial(0.0, None)
+        self.assertEqual(
+            FRONTIER_AT_OR_ABOVE([zero], "task_success", zero, expected_rows=2), [zero]
+        )
+
+    def test_expected_rows_must_name_a_positive_whole_row_count(self) -> None:
+        for count in (0, -1, True, 2.5):
+            with self.subTest(count=count), self.assertRaisesRegex(
+                ValueError, "expected_rows"
+            ):
+                FRONTIER_AT_OR_ABOVE(
+                    [], "task_success", self.trial(0.8, None), expected_rows=count
+                )
 
 
 class AFlatResultIsReadInBothDirectionsTests(unittest.TestCase):
@@ -21548,14 +21148,18 @@ class AFlatResultIsReadInBothDirectionsTests(unittest.TestCase):
         self.assertIn("does not displace a more important unresolved gap", text)
         require_stage_reference(8, RUN_SAFETY, "continuation-handoff")
         handoff = " ".join(section_text(RUN_SAFETY, "Continuation handoff").split())
-        for phrase in (
-            "the one next action the **recorded opening state** earns",
-            "rank the opening score's caps and this run's own recorded limits",
-            "A gap this run filled with a substitute is not cleared",
-            "a clause on the recommendation above, not a second one",
-        ):
-            with self.subTest(phrase=phrase):
-                self.assertIn(phrase, handoff)
+        self.assertIn(
+            "one concrete next action using the most important remaining evidence gap",
+            handoff,
+        )
+        self.assertIn(
+            "A menu offered *instead of* a recommendation is the same as no recommendation",
+            handoff,
+        )
+        self.assertIn(
+            "a larger search is an option only when that evidence and the user's objective support it",
+            handoff.casefold(),
+        )
 
     def test_it_requires_collected_data(self) -> None:
         """The failure this could otherwise cause, and the reason it is guarded.
@@ -22869,6 +22473,16 @@ class TheApprovedTotalReachesTheCodeTests(unittest.TestCase):
         # walkthrough's deterministic `None`.
         namespace["JUDGE_MODEL"] = "provider/judge"
         return namespace, placed
+
+    def test_empty_holdout_is_refused_before_wiring_or_provider_calls(self) -> None:
+        namespace, placed = self.compiled_judged_holdout(rows=0, remaining=1.00)
+        wiring = mock.Mock(side_effect=AssertionError("empty holdout reached wiring"))
+        namespace["assert_wiring_still_proven"] = wiring
+        with self.assertRaisesRegex(ValueError, "No independent held-out rows"):
+            namespace["evaluate_holdout"]({"model": "recommended"})
+        self.assertEqual(placed, [])
+        wiring.assert_not_called()
+        self.assertEqual(namespace["RUN_SPEND_USD"], [])
 
     def test_a_judged_pass_debits_the_agent_call_and_the_judge_call(self) -> None:
         """One scored row is two provider calls, and one ledger sees both.
@@ -28282,36 +27896,30 @@ class TheAgentIsFoundBeforeWhatGradesItTests(unittest.TestCase):
         )[0]
 
     def test_the_greeting_is_the_first_thing_step_one_asks_for(self) -> None:
-        """Placement, which content pinning never covered.
-
-        The Opening message is read in several places, so its WORDS were
-        pinned. Where it is printed was not, and it lived as one bullet among
-        a dozen presentation rules ninety lines above this step - so one run
-        greeted first and another inspected, scored, and greeted only when it
-        stopped for a provider key. Both read the same document.
-
-        Asserted inside section 1's own slice: the instruction has to precede
-        the discovery it precedes, and it has to spare a resumed run, which
-        opens with where it stands instead.
-        """
-        normalized = " ".join(self._stage_one().casefold().split())
-        # Asserted before indexing: `.index` raises ValueError when the
-        # instruction is absent, and a crash reads the same as the refusal
-        # this is looking for -- which is the state the pre-PR document was in.
-        self.assertIn(
-            'print "opening message"',
-            normalized,
-            "section 1 never tells the assistant to greet the customer",
+        """The welcome's owner says when to show it; discovery points there."""
+        opening = " ".join(section_text(SKILL, "Opening message").casefold().split())
+        for statement in (
+            "for a new run, show the welcome below verbatim as the first run-facing "
+            "message, before inspection or setup updates",
+            "a resumed unfinished run opens with where it stands instead",
+        ):
+            with self.subTest(statement=statement):
+                self.assertIsNone(document_states(opening, statement))
+        self.assertLess(
+            opening.index("for a new run"),
+            opening.index("welcome to traigent onboarding!"),
         )
+        normalized = " ".join(self._stage_one().casefold().split())
+        self.assertIsNone(document_states(normalized, 'follow "opening message" above'))
         self.assertIn("read-only discovery", normalized)
-        greeting = normalized.index('print "opening message"')
+        greeting = normalized.index('follow "opening message" above')
         discovery = normalized.index("read-only discovery")
         self.assertLess(
             greeting,
             discovery,
             "step 1 starts discovering before it greets the customer",
         )
-        self.assertIn("resuming", normalized[:greeting])
+        self.assertNotIn("first run-facing message", normalized)
 
     def test_the_agent_leads_and_the_guidance_says_why(self) -> None:
         normalized = " ".join(self._stage_one().casefold().split())
@@ -28632,44 +28240,43 @@ class TheScoreNamesTheEvidenceItWritesTests(unittest.TestCase):
         self.assertIn("a run that stops at the ask leaves it standing", dataset)
 
 
-class ABroughtSplitCountsAsDrawnTests(unittest.TestCase):
-    """`in_run` keyed on "once those rows are drawn", which never happens here.
+class SelectedRowsDetermineReviewMembershipTests(unittest.TestCase):
+    """A declared split no longer implies that all its rows enter the paid run."""
 
-    A customer who brings their own split has settled which rows the run uses
-    without this run drawing anything, and the bounded subset is taken only
-    above 100 usable rows - so on a small brought split the literal reading
-    leaves the flag off for the entire run.
-
-    Both readings pass validation, which is what makes it a defect rather than
-    a preference: the card either reports how many flagged rows this run reads
-    or cannot say it at all, and nothing decided which. A blinded run had to
-    guess, and guessed correctly, on a 30-row split.
-    """
-
-    def _dataset(self) -> str:
-        return " ".join(
+    def test_membership_waits_for_the_actual_selection(self) -> None:
+        dataset = " ".join(
             (SKILL_ROOT / "references" / "evaluation-and-dataset.md")
             .read_text()
             .casefold()
             .split()
         )
-
-    def test_settled_is_the_test_rather_than_selected_by_this_run(self) -> None:
-        dataset = self._dataset()
-        self.assertIn("drawn means settled, not selected by this run", dataset)
-        self.assertIn("a split the customer brought is already settled", dataset)
-
-    def test_the_threshold_that_makes_the_literal_reading_fail_is_named(
-        self,
-    ) -> None:
-        """Without the 100-row fact the rule reads as a restatement."""
-        dataset = self._dataset()
-        self.assertIn("taken only above 100 usable rows", dataset)
-
-    def test_what_still_leaves_the_flag_off_is_stated(self) -> None:
-        """A rule that only widens is a rule that always sets the flag."""
-        dataset = self._dataset()
-        self.assertIn("no declared split, and no subset taken yet", dataset)
+        for phrase in (
+            "`in_run` names the selected run rows, not membership in the customer's larger tuning/held-out split",
+            "set it only once the run's selection is settled",
+            "an existing split by itself does not settle that selection",
+            "until then leave it off every entry and report the read as a sample",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, dataset)
+        self.assertNotIn("taken only above 100 usable rows", dataset)
+        self.assertIn(
+            "listing every selected customer-provided row, including those not yet reviewed",
+            dataset,
+        )
+        self.assertIn("each reviewed entry's `in_run` must match that list", dataset)
+        document = (SKILL_ROOT / "references" / "evaluation-and-dataset.md").read_text()
+        reviews = [
+            value
+            for block in re.findall(r"```json\n(.*?)\n```", document, re.S)
+            if isinstance((value := json.loads(block)), dict)
+            and value.get("reviewer") == "assistant"
+        ]
+        self.assertEqual(len(reviews), 1)
+        example = reviews[0]
+        self.assertEqual(
+            set(example["selected_row_ids"]),
+            {row["id"] for row in example["rows"] if row["in_run"]},
+        )
 
 
 class TheOmissionRuleBindsTheRunNotOneInvocationTests(unittest.TestCase):
@@ -29275,7 +28882,7 @@ class TheUnusableBranchHasItsOwnQuestionTests(unittest.TestCase):
         """
         creation = self._creation()
         self.assertIn("is heard as all of them", creation)
-        self.assertIn("name the count this project will really use", creation)
+        self.assertIn("name the selected count under the dataset reference", creation)
 
     def test_both_routes_lead_to_a_bounded_first_run(self) -> None:
         """Pausing buys a better-grounded result, not a bigger one.
@@ -31227,7 +30834,7 @@ class OneShapeAndOneMarkForEveryChoiceTests(unittest.TestCase):
             checkpoint,
         )
         self.assertIn(
-            "approval and budgets owns the two standing reasons that rest on no number",
+            "approval and budgets owns that workflow value",
             checkpoint,
         )
         self.assertIn("state what continuing produces", checkpoint)
@@ -31285,7 +30892,8 @@ class OneShapeAndOneMarkForEveryChoiceTests(unittest.TestCase):
         )
         self.assertIn("managed trial selection, a portal experiment/link", checkpoint)
         self.assertIn(
-            "a recommendation across both runs, and a held-out score", checkpoint
+            "a recommendation across both runs, and a held-out score when independent rows are available",
+            checkpoint,
         )
         # The two rules this paragraph must survive, unchanged, in the text
         # that follows it.
@@ -31312,31 +30920,27 @@ class OneShapeAndOneMarkForEveryChoiceTests(unittest.TestCase):
         it, and the preview is then recommending with no reason stated.
         """
         safety = self._flat(RUN_SAFETY)
-        self.assertIn(
+        for statement in (
             "that observed reason is one reason among several and never the "
             "whole of the case",
-            safety,
-        )
-        for standing in (
             "the only way the customer sees managed selection run against their "
             "own agent",
-            "whether the selected configuration holds up on rows it was not "
-            "chosen on",
-        ):
-            with self.subTest(reason=standing):
-                self.assertIn(standing, safety)
-        self.assertIn(
+            "when independent rows are available, the held-out check reports on "
+            "rows the configuration was not chosen on",
             "never what it will improve, and the no-lift wording below is "
             "unchanged by them",
-            safety,
-        )
+        ):
+            with self.subTest(statement=statement):
+                self.assertIsNone(document_states(safety, statement))
         # The no-headroom route: the standing reasons are what the optional
         # verification is offered ON, and rows are never an in-run route.
-        self.assertIn("the bounded managed run stays the marked route", safety)
-        self.assertIn(
-            "offered as an optional no-lift-possible verification run", safety
-        )
-        self.assertIn("the operating contract in `skill.md` owns that bound", safety)
+        for statement in (
+            "the bounded managed run stays the marked route",
+            "offered as an optional no-lift-possible verification run",
+            "the operating contract in `skill.md` owns that bound",
+        ):
+            with self.subTest(statement=statement):
+                self.assertIsNone(document_states(safety, statement))
 
     #: An instruction to close a customer-facing message on one quoted
     #: question. It is the shape that produced the defect: a card that had
@@ -32986,7 +32590,7 @@ class TheShortfallRidesOnTheOneAskTests(unittest.TestCase):
             "reader meets it, so nothing here can check what the offer stops at",
         )
         total, tuning = (int(group) for group in generated.groups())
-        reserved = re.search(r"reserve (\d+) held-out rows", dataset)
+        reserved = re.search(r"reserve up to (\d+) held-out rows", dataset)
         self.assertIsNotNone(reserved)
         holdout = int(reserved.group(1))
         self.assertEqual(tuning + holdout, total, "the two halves do not sum")
@@ -33593,431 +33197,124 @@ class TrackingRecoveryTests(unittest.TestCase):
 
 
 class TheBoundedDrawSpendsOnDifferentRowsTests(unittest.TestCase):
-    """The subset rules said where rows come from, never that they differ.
+    """Selection counts actual rows while preserving accepted-answer groups.
 
-    Five rules governed the bounded first-run subset - which split, which band,
-    recorded how, named to the user - and a draw satisfying every one of them
-    could put the same input in the eighteen several times. The agent produces
-    one output per input, so those rows are asked the same question by every
-    configuration: the second is a provider call in every trial and no
-    comparison. Compliant behaviour on a 120-row split holding 12 distinct
-    inputs spans 0 to 168 wasted calls of 216; at 12 distinct inputs a draw of
-    eighteen forces at least six repeats by pigeonhole, whatever the picker
-    does.
-
-    These tests exist because two earlier versions of them were welds. The
-    first was presence-only, and appending "make the shortfall up from the
-    bands that can" and appending "draw the subset short by that shortfall" -
-    opposite instructions - both shipped green. The second added a banned-phrase
-    registry and a subject count, and a review then walked through both: a
-    BYTE-NEUTRAL inversion kept every required phrase and rewrote the clause
-    that carried the instruction, and a second contradicting sentence that
-    simply avoided the one counted word shipped green with the ledger
-    re-measured.
-
-    So the required half is no longer `assertIn`. Every clause below is read
-    through `clause_polarity` and `guard_issues`, the filters this file already
-    uses over prose whose job is to name what it forbids: a document that
-    FORBIDS a required clause, states it twice with different polarity, or
-    names it as a misreading rather than issuing it, is refused - and each
-    decision names the clause that carries its consequence as well as the
-    clause that labels it, so half a sentence cannot be inverted under a
-    surviving headline. The subject count is scoped to rule 6 and keyed on a
-    family of markers rather than one word, which is what the word-avoiding
-    construction got past.
-
-    The numbers the rule tells an assistant to use are asserted against what
-    preflight really emits, in `tests/test_preflight.py`, so the guidance
-    cannot name a count the card does not carry.
+    Keep the existing polarity checks: merely mentioning a rule, or forbidding
+    it under the same words, is not an instruction to follow it.
     """
 
-    RULE_COUNTS = {"four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8}
-
-    # (what is decided, clauses that state it, phrases that contradict it)
-    #
-    # Two required clauses per decision wherever the decision has a consequence:
-    # the first names it, the second carries it. The byte-neutral inversion this
-    # class was rebuilt for kept a naming clause word for word and rewrote the
-    # consequence beneath it, so a decision pinned only by its headline is
-    # pinned by the half that is never the instruction.
-    #
-    # Every banned phrase is one that was constructed and shipped green against
-    # an earlier version of this class, or is the reading the rule was rewritten
-    # to close.
     DECIDED = (
         (
-            "which repeat a draw may drop",
+            "actual row limits at every source size",
+            (
+                "at most 28 actual rows",
+                "up to 18 tuning rows",
+                "up to 10 held-out rows",
+            ),
+            ("with more than 100 usable rows", "eighteen caps the questions"),
+        ),
+        (
+            "which repeat may be dropped",
             (
                 "the second is a provider call in every trial and no comparison at all",
-                "and it is the one thing this draw may drop",
+                "it is the one thing this draw may drop",
             ),
-            (
-                "drop the row that repeats the input whatever answer it carries",
-                "distinct by input and answer",
-                "re-key it on the expected answer",
-            ),
+            ("drop the row that repeats the input whatever answer it carries",),
         ),
         (
-            "what a question with more than one accepted answer costs",
+            "complete accepted answers within the row limit",
             (
-                "every one of its rows is drawn and paid for",
-                "a configuration that answered acceptably then scores exactly "
-                "like one that answered wrongly",
+                "retain the complete accepted-answer group when selecting that question",
+                "choose fewer questions when their complete groups would exceed the row limit",
             ),
-            (
-                "scored as a fixed pair by every configuration",
-                "separate none of them - whatever expected answers they carry",
-                "keep one row per input and drop the rest",
-            ),
+            ("keep one row per input and drop the rest",),
         ),
         (
-            "which identity may cut a paid draw",
+            "exact identity rather than punctuation-stripped resemblance",
             (
                 "two inputs are the same question only when they are **equal**",
                 "this rule is never applied to a looser measure",
             ),
-            (
-                "different normalized inputs",
-                "counted the one way preflight already counts it",
-                "`normalized_identity` is the measure this rule uses",
-            ),
+            ("`normalized_identity` is the measure this rule uses",),
         ),
         (
-            "which rows the draw's size is read off",
+            "available rows can fill a missing band without relabelling",
             (
-                "among the rows this run can score",
-                "sizing a paid draw from it buys back the repeats this rule removes",
+                "fill a missing band from other eligible groups in the same source split",
+                "without inventing difficulty labels",
             ),
-            (
-                "at the tuning split's distinct-input count",
-                "`tuning_distinct_rows`",
-                "the tuning split's distinct inputs, whichever is smaller",
-            ),
+            ("the shortfall is not made up from the bands that can",),
         ),
         (
-            "whether distinctness is measured within a band or across the draw",
-            (
-                "distinct **across the whole draw**",
-                "buys nothing when another band offers the same input again",
-            ),
-            (
-                "distinct within each band",
-                "distinct within a band",
-                "is still worth taking when another band offers that input again",
-            ),
-        ),
-        (
-            "how eighteen questions are allocated without repeating an input",
-            (
-                "4 easy, 5 medium, 5 hard and 4 very-hard questions",
-                "take up to each target from questions not already selected anywhere in the draw",
-            ),
-            ("take up to four questions each band has not already contributed",),
-        ),
-        (
-            "what happens when a band cannot reach its target",
-            (
-                "when a band cannot reach its target",
-                "the draw is short by that much",
-                "the shortfall is not made up from the bands that can",
-            ),
-            (
-                "when a band cannot reach four",
-                "make the shortfall up from the bands that can",
-                "so the draw is still eighteen",
-                "top the draw back up to eighteen",
-                "pad the remainder from the other bands",
-                "so the eighteen is reached",
-            ),
-        ),
-        (
-            "whether the rule reaches the held-out split",
-            (
-                "this rule sizes the tuning draw and nothing else",
-                "this rule does not reach it",
-            ),
-            (
-                "applies to both draws",
-                "the held-out split is drawn short",
-                "draw the held-out split short",
-            ),
-        ),
-        (
-            "whether de-duplication can cost a question",
-            (
-                "de-duplication removes no question",
-                "every distinct input a band holds stays eligible",
-            ),
-            (
-                "de-duplication may remove a question",
-                "a band's inputs need not stay eligible",
-                "drop any band whose rows are all copies",
-            ),
-        ),
-        (
-            "what exact matching cannot see",
-            (
-                "is fifty different questions to this rule",
-                "the run pays for every one of them",
-            ),
-            (
-                "rewording a row is caught here",
-                "this also catches reworded repeats",
-            ),
+            "the customer's original split membership",
+            ("preserving their original membership",),
+            ("kept at the size it already has, whatever its composition",),
         ),
     )
-
-    # A directive that must be stated once. Stating it twice is how a document
-    # comes to hold two answers, and the second one is what a reader acts on.
-    STATED_ONCE = (
-        "the draw is short by that much",
-        "distinct **across the whole draw**",
-        "this rule does not reach it",
-        "two inputs are the same question only when they are **equal**",
-    )
-
-    #: Ways a sentence says a band could not fill its target.
-    SHORT_BAND = (
-        "shortfall",
-        "cannot reach four",
-        "cannot reach its target",
-        "comes up empty",
-        "band is short",
-        "short band",
-        "could not give",
-        "runs short",
-        "falls short",
-    )
-    #: Ways a sentence says how big the draw ends up.
-    DRAW_SIZE = (
-        "eighteen",
-        "the draw is short",
-        "the size",
-        "18 rows",
-    )
-
-    def dataset_document(self) -> str:
-        return (SKILL_ROOT / "references" / "evaluation-and-dataset.md").read_text()
 
     def subset_section(self) -> str:
-        document = self.dataset_document()
-        opening = "## First-run subset for a large dataset"
-        self.assertIn(opening, document)
-        return document.split(opening, 1)[1].split("\n## ", 1)[0]
-
-    def rule_six(self) -> str:
-        """Rule 6 alone, which is the block whose subjects are counted."""
-        section = self.subset_section()
-        opening = "6. **Draw different questions"
-        self.assertIn(opening, section, "rule 6 lost its lead-in")
-        return section[section.index(opening) :].split("\n\nKeeping at least", 1)[0]
-
-    def holdout_section(self) -> str:
-        document = self.dataset_document()
-        opening = "## Held-out set and claims"
-        self.assertIn(opening, document)
-        return document.split(opening, 1)[1].split("\n## ", 1)[0]
-
-    def normalized(self, text: str) -> str:
-        return " ".join(text.casefold().split())
+        return section_text(
+            SKILL_ROOT / "references" / "evaluation-and-dataset.md",
+            "First-run dataset scope",
+        )
 
     def test_each_decision_is_stated_and_its_contradictions_are_not(self) -> None:
-        """The settled answer, read for polarity, and the readings that slipped past.
-
-        `assertIn` was what the byte-neutral inversion beat: it fires when a
-        phrase is DELETED and says nothing about whether the document tells an
-        assistant to do it, forbids it, or calls it a misreading. Both filters
-        below are the ones this file already applies to prose that has to name
-        what it forbids, so a required clause is checked the same way a banned
-        one is rather than by a weaker rule of its own.
-        """
         section = self.subset_section()
         for decision, required, banned in self.DECIDED:
             for clause in required:
                 with self.subTest(decision=decision, states=clause):
-                    polarity = clause_polarity(section, clause)
                     self.assertIn(
-                        polarity,
-                        ("mandates", "unqualified"),
-                        f"the subset rules {polarity} {clause!r}, so they no "
-                        f"longer decide {decision} the way this pins it",
+                        clause_polarity(section, clause), ("mandates", "unqualified")
                     )
-                    self.assertTrue(
-                        guard_issues(section, clause),
-                        f"{clause!r} is written but not issued - the sentence "
-                        f"around it names or recalls it - so {decision} is "
-                        "decided by whatever follows instead",
-                    )
+                    self.assertTrue(guard_issues(section, clause))
             for clause in banned:
                 with self.subTest(decision=decision, forbids=clause):
                     self.assertIn(
-                        clause_polarity(section, clause),
-                        ("absent", "forbids"),
-                        f"the subset rules now answer {decision} two ways; the "
-                        "second answer is the one a reader acts on",
+                        clause_polarity(section, clause), ("absent", "forbids")
                     )
-
-    def test_a_directive_that_governs_is_stated_exactly_once(self) -> None:
-        """Two statements of one rule are two rules, and one of them will drift.
-
-        This is the guard the presence welds did not have: appending an opposite
-        instruction leaves the original in place, so every assertion about the
-        original still passes. Counting sees it.
-        """
-        section = self.subset_section()
-        for clause in self.STATED_ONCE:
-            with self.subTest(directive=clause):
-                written = clause_occurrences(section, clause)
-                self.assertEqual(
-                    len(written),
-                    1,
-                    f"{clause!r} is stated {len(written)} times in the subset "
-                    "rules; a directive with two homes can be changed in one",
-                )
-
-    def test_the_short_band_question_is_answered_in_one_sentence(self) -> None:
-        """A second answer that avoids the counted word is still a second answer.
-
-        The previous version of this counted the word `shortfall` across the
-        whole subset section, and a review beat it from both sides at once.
-        False green: "Where a band comes up empty, take the rows it could not
-        give from the bands that still have inputs left, so the eighteen is
-        reached" contradicts the rule, introduces no banned word, and never
-        writes `shortfall`. False red: rule 2 may legitimately say the word
-        while talking about REPORTING rather than deciding.
-
-        So the count is scoped to rule 6, and it counts SENTENCES that answer
-        the question - one that says a band came up short and says what the
-        draw's size does about it - rather than occurrences of one noun. The
-        de-duplication sentence beside it mentions a band contributing nothing
-        and says nothing about the size, which is why it is not a second answer
-        and is not counted as one.
-        """
-        flat = self.normalized(self.rule_six())
-        sentences = [part for part in re.split(r"(?<=[.!?])\s", flat) if part.strip()]
-        answering = [
-            sentence
-            for sentence in sentences
-            if any(marker in sentence for marker in self.SHORT_BAND)
-            and any(marker in sentence for marker in self.DRAW_SIZE)
-        ]
-        self.assertEqual(
-            len(answering),
-            1,
-            "rule 6 answers the short-band question in "
-            f"{len(answering)} sentences: {answering}. It is settled in one "
-            "sentence or it is settled in none.",
-        )
-
-    def test_the_held_out_split_owns_its_own_distinctness_rule(self) -> None:
-        """Scoping a rule out of a split is only safe when something else has it.
-
-        The previous version asserted the held-out section never says
-        `distinct`, which decided a semantic question - has ownership been
-        muddled - from a surface signal whose not-found branch was the pass.
-        It also blocked the fix: ten held-out rows all asking one question were
-        fully compliant, under a guide whose held-out claim is about
-        generalisation, and adding the obvious rule went red.
-
-        Both halves are asserted instead. Rule 6 says it stops, the held-out
-        section says what happens there, and the held-out answer is written in
-        exactly one of the two places.
-        """
-        subset = self.subset_section()
-        holdout = self.holdout_section()
-        owned = "the ten are ten different questions"
-        self.assertIn(
-            clause_polarity(holdout, owned),
-            ("mandates", "unqualified"),
-            "the held-out section no longer states its own distinctness rule, "
-            "so a repeat among the ten is answered by nothing",
-        )
-        self.assertTrue(guard_issues(holdout, owned))
-        self.assertEqual(
-            clause_occurrences(subset, owned),
-            [],
-            "the held-out rule is now stated in the subset rules too; a rule "
-            "with two homes can be changed in one",
-        )
-        self.assertIn(
-            clause_polarity(subset, "this rule does not reach it"),
-            ("mandates", "unqualified"),
-        )
-        for mandate in (
-            "ten is therefore exact in both directions, never a floor to grow from",
-            "top each set up to its composition with generated rows rather than "
-            "dropping a band",
+        for forbidden in (
+            "truncate a group",
+            "fill tuning from an existing held-out split",
         ):
-            with self.subTest(mandate=mandate[:40]):
-                self.assertIn(mandate, self.normalized(holdout))
+            with self.subTest(forbidden=forbidden):
+                self.assertEqual(clause_polarity(section, forbidden), "forbids")
 
-    def test_the_flow_prices_the_rows_actually_drawn(self) -> None:
-        """Stage 6 named a number that can now differ from what is bought.
-
-        "18 rows by default" and "that subset" were unambiguous only while the
-        two were always equal. The estimate has to name which of them it is
-        built from, and the eighteen has to say which currency it is in: on a
-        multi-reference file eighteen questions bring thirty-six rows, so the
-        flow that says "18 rows" understates the price of exactly the dataset
-        class this rule exists for.
-
-        Two clauses that used to follow are gone rather than corrected, for one
-        reason. The first named the population #356 proved wrong; the second
-        admitted only that the draw can come in BELOW eighteen, which is the
-        opposite of the multi-reference case. Both sat in the file that owns
-        pricing, quoting a reference decision they could get wrong, and a
-        conclusion that routes to a reference for its reason must not be able
-        to carry that reference's mistake. Every stale spelling is refused by
-        name here, because nothing else in this file reads SKILL.md for one.
-        """
-        skill = self.normalized(SKILL.read_text())
-        # What the flow still owes is the PRICE, and only the price. It no
-        # longer restates the draw's parameters, because it no longer performs
-        # the draw: section 4 does (traigent-first-run#473), and a flow that
-        # repeats a reference's numbers is a second place they can be changed.
-        # Every stale spelling below is still refused, which is what actually
-        # guarded the defect this test was written for.
-        self.assertIn(
-            "estimate runtime and spend from the rows those questions bring, "
-            "never from the full row count",
-            skill,
-        )
-        self.assertIn("this stage prices it and never draws it", skill)
-        for stale in (
-            "estimate runtime and spend from that subset, not from the full row count",
-            "the tuning split's distinct inputs or a band's own rows run short",
-            "which can be below 18",
-            "18 rows by default",
-            "`tuning_distinct_rows`",
-        ):
-            with self.subTest(stale=stale):
-                self.assertNotIn(self.normalized(stale), skill)
-
-    def test_the_stated_rule_count_is_the_number_of_rules(self) -> None:
-        """A label that counts nothing goes stale the first time anyone adds a rule.
-
-        Derived from the list rather than compared against a constant: the
-        expectation is what the document's own numbered items add up to, so this
-        keeps holding for a seventh rule and fails on a sixth left labelled five.
-
-        The item pattern does not require a bold lead-in. Requiring one made a
-        rule written without it invisible to the count, which is the same
-        not-found-is-a-pass shape this file keeps finding elsewhere.
-        """
+    def test_the_shared_identity_and_group_rules_have_one_home(self) -> None:
         section = self.subset_section()
-        stated = re.search(r"^(\w+) rules make the subset honest:$", section, re.M)
-        self.assertIsNotNone(stated, "the subset rules lost their counted preamble")
-        items = re.findall(r"^(\d+)\. ", section, re.M)
-        self.assertEqual(
-            [str(number) for number in range(1, len(items) + 1)],
-            items,
-            "the subset rules are not numbered 1..n, so no count describes them",
+        for clause in (
+            "two inputs are the same question only when they are **equal**",
+            "retain the complete accepted-answer group when selecting that question",
+        ):
+            self.assertEqual(len(clause_occurrences(section, clause)), 1)
+        holdout = " ".join(
+            section_text(
+                SKILL_ROOT / "references" / "evaluation-and-dataset.md",
+                "Held-out set and claims",
+            )
+            .casefold()
+            .split()
         )
-        self.assertEqual(
-            self.RULE_COUNTS.get(stated.group(1).casefold()),
-            len(items),
-            f"the section says {stated.group(1)!r} rules and lists {len(items)}",
+        self.assertIn("preserving accepted answers under rule 6 above", holdout)
+        self.assertIn(
+            "replace an exact repeat only with another eligible real group from the same source split",
+            holdout,
         )
+        self.assertIn("when none fits, use fewer rows", holdout)
+
+    def test_the_flow_prices_the_actual_selected_files(self) -> None:
+        baseline = " ".join(
+            section_text(SKILL, "6. Approve and run the baseline").casefold().split()
+        )
+        self.assertIn("prices them and never draws them", baseline)
+        self.assertIn(
+            "estimate runtime and spend from the actual selected files", baseline
+        )
+        self.assertNotIn("more than 100 usable rows", baseline)
+
+    def test_six_lists_the_six_rules_it_owns(self) -> None:
+        section = self.subset_section()
+        self.assertIn("Six rules make the subset honest:", section)
+        self.assertEqual(re.findall(r"^(\d+)\. ", section, re.M), list("123456"))
 
 
 class TheNameStampNamesOneMomentTests(unittest.TestCase):
@@ -35914,7 +35211,7 @@ class TheIntegrationReadsArePinnedTests(unittest.TestCase):
                 "safety",
                 safety,
                 "whose reason is the observed opportunity where the baseline "
-                "measured one and otherwise one of the two standing reasons",
+                "measured one and otherwise the workflow value above",
             ),
             (
                 "safety",
