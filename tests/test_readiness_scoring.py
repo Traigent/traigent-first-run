@@ -11919,6 +11919,20 @@ class TheTopBandsNeedAReadOfTheAnswersTests(unittest.TestCase):
         )
         self.assertFalse(undeclared.band_limited_by_unread_answers)
 
+    def test_a_declared_short_draw_lifts_only_after_every_selected_row_is_read(
+        self,
+    ) -> None:
+        scores = [
+            _healthy_score(
+                _review(reviewed=count, reviewed_in_run=count, selected_run_rows=24)
+            )
+            for count in (23, 24)
+        ]
+        self.assertTrue(scores[0].band_limited_by_unread_answers)
+        self.assertFalse(scores[1].band_limited_by_unread_answers)
+        self.assertGreaterEqual(MODULE.BAND_ORDER.index(scores[1].band), self._strong())
+        self.assertEqual(scores[0].overall, scores[1].overall)
+
     def test_the_evidence_line_says_coverage_where_it_covered_the_comparison(
         self,
     ) -> None:
@@ -29385,7 +29399,8 @@ class RowReviewCoverageDescribesOnlyWhatWasReadTests(unittest.TestCase):
         line = MODULE.row_review_evidence(review, facts)
         self.assertIn("sampled 12 of 28 provided rows", line)
         self.assertIn(
-            "12 of them from the 28 rows in the declared tuning/held-out split", line
+            "12 marked for this run by the row review (declared tuning/held-out split: 28 rows)",
+            line,
         )
         self.assertIn("unreviewed answers are assumed sound rather than verified", line)
         self.assertNotIn("that covers every row", line)
@@ -29405,7 +29420,8 @@ class RowReviewCoverageDescribesOnlyWhatWasReadTests(unittest.TestCase):
         line = MODULE.row_review_evidence(review, facts, "generated")
         self.assertIn("reviewed all 18 provided rows", line)
         self.assertIn(
-            "18 of them from the 28 rows in the declared tuning/held-out split", line
+            "18 marked for this run by the row review (declared tuning/held-out split: 28 rows)",
+            line,
         )
         self.assertIn("10 generated rows not reviewed", line)
         self.assertNotIn("that covers every row", line)
@@ -29430,7 +29446,7 @@ class RowReviewCoverageDescribesOnlyWhatWasReadTests(unittest.TestCase):
                 line = MODULE.row_review_evidence(review, facts)
                 if reviewed < 28:
                     self.assertIn(
-                        f"{reviewed} of them from the 28 rows in the declared tuning/held-out split",
+                        f"{reviewed} marked for this run by the row review (declared tuning/held-out split: 28 rows)",
                         line,
                     )
                 self.assertNotIn("from the 18 rows this run is graded on", line)

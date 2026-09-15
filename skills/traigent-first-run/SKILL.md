@@ -325,7 +325,7 @@ If calibration reaches its timeout: [`references/evaluation-and-dataset.md` § W
 If a check reports that the dataset or evaluator cannot separate configurations: [`references/evaluation-and-dataset.md` § Quality diagnosis and repair choice](references/evaluation-and-dataset.md#quality-diagnosis-and-repair-choice).
 If the agent and the evaluator have to be validated against each other before optimization: [`references/component-creation.md` § Compatibility contract](references/component-creation.md#compatibility-contract).
 If a repair is to move a component from `limited` or `invalid` to `real`: [`references/component-creation.md` § Readiness transitions](references/component-creation.md#readiness-transitions).
-If the dataset carries more than 100 usable rows: [`references/evaluation-and-dataset.md` § First-run subset for a large dataset](references/evaluation-and-dataset.md#first-run-subset-for-a-large-dataset).
+If dataset rows need selecting for the first run: [`references/evaluation-and-dataset.md` § First-run dataset scope](references/evaluation-and-dataset.md#first-run-dataset-scope).
 
 Follow the local validation sequence: record task-grounded calibration cases and semantic coverage;
 resolve only material grading ambiguity with one question; run deferred-SDK static preflight over
@@ -389,9 +389,8 @@ If a public signature or capability has to be confirmed on the installed SDK: [`
 
 ### 6. Approve and run the baseline
 
-Scope the run before pricing it. Where the dataset carries more than 100 usable rows, section 4
-already drew the bounded first-run subset; this stage prices it and never draws it. Estimate runtime
-and spend from the rows those questions bring, never from the full row count.
+Section 4 already selected and recorded the bounded run rows under the dataset reference; this
+stage prices them and never draws them. Estimate runtime and spend from the actual selected files.
 
 Report subset and full sizes from the ids section 4 recorded, and state that the small first-run
 sample limits the claim.
@@ -472,8 +471,8 @@ Persist `traigent-runs/config-space.json` only after nonzero search trials, from
 used; only that current-run document reaches closing readiness. Stop on provider, backend, or
 portal failure with the concrete reason and one recovery; preserve paid work and never replace it
 with mock or synthetic results. Do not fabricate configurations to reach a count.
-After search, recommend a configuration from tuning scores across both measurements and score
-only that one on the held-out rows. A frontier may contain no point worse than the current
+After search, recommend a configuration from tuning scores across both measurements. If independent
+held-out rows are available, score only that one on them; otherwise report that check unavailable. A frontier may contain no point worse than the current
 baseline under the declared objective direction; its conclusions must match measured evidence.
 
 **Read next.** Required: [`references/evaluation-and-dataset.md` § Held-out set and claims](references/evaluation-and-dataset.md#held-out-set-and-claims).
@@ -486,9 +485,9 @@ twelve-configuration default ran in full, its initial configuration among them -
 is never reduced, and an approved disclosure does not make it so; the enhanced run used real
 controls and either produced at least 10 of its 12 permitted trials, matched an explicitly approved
 and disclosed reduced target, or reports a concrete stop/failure reason; and a
-best configuration and non-degenerate measures exist. Verify the held-out score belongs to the one
-configuration this run recommends, chosen on the tuning scores, and that no other candidate was
-scored on those rows. Report truncation and persistence failures, require the portal
+best configuration and non-degenerate measures exist. When held-out scoring completed, verify its
+score belongs to the one configuration this run recommends, chosen on tuning scores, and that no
+other candidate was scored on those rows. Report truncation and persistence failures, require the portal
 probe to have stayed green, and verify each portal link before claiming visibility.
 
 **Read next.** Required: [`references/run-safety.md` § Post-run verification](references/run-safety.md#post-run-verification).
@@ -496,7 +495,7 @@ If the search stopped, failed, or returned zero trials: [`references/run-safety.
 
 Report in five layers: outcome, what the evidence establishes, current state and limits, one next
 action, then auditable details. Compare baseline and enhanced tuning outcomes, show the selected
-configuration's one held-out result, and state sample limits, exclusions by id, known-cost
+configuration's held-out result or why it is unavailable, and state sample limits, exclusions by id, known-cost
 subtotal, unknown calls, budget debits and remaining allowance, failed or incomplete work, and
 verified artifact/portal links. Name substitutes and their limits before interpreting them; keep
 every persisted experiment and label an unsynced baseline local-only.
@@ -522,15 +521,13 @@ over substitutes, every insight describes only the walkthrough.
 **Read next.** Required: [`references/sdk-execution.md` § Result checks](references/sdk-execution.md#result-checks).
 If the installed result exposes a per-example audit or an insights helper: [`references/sdk-execution.md` § Reading the result for insight](references/sdk-execution.md#reading-the-result-for-insight).
 
-Close with one recommended next action grounded in the recorded opening caps and this run's
-measured limits. A substitute fills a gap provisionally; it does not close it. Explain what that
-action would improve and the bound that most limited this walkthrough, without promising what a
-larger run would find. Use the continuation handoff for the state-specific recommendation,
+Close with one recommended next action for the customer's own agent, data, or evaluation method,
+grounded in this run's evidence. A substitute fills a gap provisionally; it does not close it.
+Use the continuation handoff for the state-specific recommendation,
 reply-ready final block, and optional skills package. On the throwaway route only, add one
 reminder: `Traigent is installed in <absolute path>/.venv-traigent for this walkthrough; to keep
 using it, install it into your own environment.` Do not reopen their environment choice.
-Handoff observations are hypotheses to test
-at full scale; `continue` never bypasses approval. Include optional telemetry repair when cost
+Causal interpretations remain hypotheses; `continue` never bypasses approval. Include optional telemetry repair when cost
 comparison is unavailable; it need not precede the quality result or displace a more important
 data/evaluator gap.
 

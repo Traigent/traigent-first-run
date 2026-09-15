@@ -362,7 +362,6 @@ MAX_REPORTED_DATASET_FINDINGS = 10
 MAX_REPORTED_EXECUTION_WITNESSES = 5
 WIRING_CHECK_EXAMPLES = 10
 FIRST_RUN_TUNING_ROWS = 18
-BOUNDED_SUBSET_ABOVE_ROWS = 100
 EXPECTED_DIFFICULTIES = {"easy", "medium", "hard", "very-hard"}
 REFERENCE_FREE_METHODS = {
     "llm-judge-pointwise",
@@ -1593,21 +1592,10 @@ def exact_input_identity(value: Any) -> str:
 
 @dataclass(frozen=True)
 class DrawableInputs:
-    """The different questions a bounded first run can draw, and what they cost.
+    """Exact input groups available to the tuning draw, counted in actual rows.
 
-    Two numbers, because a draw is capped in QUESTIONS and paid for in ROWS,
-    and this file has already published one number under the other one's name.
-    `rows_per_question` carries the scoreable rows each question brings, so a
-    caller asking "what does a cap of eighteen buy" gets an answer taken over
-    this file rather than an assumption that every question brings one row.
-
-    A question can bring more than one row honestly: a multi-reference split
-    writes one question once per accepted answer, and rule 6 draws all of them
-    because dropping one narrows what counts as correct. So the row figure is a
-    RANGE. Which questions a compliant draw takes is decided by the band floor
-    and by the author, not here, and quoting a single row number would be
-    inventing that decision. The range collapses to one number whenever every
-    question brings the same number of rows, which is the ordinary file.
+    Every accepted-answer row for a selected question stays together. The draw
+    may therefore contain fewer questions than its eighteen-row budget.
     """
 
     rows_per_question: tuple[int, ...]
@@ -1622,27 +1610,10 @@ class DrawableInputs:
         return sum(self.rows_per_question)
 
     def rows_for(self, questions: int) -> tuple[int, int]:
-        """An OUTER BOUND on the scoreable rows a draw of `questions` brings.
+        """Outer row bounds for this many complete groups, before the row cap.
 
-        Not a reachable range, and the difference is stated because an earlier
-        version of this docstring claimed otherwise. Both ends are computed by
-        taking the cheapest and the dearest questions, and rule 6 also requires
-        at least four questions from each of four difficulty bands - a
-        constraint this object cannot see, because nothing here reads a row's
-        difficulty. Where cost correlates with difficulty the cheapest
-        questions sit in one band and no compliant draw can take them: on 30
-        easy questions of one row beside 90 harder ones of three, the arithmetic
-        low end is 18 while the cheapest COMPLIANT draw is four easy and
-        fourteen others, which is 46.
-
-        So the true figure is inside this interval and the interval is honest,
-        but neither end is a quote. What a run actually pays is the rows the
-        draw brings once it exists, which is what rule 6 tells an assistant to
-        report; this is the bound available before anybody has drawn.
-
-        A cap at or above the questions this file asks buys all of them, and
-        both ends meet on the whole set - which is exact, because there is
-        nothing left for a band floor to forbid.
+        Difficulty coverage and the recorded draw decide which groups are
+        selected. Neither endpoint promises that a particular draw exists.
         """
         ordered = sorted(self.rows_per_question)
         taken = max(0, min(questions, len(ordered)))
@@ -1715,48 +1686,31 @@ def drawable_distinct_inputs(
 
 
 def first_run_question_cap(
-    usable_rows: int, distinct_questions: int | None = None
+    usable_rows: int,
+    distinct_questions: int | None = None,
+    *,
+    rows_per_question: tuple[int, ...] | None = None,
 ) -> int:
-    """How many DIFFERENT questions a paid first-run draw may take.
+    """Upper question count within the first run's eighteen actual tuning rows.
 
-    QUESTIONS, and the name says so because the previous spelling did not.
-    `FIRST_RUN_TUNING_ROWS` is an eighteen-ROW budget, `distinct_questions` is a
-    QUESTION count, and one `min()` over the two was emitted under a row label:
-    on a split of 400 rows asking 200 questions the card proposed "18 usable
-    rows" for a draw that brings 36, so a twelve-trial run priced at 216 calls
-    and bought 432. Three vocabularies in one expression is the same defect
-    this rule exists to close, on a fourth axis after the file, split and
-    labelled ones. The cap is in questions; `DrawableInputs.rows_for` converts
-    it, and both numbers are published.
-
-    The eighteen applies only where the bounded subset does. Below
-    `BOUNDED_SUBSET_ABOVE_ROWS` the run scores the whole dataset, so the cap is
-    every question the file asks rather than a cut this guidance never extends
-    that far.
-
-    `distinct_questions` is optional so that a caller holding only a row count
-    still gets an answer rather than a wrong one. Absent, nobody counted the
-    questions, and the honest fallback is the row-based figure this check
-    published before the count existed.
-
-    NONE IS NOT ZERO, and the difference is a priced run against no run at all.
-    `None` means nobody measured; `0` means somebody measured and found nothing
-    to draw. A caller that collapses the two - `distinct_questions or 0` is the
-    one-character way to do it - prices a first run at zero on any payload
-    written before the count existed. That is this rule's own defect pointed the
-    other way: a number standing in for a measurement nobody took.
-    `test_an_unmeasured_count_is_not_a_count_of_zero` pins both branches
-    against each other so the collapse cannot land green.
+    With group sizes, count complete groups that fit; the actual draw may take
+    fewer to preserve difficulty coverage. Without sizes this is only a
+    question ceiling, not a claim that each question costs one row. An absent
+    distinct count differs from a measured zero.
     """
-    if distinct_questions is None:
-        return (
-            FIRST_RUN_TUNING_ROWS
-            if usable_rows > BOUNDED_SUBSET_ABOVE_ROWS
-            else usable_rows
-        )
-    if usable_rows <= BOUNDED_SUBSET_ABOVE_ROWS:
-        return distinct_questions
-    return min(FIRST_RUN_TUNING_ROWS, distinct_questions)
+    cap = min(
+        FIRST_RUN_TUNING_ROWS,
+        usable_rows,
+        usable_rows if distinct_questions is None else distinct_questions,
+    )
+    if rows_per_question is None:
+        return cap
+    total = 0
+    for count, group_rows in enumerate(sorted(rows_per_question)[:cap]):
+        total += group_rows
+        if total > FIRST_RUN_TUNING_ROWS:
+            return count
+    return min(cap, len(rows_per_question))
 
 
 def normalize_dataset_row(
@@ -4639,21 +4593,14 @@ def check_dataset(
             WARN,
             f"{len(rows)} rows is a wiring check, not a credible score",
         )
-    # The cap named the walkthrough's eighteen whatever the file held, so a
-    # dataset of 400 rows asking 12 questions was proposed an 18-row subset in
-    # the same JSON that reported twelve. The population is named by the helper
-    # rather than taken from whichever local list of rows was nearest, because
-    # getting it wrong is not one bug: it is one bug per scoping axis, and this
-    # file has had it on three of them.
-    #
-    # BOTH NUMBERS ARE PUBLISHED, because the cap is in questions and the money
-    # is in rows, and quoting either alone under the other's name is the fourth
-    # axis of the same mistake. A multi-reference split of 200 questions over
-    # 400 rows buys 36 rows for an eighteen-question cap; the card used to say
-    # "18 usable rows" and a twelve-trial run priced at 216 calls bought 432.
+    # Bound actual tuning rows at every source size. Accepted-answer groups
+    # stay complete; selection and difficulty coverage can lower this proposal.
     drawable = drawable_distinct_inputs(rows, reference_free=reference_free)
-    first_run_questions = first_run_question_cap(len(rows), drawable.questions)
+    first_run_questions = first_run_question_cap(
+        len(rows), drawable.questions, rows_per_question=drawable.rows_per_question
+    )
     fewest_rows, most_rows = drawable.rows_for(first_run_questions)
+    most_rows = min(FIRST_RUN_TUNING_ROWS, most_rows)
     rows_clause = (
         f"{fewest_rows} scoreable rows"
         if fewest_rows == most_rows
@@ -4666,11 +4613,18 @@ def check_dataset(
     )
     emit(
         "dataset-first-run-rows",
-        PASS,
-        f"proposed first-run subset cap: {first_run_questions} questions, "
-        f"which bring {rows_clause} per configuration, from {len(rows)} usable "
-        f"rows{distinct_clause}; select and record the actual row ids before "
-        "baseline approval",
+        PASS if first_run_questions else WARN,
+        f"proposed first-run subset cap: up to {first_run_questions} questions; "
+        f"at that count, {rows_clause} per configuration within the "
+        f"{FIRST_RUN_TUNING_ROWS}-row tuning limit, from {len(rows)} usable "
+        f"rows{distinct_clause}; "
+        + (
+            "difficulty coverage may require fewer questions; select and record "
+            "the actual row ids before baseline approval"
+            if first_run_questions
+            else "no complete question group fits; prepare eligible working "
+            "material before baseline approval"
+        ),
         {
             "first_run_questions": first_run_questions,
             "first_run_rows_fewest": fewest_rows,

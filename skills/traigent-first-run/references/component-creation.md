@@ -243,7 +243,7 @@ What that sounds like, when the agent and the evaluator are both unusable and th
 > A. **I build both (recommended).** In a reversible copy under `traigent-runs/`, leaving yours
 > untouched, and re-validate, then carry on. Neither file has anything to mend - no call path in
 > one, no rubric in the other - so what I write is a generated stand-in: not a repair
-> of yours, a substitute for it. The run then measures my stand-ins against your 30 rows and your
+> of yours, a substitute for it. The run then measures my stand-ins against the selected rows from your 30 and your
 > task, so it shows the workflow end to end and cannot tell you how your own code performs.
 > B. Pause, and I will give you the exact checks a corrected version has to pass. Fix them and the
 > same first run measures your code instead of my stand-ins.
@@ -262,15 +262,15 @@ standing path line.
 
 Three things that sentence has to carry, because a reader supplies each of them wrongly otherwise.
 Name the substitute in WORDS. There is no mark for it, deliberately. Say what the run will
-actually read: "your rows" is heard as all of them, and above 100 usable rows the paid run takes a
-bounded sample, so name the count this project will really use.
+actually read: "your rows" is heard as all of them, so name the selected count under the dataset
+reference's First-run dataset scope.
 And say that the first run is bounded whichever route they pick - a customer choosing to pause and
 fix their own components is buying a better-grounded result, not a bigger one, and letting them
 believe otherwise sells the pause on a promise this walkthrough does not make.
 
 How much of the result stays about the customer's product belongs in that first route's sentence,
 and it is a property of what SURVIVES the build, never of the copy being reversible. Mending one
-broken line in a real scorer keeps their ruler, and the result may read `✅`; writing the call path
+broken line in a real evaluator keeps their evaluation method, and the result may read `✅`; writing the call path
 an echo stub never had keeps nothing but their rows and their task, and it reads as a substitute. Say which of
 the two this is, in the sentence itself. A build that promises "your product" over material this run
 wrote is the real-world/walkthrough separation broken in the one place the customer is reading - and a build
@@ -406,8 +406,8 @@ dataset has to score the product's idea of a right answer, so it holds for input
 outputs this dataset does not contain and separates right from wrong rather than recognising these
 particular answers. A dataset built to match an evaluator has to exercise the real task that
 evaluator scores, not only the shapes it happens to handle. Say which way the derivation ran, in the
-terms `references/run-safety.md` sets out at the close: a ruler drawn around one object measures
-nothing else, and the number it gives is optimistic about exactly the material it was drawn around.
+terms `references/run-safety.md` sets out at the close: agreement on material used to design the
+evaluation method need not extend to unseen examples.
 
 ## Agent creation
 

@@ -10,8 +10,8 @@ words mean and how to say them.
 ## How to use this vocabulary
 
 - Define a term the first time it appears in the conversation, in one plain
-  sentence, then use it consistently. Do not switch synonyms mid-run (pick
-  "evaluator", not sometimes "scorer", sometimes "judge", sometimes "grader").
+  sentence, then use it consistently. Say "evaluation method" in recommendations; the SDK calls
+  its implementation an "evaluator". Avoid "ruler", "scorer", or "grader" as shifting names for it.
 - Prefer the "plain" wording with the user; keep the "precise" wording, check IDs,
   pass tallies and setup bookkeeping in the report. Say "local setup checks" for
   preflight and explain what needs attention or comes next. Pending SDK or key
@@ -77,7 +77,7 @@ Labeled vs unlabeled
   Plain: labeled means each input has its correct answer attached; unlabeled
   means we only have the inputs (for example, raw logs).
 
-Evaluator (evaluation method, scorer)
+Evaluation method (evaluator in the SDK)
   Plain: the rule or program that decides whether an answer is right, and how
   right.
   Precise: the function that maps (agent output, expected output) to a score.

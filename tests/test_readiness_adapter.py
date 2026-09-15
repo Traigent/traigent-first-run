@@ -6540,6 +6540,106 @@ class ARowReviewIsMatchedToTheRowsPreflightReadTests(unittest.TestCase):
             " ".join(card.stdout.split()),
         )
 
+    def _answer_review_covers_selected_rows(
+        self, rows: list[dict], review: dict
+    ) -> bool:
+        with tempfile.TemporaryDirectory() as raw:
+            dataset = _write_jsonl(Path(raw), "d.jsonl", rows)
+            facts = MODULE.dataset_facts_from_preflight(_preflight_records(dataset))
+        return MODULE.answer_key_read(
+            facts, MODULE.row_review_from_document(review, facts)
+        )
+
+    def test_selected_rows_set_the_review_denominator_for_short_draws(self) -> None:
+        rows = self._rows(60)
+        for tuning, held_out in ((18, 6), (14, 10), (18, 10)):
+            selected = rows[:tuning] + rows[28 : 28 + held_out]
+            ids = [row["id"] for row in selected]
+            with self.subTest(tuning=tuning, held_out=held_out):
+                for complete in (True, False):
+                    review = self._review(ids if complete else ids[:-1])
+                    review["selected_row_ids"] = ids
+                    if not complete:
+                        outside = self._review([rows[-1]["id"]])["rows"][0]
+                        outside["in_run"] = False
+                        review["rows"].append(outside)
+                    process = self._score_with_review(rows, review)
+                    self.assertEqual(process.returncode, 0, process.stderr)
+                    self.assertEqual(
+                        self._answer_review_covers_selected_rows(rows, review), complete
+                    )
+                card = self._score_with_review(
+                    rows, dict(self._review(ids), selected_row_ids=ids), render=True
+                )
+                self.assertEqual(card.returncode, 0, card.stderr)
+                self.assertIn(
+                    f"{len(ids)} of {len(ids)} selected provided rows reviewed",
+                    " ".join(card.stdout.split()),
+                )
+                self.assertIn("that covers every selected provided row", card.stdout)
+                self.assertIn(f"{60 - len(ids)} other provided rows", card.stdout)
+        legacy = self._score_with_review(rows, self._review(ids[:24]))
+        self.assertEqual(legacy.returncode, 0, legacy.stderr)
+        self.assertFalse(
+            self._answer_review_covers_selected_rows(rows, self._review(ids[:24]))
+        )
+
+    def test_an_empty_selection_does_not_skip_the_opening_answer_sample(self) -> None:
+        rows = self._rows(60)
+        for read_count, held in ((1, True), (5, False)):
+            review = self._review([row["id"] for row in rows[:read_count]])
+            review["selected_row_ids"] = []
+            for entry in review["rows"]:
+                entry["in_run"] = False
+            process = self._score_with_review(rows, review)
+            self.assertEqual(process.returncode, 0, process.stderr)
+            self.assertEqual(
+                self._answer_review_covers_selected_rows(rows, review), not held
+            )
+
+    def test_selected_generated_rows_do_not_require_assistant_verdicts(self) -> None:
+        rows = self._rows(28)
+        for index, row in enumerate(rows):
+            row["split"] = "tuning" if index < 18 else "holdout"
+            if index >= 5:
+                row["source"] = "synthetic"
+        ids = [row["id"] for row in rows[:5]]
+        review = dict(self._review(ids), selected_row_ids=ids)
+        process = self._score_with_review(rows, review)
+        self.assertEqual(process.returncode, 0, process.stderr)
+        self.assertTrue(self._answer_review_covers_selected_rows(rows, review))
+        card = self._score_with_review(rows, review, render=True)
+        self.assertEqual(card.returncode, 0, card.stderr)
+        self.assertIn("23 generated rows not reviewed", card.stdout)
+
+    def test_selected_ids_and_review_membership_must_agree_with_the_source(
+        self,
+    ) -> None:
+        rows = self._rows(60)
+        rows.append(dict(rows[0], id="outside-split", split="unused"))
+        ids = [row["id"] for row in rows[:24]]
+        cases = (
+            (ids + [ids[0]], "repeats id"),
+            (ids + [" " + ids[0] + " "], "repeats id"),
+            (ids + ["unknown-id"], "preflight did not read"),
+            (ids + ["outside-split"], "outside the declared"),
+            (None, "must be a list"),
+            (ids + [42], "nonblank strings"),
+        )
+        for selected, error in cases:
+            with self.subTest(error=error):
+                process = self._score_with_review(
+                    rows, dict(self._review(ids), selected_row_ids=selected)
+                )
+                self.assertEqual(process.returncode, 2, process.stderr)
+                self.assertIn(error, process.stderr)
+        for contradictory in (False, None):
+            review = dict(self._review(ids), selected_row_ids=ids)
+            review["rows"][0]["in_run"] = contradictory
+            process = self._score_with_review(rows, review)
+            self.assertEqual(process.returncode, 2, process.stderr)
+            self.assertIn("must match membership in selected_row_ids", process.stderr)
+
     def test_an_in_run_claim_is_matched_to_the_declared_split(self) -> None:
         """A real id on neither side of the split is not a row this run reads."""
         rows = self._rows()

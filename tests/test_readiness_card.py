@@ -144,6 +144,12 @@ class ReadinessCardAudienceTests(unittest.TestCase):
                         "covers every row in the declared tuning/held-out split", line
                     )
                     self.assertNotIn("48 of them from the 48", line)
+                else:
+                    self.assertIn(
+                        f"{selected} marked for this run by the row review", line
+                    )
+                    self.assertIn("declared tuning/held-out split: 48 rows", line)
+                    self.assertNotIn("of them from", line)
                 cap = next(
                     c
                     for c in score.caps

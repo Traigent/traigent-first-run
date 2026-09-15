@@ -3818,7 +3818,7 @@ class RowReview:
     reviewed_collected: int = 0
     reviewed_undeclared: int = 0
     # How many of the `unsound` rows are among the rows this run will actually
-    # tune and check on. The run reads 28 rows - 18 tuning and 10 held out - so
+    # tune and check on. The run reads up to 28 rows, so
     # a wrong answer outside them changes nothing that happens, and a wrong
     # answer inside them is what the search is about to be graded against.
     # Those are two different sentences to a customer, and the card can only
@@ -3827,9 +3827,7 @@ class RowReview:
     # Optional, and absent is not zero. At the opening gate on a large dataset
     # the subset has not been drawn yet, so nothing can honestly claim
     # membership; `None` is that state and the card then says only that the
-    # file has bad rows. On a dataset at or under the subset size, every
-    # provided row is a row the run uses, which is the case where this is worth
-    # saying and the case where it is knowable.
+    # file has bad rows. Once selection is recorded, membership is knowable.
     unsound_in_run: int | None = None
     # How many rows the review read that the run actually reads, on the same
     # `in_run` declaration `unsound_in_run` is read from and `None` in the same
@@ -3841,6 +3839,9 @@ class RowReview:
     # different questions, and one number answering both would make a review
     # that found nothing look like a review that read nothing.
     reviewed_in_run: int | None = None
+    # Complete selected provided-row population declared by selected_row_ids,
+    # independent of how many verdicts have arrived. Generated rows are excluded.
+    selected_run_rows: int | None = None
 
 
 @dataclass(frozen=True)
@@ -6099,6 +6100,12 @@ def answer_key_read(facts: DatasetFacts, review: RowReview) -> bool:
     # of three graded rows cannot supply 28, and a file with three reviewable
     # rows cannot supply five. Asking either for more than it holds is how the
     # unsatisfiable hold looked from the other end of the scale.
+    # A recorded shorter draw is its own denominator; counting verdicts alone
+    # cannot establish how many selected answers remain unread.
+    if review.selected_run_rows is not None:
+        if review.selected_run_rows == 0:
+            return review.reviewed >= min(ANSWER_KEY_SAMPLE_ROWS, provided)
+        return review.reviewed_in_run == review.selected_run_rows
     if review.reviewed_in_run is not None and graded is not None:
         return review.reviewed_in_run >= min(ANSWER_KEY_DRAWN_ROWS, graded)
     return review.reviewed >= min(ANSWER_KEY_SAMPLE_ROWS, provided)
@@ -6150,17 +6157,24 @@ def row_review_evidence(
     # run compares on carries no answer at all, which the dataset pillar's own
     # cap is the place that says so (traigent-first-run#395).
     split_rows = run_rows(facts)
-    # `in_run` counts all reviewed split rows, including unlabelled ones.
-    # Only when the populations coincide may that count name graded rows.
+    # `in_run` counts reviewed rows selected for the run, including unlabelled
+    # ones. Full-split coverage follows only when those populations coincide.
     all_split_rows_graded = split_rows is not None and split_rows == graded
-    if (
+    if review.selected_run_rows is not None:
+        line += (
+            f", {review.reviewed_in_run} of {review.selected_run_rows} selected "
+            "provided rows reviewed"
+            if review.selected_run_rows
+            else ", no provided rows selected for this run"
+        )
+    elif (
         review.reviewed_in_run is not None
         and split_rows
         and not (all_provided and review.reviewed_in_run >= split_rows)
     ):
         line += (
-            f", {review.reviewed_in_run} of them from the {split_rows} rows "
-            "in the declared tuning/held-out split"
+            f", {review.reviewed_in_run} marked for this run by the row review "
+            f"(declared tuning/held-out split: {split_rows} rows)"
         )
     if review.unsound == 1:
         line += "; 1 expected answer contradicts its input"
@@ -6177,6 +6191,16 @@ def row_review_evidence(
     # A complete read of the graded rows is not necessarily a complete read
     # of the provided file. Report an unread remainder only when one exists.
     if (
+        review.selected_run_rows is not None
+        and review.reviewed_in_run == review.selected_run_rows
+    ):
+        if review.selected_run_rows:
+            line += "; that covers every selected provided row"
+        if not all_provided:
+            line += (
+                f"; {provided - review.reviewed} other provided rows were not reviewed"
+            )
+    elif (
         graded
         and review.reviewed_in_run is not None
         and split_rows is not None
@@ -6204,14 +6228,10 @@ def row_review_evidence(
 
 
 def run_rows(facts: DatasetFacts) -> int | None:
-    """How many rows the declared tuning/held-out split contains, when known.
+    """The source's declared tuning/held-out rows, not the selected run size.
 
-    Read from the declared split rather than from the guide's default 28,
-    because the two are not the same claim: 28 is what this walkthrough creates
-    when it has to create a dataset, and a customer who brought their own split
-    has whatever they brought. `None` when no split has been declared yet -
-    which is the ordinary opening state on one undivided file, and the state in
-    which the card may not put a number on it.
+    A source split can be larger than the paid draw. The row review declares
+    selected IDs separately. None means no complete split was published.
     """
     if facts.tuning_rows is None or facts.holdout_rows is None:
         return None
@@ -11544,6 +11564,38 @@ def row_review_from_document(document: Any, facts: DatasetFacts) -> RowReview:
     in_run_known = (
         set(facts.run_row_id_digests) if facts.run_row_id_digests is not None else None
     )
+    selected_ids: set[str] | None = None
+    if "selected_row_ids" in document:
+        selected = document["selected_row_ids"]
+        if not isinstance(selected, list):
+            raise RowReviewInputError(
+                "selected_row_ids must be a list of row id strings"
+            )
+        selected_ids = set()
+        for row_id in selected:
+            if not isinstance(row_id, str) or not row_id.strip():
+                raise RowReviewInputError(
+                    "selected_row_ids must contain nonblank strings"
+                )
+            row_id = row_id.strip()
+            if row_id in selected_ids:
+                raise RowReviewInputError(f"selected_row_ids repeats id {row_id!r}")
+            digest = row_id_digest(row_id)
+            if digest not in known:
+                raise RowReviewInputError(
+                    f"selected_row_ids names id {row_id!r} preflight did not read"
+                )
+            if in_run_known and digest not in in_run_known:
+                raise RowReviewInputError(
+                    f"selected_row_ids names id {row_id!r} outside the declared "
+                    "tuning/held-out split"
+                )
+            selected_ids.add(row_id)
+        if len(selected_ids) > provided_rows(facts):
+            raise RowReviewInputError(
+                "selected_row_ids exceeds the provided-row count; list only "
+                "selected customer rows, excluding generated rows"
+            )
     seen: set[str] = set()
     #: Every id that names no row of this dataset, so one run names them all.
     unmatched: list[str] = []
@@ -11631,6 +11683,12 @@ def row_review_from_document(document: Any, facts: DatasetFacts) -> RowReview:
                 f"{where} has in_run {in_run!r}; it says whether this run reads "
                 "that row, so it is true or false or absent - and absent means "
                 "the rows have not been drawn yet, never 'no'"
+            )
+        if selected_ids is not None and (
+            in_run is None or in_run != (row_id in selected_ids)
+        ):
+            raise RowReviewInputError(
+                f"{where} in_run must match membership in selected_row_ids"
             )
         # The narrower claim, checked where a fact exists to check it against -
         # and that fact is the published list, not `run_rows`.
@@ -11723,6 +11781,7 @@ def row_review_from_document(document: Any, facts: DatasetFacts) -> RowReview:
         # set on the same all-or-nothing `in_run` condition its sibling uses:
         # a half-answered file cannot support either count.
         reviewed_in_run=marked_in_run if in_run_declared == {True} else None,
+        selected_run_rows=len(selected_ids) if selected_ids is not None else None,
     )
 
 

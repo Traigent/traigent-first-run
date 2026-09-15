@@ -9,7 +9,7 @@ Use this reference whenever creating or validating a dataset or evaluation metho
 3. Quality diagnosis and repair choice
 4. Dataset construction
 5. When calibration runs long
-6. First-run subset for a large dataset
+6. First-run dataset scope
 7. Held-out set and claims
 
 ## Evaluation selection
@@ -551,7 +551,7 @@ repetitions for genuinely stochastic configurations; (2) a configuration that st
 on some models - a prompt or knob value that returns empty or erroring outputs (watch the
 empty-output rate) drags every example's score and inflates variance, so exclude that
 configuration rather than repeating it; (3) a brittle exact-match scorer that grades a
-correct-but-differently-phrased answer inconsistently - robustify the ruler with an
+correct-but-differently-phrased answer inconsistently - improve the evaluation method with an
 equivalence-aware match or a calibrated judge. Repetitions do not fix causes (2) or (3).
 
 When a material limitation is found, offer:
@@ -574,10 +574,9 @@ stable IDs, or a disjoint split. Do not silently delete real rows, change expect
 product policy, or broaden a rubric. For those judgment-dependent changes, propose the exact diff
 and ask first.
 
-Scope repairs to the rows this first run will actually use, including the whole dataset when that
-is the plan; "Held-out set and claims" owns when they are selected. A verified mechanical
-correction may cover the whole working copy when simpler. Report known defects outside the draw
-without implying they were fixed.
+Scope repairs to the selected first-run rows; "Held-out set and claims" owns when they are
+selected. A verified mechanical correction may cover the whole working copy when simpler.
+Report known defects outside the draw without implying they were fixed.
 
 After any repair, re-run every check whose input changed, the applicable calibration, and the
 readiness score - SKILL.md section 4 owns that rule. An evaluator repair re-runs the degenerate-gold
@@ -702,30 +701,25 @@ Prefer, in order:
 3. User-provided examples expanded into additional tuning candidates.
 4. Fully synthetic walkthrough data.
 
-For a fully generated walkthrough, create 28 examples by default: 18 tuning rows (3 easy, 5
-medium, 5 hard, 5 very hard) plus the held-out ten. "Held-out set and claims" below owns that
-split wherever its rows come from - its composition, when it is reserved, where it is written,
-what it is for, when it is scored and disclosed, and why the count stays at ten.
+For a fully generated walkthrough, create 28 examples by default: 18 tuning rows plus the
+held-out ten, using the compositions in "First-run dataset scope" and "Held-out set and claims".
+The latter owns when the split is reserved, where it is written, what it is for, and when it is
+scored and disclosed.
 
-Reduce the tuning size when cost or task shape requires it - downward only, with the
-"Topping a real dataset up to that size" total as a ceiling rather than a target - and keep all four
-bands represented in it. The
-held-out ten do not move; "Held-out set and claims" owns why.
+Reduce the generated tuning size when cost or task shape requires it, preserving the available
+spread. "First-run dataset scope" owns the row limits for every source.
 
 ### Topping a real dataset up to that size
 
-A project that arrives with real rows but fewer than 28 comparable ones gets a bounded offer only
-when the available generation room can make the comparison meaningfully larger; existing rows that
-lack usable labels are reviewed or labelled first. Twenty-eight is a ceiling on the offer rather
-than a target the run pursues by itself. Two states sit outside it. A project that maintains its own held-out split keeps that split as it stands, per
-"Held-out set and claims" below, so nothing here re-cuts it. And a dataset whose tuning side holds
-nothing scoreable is stopped on a split to repair, where more rows answer nothing at all.
+Use fewer supplied rows by default; generate a walkthrough dataset when none exists. A small
+real dataset is not permission to fill the remaining places with synthetic rows. Offer a top-up
+only through the existing asking-cap choice, and generate it only if the customer chooses it.
+Review or label existing rows lacking usable answers first; an empty tuning split needs its split
+repaired, not more rows.
 
-Draw only the difference, and derive every drawn row from the rows already there so the added ones
-match the task the real ones describe. Where each row lands - real and generated alike - is owned by
-"Real rows reach both sets before either is topped up" below, which is this same shortfall seen from
-the split's side; a placement rule here would be a second answer to one question, and the two would
-be free to disagree. Never draw past 28 in total, and never draw to replace a real row.
+An approved top-up adds only the shortfall, derived from the real task. Preserve existing split
+membership and apply the selection limits below. Never replace a real row with a generated one.
+Declare every addition through the provenance fields below.
 
 **Agreeing can lower the ceiling, so the offer says so before it is accepted.** The rows this adds
 are generated and are declared as such, so the provenance ladder below prices them exactly as it
@@ -858,10 +852,8 @@ of a leading space or a case-sensitive comparison - there are no competing inter
 offer. No configuration can earn that row, so it separates none of them.
 
 So name the count and the share, quote the result on the subset that can actually be scored, and
-record the excluded row ids so the run repeats exactly. That recording is unconditional. The
-bounded first-run subset records its own ids, but it is only drawn with more than 100 usable rows - so on the
-small datasets where a handful of degenerate golds decides the outcome, nothing else would be left
-behind at all.
+record the excluded row ids beside the selected ids so the run repeats exactly, even on a small
+dataset.
 
 Do not offer scoring the full set as an equal option. Those rows hand free points to any
 configuration that emits valid-but-empty output, so including them biases the ranking toward bad
@@ -972,7 +964,7 @@ answer moves the reported number by ten points, which is larger than the gaps co
 ranked by.
 
 So read the rows the run is graded on once those are settled - all of them, which a bounded first
-run caps at its tuning draw and the held-out ten - and, while they are not, five rows drawn at
+run bounds through its selected tuning and held-out rows - and, while they are not, five rows drawn at
 random from what the user brought. Answer one question about each: **is this expected output a
 sensible answer to this input, under the method that will grade it?** Answer `yes`, `no`, or
 `unsure`, with the row id and one sentence.
@@ -1018,6 +1010,7 @@ score it produced, which is the state it is written for rather than an accident 
 ```json
 {
   "reviewer": "assistant",
+  "selected_row_ids": ["ticket-118"],
   "rows": [
     {"id": "ticket-118", "origin": "collected", "verdict": "no", "in_run": true,
      "note": "45 days against a 30-day window, so 'approve' contradicts the input"},
@@ -1034,7 +1027,10 @@ uses `undeclared`. In conversation keep the customer's word: "your real rows", n
 rows". The sentence is required on every
 verdict - it is what makes a reading inspectable instead of a tally. `in_run` says whether this run
 reads that row; set it on every entry or on none, because a file that answers it for some rows lets
-the silent ones read as "outside the run". Five rules govern what the answers may do.
+the silent ones read as "outside the run". Once selection is settled, include `selected_row_ids`
+listing every selected customer-provided row, including those not yet reviewed; omit generated
+rows. Each reviewed entry's `in_run` must match that list. Before selection, omit both declarations.
+Five rules govern what the answers may do.
 
 **It is your own read, not a billed call.** The dataset is already open. Nothing here calls a model
 through the SDK, so it spends nothing, touches no ceiling, and needs no approval - which is why it
@@ -1054,9 +1050,10 @@ proceeds; a clean pass adds no points and no credit of any kind to the score. Wh
 is leave a sentence in the readiness evidence line, which costs zero score and names who did the
 checking, and release one hold: the top two bands are held at `WORKABLE` however high the score
 until some read of the answers has entered, because a run that never looked is not a run that
-looked and found nothing. The read is what releases it: every entry marked `in_run` where the split
-is drawn, capped at the drawn 28, and five provided rows where it is not - fewer only where the
-population holds fewer. Where it was released on a sample it is released as a sample and never as a
+looked and found nothing. The read is what releases it: every provided row in `selected_row_ids`
+once drawn, and five provided rows before selection - fewer only where that population is smaller.
+The declared selection lets a complete short draw receive credit without treating a partial review
+as complete; old review files without it retain their earlier coverage floor. Where it was released on a sample it is released as a sample and never as a
 clearance, and the card says so in those words. Readiness matches every entry
 to a row preflight read, and an `in_run` claim to the split, so an id naming nothing is refused. It
 matches on hashed ids: obfuscation, not secrecy. Having read the row you name stays your word, and
@@ -1064,8 +1061,8 @@ a review of rows you did not read is a false statement to the customer. Say that
 where it lifts, rather than letting the opening card read as though the pass went wrong.
 An `unsure` is reported there too and never scored, because uncertainty is not a finding.
 
-Three things put the ceiling there rather than a stop. The run only ever reads the tuning rows plus
-the held-out ten, so a wrong answer among rows it never opens changes nothing that happens. On
+Three things put the ceiling there rather than a stop. The run only ever reads the selected tuning
+and held-out rows, so a wrong answer among rows it never opens changes nothing that happens. On
 collected data this reading can be wrong - a refund approved outside the stated window can be the
 user's goodwill rule rather than a mistake, and you cannot tell from the row. And the remedy is
 `review-answer-key`, a question put to the user rather than a creation or a repair, which is the
@@ -1085,18 +1082,14 @@ the run, in this shape:
 
 Give each flagged row proposed for repair: the id, the quoted content, and the reason. Record other
 known affected ids in the run plan. **Say which of them are inside
-the rows this run will actually use** - the drawn tuning rows and the held-out ten. That is the
+the rows this run will actually use** - the selected tuning and held-out rows. That is the
 difference between "your file has a bad row" and "the run is about to be tuned on a bad row", and
 only the second one changes what this run measures. Set `in_run` on every entry once those rows are
 drawn, so the readiness card says it too; leave it off every entry while they are not.
 
-Drawn means settled, not selected by this run. A split the customer brought is already settled, so
-`in_run` is set at the opening gate even though nothing was drawn - the bounded subset is taken only
-above 100 usable rows, so on a small brought split no draw ever happens and reading the rule
-literally would leave the flag off for the whole run. What leaves it off is rows whose membership is
-genuinely unsettled: no declared split, and no subset taken yet. The distinction has to be stated
-because both readings pass validation and the card differs - with the flag set it reports how many
-flagged rows this run reads, and without it that sentence cannot be said at all.
+`in_run` names the selected run rows, not membership in the customer's larger tuning/held-out
+split. Set it only once the run's selection is settled; an existing split by itself does not settle
+that selection. Until then leave it off every entry and report the read as a sample.
 
 Then take the answer, because tuning the agent over a correct dataset is what the run is for:
 
@@ -1129,8 +1122,7 @@ than shown to be. If the answers were not put together carefully by a person, re
 look without claiming that this review established correctness. Where this run
 wrote the dataset or the evaluation method, say that too: the read was taken through material this
 run produced, which is this run checking its own work and is why the ceiling on it stands however
-clean it came back. Above the first-run subset size, read the drawn rows in full at the section-4
-re-score.
+clean it came back. Read the selected rows in full at the section-4 re-score.
 
 Where no read reached the score at all, the hold stands and the card asks for one. Put that where
 the card is explained, never at the pre-spend approval and never as a stop, and put the two routes
@@ -1177,15 +1169,13 @@ full band coverage and clears the spread complaint on the assistant's own opinio
 thing a self-ranked pick must not be able to do. A generated row is the other case - whoever wrote
 the question wrote its band too, and the row already declares itself generated.
 
-## First-run subset for a large dataset
+## First-run dataset scope
 
-A first run has to show the capability, not exhaust the dataset. With more than 100 usable rows,
-every trial pays for every row, so a large set turns the walkthrough into a long, expensive run
-that demonstrates nothing the smaller one would not. Select a bounded subset instead: **18 tuning
-questions by default**, with at least four available questions from each difficulty band (`easy`,
-`medium`, `hard`, `very-hard`), allocated by rule 6 below, so the subset keeps the spread rather than landing on
-one cluster - plus the held-out ten, drawn with it to their own composition; "Held-out set and
-claims" below owns when each source draws.
+A first run demonstrates the workflow on **at most 28 actual rows: up to 18 tuning rows and
+up to 10 held-out rows**, whether the source has 20, 60, or 4,812 rows. These are row limits,
+not question limits. Select 18 and 10 when enough eligible rows fit; use fewer where data, complete
+answer groups, cost, or task shape require it.
+"Held-out set and claims" owns when selection happens and how rows are reserved.
 
 Six rules make the subset honest:
 
@@ -1196,143 +1186,83 @@ Six rules make the subset honest:
    500 labelled production rows scored as an 18-row subset read as `a wiring check, not a score` -
    true of the run and false of the dataset. Difficulty and diversity survive a compliant sample;
    evidence volume collapses, so that limitation must be attributed correctly.
-
-   This rule used to be kept by arithmetic rather than by anyone remembering it: the subset was
-   drawn immediately before the paid comparison, so at every scoring gate there was no subset to
-   score by mistake. The draw now happens earlier - see below - which trades a structural guarantee
-   for a sentence, and that is the one thing this move costs. It is written here, at the top of the
-   six, because the file the score reads is the whole of what it protects.
 2. **Report the run's sample-size limitation separately.** It belongs in the run report, not the
-   dataset score: "this run compares configurations on 18 questions drawn from your 4,812 rows;
+   dataset score: "this run compares configurations on 18 rows drawn from your 4,812 rows;
    treat a small difference as directional unless paired uncertainty from the completed outputs
    supports it."
    Sample size alone cannot supply a confidence interval or minimum detectable effect for a paired
    comparison, so never invent a percentage-point threshold before those outcomes exist.
-3. **Sample within each split, never across it.** Draw the 18 tuning questions from the tuning
-   split and the held-out ten from the held-out split, keeping them disjoint. A subset drawn over the combined
-   set can pull the same input into both sides and fabricate a tune/holdout overlap that the
-   original dataset did not have.
+3. **Sample within each split, never across it.** Select tuning rows from the tuning split and
+   held-out rows from the held-out split, preserving their original membership even when the
+   customer's independent split is larger than this run. If no independent split exists, reserve
+   one under "Held-out set and claims" before selecting. Never fill tuning from an existing
+   held-out split.
 4. **Record what was chosen.** Write the selected row `id`s to `traigent-runs/run-plan.md`, plus
-   the seed when the pick inside a band was random. The recorded ids are what makes the run
-   reproducible - a seed alone does not, because the selection also depends on judgment about which
-   rows are hard.
-5. **Name the bound to the user.** Report the subset size beside the full row count ("18 tuning
-   questions in 36 rows, and 10 held-out rows, of your 4,812 for this first run"). Never let a
-   bounded run read as though the whole dataset was evaluated.
-6. **Draw different questions, and let their count set the size.** The agent produces one output
-   per input, so two rows carrying the same input are asked the same question by every
-   configuration. Where those rows also carry the same expected answer the second is a provider
-   call in every trial and no comparison at all, and it is the one thing this draw may drop. Where
-   the expected answers differ it is one question with more than one accepted answer, and **every
-   one of its rows is drawn and paid for**: dropping either row narrows what counts as correct, so
-   a configuration that answered acceptably then scores exactly like one that answered wrongly.
-   Count questions, draw rows. A multi-reference split of 60 questions under two accepted golds is
-   60 questions and 120 rows; eighteen caps the questions, and the price is the rows the questions
-   bring. Say both numbers wherever the run is priced.
+   the seed when the pick inside a band was random. The recorded ids make the run reproducible;
+   a seed alone does not record judgment about which rows are hard.
+5. **Name the bound to the user.** Report the actual selected counts beside the full count:
+   "9 tuning questions in 18 rows, and 10 held-out rows, of your 4,812 for this first run".
+   Price those actual rows and never let a bounded run read as though the whole dataset was evaluated.
+6. **Draw different questions without cutting accepted answers.** Where equal inputs also carry
+   the same expected answer, the second is a provider call in every trial and no comparison at all,
+   and it is the one thing this draw may drop. Where expected answers differ, retain the complete
+   accepted-answer group when selecting that question: every one of its rows is drawn and paid for.
+   Dropping one narrows what counts as correct, so a configuration that answered acceptably then
+   scores exactly like one that answered wrongly. Choose fewer questions when their complete groups
+   would exceed the row limit; never truncate a group. For example, two rows per question permit
+   at most nine tuning questions. If no group fits, remove exact duplicates in the working copy and
+   recheck; if none still fits, report that this material cannot support the bounded comparison.
 
    Two inputs are the same question only when they are **equal**, and this rule is never applied to
-   a looser measure. `normalized_identity` in `scripts/preflight.py` is the looser one: it keeps
-   word characters and discards every operator and mark, so `is x > 5` and `is x < 5` arrive there
-   as one string, and so do `2 + 2 = ?` and `2 - 2 = ?`. That is the right measure where it is
-   used - finding a leak between splits, or raising an advisory duplicate warning - and the wrong
-   one here, because this count cuts a **paid** draw and a wrong cut deletes a test case the
-   customer wrote. This walkthrough's own worked task is text to SQL, where the characters it
-   discards are the discriminating ones. `dataset-first-run-rows` reports the count this rule uses
-   in `first_run_distinct_rows`, beside the population it counted in `first_run_distinct_scope`,
-   and states the cap as both numbers: `first_run_questions`, and the rows they bring as
-   `first_run_rows_fewest` to `first_run_rows_most`.
+   a looser measure. `normalized_identity` in `scripts/preflight.py` discards operators, so `x > 5`
+   and `x < 5` can collide: it is useful for a possible-leak warning, not for cutting paid examples.
+   Count only **among the rows this run can score**: labelled rows, or present rows under a method
+   that needs no reference. The `dataset-first-run-rows` check reports the eligible tuning input
+   count in `first_run_distinct_rows` and its population in `first_run_distinct_scope`.
+   `first_run_questions` and `first_run_rows_fewest` / `first_run_rows_most` bound possible draws;
+   they do not select IDs or replace counting the actual files.
 
-   Distinct **across the whole draw**, not within one band: a row already drawn under one band buys
-   nothing when another band offers the same input again. Work the bands in order with targets of
-   **4 easy, 5 medium, 5 hard and 4 very-hard questions**. Take up to each target from questions not
-   already selected anywhere in the draw, and stop at eighteen or at the tuning split's
-   different questions **among the rows this run can score**, whichever is smaller. Those are the
-   labelled tuning rows, or every present tuning row under a method that scores without a
-   reference. A count taken over the whole file, or over rows the comparison cannot reach, is the
-   larger number on a split or part-annotated dataset, and sizing a paid draw from it buys back the
-   repeats this rule removes. Price and report the rows actually drawn, because they are what the
-   run buys.
+   Keep questions distinct **across the whole draw**: choosing one under another band's tag adds
+   no coverage. For tuning, aim for **4 easy, 5 medium, 5 hard and 4 very-hard rows**; complete
+   groups may change that distribution but must fit the total tuning limit. Fill a missing band
+   from other eligible groups in the same source split, without inventing difficulty labels.
+   Report the actual spread and counts; the full-dataset readiness score still describes the full dataset.
+   These identity and complete-group rules also apply when selecting held-out rows; that section
+   owns their composition and the treatment of repeats.
 
-   **When a band cannot reach its target, the draw is short by that much, and the shortfall is not made up
-   from the bands that can.** An extra `easy` input is not a `hard` one, so topping the count back
-   to eighteen from elsewhere spends the budget on the spread the floor exists to protect.
-   De-duplication removes no question - every distinct input a band holds stays eligible - so a band
-   that contributes nothing is a band whose inputs were all already drawn under another band's tag.
-   That is the dataset tagging one question two ways, which is a finding about the data; report it,
-   with the short bands, beside the sample-size limitation.
+   Reworded inputs remain different to this rule: a serial number or `(variant N)` suffix defeats
+   exact matching. When `dataset-near-duplicates` flags them, disclose that the selected rows may
+   repeat each other in wording; do not treat an exact-match count as proof of varied scenarios.
 
-   Equal inputs, never resemblance: two equal inputs are one question under any reading, while
-   rows that merely read alike are routinely two real questions, and a bounded budget must not be
-   cut on that guess. What that choice costs belongs in the report rather than in a footnote. A
-   dataset whose repeats were REWORDED - one question written out fifty times with a serial number
-   or a `(variant N)` suffix - is fifty different questions to this rule and to the comparison count
-   on the card, and the run pays for every one of them. `dataset-near-duplicates` is the check that
-   sees that shape; when it fires, say in the run report that the drawn rows may repeat each other
-   in wording and that neither the draw nor the comparison count has subtracted them.
-
-   This rule sizes the tuning draw and nothing else. The held-out ten carry their own rule under
-   "Held-out set and claims" below, which is where a repeat among them is answered; this rule does
-   not reach it.
-
-Keeping at least four available questions from every band protects the spread: a careless trim to 18 that
-drops a band costs difficulty points and prints a spread complaint about a dataset that has all four.
-
-When the rows carry no difficulty tags, work down the ladder in "Choosing rows when difficulty is
-not labelled" above. An unlabelled pick is still bounded and reproducible, just less
-representative, and that limitation belongs in the report.
-
-The full dataset stays the dataset. A later workflow can draw on more of it and a wider knob space
-when the task and evidence justify that scope. This bound keeps the first run short; the held-out
-claims below own what a later validation would need to establish.
+When difficulty tags are absent, use "Choosing rows when difficulty is not labelled" above.
+The customer's full dataset stays intact for their continuing work beyond this walkthrough.
 
 ## Held-out set and claims
 
-Reserve 10 held-out rows (2 easy, 3 medium, 3 hard, 2 very hard) and keep the same rows aside for
-the rest of the run. A dataset this run generates, tops up, or splits itself reserves the
-held-out split when its working copy is written, before any component design, calibration, or
-optimization touches it. A dataset above the first-run subset size draws the ten from that split
-with the tuning subset as soon as its own working copy is settled for usable fields and stable IDs,
-before judgment-dependent answer repairs or component design, calibration, or optimization.
-Keep the selected IDs and source split fixed; never choose or replace rows based on candidate
-scores or proposed replacement answers. This scopes the repair without selecting easier evidence.
+Reserve up to 10 held-out rows, aiming for 2 easy, 3 medium, 3 hard and 2 very hard where
+available. Keep the same selected IDs aside for the rest of the run. Settle usable fields and
+stable IDs first, then select both files before judgment-dependent answer repairs, component
+design, calibration, or optimization. Never choose or replace rows based on candidate scores or
+proposed replacement answers. This scopes repairs without selecting easier evidence.
 
-Drawing first keeps reserved rows out of component design. The earlier draw still requires the
-whole-file scoring rule in "First-run subset for a large dataset" above.
+For a project without an independent split, reserve disjoint input groups in the working copy
+when it is written.
+With too few real rows for both sets, divide them approximately in the default tuning/held-out
+proportion, rounding toward tuning: ten rows split seven and three, four split three and one,
+two split one and one. Keep complete accepted-answer groups together and adjust those counts
+rather than splitting a group. With only one group, keep it for tuning and report no independent
+held-out measurement. Use the same difficulty ladder as the tuning draw.
 
-Not at the opening card. `SKILL.md` opens that gate "before any component creation or repair", so
-usable fields and stable IDs may not yet be established; settle those before selecting rows. The
-row-review hold on such a corpus lifts on
-a read of the drawn rows in full, at the opening gate where a split was already settled and at the
-section-4 re-score where it was not; that is a hold on the band, not a third timing of the draw.
-That composition holds wherever the rows come from, because the rule governs the split this run
-reserves, not where the data originated. A project that already
-maintains its own independent held-out split is the exception: use it as it stands rather than
-re-cutting it to ten, and follow every claim rule below. When the rows carry no usable difficulty
-tags, work down the same ladder the bounded subset uses, and record the rung the split was cut on.
+The opening card precedes component creation or repair. If usable fields, stable IDs, and the
+selected IDs are already settled, review the selected rows there; otherwise take the opening
+sample and review the selected rows at the section-4 re-score. The whole-file readiness rule
+above applies at both points.
 
-**Real rows reach both sets before either is topped up.** Take the customer's own rows first
-and generate only the shortfall - and when there are too few to fill both sets, divide the real
-ones between them in the same proportion as the sets themselves, rounding in the tuning set's
-favour, before a single row is generated. Against the 18/10 default that is about two real rows to
-tuning for every one held back: ten real rows split seven and three, four split three and one, two
-split one and one. Below two there is nothing to divide, so the one row goes to tuning where the
-search can at least see it. Filling one set with the real rows and generating the other is the
-failure this rule exists to stop, and it fails in both directions: a held-out set of generated rows
-validates nothing about real inputs, and a tuning set of generated rows searches a task the
-customer does not have.
-
-**The ten are ten different questions, and a repeat is replaced rather than removed.** Two held-out
-rows carrying equal inputs measure one thing twice and leave the claim standing on nine, so the
-duplicate is topped up under the paragraph below like any other shortfall - never dropped to leave
-a shorter split, and never left in place. Sameness here is read the way the tuning draw reads it:
-equal inputs, never resemblance, so nothing is replaced on a guess about wording.
-
-Then top each set up to its composition with generated rows rather than dropping a band, placing
-each real row in the band its own difficulty puts it in, and declare the mixture through the
-provenance fields above so the row says what it is. State what the top-up costs rather than leaving
-it implied: a generated held-out row cannot show that the winner generalizes to real inputs, only
-that it survives rows the tuning search never saw. Such a split is non-blind either way, so the
-synthetic-evidence rules at the end of this section already govern what it may claim.
+Select different held-out input groups, preserving accepted answers under rule 6 above. Replace
+an exact repeat only with another eligible real group from the same source split; when none fits,
+use fewer rows and report that count. A wholly generated dataset supplies distinct held-out
+examples from the start. An explicitly approved top-up keeps every new row labelled generated;
+it can demonstrate unseen examples, not generalization to real inputs.
 
 Write the reserved rows to their own file. The tuning rows and the held-out rows are two files,
 not one file with a column, because that separation is what physically keeps a reserved row out
@@ -1348,20 +1278,9 @@ because a filter is a predicate that has to keep being right, while a file the s
 given cannot leak a row however the predicate drifts - and it is two files, written beside the
 user's untouched original, not a folder of them.
 
-Ten rows is the design, not a placeholder on the way to a larger split. Ten is what the
-composition costs: 2 easy, 3 medium, 3 hard, 2 very hard, no band holding a spare. Take one from
-an outer band and it drops to a single row, whose one outcome becomes that band's whole result - a
-band present without being measured. Take one from a middle band and the split loses resolution
-where configurations separate, which is why those two carry more. Nine rows is not a smaller
-version of this split; it is this split with a hole in it. Above ten,
-each extra row is another paid call on the winner bought from the same walkthrough ceiling, spent
-on the check instead of on the search this run exists to show. Ten is therefore exact in both
-directions, never a floor to grow from. The one split that is not ten is a project's own, kept at
-the size it already has, whatever its composition. So the resolution stays coarse, and
-the honest move is to say so plainly rather than to grow the split until the number sounds
-authoritative. This walkthrough demonstrates the comparison at small scale; a later workflow can
-investigate more representative rows and a wider knob space, as "First-run subset for a large
-dataset" above describes. That larger scope does not itself establish stronger results.
+The held-out limit keeps this introduction small. Report the actual count and its coarse
+resolution rather than enlarging it to make a number look authoritative. If no independent rows
+remain, say the held-out check was not measured; do not score tuning rows under that name.
 
 A gap between the tuning score and the held-out score can arise for two reasons without a bug;
 this run does not establish either as the cause of an observed gap:
@@ -1426,22 +1345,18 @@ which.
 Report counts, not percentages, for binary correctness while the split is this small: on ten rows
 only multiples of ten exist, so "60%" claims a resolution of one point where the truth is ten - and
 the static preflight already prints that arithmetic for whatever size the split actually is. Substitute the run's own
-`<n>` and `<m>`; a project that brought its own 500/120 split copies its numbers here, not the
-walkthrough's. Keep the note only while one row still moves the held-out figure materially. On a
-held-out set large enough that it does not, drop the note rather than pasting a caveat the
-numbers do not need.
+`<n>` and `<m>` from the actual selected files, not the customer's full split sizes.
 
 For graded or other objectives, replace correct counts with the run's actual named metric,
 aggregation, and declared direction on both lines, alongside each split's row count. Do not invent
 a pass threshold to turn those scores into correct/incorrect counts. The small-sample note still
 applies; an error rate or graded score is not a count of correct answers.
 
-Then explain the next validation action: a later run can use more representative examples and
-controls, keeping evaluation separate from tuning and winner selection as the intended claim
-requires. More rows or a wider search alone do not establish real-world performance. This
-walkthrough demonstrates the comparison cheaply; its evidence remains scoped to the rows and
-components actually used. State it without apologizing for the ten rows and without saying what a
-larger run would find; the close's skills handoff is already the route to it.
+Then connect the limitation to the customer's own work: review their answer key, repair their
+split, or validate their evaluation method as the evidence calls for, using the close's public
+skills handoff. This walkthrough's selected or generated examples demonstrate the workflow; fixing
+its copy does not fix the customer's full dataset. More rows or another walkthrough are not the
+goal, and neither alone establishes real-world performance.
 
 When the split was topped up, say so on the same line as its score. "Held out" is a claim about what
 the search never saw, not a claim that the rows came from the customer's world, and a reader who is
