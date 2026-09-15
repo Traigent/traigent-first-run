@@ -9719,8 +9719,15 @@ class TheCardSpeaksTheUsersLanguageTests(unittest.TestCase):
                     score, palette=MODULE.Palette(), unicode_ok=False
                 )
                 report = MODULE.render_markdown(score)
-                card_action = card.splitlines()[-1]
+                card_lines = card.splitlines()
+                self.assertTrue(
+                    card_lines[0].startswith("TRAIGENT OPTIMIZATION READINESS")
+                )
+                card_action = card_lines[1]
                 self.assertEqual(card_action, report.splitlines()[-1])
+                self.assertEqual(
+                    sum(line.startswith("Action: ") for line in card_lines), 1
+                )
                 self.assertTrue(card_action.startswith("Action: "))
                 self.assertGreater(len(card_action.split()), 4)
                 self.assertNotEqual(card_action, f"Action: {action}")
@@ -10889,10 +10896,9 @@ class TheCardSpeaksTheUsersLanguageTests(unittest.TestCase):
     def test_the_card_closing_line_is_inside_the_scan(self) -> None:
         """Named on its own, because it is the line that proved the gap.
 
-        `render_card` appends the estimate sentence unconditionally, one line
-        above the closing `Action:` line, so if any sentence is read by every
-        customer it is this one - and the declaration-side scan could not see
-        it.
+        `render_card` appends the estimate sentence unconditionally after the
+        evidence, so every customer meets it; the declaration-side scan could
+        not see it.
         """
         scanned = "\n".join(
             " ".join(text.split())
@@ -11300,6 +11306,80 @@ class RowLevelSanityTests(unittest.TestCase):
         )
         labels = next(s for s in pillar.subscores if s.name == "labels")
         self.assertIn("9 undecided", labels.evidence)
+
+    def test_small_confirmed_findings_keep_the_question_without_a_ceiling(self):
+        facts = _brought(60, tuning_rows=18, holdout_rows=10)
+        weights = dict(MODULE.DEFAULT_WEIGHTS)
+        clean = MODULE.score_run(
+            facts,
+            _passing_calibration(),
+            _wired_space(),
+            weights,
+            _review(reviewed=60, reviewed_in_run=28),
+        )
+        condition = "dataset-unsound-expected-outputs"
+        for bad, unsure, in_run in (
+            (1, 0, 1),
+            (1, 0, None),
+            (1, 0, 0),
+            (0, 1, 0),
+            (6, 0, 1),
+            (6, 0, None),
+            (6, 0, 0),
+        ):
+            with self.subTest(bad=bad, unsure=unsure, in_run=in_run):
+                review = _review(
+                    reviewed=60,
+                    unsound=bad,
+                    unsure=unsure,
+                    unsound_in_run=in_run,
+                    reviewed_in_run=28 if in_run is not None else None,
+                    selected_run_rows=28 if in_run is not None else None,
+                )
+                score = MODULE.score_run(
+                    facts, _passing_calibration(), _wired_space(), weights, review
+                )
+                capped = bad == 6
+                asks = bool(bad) and in_run != 0
+                self.assertEqual(score.overall, 70 if capped else clean.overall)
+                self.assertEqual(score.status, "OK")
+                self.assertEqual(
+                    score.recommended_action, "review-answer-key" if asks else "proceed"
+                )
+                self.assertEqual(
+                    sum(c.condition == condition for c in score.caps), int(capped)
+                )
+                payload = json.loads(json.dumps(asdict(score)))
+                self.assertEqual(
+                    [a["condition"] for a in payload["open_asks"]],
+                    [condition] if asks and not capped else [],
+                )
+                self.assertEqual(payload["weighted_average"], clean.weighted_average)
+                for render in (MODULE.render_card, MODULE.render_markdown):
+                    self.assertIn(
+                        f"Action: {MODULE.ACTION_DISPLAY_NAMES[score.recommended_action]}",
+                        render(score),
+                    )
+                # The existing previous-score reader still accepts older payloads
+                # without open_asks and payloads carrying this advisory question.
+                for include_asks in (True, False):
+                    previous = dict(payload)
+                    if not include_asks:
+                        previous.pop("open_asks")
+                    self.assertEqual(
+                        MODULE.previous_score_from_document(
+                            previous, "fixture"
+                        ).overall,
+                        score.overall,
+                    )
+        reference_free = MODULE.score_run(
+            facts,
+            replace(_passing_calibration(), method="llm-judge-rubric"),
+            _wired_space(),
+            weights,
+            _review(reviewed=60, unsound=1, unsound_in_run=1, reviewed_in_run=28),
+        )
+        self.assertNotIn(condition, [a.condition for a in reference_free.open_asks])
 
     def test_the_review_never_moves_a_score_upwards(self) -> None:
         """Swept over every verdict mixture, at the sub-score and cap level.
@@ -12506,8 +12586,8 @@ class AnAskThatIsNotACapIsStillRoutedTests(unittest.TestCase):
     ceiling on the SCORE, and an entry in `caps` that caps nothing is a false
     row added to fix a silence somewhere else. `open_asks` is where an ask with
     no ceiling behind it lives, and these tests pin the class rather than the
-    one member - the registry is fail-closed, the ids may not overlap the caps',
-    and the arm that reads it sorts last.
+    one member - the registry is fail-closed, one score cannot carry a condition
+    as both a cap and an ask, and the arm that reads it sorts last.
     """
 
     def _blocking(self) -> "MODULE.Cap":
@@ -12633,18 +12713,41 @@ class AnAskThatIsNotACapIsStillRoutedTests(unittest.TestCase):
         self.assertEqual(MODULE.ANSWER_KEY_UNREAD, "answer_key_unread")
         self.assertEqual(remedy, "review-answer-key")
 
-    def test_no_id_names_both_a_cap_and_an_ask(self) -> None:
-        """One id, one shape, so a reader of either table knows what it holds.
-
-        `ACTION_FOR_CONDITION`'s keys are exactly `CAP_CEILING`'s, asserted
-        elsewhere in this file, so an id in both tables would be a condition
-        with a ceiling AND no ceiling.
-        """
+    def test_only_unsound_answers_can_take_either_cap_or_ask_shape(self) -> None:
         self.assertEqual(
-            set(MODULE.ACTION_FOR_ASK) & set(MODULE.ACTION_FOR_CONDITION), set()
+            set(MODULE.ACTION_FOR_ASK) & set(MODULE.ACTION_FOR_CONDITION),
+            {"dataset-unsound-expected-outputs"},
         )
-        for condition in MODULE.ACTION_FOR_ASK:
-            self.assertNotIn(condition, MODULE.CAP_CEILING)
+
+    def test_one_score_refuses_duplicate_or_conflicting_ask_evidence(self) -> None:
+        cap = MODULE.unsound_answer_cap(_review(reviewed=60, unsound=6))
+        ask = MODULE.Ask(condition=cap.condition, reason="Review the flagged answer.")
+        pillars = [MODULE.Pillar(name, 90, 1.0, ()) for name in MODULE.PILLAR_ORDER]
+        for caps, asks in (([cap], [ask]), ([], [ask, ask])):
+            with self.subTest(caps=len(caps), asks=len(asks)):
+                with self.assertRaisesRegex(
+                    ValueError, "a condition cannot appear twice"
+                ):
+                    MODULE.aggregate(
+                        pillars, caps, (), dict(MODULE.DEFAULT_WEIGHTS), open_asks=asks
+                    )
+        previous = json.loads(
+            json.dumps(
+                asdict(
+                    MODULE.aggregate(pillars, [cap], (), dict(MODULE.DEFAULT_WEIGHTS))
+                )
+            )
+        )
+        for caps, asks in (
+            ([asdict(cap)], [asdict(ask)]),
+            ([], [asdict(ask), asdict(ask)]),
+        ):
+            with self.subTest(loader_caps=len(caps), loader_asks=len(asks)):
+                document = dict(previous, caps=caps, open_asks=asks)
+                with self.assertRaisesRegex(
+                    MODULE.PreviousScoreInputError, "a condition cannot appear twice"
+                ):
+                    MODULE.previous_score_from_document(document, "fixture")
 
     def test_an_ask_nobody_mapped_cannot_be_constructed(self) -> None:
         """Fail-closed, on the footing every cap registry is.
@@ -28611,17 +28714,22 @@ class ThePreviousScoreAndTheActionLineTests(unittest.TestCase):
     def _lines(self, text: str) -> list[str]:
         return text.rstrip("\n").splitlines()
 
-    def test_the_card_ends_on_the_recommended_action_slug(self) -> None:
+    def test_the_card_places_its_only_action_immediately_after_the_headline(
+        self,
+    ) -> None:
         argv = ["--preflight", str(self.preflight)]
         code, card, _ = self._run([*argv, "--color", "never", "--ascii"])
         self.assertEqual(code, 0)
         _code, payload, _ = self._run([*argv, "--json"])
         score = json.loads(payload)
         self.assertEqual(score["status"], "BLOCKED")
+        lines = self._lines(card)
+        self.assertTrue(lines[0].startswith("TRAIGENT OPTIMIZATION READINESS"))
         self.assertEqual(
-            self._lines(card)[-1],
+            lines[1],
             f"Action: {MODULE.ACTION_DISPLAY_NAMES[score['recommended_action']]}",
         )
+        self.assertEqual(sum(line.startswith("Action: ") for line in lines), 1)
         self.assertIn(score["recommended_action"], MODULE.ACTION_KINDS)
 
     def test_previous_prints_what_changed_and_what_did_not(self) -> None:
@@ -28655,7 +28763,9 @@ class ThePreviousScoreAndTheActionLineTests(unittest.TestCase):
         )
         lines = self._lines(card)
         self.assertEqual(lines[-1], line)
-        self.assertTrue(lines[-2].startswith("Action: "), lines[-2])
+        self.assertTrue(lines[0].startswith("TRAIGENT OPTIMIZATION READINESS"))
+        self.assertTrue(lines[1].startswith("Action: "), lines[1])
+        self.assertEqual(sum(line.startswith("Action: ") for line in lines), 1)
         self.assertEqual(payload["delta"]["line"], line)
         self.assertEqual(payload["delta"]["changed"], ["evaluation"])
         self.assertEqual(payload["delta"]["unchanged"], ["dataset", "agent"])
@@ -28678,7 +28788,7 @@ class ThePreviousScoreAndTheActionLineTests(unittest.TestCase):
         self.assertNotIn("delta", json.loads(before))
 
     def test_the_report_ends_on_the_action_and_the_delta_too(self) -> None:
-        """P3-4: the durable copy carries the card's two closing lines."""
+        """The report closes with the action and delta the card also carries."""
         _code, before, _ = self._run(["--preflight", str(self.preflight), "--json"])
         previous = self.root / "previous.json"
         previous.write_text(before)
@@ -28699,14 +28809,16 @@ class ThePreviousScoreAndTheActionLineTests(unittest.TestCase):
         self.assertEqual(code, 0, err)
         card_lines = self._lines(card)
         report_lines = self._lines(report.read_text())
-        self.assertTrue(card_lines[-2].startswith("Action: "))
+        self.assertTrue(card_lines[0].startswith("TRAIGENT OPTIMIZATION READINESS"))
+        self.assertTrue(card_lines[1].startswith("Action: "))
+        self.assertEqual(sum(line.startswith("Action: ") for line in card_lines), 1)
         self.assertTrue(card_lines[-1].startswith("changed: evaluation "))
-        self.assertEqual(report_lines[-2:], card_lines[-2:])
+        self.assertEqual(report_lines[-2:], [card_lines[1], card_lines[-1]])
         # Without --previous the report ends on the action alone.
         code, card, err = self._run([*argv, "--color", "never", "--ascii"])
         self.assertEqual(code, 0, err)
         report_lines = self._lines(report.read_text())
-        self.assertEqual(report_lines[-1], self._lines(card)[-1])
+        self.assertEqual(report_lines[-1], self._lines(card)[1])
         self.assertTrue(report_lines[-1].startswith("Action: "))
         self.assertFalse(report_lines[-2].startswith("changed: "))
 

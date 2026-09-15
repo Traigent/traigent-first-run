@@ -200,7 +200,7 @@ class ReadinessCardAudienceTests(unittest.TestCase):
         self.assertIn("not covered by this pillar", card)
         self.assertIn("Local pre-run planning estimate", card)
         self.assertEqual(
-            card.splitlines()[-1], "Action: Continue to the next guided step."
+            card.splitlines()[1], "Action: Continue to the next guided step."
         )
 
     def test_rendering_preserves_full_serialized_and_markdown_diagnostics(self):
@@ -342,7 +342,7 @@ class ReadinessCardAudienceTests(unittest.TestCase):
                 self.assertIn(finding, card)
                 self.assertEqual("FIX BEFORE PAID RUN" in card, blocks)
                 self.assertEqual(
-                    card.splitlines()[-1],
+                    card.splitlines()[1],
                     f"Action: {MODULE.ACTION_DISPLAY_NAMES[score.recommended_action]}",
                 )
 
@@ -356,8 +356,16 @@ class ReadinessCardAudienceTests(unittest.TestCase):
         for score in states:
             before = asdict(score)
             card = MODULE.render_card(score)
+            first_pillar = min(
+                (
+                    card.index(f"  {pillar.name.upper():<11} ")
+                    for pillar in score.pillars
+                ),
+                default=len(card),
+            )
             for cap in score.caps:
                 observed.add((cap.blocks, cap.asks))
+                self.assertLess(card.index(MODULE.card_cap_reason(cap)), first_pillar)
                 if cap == MODULE.UNPROBED_DISCOVERED_KNOBS_CAP:
                     self.assertIn(
                         "has not established which settings change the request", card
@@ -365,8 +373,11 @@ class ReadinessCardAudienceTests(unittest.TestCase):
                 else:
                     self.assertIn(cap.reason, card)
             self.assertEqual(
-                card.splitlines()[-1],
+                card.splitlines()[1],
                 f"Action: {MODULE.ACTION_DISPLAY_NAMES[score.recommended_action]}",
+            )
+            self.assertEqual(
+                sum(line.startswith("Action: ") for line in card.splitlines()), 1
             )
             self.assertEqual(asdict(score), before)
         self.assertTrue({(True, False), (False, True), (False, False)} <= observed)
@@ -374,6 +385,10 @@ class ReadinessCardAudienceTests(unittest.TestCase):
     def test_healthy_configuration_and_scored_observations_keep_their_evidence(self):
         score = fixtures._healthy_score()
         card = MODULE.render_card(score)
+        self.assertEqual(
+            card.splitlines()[1],
+            f"Action: {MODULE.ACTION_DISPLAY_NAMES[score.recommended_action]}",
+        )
         for pillar in score.pillars:
             for sub in pillar.subscores:
                 self.assertIn(sub.evidence, card)

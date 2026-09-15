@@ -16872,6 +16872,8 @@ class SkillPackageTests(unittest.TestCase):
             "the same review",
             "put the flagged rows to the user",
             "approval-gated question",
+            '"A `no` is never a silent edit" below owns whether a question is needed '
+            "and how to settle it",
         ),
         "add-examples": (
             "more comparable examples is what lifts this",
@@ -18058,8 +18060,6 @@ class SkillPackageTests(unittest.TestCase):
             self.cap_routing_region(), self.constructed_cap_conditions()
         )
         for condition in sorted(conditions):
-            with self.subTest(condition=condition):
-                self.assert_the_route_is_written_for(condition, passages)
             with self.subTest(condition=condition):
                 self.assert_the_route_is_written_for(condition, passages)
         self.assertIn("present the reason rather than the condition id", normalized)
@@ -27896,36 +27896,30 @@ class TheAgentIsFoundBeforeWhatGradesItTests(unittest.TestCase):
         )[0]
 
     def test_the_greeting_is_the_first_thing_step_one_asks_for(self) -> None:
-        """Placement, which content pinning never covered.
-
-        The Opening message is read in several places, so its WORDS were
-        pinned. Where it is printed was not, and it lived as one bullet among
-        a dozen presentation rules ninety lines above this step - so one run
-        greeted first and another inspected, scored, and greeted only when it
-        stopped for a provider key. Both read the same document.
-
-        Asserted inside section 1's own slice: the instruction has to precede
-        the discovery it precedes, and it has to spare a resumed run, which
-        opens with where it stands instead.
-        """
-        normalized = " ".join(self._stage_one().casefold().split())
-        # Asserted before indexing: `.index` raises ValueError when the
-        # instruction is absent, and a crash reads the same as the refusal
-        # this is looking for -- which is the state the pre-PR document was in.
-        self.assertIn(
-            'print "opening message"',
-            normalized,
-            "section 1 never tells the assistant to greet the customer",
+        """The welcome's owner says when to show it; discovery points there."""
+        opening = " ".join(section_text(SKILL, "Opening message").casefold().split())
+        for statement in (
+            "for a new run, show the welcome below verbatim as the first run-facing "
+            "message, before inspection or setup updates",
+            "a resumed unfinished run opens with where it stands instead",
+        ):
+            with self.subTest(statement=statement):
+                self.assertIsNone(document_states(opening, statement))
+        self.assertLess(
+            opening.index("for a new run"),
+            opening.index("welcome to traigent onboarding!"),
         )
+        normalized = " ".join(self._stage_one().casefold().split())
+        self.assertIsNone(document_states(normalized, 'follow "opening message" above'))
         self.assertIn("read-only discovery", normalized)
-        greeting = normalized.index('print "opening message"')
+        greeting = normalized.index('follow "opening message" above')
         discovery = normalized.index("read-only discovery")
         self.assertLess(
             greeting,
             discovery,
             "step 1 starts discovering before it greets the customer",
         )
-        self.assertIn("resuming", normalized[:greeting])
+        self.assertNotIn("first run-facing message", normalized)
 
     def test_the_agent_leads_and_the_guidance_says_why(self) -> None:
         normalized = " ".join(self._stage_one().casefold().split())

@@ -1476,8 +1476,9 @@ ACTION_FOR_CONDITION: dict[str, str] = {
 # than observed. That table's keys are exactly `CAP_CEILING`'s - a test asserts
 # the two sets are equal - so a condition that caps nothing cannot be added
 # there without either a ceiling nobody chose or the invariant going. Keeping
-# them apart is also what makes an id answerable: a condition names a cap or an
-# ask, never both, and a reader of either table knows which shape it is holding.
+# them apart keeps non-capping questions out of the ceiling registry. Unsound
+# answers use their existing condition in either shape, according to the
+# reviewed share; aggregate refuses both shapes together in one score.
 #
 # THE REMEDIES ARE NOT NEW WORDS. `review-answer-key` is what
 # `ACTION_FOR_CONDITION` already routes for a generated or unsound answer key -
@@ -1516,6 +1517,7 @@ ACTION_FOR_CONDITION: dict[str, str] = {
 ANSWER_KEY_UNREAD = "answer_key_unread"
 ACTION_FOR_ASK: dict[str, str] = {
     ANSWER_KEY_UNREAD: "review-answer-key",
+    "dataset-unsound-expected-outputs": "review-answer-key",
 }
 ACTION_KINDS = frozenset(
     {PROCEED, *ACTION_FOR_CONDITION.values(), *ACTION_FOR_ASK.values()}
@@ -9623,6 +9625,7 @@ def aggregate(
     agent_route_unverified: bool = False,
     agent_unfollowed_settings: Sequence[tuple[str, int]] = (),
     answers_read: bool = True,
+    open_asks: Sequence[Ask] = (),
 ) -> ReadinessScore:
     # Every declared weight stays in the denominator, and #201 is the reason
     # that sentence is worth writing down rather than assuming.
@@ -9680,7 +9683,16 @@ def aggregate(
     # ceiling has unread answers too, and nothing is held there - so there is no
     # verdict to lift and no ask to put, and routing one would hand a remedy to
     # a card whose band the read would not move.
-    open_asks = (ANSWER_KEY_UNREAD_ASK,) if held_for_answers else ()
+    open_asks = tuple(open_asks) + (
+        (ANSWER_KEY_UNREAD_ASK,) if held_for_answers else ()
+    )
+    ask_conditions = [ask.condition for ask in open_asks]
+    if len(set(ask_conditions)) != len(ask_conditions) or set(ask_conditions) & {
+        cap.condition for cap in ordered_caps
+    }:
+        raise ValueError(
+            "a condition cannot appear twice or as both a cap and an open ask"
+        )
     return ReadinessScore(
         schema_version=SCHEMA_VERSION,
         unmeasured=unmeasured_checks(pillars, ordered_caps),
@@ -9746,6 +9758,29 @@ def score_run(
         dataset_facts,
         reference_free=scores_without_a_reference(evaluation_facts.method),
     )
+    open_asks: tuple[Ask, ...] = ()
+    if (
+        review is not None
+        and review.supplied
+        and review.reviewed
+        and review.unsound
+        and review.unsound_in_run != 0
+        and not scores_without_a_reference(evaluation_facts.method)
+        and not any(
+            cap.condition == "dataset-unsound-expected-outputs" for cap in dataset_caps
+        )
+    ):
+        open_asks = (
+            Ask(
+                condition="dataset-unsound-expected-outputs",
+                reason=(
+                    "The coding assistant flagged expected answers this run "
+                    "uses or may use. Put those rows and reasons to the user "
+                    "before changing them; the finding changes no points and "
+                    "does not stop the run."
+                ),
+            ),
+        )
     return aggregate(
         [dataset_pillar, evaluation_pillar, agent_pillar],
         [
@@ -9799,6 +9834,7 @@ def score_run(
         # `score_run` is where both are in scope, and it is the one entry point
         # a customer's card is produced through.
         answers_read=answer_key_read(dataset_facts, review or RowReview()),
+        open_asks=open_asks,
     )
 
 
@@ -10301,10 +10337,25 @@ def render_card(
     # replaces it.
     headline = f"{score.overall}/100  {score.band}"
     lines.append(f"TRAIGENT OPTIMIZATION READINESS{' ' * 8}{headline}")
+    lines.append(f"Action: {ACTION_DISPLAY_NAMES[score.recommended_action]}")
     lines.append("")
     lines.extend(blocker_lines(score, palette))
     if note := confirmed_absence_note(score):
         lines.extend([note, ""])
+    # Put the next step and its limits before the detailed pillar evidence.
+    # Reply-ready choices remain below that evidence.
+    if score.caps:
+        for cap in score.caps:
+            if cap.blocks:
+                label = f"{palette.bad}FIX BEFORE PAID RUN{palette.reset}"
+            elif cap.ceiling is None:
+                label = f"{palette.warn}NOT CHECKED HERE{palette.reset}"
+            elif binds(cap, score.overall):
+                label = f"{palette.warn}LIMITED TO {cap.ceiling}{palette.reset}"
+            else:
+                label = f"{palette.warn}WOULD LIMIT TO {cap.ceiling}{palette.reset}"
+            lines.append(f"  {label} {card_cap_reason(cap)}")
+        lines.append("")
     for pillar in score.pillars:
         colour = band_color(palette, pillar.score)
         headline_suffix = f"  {pillar.score}/100"
@@ -10492,40 +10543,6 @@ def render_card(
             # permanent gap in the customer's project.
             lines.append(f"    {palette.dim}{AGENT_NOT_COVERED}{palette.reset}")
         lines.append("")
-    if score.caps:
-        for cap in score.caps:
-            # The label has to carry the difference the status already makes,
-            # or the card contradicts its own JSON: an advisory ceiling reported
-            # `status: OK` while this line printed BLOCKED next to it.
-            #
-            # "Cap" is the word the code and the schema use; it is not a word a
-            # first-time reader knows. What they need is the consequence, so the
-            # line says it: something to fix before paying, or a limit on the
-            # number - with the limit shown, since "why is this 89" is the
-            # question it answers.
-            #
-            # The number has to be conditioned too, not only the kind of label.
-            # A ceiling that is not the operative one is not what limits this
-            # score, and printing it flat states a number the card cannot
-            # reconcile: the reader is shown 89 beside a 25, with nothing on the
-            # card saying the lowest ceiling wins. The subjunctive is the whole
-            # fix - it says the ceiling is real without claiming it applies now.
-            if cap.blocks:
-                label = f"{palette.bad}FIX BEFORE PAID RUN{palette.reset}"
-            elif cap.ceiling is None:
-                # Nothing is limited, so no number is shown and none is
-                # implied. `NOT CHECKED HERE` is the whole claim: a check this
-                # run did not make, said in the customer's terms rather than
-                # in the scorer's. Printing `LIMITED TO` beside a cap that
-                # bounds nothing would be the defect this arm exists to
-                # remove, wearing the old label.
-                label = f"{palette.warn}NOT CHECKED HERE{palette.reset}"
-            elif binds(cap, score.overall):
-                label = f"{palette.warn}LIMITED TO {cap.ceiling}{palette.reset}"
-            else:
-                label = f"{palette.warn}WOULD LIMIT TO {cap.ceiling}{palette.reset}"
-            lines.append(f"  {label} {card_cap_reason(cap)}")
-        lines.append("")
     if score.agent_route_unverified or any(
         card_check_evidence(score, pillar, sub) != sub.evidence
         for pillar in score.pillars
@@ -10657,12 +10674,6 @@ def render_card(
         f"  {palette.dim}Local pre-run planning estimate, not a probability or "
         f"measured optimization result.{palette.reset}"
     )
-    # Last, and in the same shape the declared-mode board ends on. Everything
-    # above is a finding; this is the one thing to do about them first, which
-    # `recommended_action` already decided for the payload and the card left
-    # the reader to re-derive from the ceilings. JSON retains the routing id;
-    # the card translates that same decision into the user's language.
-    lines.append(f"Action: {ACTION_DISPLAY_NAMES[score.recommended_action]}")
     return "\n".join(lines)
 
 
@@ -11320,6 +11331,21 @@ def previous_score_from_document(document: Any, reference: str) -> PreviousScore
         raise PreviousScoreInputError(
             f"{where}: 'caps' must be the list of condition objects this script "
             "prints"
+        )
+    open_asks = document.get("open_asks", [])
+    if not isinstance(open_asks, list) or not all(
+        isinstance(ask, dict) and isinstance(ask.get("condition"), str)
+        for ask in open_asks
+    ):
+        raise PreviousScoreInputError(
+            f"{where}: 'open_asks' must be a list of condition objects"
+        )
+    ask_conditions = [ask["condition"] for ask in open_asks]
+    if len(set(ask_conditions)) != len(ask_conditions) or set(ask_conditions) & {
+        cap["condition"] for cap in caps
+    }:
+        raise PreviousScoreInputError(
+            f"{where}: a condition cannot appear twice or as both a cap and an open ask"
         )
     return PreviousScore(
         overall=overall,

@@ -12,6 +12,9 @@ data egress, or project behavior.
 
 ## Opening message
 
+For a new run, show the welcome below verbatim as the first run-facing message, before
+inspection or setup updates. A resumed unfinished run opens with where it stands instead.
+
 > **Welcome to Traigent Onboarding!**
 >
 > 1. **Inspect** - preserve your agent, dataset, and evaluator.
@@ -175,9 +178,7 @@ environment" names a section the customer was never given. This guide's own pros
 
 ### 1. Inspect quietly
 
-Unless this run is resuming - which opens with where it stands instead - print
-"Opening message" above verbatim before anything else. Then perform safe,
-read-only discovery without asking for approval:
+Follow "Opening message" above, then perform safe, read-only discovery without asking for approval:
 
 - Identify the checkout root of this guide's clone, or its installed package directory.
   If it is nested inside the target project, exclude that whole tree from discovery and scoring,
