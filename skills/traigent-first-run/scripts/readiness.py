@@ -15763,10 +15763,7 @@ def _call_argument_contributes(
     request_boundary = any(
         isinstance(candidate, ast.Call)
         and _is_statically_reachable(candidate, source)
-        and isinstance(candidate.func, ast.Attribute)
-        and _request_receiver_has_external_constructor(
-            candidate.func.value, target, source
-        )
+        and _call_is_external_request(candidate, target, source)
         and _request_result_reaches_return(candidate, target, source)
         for candidate in _callable_body_nodes(target)
     )
@@ -15829,10 +15826,7 @@ def _request_call_consumes_argument(
 ) -> bool:
     """One imported request call consumes this argument on the return path."""
     return bool(
-        isinstance(call.func, ast.Attribute)
-        and _request_receiver_has_external_constructor(
-            call.func.value, callable_node, source
-        )
+        _call_is_external_request(call, callable_node, source)
         and _request_result_reaches_return(call, callable_node, source)
     )
 
@@ -15886,11 +15880,30 @@ def _direct_external_constructor_import(
     source: StaticSourceEvidence,
 ) -> bool:
     """Resolve one ordinary constructor rooted in a non-project import."""
+    return _external_import_target(constructor, callable_node, source) is not None
+
+
+def _external_import_target(
+    constructor: ast.expr,
+    callable_node: ast.FunctionDef | ast.AsyncFunctionDef,
+    source: StaticSourceEvidence,
+) -> tuple[str, str | None] | None:
+    """The non-project import one spelling resolves to, or None.
+
+    The module the spelling came from, and the member it named where the form
+    was `from module import member` - `None` for `import module [as name]`,
+    where the member is whatever attribute the call site reads. The resolution
+    is the constructor rule's: exactly one binding of the spelling, reachable,
+    before the reference, rebound nowhere, and not a module this project
+    shadows. `_direct_external_constructor_import` is that rule as a boolean;
+    `_module_request_function` needs the target too, to ask whether the member
+    is a request function rather than only whether the import is external.
+    """
     root: ast.expr = constructor
     while isinstance(root, ast.Attribute):
         root = root.value
     if not isinstance(root, ast.Name):
-        return False
+        return None
     module_qualified = root is not constructor
     name = root.id
     local_nodes = [
@@ -15919,14 +15932,14 @@ def _direct_external_constructor_import(
     )
     if local_bindings or locally_bound:
         if locally_bound or len(local_bindings) != 1 or len(local_matches) != 1:
-            return False
+            return None
         selected_import, imported_module = local_matches[0]
         if not _is_statically_reachable(
             selected_import, source
         ) or not _statement_precedes_reference(
             selected_import, root, callable_node, source
         ):
-            return False
+            return None
     else:
         module_bindings, module_matches = _external_import_candidates(
             source.tree.body,
@@ -15934,10 +15947,10 @@ def _direct_external_constructor_import(
             module_qualified=module_qualified,
         )
         if len(module_bindings) != 1 or len(module_matches) != 1:
-            return False
+            return None
         selected_import, imported_module = module_matches[0]
         if selected_import.lineno >= root.lineno:
-            return False
+            return None
         for node in ast.walk(source.tree):
             if (
                 isinstance(node, ast.Name)
@@ -15946,19 +15959,102 @@ def _direct_external_constructor_import(
             ):
                 owner = _lexical_owner(node, source)
                 if owner is source.tree or _scope_declares_global(owner, name):
-                    return False
+                    return None
             if (
                 isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
                 and node.name == name
                 and source.parents.get(id(node)) is source.tree
             ):
-                return False
+                return None
     top_level = imported_module.split(".", 1)[0]
-    return bool(
-        top_level not in sys.stdlib_module_names
-        and top_level != "builtins"
-        and not _project_shadows_import(imported_module, source)
-    )
+    if (
+        top_level in sys.stdlib_module_names
+        or top_level == "builtins"
+        or _project_shadows_import(imported_module, source)
+    ):
+        return None
+    member = None
+    if isinstance(selected_import, ast.ImportFrom):
+        # The statement is in `matches` because one of its aliases binds this
+        # spelling, so the lookup cannot come back empty; read it fail closed
+        # all the same, as every other "did not find" in this module is.
+        member = next(
+            (
+                alias.name
+                for alias in selected_import.names
+                if _import_binding_name(selected_import, alias) == name
+            ),
+            None,
+        )
+        if member is None:
+            return None
+    return imported_module, member
+
+
+# Provider libraries whose request is a module-level function rather than a
+# method on a client the file constructed. LiteLLM is the library this guide
+# pins and calls itself - the walkthrough wrapper in `sdk-execution.md` sends
+# through `litellm.completion` - so an agent written the way LiteLLM's own
+# documentation shows it, `import litellm` and `litellm.completion(model=...)`,
+# has to read as the request it is. It did not: the receiver rule asks whether
+# the object a method is called on was built from a non-project import, and a
+# module is not built, so every setting such an agent sent was reported as one
+# this read "could not follow to the request", on a route the customer had
+# taken exactly as the card describes it. Here the module is the receiver, and
+# the same non-project-import question is asked of it through
+# `_external_import_target`, including its refusal of a project module named
+# `litellm` and of a rebound spelling. Only the request functions are listed:
+# `litellm.token_counter(model=model)` names the setting on a call that sends
+# nothing, and stays outside.
+MODULE_REQUEST_FUNCTIONS: dict[str, frozenset[str]] = {
+    "litellm": frozenset(
+        {"completion", "acompletion", "text_completion", "atext_completion"}
+    ),
+}
+
+
+def _module_request_function(
+    func: ast.expr,
+    callable_node: ast.FunctionDef | ast.AsyncFunctionDef,
+    source: StaticSourceEvidence,
+) -> str | None:
+    """The provider-module request this callee is, dotted, or None.
+
+    Two spellings, both resolved by `_external_import_target` before the
+    member is looked up: `litellm.completion(...)` (or through `import litellm
+    as llm`), where the attribute is the member, and `completion(...)` under
+    `from litellm import completion [as name]`, where the import named it.
+    """
+    if isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name):
+        target = _external_import_target(func, callable_node, source)
+        if target is None or target[1] is not None:
+            return None
+        module, member = target[0], func.attr
+    elif isinstance(func, ast.Name):
+        target = _external_import_target(func, callable_node, source)
+        if target is None or target[1] is None:
+            return None
+        module, member = target
+    else:
+        return None
+    if member in MODULE_REQUEST_FUNCTIONS.get(module, frozenset()):
+        return f"{module}.{member}"
+    return None
+
+
+def _call_is_external_request(
+    call: ast.Call,
+    callable_node: ast.FunctionDef | ast.AsyncFunctionDef,
+    source: StaticSourceEvidence,
+) -> bool:
+    """A method on a client built from a non-project import, or a provider module's own request function."""
+    if isinstance(
+        call.func, ast.Attribute
+    ) and _request_receiver_has_external_constructor(
+        call.func.value, callable_node, source
+    ):
+        return True
+    return _module_request_function(call.func, callable_node, source) is not None
 
 
 def _request_receiver_has_external_constructor(
@@ -16882,10 +16978,7 @@ def _request_parameters(
             and _is_statically_reachable(call, source)
             and not any(isinstance(argument, ast.Starred) for argument in call.args)
             and not any(keyword.arg is None for keyword in call.keywords)
-            and isinstance(call.func, ast.Attribute)
-            and _request_receiver_has_external_constructor(
-                call.func.value, callable_node, source
-            )
+            and _call_is_external_request(call, callable_node, source)
             and (returned := _request_result_return_nodes(call, callable_node, source))
         ):
             continue
@@ -17073,6 +17166,33 @@ def _compute_callables_on_the_call_path(
         (call, target, _forwarded_parameter_references(call, target))
         for call, target in helper_calls
     ]
+    # Handing the mapping to a helper that is itself an argument of another
+    # call - `send(build(text, config), temperature)` - is not a call-path edge:
+    # the outer call consumes the helper's result, and whether that result
+    # reaches the return is the outer call's question, asked of it above. It is
+    # still the mapping going into a same-file helper this read can open, and
+    # the same safety question is asked of that helper's parameter. Left out of
+    # the forwarding references, the hand-off read as an escape, and the
+    # documented rule - a mapping read only as `config["x"]`/`config.get("x")`
+    # in the callable that owns it and in any same-file helper it is handed to
+    # keeps every setting creditable - was false by one nesting level: only the
+    # first setting read in the selected callable survived, and a `temperature`
+    # read second lost credit for being second. These edges widen the safety
+    # question only; `helpers` below, which decides the call path, is still
+    # built from the edges whose contribution to the return is proved.
+    nested_forwarding_edges = [
+        (node, target, _forwarded_parameter_references(node, target))
+        for node in _callable_body_nodes(selected)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and _is_statically_reachable(node, source)
+        and not _callable_binds(node.func.id, selected)
+        and (target := definitions.get(node.func.id)) is not None
+        and _module_callable_is_current(target, source)
+        and _call_matches_static_signature(node, target)
+        and _call_is_an_intermediate_argument(node, selected, source)
+    ]
+    mapping_edges = forwarding_edges + nested_forwarding_edges
     selected_mapping_parameters = {
         name
         for name in _callable_parameter_names(selected)
@@ -17086,13 +17206,13 @@ def _compute_callables_on_the_call_path(
                 _config_read_key(child, frozenset({target_parameter})) is not None
                 for child in _callable_body_nodes(target)
             )
-            for _, target, references in forwarding_edges
+            for _, target, references in mapping_edges
             for reference, target_parameter in references
         )
     }
     allowed_forwarding_references = frozenset(
         id(reference)
-        for _, target, references in forwarding_edges
+        for _, target, references in mapping_edges
         for reference, target_parameter in references
         if _callable_parameter_is_unshadowed(
             target_parameter,
@@ -17136,6 +17256,51 @@ def _compute_callables_on_the_call_path(
     return [(selected, frozenset(initial))] + [
         (helper, frozenset(parameters)) for helper, parameters in helpers.values()
     ]
+
+
+# The one cast a setting may pass through and still be the setting. `float` is
+# injective over the values a range can hold, so two declared bounds that
+# differ still differ after it; `int` is not (`int(0.0)` and `int(0.7)` are the
+# same request) and a clamp collapses half a range. The reasoning is the
+# request-site rule's in `_value_is_this_setting`; it is written once here so
+# the local that holds the read is treated exactly as the argument that sends
+# it. A file that rebinds the spelling has made it its own function, and the
+# cast is then not unwrapped, which is the table-read rule's stance on every
+# builtin it trusts.
+INJECTIVE_CASTS = frozenset({"float"})
+
+
+def _builtin_is_unshadowed(name: str, source: StaticSourceEvidence) -> bool:
+    """Whether a builtin spelling still means the builtin everywhere in this module.
+
+    The question `_unshadowed_table_readers` asks of its allowlist, asked of
+    one name, and answered the same way: fail closed on any binding of the
+    spelling in any scope, including a parameter or a comprehension target.
+    """
+    for node in ast.walk(source.tree):
+        if isinstance(node, _BINDING_CAPABLE_NODES) and _node_binds(name, node):
+            return False
+        if isinstance(node, ast.comprehension) and _target_binds(name, (node.target,)):
+            return False
+        if isinstance(
+            node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)
+        ) and name in _callable_parameter_names(node):
+            return False
+    return True
+
+
+def _unwrap_injective_cast(value: ast.expr, source: StaticSourceEvidence) -> ast.expr:
+    """`float(x)` reads as `x` where `float` is still the builtin; anything else as is."""
+    if (
+        isinstance(value, ast.Call)
+        and isinstance(value.func, ast.Name)
+        and value.func.id in INJECTIVE_CASTS
+        and len(value.args) == 1
+        and not value.keywords
+        and _builtin_is_unshadowed(value.func.id, source)
+    ):
+        return value.args[0]
+    return value
 
 
 def _config_read_key(node: ast.AST, receivers: frozenset[str]) -> str | None:
@@ -17220,6 +17385,8 @@ def _direct_config_holders(
             continue
         value = node.value
         names = _assignment_names(node)
+        if value is not None:
+            value = _unwrap_injective_cast(value, source)
         read = (
             _config_read_key(value, dynamic_parameters) if value is not None else None
         )
@@ -17467,22 +17634,15 @@ def _value_is_this_setting(
     telling a refusal apart from the catch-all, which spoke for this rule and
     spoke wrongly.
 
-    The wrapper is `float` alone, and the reason is arithmetic rather than
-    taste: `float` is injective over the values a range can hold, so two
-    declared bounds that differ still differ after it. `int` is not - `int(0.0)`
-    and `int(0.7)` are the same request - and a clamp such as `min(x, 0.5)`
-    collapses a whole half of a range, so neither is read here. A cast this
-    does not accept is a false refusal and is named as one by the diagnosis
-    rather than passed over in silence.
+    The wrapper is `float` alone - `INJECTIVE_CASTS`, with the arithmetic
+    beside it - and it is unwrapped here and on the local that holds the read
+    by the same `_unwrap_injective_cast`, so `temperature = float(config
+    ["temperature"])` followed by `temperature=temperature` is the same route
+    as `temperature=float(config["temperature"])`. A cast this does not accept
+    is a false refusal and is named as one by the diagnosis rather than passed
+    over in silence.
     """
-    if (
-        isinstance(value, ast.Call)
-        and isinstance(value.func, ast.Name)
-        and value.func.id == "float"
-        and len(value.args) == 1
-        and not value.keywords
-    ):
-        value = value.args[0]
+    value = _unwrap_injective_cast(value, source)
     if (
         isinstance(value, ast.Name)
         and isinstance(value.ctx, ast.Load)
@@ -17558,10 +17718,7 @@ def _knob_reaches_its_named_request_argument(
             if not (
                 isinstance(call, ast.Call)
                 and _is_statically_reachable(call, source)
-                and isinstance(call.func, ast.Attribute)
-                and _request_receiver_has_external_constructor(
-                    call.func.value, callable_node, source
-                )
+                and _call_is_external_request(call, callable_node, source)
                 # The receiver check resolves the chain ROOT, so every method
                 # on a provider client satisfies it - `client.log.record(...)`
                 # as readily as `client.chat.completions.create(...)`. What
@@ -19501,9 +19658,10 @@ ACCEPTED_ROUTE_PARTS: tuple[str, ...] = (
     # draft named neither, which read as "change your function signature" to
     # an author whose only real gap was the kind of call.
     "and where the choice is read from a mapping rather than taken as a "
-    "parameter, the call has to be a provider client's own request; that "
+    "parameter, the call has to be a provider client's own request - that "
     "client can be built at module level or inside the callable, either "
-    "reads",
+    "reads - or LiteLLM's own module-level request, imported under any name "
+    "from litellm itself",
 )
 
 
