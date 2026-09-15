@@ -1646,12 +1646,8 @@ ROUTE_CATEGORY: dict[str, str] = {
     # below refuses any non-scoping route that does not block - so this is the
     # only category the merged behaviour admits.
     #
-    # #187 set both flags on its own cap only, and the two siblings that
-    # predate it kept `asks=False` - so the argument this comment makes was
-    # true of all three and implemented on one, and a wholly model-written
-    # answer key emitted `proceed`. All three now carry `asks=True`, and the
-    # remedy-keyed guard in `tests/test_readiness_scoring.py` is what stops the
-    # next cap from being added to one of these tables and not the other flag.
+    # Generated answer keys ask for review; unsound customer answers ask only
+    # when their selected-run membership is unknown or includes a flagged row.
     "dataset-unsound-expected-outputs": CLAIM_SCOPING,
     "evaluator-absent": CREATION_OR_REPAIR,
     # Both scope, for the reason the dataset provenance rungs do and for one
@@ -2557,11 +2553,8 @@ class Cap:
     # and an offer with nobody asked is a substitution made on the customer's
     # behalf, which is the thing the one ask at discovery exists to prevent.
     #
-    # It is still a property of the remedy and not a preference per cap: both
-    # `add-examples` conditions declare the same expression, so the ask arrives
-    # exactly while the top-up has somewhere to go. Consent removes the stop and
-    # never the score - answering it changes what the dataset IS, and the rows
-    # it writes are scored as the generated rows they are.
+    # The remedy's scope decides whether it asks: top-ups need room, and
+    # unsound answers known to be outside the selected run need no in-run repair.
     asks: bool = False
     # Derived, never passed: `init=False` means no call site can supply one, so
     # the table above is the only place a remedy is decided and a condition
@@ -6310,10 +6303,8 @@ def unsound_answer_cap(review: RowReview, run_rows: int | None = None) -> Cap | 
     """The one ceiling this judgement may set, and never a point of credit.
 
     Fires on the share of what was actually read, which is the only population
-    it has evidence about. A single wrong answer below that share is still
-    surfaced - it becomes the approval-gated question the action table already
-    requires, and it is counted in the evidence line above - it just does not
-    bound the whole run on its own.
+    it has evidence about. A finding below that share remains in the evidence
+    line; the guidance scopes any question to selected-run membership.
 
     An `unsure` never reaches here. Withholding a claim on evidence the
     assistant gathered is one thing; withholding it because the assistant could
@@ -6348,53 +6339,28 @@ def unsound_answer_cap(review: RowReview, run_rows: int | None = None) -> Cap | 
             f"{review.unsound_in_run} of them marked for this run by the row "
             f"review{scope}"
         )
+    if review.unsound_in_run == 0:
+        followup = (
+            "The full-dataset readiness ceiling remains because those findings "
+            "are unresolved; they are outside the selected rows, so they need "
+            "no repair for this run. The run is not stopped."
+        )
+    else:
+        followup = (
+            "It is put to you as a question with the row and the reason, and "
+            "nothing is edited until you answer. The run is not stopped; what "
+            "it may claim is bounded until the answer key is agreed."
+        )
     return Cap(
         "dataset-unsound-expected-outputs",
         UNSOUND_ANSWER_CEILING,
         f"Reading each row's input beside its expected answer, {subject} "
         f"(of {review.reviewed} read) - {consequence}. This is the coding "
-        "assistant's reading, not a measurement, so it is put to you as a "
-        "question with the row and the reason, and nothing is edited until you "
-        "answer. The run is not stopped; what it may claim is bounded until "
-        "the answer key is agreed.",
-        # Bounds, never blocks - and the reason is not a preference about
-        # severity. Three things decide it, and they point the same way.
-        #
-        # The run only ever reads 28 rows (18 tuning, 10 held out). A customer
-        # with 28 sound rows has a run worth making whatever else is in the
-        # file; a broken row the search never opens stops nothing, and the
-        # `unsound_in_run` clause above is what lets the card say which case
-        # this is instead of asserting the worse one.
-        #
-        # On collected data this judgement can simply be wrong. A row that
-        # reads as contradictory to a model can be correct in the customer's
-        # domain - a refund approved outside the policy window because their
-        # goodwill rule says so - and an opinion that can be wrong may bound a
-        # claim and may not cancel the customer's run. (On model-generated rows
-        # the judgement is far more likely right, and those rows are refused by
-        # this input and bounded by the synthetic ceiling anyway.)
-        #
-        # And the remedy decides it, under the rule on `Cap.blocks`: a route
-        # that asks for a creation or a repair blocks, a route that scopes what
-        # the result may claim is advisory. `review-answer-key` is a question
-        # put to the customer - not a creation, not a repair.
-        # `dataset-generated-answer-key` carries that identical slug and is
-        # advisory for the same reason, and one remedy may not mean "stop" on
-        # one card and "proceed" on the next. Whether each provenance cap
-        # blocks is decided once, beside those caps; this one is decided here,
-        # and the two decisions have to agree.
+        f"assistant's reading, not a measurement. {followup}",
+        # The source-wide ceiling survives selection. An explicit outside-only
+        # finding needs no answer before this run; unknown membership still does.
         blocks=False,
-        # And ASKS, which is the half `blocks=False` alone deleted. The entire
-        # content of this condition is a question for the user, and with the
-        # block removed `recommended_action` returned `proceed` - a payload
-        # saying there is nothing to do about a finding whose only purpose is
-        # to be acted on before the run. Measured. Source:
-        # tests/test_readiness_scoring.py#AnswerKeyReviewTests. 89 STRONG / OK / proceed
-        # under the default `blocks=True` became 70 WORKABLE / BLOCKED /
-        # review-answer-key, and `blocks=False` on its own returned it to
-        # proceed with the remedy gone. The run proceeds, the ceiling stands,
-        # and the remedy is still named.
-        asks=True,
+        asks=review.unsound_in_run != 0,
     )
 
 

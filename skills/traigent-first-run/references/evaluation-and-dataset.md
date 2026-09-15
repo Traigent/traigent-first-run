@@ -576,7 +576,7 @@ and ask first.
 
 Scope repairs to the selected first-run rows; "Held-out set and claims" owns when they are
 selected. A verified mechanical correction may cover the whole working copy when simpler.
-Report known defects outside the draw without implying they were fixed.
+For defects outside the draw, follow "A `no` is never a silent edit" below.
 
 After any repair, re-run every check whose input changed, the applicable calibration, and the
 readiness score - SKILL.md section 4 owns that rule. An evaluator repair re-runs the degenerate-gold
@@ -637,9 +637,8 @@ agent paragraph below carries both halves:
   run's own sampled read, before a correctness claim; until then the score measures model agreement.
 - `dataset-mostly-generated-answer-key` - the same review, on the model-written answers only, and
   say how many of the expected answers they are; the run proceeds meanwhile.
-- `dataset-unsound-expected-outputs` - bounded, not stopped: put the flagged rows to the user as one
-  approval-gated question and take the answer, per "A `no` is never a silent edit" in
-  `references/evaluation-and-dataset.md`.
+- `dataset-unsound-expected-outputs` - bounded, not stopped: "A `no` is never a silent edit" below
+  owns whether a question is needed and how to settle it.
 - `dataset-tuning-split-empty` - the rows are fine and the split is not: no row on the side the
   search compares on can be scored. Repair the split as `dataset-tune-holdout-overlap` above is
   repaired; do not enter the creation dependency matrix and do not ask for more data.
@@ -1000,9 +999,8 @@ Record the answers
 where `SKILL.md`'s opening gate places a scoring's own files, and pass that file to
 `scripts/readiness.py --row-review`:
 
-That file is this run's own read, not the customer's material, and it is the one thing a run leaves
-in their project - which is why the opening message names it instead of claiming the score wrote
-nothing. Every opening gate rewrites it whole. So a re-score after the ask is answered supersedes
+That file is this run's own read, kept in the readiness directory named before the card under
+`SKILL.md`'s opening gate. Every opening gate rewrites it whole. So a re-score after the ask is answered supersedes
 it, whether the answer keeps the dataset or points at a different one, and an earlier verdict never
 survives to be read as current. A run that stops at the ask leaves it standing as the record of the
 score it produced, which is the state it is written for rather than an accident of stopping early.
@@ -1065,11 +1063,13 @@ Three things put the ceiling there rather than a stop. The run only ever reads t
 and held-out rows, so a wrong answer among rows it never opens changes nothing that happens. On
 collected data this reading can be wrong - a refund approved outside the stated window can be the
 user's goodwill rule rather than a mistake, and you cannot tell from the row. And the remedy is
-`review-answer-key`, a question put to the user rather than a creation or a repair, which is the
-same remedy `dataset-generated-answer-key` carries and is scoped the same way.
+`review-answer-key` when a finding may affect the selected rows: a question put to the user rather
+than a creation or a repair, as scoped below.
 
-**A `no` is never a silent edit, and it opens a conversation.** Put the findings to the user before
-the run, in this shape:
+**A `no` is never a silent edit.** After selection, if every flagged row is explicitly outside
+this run, report those IDs as unresolved, retain the full-dataset readiness limitation, and
+continue without another repair question. Otherwise put the findings to the user before the run,
+in this shape:
 
 > I suspect this dataset has rows that need fixing before the run.
 >

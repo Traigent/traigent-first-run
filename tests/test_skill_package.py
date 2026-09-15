@@ -17510,6 +17510,19 @@ class SkillPackageTests(unittest.TestCase):
         # 1. Unbilled, which is the whole reason it may sit at the opening gate.
         self.assertIn("your own read, not a billed call", normalized)
         self.assertIn("needs no approval", normalized)
+        self.assertIsNone(
+            document_states(
+                normalized,
+                "kept in the readiness directory named before the card under "
+                "`SKILL.md`'s opening gate",
+            )
+        )
+        self.assertIsNone(
+            document_states(
+                skill,
+                "name the fresh project-relative readiness directory before showing the card",
+            )
+        )
         self.assertIn(
             "--row-review",
             section_text(
@@ -17575,7 +17588,15 @@ class SkillPackageTests(unittest.TestCase):
         #    shape: every flagged row's id, its quoted content, the reason, and
         #    whether the run will actually read it. Then the user's answer
         #    decides, in both directions.
-        self.assertIn("never a silent edit, and it opens a conversation", normalized)
+        self.assertIn("never a silent edit", normalized)
+        self.assertIsNone(
+            document_states(
+                normalized,
+                "if every flagged row is explicitly outside this run, report those IDs as "
+                "unresolved, retain the full-dataset readiness limitation, and continue "
+                "without another repair question",
+            )
+        )
         self.assertIn(
             "I suspect this dataset has rows that need fixing before the run",
             normalized,

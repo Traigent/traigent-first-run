@@ -385,7 +385,8 @@ Readiness score (the card, the three pillars, bands, caps, blocked)
   measures, the strongest evidence, the one limitation that most affects the next action, and that
   action, in one short paragraph without repeating the card's counts or caveats. Keep the printed
   card in a fenced text block so its bars, markers and alignment survive; do not redraw it or add
-  a second checklist of the same findings. The provenance board names real material and substitutes;
+  a second checklist of the same findings. An attention mark on an undecided row review signals
+  uncertainty; it does not itself deduct points or require repair. The provenance board names real material and substitutes;
   it does not repeat the detailed checks. A re-score is a gate result; `SKILL.md` section 4 owns how
   it is presented. Do not animate with invented progress or narrate every card line.
 

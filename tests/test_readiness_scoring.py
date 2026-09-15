@@ -9089,45 +9089,11 @@ def cap_construction_field(source: str, field: str, default: object) -> dict[str
 
 
 class OneRemedyOneQuestionTests(unittest.TestCase):
-    """Conditions sharing a remedy must agree on whether that remedy is asked.
+    """Shared remedies ask consistently while their scope leaves work to settle.
 
-    The gap every existing table check is blind to. `CAP_CEILING`,
-    `ROUTE_CATEGORY`, `CAP_SEVERITY_ORDER` and `ACTION_FOR_CONDITION` are all
-    checked for membership and for order, and every one of those checks reads
-    a TABLE - so none of them can see a flag that lives on the cap rather than
-    in a table. `asks` is exactly that flag, and the state it hid was not
-    subtle: three conditions route to `review-answer-key`, one of them set
-    `asks=True`, and a dataset whose entire answer key was written by a model
-    emitted `recommended_action: "proceed"` beside SKILL.md's instruction to
-    have a person review a sample of the answers before a correctness claim.
-
-    So the assertion is at the level the flag is wrong at. `Cap.asks` says in
-    its own words that the flag "is a property of `review-answer-key` and not
-    of a size" - a property OF THE REMEDY - and `ACTION_FOR_CONDITION` is where
-    remedies are decided. Reading that table is therefore the whole guard, and
-    a fourth `review-answer-key` rung cannot ship asking nothing.
-
-    Detected, though, and not inherited - the distinction is worth stating
-    because the weaker word flatters this guard. `asks` is a per-`Cap` keyword
-    defaulting False, so an author adding a condition to `ACTION_FOR_CONDITION`
-    and omitting `asks=True` at the call site constructs a perfectly valid cap;
-    what happens next is that THIS test goes red, after the fact, rather than
-    the value arriving from the remedy. Making the omission unreachable instead
-    of caught means keying the flag off the remedy in a table beside
-    `ACTION_FOR_CONDITION` and deriving it in `__post_init__` - which changes
-    the `Cap` constructor's contract, retires the AST reading below along with
-    it, and hard-codes an asymmetry with `blocks` that is deliberately only
-    asserted today. That is its own change with its own regression story, and
-    it is filed rather than smuggled in here.
-
-    Deliberately `asks` and not every cap field. `blocks` disagrees under
-    `get-data` on purpose - `dataset-absent` waits, `dataset-coarse-resolution`
-    does not, and `dataset-below-measurable-size` decides at runtime - and
-    `ROUTE_CATEGORY`'s own comment records that disagreement as tracked and not
-    this rule's call. A ceiling is not remedy-keyed either, and that too is
-    written down beside `CAP_SEVERITY_ORDER`: `get-data` spans 20 to 89,
-    because "what should the user do" and "how much of the result survives"
-    are different questions. `asks` is the one cap field the remedy decides.
+    Generated answer keys always need review. The unsound-answer cap also
+    records source defects outside the selected run; that branch stays advisory
+    and its membership cases are exercised by the runtime tests below.
     """
 
     def _declared(self, field: str) -> dict[str, set]:
@@ -9147,6 +9113,10 @@ class OneRemedyOneQuestionTests(unittest.TestCase):
 
     def test_conditions_sharing_a_remedy_agree_on_whether_it_asks(self) -> None:
         declared = self._declared("asks")
+        self.assertEqual(
+            declared.pop("dataset-unsound-expected-outputs"),
+            {"review.unsound_in_run != 0"},
+        )
         by_remedy: dict[str, dict[str, set]] = {}
         for condition, values in declared.items():
             remedy = MODULE.ACTION_FOR_CONDITION[condition]
@@ -9232,7 +9202,12 @@ class OneRemedyOneQuestionTests(unittest.TestCase):
         )
         self.assertGreater(len(siblings), 1)
         self.assertEqual(
-            {value for condition in siblings for value in declared[condition]},
+            {
+                value
+                for condition in siblings
+                if condition != "dataset-unsound-expected-outputs"
+                for value in declared[condition]
+            },
             {False, True},
             "the mutation no longer un-ports the sibling it names",
         )
@@ -11661,6 +11636,91 @@ class TheUnsoundAnswerCapBoundsRatherThanBlocksTests(unittest.TestCase):
             "`review-answer-key` cannot act on two answers",
         )
         self.assertFalse(self._cap(reviewed=28, unsound=3).blocks)
+
+    def test_only_selected_or_unplaced_findings_ask_before_the_run(self) -> None:
+        ids = [f"row-{index}" for index in range(60)]
+        selected = ids[:28]
+        facts = replace(
+            _brought(60, tuning_rows=18, holdout_rows=10),
+            row_id_digests=tuple(MODULE.row_id_digest(row_id) for row_id in ids),
+            run_row_id_digests=tuple(
+                MODULE.row_id_digest(row_id) for row_id in selected
+            ),
+        )
+        for membership in ("outside", "inside", "unknown"):
+            with self.subTest(membership=membership):
+                bad = set(ids[:6] if membership == "inside" else ids[-6:])
+                document = {
+                    "reviewer": "assistant",
+                    "rows": [
+                        {
+                            "id": row_id,
+                            "origin": "collected",
+                            "verdict": "no" if row_id in bad else "yes",
+                            "note": (
+                                "The expected answer contradicts its input."
+                                if row_id in bad
+                                else "The expected answer follows from its input."
+                            ),
+                            **(
+                                {"in_run": row_id in selected}
+                                if membership != "unknown"
+                                else {}
+                            ),
+                        }
+                        for row_id in ids
+                    ],
+                }
+                if membership != "unknown":
+                    document["selected_row_ids"] = selected
+                review = MODULE.row_review_from_document(
+                    json.loads(json.dumps(document)), facts
+                )
+                score = MODULE.score_run(
+                    facts,
+                    _passing_calibration(),
+                    _wired_space(),
+                    dict(MODULE.DEFAULT_WEIGHTS),
+                    review,
+                )
+                cap = next(
+                    c
+                    for c in score.caps
+                    if c.condition == "dataset-unsound-expected-outputs"
+                )
+                asking = membership != "outside"
+                action = "review-answer-key" if asking else "proceed"
+                self.assertEqual((score.overall, score.status), (70, "OK"))
+                self.assertEqual((cap.asks, cap.blocks), (asking, False))
+                self.assertEqual(score.recommended_action, action)
+                payload = json.loads(json.dumps(asdict(score)))
+                self.assertEqual(payload["recommended_action"], action)
+                self.assertEqual(
+                    next(c for c in payload["caps"] if c["condition"] == cap.condition)[
+                        "asks"
+                    ],
+                    asking,
+                )
+                card = MODULE.render_card(score, unicode_ok=False)
+                report = MODULE.render_markdown(score)
+                self.assertIn(f"Action: {MODULE.ACTION_DISPLAY_NAMES[action]}", card)
+                self.assertEqual("asks: `review-answer-key`" in report, asking)
+                if not asking:
+                    self.assertIn("outside the selected rows", cap.reason)
+                    self.assertIn("full-dataset readiness ceiling remains", report)
+                    self.assertNotIn("until you answer", card)
+                below_threshold = replace(
+                    review,
+                    unsound=5,
+                    unsound_in_run=(
+                        5 if membership == "inside" else review.unsound_in_run
+                    ),
+                )
+                self.assertIsNone(MODULE.unsound_answer_cap(below_threshold))
+                self.assertIn(
+                    "5 expected answers contradict their input",
+                    MODULE.row_review_evidence(below_threshold, facts),
+                )
 
     def test_a_flagged_row_outside_the_run_is_not_reported_as_one_inside_it(
         self,
