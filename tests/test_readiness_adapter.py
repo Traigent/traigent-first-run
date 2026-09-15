@@ -6534,8 +6534,9 @@ class ARowReviewIsMatchedToTheRowsPreflightReadTests(unittest.TestCase):
         )
         self.assertEqual(card.returncode, 0, card.stderr)
         self.assertIn(
-            "the coding assistant reviewed all 40 provided rows, 40 of them from "
-            "the 40 rows this run is graded on",
+            "the coding assistant reviewed all 40 provided rows; "
+            "none contradicts its own input; that covers every row in the "
+            "declared tuning/held-out split",
             " ".join(card.stdout.split()),
         )
 

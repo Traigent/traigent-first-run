@@ -10,6 +10,22 @@ Help the user see a credible optimization quickly without overstating synthetic 
 Do the technical work. Ask only for information or approval that changes the result, cost,
 data egress, or project behavior.
 
+## Opening message
+
+> **Welcome to Traigent Onboarding!**
+>
+> 1. **Inspect** - preserve your agent, dataset, and evaluator.
+> 2. **Readiness** - check your setup for free and explain the readiness score.
+> 3. **Baseline** - install the SDK, then measure today's setup and report available calls, cost, and time.
+> 4. **Optimize** - the paid baseline result comes first, your Traigent account after it, then a
+>    bounded managed search.
+> 5. **Results** - compare the runs, recommend one next step, and hand over the Traigent skills so
+>    you can keep going alone.
+>
+> I will mark each stage with measured numbers when available. The readiness score describes your
+> setup, not your agent's accuracy or an optimization result. I explain details only if action is needed.
+> Baseline evidence decides the next step.
+
 ## Bundled guidance index
 
 Load each reference when its stage begins:
@@ -83,13 +99,13 @@ per run and reused; the run supplies it because no bundled script reads a clock.
   `git -C "<project-root>" rev-parse --is-inside-work-tree` succeeds, add `/traigent-runs/` to the
   project-root `.gitignore`; otherwise do not create `.gitignore`. Never overwrite source material.
 - Do not put educational or advanced-skill links in the active run. Offer links after the result.
-- Keep internal check IDs, SDK internals, and optimization jargon out of user-facing progress.
+- Use the glossary's plain wording for progress; keep implementation details in the run record.
 - Named routes are lettered from `A`, exactly one marked recommended, and answerable by reply.
   No route carries a decision of its own. Keep the question last; a route list is never compressed into yes/no. `I have it` is unnumbered,
   last, and only on material questions. A single action without alternatives is not a route list.
 - An ask that follows a result sits below it. Never a marker, heading or summary of it above
   the card, board or evidence. An ask before any result may open the message.
-- Open with the five-stage journey in "Opening message" below. At boundaries/long work, use
+- At boundaries/long work, use
   `Stage <n>/5 · <name>` and `Done / Now / Next`. Show observed readiness score, rows checked,
   calls/trials, cost, or time; keep finished stages as compact checkmarks. Label estimates; never
   invent progress/ETA.
@@ -142,22 +158,6 @@ when any component is synthetic.
 After creation, retain unresolved `❗` lines; list substitutes unmarked under walkthrough setup.
 Mixed boards mark only validated real components `✅`. The zero-anchor procedure supplies the
 three-gap wording; do not render an additional board merely to explain this convention.
-
-## Opening message
-
-> **Welcome to Traigent Onboarding!**
->
-> 1. **Inspect** - preserve your agent, dataset, and evaluator.
-> 2. **Readiness** - run free readiness research and explain its score.
-> 3. **Baseline** - install the SDK, then measure today's setup and report available calls, cost, and time.
-> 4. **Optimize** - the paid baseline result comes first, your Traigent account after it, then a
->    bounded managed search.
-> 5. **Results** - compare the runs, recommend one next step, and hand over the Traigent skills so
->    you can keep going alone.
->
-> I will mark each stage with measured numbers when available. Readiness checks the score and
-> setup—not agent accuracy or an optimization result. I explain details only if action is needed.
-> Baseline evidence decides the next step.
 
 ## Guided flow
 
@@ -220,10 +220,9 @@ rows, calibrates an eligible local evaluator, and scores all three pillars from 
 evidence. Preserve the opening score before creating substitutes. An existing but unmeasured
 component is not absent, and historical readings or config spaces earn no current-run credit.
 On a zero-anchor run, keep evidence on stdout and the card in the conversation until the task
-answer permits writes. Otherwise name the fresh project-relative readiness directory and any row
-review or calibration artifacts before showing the card. Render the card verbatim, then explain
-its score, band, and reasons in the user's language using the glossary's presentation rules.
-The scoring command reads the project; name the evidence this run wrote before it.
+answer permits writes. Otherwise name the fresh project-relative readiness directory before
+showing the card. Render the card verbatim once, then use the glossary's presentation rules
+for its explanation.
 
 **Read next.** Required: [`references/component-creation.md` § Reading the agent for the opening score](references/component-creation.md#reading-the-agent-for-the-opening-score).
 If a component has to be classified `real`, `limited`, or `invalid`: [`references/component-creation.md` § Evidence and provenance](references/component-creation.md#evidence-and-provenance).
@@ -249,8 +248,8 @@ The gap-question procedure below owns the wording and path alternative.
 ### 2. Show readiness once
 
 For a zero-anchor project, the intent gate already rendered the initial readiness board; do not
-render it again before the user answers. For every other starting state, render the initial
-real-world readiness board after inspection. Show the rendered card beside that board, as printed.
+render it again before the user answers. For every other starting state, add the initial
+real-world readiness board after the opening card.
 State what the coding assistant will create for the walkthrough.
 Do not show external links. Do not ask the user to solve missing setup pieces - the ask below fills
 them and offers to use theirs, which is the opposite of delegating them. After a creation or

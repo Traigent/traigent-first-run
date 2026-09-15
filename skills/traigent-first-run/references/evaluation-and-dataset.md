@@ -559,8 +559,9 @@ When a material limitation is found, offer:
 A. **Repair and re-evaluate (recommended)** - create a working copy under `traigent-runs/`, preserve
    the original, make the smallest defensible fix, and re-run static checks, compatibility, and
    evaluator calibration.
-B. **Continue as a workflow demonstration** - only when the component executes safely. Keep it
-   `limited` and `❗`; state before and after the run that the result is not a credible performance
+B. **Continue as a workflow demonstration** - only with safe execution and usable grading under
+   the invalid-component rule above. Keep it `limited` and `❗`; state before and after the run
+   that the result is not a credible performance
    estimate. Say what this route *does* - continue now, on material this run writes or keeps.
    Never word it as a "replacement" or as continuing "once a valid one is available": read that
    way it is a second way to pause, and then every route on offer is a way of stopping. This is the one
@@ -572,6 +573,11 @@ Make objective, reversible repairs in the working copy, such as schema normaliza
 stable IDs, or a disjoint split. Do not silently delete real rows, change expected answers, invent
 product policy, or broaden a rubric. For those judgment-dependent changes, propose the exact diff
 and ask first.
+
+Scope repairs to the rows this first run will actually use, including the whole dataset when that
+is the plan; "Held-out set and claims" owns when they are selected. A verified mechanical
+correction may cover the whole working copy when simpler. Report known defects outside the draw
+without implying they were fixed.
 
 After any repair, re-run every check whose input changed, the applicable calibration, and the
 readiness score - SKILL.md section 4 owns that rule. An evaluator repair re-runs the degenerate-gold
@@ -1075,9 +1081,10 @@ the run, in this shape:
 >   contradicts it. **This row is in the 28 the run will use.**
 > - `ticket-204` - ... (one line per row: the id, the quoted input and expected answer, the reason)
 >
-> I intend to fix these before the run - do you agree or disagree?
+> I intend to fix the affected rows this first run will use - do you agree or disagree?
 
-Give every flagged row: the id, the quoted content, and the reason. **Say which of them are inside
+Give each flagged row proposed for repair: the id, the quoted content, and the reason. Record other
+known affected ids in the run plan. **Say which of them are inside
 the rows this run will actually use** - the drawn tuning rows and the held-out ten. That is the
 difference between "your file has a bad row" and "the run is about to be tuned on a bad row", and
 only the second one changes what this run measures. Set `in_run` on every entry once those rows are
@@ -1093,10 +1100,12 @@ flagged rows this run reads, and without it that sentence cannot be said at all.
 
 Then take the answer, because tuning the agent over a correct dataset is what the run is for:
 
-- **Agree** - repair the rows in the working copy, re-run the check, and re-score.
+- **Agree** - repair the rows in the working copy within that scope, re-run the check, and re-score.
 - **Disagree** - proceed with the rows as they stand, and say in the run's own report what it was
   tuned on: the rows you read as wrong, that the user kept them, and that the accuracy figures
   include them.
+
+This route settles a judgement; demonstrated broken grading follows the invalid-component rule above.
 
 This is deliberately the opposite of the degenerate-gold rule above, and the contrast is the point.
 A gold that scores a right and a wrong answer identically offers no competing interpretation, so it
@@ -1106,9 +1115,10 @@ it to be - and only the user can settle which.
 
 **It is declared as your judgement, never as the user's ground truth.** The file names
 `"reviewer": "assistant"` and readiness refuses any other value, so a verdict can never be filed as
-though the user gave it. If they approve a repair, the repaired row follows "Declaring provenance"
-above: its expected answer is now model-written, carries `output_provenance` saying so, and stops
-counting as an answer anyone observed.
+though the user gave it. If an approved repair writes or infers a new expected answer, declare that
+answer model-written under "Declaring provenance" above. Restoring unchanged customer answers to
+their inputs through verified source IDs or a documented mapping preserves their answer provenance;
+record the mapping and repaired IDs. A guessed offset or semantic similarity is not that evidence.
 
 Say what you reviewed and what you assumed. Readiness scores the whole dataset and never a subset,
 so distinguish provided-file coverage from graded-row coverage using the card's actual counts.
@@ -1278,23 +1288,20 @@ claims below own what a later validation would need to establish.
 ## Held-out set and claims
 
 Reserve 10 held-out rows (2 easy, 3 medium, 3 hard, 2 very hard) and keep the same rows aside for
-the rest of the run. When they are drawn follows the source, in two cases that now reach the same
-moment: a dataset this run
-generates, tops up, or splits itself reserves the held-out split when its working copy is written,
-before any component design, calibration, or optimization touches it; a dataset above the first-run subset size draws the ten from that split with the
-tuning subset as soon as its own working copy is settled - after it is created, topped up or
-repaired, and before anything else is designed, calibrated or validated against it.
+the rest of the run. A dataset this run generates, tops up, or splits itself reserves the
+held-out split when its working copy is written, before any component design, calibration, or
+optimization touches it. A dataset above the first-run subset size draws the ten from that split
+with the tuning subset as soon as its own working copy is settled for usable fields and stable IDs,
+before judgment-dependent answer repairs or component design, calibration, or optimization.
+Keep the selected IDs and source split fixed; never choose or replace rows based on candidate
+scores or proposed replacement answers. This scopes the repair without selecting easier evidence.
 
-That collapses two timings into one, and the one it keeps is the safer. The brought corpus used to
-draw immediately before the paid comparison, which meant the evaluator was designed while looking at
-the whole file and ten of those rows were relabelled held-out afterwards - rows that had already
-shaped the ruler about to grade them. Drawing first and designing second costs nothing and is
-strictly better blindness. What it does cost is rule 1's structural guarantee, which is why that rule
-now states the file the score reads and says why the sentence is load-bearing.
+Drawing first keeps reserved rows out of component design. The earlier draw still requires the
+whole-file scoring rule in "First-run subset for a large dataset" above.
 
 Not at the opening card. `SKILL.md` opens that gate "before any component creation or repair", so
-nothing has been deduplicated, no placeholder filled and no id repaired yet, and a draw there would
-select rows the repair then changes or removes. The row-review hold on such a corpus lifts on
+usable fields and stable IDs may not yet be established; settle those before selecting rows. The
+row-review hold on such a corpus lifts on
 a read of the drawn rows in full, at the opening gate where a split was already settled and at the
 section-4 re-score where it was not; that is a hold on the band, not a third timing of the draw.
 That composition holds wherever the rows come from, because the rule governs the split this run

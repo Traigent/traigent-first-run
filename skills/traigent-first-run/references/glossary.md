@@ -12,8 +12,10 @@ words mean and how to say them.
 - Define a term the first time it appears in the conversation, in one plain
   sentence, then use it consistently. Do not switch synonyms mid-run (pick
   "evaluator", not sometimes "scorer", sometimes "judge", sometimes "grader").
-- Prefer the "plain" wording with the user; keep the "precise" wording for your
-  own reasoning and for the report.
+- Prefer the "plain" wording with the user; keep the "precise" wording, check IDs,
+  pass tallies and setup bookkeeping in the report. Say "local setup checks" for
+  preflight and explain what needs attention or comes next. Pending SDK or key
+  setup is upcoming work; distinguish it from failed component checks.
 - Never assume the user knows an acronym. Expand it once
   (RAG = retrieval-augmented generation).
 - When a term maps to a decision the user must make, use the "ask like this"
@@ -381,8 +383,11 @@ Readiness score (the card, the three pillars, bands, caps, blocked)
 
   Present it as progress: `Stage 2/5 · Readiness - <score>/100 (<band>)`. Explain what the score
   measures, the strongest evidence, the one limitation that most affects the next action, and that
-  action. A re-score is a gate result; `SKILL.md` section 4 owns how it is presented. Do not
-  animate with invented progress or narrate every card line.
+  action, in one short paragraph without repeating the card's counts or caveats. Keep the printed
+  card in a fenced text block so its bars, markers and alignment survive; do not redraw it or add
+  a second checklist of the same findings. The provenance board names real material and substitutes;
+  it does not repeat the detailed checks. A re-score is a gate result; `SKILL.md` section 4 owns how
+  it is presented. Do not animate with invented progress or narrate every card line.
 
 
 NOT CHECKED HERE

@@ -1215,6 +1215,8 @@ class SubScore:
     # prints it as the headline count, and any other statement of it is a copy
     # that can drift.
     applicable: bool = True
+    # A reported adverse finding can require attention without changing points.
+    warning: bool = False
 
 
 # What the user should DO about each cap, as a closed vocabulary.
@@ -5961,7 +5963,7 @@ def provided_rows(facts: DatasetFacts) -> int:
 
 
 def graded_rows(facts: DatasetFacts) -> int | None:
-    """The labelled rows this run is graded on, when the split says which.
+    """The labelled rows in the declared tuning/held-out split, when known.
 
     `run_rows` counts the tuning and held-out rows; this counts the ones among
     them that carry an expected answer, which is the population an answer-key
@@ -6139,12 +6141,8 @@ def row_review_evidence(
         line = f"the coding assistant reviewed all {provided} provided rows"
     else:
         line = f"the coding assistant sampled {review.reviewed} of {provided} provided rows"
-    # And what those rows COVER, where the review said which rows the run
-    # reads. Without this clause the card printed "read 60 of 4812 provided
-    # rows" beside a top band, because the sentence counts the file and the
-    # floor counts the rows the comparison is graded on - two denominators for
-    # one read, which is the class `provided_rows` was extracted to close and
-    # this is the same class in the other direction.
+    # The review declares run membership; preflight only counts the full split.
+    # Name that denominator without claiming it is the eventual paid draw.
     graded = graded_rows(facts)
     # `graded` of zero is left unsaid rather than printed. "covering 0 of the 0
     # rows this run is graded on" is a true arithmetic and a nonsense sentence:
@@ -6155,12 +6153,11 @@ def row_review_evidence(
     # `in_run` counts all reviewed split rows, including unlabelled ones.
     # Only when the populations coincide may that count name graded rows.
     all_split_rows_graded = split_rows is not None and split_rows == graded
-    if review.reviewed_in_run is not None and graded and all_split_rows_graded:
-        line += (
-            f", {review.reviewed_in_run} of them from the {graded} rows this "
-            "run is graded on"
-        )
-    elif review.reviewed_in_run is not None and split_rows:
+    if (
+        review.reviewed_in_run is not None
+        and split_rows
+        and not (all_provided and review.reviewed_in_run >= split_rows)
+    ):
         line += (
             f", {review.reviewed_in_run} of them from the {split_rows} rows "
             "in the declared tuning/held-out split"
@@ -6169,6 +6166,8 @@ def row_review_evidence(
         line += "; 1 expected answer contradicts its input"
     elif review.unsound:
         line += f"; {review.unsound} expected answers contradict their input"
+    elif review.unsure:
+        line += "; no contradiction confirmed"
     else:
         line += "; none contradicts its own input"
     if review.unsure:
@@ -6184,9 +6183,12 @@ def row_review_evidence(
         and review.reviewed_in_run >= split_rows
     ):
         if all_split_rows_graded:
-            line += "; that is every row this run is graded on"
+            line += "; that covers every row in the declared tuning/held-out split"
         else:
-            line += f"; all {graded} graded rows are among those reviewed"
+            line += (
+                f"; all {graded} rows with expected answers in the declared "
+                "tuning/held-out split are among those reviewed"
+            )
         if not all_provided:
             line += (
                 f"; {provided - review.reviewed} other provided rows were not reviewed"
@@ -6202,7 +6204,7 @@ def row_review_evidence(
 
 
 def run_rows(facts: DatasetFacts) -> int | None:
-    """How many rows this run will actually tune and check on, when it is known.
+    """How many rows the declared tuning/held-out split contains, when known.
 
     Read from the declared split rather than from the guide's default 28,
     because the two are not the same claim: 28 is what this walkthrough creates
@@ -6306,12 +6308,8 @@ def unsound_answer_cap(review: RowReview, run_rows: int | None = None) -> Cap | 
         if review.unsound == 1
         else f"{review.unsound} answers do not answer their own question"
     )
-    # Two different findings, and the reader has to be told which one this is.
-    # The run reads a bounded subset - the tuning rows plus the held-out ten -
-    # so a wrong answer outside it costs nothing: the file has a bad row and
-    # the run never opens it. A wrong answer inside it is the run being graded
-    # against something believed wrong, which is the whole reason to say any of
-    # this before the paid search rather than after.
+    # Attribute selected-run membership to the review. The declared split size
+    # does not establish the draw, and an excluded row can still be in that split.
     if review.unsound_in_run is None:
         consequence = (
             "somewhere in the file this run draws from. Whether the search "
@@ -6319,14 +6317,16 @@ def unsound_answer_cap(review: RowReview, run_rows: int | None = None) -> Cap | 
         )
     elif review.unsound_in_run == 0:
         consequence = (
-            "outside the rows this run tunes and checks on, so the search does "
-            "not read them"
+            "all marked outside this run by the row review; they may still "
+            "belong to the larger declared tuning/held-out split"
         )
     else:
-        scope = f"the {run_rows} rows" if run_rows else "the rows"
+        scope = (
+            f" (declared tuning/held-out split: {run_rows} rows)" if run_rows else ""
+        )
         consequence = (
-            f"{review.unsound_in_run} of them among {scope} this run tunes and "
-            "checks on, so the search is about to be graded against them"
+            f"{review.unsound_in_run} of them marked for this run by the row "
+            f"review{scope}"
         )
     return Cap(
         "dataset-unsound-expected-outputs",
@@ -6861,6 +6861,8 @@ def score_dataset(
                 with_review(labels_evidence(labelled, rows, facts.placeholder_rows)),
             )
         )
+    if review.supplied and (review.unsound or review.unsure):
+        subs[-1] = replace(subs[-1], warning=True)
 
     # How many rows this run can actually compare configurations on. For a
     # reference-based scorer that is the labelled count: a row with no expected
@@ -10017,7 +10019,7 @@ def marker_unmeasured(unicode_ok: bool) -> str:
 def marker(sub: SubScore, unicode_ok: bool) -> str:
     if not sub.measured:
         return marker_unmeasured(unicode_ok)
-    if sub.value >= sub.maximum * 0.8:
+    if not sub.warning and sub.value >= sub.maximum * 0.8:
         return "OK" if not unicode_ok else "✅"
     return "!!" if not unicode_ok else "❗"
 
@@ -10483,7 +10485,9 @@ def render_card(
                 # marker is the worst of the group, for the reason the pillar
                 # headline takes the worst: a reader scanning markers must not
                 # be shown the most forgiving one of a set.
-                worst = min(subs, key=lambda sub: (sub.measured, sub.value))
+                worst = min(
+                    subs, key=lambda sub: (sub.measured, not sub.warning, sub.value)
+                )
                 lines.append(f"    {marker(worst, unicode_ok)} {evidence}")
                 lines.extend(
                     f"        {marker(sub, unicode_ok)} {display_name(sub.name)}"

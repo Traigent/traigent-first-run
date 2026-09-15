@@ -4374,7 +4374,7 @@ class SkillPackageTests(unittest.TestCase):
         guide = (ROOT / "GUIDE.md").read_text()
         start_section = guide.split("## Start here", 1)[1].split("## ", 1)[0]
         links = re.findall(r"\[[^\]]+\]\(([^)]+)\)", start_section)
-        self.assertEqual(links, ["skills/traigent-first-run/SKILL.md"])
+        self.assertEqual(links, ["skills/traigent-first-run/SKILL.md#opening-message"])
         normalized = " ".join(start_section.casefold().split())
         self.assertIn(
             "the skill routes its bundled references at the stage where each is needed",
@@ -5855,9 +5855,9 @@ class SkillPackageTests(unittest.TestCase):
             "mandatory-calibration",
         )
         skill_text = " ".join(SKILL.read_text().casefold().split()).replace(" > ", " ")
-        self.assertIn("run free readiness research", skill_text)
+        self.assertIn("check your setup for free", skill_text)
         self.assertIn(
-            "score and setup—not agent accuracy or an optimization result", skill_text
+            "setup, not your agent's accuracy or an optimization result", skill_text
         )
         self.assertIn("i explain details", skill_text)
         self.assertIn("only if action is needed", skill_text)
@@ -7844,7 +7844,10 @@ class SkillPackageTests(unittest.TestCase):
         self.assertIn("finished stages as compact checkmarks", skill)
         # GUIDE.md keeps the cloned-repo reader pointed at it, and states it
         # only once: a second copy is a rule that can be changed in one place.
-        self.assertIn('five-stage journey under "opening message"', guide)
+        self.assertIn(
+            "[Opening message](skills/traigent-first-run/SKILL.md#opening-message)".casefold(),
+            guide,
+        )
 
         # "Only once" is asserted over the tracked tree, not over GUIDE.md.
         # Checking the one document the script just left proves it left; it says
@@ -8496,7 +8499,7 @@ class SkillPackageTests(unittest.TestCase):
     CUSTOMER_JOURNEY = (
         # (what the flow does, promise item, words that item must carry)
         ("perform safe, read-only discovery", 1, "inspect"),
-        ("render the initial real-world readiness board", 2, "readiness"),
+        ("add the initial real-world readiness board", 2, "readiness"),
         ("follow that route's single install approval", 3, "install the sdk"),
         ("### 6. approve and run the baseline", 3, "measure today's setup"),
         # The promise says ACCOUNT, so the flow phrase has to be the sentence
@@ -15441,9 +15444,9 @@ class SkillPackageTests(unittest.TestCase):
     def test_the_held_out_draw_has_one_timing_per_source(self) -> None:
         """Three passages gave the timing three ways; one sentence owns it now.
 
-        The two sources now reach the same moment (traigent-first-run#473), so
-        what this pins is one sentence saying so rather than two timings kept
-        in step. The brought corpus used to draw immediately before the paid
+        The timing stays in one owner: resolve stable rows, select them, then
+        repair their answers and design components. The brought corpus used to
+        draw immediately before the paid
         comparison, which designed the evaluator over rows that were relabelled
         held-out afterwards; the phrase that named that timing is refused here
         so it cannot come back as a helpful clarification.
@@ -15456,11 +15459,13 @@ class SkillPackageTests(unittest.TestCase):
         )
         owner = dataset.split("## held-out set and claims", 1)[1]
         for phrase in (
-            "when they are drawn follows the source, in two cases",
             "a dataset this run generates, tops up, or splits itself reserves the "
             "held-out split when its working copy is written",
-            "in two cases that now reach the same moment",
-            "as soon as its own working copy is settled",
+            "as soon as its own working copy is settled for usable fields and stable ids",
+            "before judgment-dependent answer repairs or component design",
+            "keep the selected ids and source split fixed",
+            "never choose or replace rows based on candidate scores or proposed "
+            "replacement answers",
             "not at the opening card",
             "a hold on the band, not a third timing of the draw",
         ):
@@ -18101,6 +18106,11 @@ class SkillPackageTests(unittest.TestCase):
             normalized,
         )
         self.assertIn("repair the rows in the working copy", normalized)
+        self.assertIn(
+            "Scope repairs to the rows this first run will actually use, "
+            "including the whole dataset when that is the plan",
+            normalized,
+        )
         self.assertIn("say in the run's own report what it was tuned on", normalized)
         # And the route says the same thing where routes live - as a ROUTE.
         # It stated all four of the mandates above at length, in a list where
@@ -18135,6 +18145,11 @@ class SkillPackageTests(unittest.TestCase):
         # 5. Declared as the assistant's judgement, never as the user's.
         self.assertIn("never as the user's ground truth", normalized)
         self.assertIn('"reviewer": "assistant"', dataset)
+        self.assertIn(
+            "Restoring unchanged customer answers to their inputs through verified "
+            "source IDs or a documented mapping preserves their answer provenance",
+            normalized,
+        )
         # And the scorer actually implements the three it can.
         self.assertEqual(READINESS.ROW_REVIEW_REVIEWER, "assistant")
         self.assertNotIn("synthesised", READINESS.ROW_REVIEW_ORIGINS)
@@ -19396,6 +19411,18 @@ class SkillPackageTests(unittest.TestCase):
             "broken grading signal",
         ):
             self.assertIn(phrase, local)
+        self.assertIn(
+            "only with safe execution and usable grading under the "
+            "invalid-component rule above",
+            " ".join(
+                section_text(
+                    SKILL_ROOT / "references" / "evaluation-and-dataset.md",
+                    "Quality diagnosis and repair choice",
+                )
+                .casefold()
+                .split()
+            ),
+        )
 
     def test_unusable_rows_are_diagnosed_from_the_file_not_from_the_summary(
         self,

@@ -56,6 +56,119 @@ def unresolved_source_score():
 
 
 class ReadinessCardAudienceTests(unittest.TestCase):
+    def test_answer_key_findings_cannot_render_as_ok_without_changing_points(self):
+        facts = fixtures._routing_corpus()
+        baseline = fixtures._healthy_score(fixtures._review(reviewed=48))
+        baseline_dataset = next(p for p in baseline.pillars if p.name == "dataset")
+        for unsound, unsure in ((0, 0), (1, 0), (48, 0), (0, 2), (0, 48)):
+            with self.subTest(unsound=unsound, unsure=unsure):
+                score = MODULE.score_run(
+                    facts,
+                    fixtures._passing_calibration(),
+                    fixtures._wired_space(),
+                    dict(MODULE.DEFAULT_WEIGHTS),
+                    fixtures._review(reviewed=48, unsound=unsound, unsure=unsure),
+                )
+                dataset = next(p for p in score.pillars if p.name == "dataset")
+                self.assertEqual(dataset.score, baseline_dataset.score)
+                self.assertEqual(dataset.confidence, baseline_dataset.confidence)
+                self.assertEqual(
+                    [(s.value, s.maximum, s.measured) for s in dataset.subscores],
+                    [
+                        (s.value, s.maximum, s.measured)
+                        for s in baseline_dataset.subscores
+                    ],
+                )
+                self.assertEqual(
+                    any(
+                        c.condition == "dataset-unsound-expected-outputs"
+                        for c in score.caps
+                    ),
+                    unsound == 48,
+                )
+                labels = next(s for s in dataset.subscores if s.name == "labels")
+                for unicode_ok in (False, True):
+                    card = MODULE.render_card(score, unicode_ok=unicode_ok)
+                    line = next(
+                        line for line in card.splitlines() if "contradict" in line
+                    )
+                    expected = (
+                        ("❗" if unicode_ok else "!!")
+                        if unsound or unsure
+                        else ("✅" if unicode_ok else "OK")
+                    )
+                    self.assertEqual(line.split()[0], expected)
+                    if unsure:
+                        self.assertIn("no contradiction confirmed", line)
+                        self.assertIn(f"{unsure} undecided", line)
+                        self.assertNotIn("none contradicts its own input", line)
+                    self.assertIn(labels.evidence, MODULE.render_markdown(score))
+                self.assertEqual(
+                    asdict(labels).get("warning", False), bool(unsound or unsure)
+                )
+
+    def test_review_coverage_describes_the_declared_split_not_a_selected_run(self):
+        facts, _ = (
+            fixtures.RowReviewCoverageDescribesOnlyWhatWasReadTests.reviewed_dataset(
+                provided=48, graded=48, reviewed=48
+            )
+        )
+        for selected in (0, 28, 48):
+            with self.subTest(selected=selected):
+                review = MODULE.row_review_from_document(
+                    {
+                        "reviewer": "assistant",
+                        "rows": [
+                            {
+                                "id": f"review-row-{index}",
+                                "origin": "collected",
+                                "verdict": "no",
+                                "note": "The expected answer contradicts its input.",
+                                "in_run": index < selected,
+                            }
+                            for index in range(48)
+                        ],
+                    },
+                    facts,
+                )
+                score = MODULE.score_run(
+                    facts,
+                    fixtures._passing_calibration(),
+                    fixtures._wired_space(),
+                    dict(MODULE.DEFAULT_WEIGHTS),
+                    review,
+                )
+                line = MODULE.row_review_evidence(review, facts)
+                if selected == 48:
+                    self.assertIn(
+                        "covers every row in the declared tuning/held-out split", line
+                    )
+                    self.assertNotIn("48 of them from the 48", line)
+                cap = next(
+                    c
+                    for c in score.caps
+                    if c.condition == "dataset-unsound-expected-outputs"
+                )
+                if selected:
+                    self.assertIn(
+                        f"{selected} of them marked for this run by the row review",
+                        cap.reason,
+                    )
+                    self.assertIn("declared tuning/held-out split: 48 rows", cap.reason)
+                else:
+                    self.assertIn(
+                        "all marked outside this run by the row review", cap.reason
+                    )
+                    self.assertNotIn("outside the declared", cap.reason)
+                for rendered in (
+                    MODULE.render_card(score),
+                    MODULE.render_markdown(score),
+                ):
+                    self.assertNotIn("rows this run is graded on", rendered)
+                    self.assertNotIn(
+                        "search is about to be graded against them", rendered
+                    )
+
     def test_unverified_opening_explains_its_limit_without_the_source_recipe(self):
         score = unresolved_source_score()
         self.assertEqual(
