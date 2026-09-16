@@ -58,9 +58,11 @@ into the same decision. That question carries five things:
    agent, evaluation method.
 2. That this run can build each missing piece from what exists. Offer a dataset top-up only when
    its cap has `asks: true`; otherwise name the limitation, but do not offer rows.
-3. What that costs, in terms the score already uses: what this run writes stays a substitute, never
-   becomes real-world readiness, examples it writes carry the generated-data ceiling and cannot
-   present as strong however good the rest is, and no configuration from the result may be promoted.
+3. What that changes about the result, in the customer's terms: what this run writes stays a
+   substitute for the walkthrough and never becomes real-world readiness; examples it writes are
+   weaker evidence than their own, so the result shows the workflow rather than measuring their
+   product; and no configuration from the result may be promoted. The ceiling generated rows
+   carry, and its number, are for the approval and the report - never the ask.
 4. One answer where something is missing: proceed. Where it is only short, keeping what they
    brought is a second. `I have it` with a path is never counted among them.
 5. **What they want optimized**, in one line, where this run cannot already tell. The SDK optimizes
@@ -84,8 +86,9 @@ material keeps every gate section 4 already puts on it. The wording and supplied
 When a dataset below this run's **28** has an asking cap, its top-up rides on that same question
 and never as a second one.
 State the bound before the answer. Agreeing changes what the dataset is, never what it earns:
-generated rows retain their provenance, so say before they answer whether accepting lowers the
-ceiling on their count, and by how much.
+generated rows retain their provenance, so say before they answer that the rows it adds are
+written for this walkthrough and are weaker evidence than their own, and that their own rows stay
+exactly as they are.
 The shortfall procedure below owns how each size is put, what that sentence says and where the
 offer ends; the dataset reference owns the split behind the total, how the rows are drawn and the
 ceiling that follows.
@@ -161,8 +164,8 @@ is a sentence a customer can act on, where "the inventory is incomplete" is not.
 > score it on, or anything that says what a right answer looks like - they may well exist somewhere
 > I did not look. I can write both from the agent itself: examples that exercise what it actually
 > does, and a grading method to match. Examples I write are weaker evidence than examples out of
-> your product: the score carries the generated-data ceiling because of it, so this run can show the
-> workflow working and cannot tell you how your product performs.
+> your product, so this run can show the workflow working and cannot tell you how your product
+> performs.
 >
 > Shall I go ahead? Or reply `I have it` with a path - `agent: <path>`, `dataset: <path>`,
 > `evaluation: <path>` - and I will use yours.
@@ -183,16 +186,17 @@ a project with no dataset often has the material for one, and saying so is the d
 the last anchor to fall: an agent that echoes its input anchors nothing, and that case is the
 matrix's all-missing row, which asks what the walkthrough should do rather than guessing it.
 
-Match the cost sentence to how much is derived: one generated component around real material and
-a trio built from task intent support different claims. Keep the answers last, the cost to one
-sentence, and the search to one clause. Explain the generated demonstration accurately without
-overselling the alternative of waiting for real material.
+Match that sentence to how much is derived: one generated component around real material and
+a trio built from task intent support different claims. Keep the answers last, what it changes
+about the result to one sentence, and the search to one clause. Explain the generated
+demonstration accurately without overselling the alternative of waiting for real material.
 
 ### When the gap is a shortfall
 
 Same question, same message, different sentence. What is short here is rows to compare on rather
 than a component, so name the count the score actually used, say where the offer stops, say what
-accepting it costs - and mark the top-up recommended, as SKILL.md requires of every route list.
+it changes about the result - and mark the top-up recommended, as SKILL.md requires of every route
+list.
 It is recommended under either size ceiling, on the same terms as the dataset this walkthrough
 builds when it finds none: whether the held-out rows are ones the customer reserved or ones this
 run reserves from the comparable count on the card, a file under 28 leaves the tuning side, the
@@ -202,9 +206,9 @@ held-out side, or both short of the two halves this walkthrough is built for.
 > can come down to one lucky row. Two ways forward:
 >
 > A. **Add generated examples up to 28 rows in total (recommended)** - the size this walkthrough
-> builds. That gives the search more to separate on, and it also makes most of the set
-> model-written, which lowers the ceiling on what the result may claim; the rows I add are declared
-> generated, and the result says so.
+> is built for, so the run has enough to compare on. Your own rows stay exactly as they are; the
+> rows I add are declared as written for this walkthrough and are weaker evidence than your own, so
+> this first run reads as a walkthrough of the workflow, not a measurement of your product.
 > B. Continue on the nine, and the report carries the one-lucky-row limit.
 >
 > Or reply `I have it` with a path if there are rows I did not find.
@@ -214,15 +218,16 @@ The dataset reference owns the split and provenance arithmetic behind this offer
 Match the sentence to which ceiling the card actually raised rather than to a row count of your own.
 The wiring-check ceiling is the harder finding, and its sentence is the one above; the
 small-comparison-set ceiling is the softer, so its sentence says the run can measure on what it
-has and puts the offer as the shape this walkthrough is built for rather than as a rescue, with the
-top-up still route A and recommended and continuing as is still route B. Under that softer ceiling
-neither route clears the finding - 28 rows cut into two halves still resolve coarsely - so the rule
-below that marks the route which clears it does not choose here; the mark goes to the route that
-reaches the shape this walkthrough builds, and the sentence says the ceiling stays. The total goes
-in the sentence either way, as it does above. When the card stops asking there is nothing to offer,
-and a ceiling left standing over it is not a request. None of this applies while the card is
-blocked on an empty tuning split: the rows are there, the split is what is wrong, and more rows
-answer nothing.
+has and puts the offer as the shape this walkthrough is built for rather than as a rescue - route
+A's caveat there is more to compare on, still a walkthrough rather than a finer measurement of
+their product - with the top-up still route A and recommended and continuing as is still
+route B. Under that softer ceiling neither route clears the finding - 28 rows cut into two halves
+still resolve coarsely - so the rule below that marks the route which clears it does not choose
+here; the mark goes to the route that reaches the shape this walkthrough builds, and the result, not
+the ask, says the ceiling stays. The total goes in the sentence either way, as it does above. When the
+card stops asking there is nothing to offer, and a ceiling left standing over it is not a request.
+None of this applies while the card is blocked on an empty tuning split: the rows are there, the
+split is what is wrong, and more rows answer nothing.
 
 ### When a component is present but unusable
 
