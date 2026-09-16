@@ -561,7 +561,7 @@ class StaticPreflightTests(unittest.TestCase):
         """
         editable = [
             f"__editable__.{MODULE.SDK_DISTRIBUTION}-0.27.0.pth",
-            f"__editable___{MODULE.SDK_DISTRIBUTION}_0_26_0_finder.py",
+            f"__editable___{MODULE.SDK_DISTRIBUTION}_0_27_0_finder.py",
             f"{MODULE.SDK_DISTRIBUTION}-0.27.0.dist-info/RECORD",
         ]
         with mock.patch.object(MODULE, "files", return_value=editable):
