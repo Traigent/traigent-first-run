@@ -84,7 +84,8 @@ material keeps every gate section 4 already puts on it. The wording and supplied
 When a dataset below this run's **28** has an asking cap, its top-up rides on that same question
 and never as a second one.
 State the bound before the answer. Agreeing changes what the dataset is, never what it earns:
-generated rows retain their provenance, so say before they answer that accepting lowers the ceiling.
+generated rows retain their provenance, so say before they answer whether accepting lowers the
+ceiling on their count, and by how much.
 The shortfall procedure below owns how each size is put, what that sentence says and where the
 offer ends; the dataset reference owns the split behind the total, how the rows are drawn and the
 ceiling that follows.
@@ -190,24 +191,38 @@ overselling the alternative of waiting for real material.
 ### When the gap is a shortfall
 
 Same question, same message, different sentence. What is short here is rows to compare on rather
-than a component, so name the count the score actually used, say where the offer stops, and say what
-accepting it costs:
+than a component, so name the count the score actually used, say where the offer stops, say what
+accepting it costs - and mark the top-up recommended, as SKILL.md requires of every route list.
+It is recommended under either size ceiling, on the same terms as the dataset this walkthrough
+builds when it finds none: whether the held-out rows are ones the customer reserved or ones this
+run reserves from the comparable count on the card, a file under 28 leaves the tuning side, the
+held-out side, or both short of the two halves this walkthrough is built for.
 
 > Your dataset is here and I can run on it - 9 rows scored, so a difference between configurations
-> can come down to one lucky row. I can add generated examples up to 28 rows in total, the size this
-> walkthrough builds. That gives the search more to separate on, and it also makes most of the set
-> model-written, which lowers the ceiling on what the result may claim. Continue on the nine, add the
-> rest, or reply `I have it` with a path if there are rows I did not find.
+> can come down to one lucky row. Two ways forward:
+>
+> A. **Add generated examples up to 28 rows in total (recommended)** - the size this walkthrough
+> builds. That gives the search more to separate on, and it also makes most of the set
+> model-written, which lowers the ceiling on what the result may claim; the rows I add are declared
+> generated, and the result says so.
+> B. Continue on the nine, and the report carries the one-lucky-row limit.
+>
+> Or reply `I have it` with a path if there are rows I did not find.
 
 The dataset reference owns the split and provenance arithmetic behind this offer.
 
 Match the sentence to which ceiling the card actually raised rather than to a row count of your own.
 The wiring-check ceiling is the harder finding, and its sentence is the one above; the
-small-comparison-set ceiling is the softer, and its offer is put as a closer fit to real-world
-variety rather than a must-have, with continuing as is named first. The total goes in the sentence
-either way, as it does above. When the card stops asking there is nothing to offer, and a ceiling
-left standing over it is not a request. None of this applies while the card is blocked on an empty
-tuning split: the rows are there, the split is what is wrong, and more rows answer nothing.
+small-comparison-set ceiling is the softer, so its sentence says the run can measure on what it
+has and puts the offer as the shape this walkthrough is built for rather than as a rescue, with the
+top-up still route A and recommended and continuing as is still route B. Under that softer ceiling
+neither route clears the finding - 28 rows cut into two halves still resolve coarsely - so the rule
+below that marks the route which clears it does not choose here; the mark goes to the route that
+reaches the shape this walkthrough builds, and the sentence says the ceiling stays. The total goes
+in the sentence either way, as it does above. When the card stops asking there is nothing to offer,
+and a ceiling left standing over it is not a request. None of this applies while the card is
+blocked on an empty tuning split: the rows are there, the split is what is wrong, and more rows
+answer nothing.
 
 ### When a component is present but unusable
 

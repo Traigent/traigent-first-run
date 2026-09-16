@@ -6625,7 +6625,7 @@ class SkillPackageTests(unittest.TestCase):
             # guide sanctions, and both are now ceilings - so the phrase pinned
             # a promise the card had stopped keeping. What the README must
             # still carry is the boundary itself, from the other side.
-            "they do not stop the run and they ask nothing of you",
+            "they do not stop the run. where your file holds fewer than the 28 rows the walkthrough builds",
             "judgment-dependent changes to real examples, expected answers, or grading policy",
             "destructive or production-affecting actions",
             "if no key is already present",
@@ -15171,7 +15171,7 @@ class SkillPackageTests(unittest.TestCase):
         self.assertIn(
             '"first-run dataset scope" owns the row limits for every source', dataset
         )
-        self.assertIn("use fewer supplied rows by default", dataset)
+        self.assertIn("fewer supplied rows are enough; 28 is never required", dataset)
         self.assertNotIn("adjust the tuning size", dataset)
 
     def test_the_held_out_limit_allows_fewer_without_overstating_evidence(self) -> None:
@@ -15217,8 +15217,8 @@ class SkillPackageTests(unittest.TestCase):
             .split()
         )
         for phrase in (
-            "use fewer supplied rows by default; generate a walkthrough dataset when none exists",
-            "a small real dataset is not permission to fill the remaining places with synthetic rows",
+            "fewer supplied rows are enough; 28 is never required",
+            "which route that ask marks, and why, belongs to the shortfall procedure",
             "generate it only if the customer chooses it",
             "ten rows split seven and three, four split three and one, two split one and one",
             "keep complete accepted-answer groups together",
@@ -32625,7 +32625,10 @@ class TheShortfallRidesOnTheOneAskTests(unittest.TestCase):
         # And the half a customer cannot weigh without being told: a
         # topped-up short dataset is mostly generated, so accepting the
         # offer lowers the ceiling rather than raising the score.
-        self.assertIn("accepting lowers the ceiling", normalized)
+        self.assertIn(
+            "whether accepting lowers the ceiling on their count, and by how much",
+            normalized,
+        )
         self.assertLess(
             READINESS.SYNTHESISED_ROW_POINTS, READINESS.COLLECTED_ROW_POINTS
         )
@@ -32685,8 +32688,9 @@ class TheShortfallRidesOnTheOneAskTests(unittest.TestCase):
         for clause in (
             "can come down to one lucky row",
             "lowers the ceiling on what the result may claim",
-            "rather than a must-have",
-            "with continuing as is named first",
+            "rather than as a rescue",
+            "the top-up still route a and recommended and continuing as is still route b",
+            "the mark goes to the route that reaches the shape this walkthrough builds",
             "the total goes in the sentence either way",
             "when the card stops asking there is nothing to offer",
             "a ceiling left standing over it is not a request",
@@ -32701,7 +32705,7 @@ class TheShortfallRidesOnTheOneAskTests(unittest.TestCase):
         # this was drafted, which is a rule with two homes and about four
         # hundred resident bytes.
         self.assertNotIn(
-            "rather than a must-have", " ".join(SKILL.read_text().casefold().split())
+            "rather than as a rescue", " ".join(SKILL.read_text().casefold().split())
         )
 
 

@@ -4813,9 +4813,10 @@ def top_up_offer(
 
     Two caps and one offer, so the wording cannot drift between the card a
     customer with nine rows reads and the card a customer with twenty-five
-    reads. It names the total, both halves of it, and the fact that the total is
-    where it stops - the owner's constraint that this may not be read as an
-    open-ended offer to generate data.
+    reads. Where it offers, it names the total, both halves of it, and the fact
+    that the total is where it stops - the owner's constraint that this may not
+    be read as an open-ended offer to generate data; the two labelling branches
+    below name the rows this run can label instead, and their cost.
 
     Empty above the walkthrough's own size, because there is nothing left to
     offer: a project with 28 comparable rows already has the split this guide
@@ -4825,21 +4826,25 @@ def top_up_offer(
     available = effective_n if available_rows is None else available_rows
     if available >= WALKTHROUGH_DATASET_ROWS:
         # Any file at or past the walkthrough's size with rows it cannot
-        # compare on is told to review those rows, not that it holds the size:
+        # compare on is told this run can label those rows, not that it holds the size:
         # a 40-row file with 15 labelled rows used to fall through to "" here
         # and the ceiling then said the file already held the 28 rows.
         if effective_n < WALKTHROUGH_DATASET_ROWS and available > effective_n:
             return (
-                f" Review or label the {available - effective_n} existing row(s) "
-                "that are not comparable before generating anything; the file "
-                "already sits at this walkthrough's bounded size."
+                f" This run can label the {available - effective_n} existing row(s) "
+                "that are not comparable, in a working copy with those answers "
+                "declared model-written, which bounds what the result may claim, "
+                "before generating anything; the file already sits at this "
+                "walkthrough's bounded size."
             )
         return ""
     if effective_n + (WALKTHROUGH_DATASET_ROWS - available) < WIRING_CHECK_EXAMPLES:
         return (
-            f" Review or label the {available - effective_n} existing row(s) "
-            "that are not comparable first; the remaining bounded generation "
-            "room cannot make this comparison measurable."
+            f" This run can label the {available - effective_n} existing row(s) "
+            "that are not comparable first, in a working copy with those answers "
+            "declared model-written, which bounds what the result may claim; the "
+            "remaining bounded generation room alone cannot make this comparison "
+            "measurable."
         )
     if preserve_existing_split:
         return (
@@ -10059,7 +10064,7 @@ ACTION_DISPLAY_NAMES = {
     "connect-real-evaluator": "Align the evaluation method with the product's grading policy.",
     "declare-data-provenance": "Clarify where the examples came from.",
     "get-data": "Choose existing examples or a walkthrough dataset with your assistant.",
-    "label-data": "Provide expected results for a representative set of examples.",
+    "label-data": "Review the expected results this run proposes for a representative set of examples.",
     "read-dataset": "Check the selected dataset path and readable format.",
     "repair-dataset": "Review a proposed dataset repair and validate its working copy.",
     "repair-evaluator": "Review the evaluator's grading issue and validate its repair.",
