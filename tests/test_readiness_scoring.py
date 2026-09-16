@@ -16967,7 +16967,7 @@ class TheDatasetSizeLadderTests(unittest.TestCase):
     def test_partial_labels_are_repaired_before_a_bounded_top_up(self) -> None:
         cap = MODULE.power_ceiling(1, 1, available_rows=27)
         self.assertFalse(cap.asks)
-        self.assertIn("Review or label the 26 existing row(s)", cap.reason)
+        self.assertIn("This run can label the 26 existing row(s)", cap.reason)
         self.assertNotIn("18 to tune on", cap.reason)
 
     def test_a_project_owned_split_is_preserved_in_the_offer(self) -> None:
@@ -28628,15 +28628,16 @@ class TheWalkthroughSizeNamesItselfTests(unittest.TestCase):
         and the comparable count is past the wiring-check band - and the
         ceiling fell through to "the file already holds the 28 rows". It
         holds 40, 15 of which can be compared on; the sentence is the one
-        about reviewing the other 25.
+        about this run labelling the other 25.
         """
         cap = MODULE.power_ceiling(15, 15, available_rows=40)
         self.assertEqual(cap.condition, "dataset-coarse-resolution")
         self.assertNotIn("already holds the 28 rows", cap.reason)
         self.assertIn(
-            "Review or label the 25 existing row(s) that are not comparable "
-            "before generating anything; the file already sits at this "
-            "walkthrough's bounded size.",
+            "This run can label the 25 existing row(s) that are not comparable, "
+            "in a working copy with those answers declared model-written, which "
+            "bounds what the result may claim, before generating anything; the "
+            "file already sits at this walkthrough's bounded size.",
             cap.reason,
         )
         self.assertFalse(cap.asks)
@@ -28647,7 +28648,7 @@ class TheWalkthroughSizeNamesItselfTests(unittest.TestCase):
             cap for cap in caps if cap.condition == "dataset-coarse-resolution"
         )
         self.assertNotIn("already holds the 28 rows", scored.reason)
-        self.assertIn("Review or label the 25 existing row(s)", scored.reason)
+        self.assertIn("This run can label the 25 existing row(s)", scored.reason)
         # And the walkthrough sentence needs the comparable count, not only an
         # empty offer: 29 comparable rows in a 40-row file do hold the size.
         self.assertIn(

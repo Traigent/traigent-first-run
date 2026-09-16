@@ -710,11 +710,12 @@ spread. "First-run dataset scope" owns the row limits for every source.
 
 ### Topping a real dataset up to that size
 
-Use fewer supplied rows by default; generate a walkthrough dataset when none exists. A small
-real dataset is not permission to fill the remaining places with synthetic rows. Offer a top-up
-only through the existing asking-cap choice, and generate it only if the customer chooses it.
-Review or label existing rows lacking usable answers first; an empty tuning split needs its split
-repaired, not more rows.
+Fewer supplied rows are enough; 28 is never required: generate a walkthrough dataset when none
+exists, top a short one up only through the existing asking-cap choice, and generate it only if
+the customer chooses it. Which route that ask marks, and why, belongs to the shortfall procedure in
+`references/component-creation.md`. Rows lacking usable answers are labelled in a working copy
+first, under `dataset-no-expected-outputs` above; an empty tuning split needs its split repaired,
+not more rows.
 
 An approved top-up adds only the shortfall, derived from the real task. Preserve existing split
 membership and apply the selection limits below. Never replace a real row with a generated one.
@@ -723,8 +724,10 @@ Declare every addition through the provenance fields below.
 **Agreeing can lower the ceiling, so the offer says so before it is accepted.** The rows this adds
 are generated and are declared as such, so the provenance ladder below prices them exactly as it
 prices any other generated row - and on a small real dataset the generated share after a top-up is
-most of the set. Measured on nine real rows topped to twenty-eight: the card moves from the
-wiring-check ceiling to a mostly-generated one, four points lower. That is the trade the
+most of the set. Measured on nine real rows topped to twenty-eight, the card moves from the
+wiring-check ceiling to a mostly-generated one, four points lower; on ten to thirteen it moves from
+the coarse-resolution ceiling to that same `MOSTLY_SYNTHETIC_CEILING` of 70, raised once generated
+rows exceed `MOSTLY_SYNTHETIC_SHARE` of the set; from fourteen up no ceiling moves. That is the trade the
 customer is being asked to make, and it is the reason the offer is a question rather than a service:
 more to compare on, against a claim bounded by who wrote the rows. A topped-up dataset is a dataset
 this run can compare on, not a dataset that has been improved.

@@ -265,7 +265,9 @@ bounds nothing, and reading a whole answer key is not what a first run asks of a
 Generated data and a small comparison set land on neither of those. A walkthrough dataset is what
 this guide writes for a user who has none, and a handful of rows is a wiring check - both are runs
 worth making, and both are things the result may not claim too much from. So they lower the ceiling
-and say why; they do not stop the run and they ask nothing of you.
+and say why; they do not stop the run. Where your file holds fewer than the 28 rows the walkthrough
+builds, the same card offers a bounded top-up of generated rows on its one question, recommended
+and declared as generated - accept it or keep what you brought.
 
 More than one condition can apply, and a ceiling only does anything while it is the lowest limit in
 play - at or below every other ceiling, and at or below your average. Two conditions can carry the
