@@ -275,8 +275,9 @@ structural findings, report counts and percentages.
 Put all missing or unread components, quality findings, and eligible shortfalls on one question
 below the board, before building anything. Say what was searched for and not found, what this run
 can derive, and how substitutes limit the result. Offer bounded top-up only for an asking cap:
-up to 28 rows, with its generated-data ceiling disclosed. Offer proceed; where material is only
-short, also offer keeping it. Always end with `I have it` and a path as an unnumbered alternative.
+up to 28 rows, declared generated and weaker evidence than theirs. Offer proceed; where material
+is only short, also offer keeping it. Always end with `I have it` and a path as an unnumbered
+alternative.
 Ask what they want optimized only where their evaluator and project do not establish it; if no
 objective is named, say the default is accuracy, with cost when measurable. Then stop and wait.
 A supplied path reopens the opening gate before the run record is created. The zero-anchor task

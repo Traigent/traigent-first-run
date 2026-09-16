@@ -1780,8 +1780,10 @@ auditable:
 1. **Outcome** - baseline versus enhanced result and whether a recommendation is supported.
 2. **What the evidence establishes** - baseline tuning result, enhanced tuning result, and actual
    persisted runs.
-3. **Current state and limits** - component provenance, exclusions, uncertainty, incomplete
-   phases, missing cost/usage telemetry, and any small-sample held-out gap.
+3. **Current state and limits** - component provenance (for a topped-up dataset, the ceiling its
+   generated share carries, with its number; the details layer keeps the mixture's counts),
+   exclusions, uncertainty, incomplete phases, missing cost/usage telemetry, and any small-sample
+   held-out gap.
 4. **Next action** - apply the most useful lesson to the customer's own project through the
    continuation handoff below.
 5. **Details** - configurations, objectives, trials, failures, cost, stop reason, artifacts, and

@@ -26594,14 +26594,15 @@ class TheGapIsPutToTheUserOnceTests(unittest.TestCase):
 
         Three claims, each of which an existing mandate already makes
         elsewhere, so none of them is a new promise: the substitute stays
-        walkthrough setup, generated examples carry a ceiling that keeps the
-        score out of the top bands, and nothing may be promoted off the result.
+        walkthrough setup, generated examples are weaker evidence than the
+        customer's own, with the ceiling itself kept for the approval and the
+        report, and nothing may be promoted off the result.
         """
         normalized = " ".join(self._ask().casefold().split())
         for claim in (
             "never becomes real-world readiness",
-            "generated-data ceiling",
-            "cannot present as strong",
+            "weaker evidence than their own",
+            "never the ask",
             "may be promoted",
         ):
             with self.subTest(claim=claim):
@@ -32622,11 +32623,11 @@ class TheShortfallRidesOnTheOneAskTests(unittest.TestCase):
         self.assertNotIn("removes the stop", normalized)
         self.assertIn("changes what the dataset is, never what it earns", normalized)
         self.assertIn("generated rows retain their provenance", normalized)
-        # And the half a customer cannot weigh without being told: a
-        # topped-up short dataset is mostly generated, so accepting the
-        # offer lowers the ceiling rather than raising the score.
+        # And the half a customer cannot weigh without being told: the rows
+        # a top-up adds are generated, so the ask says they are weaker
+        # evidence, and the ceiling waits for the approval and the report.
         self.assertIn(
-            "whether accepting lowers the ceiling on their count, and by how much",
+            "written for this walkthrough and are weaker evidence than their own",
             normalized,
         )
         self.assertLess(
@@ -32687,7 +32688,7 @@ class TheShortfallRidesOnTheOneAskTests(unittest.TestCase):
         )
         for clause in (
             "can come down to one lucky row",
-            "lowers the ceiling on what the result may claim",
+            "weaker evidence than your own, so this first run reads as a walkthrough",
             "rather than as a rescue",
             "the top-up still route a and recommended and continuing as is still route b",
             "the mark goes to the route that reaches the shape this walkthrough builds",
