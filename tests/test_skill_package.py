@@ -4495,7 +4495,7 @@ class SkillPackageTests(unittest.TestCase):
         self.assertEqual(
             requirements,
             [
-                "traigent==0.26.0",
+                "traigent==0.27.0",
                 "litellm==1.93.0",
                 "python-dotenv==1.2.2",
             ],
@@ -4841,7 +4841,7 @@ class SkillPackageTests(unittest.TestCase):
             "without resolving again",
             "**version guard.**",
             "not a requirement for their environment",
-            "`traigent` at or above `0.26.0` and `litellm` at or above its pin are kept",
+            "`traigent` at or above `0.27.0` and `litellm` at or above its pin are kept",
             "`not the tested versions`",
             "including prerelease, development, post-release, local and epoch segments",
             "`this will change <package> <installed> to <pinned>` receives a yes",
@@ -14658,7 +14658,7 @@ class SkillPackageTests(unittest.TestCase):
                 self.assertNotIn(phrase, combined)
 
     def test_baseline_sync_never_uses_all_and_never_reads_private_layout(self) -> None:
-        """Verified against installed traigent 0.26.0.
+        """Verified against installed traigent 0.27.0.
 
         `--all` pushes every optimization ever logged on the machine - 1042
         sessions on the box used to check this, including unrelated projects.
@@ -19458,11 +19458,13 @@ class SkillPackageTests(unittest.TestCase):
             template,
             "the walkthrough template must not produce a removed field",
         )
-        # The SDK's own `recommend_configuration_space(agent_type)` is a
-        # different surface - a real parameter of a real library function - and
-        # is deliberately still documented. Removing our document field must
-        # not quietly delete somebody else's API from the reference table.
-        self.assertIn("recommend_configuration_space(agent_type)", template)
+        # The SDK's own `recommend_configuration_space(agent_type)` was a
+        # different surface and stayed documented while it existed; SDK 0.27.0
+        # retired `traigent.config_generator.recommendations` outright, so the
+        # reference table must not send a reader to a module that no longer
+        # imports.
+        self.assertNotIn("recommend_configuration_space", template)
+        self.assertNotIn("traigent.config_generator.recommendations", template)
 
     def test_the_glossary_names_exactly_the_agent_lines_the_card_prints(self) -> None:
         """The card's Agent lines and the glossary's list are one decision.
@@ -21471,7 +21473,7 @@ class TheApprovedTotalReachesTheCodeTests(unittest.TestCase):
         money it had spent: three calls at $0.01 left `run_remaining_usd()`
         reporting the whole of a $0.03 remaining.
 
-        The SDK cannot close it either. At the pinned 0.26.0 its local
+        The SDK cannot close it either. At the pinned 0.27.0 its local
         evaluator settles a trial's cost before it applies the metric
         functions, so a call made inside one is already past that trial's
         accounting.

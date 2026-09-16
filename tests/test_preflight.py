@@ -419,7 +419,7 @@ class StaticPreflightTests(unittest.TestCase):
         """Being on a different release is not a defect, and newer least of all.
 
         This replaces a check that required the installed release to equal the
-        tested one exactly. That comparison refused 0.24.0 and 0.27.0 with the
+        tested one exactly. That comparison refused 0.24.0 and 0.28.0 with the
         same words, so a customer who had kept the SDK current was told by the
         product that their copy of the product was unsupported - and the SDK
         ships faster than the constant could be bumped, which made the refusal
@@ -429,7 +429,7 @@ class StaticPreflightTests(unittest.TestCase):
         the one that had no test at all, because at the time the gate was
         written there was no release above the pin to write it against.
         """
-        for installed in ("0.24.0", "0.25.0", "0.27.0", "1.0.0"):
+        for installed in ("0.24.0", "0.25.0", "0.28.0", "1.0.0"):
             with self.subTest(installed=installed):
                 MODULE.RESULTS.clear()
                 with mock.patch.object(
@@ -518,7 +518,7 @@ class StaticPreflightTests(unittest.TestCase):
         with mock.patch.object(MODULE, "files", return_value=None):
             self.assertIsNone(MODULE.installed_sdk_is_the_optimizer())
         with mock.patch.object(
-            MODULE, "version", return_value="0.26.0"
+            MODULE, "version", return_value="0.27.0"
         ), mock.patch.object(MODULE, "files", return_value=None):
             MODULE.check_sdk()
         result = next(item for item in MODULE.RESULTS if item.check == "sdk-version")
@@ -560,9 +560,9 @@ class StaticPreflightTests(unittest.TestCase):
         unrecognised, and unrecognised may not become a finding.
         """
         editable = [
-            f"__editable__.{MODULE.SDK_DISTRIBUTION}-0.26.0.pth",
+            f"__editable__.{MODULE.SDK_DISTRIBUTION}-0.27.0.pth",
             f"__editable___{MODULE.SDK_DISTRIBUTION}_0_26_0_finder.py",
-            f"{MODULE.SDK_DISTRIBUTION}-0.26.0.dist-info/RECORD",
+            f"{MODULE.SDK_DISTRIBUTION}-0.27.0.dist-info/RECORD",
         ]
         with mock.patch.object(MODULE, "files", return_value=editable):
             self.assertIsNone(MODULE.installed_sdk_is_the_optimizer())
@@ -618,7 +618,7 @@ class StaticPreflightTests(unittest.TestCase):
         shown less, and they can only weigh that if the run says so.
         """
         for name, text in (
-            ("requirements.txt", "traigent==0.26.0\nrequests\n"),
+            ("requirements.txt", "traigent==0.27.0\nrequests\n"),
             ("pyproject.toml", 'dependencies = ["traigent>=0.25", "httpx"]\n'),
             ("setup.py", 'setup(install_requires=["traigent"])\n'),
         ):
@@ -652,7 +652,7 @@ class StaticPreflightTests(unittest.TestCase):
         this file has ever become an exit code.
         """
         with tempfile.TemporaryDirectory() as directory:
-            (Path(directory) / "requirements.txt").write_text("traigent==0.26.0\n")
+            (Path(directory) / "requirements.txt").write_text("traigent==0.27.0\n")
             env_path = quiet_env_file(Path(directory))
             with mock.patch.object(
                 sys,

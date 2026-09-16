@@ -103,10 +103,10 @@ class DetectionPredicateTests(unittest.TestCase):
 
 
 class VersionGuardTests(unittest.TestCase):
-    PINS = {"traigent": "0.26.0", "litellm": "1.93.0", "python-dotenv": "1.2.2"}
+    PINS = {"traigent": "0.27.0", "litellm": "1.93.0", "python-dotenv": "1.2.2"}
 
     def test_the_guard_has_three_cases_and_a_missing_pin_is_installed(self) -> None:
-        installed = {"traigent": "0.26.0", "litellm": "1.80.0"}
+        installed = {"traigent": "0.27.0", "litellm": "1.80.0"}
         by_name = {r["package"]: r for r in MODULE.guard(installed, self.PINS)}
         self.assertEqual(by_name["traigent"]["action"], "keep")
         self.assertEqual(by_name["litellm"]["action"], "change")
@@ -124,7 +124,7 @@ class VersionGuardTests(unittest.TestCase):
 
     def test_a_newer_version_is_kept_with_the_not_tested_note(self) -> None:
         installed = {
-            "traigent": "0.27.1",
+            "traigent": "0.28.1",
             "litellm": "1.98.0",
             "python-dotenv": "1.2.2",
         }
@@ -165,7 +165,7 @@ class ApprovalCardTests(unittest.TestCase):
     def test_the_card_splits_new_packages_from_version_changes(self) -> None:
         report = {
             "install": [
-                {"metadata": {"name": "traigent", "version": "0.26.0"}},
+                {"metadata": {"name": "traigent", "version": "0.27.0"}},
                 {"metadata": {"name": "LiteLLM", "version": "1.93.0"}},
                 {"metadata": {"name": "tokenizers", "version": "0.21.0"}},
                 {"metadata": {"name": "openai", "version": "1.90.0"}},
@@ -173,7 +173,7 @@ class ApprovalCardTests(unittest.TestCase):
         }
         installed = {"litellm": "1.80.0", "openai": "1.90.0", "requests": "2.32.0"}
         card = MODULE.approval_card(report, installed)
-        self.assertEqual(card["new"], ["tokenizers 0.21.0", "traigent 0.26.0"])
+        self.assertEqual(card["new"], ["tokenizers 0.21.0", "traigent 0.27.0"])
         self.assertEqual(card["changes"], ["litellm 1.80.0 -> 1.93.0"])
 
     def test_an_empty_report_is_an_empty_card(self) -> None:
@@ -208,7 +208,7 @@ class CommandLineTests(unittest.TestCase):
                         timeout=30,
                     ).stdout.strip()
                 )
-                for name, version in (("litellm", "1.80.0"), ("traigent", "0.27.0")):
+                for name, version in (("litellm", "1.80.0"), ("traigent", "0.28.0")):
                     metadata = site / f"{name}-{version}.dist-info"
                     metadata.mkdir(parents=True)
                     (metadata / "METADATA").write_text(

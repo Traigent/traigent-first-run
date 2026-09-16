@@ -50,7 +50,6 @@ signature you have not inspected, and treat an absent name as unavailable rather
 | Primary-only or cost-aware candidate selection | `traigent.ParetoFrontCalculator` |
 | Dataset loader and example fields (`.input_data` / `.expected_output` / `.metadata`) | `traigent.Dataset` (`Dataset.from_jsonl`) |
 | `optimize_sync(...)` and its result object | the decorated function (`agent.optimize_sync`) |
-| Knob recommendations - `recommend_configuration_space(agent_type)`, agent_type `rag` or `code_gen` | `traigent.config_generator.recommendations` |
 
 Read outcomes from attributes on the result object rather than parsing the printed table; inspect
 it once and reuse the names: `cloud_url` (direct portal link), `best_config`, `best_score`,
@@ -470,7 +469,7 @@ os.environ["TRAIGENT_COST_APPROVED"] = "true"
 SDK_RESULTS_DIR = RUN_DIR / "sdk-results"
 if not os.environ.get("TRAIGENT_RESULTS_FOLDER", "").strip():
     os.environ["TRAIGENT_RESULTS_FOLDER"] = str(SDK_RESULTS_DIR)
-# SDK 0.26.0 otherwise stores query/response/expected text in local per-example
+# SDK 0.27.0 otherwise stores query/response/expected text in local per-example
 # logs. The first-run record needs ids and metrics, not another copy of content.
 os.environ["TRAIGENT_LOG_EXAMPLE_CONTENT"] = "false"
 
@@ -2429,9 +2428,8 @@ criterion alone, report cost comparison unavailable, and make no savings or chea
 `references/evaluation-and-dataset.md` owns choosing one candidate and handling a quality tie.
 
 Do not pass `strategy=` or `strategy_params` to obtain this: use the public calculator through the
-adapter above. A strategy can replace the objectives the decorator declared, and the cost-floor
-preset uses built-in exact-match accuracy rather than the wired scorer. Neither should silently
-change the metric or winner this report describes.
+adapter above. The pinned SDK removed its named selection presets, and the decorator raises
+`TypeError` for either argument; nothing may silently change the metric or winner this report describes.
 
 When the recorded plan has no independent held-out rows, skip this pass and report no held-out
 measurement. Otherwise score the reserved rows with the run's recommended configuration, when SKILL section 7 says to,
