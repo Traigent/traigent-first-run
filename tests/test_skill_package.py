@@ -6,6 +6,7 @@ import contextlib
 import contextvars
 import hashlib
 import http.server
+import importlib.metadata
 import importlib.util
 import inspect
 import io
@@ -4495,7 +4496,7 @@ class SkillPackageTests(unittest.TestCase):
         self.assertEqual(
             requirements,
             [
-                "traigent==0.26.0",
+                "traigent==0.27.0",
                 "litellm==1.93.0",
                 "python-dotenv==1.2.2",
             ],
@@ -4841,7 +4842,7 @@ class SkillPackageTests(unittest.TestCase):
             "without resolving again",
             "**version guard.**",
             "not a requirement for their environment",
-            "`traigent` at or above `0.26.0` and `litellm` at or above its pin are kept",
+            "`traigent` at or above `0.27.0` and `litellm` at or above its pin are kept",
             "`not the tested versions`",
             "including prerelease, development, post-release, local and epoch segments",
             "`this will change <package> <installed> to <pinned>` receives a yes",
@@ -14658,15 +14659,15 @@ class SkillPackageTests(unittest.TestCase):
                 self.assertNotIn(phrase, combined)
 
     def test_baseline_sync_never_uses_all_and_never_reads_private_layout(self) -> None:
-        """Verified against installed traigent 0.26.0.
+        """Verified against installed traigent 0.27.0.
 
         `--all` pushes every optimization ever logged on the machine - 1042
         sessions on the box used to check this, including unrelated projects.
 
         The second half of this used to say the SDK exposed no supported id for
-        the run just completed. The pinned 0.26.0 does: `sync_session_id` is a
-        public field on the result, verified absent on 0.25.0 and present on
-        0.26.0. So the upload path is reachable now, and what stays pinned is
+        the run just completed. The pinned SDK does: `sync_session_id` is a
+        public field on the result, verified absent on 0.25.0 and present from
+        0.26.0 on. So the upload path is reachable now, and what stays pinned is
         the decision that outlived the limitation - feature-detect the public
         attribute, and when it is empty leave the baseline local rather than
         reading the SDK's private storage layout or reaching for `--all`. An
@@ -19458,11 +19459,76 @@ class SkillPackageTests(unittest.TestCase):
             template,
             "the walkthrough template must not produce a removed field",
         )
-        # The SDK's own `recommend_configuration_space(agent_type)` is a
-        # different surface - a real parameter of a real library function - and
-        # is deliberately still documented. Removing our document field must
-        # not quietly delete somebody else's API from the reference table.
-        self.assertIn("recommend_configuration_space(agent_type)", template)
+        # The SDK's own `recommend_configuration_space(agent_type)` was a
+        # different surface and stayed documented while it existed; SDK 0.27.0
+        # retired it, and the navigation-table test below is what keeps the
+        # table from naming a module the pinned SDK no longer ships.
+
+    def test_every_module_the_navigation_table_names_imports_on_the_pinned_sdk(
+        self,
+    ) -> None:
+        """The "Import from" column is a promise the installed SDK has to keep.
+
+        SDK 0.27.0 retired `traigent.config_generator.recommendations` without
+        a changelog line, and the table kept sending readers to it; nothing
+        here noticed because the table was only ever checked as text. This
+        imports every dotted `traigent.*` name the table's second column
+        carries, on the SDK the suite runs against, and resolves any trailing
+        attribute (`traigent.ParetoFrontCalculator`) off the module it names.
+
+        Follows `test_offline_socket_contract`: skip when the SDK is not
+        installed locally, fail under CI, so a green run there means the
+        table was actually checked.
+        """
+        if importlib.util.find_spec("traigent") is None:
+            if os.environ.get("CI"):
+                self.fail(
+                    "traigent is missing under CI, so the navigation table was "
+                    "not checked against the pinned SDK"
+                )
+            self.skipTest("traigent is not installed; install the pinned SDK")
+        text = SDK_EXECUTION.read_text()
+        start = text.index("| Need | Import from |")
+        end = text.index("\n\n", start)
+        rows = [
+            line for line in text[start:end].splitlines()[2:] if line.startswith("|")
+        ]
+        self.assertGreaterEqual(len(rows), 5, "the navigation table lost its rows")
+        names = sorted(
+            {
+                match
+                for row in rows
+                for match in re.findall(
+                    r"`(traigent(?:\.[A-Za-z_][A-Za-z0-9_]*)+)`", row
+                )
+            }
+        )
+        self.assertTrue(names, "the navigation table names no traigent.* surface")
+        unresolved = []
+        for dotted in names:
+            parts = dotted.split(".")
+            module = None
+            for depth in range(len(parts), 0, -1):
+                candidate = ".".join(parts[:depth])
+                if importlib.util.find_spec(candidate) is not None:
+                    module = importlib.import_module(candidate)
+                    remainder = parts[depth:]
+                    break
+            if module is None:
+                unresolved.append(dotted)
+                continue
+            target = module
+            for attribute in remainder:
+                target = getattr(target, attribute, None)
+                if target is None:
+                    unresolved.append(dotted)
+                    break
+        self.assertEqual(
+            unresolved,
+            [],
+            "the navigation table names surfaces the installed SDK does not "
+            f"provide (installed traigent {importlib.metadata.version('traigent')})",
+        )
 
     def test_the_glossary_names_exactly_the_agent_lines_the_card_prints(self) -> None:
         """The card's Agent lines and the glossary's list are one decision.
@@ -21471,7 +21537,7 @@ class TheApprovedTotalReachesTheCodeTests(unittest.TestCase):
         money it had spent: three calls at $0.01 left `run_remaining_usd()`
         reporting the whole of a $0.03 remaining.
 
-        The SDK cannot close it either. At the pinned 0.26.0 its local
+        The SDK cannot close it either. At the pinned 0.27.0 its local
         evaluator settles a trial's cost before it applies the metric
         functions, so a call made inside one is already past that trial's
         accounting.

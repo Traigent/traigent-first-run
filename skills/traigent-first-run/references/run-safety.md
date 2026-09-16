@@ -117,7 +117,7 @@ Only after the standard-library-only component checks:
    below. Into the throwaway environment: the exact pins in
    `assets/requirements-first-run.txt`, never the project's own declarations, which the run never
    edits. Never use an unversioned `pip install traigent`. On the throwaway route,
-   say first: `Installing traigent==0.26.0, litellm==1.93.0 and python-dotenv==1.2.2 into
+   say first: `Installing traigent==0.27.0, litellm==1.93.0 and python-dotenv==1.2.2 into
    <absolute path>/.venv-traigent - a package fetch only: no provider or Traigent calls, and none
    of your project's code runs.` Then proceed: the notice is not a question, and the
    install-approval policy clause in the authorization table still governs. Keep this unattended
@@ -268,7 +268,7 @@ In the commands below, `.../` is the absolute skill directory resolved under GUI
    local setup evidence. Never substitute the candidate's `-m pip`, a console `pip`, or a fresh
    unbound resolver call: startup hooks and a second resolution are outside this approval.
 4. **Version guard.** The pins in `assets/requirements-first-run.txt` are the tested versions and
-   the recommendation, not a requirement for their environment. `traigent` at or above `0.26.0`
+   the recommendation, not a requirement for their environment. `traigent` at or above `0.27.0`
    and `litellm` at or above its pin are kept as they are and only what is missing is installed;
    the setup evidence then carries the one-line note `not the tested versions`, naming them.
    Compare complete package versions, including prerelease, development, post-release, local and
@@ -429,7 +429,7 @@ In the commands below, `.../` is the absolute skill directory resolved under GUI
   nothing was spent only where the evidence establishes no billable call happened. A contradiction
   seen during or after a paid call does not establish that.
   Describe the documented backend-payload contract, not independently audited network traffic.
-- Treat backend transmission and local persistence as separate boundaries. SDK 0.26.0 writes
+- Treat backend transmission and local persistence as separate boundaries. SDK 0.27.0 writes
   per-example `query`, `response`, and `expected` text to local optimization logs by default. In
   the first-run wrapper, set `TRAIGENT_LOG_EXAMPLE_CONTENT=false` in the process before importing
   Traigent; this retains example ids and metrics while writing those content fields as `null`.

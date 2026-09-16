@@ -45,7 +45,7 @@ SUPPORTED_PYTHON_MAX = (3, 14)
 # up to date was turned away by the product for being ahead of it. The SDK
 # ships faster than this constant can be bumped, so equality guaranteed the
 # guide would break on every release until somebody edited this line.
-TESTED_TRAIGENT_VERSION = "0.26.0"
+TESTED_TRAIGENT_VERSION = "0.27.0"
 # The modules every code block in this guide imports without first checking
 # for them (`references/sdk-execution.md`, the wrapper's import block).
 #
