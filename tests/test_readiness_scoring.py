@@ -14829,7 +14829,7 @@ class CopiedCalibrationProvenanceKeepsScoringTests(unittest.TestCase):
                             check.evidence,
                         )
                         self.assertIn(
-                            "target supplied as read-only or a duplicate",
+                            "target that is not the one your original uses",
                             check.evidence,
                         )
                     else:

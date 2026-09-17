@@ -9512,7 +9512,7 @@ class SkillPackageTests(unittest.TestCase):
         )
         ordered = (
             "the refusal above stays everywhere it does not apply",
-            "**copy the evaluator - the actor, never the data.**",
+            "**copy the evaluator - the actor, never the data as rows.**",
             "`traigent-runs/calibration/`",
             "never edit or move their original",
             "never changes the customer's agent, dataset, or evaluator in place",
@@ -9521,15 +9521,24 @@ class SkillPackageTests(unittest.TestCase):
             "a config-file key, a `dotenv` read, a connection handed in from a helper",
             "cannot take the route; it is refused under step 5",
             "file and line",
-            "**ask the customer for a safe target - one question, lettered, and this is its wording:**",
+            "**ask the customer for a safe target - one question, lettered, and this is its wording.**",
+            "under 256 mb",
+            "a copy this run makes itself, with a plain shell copy (`cp`) of the whole file and its "
+            "sidecars into `traigent-runs/calibration/`, byte for byte, never opened, never read row "
+            "by row, never printed",
+            "a copy costs seconds and no tokens",
+            "is never dumped, cloned, or guessed by this run, so the question drops route a",
             "`your evaluator sets its connection target at <copy path>:<line> (<what is there>). "
-            "this run can calibrate a copy of it against a target you choose, without opening "
-            "the one your original uses. a. use a read-only connection or a duplicate of the "
-            "data you made with a proper tool: paste its value into <.env path> under <name> - "
-            "there, never here in chat - and reply a. b. skip the calibration; the run continues "
+            "this run can calibrate a copy of it against a target that is not the one your "
+            "original uses. a. this run copies that database file, byte for byte, into "
+            "traigent-runs/calibration/ and calibrates the evaluator copy against the file copy - "
+            "your file and evaluator untouched, no row read (recommended). b. paste a read-only "
+            "connection or a duplicate you made with a proper tool into <.env path> under <name> - "
+            "there, never here in chat - and reply b. c. skip the calibration; the run continues "
             "on the disclosure above.`",
-            "never make the duplicate yourself, never read rows to build one, never guess a target",
-            "`b` and silence take the disclosure route above",
+            "on route a this run writes the copied file's absolute path under `<name>` into that `.env` itself",
+            "never make a duplicate any other way, never read rows to build one, never guess a target",
+            "the last route and silence take the disclosure route above",
             "**repoint only that one place**",
             "--calibrated-copy-of <original path> --target-name <name> --target-env-file <.env path>",
             # The rule, in one sentence, ahead of everything it makes
@@ -9560,8 +9569,10 @@ class SkillPackageTests(unittest.TestCase):
             "calibration of a copy does not remove the original evaluator's execution disclosure",
             "a passing payload credits and a failing one convicts, exactly as on any other shape",
             '"calibrated a copy of your evaluator against the target you supplied as read-only or a duplicate"',
+            '"against a copy of your database file this run made"',
             "only when that calibration completed",
             "remains the customer's declaration, not something the scoring command verified",
+            "a copy the engine cannot open fails the calibration rather than passing it",
         )
         positions = [route.index(phrase) for phrase in ordered]
         self.assertEqual(positions, sorted(positions))
@@ -9606,7 +9617,7 @@ class SkillPackageTests(unittest.TestCase):
         readiness = (SKILL_ROOT / "scripts" / "readiness.py").read_text()
         self.assertIn(
             "the supplied result reports calibration on a copy of your "
-            '"\n            "evaluator against a target supplied as read-only or a duplicate',
+            '"\n            "evaluator against a target that is not the one your original uses',
             readiness,
         )
         # The authorization row carries the clause, and only the clause.
@@ -9621,7 +9632,8 @@ class SkillPackageTests(unittest.TestCase):
             "where that reference's copied-actor route applies", authorization
         )
         self.assertIn(
-            "never their original file and never a target this run chose", authorization
+            "never their original file and never a live target this run chose",
+            authorization,
         )
         # The steps are stated once. The repoint imperative is the route's
         # most specific sentence, so it is the one checked for a second home.

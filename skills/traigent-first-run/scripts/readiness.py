@@ -7571,7 +7571,7 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
             disqualified = None
         route = (
             "; the supplied result reports calibration on a copy of your "
-            "evaluator against a target supplied as read-only or a duplicate"
+            "evaluator against a target that is not the one your original uses"
             if facts.calibrated_copy
             else ""
         )
@@ -8162,8 +8162,9 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
                         "this check is outside what this guide performs on your "
                         "original file. The one step in this guide that could "
                         "change that is the copied-actor route: a copy of your "
-                        "evaluator, calibrated against a read-only or duplicate "
-                        "target you supply, where the run can offer it. It is a "
+                        "evaluator, calibrated against a copy of your database "
+                        "file this run makes or a read-only or duplicate target "
+                        "you supply, where the run can offer it. It is a "
                         "limit of this run and not a judgement of your evaluator, "
                         "and THIS does not stop your run. "
                     )

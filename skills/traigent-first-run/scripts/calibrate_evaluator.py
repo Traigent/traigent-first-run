@@ -12,8 +12,9 @@ The gate below asks ``preflight.py``'s one-directional walk of the two files it 
 and the module behind ``--reply-transform`` - and refuses on a witness. It does not follow what
 those two files import, so a helper module they reach is a file nobody read. One contained route
 exists (``--calibrated-copy-of``): a self-contained copy of the evaluator under
-``traigent-runs/calibration/``, repointed to read the target the customer supplied as read-only or
-a duplicate from the environment, which the same walk admits only where every witness is an engine
+``traigent-runs/calibration/``, repointed to read from the environment a target that is not the
+original's - a byte copy of a local database file the run made, or the read-only or duplicate
+target the customer supplied - which the same walk admits only where every witness is an engine
 the target can bound - never a process, never more than one engine, never a local import, never
 the reply transform - and only after the repoint itself is established from the two files' trees.
 """
@@ -1633,8 +1634,9 @@ def scope_refusal_message(scan: dict[str, Any]) -> str:
             "references/run-safety.md, which now records why. The one route "
             "this guide offers is the copied-actor route that reference "
             "describes - a copy of the evaluator under "
-            "traigent-runs/calibration/, repointed at a read-only or duplicate "
-            "target the customer supplies, passed here with "
+            "traigent-runs/calibration/, repointed at a copy of a local database "
+            "file the run makes or a read-only or duplicate target the customer "
+            "supplies, passed here with "
             "--calibrated-copy-of ORIGINAL. Where that route is refused, tell "
             "readiness.py what happened with --calibration-scope-refused so "
             "the card discloses the unmade check instead of asking for it. "
@@ -2144,8 +2146,9 @@ def parse_args() -> argparse.Namespace:
         help=(
             "the copied-actor route: --scorer is a copy of the customer's "
             "evaluator ORIGINAL, placed under traigent-runs/calibration/ and "
-            "repointed to read the read-only or duplicate target they "
-            "supplied from the environment under --target-name, per "
+            "repointed to read a target that is not the original's - a copied "
+            "database file or the read-only or duplicate target they supplied - "
+            "from the environment under --target-name, per "
             "references/run-safety.md. Admits the engine witnesses the gate "
             "would otherwise refuse, records original, copy and target name "
             "in the result as `calibrated_copy`, and refuses a copy that "
@@ -2168,8 +2171,9 @@ def parse_args() -> argparse.Namespace:
         "--target-env-file",
         metavar="PATH",
         help=(
-            "with --calibrated-copy-of: the owner-only .env file the customer "
-            "pasted the target into under --target-name. Refused unless it is "
+            "with --calibrated-copy-of: the owner-only .env file that holds the "
+            "target under --target-name, written by the run on route A or pasted "
+            "by the customer on route B. Refused unless it is "
             "readable by its owner alone"
         ),
     )
