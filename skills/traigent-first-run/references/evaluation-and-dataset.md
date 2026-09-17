@@ -724,10 +724,13 @@ Declare every addition through the provenance fields below.
 **Agreeing can lower the ceiling, and the result says by how much.** The rows this adds
 are generated and are declared as such, so the provenance ladder below prices them exactly as it
 prices any other generated row - and on a small real dataset the generated share after a top-up is
-most of the set. Measured on nine real rows topped to twenty-eight, the card moves from the
-wiring-check ceiling to a mostly-generated one, four points lower; on ten to thirteen it moves from
-the coarse-resolution ceiling to that same `MOSTLY_SYNTHETIC_CEILING` of 70, raised once generated
-rows exceed `MOSTLY_SYNTHETIC_SHARE` of the set; from fourteen up no ceiling moves. That is the
+most of the set. Measured on a file with no declared split: on nine real rows topped to
+twenty-eight the card moves from the wiring-check ceiling to a mostly-generated one, four points
+lower; on ten to thirteen it moves from the coarse-resolution ceiling to that same
+`MOSTLY_SYNTHETIC_CEILING` of 70, raised once generated rows exceed `MOSTLY_SYNTHETIC_SHARE` of the
+set; from fourteen up no ceiling moves. With a declared split the opening ceiling follows the
+tuning side, so a 9/6 split topped to 18/10 moves from the wiring-check ceiling up to the
+coarse-resolution one. That is the
 trade behind the offer, and the reason it is a question rather than a service:
 more to compare on, against a claim bounded by who wrote the rows. A topped-up dataset is a dataset
 this run can compare on, not a dataset that has been improved.

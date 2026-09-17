@@ -4,8 +4,9 @@ Run a guided Traigent optimization in one sitting, from whatever your project ha
 
 Your coding assistant inspects the project, preserves any real agent, dataset, and evaluation
 method it finds, and checks whether those components can support a meaningful comparison. If a
-real dataset or evaluator is too small, corrupted, narrow, trivial, or logically mismatched, the
-assistant explains the evidence and offers to repair a working copy and revalidate it. The
+real dataset or evaluator is corrupted, narrow, trivial, or logically mismatched, the assistant
+explains the evidence and offers to repair a working copy and revalidate it; a dataset that is
+only short is offered a bounded top-up instead. The
 assistant labels any temporary walkthrough material so it cannot be mistaken for production
 evidence. When an optimization does not beat your existing baseline, that no-lift result is
 reported plainly rather than dressed up as a win. Verified facts are separated
@@ -234,9 +235,11 @@ too: they hold the paid comparison until they are cleared, while the rest only b
 result may claim. The card says the holding on its own `BLOCKER` line under the score rather than
 as a tag beside the band, because the band and the block grade different things - the band grades
 how good the evidence is, the blocker says whether the paid comparison may start yet. A generated
-walkthrough dataset scoring `65/100 WORKABLE` while blocked is therefore the ordinary case and not
-a self-contradiction: the score stands, and the line says how many things have to clear first,
-where each of them is marked, and what happens once they are cleared.
+walkthrough dataset scoring `65/100 WORKABLE` with nothing blocking is the ordinary case: its
+ceiling bounds the claim and stops nothing. A blocked card never reads above `PARTIAL`, because
+every condition that holds the paid run also caps the score at 50 or below; the score stands, and
+the line says how many things have to clear first, where each of them is marked, and what happens
+once they are cleared.
 
 The card labels the kinds differently, and the label is the whole message.
 `FIX BEFORE PAID RUN` means the current components cannot yet support a trustworthy paid
@@ -265,9 +268,10 @@ bounds nothing, and reading a whole answer key is not what a first run asks of a
 Generated data and a small comparison set land on neither of those. A walkthrough dataset is what
 this guide writes for a user who has none, and a handful of rows is a wiring check - both are runs
 worth making, and both are things the result may not claim too much from. So they lower the ceiling
-and say why; they do not stop the run. Where your file holds fewer than the 28 rows the walkthrough
-builds, the same card offers a bounded top-up of generated rows on its one question, recommended
-and declared as generated - accept it or keep what you brought.
+and say why; they do not stop the run. Where the card's size ceiling asks - your file is under the
+28 rows the walkthrough builds and filling it would reach ten comparable ones - the same card offers
+a bounded top-up of generated rows on its one question, recommended and declared as generated -
+accept it or keep what you brought.
 
 More than one condition can apply, and a ceiling only does anything while it is the lowest limit in
 play - at or below every other ceiling, and at or below your average. Two conditions can carry the

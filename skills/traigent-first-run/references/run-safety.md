@@ -1150,7 +1150,9 @@ exist and points at a file that was never created.
   evaluation method. Name the condition in the user's own words - no examples were
   connected, the answer key was written by a model, no grading method existed - and then what this
   run put there instead. Both halves: "a dataset was created", without the gap it answers, reads as
-  a feature rather than as a substitution for something they do not have. Where this run created and
+  a feature rather than as a substitution for something they do not have. Where the dataset was
+  topped up, add the ceiling its generated share now carries, with its number: the ask deliberately
+  left the number out, and this is the first place the customer hears it. Where this run created and
   repaired nothing, drop the bullet; there is no gap of ours to name, and describing the customer's
   own material as one is the claim this card exists to avoid making.
 - **Absolute paths** - one for each file this run actually wrote: the generated or repaired dataset
