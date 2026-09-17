@@ -3513,7 +3513,8 @@ def candidate_execution_witnesses(tree: ast.Module) -> tuple[str, ...]:
 #
 # Why the split exists at all: `calibrate_evaluator.py`'s copied-actor route
 # (`--calibrated-copy-of`, and `references/run-safety.md` § the copied-actor
-# route) calibrates a COPY of an evaluator against a read-only or duplicate
+# route) calibrates a COPY of an evaluator against a target that is not the
+# original's - a database file copy the run made, or a read-only or duplicate
 # target the customer supplied. A safe target bounds an engine. It bounds
 # nothing about `subprocess.run(candidate)` or `exec(candidate)`, so the route
 # is refused for a file that reaches a process, and the refusal has to come

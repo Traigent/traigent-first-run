@@ -9530,7 +9530,8 @@ class SkillPackageTests(unittest.TestCase):
             "is never dumped, cloned, or guessed by this run, so the question drops route a",
             "`your evaluator sets its connection target at <copy path>:<line> (<what is there>). "
             "this run can calibrate a copy of it against a target that is not the one your "
-            "original uses. a. this run copies that database file, byte for byte, into "
+            "original uses. a. this run copies that database file (<absolute path>, <size> with its "
+            "sidecars), byte for byte, into "
             "traigent-runs/calibration/ and calibrates the evaluator copy against the file copy - "
             "your file and evaluator untouched, no row read (recommended). b. paste a read-only "
             "connection or a duplicate you made with a proper tool into <.env path> under <name> - "

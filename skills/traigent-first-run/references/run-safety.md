@@ -137,16 +137,18 @@ Only after the standard-library-only component checks:
    exit it and never reuse that process for a real run.
 6. After all applicable free checks, create or minimally update `.env` through
    the ordered credential handoff below, which selects the file: add only a
-   genuinely missing selected-provider key, and stop once for only that secret locally. Where the
+   genuinely missing selected-provider key, and stop once for only that secret locally; any other
+   line is the `.env` rule's under Rules, which names the copied-actor route's one. Where the
    route's credential is absent and another vendor's is present, that stop closes its message with
    the lettered ask - `A.` preserve this route by adding <key>, marked recommended unless the user
    already chose the other vendor; `B.` change to <available vendor> - and nothing follows it: one
    reply pastes the key or changes the route. Do not request or route the Traigent key before the
    section-7 baseline checkpoint.
-7. Where the copied-actor route in Static and mock validation was taken and the customer replied
-   `A` or `B`, run that calibration once the target is in the file step 6 selected under the name
-   the question stated - the copied file's absolute path this run wrote on `A`, the value they
-   pasted on `B` - the copy reads it there and nowhere else. It is the one
+7. Where the copied-actor route in Static and mock validation was taken and the customer chose a
+   route that calibrates - the file copy this run makes, or a target they paste - run that
+   calibration once the target is in the file step 6 selected under the name the question stated
+   - the copied file's absolute path this run wrote, or the value they pasted - the copy reads it
+   there and nowhere else. A skip reply runs nothing. It is the one
    calibration this sequence runs after the credential handoff, because its target lives in the
    same owner-only file.
 
@@ -547,7 +549,8 @@ defaults to read-only, so grant it full access rather than accepting the default
 moment the user creates the key, not afterwards.
 
 Preserve existing owner-owned `.env` values. Add only a genuinely missing selected-provider key for
-this run; do not add a backend or API URL. An existing override does not affect the local baseline,
+this run, and the copied-actor route's one target line where its file copy was taken; do not add
+a backend or API URL. An existing override does not affect the local baseline,
 which runs backend-offline and removes the Traigent key before importing the SDK. At connected-run
 approval, inspect that override and confirm the destination before a run can be recorded there.
 Existing cost figures and approval-looking values are likewise not approval for this run: its wrapper
@@ -726,7 +729,8 @@ measuring their own evaluator themselves, which this run will read.
 
 One contained route to the calibration evidence exists inside this guide, and the refusal above
 stays everywhere it does not apply. What the refusal argues is that the target is unbounded. A
-target the customer bounds is a different proposition, and a copy of the actor pointed at it is one
+target that is bounded - a file copy this run makes, or one the customer bounds - is a different
+proposition, and a copy of the actor pointed at it is one
 this run can calibrate without opening the connection their original opens. Offer it where every
 step below can be made honest; where one cannot, say which, and keep the disclosure route.
 
@@ -746,27 +750,45 @@ step below can be made honest; where one cannot, say which, and keep the disclos
 3. **Ask the customer for a safe target - one question, lettered, and this is its wording.** What
    the located argument holds decides the routes. A **local database file** - a literal or an
    expression that resolves to a path on disk, as `sqlite3.connect("<file>")` and
-   `duckdb.connect("<file>")` take, where the file exists and it and its sidecars (`-wal`, `-shm`,
-   `-journal`; DuckDB's `.wal`) together are under 256 MB - the size a copy takes in seconds on
-   any disk the project sits on, and a bound a first run may spend of the customer's disk without
-   asking - earns route A: a copy this run makes itself, with a plain shell copy (`cp`) of the
-   whole file and its sidecars into `traigent-runs/calibration/`, byte for byte, never opened,
-   never read row by row, never printed. A copy costs seconds and no tokens; reading the database
-   would cost both and put the customer's rows in this conversation. A `-shm` or `-journal`
-   sidecar means a process may hold the file open: say so, and take the copy only once the
-   customer confirms nothing is writing it, since a copy taken under a writer can be torn. A
-   **server or unknown target** - anything else, or a file over the bound - is never dumped,
-   cloned, or guessed by this run, so the question drops route A and letters the other two from
-   A, the pasted target marked recommended.
+   `duckdb.connect("<file>")` take, resolved to an absolute path with links followed - `realpath`
+   or the chosen interpreter's `os.path.realpath` for the path; `stat -L` (`-c %s` on Linux,
+   `-f %z` on macOS) for each size, never `ls`, which reports a link's own size - lying inside the
+   resolved project root, where the file exists and it and the sidecars beside the resolved file
+   (`-wal`, `-shm`, `-journal`; DuckDB's `.wal`) together measure under 256 MB - the size a copy
+   takes in seconds on any disk the project sits on, and a bound a first run may spend of the
+   customer's disk without asking - earns route A: a copy this run makes itself, with a plain
+   shell copy (`cp`) of the whole file and its sidecars into `traigent-runs/calibration/`, byte
+   for byte, never opened, never read row by row, never printed. A copy costs seconds and no
+   tokens; reading the database would cost both and put the customer's rows in this conversation.
+   A `-shm` or `-journal` sidecar means a process may hold the file open: say so, and take the
+   copy only once the customer confirms nothing is writing it, since a copy taken under a writer
+   can be torn. After the copy, open the run's own copy - never the customer's file - once, for
+   SQLite's integrity check, through the chosen interpreter's stdlib so no CLI is needed:
+   `"<chosen interpreter>" -I -S -B -c 'import sqlite3, sys; print(*[r[0] for r in
+   sqlite3.connect(sys.argv[1]).execute("PRAGMA integrity_check")], sep="\n")' "<copy>"`. It
+   answers `ok` for a sound file and otherwise describes the damage by page, table, index and row
+   number - names and counts, never a stored value - or refuses to open it at all. Treat anything
+   but `ok` as a torn copy: take it again once nothing writes the file, or, where a second copy
+   is also torn, re-put the question without route A, saying the copy could not be verified, so
+   the pasted target is what they choose next. A torn SQLite copy is never calibrated, so on that
+   engine a route-A failure is never the evaluator's. DuckDB offers no such check: there the
+   customer's word that nothing writes the file is the whole guarantee, and a route-A calibration
+   that fails on a DuckDB copy is reported as a copy this run could not verify, not as the
+   evaluator's. A **server or unknown target** - anything else, a file outside the resolved
+   project root, or a file over the bound - is never dumped, cloned, or guessed by this run, so
+   the question drops route A, says why in one clause after `<what is there>` - `This run makes
+   no copy of it: it lies outside your project root` or `it and its sidecars measure <size>, over
+   the 256 MB a first run copies unasked` - and letters the other two from A, the pasted target
+   marked recommended.
 
-   `Your evaluator sets its connection target at <copy path>:<line> (<what is there>). This run can calibrate a copy of it against a target that is not the one your original uses. A. This run copies that database file, byte for byte, into traigent-runs/calibration/ and calibrates the evaluator copy against the file copy - your file and evaluator untouched, no row read (recommended). B. Paste a read-only connection or a duplicate you made with a proper tool into <.env path> under <NAME> - there, never here in chat - and reply B. C. Skip the calibration; the run continues on the disclosure above.`
+   `Your evaluator sets its connection target at <copy path>:<line> (<what is there>). This run can calibrate a copy of it against a target that is not the one your original uses. A. This run copies that database file (<absolute path>, <size> with its sidecars), byte for byte, into traigent-runs/calibration/ and calibrates the evaluator copy against the file copy - your file and evaluator untouched, no row read (recommended). B. Paste a read-only connection or a duplicate you made with a proper tool into <.env path> under <NAME> - there, never here in chat - and reply B. C. Skip the calibration; the run continues on the disclosure above.`
 
    `<NAME>` is a name this run states, such as `TRAIGENT_CALIBRATION_TARGET`; `<.env path>` is the
    owner-only `.env` the Setup sequence's step 6 handoff selects, which is why this calibration
    runs at that sequence's step 7, after the handoff. On route A this run writes the copied file's
    absolute path under `<NAME>` into that `.env` itself - the child runs from
-   `traigent-runs/calibration/`, so a relative path opens nothing and fails as if the evaluator
-   had - and the gate below reads it exactly as it reads a pasted one. Never make a duplicate any other way, never read rows to build one, never guess a
+   `traigent-runs/calibration/`, so a project-relative path opens nothing and fails as if the
+   evaluator had - and the gate below reads it exactly as it reads a pasted one. Never make a duplicate any other way, never read rows to build one, never guess a
    target. The last route and silence take the disclosure route above.
 4. **Repoint only that one place**, then calibrate the copy through the same gate, which hands the
    child that one value and nothing else: `scripts/calibrate_evaluator.py --calibrated-copy-of
