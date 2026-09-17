@@ -6625,7 +6625,7 @@ class SkillPackageTests(unittest.TestCase):
             # guide sanctions, and both are now ceilings - so the phrase pinned
             # a promise the card had stopped keeping. What the README must
             # still carry is the boundary itself, from the other side.
-            "they do not stop the run. where your file holds fewer than the 28 rows the walkthrough builds",
+            "they do not stop the run. where the card's size ceiling asks",
             "judgment-dependent changes to real examples, expected answers, or grading policy",
             "destructive or production-affecting actions",
             "if no key is already present",
