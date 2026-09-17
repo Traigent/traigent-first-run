@@ -62,15 +62,15 @@ guide is ever edited faster than it is reviewed, which is the condition that wou
 
 For changes to this repository itself - no customer run ever runs these:
 
-Illustrative warm wall times observed on one developer checkout on 2026-08-13; hardware, load, and
-caches change them, and image pulls are excluded.
+Illustrative warm wall times observed on one developer checkout on 2026-08-13, the unit suite
+re-timed on 2026-09-17; hardware, load, and caches change them, and image pulls are excluded.
 
 | Check | Observed warm | Run it when |
 | --- | --- | --- |
 | `python tools/relock.py --check` | 0.1 s | Always - fixture locks must match the fixtures they mirror. |
 | `ruff check .` | 0.1 s | Always. |
 | `black --check .` | ~0.2 s | Always. |
-| `python -m unittest discover -s tests` | ~4 min | Anything the suite pins changed - guidance, scripts, tools, tests, or the workflow. |
+| `python -m unittest discover -s tests` | ~10 min | Anything the suite pins changed - guidance, scripts, tools, tests, or the workflow. |
 | [`offline-contract` Docker command](tests/behavioral/README.md#running-the-container-job-locally) | ~30 s after the image is available | Before pushing a change to `preflight.py`, `calibrate_evaluator.py`, or `readiness.py`; the image pull is separate and variable. |
 
 The unit suite requires the pinned stack in
