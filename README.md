@@ -372,8 +372,8 @@ That backend boundary is separate from local retention. SDK 0.27.0 writes each e
 `TRAIGENT_LOG_EXAMPLE_CONTENT=false` in its run process before importing Traigent, which retains
 example ids and metrics but writes those three content fields as `null`, and keeps
 assistant-created logs under the ignored `traigent-runs/` directory. Where the copied-actor route
-copies a local database file, that copy also stays there, is never read by the assistant, and is
-yours to delete. A preserved project-defined results folder is honored and named.
+copies a local database file, that copy also stays there, its rows are never read by the assistant,
+and it is yours to delete. A preserved project-defined results folder is honored and named.
 
 When there is anything to record, the walkthrough also writes `traigent-runs/run-log.jsonl` — a
 local note of where the run waited, stopped, or met something that can bend the result. Each line
