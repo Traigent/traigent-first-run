@@ -13542,10 +13542,10 @@ class SkillPackageTests(unittest.TestCase):
         The existence check above passed against both halves of this change
         while they contradicted each other. `harness.py --all` calls the
         calibrator with no `--timeout`, so it runs on the derived bound - 660s
-        today - and the two jobs declared 600s and 300s. On that path GitHub
-        cancelled the job first and reported a bare cancellation, so the partial
-        stdout and stderr `run_command` collects from the killed child, which is
-        the entire reason the derived bound exists, was never written.
+        then, 960s today - and the two jobs declared 600s and 300s. On that path
+        GitHub cancelled the job first and reported a bare cancellation, so the
+        partial stdout and stderr `run_command` collects from the killed child,
+        which is the entire reason the derived bound exists, was never written.
 
         So the relation is asserted, not the number: the workflow may declare
         more than the floor, and a change to the calibrator's ceiling moves the

@@ -62,8 +62,8 @@ guide is ever edited faster than it is reviewed, which is the condition that wou
 
 For changes to this repository itself - no customer run ever runs these:
 
-Illustrative warm wall times observed on one developer checkout on 2026-08-13; hardware, load, and
-caches change them, and image pulls are excluded.
+Illustrative warm wall times observed on one developer checkout on 2026-08-13, the unit suite
+re-timed on 2026-09-17; hardware, load, and caches change them, and image pulls are excluded.
 
 | Check | Observed warm | Run it when |
 | --- | --- | --- |

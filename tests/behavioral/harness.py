@@ -702,7 +702,7 @@ def minimum_ci_job_timeout_minutes() -> int:
 
     The margin sits on top of the single-command bound rather than inside it,
     because it pays for different work: checkout, the image pull with its
-    retries or the three `pip install` calls, and every other test in the job.
+    retries or the two `pip install` calls, and every other test in the job.
     It is a floor, not a cap: it holds only where that other work fits inside
     three minutes, as it does for `offline-contract`. Where it does not, the
     workflow adds the job's own measured runtime on top, and the comment beside
