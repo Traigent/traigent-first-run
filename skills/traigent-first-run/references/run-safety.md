@@ -144,8 +144,9 @@ Only after the standard-library-only component checks:
    reply pastes the key or changes the route. Do not request or route the Traigent key before the
    section-7 baseline checkpoint.
 7. Where the copied-actor route in Static and mock validation was taken and the customer replied
-   `A`, run that calibration once they have pasted the target into the file step 6 selected, under
-   the name the question stated - the copy reads it there and nowhere else. It is the one
+   `A` or `B`, run that calibration once the target is in the file step 6 selected under the name
+   the question stated - the copied file's absolute path this run wrote on `A`, the value they
+   pasted on `B` - the copy reads it there and nowhere else. It is the one
    calibration this sequence runs after the credential handoff, because its target lives in the
    same owner-only file.
 
@@ -374,7 +375,9 @@ In the commands below, `.../` is the absolute skill directory resolved under GUI
   target-project `.env`. Verify its owner-only mode, check only key presence, and do not copy or
   move its values into another file or ask the user to enter an already available key again.
   Preserve existing values, comments, unrelated keys, blank alternate-provider entries, and any
-  Traigent key already present; add only the genuinely missing selected-provider entry. Before
+  Traigent key already present; add only the genuinely missing selected-provider entry and, where
+  The copied-actor route's route A was taken, that route's target name with the copied file's
+  absolute path. Before
   opening it, require mode `0600` on POSIX. Resolve the selected handoff file relative to its Git
   worktree as `<credential-file-relative-path>`. Root `.env` uses
   `git -C "<credential-file-worktree>" ls-files --error-unmatch -- .env`: exit 0 means tracked
@@ -727,11 +730,12 @@ target the customer bounds is a different proposition, and a copy of the actor p
 this run can calibrate without opening the connection their original opens. Offer it where every
 step below can be made honest; where one cannot, say which, and keep the disclosure route.
 
-1. **Copy the evaluator - the actor, never the data.** Copy the evaluator file into
+1. **Copy the evaluator - the actor, never the data as rows.** Copy the evaluator file into
    `traigent-runs/calibration/` inside the customer's project. Never edit or move their original;
    the copy is walkthrough material under the ignored run directory, like everything else the run
    writes. The reduced dataset and config space the walkthrough already builds stay where they are,
-   and this route never changes the customer's agent, dataset, or evaluator in place.
+   and this route never changes the customer's agent, dataset, or evaluator in place. Route A in
+   step 3 copies a database *file* as the copy's target; that file is never opened as data.
 2. **Locate the connection target statically, in the copy.** The one place is the target argument
    of the engine's constructor call - `sqlite3.connect(...)`, `psycopg2.connect(...)`,
    `create_engine(...)`, `duckdb.connect(...)` and their kin - whether it holds a literal or an
@@ -739,14 +743,31 @@ step below can be made honest; where one cannot, say which, and keep the disclos
    read, a connection handed in from a helper - has no such argument to replace and cannot take
    the route; it is refused under step 5. The run must be able to name that one place - file and
    line.
-3. **Ask the customer for a safe target - one question, lettered, and this is its wording:**
+3. **Ask the customer for a safe target - one question, lettered, and this is its wording.** What
+   the located argument holds decides the routes. A **local database file** - a literal or an
+   expression that resolves to a path on disk, as `sqlite3.connect("<file>")` and
+   `duckdb.connect("<file>")` take, where the file exists and it and its sidecars (`-wal`, `-shm`,
+   `-journal`; DuckDB's `.wal`) together are under 256 MB - the size a copy takes in seconds on
+   any disk the project sits on, and a bound a first run may spend of the customer's disk without
+   asking - earns route A: a copy this run makes itself, with a plain shell copy (`cp`) of the
+   whole file and its sidecars into `traigent-runs/calibration/`, byte for byte, never opened,
+   never read row by row, never printed. A copy costs seconds and no tokens; reading the database
+   would cost both and put the customer's rows in this conversation. A `-shm` or `-journal`
+   sidecar means a process may hold the file open: say so, and take the copy only once the
+   customer confirms nothing is writing it, since a copy taken under a writer can be torn. A
+   **server or unknown target** - anything else, or a file over the bound - is never dumped,
+   cloned, or guessed by this run, so the question drops route A and letters the other two from
+   A, the pasted target marked recommended.
 
-   `Your evaluator sets its connection target at <copy path>:<line> (<what is there>). This run can calibrate a copy of it against a target you choose, without opening the one your original uses. A. Use a read-only connection or a duplicate of the data you made with a proper tool: paste its value into <.env path> under <NAME> - there, never here in chat - and reply A. B. Skip the calibration; the run continues on the disclosure above.`
+   `Your evaluator sets its connection target at <copy path>:<line> (<what is there>). This run can calibrate a copy of it against a target that is not the one your original uses. A. This run copies that database file, byte for byte, into traigent-runs/calibration/ and calibrates the evaluator copy against the file copy - your file and evaluator untouched, no row read (recommended). B. Paste a read-only connection or a duplicate you made with a proper tool into <.env path> under <NAME> - there, never here in chat - and reply B. C. Skip the calibration; the run continues on the disclosure above.`
 
    `<NAME>` is a name this run states, such as `TRAIGENT_CALIBRATION_TARGET`; `<.env path>` is the
    owner-only `.env` the Setup sequence's step 6 handoff selects, which is why this calibration
-   runs at that sequence's step 7, after the handoff. Never make the duplicate yourself, never
-   read rows to build one, never guess a target. `B` and silence take the disclosure route above.
+   runs at that sequence's step 7, after the handoff. On route A this run writes the copied file's
+   absolute path under `<NAME>` into that `.env` itself - the child runs from
+   `traigent-runs/calibration/`, so a relative path opens nothing and fails as if the evaluator
+   had - and the gate below reads it exactly as it reads a pasted one. Never make a duplicate any other way, never read rows to build one, never guess a
+   target. The last route and silence take the disclosure route above.
 4. **Repoint only that one place**, then calibrate the copy through the same gate, which hands the
    child that one value and nothing else: `scripts/calibrate_evaluator.py --calibrated-copy-of
    <original path> --target-name <NAME> --target-env-file <.env path>`. The rule the gate proves:
@@ -787,10 +808,13 @@ step below can be made honest; where one cannot, say which, and keep the disclos
    Opening readiness procedure for the result and the original evaluator's scope declaration.
    Calibration of a copy does not remove the original evaluator's execution disclosure or establish
    what its target reaches. A passing payload credits and a failing one convicts, exactly as on any
-   other shape. The card records the payload's copied-route declaration; the run's own evidence may
+   other shape. The card records the payload's copied-route declaration in words that fit either
+   route - "against a target that is not the one your original uses"; the run's own evidence may
    say "calibrated a copy of your evaluator against the target you supplied as read-only or a
-   duplicate" only when that calibration completed. The target's read-only or duplicate property
-   remains the customer's declaration, not something the scoring command verified.
+   duplicate" - or, on route A, "against a copy of your database file this run made" - only when
+   that calibration completed. A supplied target's read-only or duplicate property remains the
+   customer's declaration, not something the scoring command verified; a file copy this run made
+   is its own, and a copy the engine cannot open fails the calibration rather than passing it.
 
 ### A replay that changes the customer's world asks first
 

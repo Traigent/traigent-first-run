@@ -107,7 +107,8 @@ flowchart TD
 4. Validates compatibility and every safely local evaluator-discrimination check directly on your
    evaluator. Comparison scorers and LLM judges do not need a calibration copy; an LLM judge still
    needs paid/data-egress approval. Only a scorer that executes candidate code or SQL against an
-   engine needs the copied-actor route and a target you supply as read-only or a duplicate;
+   engine needs the copied-actor route - a copy of a local database file the run makes, or a
+   read-only or duplicate target you supply;
    unsupported execution paths keep their disclosure and skip that calibration.
 5. Shows a concise baseline preview immediately before its paid calls, with runtime, estimated
    spend, a total execution stop target (`$5.00` by default), and data egress. That target is a
@@ -370,8 +371,9 @@ That backend boundary is separate from local retention. SDK 0.27.0 writes each e
 `response`, and `expected` text to local optimization logs by default. The walkthrough sets
 `TRAIGENT_LOG_EXAMPLE_CONTENT=false` in its run process before importing Traigent, which retains
 example ids and metrics but writes those three content fields as `null`, and keeps
-assistant-created logs under the ignored `traigent-runs/` directory. A preserved project-defined
-results folder is honored and named.
+assistant-created logs under the ignored `traigent-runs/` directory. Where the copied-actor route
+copies a local database file, that copy also stays there, is never read by the assistant, and is
+yours to delete. A preserved project-defined results folder is honored and named.
 
 When there is anything to record, the walkthrough also writes `traigent-runs/run-log.jsonl` — a
 local note of where the run waited, stopped, or met something that can bend the result. Each line
