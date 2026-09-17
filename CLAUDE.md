@@ -70,7 +70,7 @@ caches change them, and image pulls are excluded.
 | `python tools/relock.py --check` | 0.1 s | Always - fixture locks must match the fixtures they mirror. |
 | `ruff check .` | 0.1 s | Always. |
 | `black --check .` | ~0.2 s | Always. |
-| `python -m unittest discover -s tests` | ~4 min | Anything the suite pins changed - guidance, scripts, tools, tests, or the workflow. |
+| `python -m unittest discover -s tests` | ~10 min | Anything the suite pins changed - guidance, scripts, tools, tests, or the workflow. |
 | [`offline-contract` Docker command](tests/behavioral/README.md#running-the-container-job-locally) | ~30 s after the image is available | Before pushing a change to `preflight.py`, `calibrate_evaluator.py`, or `readiness.py`; the image pull is separate and variable. |
 
 The unit suite requires the pinned stack in

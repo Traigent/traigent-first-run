@@ -16,27 +16,28 @@ jobs:
   offline-contract:
     runs-on: ubuntu-latest
     # Measured, and re-derivable. Source: every successful `offline-contract`
-    # job on `first-run-guide` from 2026-07-20 to 2026-08-06, n=65, read with
-    # `gh run list --branch first-run-guide --workflow validate.yml` and
-    # `gh run view <id> --json jobs`. Durations: 13s min / 19s p50 / 31s p95 /
-    # 32s max.
+    # job in the 100 most recent runs of this workflow, 2026-09-11 to
+    # 2026-09-17, n=99, read with `gh run list --workflow validate.yml
+    # --limit 100` and `gh api repos/Traigent/traigent-first-run/actions/runs/
+    # <id>/jobs`. Durations: 35s min / 48s p50 / 52s p95 / 79s max.
     #
     # The median is the wrong number to bound against here, because the series
-    # trends upward as the package grows: the ten most recent runs are 27-32s
-    # against a whole-window p50 of 19s.
+    # moves up as the package grows: the same job read the same way over
+    # 2026-07-20 to 2026-08-06, n=65, was 13s min / 19s p50 / 32s max.
     #
     # But the measurement is not what sets this number, and this job is the
     # reason. `harness.py --all` calls `calibrate_evaluator.py` with no
     # `--timeout`, so that command runs on the DERIVED bound - the calibrator's
-    # own ceiling plus headroom, 660s today. A five-minute job cap is 360s below
-    # that, so a hung calibration was killed by GitHub with a bare cancellation
-    # and the harness never wrote the partial stdout and stderr that says why.
-    # The floor is therefore derived from the same constant, not chosen against
-    # the measurement, and
+    # own ceiling plus headroom, 960s today. A five-minute job cap sat below
+    # the bound of the day, so a hung calibration was killed by GitHub with a
+    # bare cancellation and the harness never wrote the partial stdout and
+    # stderr that says why. The floor is therefore derived from the same
+    # constant, not chosen against the measurement, and
     # `tests/test_skill_package.py::test_every_ci_job_outlives_the_harness_bound`
     # fails if this number drops below it. It is 19 minutes today: 16 for the
-    # command, 3 for everything else in the job - a little over twice the
-    # slowest whole job of either kind ever recorded, 104s.
+    # command, 3 for everything else in this job. The slowest job in the
+    # window, 79s, plus the two 20s pauses the image pull may take between
+    # attempts, is 119s, inside that margin.
     #
     # 14 until #151, which let a slow evaluator finish and so raised the
     # calibrator's ceiling to 900s - moving the floor this number is derived
@@ -114,32 +115,32 @@ jobs:
   validate:
     needs: offline-contract
     runs-on: ubuntu-latest
-    # Same source and window, n=68 (this job predates `offline-contract`, hence
-    # the three extra runs): 12s min / 22.5s p50 / 97s p95 / 104s max, with the
-    # same upward trend - the ten most recent are 59-104s. Added to the observed
-    # maximum, not to the median: the slow-evaluator end-to-end test this branch
-    # introduces sleeps 33s inside a local scorer - 33s by construction, and
-    # 34.2s wall for the test measured on a developer machine, not on a runner.
-    # Source: tests/behavioral/test_contracts.py#ExplicitTimeoutEndToEndTests -
-    # so the projected worst case for the job's own work is about 140s.
+    # Same source and window, n=99: 438s min / 638s p50 / 806s p95 / 842s max,
+    # the ten most recent 588-834s. Over 2026-07-20 to 2026-08-06 the same job
+    # was 12s min / 104s max; the unit suite has grown since, and its
+    # slow-evaluator end-to-end test alone holds a local scorer for 33s by
+    # construction. Source:
+    # tests/behavioral/test_contracts.py#ExplicitTimeoutEndToEndTests.
     #
     # This job runs `tests/behavioral/test_contracts.py`, which drives the same
     # `run_command`, so the same floor applies for the same reason: at ten
-    # minutes the job was killed 60s before the harness's own 660s bound could
-    # fire, and the preserved-output diagnostic was exactly what was lost. Both
-    # jobs now carry one derived floor rather than two hand-picked multiples of
-    # two different measurements - the earlier 5x/10x split was justified by the
-    # jobs' own runtimes, which is not the quantity that decides who kills the
-    # command first.
+    # minutes the job was killed 60s before the harness's own bound of the day
+    # could fire, and the preserved-output diagnostic was exactly what was
+    # lost. The floor is not enough on its own here, though. It assumes the
+    # bounded command starts inside the three-minute margin, and in this job
+    # it starts wherever the suite has reached, up to the whole 842s. So this
+    # cap is the floor plus the job's own measured work, rounded up to whole
+    # minutes: 19 + 15 = 34. `harness.py` derives the floor and the workflow
+    # adds the job's own runtime, and the test named above holds the relation.
     #
     # The three-minute margin still covers what was reasoned about before: this
-    # job makes three `pip install` calls against live PyPI, the only step in
-    # either job whose duration depends on a third party, and a slow index must
-    # not be reported as a broken pull request.
+    # job makes three `pip install` calls against live PyPI, the steps in this
+    # job whose duration depends on a third party (the job above has its image
+    # pull), and a slow index must not be reported as a broken pull request.
     #
-    # Also raised from 14 to 19 by #151's calibrator ceiling; see the note on
-    # the job above.
-    timeout-minutes: 19
+    # Raised from 14 to 19 by #151's calibrator ceiling; see the note on the
+    # job above. Raised to 34 when the suite's own runtime was re-measured.
+    timeout-minutes: 34
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1

@@ -701,11 +701,13 @@ def minimum_ci_job_timeout_minutes() -> int:
     harness could say anything.
 
     The margin sits on top of the single-command bound rather than inside it,
-    because it pays for different work: checkout, the docker pull or the three
-    `pip install` calls, and every other test in the job. Measured over every
-    successful job on `first-run-guide` from 2026-07-20 to 2026-08-06, the
-    slowest whole job of either kind is 104s, so three minutes is a little over
-    twice the slowest run ever recorded of everything that is not this command.
+    because it pays for different work: checkout, the image pull with its
+    retries or the three `pip install` calls, and every other test in the job.
+    It is a floor, not a cap: it holds only where that other work fits inside
+    three minutes, as it does for `offline-contract`. Where it does not, the
+    workflow adds the job's own measured runtime on top, and the comment beside
+    each `timeout-minutes` in `.github/workflows/validate.yml` carries the
+    measurement and the arithmetic, so there is one home for the numbers.
     """
     return math.ceil(worst_case_command_timeout_seconds() / 60) + CI_JOB_MARGIN_MINUTES
 
