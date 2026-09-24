@@ -1473,8 +1473,8 @@ observe is not a dollar-limited path.
 
 Use the same final reply-ready block, not another setup question:
 
-- `A.` **Continue the bounded run on the primary criterion**, marked recommended because it can
-  still show a meaningful quality comparison. Reply `continue`.
+- `A.` **Continue the bounded run on the primary criterion** *(recommended - it can still show a
+  meaningful quality comparison)*. Reply `continue`.
 - `B.` **Repair telemetry first**, an optional route for a user who wants cost comparisons or token
   records before proceeding. Reply `repair`.
 
