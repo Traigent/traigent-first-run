@@ -1676,6 +1676,13 @@ def subprocess_environment(allow_provider_access: bool) -> dict[str, str]:
         {
             "TRAIGENT_OFFLINE_MODE": "true",
             "LITELLM_LOCAL_MODEL_COST_MAP": "true",
+            # The worker sets its own flag at `__main__`, but a process the
+            # scorer starts - a spawned pool re-importing its modules by name -
+            # inherits the environment and not that flag (#559). It reaches
+            # only a child that inherits this environment: one the scorer
+            # starts with its own `env=`, or with `-E` or `-I`, can still
+            # write bytecode, and nothing set from here reaches it.
+            "PYTHONDONTWRITEBYTECODE": "1",
         }
     )
     return environment
@@ -3750,4 +3757,10 @@ def run() -> int:
 
 
 if __name__ == "__main__":
+    # Before anything is imported by path: this process loads `preflight.py`
+    # from the guide copy, and as a worker loads the scorer and whatever it
+    # imports from the project, and neither place is ours to write
+    # `__pycache__` into (#559). Here rather than in `main()`, so a test that
+    # calls `main()` in-process does not change its own interpreter.
+    sys.dont_write_bytecode = True
     raise SystemExit(main())

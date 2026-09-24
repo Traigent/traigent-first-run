@@ -7,6 +7,7 @@ import io
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -4648,6 +4649,102 @@ class TheCommandLineDocumentsItsExitCodesTests(unittest.TestCase):
                 self.assertIn(f"\n  {code}  ", process.stdout)
         self.assertIn("--reply-transform could not be loaded", process.stdout)
         self.assertIn("TRAIGENT_FIRST_RUN_TRACEBACK", process.stdout)
+
+
+class CalibrationLeavesNoBytecodeTests(unittest.TestCase):
+    """A calibration writes no `__pycache__` or `.pyc` into the project (#559).
+
+    The parent loads the guide's `preflight.py` by path and each worker loads
+    the scorer by path, in processes the assistant starts without `-B`. So a
+    real run left bytecode beside the scorer, beside every module it imports,
+    and inside the guide copy the project carries. The guide is copied into
+    the project here because that is where a customer's copy lives, and the
+    host's own bytecode settings are removed so they cannot hide the defect.
+    """
+
+    def calibrate(self, directory: str, scorer_source: str) -> Path:
+        project = Path(directory) / "project"
+        script = project / "traigent-first-run" / SCRIPT.relative_to(ROOT)
+        shutil.copytree(
+            SCRIPT.parent,
+            script.parent,
+            ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
+        )
+        (project / "field_rules.py").write_text(
+            "def coverage(output, expected):\n"
+            "    required = set(expected)\n"
+            "    return len(required & set(output)) / len(required)\n"
+        )
+        scorer = project / "evaluator.py"
+        scorer.write_text(scorer_source)
+        environment = dict(os.environ)
+        environment.pop("PYTHONDONTWRITEBYTECODE", None)
+        environment.pop("PYTHONPYCACHEPREFIX", None)
+        process = subprocess.run(
+            [
+                sys.executable,
+                str(script),
+                "--scorer",
+                f"{scorer}:score",
+                "--good",
+                '["name", "email", "phone", "city"]',
+                "--equivalent-good",
+                '["city", "phone", "email", "name"]',
+                "--partial",
+                '["name", "email"]',
+                "--bad",
+                '["unrelated"]',
+                "--expected",
+                '["name", "email", "phone", "city"]',
+                "--allow-execution",
+                "--json",
+            ],
+            capture_output=True,
+            text=True,
+            cwd=project,
+            env=environment,
+        )
+        self.assertEqual(process.returncode, 0, process.stderr)
+        self.assertTrue(json.loads(process.stdout)["passed"])
+        return project
+
+    def assert_no_bytecode(self, project: Path) -> None:
+        written = sorted(
+            str(path.relative_to(project))
+            for path in project.rglob("*")
+            if path.name == "__pycache__" or path.suffix in (".pyc", ".pyo")
+        )
+        self.assertEqual(written, [])
+
+    def test_a_scorer_that_imports_a_sibling_leaves_no_bytecode(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            project = self.calibrate(
+                directory,
+                "from field_rules import coverage\n\n\n"
+                "def score(output, expected, input_data=None, metadata=None):\n"
+                "    return coverage(output, expected)\n",
+            )
+            self.assert_no_bytecode(project)
+
+    def test_a_process_the_scorer_starts_leaves_no_bytecode(self) -> None:
+        """A process the scorer starts inherits the worker's environment only.
+
+        A spawned interpreter does not inherit `sys.dont_write_bytecode`, so
+        the worker's own flag cannot reach it; it imports the sibling module
+        again, by name, from the project.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            project = self.calibrate(
+                directory,
+                "import multiprocessing\n"
+                "from concurrent.futures import ProcessPoolExecutor\n\n"
+                "from field_rules import coverage\n\n\n"
+                "def score(output, expected, input_data=None, metadata=None):\n"
+                "    context = multiprocessing.get_context('spawn')\n"
+                "    with ProcessPoolExecutor(1, mp_context=context) as pool:\n"
+                "        return pool.submit(coverage, output, expected).result()\n",
+            )
+            self.assert_no_bytecode(project)
 
 
 if __name__ == "__main__":

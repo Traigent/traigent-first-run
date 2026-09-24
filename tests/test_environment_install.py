@@ -10,6 +10,7 @@ import csv
 import io
 import json
 import os
+import shutil
 import subprocess
 import sys
 import sysconfig
@@ -492,6 +493,43 @@ print(json.dumps({"attempted": attempted, "error": None}))
             )
         )
         self.assertIn("system-site-packages", self.plan(success=False).stderr)
+
+
+class ARefusedLaunchLeavesNoBytecodeTests(unittest.TestCase):
+    """A launch without `-B` is refused, and writes nothing on the way (#559).
+
+    The helper loads `find_environments.py` by path when it is imported, which
+    is before `main()` can refuse a launch that is missing `-B`. So a deviating
+    launch wrote `__pycache__` into the guide copy the project carries, then
+    said the launch was wrong.
+    """
+
+    def test_a_launch_without_dont_write_bytecode_writes_no_bytecode(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            project = Path(temporary) / "project"
+            script = project / "traigent-first-run" / SCRIPT.relative_to(ROOT)
+            shutil.copytree(
+                SCRIPT.parent,
+                script.parent,
+                ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
+            )
+            result = subprocess.run(
+                [str(TRUSTED), "-I", "-S", str(script), "apply", "--plan", "x"]
+                + ["--approved-plan-sha256", "0"],
+                cwd=project,
+                text=True,
+                capture_output=True,
+                timeout=90,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertIn("-I -S -B", result.stderr)
+            written = sorted(
+                str(path.relative_to(project))
+                for path in project.rglob("*")
+                if path.name == "__pycache__" or path.suffix in (".pyc", ".pyo")
+            )
+            self.assertEqual(written, [])
 
 
 if __name__ == "__main__":

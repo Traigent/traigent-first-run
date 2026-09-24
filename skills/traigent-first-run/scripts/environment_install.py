@@ -32,7 +32,16 @@ SPEC = importlib.util.spec_from_file_location(
 )
 ENV = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader is not None
-SPEC.loader.exec_module(ENV)
+# This load runs at import, before `main()` can refuse a launch without `-B`,
+# so it must not write `__pycache__` into the guide copy on the way (#559).
+# Scoped rather than left set, so a caller that imports this file keeps its own
+# setting.
+_dont_write_bytecode = sys.dont_write_bytecode
+sys.dont_write_bytecode = True
+try:
+    SPEC.loader.exec_module(ENV)
+finally:
+    sys.dont_write_bytecode = _dont_write_bytecode
 
 
 def require_isolation() -> None:
