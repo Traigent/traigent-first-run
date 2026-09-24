@@ -382,6 +382,31 @@ class ReadinessCardAudienceTests(unittest.TestCase):
             self.assertEqual(asdict(score), before)
         self.assertTrue({(True, False), (False, True), (False, False)} <= observed)
 
+    def test_a_wrong_kind_of_check_is_not_followed_by_continue(self):
+        """traigent-first-run#561's card: the finding and its Action agree."""
+        evaluation = replace(
+            fixtures._passing_calibration(),
+            method="normalized-exact",
+            task_kind="code-sql",
+        )
+        score = MODULE.score_run(
+            fixtures._routing_corpus(),
+            evaluation,
+            fixtures._wired_space(),
+            dict(MODULE.DEFAULT_WEIGHTS),
+            fixtures._review(reviewed=48),
+        )
+        card = MODULE.render_card(score)
+        action = (
+            "Action: Review why this check does not fit this output, and a "
+            "check that does."
+        )
+        self.assertEqual(card.splitlines()[1], action)
+        self.assertEqual(MODULE.render_markdown(score).splitlines()[-1], action)
+        self.assertIn("normalized-exact is the wrong kind of check for code-sql", card)
+        self.assertNotIn(MODULE.ACTION_DISPLAY_NAMES[MODULE.PROCEED], card)
+        self.assertNotIn("FIX BEFORE PAID RUN", card)
+
     def test_healthy_configuration_and_scored_observations_keep_their_evidence(self):
         score = fixtures._healthy_score()
         card = MODULE.render_card(score)

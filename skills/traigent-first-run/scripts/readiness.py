@@ -279,7 +279,18 @@ def render_text(plan: ReadinessPlan) -> str:
 # bump each version silently accepts the other's payload and `--strict` flips
 # its exit under an unchanged number, which is the reading 2 was bumped to
 # prevent.
-SCHEMA_VERSION = 6
+#
+# 7: `recommended_action` may read `review-evaluator-fit`, from an ask that
+# caps nothing: the declared evaluation method is the wrong kind of check for
+# the declared output (`evaluator-task-mismatch`, traigent-first-run#561).
+#
+# No key moved, and like 3, 4 and 5 it is the MEANING that decides. A schema-6
+# consumer read that field from a closed set without this slug, and read
+# `proceed` for a run the task-fit check had already called the wrong kind of
+# check. `overall`, `band` and `status` are unchanged by it, so a consumer
+# gating paid work on them sees nothing new; one routing on the remedy meets a
+# value 6 never contained, and the version is how it tells the two apart.
+SCHEMA_VERSION = 7
 DEFAULT_WEIGHTS = {"dataset": 40.0, "evaluation": 35.0, "agent": 25.0}
 # Read each entry as "score BELOW this number is that band" - these are
 # exclusive upper bounds, not the score a band requires. The last entry is an
@@ -1554,7 +1565,26 @@ ACTION_FOR_CONDITION: dict[str, str] = {
 # carry it; the id space either follows or this one goes back, and that is a
 # decision to take with both payloads in front of you rather than here.
 ANSWER_KEY_UNREAD = "answer_key_unread"
+# A declared method that is the wrong kind of check for the declared output
+# (traigent-first-run#561). The task-fit check already withholds its points
+# and prints why; nothing carried it to the one ask, so a card could read
+# `proceed` beside the sentence "the wrong kind of check". An ask and not a
+# cap: a ceiling would charge that fact a second time, and blocking would let
+# an inference from two declared words cancel a run - refused for the inferred
+# split in #242 and in the reversal of #393's block above.
+#
+# ITS OWN REMEDY, because neither existing one says this. `repair-evaluator`
+# is the remedy of two conditions that both block, and the tests hold every
+# condition behind one remedy slug to one verdict, so an ask that stops
+# nothing cannot share it. `connect-real-evaluator` means "this run wrote a
+# substitute; connect yours", and this evaluator is theirs.
+#
+# FIRST, ahead of the answer-key read: that read asks whether each expected
+# answer is sensible under the method that will grade it, so the method is
+# settled before the key is read through it.
+EVALUATOR_TASK_MISMATCH = "evaluator-task-mismatch"
 ACTION_FOR_ASK: dict[str, str] = {
+    EVALUATOR_TASK_MISMATCH: "review-evaluator-fit",
     ANSWER_KEY_UNREAD: "review-answer-key",
     "dataset-unsound-expected-outputs": "review-answer-key",
 }
@@ -7353,6 +7383,27 @@ def calibration_result_established(facts: EvaluationFacts) -> bool:
     return established
 
 
+def task_fit_mismatch(facts: EvaluationFacts) -> bool:
+    """Whether the declared method is the wrong kind of check for the output.
+
+    The task-fit arm that prints "the wrong kind of check" and the ask that
+    carries it to the one ask both read this, so the card cannot print the
+    sentence without the ask or raise the ask without the sentence. Reported
+    execution is excluded because the first task-fit arm answers it with its
+    own scope sentence instead, and an absent or unparseable evaluator because
+    `score_evaluation` returns before task fit is read at all.
+    """
+    profile = METHOD_PROFILES.get(facts.method or "")
+    return bool(
+        facts.present
+        and facts.parses is not False
+        and profile
+        and facts.task_kind
+        and facts.task_kind not in profile["fits"]
+        and facts.executes_candidate is not True
+    )
+
+
 def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
     caps: list[Cap] = []
     subs: list[SubScore] = []
@@ -7907,13 +7958,16 @@ def score_evaluation(facts: EvaluationFacts) -> tuple[Pillar, list[Cap]]:
                 facts.method or "", facts.comparison_shape, facts.comparison_witness
             )
         else:
-            value = TASK_FIT_WEIGHT if fits else TASK_FIT_UNFIT_CREDIT
+            # The one predicate the `evaluator-task-mismatch` ask reads too, so
+            # this sentence and that ask cannot come apart.
+            mismatch = task_fit_mismatch(facts)
+            value = TASK_FIT_UNFIT_CREDIT if mismatch else TASK_FIT_WEIGHT
             evidence = (
-                task_fit_declared_evidence(
+                task_fit_evidence(facts.method, facts.task_kind, profile["fits"])
+                if mismatch
+                else task_fit_declared_evidence(
                     facts.method, facts.task_kind, facts.comparison_shape
                 )
-                if fits
-                else task_fit_evidence(facts.method, facts.task_kind, profile["fits"])
             )
         subs.append(SubScore("task-fit", value, TASK_FIT_WEIGHT, True, evidence))
     else:
@@ -9838,6 +9892,20 @@ def score_run(
                 ),
             ),
         )
+    if task_fit_mismatch(evaluation_facts):
+        open_asks = (
+            Ask(
+                condition=EVALUATOR_TASK_MISMATCH,
+                reason=(
+                    "The declared evaluation method is the wrong kind of check "
+                    "for this output. Show the user what it counts as correct "
+                    "and, where one exists, an answer it grades wrongly, and "
+                    "offer a check that fits as a working copy; task fit has "
+                    "already withheld its credit, so this ask moves no further "
+                    "points and does not stop the run."
+                ),
+            ),
+        ) + open_asks
     return aggregate(
         [dataset_pillar, evaluation_pillar, agent_pillar],
         [
@@ -10122,6 +10190,7 @@ ACTION_DISPLAY_NAMES = {
     "repair-evaluator": "Review the evaluator's grading issue and validate its repair.",
     "resplit-dataset": "Separate the tuning examples from the held-out examples.",
     "review-answer-key": "Review the expected answers that support this comparison.",
+    "review-evaluator-fit": "Review why this check does not fit this output, and a check that does.",
     "review-repeats": "Review repeated examples and their effect on this comparison.",
     "review-split": "Review how the dataset is divided for this comparison.",
     "vary-knobs": "Identify settings that change the agent's actual requests.",
