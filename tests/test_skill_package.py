@@ -1041,7 +1041,9 @@ POLARITY_ASIDE = re.compile(
 POLARITY_ADJACENT = 90
 
 
-def adjacent_runup(flat: str, at: int) -> str:
+def adjacent_runup(
+    flat: str, at: int, breaks: re.Pattern[str] = POLARITY_CLAUSE_BREAK
+) -> str:
     """The words that actually govern the clause starting at `at`.
 
     Bounded three ways, each of which was a false green: by the sentence, by
@@ -1054,13 +1056,16 @@ def adjacent_runup(flat: str, at: int) -> str:
     What comes back is the governing words, not a contiguous slice: a
     comma-fenced aside (`POLARITY_ASIDE`) is dropped first, so the governor in
     front of it is read and the aside's own subordinator is not.
+
+    `breaks` is the clause-break pattern. The negation classifiers pass
+    `_HEDGE_CLAUSE_BREAK`, which keeps `rather than` whole.
     """
     start = 0
     for boundary in POLARITY_SENTENCE_BREAK.finditer(flat, 0, at):
         start = boundary.end()
     window = POLARITY_ASIDE.sub(" ", flat[max(start, at - POLARITY_ADJACENT) : at])
     cut = 0
-    for boundary in POLARITY_CLAUSE_BREAK.finditer(window):
+    for boundary in breaks.finditer(window):
         cut = boundary.end()
     return window[cut:]
 
@@ -3023,6 +3028,78 @@ def score_config_space(document: dict) -> tuple[object, list[str]]:
 _SENTENCE_BREAK = re.compile(r"(?<=[.;:])\s+")
 
 
+def _keeping_rather_than(pattern: re.Pattern[str]) -> re.Pattern[str]:
+    """`pattern` with its `rather` break made to skip `rather than`.
+
+    Raises at import rather than returning the pattern unchanged: a silent no-op
+    would bring back the cut this exists to remove.
+    """
+    source, count = re.subn(
+        re.escape("|rather)"), lambda _: r"|rather(?!\s+than\b))", pattern.pattern
+    )
+    if count != 1:
+        raise RuntimeError(
+            "_HEDGE_CLAUSE_BREAK: expected exactly one `|rather)` in "
+            f"POLARITY_CLAUSE_BREAK ({pattern.pattern!r}), found {count}"
+        )
+    return re.compile(source)
+
+
+#: `POLARITY_CLAUSE_BREAK` without the `rather` that opens `rather than`. All
+#: three hedges that read through `hedge_window` list `rather than` as a
+#: negator, and a cut at ` rather ` threw it away: "report which caps cleared
+#: rather than opening -> current" read its run-up as `than ` and was refused.
+#: Derived rather than restated so the two lists cannot drift.
+_HEDGE_CLAUSE_BREAK = _keeping_rather_than(POLARITY_CLAUSE_BREAK)
+
+
+def hedge_window(text: str, match: re.Match[str]) -> str:
+    """The words that can negate a classifier match: its run-up and last clause.
+
+    Used by `claims_no_effect`, `pairs_the_readiness_scores` and
+    `places_an_ask_above_its_evidence`. All three used to read their hedge over
+    the whole sentence in front of the match, so a negator that governs an
+    earlier, unrelated clause excused the claim or instruction that followed it
+    (traigent-first-run#574).
+
+    Two halves, and both are needed. The run-up (`adjacent_runup`, the clause
+    leading into the match) holds the `never` of "never record the new score,
+    band, and caps beside the opening result", whose match opens before the
+    list's `, and`. The match's last clause holds the `never` of "lead with the
+    caps that cleared, never with a new score beside the opening one", whose
+    match opens on `caps`. The whole span is not read, because a lazy span
+    crosses clauses: "the opening band no longer holds, so set the new score
+    beside the opening one" carried its `no` inside the match.
+
+    **What this does not do.** It is clause scope, not syntax, so three shapes
+    are read wrongly, and each is recorded rather than patched:
+
+    - Any hedge token in the same clause excuses the match, whatever it governs:
+      "show the band that no longer holds as opening -> current" and "at the
+      zero-anchor stop show opening -> current" both pass.
+    - A match can open on an anchor noun in an earlier clause, and then that
+      clause's negator sits in the run-up: "no caps remain, so set the new score
+      beside the opening one" passes. Re-reading only the last clause after a
+      coordinator catches these, and also refuses "never record the new score,
+      band, and caps beside the opening result", because a list's `, and` is the
+      same token as a clause's. The misses are pinned in
+      `test_a_pairing_that_opens_in_an_earlier_clause_is_a_known_miss`.
+    - Every comma is a clause break, so a negator in front of a comma-fenced
+      aside or a comma list is cut off. "Never, under any circumstances, set the
+      new score beside the opening one" and "never record the new overall score,
+      the new band, the binding caps and the repair summary beside the opening
+      result" are refused. These are false reds, which is the cost
+      `POLARITY_ASIDE` records for the polarity guards; that pattern only removes
+      asides opened by a subordinator. No shipped document writes either shape.
+    """
+    span = match.group(0)
+    last_clause = 0
+    for boundary in _HEDGE_CLAUSE_BREAK.finditer(span):
+        last_clause = boundary.end()
+    runup = adjacent_runup(text, match.start(), _HEDGE_CLAUSE_BREAK)
+    return f"{runup} {span[last_clause:]}"
+
+
 # A claim that a knob has NO EFFECT, in the ways one gets written. Not a
 # blocklist of literals this document happens not to contain: it is the
 # predicate, in its ordinary English forms, so a phrasing nobody has written
@@ -3055,7 +3132,10 @@ _NO_EFFECT_CLAIM = re.compile(
 # Prohibiting the claim is not making it, and this guide prohibits it in
 # writing - so the marker has to be looked for across the whole clause in
 # front, not only in the word immediately before. `never enough to prove one
-# does nothing` negates from six words away.
+# does nothing` negates from six words away. The clause, not the sentence: it is
+# read through `hedge_window`, because "six trials cannot separate the models,
+# so the temperature knob does not matter" was excused by a `cannot` that
+# governs the first clause and not the claim.
 #
 # The markers are deliberately the strong ones. A bare `not` would have
 # accepted `the knob did not move the baseline, so it does not matter`, which
@@ -3083,7 +3163,7 @@ def claims_no_effect(sentence: str) -> bool:
     matter") is - regardless of which words the assertion happens to use.
     """
     for match in _NO_EFFECT_CLAIM.finditer(sentence):
-        if not _NO_EFFECT_HEDGE.search(sentence[: match.start()]):
+        if not _NO_EFFECT_HEDGE.search(hedge_window(sentence, match)):
             return True
     return False
 
@@ -3133,10 +3213,18 @@ _PAIRED_READINESS_SCORES = re.compile(
 # Naming the pairing in order to forbid it is how this guide states the rule -
 # "never show that score or set it beside the opening one" is the settled
 # answer, and a classifier that could not see the `never` would fail the
-# document for stating it. Searched across the clause up to and including the
-# match rather than only in front of it: the negator sits inside the span for
-# "lead with the caps that cleared, never with a new score beside the opening
-# one", where the match opens on `caps` and `never` arrives four words later.
+# document for stating it. Read inside the match as well as in front of it: the
+# negator sits inside the span for "lead with the caps that cleared, never with
+# a new score beside the opening one", where the match opens on `caps` and
+# `never` arrives four words later.
+#
+# Read only where a negator can govern the pairing (`hedge_window` above),
+# never over the whole sentence in front of it. The sentence-wide read let the
+# bare `no` of an unrelated earlier clause excuse whatever followed: "the opening
+# band no longer holds for the rows this run uses, and show the band as opening
+# -> current" passed, while its second clause alone was refused. `no longer`
+# itself stays a hedge: "this record no longer carries a latest revalidated
+# readiness score" is a negation that does govern the pairing.
 _PAIRED_READINESS_HEDGE = re.compile(
     r"\b(?:never|not|no|nothing|none|cannot|can't|must not|may not"
     r"|rather than|instead of|without|avoid|refuse[sd]?|forbid(?:s|den)?"
@@ -3155,7 +3243,7 @@ def pairs_the_readiness_scores(sentence: str) -> bool:
     render the pair is - whichever words it happens to reach for.
     """
     for match in _PAIRED_READINESS_SCORES.finditer(sentence):
-        if not _PAIRED_READINESS_HEDGE.search(sentence[: match.end()]):
+        if not _PAIRED_READINESS_HEDGE.search(hedge_window(sentence, match)):
             return True
     return False
 
@@ -5442,6 +5530,54 @@ class SkillPackageTests(unittest.TestCase):
                     "this reports the measurement honestly, or forbids the "
                     "overclaim, and must be allowed",
                 )
+
+    def test_a_negation_in_an_earlier_clause_does_not_excuse_a_no_effect_claim(
+        self,
+    ) -> None:
+        """The readiness-pairing check's #574 defect, in the no-effect classifier.
+
+        The hedge was read over everything in front of the claim, so a `never`
+        or `cannot` that governs an earlier clause excused the claim after it.
+        This hedge list is deliberately stronger than the other two - no bare
+        `not`, no `do not` - so its cases are its own. The accepted ones keep a
+        negation that governs the claim: a `never` after `, so`, a `rather than`
+        in the claim's run-up, and the prohibition itself.
+        """
+        must_refuse = (
+            "Six trials cannot separate the models, so the temperature knob "
+            "does not matter.",
+            "The run never crashed, so the temperature knob does not matter.",
+            "The winner cannot be named yet, and the retrieval depth has no effect.",
+        )
+        must_accept = (
+            "Never say the temperature knob does not matter.",
+            "The baseline moved little, so never report that the knob does not "
+            "matter.",
+            "Report the spread rather than saying the knob does nothing.",
+        )
+        for sentence in must_refuse:
+            with self.subTest(refuse=sentence):
+                self.assertTrue(
+                    claims_no_effect(sentence),
+                    "the negation governs an earlier clause, not the claim, so "
+                    "this still asserts the knob has no effect",
+                )
+        for sentence in must_accept:
+            with self.subTest(accept=sentence):
+                self.assertFalse(
+                    claims_no_effect(sentence),
+                    "the negation governs this claim, so the sentence forbids it",
+                )
+        # The comma cost `hedge_window` records, pinned where it bites: an aside
+        # set off by commas cuts the governing negation out of the run-up, so a
+        # sentence that forbids the claim is still read as making it. No shipped
+        # document writes this shape; if a later fix accepts it, move it above.
+        known_false_red = (
+            "We cannot prove, from six trials, that the knob does not matter.",
+        )
+        for sentence in known_false_red:
+            with self.subTest(known_false_red=sentence):
+                self.assertTrue(claims_no_effect(sentence))
 
     def test_no_guidance_document_claims_a_knob_has_no_effect(self) -> None:
         """The honesty rule, applied to the whole corpus rather than asserted.
@@ -25583,6 +25719,79 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
                     "a different pair, and must be allowed",
                 )
 
+    def test_a_negation_in_an_earlier_clause_does_not_excuse_the_pairing(
+        self,
+    ) -> None:
+        """A `no` that governs another clause is not a prohibition of this one.
+
+        The hedge used to be read over the whole sentence up to the match, so the
+        bare `no` of "no longer holds" excused an instruction to render the pair
+        that followed it - and each refused sentence below passed while its
+        second clause alone was refused. The accepted ones are the shapes the
+        narrower read has to keep: a negation in the run-up that governs a list
+        crossing `, and`, a `no` that opens the clause after `, but`, and a
+        `rather than` that a cut at ` rather ` would split from its `than`.
+        """
+        must_refuse = (
+            # the arrow template after an unrelated `no longer`
+            "Say the opening band no longer holds for the rows this run uses, "
+            "and show the band as opening -> current.",
+            # `beside`, with the match opening after the clause break
+            "The opening band no longer holds for the rows this run uses, and "
+            "the report sets the closing score beside the opening one.",
+            # `beside`, with the lazy span reaching back over the `no`
+            "The opening band no longer holds, so set the new score beside the "
+            "opening one.",
+        )
+        for sentence in must_refuse:
+            with self.subTest(refuse=sentence):
+                self.assertTrue(
+                    pairs_the_readiness_scores(sentence),
+                    "the negation governs an earlier clause, not the pairing, so "
+                    "this still sets a later score beside the opening one",
+                )
+
+        must_accept = (
+            "Never record the new score, band, and caps beside the opening result.",
+            "The score is re-run to check that a repair cleared what it failed "
+            "on, but no closing number is put beside the opening one.",
+            "Report which caps cleared rather than opening -> current.",
+            "Report the caps that cleared rather than both scores.",
+            "Lead with the caps that cleared rather than with a new score beside "
+            "the opening one.",
+        )
+        for sentence in must_accept:
+            with self.subTest(accept=sentence):
+                self.assertFalse(
+                    pairs_the_readiness_scores(sentence),
+                    "the negation governs this pairing, so the sentence forbids it",
+                )
+
+    def test_a_pairing_that_opens_in_an_earlier_clause_is_a_known_miss(
+        self,
+    ) -> None:
+        """Instructions the classifier passes, recorded so the gap stays visible.
+
+        Each match opens on an anchor noun (`caps`, `cap`, `result`) in the
+        clause before the instruction, so that clause's negator sits in the
+        run-up and excuses the pairing. `hedge_window` records why the obvious
+        fix was not taken: it also refuses a prohibition this package needs.
+        These assert the miss, so a fix that catches them turns this red - move
+        the sentence to `must_refuse` above when it does.
+        """
+        known_misses = (
+            "No caps remain, so set the new score beside the opening one.",
+            "Not every cap cleared, so put the closing score beside the opening one.",
+            "No result changed, and the card shows the band beside the opening one.",
+        )
+        for sentence in known_misses:
+            with self.subTest(miss=sentence):
+                self.assertFalse(
+                    pairs_the_readiness_scores(sentence),
+                    "this known miss is now caught - move it to must_refuse in "
+                    "the test above and delete it here",
+                )
+
     # A value the guidance states in more than one document, and the pattern
     # that finds it. Anchored on the CONCEPT, never on the shape of the value:
     # a bare `\$(\d+\.\d{2})` also matches the "$0.00" in a sentence about
@@ -29222,14 +29431,17 @@ _ASK_ABOVE_SHAPES = (
     re.compile(r"\b(?:summary|heading|marker)\b[^.]{0,60}\bat the top\b"),
 )
 
-#: Read only in front of the match, never behind it. A hedge that arrives after
-#: the instruction does not undo it - "lead with the ask above the card; do not
-#: bury it" is still the instruction - and a whole-sentence search would accept
-#: exactly that. `pairs_the_readiness_scores` reads its own hedge the same way.
+#: Read through `hedge_window`, the clause leading into the match and the match's
+#: own last clause, which is where `pairs_the_readiness_scores` reads its hedge
+#: too. Never behind the match: a hedge that arrives after the instruction does
+#: not undo it - "lead with the ask above the card; do not bury it" is still the
+#: instruction - and a whole-sentence search would accept exactly that. Nor over
+#: everything in front of it: "the old band no longer holds, so put the question
+#: above the card" was excused by a `no` that governs a different clause.
 _ASK_ABOVE_HEDGE = re.compile(
     r"\b(?:never|not|no|nothing|neither|nor|avoid|refuse|refuses|forbid|forbids|"
-    r"forbidden|instead of|rather than|must not|do not|does not|cannot|may not|"
-    r"without|stop|stops)\b"
+    r"forbidden|instead of|rather than|must not|do not|don[’']t|does not|doesn[’']t|"
+    r"cannot|may not|without|stop|stops)\b"
 )
 
 #: The rule's own permitted case. An ask with no result yet above it is the
@@ -29245,8 +29457,8 @@ def places_an_ask_above_its_evidence(sentence: str) -> bool:
     produced: the ask lands above the material that argues for it, the customer
     scrolls past it into the detail, and misses it. A sentence FORBIDDING that
     reads almost identically to one requiring it - both name an ask, a card and
-    a direction - so the hedge is what separates them, and it is read only in
-    front of the match for the reason given above the pattern.
+    a direction - so the hedge is what separates them, and it is read only where
+    it can govern the match, for the reason given above the pattern.
     """
     flat = " ".join(sentence.split()).casefold()
     if _ASK_BEFORE_ANY_RESULT.search(flat):
@@ -29255,9 +29467,7 @@ def places_an_ask_above_its_evidence(sentence: str) -> bool:
         match = pattern.search(flat)
         if match is None:
             continue
-        if _ASK_ABOVE_HEDGE.search(flat[: match.start()]):
-            continue
-        if _ASK_ABOVE_HEDGE.search(match.group(0)):
+        if _ASK_ABOVE_HEDGE.search(hedge_window(flat, match)):
             continue
         return True
     return False
@@ -30037,6 +30247,10 @@ class TheAskIsLastAndNamesWhatIsLackingTests(unittest.TestCase):
             "Nothing announces it above the card - no marker line, no heading.",
             "This question is the last thing in the message.",
             "Show readiness once, then ask.",
+            # the contracted forms of `do not` and `does not`
+            "Don't lead with the question.",
+            "The message doesn't open with the question.",
+            "Don’t lead with the question.",
         )
         for sentence in must_refuse:
             with self.subTest(refuse=sentence):
@@ -30050,6 +30264,41 @@ class TheAskIsLastAndNamesWhatIsLackingTests(unittest.TestCase):
                     places_an_ask_above_its_evidence(sentence),
                     "this is the rule itself, or the case it allows, and the "
                     "check called it an offence",
+                )
+
+    def test_a_negation_in_an_earlier_clause_does_not_excuse_the_ask(self) -> None:
+        """The same defect as the readiness-pairing check's, and the same fix.
+
+        The hedge was read over everything in front of the match, so a `no`
+        governing an earlier clause excused the instruction after it. The
+        second refused sentence opens the way the example above
+        `POLARITY_CLAUSE_BREAK` does: an instruction wearing a subordinate
+        clause's `no`. The accepted ones keep a negation that governs the ask:
+        in the run-up ahead of a list, after `, and`, and as a `rather than`
+        that must stay whole.
+        """
+        must_refuse = (
+            "The old band no longer holds, so put the question above the card.",
+            "When no second route has been priced, put the question above the card.",
+            "Nothing was repaired, and the ask goes above the card.",
+        )
+        must_accept = (
+            "Never put the question, the choice or the ask above the card.",
+            "Show the card first, and never put the question above the card.",
+            "Put the question below the card rather than above the card.",
+        )
+        for sentence in must_refuse:
+            with self.subTest(refuse=sentence):
+                self.assertTrue(
+                    places_an_ask_above_its_evidence(sentence),
+                    "the negation governs an earlier clause, not the ask, so this "
+                    "still puts the question above its material",
+                )
+        for sentence in must_accept:
+            with self.subTest(accept=sentence):
+                self.assertFalse(
+                    places_an_ask_above_its_evidence(sentence),
+                    "the negation governs this ask, so the sentence forbids it",
                 )
 
     def test_the_gap_is_named_as_the_pieces_and_not_as_a_situation(self) -> None:
