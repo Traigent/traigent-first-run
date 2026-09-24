@@ -353,6 +353,14 @@ MIN_CONFIDENCE_FOR_TOP_BANDS = 0.75
 # plenty. A gate on the band is not a number on that scale at all: it reads
 # the verdict each run was about to reach, which is the thing being refused.
 ANSWER_KEY_BAND_CEILING = "WORKABLE"
+# The third hold's ceiling, and the same one on purpose (traigent-first-run#572).
+# A method of the wrong kind for the output is the same claim refused one step
+# earlier: the card may not stand behind a comparison graded on the wrong
+# thing. Named separately so that `hold_band_for_evaluator_fit` says whose
+# ceiling it applies, and bound to the answer-key one so the holds cannot
+# drift apart - two holds at different bands would let the band on a card
+# depend on which of them happened to be applied last.
+EVALUATOR_FIT_BAND_CEILING = ANSWER_KEY_BAND_CEILING
 # How much of the answer key has to be looked at before the hold above comes
 # off. Two numbers, because the run knows two different things at the two
 # moments it asks. The first is `ANSWER_KEY_DRAWN_ROWS`, which is derived
@@ -4586,10 +4594,10 @@ def hold_band_for_evaluator_fit(band: str, method_fits: bool) -> tuple[str, bool
     """
     if method_fits:
         return band, False
-    ceiling_index = BAND_ORDER.index(ANSWER_KEY_BAND_CEILING)
+    ceiling_index = BAND_ORDER.index(EVALUATOR_FIT_BAND_CEILING)
     if BAND_ORDER.index(band) <= ceiling_index:
         return band, False
-    return ANSWER_KEY_BAND_CEILING, True
+    return EVALUATOR_FIT_BAND_CEILING, True
 
 
 def combine(name: str, subscores: Sequence[SubScore]) -> Pillar:

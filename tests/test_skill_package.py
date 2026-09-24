@@ -14178,9 +14178,14 @@ class SkillPackageTests(unittest.TestCase):
             "an open `evaluator-task-mismatch` is restated the same way: its "
             "question was put on the one ask, so say what was found and what "
             "the customer answered, and do not ask it again",
-            # The mark stays on proceed when they kept their evaluator.
+            # The mark stays on proceed when they kept their evaluator, and
+            # says why in the parent rule's own terms: the route that clears
+            # the finding the card RAISED is marked, and this card raises
+            # none - it restates one already answered.
             "a customer who kept their evaluator over an open "
-            "`evaluator-task-mismatch` does not move it: `a.` keeps the mark",
+            "`evaluator-task-mismatch` does not move it: the card restates a "
+            "finding they have answered rather than raising one, so `a.` keeps "
+            "the mark",
             # The exception, with a reason of its own ...
             "the exception is an open `evaluator-task-mismatch`, for a reason "
             "of its own: it says optimization will rank every configuration on "
@@ -25434,7 +25439,8 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
             # that reason, and this ask is carried, because the spend being
             # approved is measured with that evaluator. The forbidden wordings
             # are the old exclusion with no exception and the two-trigger count
-            # that left this ask out.
+            # that left this ask out. The proceed mark on that card, and its
+            # reason, are pinned by `test_the_pre_spend_card_carries_an_open_fit_ask`.
             "whether the pre-spend card carries an open evaluator-task-mismatch",
             (
                 "the exception is an open `evaluator-task-mismatch`, for a reason "
@@ -25445,6 +25451,22 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
                 "difference",
                 "because the two triggers do not produce the same card",
                 "on the second trigger alone, drop the bullet",
+            ),
+        ),
+        (
+            # #455 wrote the band holds twice, in the glossary and in the public
+            # README, and #572 added a third hold to the glossary only; the
+            # README still said "one of two" and "neither hold". Both now name
+            # three, and neither count may come back in either document.
+            "how many things hold the top two bands",
+            (
+                "thin measurement is one of three things that hold a band",
+                "three things hold them: too little of the score was measured",
+            ),
+            (
+                "thin measurement is one of two things that hold a band",
+                "neither hold is a cap",
+                "two things hold them",
             ),
         ),
     )

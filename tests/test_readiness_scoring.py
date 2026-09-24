@@ -13501,7 +13501,13 @@ class AWrongKindOfCheckHoldsTheBandTests(unittest.TestCase):
                 )
 
     def test_the_hold_takes_only_the_top_two_bands(self) -> None:
-        edge = MODULE.BAND_ORDER.index("WORKABLE")
+        # Its own name, bound to the answer-key ceiling: the holds hold at one
+        # band, so which of them is applied last cannot decide the card.
+        self.assertEqual(
+            MODULE.EVALUATOR_FIT_BAND_CEILING, MODULE.ANSWER_KEY_BAND_CEILING
+        )
+        ceiling = MODULE.EVALUATOR_FIT_BAND_CEILING
+        edge = MODULE.BAND_ORDER.index(ceiling)
         self.assertEqual(MODULE.BAND_ORDER[edge + 1 :], ["STRONG", "EXCELLENT"])
         for band in MODULE.BAND_ORDER:
             with self.subTest(band=band):
@@ -13509,7 +13515,7 @@ class AWrongKindOfCheckHoldsTheBandTests(unittest.TestCase):
                     MODULE.hold_band_for_evaluator_fit(band, True), (band, False)
                 )
                 expected = (
-                    ("WORKABLE", True)
+                    (ceiling, True)
                     if MODULE.BAND_ORDER.index(band) > edge
                     else (band, False)
                 )

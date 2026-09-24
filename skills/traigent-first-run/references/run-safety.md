@@ -1256,8 +1256,8 @@ exist and points at a file that was never created.
   answer the question it is being paid to answer, fixing is the route that can produce that result:
   `B.` carries the mark, `A.` proceed stays offered unmarked, and the sentence beside it names the
   finding that moved it. The mark is never withheld from the pair. A customer who kept their
-  evaluator over an open `evaluator-task-mismatch` does not move it: `A.` keeps the mark beside the
-  restated finding and answer.
+  evaluator over an open `evaluator-task-mismatch` does not move it: the card restates a finding
+  they have answered rather than raising one, so `A.` keeps the mark.
 
   The final reply-ready block below places this pair too.
 
