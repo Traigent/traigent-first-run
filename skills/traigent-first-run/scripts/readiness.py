@@ -354,6 +354,45 @@ ANSWER_KEY_BAND_CEILING = "WORKABLE"
 # rather than skipped, on both arms: for a retrieval system whose input is a
 # PDF and whose expected output is a paragraph, reading every row is not work
 # to put a customer, or this run, through during onboarding.
+#
+# Re-examined and kept for traigent-first-run#562, which asked how much five
+# rows can miss. Computed against `UNSOUND_ANSWER_SHARE`: the fewest unsound
+# rows a full read of 31 caps on is 4, and a random five-row draw misses all
+# four with probability 0.48. Over files of 20 to 20,000 rows, at the fewest
+# unsound rows a full read caps on, that miss runs 0.42 to 0.59. Three of 31
+# is 9.7%, under the share, so a full read with those three marked `no` sets
+# no cap and asks `review-answer-key` - in the measured 31-row project the
+# card still opened EXCELLENT, so missing them moved the action, not the band.
+# Seeing at least one unsound row with 90% confidence takes 11 to 22 rows over
+# files of 20 to 999 rows (13 at 4 of 31) and 22 at 1,000 rows or more - and
+# seeing one is not capping, which at 22 rows read takes 3.
+#
+# So the change was disclosure only: `row_review_evidence` says on the sample
+# line what a read of this size can show and what it cannot. It says so only
+# on a read of at most this many rows with at least one `yes` or `no` in it: a
+# larger read begins to measure the rate, and an all-`unsure` read showed
+# nothing. On every read it does print on, the unread rows are more than a
+# tenth of the file - at worst this many of one more - so the file's share of
+# wrong answers could lie anywhere in a range wider than
+# `UNSOUND_ANSWER_SHARE`, and a clean read cannot rule out a share above it.
+# Three alternatives were refused:
+# - Printing the miss probability. The card's footer says it is not a
+#   probability; the figure holds only for a uniformly random draw, and the
+#   coding assistant makes the draw with nothing here to verify it; and it is
+#   near-constant, sawtoothing as the capping count steps up every ten rows, so
+#   it would tell a reader nothing about their own file.
+# - A larger draw. 11 to 22 rows is 2.2 to 4.4 times the reading on every run
+#   that takes this arm, and it reverses traigent-first-run#441, which set
+#   five as what is asked before the rows are selected.
+# - A sample that releases nothing. Every opening that reaches the top bands
+#   on a sample goes back to WORKABLE, the hold #441 made liftable, and the
+#   wording it needs is banned in the guidance's contradictions registry.
+#
+# The backstop is the full read of the selected rows at the section-4 re-score,
+# before any paid call. This module cannot see whether that read happens, so
+# the card does not promise it. Re-open this if the opening band starts to gate
+# spending, or if that full read stops being mandatory: either one makes the
+# sample the last read of the answers before money is spent.
 ANSWER_KEY_SAMPLE_ROWS = 5
 
 
@@ -6221,6 +6260,18 @@ def row_review_evidence(
         line += (
             "; a sample, so unreviewed answers are assumed sound rather than verified"
         )
+        # What a sample of the size asked for can show, said only where it is
+        # true: a larger read begins to measure the rate, and a read with no
+        # `yes` or `no` in it showed nothing. Why the draw stays at this size is
+        # recorded beside `ANSWER_KEY_SAMPLE_ROWS`.
+        if (
+            review.reviewed <= ANSWER_KEY_SAMPLE_ROWS
+            and review.unsure < review.reviewed
+        ):
+            line += (
+                " - enough to show an answer key that is wrong throughout, not to"
+                " measure how often an answer is wrong"
+            )
     line += "; this row review does not verify comparison results"
     if evaluator_origin == "generated":
         line += " - and this run wrote the evaluation method they were judged against"

@@ -12322,6 +12322,122 @@ class TheTopBandsNeedAReadOfTheAnswersTests(unittest.TestCase):
             line.endswith("this row review does not verify comparison results")
         )
 
+    def test_the_sample_clause_prints_only_where_it_is_true(self) -> None:
+        """A sample says what its size can and cannot show (traigent-first-run#562).
+
+        "A sample" tells the reader the rest was assumed; it does not tell them
+        what a read of five rows is able to find. It finds an answer key that
+        is wrong throughout, and it cannot measure how often an answer is
+        wrong. Both halves are claims about a read of that size with a verdict
+        in it, so the clause is printed there and nowhere else: not on a larger
+        read, where 30 of 31 rows effectively does measure the rate; not on a
+        read where every verdict is `unsure`, which showed nothing; and not on
+        the branches that cover the rows the run is graded on, or the file.
+        """
+        clause = (
+            "a sample, so unreviewed answers are assumed sound rather than verified"
+            " - enough to show an answer key that is wrong throughout, "
+            "not to measure how often an answer is wrong; "
+        )
+        sample = (
+            "a sample, so unreviewed answers are assumed sound rather than verified;"
+        )
+
+        def dataset(rows: int, tuning: int | None = None, holdout: int | None = None):
+            return MODULE.DatasetFacts(
+                exists=True,
+                dataset_supplied=True,
+                rows=rows,
+                labelled_rows=rows,
+                answerable_rows=rows,
+                collected_rows=rows,
+                tuning_rows=tuning,
+                holdout_rows=holdout,
+                tuning_labelled_rows=tuning,
+                holdout_labelled_rows=holdout,
+            )
+
+        file31 = dataset(31)
+        split40 = dataset(40, tuning=18, holdout=10)
+        cases = (
+            # name, facts, review, clause printed, text the branch prints
+            (
+                "5 of 48",
+                _routing_corpus(),
+                _review(reviewed=5, reviewed_in_run=5),
+                True,
+                "sampled 5 of 48",
+            ),
+            ("1 row", file31, _review(reviewed=1), True, "sampled 1 of 31"),
+            ("30 of 31", file31, _review(reviewed=30), False, sample),
+            (
+                "10 of 28 selected",
+                split40,
+                _review(reviewed=10, reviewed_in_run=10, selected_run_rows=28),
+                False,
+                sample,
+            ),
+            ("all unsure", file31, _review(reviewed=5, unsure=5), False, sample),
+            (
+                "5 rows, 3 unsure",
+                file31,
+                _review(reviewed=5, unsure=3),
+                True,
+                "sampled 5 of 31",
+            ),
+            ("6 of 31", file31, _review(reviewed=6), False, sample),
+            (
+                "covered selected rows",
+                split40,
+                _review(reviewed=28, reviewed_in_run=28, selected_run_rows=28),
+                False,
+                "that covers every selected provided row",
+            ),
+            (
+                "covered split",
+                split40,
+                _review(reviewed=28, reviewed_in_run=28),
+                False,
+                "that covers every row in the declared tuning/held-out split",
+            ),
+            (
+                "full read",
+                file31,
+                _review(reviewed=31),
+                False,
+                "reviewed all 31 provided rows",
+            ),
+        )
+        for name, facts, review, printed, branch_text in cases:
+            with self.subTest(case=name):
+                line = MODULE.row_review_evidence(review, facts)
+                self.assertIn(branch_text, line)
+                if printed:
+                    self.assertIn(clause, line)
+                else:
+                    self.assertNotIn("how often an answer is wrong", line)
+                    self.assertNotIn("wrong throughout", line)
+                self.assertTrue(
+                    line.endswith("this row review does not verify comparison results")
+                )
+
+    def test_a_sample_the_clause_prints_on_leaves_more_than_the_share_unread(
+        self,
+    ) -> None:
+        """Why "not to measure how often" is true on every read it prints on.
+
+        The clause prints only on a read of at most `ANSWER_KEY_SAMPLE_ROWS`
+        rows that left some provided row unread, so the closest it comes to a
+        full read is that many rows of one more. Even there the unread rows are
+        a larger share of the file than `UNSOUND_ANSWER_SHARE`, so the file's
+        share of wrong answers could lie anywhere in a range wider than the
+        threshold, and a clean read cannot rule out a share above it. Raise the
+        sample size far enough and that stops holding, and so does the
+        sentence; this fails first.
+        """
+        worst_unread_share = 1 / (MODULE.ANSWER_KEY_SAMPLE_ROWS + 1)
+        self.assertGreater(worst_unread_share, MODULE.UNSOUND_ANSWER_SHARE)
+
     def test_a_sample_taken_through_this_runs_own_method_says_so(self) -> None:
         """The self-certification the owner accepted, made visible.
 
