@@ -1143,7 +1143,7 @@ Before the provider-paid baseline, show only its immediate scope:
 
 ### Rendering and enforcing baseline approval
 
-When this run filled a gap for the walkthrough, or an active cap asks rather than blocks, that same
+When a trigger under The pre-spend approval card below holds, that same
 approval also carries the pre-spend card in this reference: what the gap was and how it
 was filled, absolute paths to what was written, the easiest and hardest rows, what the evaluation
 method counts as correct, and the provenance this run assumed, stated rather than asked. It is
@@ -1187,11 +1187,12 @@ time/cost; do not ask the user to select implementation timeouts.
 The baseline is the first thing in this run that costs money, and the last moment at which changing
 what that money is spent measuring against is free. So whenever this run generated or repaired the
 dataset or the evaluation method or relies on one in the customer's place, or an active cap asks
-rather than blocks, the baseline approval above carries this card too. It adds no pause of its own -
-the approval already stops, and this is part of what it stops with.
+rather than blocks, or `evaluator-task-mismatch` is open, the baseline approval above carries this
+card too. It adds no pause of its own - the approval already stops, and this is part of what it
+stops with.
 
-Each bullet carries its own condition, because the two triggers do not produce the same card. On the
-asking-cap path the customer's own dataset and evaluation method are the material under discussion
+Each bullet carries its own condition, because the triggers do not produce the same card. On the
+last two the customer's own dataset and evaluation method are the material under discussion
 and this run wrote nothing, so a bullet written for generated material describes a gap that does not
 exist and points at a file that was never created.
 
@@ -1201,7 +1202,7 @@ exist and points at a file that was never created.
   the gap it answers, reads as a feature rather than as a substitution for something they do not
   have. Where the dataset was topped up, add the ceiling its generated share now carries, with its
   number: the ask deliberately left the number out, and this is the first place the customer hears
-  it. On the second trigger alone, drop the bullet; there is no gap of ours to name, and describing
+  it. On the last two triggers alone, drop the bullet; there is no gap of ours to name, and describing
   the customer's own material as one is the claim this card exists to avoid making.
 - **Absolute paths** - one for each file this run actually wrote: the generated or repaired dataset
   when this run wrote or changed it, and the evaluation method when this run wrote one, each as a
@@ -1231,7 +1232,9 @@ exist and points at a file that was never created.
   the evaluator connects read-only, and so which connection answer this spend is being approved on.
   The scope gate above raises the question and deliberately does not put it, because this is the
   moment the answer bears on. What was NOT checked is a different thing and is stated once, in the
-  scope bullet above, which fires whether or not this cap is still asking.
+  scope bullet above, which fires whether or not this cap is still asking. An open
+  `evaluator-task-mismatch` is restated the same way: its question was put on the one ask, so say
+  what was found and what the customer answered, and do not ask it again.
 - **Where we are.** `Stage 3/5 · Baseline`, so the choice arrives placed in the run rather than
   loose.
 - **Proceed, or fix.** Two lettered routes with the recommendation on one of them, in the shape
@@ -1252,7 +1255,9 @@ exist and points at a file that was never created.
   card carries a `FIX BEFORE PAID RUN`, where any cap blocks, or where the run as scoped cannot
   answer the question it is being paid to answer, fixing is the route that can produce that result:
   `B.` carries the mark, `A.` proceed stays offered unmarked, and the sentence beside it names the
-  finding that moved it. The mark is never withheld from the pair.
+  finding that moved it. The mark is never withheld from the pair. A customer who kept their
+  evaluator over an open `evaluator-task-mismatch` does not move it: `A.` keeps the mark beside the
+  restated finding and answer.
 
   The final reply-ready block below places this pair too.
 
@@ -1261,14 +1266,15 @@ remedy at the moment they are asked to pay - not that its question is put here a
 Bound, never block - the run is still worth making, and the question is what to settle before it
 rather than instead of it.
 
-An ask that caps nothing is deliberately NOT carried here, and the difference is a decision rather
-than an omission. A ceiling standing on the score is a bounded claim the customer is being asked to
-pay for, so it belongs at the moment of paying. An unread answer key bounds nothing: putting it here
-invites a customer to stop and go and read a key nobody was asking them to read, when the run is
-small, its spend is bounded by the ceiling on the approval below, and what it buys is seeing the
-thing work end to end. It is carried
-where the card is explained instead, in the order
-`references/evaluation-and-dataset.md` sets out.
+An ask that caps nothing is deliberately NOT carried here, save the one below, and the difference is
+a decision rather than an omission. A ceiling standing on the score is a bounded claim the customer
+is being asked to pay for, so it belongs at the moment of paying. An unread answer key bounds
+nothing: putting it here invites a customer to stop and go and read a key nobody was asking them to
+read, when the run is small, its spend is bounded by the ceiling on the approval below, and what it
+buys is seeing the thing work end to end. It is carried where the card is explained instead, in the
+order `references/evaluation-and-dataset.md` sets out. The exception is an open
+`evaluator-task-mismatch`, for a reason of its own: it says optimization will rank every
+configuration on the wrong thing, and that ranking is what this spend buys.
 
 After showing the baseline result, give the connected stage a preview and approval:
 

@@ -14058,11 +14058,11 @@ class SkillPackageTests(unittest.TestCase):
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, safety)
-        # Each bullet states the condition it fires under. The card has two
-        # unlike triggers - this run wrote something, or a cap asks - and the
-        # bullets were written for the first one only, so the asking-cap path
-        # told the assistant to name a gap that did not exist and to print a
-        # path for a file the run never created.
+        # Each bullet states the condition it fires under. The card has unlike
+        # triggers - this run wrote something, a cap asks, or the fit ask is
+        # open (#572) - and the bullets were written for the first one only,
+        # so the asking-cap path told the assistant to name a gap that did not
+        # exist and to print a path for a file the run never created.
         # The first trigger names both routes to a `generated` component: one
         # this run wrote, and one it relies on in the customer's place, which a
         # customer's disclaimer of their own file makes it (#563). The gap
@@ -14076,7 +14076,7 @@ class SkillPackageTests(unittest.TestCase):
             "no grading method of theirs existed - and then what stands in for it",
             # By the trigger, because a cap can ask on a card the first
             # trigger also raised, and that card still owes the bullet.
-            "on the second trigger alone, drop the bullet",
+            "on the last two triggers alone, drop the bullet",
             "one for each file this run actually wrote",
             "a run that wrote neither lists neither",
         ):
@@ -14129,12 +14129,12 @@ class SkillPackageTests(unittest.TestCase):
             .casefold()
             .split()
         )
-        # SKILL.md says when it fires and points at the owner; it does not
-        # restate the card.
+        # The rendering rule says when it fires by pointing at the card's own
+        # triggers (#572), so the trigger list has one home and is not
+        # restated here.
         for phrase in (
-            "when this run filled a gap for the walkthrough, or an active cap "
-            "asks rather than blocks, that same approval also carries the "
-            "pre-spend card in this reference",
+            "when a trigger under the pre-spend approval card below holds, that "
+            "same approval also carries the pre-spend card in this reference",
             "it is content on the approval that already stops, never a second pause",
         ):
             with self.subTest(document="SKILL.md", phrase=phrase):
@@ -14154,6 +14154,42 @@ class SkillPackageTests(unittest.TestCase):
             "the material approval has to reach the user before the run card "
             "that precedes the paid calls; asked afterwards it is a report",
         )
+
+    def test_the_pre_spend_card_carries_an_open_fit_ask(self) -> None:
+        """traigent-first-run#572: the spend is measured with that evaluator.
+
+        #568 made `evaluator-task-mismatch` an ask that caps nothing, and the
+        card kept every such ask off itself for a reason written about the
+        unread answer key. So a paid baseline could be approved with an
+        evaluator of the wrong kind for the output never mentioned. The ask is
+        now a trigger; the card restates it rather than asking again; keeping
+        their evaluator keeps the proceed mark; and the answer key's own
+        exclusion keeps its reason.
+        """
+        card = " ".join(
+            section_text(RUN_SAFETY, "The pre-spend approval card").casefold().split()
+        )
+        for phrase in (
+            # The trigger, where the triggers are listed.
+            "or an active cap asks rather than blocks, or "
+            "`evaluator-task-mismatch` is open, the baseline approval above "
+            "carries this card too",
+            # Restated, never asked a second time.
+            "an open `evaluator-task-mismatch` is restated the same way: its "
+            "question was put on the one ask, so say what was found and what "
+            "the customer answered, and do not ask it again",
+            # The mark stays on proceed when they kept their evaluator.
+            "a customer who kept their evaluator over an open "
+            "`evaluator-task-mismatch` does not move it: `a.` keeps the mark",
+            # The exception, with a reason of its own ...
+            "the exception is an open `evaluator-task-mismatch`, for a reason "
+            "of its own: it says optimization will rank every configuration on "
+            "the wrong thing",
+            # ... beside the answer key's reason, which still stands.
+            "an unread answer key bounds nothing",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, card)
 
     def test_close_recaps_readiness_and_offers_the_skills_package(self) -> None:
         require_stage_reference(8, RUN_SAFETY, "post-run-verification")
@@ -25389,6 +25425,26 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
                 "the unread answer key is the one this run raises",
                 "the unread answer key and an evaluator of the wrong kind for the "
                 "output are two this run raises",
+            ),
+        ),
+        (
+            # #568 kept `evaluator-task-mismatch` off the pre-spend card with
+            # every other ask that caps nothing, on a reason written about the
+            # unread answer key. #572 revised it: the answer key stays off for
+            # that reason, and this ask is carried, because the spend being
+            # approved is measured with that evaluator. The forbidden wordings
+            # are the old exclusion with no exception and the two-trigger count
+            # that left this ask out.
+            "whether the pre-spend card carries an open evaluator-task-mismatch",
+            (
+                "the exception is an open `evaluator-task-mismatch`, for a reason "
+                "of its own",
+            ),
+            (
+                "an ask that caps nothing is deliberately not carried here, and the "
+                "difference",
+                "because the two triggers do not produce the same card",
+                "on the second trigger alone, drop the bullet",
             ),
         ),
     )
