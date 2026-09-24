@@ -9004,9 +9004,13 @@ class TheRemedyIsMachineReadableTests(unittest.TestCase):
         self.assertEqual(payload["caps"][0]["action_kind"], "repair-evaluator")
         self.assertEqual(
             payload["schema_version"],
-            6,
+            7,
             "a consumer must be able to tell 'emits no remedy' from 'has none'",
         )
+        # 7 rather than 6, and a value again: `recommended_action` may read
+        # `review-evaluator-fit`, a slug 6 never contained, from an ask that
+        # caps nothing (traigent-first-run#561).
+        self.assertIn("review-evaluator-fit", MODULE.ACTION_KINDS)
         # 6 rather than 5, and this one is a key as well as a value. `caps` may
         # now carry `"ceiling": null` - a cap that discloses and asks and bounds
         # nothing - and a schema-5 consumer doing arithmetic on that field gets
@@ -12936,6 +12940,307 @@ class AnAskThatIsNotACapIsStillRoutedTests(unittest.TestCase):
             f"Action: {MODULE.ACTION_DISPLAY_NAMES[held.recommended_action]}", card
         )
         self.assertFalse(MODULE.nothing_pending_beyond(held, "some-other-ask"))
+
+
+class AWrongKindOfCheckRidesTheOneAskTests(unittest.TestCase):
+    """The task-fit finding reaches the one ask, and costs nothing twice.
+
+    traigent-first-run#561: a text-to-SQL project graded by a normalized text
+    comparison, calibrated and row-reviewed, printed "normalized-exact is the
+    wrong kind of check for code-sql output" in its evaluation pillar and
+    `Action: Continue` two lines above it. The finding is owed to the customer
+    and no ceiling carries it, so it is an ask that caps nothing: it moves
+    `recommended_action` and `open_asks`, and nothing else.
+    """
+
+    def _evaluation(self, method, kind, **extra) -> "MODULE.EvaluationFacts":
+        return replace(_passing_calibration(), method=method, task_kind=kind, **extra)
+
+    def _score(self, method, kind, review=None, dataset=None, **extra):
+        return MODULE.score_run(
+            dataset if dataset is not None else _routing_corpus(),
+            self._evaluation(method, kind, **extra),
+            _wired_space(),
+            dict(MODULE.DEFAULT_WEIGHTS),
+            review,
+        )
+
+    def _without_the_ask(self, method, kind, review=None):
+        """The same computation with only the ask taken away.
+
+        The evaluation pillar is scored first and handed back unchanged, so the
+        one difference between the two scores is the ask itself - not a
+        different pillar reached by switching the predicate off everywhere.
+        """
+        evaluation = self._evaluation(method, kind)
+        pillar_and_caps = MODULE.score_evaluation(evaluation)
+        with mock.patch.object(
+            MODULE, "score_evaluation", return_value=pillar_and_caps
+        ), mock.patch.object(MODULE, "task_fit_mismatch", return_value=False):
+            return MODULE.score_run(
+                _routing_corpus(),
+                evaluation,
+                _wired_space(),
+                dict(MODULE.DEFAULT_WEIGHTS),
+                review,
+            )
+
+    def _conditions(self, score) -> list[str]:
+        return [ask.condition for ask in score.open_asks]
+
+    def _task_fit(self, score) -> "MODULE.SubScore":
+        evaluation = next(p for p in score.pillars if p.name == "evaluation")
+        return next(s for s in evaluation.subscores if s.name == "task-fit")
+
+    def test_the_filed_pair_puts_the_finding_on_the_one_ask(self) -> None:
+        score = self._score("normalized-exact", "code-sql", _review(reviewed=48))
+        self.assertIn("wrong kind of check", self._task_fit(score).evidence)
+        self.assertEqual(self._conditions(score), [MODULE.EVALUATOR_TASK_MISMATCH])
+        self.assertEqual(score.recommended_action, "review-evaluator-fit")
+        ask = score.open_asks[0]
+        self.assertEqual(ask.action_kind, score.recommended_action)
+        # The pillar has already withheld task-fit credit for this pair, so
+        # the reason may not claim the finding costs nothing: it says the ask
+        # moves nothing FURTHER, which the test below measures.
+        fit = self._task_fit(score)
+        self.assertEqual(fit.value, MODULE.TASK_FIT_UNFIT_CREDIT)
+        self.assertLess(fit.value, fit.maximum)
+        self.assertNotIn("changes no points", ask.reason)
+        self.assertIn("task fit has already withheld its credit", ask.reason)
+        self.assertIn("moves no further points", ask.reason)
+        self.assertIn("does not stop the run", ask.reason)
+        payload = json.loads(json.dumps(asdict(score), sort_keys=True))
+        self.assertEqual(
+            payload["open_asks"],
+            [
+                {
+                    "condition": "evaluator-task-mismatch",
+                    "action_kind": "review-evaluator-fit",
+                    "reason": ask.reason,
+                }
+            ],
+        )
+
+    def test_it_changes_no_number_band_or_status(self) -> None:
+        """The #396 class: identical with and without the ask, bar the remedy."""
+        for review in (None, _review(reviewed=48)):
+            with self.subTest(reviewed=review is not None):
+                asked = self._score("normalized-exact", "code-sql", review)
+                silent = self._without_the_ask("normalized-exact", "code-sql", review)
+                self.assertIn(MODULE.EVALUATOR_TASK_MISMATCH, self._conditions(asked))
+                self.assertNotIn(
+                    MODULE.EVALUATOR_TASK_MISMATCH, self._conditions(silent)
+                )
+                for field in (
+                    "overall",
+                    "weighted_average",
+                    "band",
+                    "status",
+                    "caps",
+                    "pillars",
+                    "band_limited_by_unread_answers",
+                ):
+                    self.assertEqual(getattr(asked, field), getattr(silent, field))
+                self.assertEqual(
+                    self._conditions(asked),
+                    [MODULE.EVALUATOR_TASK_MISMATCH, *self._conditions(silent)],
+                )
+                self.assertNotEqual(asked.recommended_action, silent.recommended_action)
+
+    def test_it_is_silent_wherever_the_card_prints_no_mismatch(self) -> None:
+        cases = {
+            "composite over code-sql": ("composite", "code-sql", {}),
+            "execution, reported": (
+                "execution",
+                "code-sql",
+                {"executes_candidate": True},
+            ),
+            "execution, unproven": ("execution", "code-sql", {}),
+            "a text comparison that executes": (
+                "normalized-exact",
+                "code-sql",
+                {"executes_candidate": True},
+            ),
+            "sql-structure, comparison unproven": ("sql-structure", "code-sql", {}),
+            "no task kind declared": ("normalized-exact", None, {}),
+            "no method declared": (None, "code-sql", {}),
+        }
+        for name, (method, kind, extra) in cases.items():
+            with self.subTest(name):
+                score = self._score(method, kind, **extra)
+                self.assertNotIn(
+                    MODULE.EVALUATOR_TASK_MISMATCH, self._conditions(score)
+                )
+                self.assertNotEqual(score.recommended_action, "review-evaluator-fit")
+        for method, profile in MODULE.METHOD_PROFILES.items():
+            for kind in profile["fits"]:
+                with self.subTest(fits=(method, kind)):
+                    self.assertNotIn(
+                        MODULE.EVALUATOR_TASK_MISMATCH,
+                        self._conditions(self._score(method, kind)),
+                    )
+
+    def test_the_ask_and_the_sentence_are_one_predicate(self) -> None:
+        """Every pair and every witness: the ask fires exactly where it prints.
+
+        Five task-fit arms stand between the table and the sentence, and only
+        the last prints "the wrong kind of check". An ask keyed to a second
+        copy of the fit test would fire under an arm that prints something else
+        the day an arm moves; this walks every declared pair against every
+        execution and comparison witness instead of trusting the shared helper.
+
+        Agreement alone is not enough: the last arm and the ask both read
+        `task_fit_mismatch`, so a helper wrong in both places at once would
+        agree with itself. Each cell is therefore also held to an oracle built
+        here from the fit table alone, without calling the helper.
+
+        `present` and `parses` are walked too, because `score_evaluation`
+        returns before task fit for an absent or unparseable evaluator and
+        prints "no evaluator" or "does not parse" there instead.
+        """
+        fired = 0
+        scored = {"absent": 0, "unparseable": 0}
+        for method, kind, executes, shape, present, parses in itertools.product(
+            (None, *MODULE.METHOD_PROFILES),
+            (None, *MODULE.TASK_KINDS),
+            (None, False, True),
+            (None, "exact", "normalized-exact", "sql-structure"),
+            (True, False),
+            (None, True, False),
+        ):
+            try:
+                evaluation = self._evaluation(
+                    method,
+                    kind,
+                    executes_candidate=executes,
+                    comparison_shape=shape,
+                    present=present,
+                    parses=parses,
+                )
+            except ValueError:
+                # A state `EvaluationFacts` refuses to construct, such as an
+                # absent evaluator carrying an execution witness.
+                continue
+            score = MODULE.score_run(
+                _routing_corpus(),
+                evaluation,
+                _wired_space(),
+                dict(MODULE.DEFAULT_WEIGHTS),
+            )
+            scored["absent"] += not present
+            scored["unparseable"] += parses is False
+            printed = "wrong kind of check" in self._task_fit(score).evidence
+            asked = MODULE.EVALUATOR_TASK_MISMATCH in self._conditions(score)
+            # Reported execution is excluded on purpose: the first task-fit arm
+            # answers it with its own scope sentence.
+            expected = bool(
+                present
+                and parses is not False
+                and method in MODULE.METHOD_PROFILES
+                and kind is not None
+                and kind not in MODULE.METHOD_PROFILES[method]["fits"]
+                and executes is not True
+            )
+            fired += asked
+            if not printed == asked == expected:
+                self.fail(
+                    f"{method} / {kind} / executes={executes} / shape={shape} / "
+                    f"present={present} / parses={parses}: sentence {printed}, "
+                    f"ask {asked}, expected {expected}"
+                )
+        self.assertGreater(fired, 0, "the walk never reached a mismatch")
+        self.assertGreater(scored["absent"], 0, "the walk never scored an absent one")
+        self.assertGreater(scored["unparseable"], 0, "nor an unparseable one")
+
+    def test_it_claims_no_misgrade_the_mismatch_does_not_show(self) -> None:
+        """Not every wrong kind of check misgrades: some cannot be seen into.
+
+        A composite over numeric output and a model judge over SQL or numbers are
+        unfit for reasons that name no answer graded wrongly, so neither the Action line
+        nor the ask may tell anyone to show one; SKILL.md forbids calling a
+        component weak from intuition.
+        """
+        action = MODULE.ACTION_DISPLAY_NAMES["review-evaluator-fit"]
+        self.assertNotIn("misgrade", action)
+        for method, kind, why in (
+            ("composite", "numeric", "this score cannot see"),
+            ("llm-judge-pointwise", "code-sql", "that model's opinion"),
+            ("llm-judge-rubric", "numeric", "rather than on a rule you can check"),
+        ):
+            with self.subTest(method=method, kind=kind):
+                score = self._score(method, kind, _review(reviewed=48))
+                self.assertIn(why, self._task_fit(score).evidence)
+                self.assertEqual(score.recommended_action, "review-evaluator-fit")
+                self.assertEqual(
+                    MODULE.render_card(score).splitlines()[1], f"Action: {action}"
+                )
+                reason = score.open_asks[0].reason
+                self.assertIn("where one exists, an answer it grades wrongly", reason)
+                # A model judge grades on no rule anyone can check, so the ask
+                # names what the method counts as correct, not "its rule".
+                self.assertIn("what it counts as correct", reason)
+                self.assertNotIn("its rule", reason)
+
+    def test_it_orders_before_the_answer_key_and_after_every_cap(self) -> None:
+        self.assertEqual(
+            next(iter(MODULE.ACTION_FOR_ASK)), MODULE.EVALUATOR_TASK_MISMATCH
+        )
+        mismatch = MODULE.Ask(condition=MODULE.EVALUATOR_TASK_MISMATCH, reason="r")
+        self.assertLess(
+            MODULE.ask_order(mismatch), MODULE.ask_order(MODULE.ANSWER_KEY_UNREAD_ASK)
+        )
+        held = self._score("normalized-exact", "code-sql")
+        self.assertEqual(
+            self._conditions(held),
+            [MODULE.EVALUATOR_TASK_MISMATCH, MODULE.ANSWER_KEY_UNREAD],
+        )
+        self.assertEqual(held.recommended_action, "review-evaluator-fit")
+        # The hold's reassurance is true only while nothing else is asked.
+        self.assertFalse(MODULE.nothing_pending_beyond(held, MODULE.ANSWER_KEY_UNREAD))
+        self.assertNotIn(
+            "this read is the only thing being asked of you",
+            MODULE.render_card(held, palette=MODULE.Palette(), unicode_ok=False),
+        )
+        # Both cap arms still speak first, and the ask stays on the payload.
+        caps = AnAskThatIsNotACapIsStillRoutedTests()
+        asks = (MODULE.ANSWER_KEY_UNREAD_ASK, mismatch)
+        for cap in (caps._blocking(), caps._asking()):
+            with self.subTest(cap=cap.condition):
+                self.assertEqual(
+                    MODULE.recommended_action((cap,), asks), cap.action_kind
+                )
+        blocked = self._score(
+            "normalized-exact", "code-sql", dataset=MODULE.DatasetFacts()
+        )
+        self.assertEqual(blocked.status, "BLOCKED")
+        self.assertNotEqual(blocked.recommended_action, "review-evaluator-fit")
+        self.assertIn(MODULE.EVALUATOR_TASK_MISMATCH, self._conditions(blocked))
+
+    def test_beside_unsound_answers_the_payload_keeps_the_table_order(self) -> None:
+        """Both asks at once: `open_asks` is "in the order it is to be done".
+
+        `recommended_action` sorts by the table, so it reads the same whatever
+        order the list is built in; only the payload shows a list assembled
+        backwards, and a consumer reading `open_asks` is told the order there.
+        """
+        score = self._score(
+            "normalized-exact",
+            "code-sql",
+            _review(reviewed=48, unsound=1, unsound_in_run=1),
+        )
+        self.assertEqual(
+            self._conditions(score),
+            [MODULE.EVALUATOR_TASK_MISMATCH, "dataset-unsound-expected-outputs"],
+        )
+        self.assertEqual(score.recommended_action, "review-evaluator-fit")
+
+    def test_the_remedy_is_its_own_and_no_ceiling_carries_it(self) -> None:
+        remedy = MODULE.ACTION_FOR_ASK[MODULE.EVALUATOR_TASK_MISMATCH]
+        self.assertEqual(remedy, "review-evaluator-fit")
+        self.assertIn(remedy, MODULE.ACTION_KINDS)
+        self.assertIn(remedy, MODULE.ACTION_DISPLAY_NAMES)
+        self.assertNotIn(remedy, set(MODULE.ACTION_FOR_CONDITION.values()))
+        self.assertNotIn(MODULE.EVALUATOR_TASK_MISMATCH, MODULE.ACTION_FOR_CONDITION)
 
 
 class ADeferredCalibrationSaysSoInTheFieldConsumersReadTests(unittest.TestCase):

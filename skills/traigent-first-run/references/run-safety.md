@@ -977,8 +977,8 @@ search failed to produce - both are the same absent input. So on a closing card 
 zero-trial search, `status: OK` describes only the evidence this cap was given, and is not a verdict
 that the search succeeded. `recommended_action` reads `proceed` there only when nothing else blocks
 and nothing else is asking: an asking cap carries its own remedy into that field, and so does an ask
-that caps nothing, which arrives in `open_asks` rather than in `caps` - the unread answer key is the
-one this run raises. So `proceed` on this card is the absence of every other finding rather than a
+that caps nothing, which arrives in `open_asks` rather than in `caps`. So `proceed` on this card is
+the absence of every other finding rather than a
 statement about this one, and a remedy standing beside an empty `caps` list is accounted for. Report that
 search's outcome from the run itself - trials executed, spend, the error it stopped on - and never
 let an advisory agent cap stand in for it. Whether a search that produced nothing may be retried or

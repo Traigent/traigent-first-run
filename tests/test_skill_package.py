@@ -25175,6 +25175,22 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
                 "no step in this guide would change that, and that is a fact",
             ),
         ),
+        (
+            # Unsound expected outputs were already an ask that caps nothing
+            # when the closing-card aside named the unread answer key as "the
+            # one", and #561 added a third. The aside now names none; both
+            # forbidden wordings listed a subset of the asks as all of them.
+            "whether the closing card lists the asks that cap nothing",
+            (
+                "and so does an ask that caps nothing, which arrives in `open_asks` "
+                "rather than in `caps`. so `proceed` on this card",
+            ),
+            (
+                "the unread answer key is the one this run raises",
+                "the unread answer key and an evaluator of the wrong kind for the "
+                "output are two this run raises",
+            ),
+        ),
     )
 
     # Our own release history, in the words a customer reads. Every one of
