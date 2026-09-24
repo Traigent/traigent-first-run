@@ -1442,7 +1442,8 @@ ACTION_FOR_CONDITION: dict[str, str] = {
     # NOT `connect-evaluator`, and the pair is the same shape as `get-data`
     # against `connect-real-data` one table over. `connect-evaluator` means
     # "there is nothing here, select or create one" and stops the run;
-    # this means "there is one, and this run wrote it", which stops nothing -
+    # this means "there is one, and this run wrote it or relies on it in the
+    # customer's place", which stops nothing -
     # the walkthrough substitute is what makes the run possible, and the guide
     # creates it on purpose. One slug meaning both would be #197 again.
     "evaluator-generated": "connect-real-evaluator",
@@ -1485,12 +1486,13 @@ ACTION_FOR_CONDITION: dict[str, str] = {
     # wrong instruction, not merely a badly named condition.
     #
     # NOT `vary-knobs` and NOT `connect-real-agent`. The first is the defect.
-    # The second is #238's rung and means "there is one, and this run wrote it",
-    # which stops nothing; this means "there is nothing here, select or create
-    # one", which is the same pair `evaluator-absent` and `evaluator-generated`
-    # already are one pillar over. Reusing either slug would be #197 again - one
-    # instruction meaning "stop, there is nothing here" on one card and "carry
-    # on, this is ours" on the next.
+    # The second is #238's rung and means "there is one, and this run wrote it
+    # or relies on it in the customer's place", which stops nothing; this means
+    # "there is nothing here, select or create one", which is the same pair
+    # `evaluator-absent` and `evaluator-generated` already are one pillar over.
+    # Reusing either slug would be #197 again - one instruction meaning "stop,
+    # there is nothing here" on one card and "carry on, this is ours" on the
+    # next.
     "agent-absent": "connect-agent",
     # The other half of #359's repetition finding, which counted the repeats and
     # asked about them on the card while `recommended_action` still said
@@ -1576,8 +1578,8 @@ ANSWER_KEY_UNREAD = "answer_key_unread"
 # ITS OWN REMEDY, because neither existing one says this. `repair-evaluator`
 # is the remedy of two conditions that both block, and the tests hold every
 # condition behind one remedy slug to one verdict, so an ask that stops
-# nothing cannot share it. `connect-real-evaluator` means "this run wrote a
-# substitute; connect yours", and this evaluator is theirs.
+# nothing cannot share it. `connect-real-evaluator` means "this run wrote or
+# relies on a substitute; connect yours", and this evaluator is theirs.
 #
 # FIRST, ahead of the answer-key read: that read asks whether each expected
 # answer is sensible under the method that will grade it, so the method is
@@ -2266,8 +2268,9 @@ CAP_SEVERITY_ORDER: tuple[tuple[str, tuple[tuple[str, int | None], ...]], ...] =
             ("dataset-undeclared-provenance", FULLY_SYNTHETIC_CEILING),
             # #238's agent rung, on the same number and ranked after both: the
             # dataset conditions are counted per row, this one is declared by
-            # the run about its own work, and the counted-before-inferred rule
-            # this table already applies puts the count first.
+            # the run - about its own work where it wrote the agent - and the
+            # counted-before-inferred rule this table already applies puts the
+            # count first.
             ("agent-generated", AGENT_GENERATED_CEILING),
             ("dataset-mostly-synthetic", MOSTLY_SYNTHETIC_CEILING),
             ("dataset-mostly-undeclared", MOSTLY_SYNTHETIC_CEILING),
@@ -3953,14 +3956,16 @@ class EvaluationFacts:
     # False narrows that same present-but-unresolved state to "the file is
     # not even valid Python" (traigent-first-run#133).
     parses: bool | None = None
-    # Whose evaluator this is - `generated` where this run wrote it, `brought`
-    # where the customer did, `None` where nobody said (#238).
+    # Whose evaluator this is - `generated` where this run wrote it or relies on
+    # it in the customer's place (a file the customer disclaimed included),
+    # `brought` where it is the customer's own, `None` where nobody said (#238).
     #
     # Declared rather than measured, because there is nothing here to measure:
     # no property of a scoring function distinguishes one this run wrote from
     # one the customer wrote, and inventing a heuristic for it would put a
-    # guess about authorship on somebody's card. The run that wrote the file is
-    # the one party that knows for certain, and the flag is how it says so.
+    # guess about authorship on somebody's card. The run is the one party that
+    # knows for certain - it wrote the file, or heard the customer disclaim it -
+    # and the flag is how it says so.
     #
     # `None` raises nothing, which is a decision and not an oversight - see
     # `origin_cap`.
@@ -6201,13 +6206,14 @@ def row_review_evidence(
     Neither coverage claim verifies the comparison: this is the assistant's
     assessment of expected answers, not an optimization measurement.
 
-    And where this run wrote the method those rows were judged against, the
-    line says so. The sample is then this run checking its own work - which the
-    owner accepted rather than adding a human step to onboarding, and an
-    accepted limit that nobody is told about is indistinguishable from one
-    nobody noticed. `evaluator-generated`'s ceiling already prices the method;
-    what it does not say is that the one behavioural read on the card was taken
-    through it.
+    And where the method those rows were judged against is `generated` - one
+    this run wrote or relies on in the customer's place - the line says so,
+    without claiming which of the two it was. Where this run wrote it, the
+    sample is then this run checking its own work - which the owner accepted
+    rather than adding a human step to onboarding, and an accepted limit that
+    nobody is told about is indistinguishable from one nobody noticed.
+    `evaluator-generated`'s ceiling already prices the method; what it does not
+    say is that the one behavioural read on the card was taken through it.
     """
     if not review.supplied:
         return ""
@@ -6304,7 +6310,10 @@ def row_review_evidence(
             )
     line += "; this row review does not verify comparison results"
     if evaluator_origin == "generated":
-        line += " - and this run wrote the evaluation method they were judged against"
+        line += (
+            " - and the evaluation method they were judged against is one this run"
+            " wrote or relies on in place of your own"
+        )
     return line
 
 
@@ -6323,9 +6332,9 @@ ORIGIN_CAPS: dict[str, Cap] = {
     "evaluation": Cap(
         "evaluator-generated",
         EVALUATOR_GENERATED_CEILING,
-        "This run wrote the evaluator, so the score reports agreement with an "
-        "evaluation method nobody outside this run has checked against your "
-        "task. Your "
+        "This run wrote the evaluator or relies on it in place of your own, so "
+        "the score reports agreement with an evaluation method nobody outside "
+        "this run has checked against your task. Your "
         "rows and your answers are real; what grades them is a stand-in until "
         "your own scoring is connected or a person confirms this one marks the "
         "way you would.",
@@ -6334,8 +6343,9 @@ ORIGIN_CAPS: dict[str, Cap] = {
     "agent": Cap(
         "agent-generated",
         AGENT_GENERATED_CEILING,
-        "This run wrote the agent, so the winning configuration belongs to a "
-        "walkthrough stand-in rather than to the program you run. The "
+        "This run wrote the agent or relies on it in place of your own, so the "
+        "winning configuration belongs to a walkthrough stand-in rather than "
+        "to the program you run. The "
         "comparison is real and it is not a measurement of your production "
         "behavior.",
         blocks=False,
@@ -20946,7 +20956,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         choices=COMPONENT_ORIGINS,
         help=(
             "who wrote the evaluator: 'brought' for the customer's own, "
-            "'generated' for one this run created. A generated evaluation "
+            "'generated' for one this run created or relies on in the "
+            "customer's place. A generated evaluation "
             "method bounds what the score may claim and never stops the run; "
             "there is nothing here to measure, so it is declared"
         ),

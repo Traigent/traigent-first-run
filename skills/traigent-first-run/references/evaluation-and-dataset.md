@@ -657,7 +657,7 @@ invalid-evaluator paragraph in section 4 of SKILL.md - inspect, repair, or repla
 the absent-evidence reading in the opening readiness gate and the creation dependency matrix -
 create or select. `evaluator-generated` and `agent-generated` route through the walkthrough labeling
 rules and nothing else - carry the substitute's provenance into the words as well as the card, and say the
-result measures the substitute rather than their product. Neither is a repair: this run created the
+result measures the substitute rather than their product. Neither is a repair: this run created or relies on the
 component on purpose, the run continues, and what the ceiling refuses is the claim, not the work.
 `evaluator-unvalidated` routes through the opening/section-4 calibration gate in SKILL.md: measure it once
 when that gate establishes eligibility, or keep the ceiling and name the concrete deferral. It is

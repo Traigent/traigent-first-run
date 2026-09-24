@@ -106,8 +106,8 @@ Always report the component provenance:
 - `✅` real and validated.
 - `❗` missing, invalid, or evidence-limited real-world component.
 
-A substitute this run generated carries no mark: it is not a state their component is in. List it
-under `Walkthrough setup`, named in words.
+A substitute this run generated or relies on in the customer's place carries no mark: it is not a
+state their component is in. List it under `Walkthrough setup`, named in words.
 
 If anything is a substitute, say before the numbers that the result demonstrates the workflow and
 is not evidence of expected production performance. Any walkthrough-only substitute is still

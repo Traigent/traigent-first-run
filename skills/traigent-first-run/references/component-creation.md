@@ -17,10 +17,10 @@ before creating any of them.
 
 Classify each component as:
 
-- `real` - project/customer material that exists independently of the walkthrough.
+- `real` - the customer's own material, existing independently of the walkthrough.
 - `limited` - real material is technically usable for a walkthrough, but concrete evidence shows
   it cannot yet support a credible optimization claim.
-- `demo` - material invented to demonstrate the workflow.
+- `demo` - material invented to demonstrate the workflow, or relied on in the customer's place.
 - `missing` - no usable component found.
 - `invalid` - material exists but fails compatibility or validation.
 

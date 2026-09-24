@@ -1183,24 +1183,23 @@ time/cost; do not ask the user to select implementation timeouts.
 
 The baseline is the first thing in this run that costs money, and the last moment at which changing
 what that money is spent measuring against is free. So whenever this run generated or repaired the
-dataset or the evaluation method, or an active cap asks rather than blocks, the baseline approval
-above carries this card too. It adds no pause of its own - the approval already stops, and this is
-part of what it stops with.
+dataset or the evaluation method or relies on one in the customer's place, or an active cap asks
+rather than blocks, the baseline approval above carries this card too. It adds no pause of its own -
+the approval already stops, and this is part of what it stops with.
 
 Each bullet carries its own condition, because the two triggers do not produce the same card. On the
 asking-cap path the customer's own dataset and evaluation method are the material under discussion
 and this run wrote nothing, so a bullet written for generated material describes a gap that does not
 exist and points at a file that was never created.
 
-- **The gap, and how it was filled** - where this run generated or repaired the dataset or the
-  evaluation method. Name the condition in the user's own words - no examples were
-  connected, the answer key was written by a model, no grading method existed - and then what this
-  run put there instead. Both halves: "a dataset was created", without the gap it answers, reads as
-  a feature rather than as a substitution for something they do not have. Where the dataset was
-  topped up, add the ceiling its generated share now carries, with its number: the ask deliberately
-  left the number out, and this is the first place the customer hears it. Where this run created and
-  repaired nothing, drop the bullet; there is no gap of ours to name, and describing the customer's
-  own material as one is the claim this card exists to avoid making.
+- **The gap, and how it was filled** - on the first trigger above. Name the condition in the user's
+  own words - no examples were connected, the answer key was written by a model, no grading method
+  of theirs existed - and then what stands in for it. Both halves: "a dataset was created", without
+  the gap it answers, reads as a feature rather than as a substitution for something they do not
+  have. Where the dataset was topped up, add the ceiling its generated share now carries, with its
+  number: the ask deliberately left the number out, and this is the first place the customer hears
+  it. On the second trigger alone, drop the bullet; there is no gap of ours to name, and describing
+  the customer's own material as one is the claim this card exists to avoid making.
 - **Absolute paths** - one for each file this run actually wrote: the generated or repaired dataset
   when this run wrote or changed it, and the evaluation method when this run wrote one, each as a
   full path they can open in another window while they read this. A relative path is not openable
@@ -1850,10 +1849,11 @@ Include:
   allowance; the configurations tested out of the space's total, failures, stop reason and direct
   portal links. Name each phase's actual objectives when cost coverage changed.
 - Which components were `✅` real and which were walkthrough substitutes.
-- What this run created or repaired, and what that costs the claim: examples it wrote are weaker
-  evidence than examples collected from the product, and an evaluation method it wrote is a
-  starting point rather than the product's grading policy - one a person may want to move in
-  either direction, so it rewards what their product values.
+- What this run created, repaired or relies on in the customer's place, and what that costs the
+  claim: examples it wrote are weaker evidence than examples collected from the product, and an
+  evaluation method it wrote or relies on is a starting point rather than the product's grading
+  policy - one a person may want to move in either direction, so it rewards what their product
+  values.
 - The run's scope, in this run's own recorded numbers: rows scored beside the dataset's usable
   rows, distinct configurations measured beside the enhanced space's combination count, executed
   trials separately, and knobs varied beside the
@@ -1994,13 +1994,13 @@ an easy-looking task may reflect how the walkthrough examples were constructed.
 If any component is synthetic, put the limitation before the score. A synthetic Pareto frontier
 can look identical to a production one.
 
-Then explain what remains to validate for the intended product use, as one paragraph rather than
-a warning. For every pillar this run generated - the dataset, the evaluation method, the agent -
-name the needed real replacement or human review of its task fit. Those are next validation
-actions, not proof of production readiness. Reporting procedure above and "Held-out set and
-claims" in `references/evaluation-and-dataset.md` own the later promotion requirements; human
-review alone does not satisfy them. Describe the answer-key review on the terms "Say what you
-reviewed and what you assumed" in that reference sets out.
+Then explain what remains to validate for the intended product use, as one paragraph rather than a
+warning. For every pillar this run generated or relies on in the customer's place - the dataset, the
+evaluation method, the agent - name the needed real replacement or human review of its task fit.
+Those are next validation actions, not proof of production readiness. Reporting procedure above and
+"Held-out set and claims" in `references/evaluation-and-dataset.md` own the later promotion
+requirements; human review alone does not satisfy them. Describe the answer-key review on the terms
+"Say what you reviewed and what you assumed" in that reference sets out.
 
 Say what the run actually gave the user, using only completed phases and verified artifacts.
 A preserved local baseline is useful even without a portal result. Name results in the portal only
