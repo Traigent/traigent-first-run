@@ -25458,7 +25458,11 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
             # #455 wrote the band holds twice, in the glossary and in the public
             # README, and #572 added a third hold to the glossary only; the
             # README still said "one of two" and "neither hold". Both now name
-            # three, and neither count may come back in either document.
+            # three, pinned per document by
+            # `test_the_readme_and_glossary_name_every_band_hold`. This entry
+            # adds the one thing those pins cannot: the old sentences, word for
+            # word, refused in every document, so a stale copy pasted into a
+            # third one is caught too.
             "how many things hold the top two bands",
             (
                 "thin measurement is one of three things that hold a band",
@@ -25701,51 +25705,48 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
                         "guidance back in conflict",
                     )
 
-    #: A count of two put on the band holds: "two", "both" or "neither" within
-    #: two words of "hold"/"holds" or "things that (can) hold". Read per
-    #: paragraph, and only where the paragraph mentions a band, so "two gates
-    #: hold the approved total" is not a band hold.
-    TWO_BAND_HOLDS = re.compile(
-        r"\b(?:two|both|neither)\b(?:\W+\w+){0,2}?\W+(?:holds?|things that (?:can )?hold)\b"
-    )
-
-    def test_the_readme_names_every_band_hold(self) -> None:
-        """traigent-first-run#572: the public twin of the glossary's holds.
-
-        The README carried "one of two things that hold a band" after the
-        glossary said three, and the registry above could not see it: its
-        agreed phrase was satisfied by the glossary alone. So the README is
-        read on its own - it states three and names the fit hold - and no
-        paragraph anywhere may count the holds as two, however it is worded.
-        """
-        readme = " ".join((ROOT / "README.md").read_text().casefold().split())
-        for phrase in (
+    #: The three band holds, each in the words its document uses for it: the
+    #: README speaks about "the agent", the glossary to "your agent".
+    BAND_HOLD_PINS = {
+        "README.md": (
             "thin measurement is one of three things that hold a band",
             "nobody has read the expected answers the run is graded against",
             "the evaluation method is the wrong kind of check for the agent's output",
-        ):
-            with self.subTest(phrase=phrase):
-                self.assertIn(phrase, readme)
-        offenders = [
-            f"{path.name}: {' '.join(paragraph.split())[:120]}"
-            for path in conversation_contract_documents()
-            for paragraph in re.split(r"\n\s*\n", path.read_text())
-            if "band" in paragraph.casefold()
-            and self.TWO_BAND_HOLDS.search(" ".join(paragraph.casefold().split()))
-        ]
-        self.assertEqual(offenders, [], "a document counts the band holds as two")
-        # The predicate is the guard, so it is run against the wordings it has
-        # to refuse and the ones it has to leave alone.
-        for wording, refused in (
-            ("one of the two things that can hold a band", True),
-            ("one of two things that hold a band", True),
-            ("neither hold is a cap", True),
-            ("the band has two holds", True),
-            ("one of three things that hold a band, and the other two", False),
-            ("the top two bands say the run stands behind it, so they are held", False),
-        ):
-            with self.subTest(wording=wording):
-                self.assertEqual(bool(self.TWO_BAND_HOLDS.search(wording)), refused)
+        ),
+        "glossary.md": (
+            "three things hold them: too little of the score was measured at all",
+            "nobody has read the expected answers the run is graded against",
+            "the evaluation method is the wrong kind of check for your agent's output",
+        ),
+    }
+
+    def test_the_readme_and_glossary_name_every_band_hold(self) -> None:
+        """traigent-first-run#572: the two places that count the band holds.
+
+        #455 wrote the holds into the glossary and into its public twin in
+        README.md. #572 added a third hold to the glossary, and the README
+        still said "one of two things that hold a band": the registry entry
+        above could not see it, because its agreed phrase was satisfied by the
+        glossary alone.
+
+        What this catches: either document stops saying three, or stops naming
+        any one of the three holds - by reverting, by rewording the count ("one
+        of the two things", "held for two reasons"), or by dropping a hold
+        while keeping "three". Each document is read on its own, so one cannot
+        satisfy the other's pins.
+
+        What it misses: a count of two restated in any OTHER document, in
+        words the registry's literal list does not carry. A keyword predicate
+        for that was tried and refused - measured, it refused four of seven
+        legitimate sentences ("while both conditions hold") and passed five of
+        nine paraphrases ("one of two reasons a band is held"). That case is
+        left to the whole-document read that CLAUDE.md makes the review rule.
+        """
+        for path in (ROOT / "README.md", SKILL_ROOT / "references" / "glossary.md"):
+            text = " ".join(path.read_text().casefold().split())
+            for phrase in self.BAND_HOLD_PINS[path.name]:
+                with self.subTest(document=path.name, phrase=phrase):
+                    self.assertIn(phrase, text)
 
     def test_no_document_presents_a_later_readiness_score_beside_the_opening_one(
         self,

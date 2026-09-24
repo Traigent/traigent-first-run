@@ -32,8 +32,9 @@ stops being true once the key is read while the method is still the wrong kind: 
 over until a method that fits the output replaces the one in use. It now says so, so nobody is
 promised a band the read will not move, and the card's answer-key line says the same in that state.
 README.md carried the same two-holds sentence as the glossary and now names three; it is outside
-this budget. The contradictions registry records the revised pre-spend decision, and a README check
-holds it to all three holds and refuses a count of two in any document, however it is worded.
+this budget. The contradictions registry records the revised pre-spend decision and refuses the old
+two-holds sentences word for word, and a content check holds the README and the glossary each to all
+three holds.
 
 run-safety.md, glossary.md and SKILL.md were read end to end, and the row-level sanity check section
 of evaluation-and-dataset.md, which holds the edited paragraph, was read whole. SKILL.md is
