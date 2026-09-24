@@ -13927,14 +13927,31 @@ class SkillPackageTests(unittest.TestCase):
         # bullets were written for the first one only, so the asking-cap path
         # told the assistant to name a gap that did not exist and to print a
         # path for a file the run never created.
+        # The first trigger names both routes to a `generated` component: one
+        # this run wrote, and one it relies on in the customer's place, which a
+        # customer's disclaimer of their own file makes it (#563). The gap
+        # bullet points at that trigger rather than restating a narrower one.
         for degradation in (
-            "where this run generated or repaired the dataset or the evaluation method",
-            "where this run created and repaired nothing, drop the bullet",
+            "whenever this run generated or repaired the dataset or the evaluation "
+            "method or relies on one in the customer's place, or an active cap asks",
+            "**the gap, and how it was filled** - on the first trigger above",
+            # What fills the gap is named by what it does, not by who typed
+            # it: on the relied-on route this run wrote nothing there.
+            "no grading method of theirs existed - and then what stands in for it",
+            # By the trigger, because a cap can ask on a card the first
+            # trigger also raised, and that card still owes the bullet.
+            "on the second trigger alone, drop the bullet",
             "one for each file this run actually wrote",
             "a run that wrote neither lists neither",
         ):
             with self.subTest(condition=degradation):
                 self.assertIn(degradation, safety)
+        self.assertNotRegex(
+            safety,
+            r"where (?:only )?a cap asks, drop the bullet",
+            "a drop rule keyed on a cap asking also fires on a card the first "
+            "trigger raised, and drops the gap that card owes",
+        )
         # One question, one home. The only cap that asks on this branch already
         # owns a complete quoted question that stage 4 routes it to by name, and
         # the two disagreed about when it is put, what it says and what the
@@ -18725,13 +18742,25 @@ class SkillPackageTests(unittest.TestCase):
             section_text(RUN_SAFETY, "Reporting procedure").casefold().split()
         )
         for phrase in (
-            "what this run created or repaired, and what that costs the claim",
+            # Both routes to `generated` (#563): a disclaimed evaluator this run
+            # relies on is no more the product's grading policy than one it wrote.
+            "what this run created, repaired or relies on in the customer's place, "
+            "and what that costs the claim",
             "examples it wrote are weaker evidence than examples collected from the product",
-            "an evaluation method it wrote is a starting point rather than the "
-            "product's grading policy - one a person may want to move in either direction",
+            "an evaluation method it wrote or relies on is a starting point rather "
+            "than the product's grading policy - one a person may want to move in "
+            "either direction",
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, normalized)
+        # And the paragraph after the checks names what still needs a real
+        # replacement by the same two routes, not by what this run typed.
+        self.assertIn(
+            "for every pillar this run generated or relies on in the customer's "
+            "place - the dataset, the evaluation method, the agent - name the "
+            "needed real replacement",
+            " ".join(RUN_SAFETY.read_text().casefold().split()),
+        )
         for removed in (
             "the readiness transition",
             "the recorded opening score beside the closing one",
@@ -24687,8 +24716,10 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
                 # The marker went and this sentence lost its glyph with it. The
                 # settled answer is unchanged - the assistant creates them, not
                 # Traigent - so the registry records the new wording rather than
-                # dropping a check whose decision never moved.
-                "a substitute the assistant creates carries no mark",
+                # dropping a check whose decision never moved. Held to the
+                # actor alone, so the mark rule beside it (#563) is guarded by
+                # its own entry below and a change to one reads as that one.
+                "a substitute the assistant creates",
             ),
             (
                 "temporary walkthrough substitute created by traigent",
@@ -24697,6 +24728,39 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
                 "if traigent generates temporary components",
                 "traigent generated an agent for this walkthrough",
             ),
+        ),
+        (
+            # A file the customer disclaimed and this run relies on in their
+            # place is `generated` under the origin rule (#563). It reads
+            # cleanly and can calibrate, so a no-mark rule naming only what
+            # this run created let it pass for their own validated component.
+            "whether a substitute this run relies on in the customer's place "
+            "carries a board mark",
+            (
+                "a substitute the assistant creates or relies on in the customer's "
+                "place carries no mark",
+                "a substitute this run generated or relies on in the customer's "
+                "place carries no mark",
+            ),
+            (
+                "a substitute the assistant creates carries no mark",
+                "a substitute this run generated carries no mark",
+            ),
+        ),
+        (
+            # The class list is where a component is first sorted, before any
+            # mark: a disclaimed file exists independently of the walkthrough,
+            # so "project material" put it in `real` and on the way to `✅`.
+            "which provenance class a file this run relies on in the customer's "
+            "place takes",
+            # One agreed phrase, not two: the registry accepts any of them, so
+            # the `demo` half is what must be present and the old `real` half is
+            # what must not be - each revert then fails on its own.
+            (
+                "`demo` - material invented to demonstrate the workflow, or relied "
+                "on in the customer's place",
+            ),
+            ("`real` - project/customer material that exists independently",),
         ),
         (
             "whether historical config-space evidence enters readiness",
@@ -28756,8 +28820,15 @@ class TheSubstituteHasNoMarkerAnywhereTests(unittest.TestCase):
         An omission nobody wrote down reads as an oversight, and the next
         contributor supplies the missing third mark helpfully.
         """
-        guide = (ROOT / "GUIDE.md").read_text(encoding="utf-8")
-        self.assertIn("A substitute this run generated carries no mark", guide)
+        guide = " ".join((ROOT / "GUIDE.md").read_text(encoding="utf-8").split())
+        # Both routes to `generated` (#563): a file the customer disclaimed
+        # and this run relies on reads cleanly and can calibrate, and without
+        # this it would pass for their own validated component and earn `✅`.
+        self.assertIn(
+            "A substitute this run generated or relies on in the customer's place "
+            "carries no mark",
+            guide,
+        )
 
     def test_the_script_prints_the_words_and_not_a_glyph(self) -> None:
         """The renderer is where a marker actually reaches a customer."""

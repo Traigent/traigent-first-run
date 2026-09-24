@@ -12456,10 +12456,11 @@ class TheTopBandsNeedAReadOfTheAnswersTests(unittest.TestCase):
         review = _review(reviewed=5, reviewed_in_run=5)
         brought = MODULE.row_review_evidence(review, facts, "brought")
         generated = MODULE.row_review_evidence(review, facts, "generated")
-        self.assertNotIn("wrote the evaluation method", brought)
+        self.assertNotIn("the evaluation method they were judged against", brought)
         self.assertEqual(brought, MODULE.row_review_evidence(review, facts))
         self.assertIn(
-            "this run wrote the evaluation method they were judged against",
+            "the evaluation method they were judged against is one this run "
+            "wrote or relies on in place of your own",
             generated,
         )
         # It reaches the card the customer holds, not only the helper.
@@ -12473,7 +12474,8 @@ class TheTopBandsNeedAReadOfTheAnswersTests(unittest.TestCase):
         dataset = next(pillar for pillar in card.pillars if pillar.name == "dataset")
         self.assertTrue(
             any(
-                "wrote the evaluation method they were judged against" in sub.evidence
+                "the evaluation method they were judged against is one this run"
+                in sub.evidence
                 for sub in dataset.subscores
             ),
             "the disclosure never reaches a pillar the card renders",
@@ -25137,6 +25139,39 @@ class TheBuildHalfCitesTheAgentItReadTests(unittest.TestCase):
         )
 
 
+#: A sentence saying this run produced the component, in a closed list of
+#: verbs: the two these six texts have used (wrote, created), their present
+#: tenses, and the three the reviewers' probes reached for (built, made,
+#: generated). It is not every way the package could say it. The byte pins
+#: beside each text carry the guarantee; this rule makes a reworded pin fail
+#: for the right reason, as far as its list reaches.
+_AUTHORSHIP_CLAIM = re.compile(
+    r"\bthis run (?:wrote|writes|created|creates|built|made|generated)\b"
+    r"|\b(?:written|created|built) by this run\b",
+    re.IGNORECASE,
+)
+#: The other route to `generated`, in the terms component-creation.md gives
+#: it: one this run "relies on in their place", which a customer's disclaimer
+#: of a pre-existing file makes it. So the route is named by that reliance, by
+#: standing in for the customer's own, or by the disclaimer itself - offered as
+#: the alternative, with an `or`, rather than beside a claim left standing.
+_DISCLAIMED_ROUTE = re.compile(
+    r"\bor\W+(?:\w+\W+){0,4}?"
+    r"(?:rel(?:ies|y|ied) on|stands? in for|in place of"
+    r"|in (?:their|your|the customer's) place|disclaim)",
+    re.IGNORECASE,
+)
+
+
+def _authorship_stated_as_fact(text: str) -> list[str]:
+    """Each clause that says this run produced the component and nothing else."""
+    return [
+        clause.strip()
+        for clause in re.split(r"[.;]", text)
+        if _AUTHORSHIP_CLAIM.search(clause) and not _DISCLAIMED_ROUTE.search(clause)
+    ]
+
+
 class WhoWroteItBoundsWhatItMayClaimTests(unittest.TestCase):
     """#238: provenance was graded for the rows and for nothing else.
 
@@ -25365,6 +25400,167 @@ class WhoWroteItBoundsWhatItMayClaimTests(unittest.TestCase):
                     replace(facts, origin="generated")
                 )
                 self.assertIn("agent-generated", [cap.condition for cap in caps])
+
+    def test_a_disclaimed_component_is_not_said_to_be_written_by_this_run(
+        self,
+    ) -> None:
+        """`generated` has two routes, so the sentence has to hold for both (#563).
+
+        The guide declares a component `generated` when this run created it OR
+        relies on it in the customer's place, and it names the second route
+        outright: a customer who disclaims a file already in their project gets
+        `generated`. The flag carries one value for both, so the scorer cannot
+        tell them apart, and a sentence saying only "this run wrote it" told
+        that customer the run wrote their own file. The consequence each
+        sentence states was already true of both routes; only the claim of
+        authorship was not.
+
+        So every text that speaks for the `generated` value is read here: the
+        two ceilings, the row-review line, the `--help` of both flags - the
+        definition the coding assistant reads - and the guidance sentence that
+        says why neither ceiling is routed as a repair. Each one that names
+        this run's writing must name the other route beside it.
+        """
+        guide = (
+            ROOT
+            / "skills"
+            / "traigent-first-run"
+            / "references"
+            / "component-creation.md"
+        ).read_text(encoding="utf-8")
+        self.assertIn(
+            "a customer's disclaimer of a pre-existing file makes it `generated`",
+            " ".join(guide.split()),
+            "the guide no longer routes a disclaimed file to `generated`, so "
+            "this pin is guarding a case that cannot arise",
+        )
+        reasons = {
+            cap.condition: cap.reason
+            for cap in self._score(evaluation="generated", agent="generated").caps
+        }
+        row_review = MODULE.row_review_evidence(
+            _review(reviewed=5, reviewed_in_run=5), _routing_corpus(), "generated"
+        )
+        # Read off the declaration, as the customer-facing scan reads `help`:
+        # the parser is built inside `parse_args`, and argparse re-wraps help
+        # text at hyphens, so the printed form is not the declared sentence.
+        helps = {
+            call.args[0].value: ast.literal_eval(keyword.value)
+            for call in ast.walk(ast.parse(SCRIPT.read_text(encoding="utf-8")))
+            if isinstance(call, ast.Call)
+            and isinstance(call.func, ast.Attribute)
+            and call.func.attr == "add_argument"
+            and call.args
+            and isinstance(call.args[0], ast.Constant)
+            and call.args[0].value in {"--evaluator-origin", "--agent-origin"}
+            for keyword in call.keywords
+            if keyword.arg == "help"
+        }
+        routing = " ".join(
+            (
+                ROOT
+                / "skills"
+                / "traigent-first-run"
+                / "references"
+                / "evaluation-and-dataset.md"
+            )
+            .read_text(encoding="utf-8")
+            .split()
+        )
+        found = re.search(r"Neither is a repair: [^,]*? on purpose", routing)
+        self.assertIsNotNone(
+            found,
+            "evaluation-and-dataset.md no longer says why neither ceiling is a "
+            "repair, so the guidance sentence this test reads has moved",
+        )
+        routing_clause = found.group(0)
+        for label, text, pinned in (
+            (
+                "evaluator-generated",
+                reasons["evaluator-generated"],
+                "This run wrote the evaluator or relies on it in place of your "
+                "own, so the score reports agreement with an evaluation method "
+                "nobody outside this run has checked against your task. Your "
+                "rows and your answers are real; what grades them is a stand-in "
+                "until your own scoring is connected or a person confirms this "
+                "one marks the way you would.",
+            ),
+            (
+                "agent-generated",
+                reasons["agent-generated"],
+                "This run wrote the agent or relies on it in place of your own, "
+                "so the winning configuration belongs to a walkthrough stand-in "
+                "rather than to the program you run. The comparison is real and "
+                "it is not a measurement of your production behavior.",
+            ),
+            (
+                "row review",
+                # Pinned whole beside the other row-review lines; the clause
+                # this test is about is what is held here.
+                row_review[row_review.rindex(" - and ") :],
+                " - and the evaluation method they were judged against is one "
+                "this run wrote or relies on in place of your own",
+            ),
+            (
+                "--evaluator-origin",
+                helps["--evaluator-origin"],
+                "who wrote the evaluator: 'brought' for the customer's own, "
+                "'generated' for one this run created or relies on in the "
+                "customer's place. A generated evaluation method bounds what "
+                "the score may claim and never stops the run; there is nothing "
+                "here to measure, so it is declared",
+            ),
+            (
+                "--agent-origin",
+                helps["--agent-origin"],
+                "who wrote the agent, read exactly as --evaluator-origin is",
+            ),
+            (
+                # The guidance's own reading of both ceilings, where it tells
+                # the assistant why neither is routed as a repair.
+                "evaluation-and-dataset.md routing",
+                routing_clause,
+                "Neither is a repair: this run created or relies on the "
+                "component on purpose",
+            ),
+        ):
+            with self.subTest(text=label):
+                self.assertEqual(
+                    _authorship_stated_as_fact(text),
+                    [],
+                    "authorship stated as fact, which is false for a file the "
+                    "customer disclaimed",
+                )
+                self.assertEqual(text, pinned)
+
+    def test_the_authorship_rule_reads_the_claim_not_one_spelling_of_it(
+        self,
+    ) -> None:
+        """The rule above, probed both ways, so a reworded sentence is still read.
+
+        Its first form matched two verbs and one literal phrase: "This run built
+        the evaluator" passed it, and "wrote or stands in for" failed it. Both
+        are fixed here as probes rather than left to whoever next rewords a
+        ceiling.
+        """
+        for claim in (
+            "This run built the evaluator, so the score reports agreement",
+            "This run made the agent, so the winning configuration is a stand-in",
+            "the evaluation method they were judged against was written by this run",
+            "'generated' for one this run creates",
+            "This run wrote the evaluator in place of your own",
+        ):
+            with self.subTest(claim=claim):
+                self.assertTrue(_authorship_stated_as_fact(claim))
+        for both_routes in (
+            "This run wrote or stands in for the evaluator",
+            "This run wrote the evaluator or relies on it in place of your own",
+            "one this run created or relies on in the customer's place",
+            "built by this run or, where you disclaimed yours, adopted as found",
+            "nobody outside this run has checked it against your task",
+        ):
+            with self.subTest(both_routes=both_routes):
+                self.assertEqual(_authorship_stated_as_fact(both_routes), [])
 
     def test_the_flags_reach_the_score_from_the_command_line(self) -> None:
         """The declaration is worth nothing if `run` drops it."""
@@ -30023,7 +30219,8 @@ class RowReviewCoverageDescribesOnlyWhatWasReadTests(unittest.TestCase):
         self.assertIn("this row review does not verify comparison results", line)
         self.assertTrue(
             line.endswith(
-                "this run wrote the evaluation method they were judged against"
+                "the evaluation method they were judged against is one this run "
+                "wrote or relies on in place of your own"
             )
         )
 
