@@ -9004,9 +9004,14 @@ class TheRemedyIsMachineReadableTests(unittest.TestCase):
         self.assertEqual(payload["caps"][0]["action_kind"], "repair-evaluator")
         self.assertEqual(
             payload["schema_version"],
-            7,
+            8,
             "a consumer must be able to tell 'emits no remedy' from 'has none'",
         )
+        # 8 rather than 7: `band` may read WORKABLE where 7 read EXCELLENT for
+        # the same inputs, held by an open `evaluator-task-mismatch`, and the
+        # new key is how a consumer tells that hold from a lower band
+        # (traigent-first-run#572).
+        self.assertIn("band_limited_by_evaluator_fit", payload)
         # 7 rather than 6, and a value again: `recommended_action` may read
         # `review-evaluator-fit`, a slug 6 never contained, from an ask that
         # caps nothing (traigent-first-run#561).
@@ -13139,8 +13144,15 @@ class AWrongKindOfCheckRidesTheOneAskTests(unittest.TestCase):
             ],
         )
 
-    def test_it_changes_no_number_band_or_status(self) -> None:
-        """The #396 class: identical with and without the ask, bar the remedy."""
+    def test_it_changes_no_number_or_status_and_holds_only_the_band(self) -> None:
+        """The #396 class, revised by #572: the remedy moves, and so does the band.
+
+        #568 held the band identical with and without the ask, and the card
+        then printed a top band one line above "the wrong kind of check". The
+        band is now held at WORKABLE while the ask is open; every number behind
+        it is exactly what it was, and while the answer key is unread the
+        answer-key hold already holds it, so nothing about the band changes.
+        """
         for review in (None, _review(reviewed=48)):
             with self.subTest(reviewed=review is not None):
                 asked = self._score("normalized-exact", "code-sql", review)
@@ -13152,13 +13164,19 @@ class AWrongKindOfCheckRidesTheOneAskTests(unittest.TestCase):
                 for field in (
                     "overall",
                     "weighted_average",
-                    "band",
                     "status",
                     "caps",
                     "pillars",
                     "band_limited_by_unread_answers",
                 ):
                     self.assertEqual(getattr(asked, field), getattr(silent, field))
+                self.assertFalse(silent.band_limited_by_evaluator_fit)
+                if review is None:
+                    self.assertEqual(asked.band, silent.band)
+                    self.assertFalse(asked.band_limited_by_evaluator_fit)
+                else:
+                    self.assertEqual((silent.band, asked.band), ("STRONG", "WORKABLE"))
+                    self.assertTrue(asked.band_limited_by_evaluator_fit)
                 self.assertEqual(
                     self._conditions(asked),
                     [MODULE.EVALUATOR_TASK_MISMATCH, *self._conditions(silent)],
@@ -13359,6 +13377,188 @@ class AWrongKindOfCheckRidesTheOneAskTests(unittest.TestCase):
         self.assertIn(remedy, MODULE.ACTION_DISPLAY_NAMES)
         self.assertNotIn(remedy, set(MODULE.ACTION_FOR_CONDITION.values()))
         self.assertNotIn(MODULE.EVALUATOR_TASK_MISMATCH, MODULE.ACTION_FOR_CONDITION)
+
+
+class AWrongKindOfCheckHoldsTheBandTests(unittest.TestCase):
+    """traigent-first-run#572: EXCELLENT one line above "the wrong kind of check".
+
+    The filed state from #561: a 12-configuration wired space with a read of
+    how the agent is built, 120 brought rows reviewed in full, and a passing
+    calibration, graded by a text comparison over SQL output. It scored 92
+    EXCELLENT beside `review-evaluator-fit`. The band is now held at WORKABLE
+    while that ask is open; nothing else in the payload moves.
+    """
+
+    FILED_PAIRS = (("normalized-exact", "code-sql"), ("exact", "code-sql"))
+
+    def _score(self, method, kind, review, **extra) -> "MODULE.ReadinessScore":
+        return MODULE.score_run(
+            _brought(
+                120,
+                tuning_rows=84,
+                holdout_rows=36,
+                tuning_labelled_rows=84,
+                holdout_labelled_rows=36,
+            ),
+            replace(_passing_calibration(), method=method, task_kind=kind, **extra),
+            replace(_wired_space(), build=_read(_build_document()).build),
+            dict(MODULE.DEFAULT_WEIGHTS),
+            review,
+        )
+
+    def _without_the_hold(self, method, kind, review, **extra):
+        """The same computation with only this hold taken away."""
+        with mock.patch.object(
+            MODULE,
+            "hold_band_for_evaluator_fit",
+            side_effect=lambda band, method_fits: (band, False),
+        ):
+            return self._score(method, kind, review, **extra)
+
+    @staticmethod
+    def _payload(score) -> dict:
+        return json.loads(json.dumps(asdict(score), sort_keys=True))
+
+    def _hold_lines(self, text: str, band: str) -> list[str]:
+        sentence = MODULE.evaluator_fit_hold_paragraph(band)
+        return [line for line in text.splitlines() if sentence in line]
+
+    def test_the_filed_pairs_are_held_and_nothing_else_moves(self) -> None:
+        for method, kind in self.FILED_PAIRS:
+            with self.subTest(method=method):
+                held = self._score(method, kind, _review(reviewed=120))
+                free = self._without_the_hold(method, kind, _review(reviewed=120))
+                self.assertEqual((free.overall, free.band), (92, "EXCELLENT"))
+                self.assertEqual((held.overall, held.band), (92, "WORKABLE"))
+                self.assertTrue(held.band_limited_by_evaluator_fit)
+                self.assertFalse(held.band_limited_by_unread_answers)
+                self.assertFalse(held.band_limited_by_confidence)
+                self.assertEqual(held.recommended_action, "review-evaluator-fit")
+                changed = {"band", "band_limited_by_evaluator_fit"}
+                held_rest = {
+                    key: value
+                    for key, value in self._payload(held).items()
+                    if key not in changed
+                }
+                free_rest = {
+                    key: value
+                    for key, value in self._payload(free).items()
+                    if key not in changed
+                }
+                self.assertEqual(
+                    json.dumps(held_rest, sort_keys=True),
+                    json.dumps(free_rest, sort_keys=True),
+                )
+
+    def test_a_method_that_fits_is_never_held(self) -> None:
+        walked = 0
+        for method, profile in MODULE.METHOD_PROFILES.items():
+            for kind in profile["fits"]:
+                with self.subTest(fits=(method, kind)):
+                    score = self._score(method, kind, _review(reviewed=120))
+                    self.assertNotIn(
+                        MODULE.EVALUATOR_TASK_MISMATCH,
+                        [ask.condition for ask in score.open_asks],
+                    )
+                    self.assertFalse(score.band_limited_by_evaluator_fit)
+                    walked += 1
+        self.assertGreater(walked, 0, "the walk reached no fitting pair")
+        # And the fitting method for this very output keeps its top band.
+        proven = self._score(
+            "sql-structure",
+            "code-sql",
+            _review(reviewed=120),
+            comparison_shape="sql-structure",
+        )
+        self.assertEqual(proven.band, "EXCELLENT")
+        self.assertFalse(proven.band_limited_by_evaluator_fit)
+
+    def test_the_answer_key_hold_is_untouched_until_the_key_is_read(self) -> None:
+        """Two holds, one band: the older one keeps it while the key is unread."""
+        for method, kind in self.FILED_PAIRS:
+            with self.subTest(method=method, state="key unread"):
+                held = self._score(method, kind, None)
+                free = self._without_the_hold(method, kind, None)
+                self.assertEqual(
+                    json.dumps(self._payload(held), sort_keys=True),
+                    json.dumps(self._payload(free), sort_keys=True),
+                )
+                self.assertEqual(held.band, "WORKABLE")
+                self.assertTrue(held.band_limited_by_unread_answers)
+                self.assertFalse(held.band_limited_by_evaluator_fit)
+                self.assertEqual(
+                    [ask.condition for ask in held.open_asks],
+                    [MODULE.EVALUATOR_TASK_MISMATCH, MODULE.ANSWER_KEY_UNREAD],
+                )
+            with self.subTest(method=method, state="key read"):
+                read = self._score(method, kind, _review(reviewed=120))
+                self.assertEqual(read.band, "WORKABLE")
+                self.assertFalse(read.band_limited_by_unread_answers)
+                self.assertTrue(read.band_limited_by_evaluator_fit)
+                self.assertNotIn(
+                    MODULE.ANSWER_KEY_UNREAD,
+                    [ask.condition for ask in read.open_asks],
+                )
+
+    def test_the_hold_takes_only_the_top_two_bands(self) -> None:
+        edge = MODULE.BAND_ORDER.index("WORKABLE")
+        self.assertEqual(MODULE.BAND_ORDER[edge + 1 :], ["STRONG", "EXCELLENT"])
+        for band in MODULE.BAND_ORDER:
+            with self.subTest(band=band):
+                self.assertEqual(
+                    MODULE.hold_band_for_evaluator_fit(band, True), (band, False)
+                )
+                expected = (
+                    ("WORKABLE", True)
+                    if MODULE.BAND_ORDER.index(band) > edge
+                    else (band, False)
+                )
+                self.assertEqual(
+                    MODULE.hold_band_for_evaluator_fit(band, False), expected
+                )
+
+    def test_it_is_not_a_rule_for_every_open_ask(self) -> None:
+        """Flagged answers under the share move the action, not the band."""
+        score = self._score(
+            "sql-structure",
+            "code-sql",
+            _review(reviewed=120, unsound=1, unsound_in_run=1),
+            comparison_shape="sql-structure",
+        )
+        self.assertEqual(
+            [ask.condition for ask in score.open_asks],
+            ["dataset-unsound-expected-outputs"],
+        )
+        self.assertEqual(score.band, "EXCELLENT")
+        self.assertFalse(score.band_limited_by_evaluator_fit)
+
+    def test_the_card_and_the_report_name_the_hold_once(self) -> None:
+        held = self._score("normalized-exact", "code-sql", _review(reviewed=120))
+        sentence = MODULE.evaluator_fit_hold_paragraph(held.band)
+        self.assertIn("wrong kind of check for this output", sentence)
+        self.assertIn("a method that fits this output is what lifts it", sentence)
+        card = MODULE.render_card(held, palette=MODULE.Palette(), unicode_ok=False)
+        self.assertEqual(len(self._hold_lines(card, held.band)), 1)
+        self.assertEqual(
+            len(self._hold_lines(MODULE.render_markdown(held), held.band)), 1
+        )
+        # And nowhere the hold is not in force: a fitting method, or a card the
+        # answer-key hold is already holding.
+        for other in (
+            self._score(
+                "sql-structure",
+                "code-sql",
+                _review(reviewed=120),
+                comparison_shape="sql-structure",
+            ),
+            self._score("normalized-exact", "code-sql", None),
+        ):
+            with self.subTest(band=other.band):
+                for text in (
+                    MODULE.render_card(other, palette=MODULE.Palette()),
+                    MODULE.render_markdown(other),
+                ):
+                    self.assertEqual(self._hold_lines(text, other.band), [])
 
 
 class ADeferredCalibrationSaysSoInTheFieldConsumersReadTests(unittest.TestCase):

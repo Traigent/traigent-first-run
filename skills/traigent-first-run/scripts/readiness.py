@@ -290,7 +290,17 @@ def render_text(plan: ReadinessPlan) -> str:
 # check. `overall`, `band` and `status` are unchanged by it, so a consumer
 # gating paid work on them sees nothing new; one routing on the remedy meets a
 # value 6 never contained, and the version is how it tells the two apart.
-SCHEMA_VERSION = 7
+#
+# 8: `band` is held at WORKABLE while that same ask is open
+# (`band_limited_by_evaluator_fit`, traigent-first-run#572).
+#
+# Additive in keys - the flag is new and nothing was removed or renamed - and,
+# like 3, not additive in MEANING. A schema-7 consumer read `band` for a
+# text-to-SQL project graded by a text comparison and saw EXCELLENT; for the
+# same inputs it now sees WORKABLE, with `overall` unchanged. Without the bump
+# a 7 consumer comparing the two cannot tell a held band from a lower one, which
+# is the reading 3 was bumped to prevent for the answer-key hold.
+SCHEMA_VERSION = 8
 DEFAULT_WEIGHTS = {"dataset": 40.0, "evaluation": 35.0, "agent": 25.0}
 # Read each entry as "score BELOW this number is that band" - these are
 # exclusive upper bounds, not the score a band requires. The last entry is an
@@ -446,6 +456,23 @@ def answer_key_hold_paragraph(band: str, nothing_else_pending: bool) -> str:
         f"expected answer, up to {ANSWER_KEY_DRAWN_ROWS} of them where the "
         "split is settled, or all of them if there are fewer, and a small "
         "sample of what you brought where it is not - is what lifts it."
+    )
+
+
+def evaluator_fit_hold_paragraph(band: str) -> str:
+    """The fit hold's one line, in one home, for both renderers.
+
+    One home for the reason `answer_key_hold_paragraph` gives: the card and the
+    durable report each carrying their own copy is how they came to say two
+    things. What lifts it is the method, never a reply: a customer who keeps
+    their evaluator keeps the hold, because the card is still describing the
+    same comparison (traigent-first-run#572).
+    """
+    return (
+        "The evaluation method is the wrong kind of check for this output, so "
+        f"no score carries this comparison above {band}. This hold is not a cap "
+        "and does not stop the run: a method that fits this output is what "
+        "lifts it."
     )
 
 
@@ -1584,6 +1611,11 @@ ANSWER_KEY_UNREAD = "answer_key_unread"
 # FIRST, ahead of the answer-key read: that read asks whether each expected
 # answer is sensible under the method that will grade it, so the method is
 # settled before the key is read through it.
+#
+# AND A HOLD ON THE BAND, which is neither of the two refused above
+# (traigent-first-run#572): it charges no point and stops nothing, and without
+# it the card printed EXCELLENT one line above this ask. See
+# `hold_band_for_evaluator_fit`.
 EVALUATOR_TASK_MISMATCH = "evaluator-task-mismatch"
 ACTION_FOR_ASK: dict[str, str] = {
     EVALUATOR_TASK_MISMATCH: "review-evaluator-fit",
@@ -3644,6 +3676,10 @@ class ReadinessScore:
     # "was the behavioural question about the answer key ever asked", carried
     # as its own key because no other field in this payload answers it.
     band_limited_by_unread_answers: bool = False
+    # Whether an open `evaluator-task-mismatch` is what holds this band, on the
+    # same terms as the flag above: its own key, because a held band and a
+    # lower one print the same word.
+    band_limited_by_evaluator_fit: bool = False
     # What this run owes that no ceiling carries, in the order it is to be done.
     #
     # `caps` answers "what is limiting the score" and answered nothing else, so
@@ -4523,6 +4559,32 @@ def hold_band_for_unread_answers(band: str, answers_read: bool) -> tuple[str, bo
     remedy on a card that has nothing left to lift.
     """
     if answers_read:
+        return band, False
+    ceiling_index = BAND_ORDER.index(ANSWER_KEY_BAND_CEILING)
+    if BAND_ORDER.index(band) <= ceiling_index:
+        return band, False
+    return ANSWER_KEY_BAND_CEILING, True
+
+
+def hold_band_for_evaluator_fit(band: str, method_fits: bool) -> tuple[str, bool]:
+    """Hold the top two bands while the method is the wrong kind of check.
+
+    The third hold, applied after the answer-key one and composing with it the
+    same way: a band another hold already put at WORKABLE is returned with
+    False, so the card names one hold and one remedy (traigent-first-run#572).
+
+    The same ceiling as the other two, for the same claim. STRONG and EXCELLENT
+    say the run stands behind the comparison, and a method of the wrong kind
+    for the output ranks every configuration on the wrong thing, which no later
+    check in this run would catch. The number stays what task fit already made
+    it: a ceiling here was refused in #568 as charging that fact twice.
+
+    Keyed to this one ask and not to "any open ask". Flagged answers below
+    `UNSOUND_ANSWER_SHARE` are footnoted rather than bounded, by the reasoning
+    recorded there, so their ask moves the action and not the band; a general
+    rule would quietly reverse that decision.
+    """
+    if method_fits:
         return band, False
     ceiling_index = BAND_ORDER.index(ANSWER_KEY_BAND_CEILING)
     if BAND_ORDER.index(band) <= ceiling_index:
@@ -9799,6 +9861,14 @@ def aggregate(
     # path a customer reaches is `score_run`, which computes it from the facts
     # and the review.
     band, held_for_answers = hold_band_for_unread_answers(band, answers_read)
+    # After the answer-key hold, so that hold, its flag and its ask are exactly
+    # what they were whenever the key is unread; this one takes over once it is
+    # read. Read off the asks handed in, which is the one place the mismatch is
+    # decided (`task_fit_mismatch`), rather than a second copy of the test.
+    band, held_for_fit = hold_band_for_evaluator_fit(
+        band,
+        EVALUATOR_TASK_MISMATCH not in {ask.condition for ask in open_asks},
+    )
     # The ask exists exactly while the hold is costing something, which is the
     # flag above rather than `answers_read` on its own. A run scoring under the
     # ceiling has unread answers too, and nothing is held there - so there is no
@@ -9834,6 +9904,7 @@ def aggregate(
         agent_route_unverified=agent_route_unverified,
         agent_unfollowed_settings=tuple(agent_unfollowed_settings),
         band_limited_by_unread_answers=held_for_answers,
+        band_limited_by_evaluator_fit=held_for_fit,
         open_asks=open_asks,
     )
 
@@ -10806,6 +10877,12 @@ def render_card(
             + answer_key_hold_paragraph(score.band, nothing_else_pending)
             + f"{palette.reset}"
         )
+    if score.band_limited_by_evaluator_fit:
+        lines.append(
+            f"  {palette.dim}"
+            + evaluator_fit_hold_paragraph(score.band)
+            + f"{palette.reset}"
+        )
     lines.append(
         f"  {palette.dim}Local pre-run planning estimate, not a probability or "
         f"measured optimization result.{palette.reset}"
@@ -10878,6 +10955,15 @@ def render_markdown(
                     "",
                 ]
                 if score.band_limited_by_unread_answers
+                else []
+            ),
+            *(
+                [
+                    "**The band is held here.** "
+                    + evaluator_fit_hold_paragraph(score.band),
+                    "",
+                ]
+                if score.band_limited_by_evaluator_fit
                 else []
             ),
             *(
