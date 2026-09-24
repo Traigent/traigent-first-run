@@ -13567,6 +13567,118 @@ class AWrongKindOfCheckHoldsTheBandTests(unittest.TestCase):
                     self.assertEqual(self._hold_lines(text, other.band), [])
 
 
+class TheAnswerKeyLinePromisesNoBandTheFitHoldKeepsTests(unittest.TestCase):
+    """The answer-key hold's line, beside an open fit ask (traigent-first-run#572).
+
+    With the key unread and the method of the wrong kind, the answer-key hold
+    holds the band and its line says a read "is what lifts it". The read lifts
+    that hold and the fit hold then holds the same band, so the line gains one
+    clause in that state and in no other.
+    """
+
+    CLAUSE = "that read alone will not lift the band"
+    # The paragraph as it printed before this clause existed (dd08aac1), for
+    # both values of the trailing all-clear. Literal on purpose: every card
+    # without the fit ask has to print exactly this, and a pin computed from
+    # the function under test would move with it.
+    BEFORE = {
+        True: (
+            "No read of the expected answers this run is graded against has "
+            "reached this score, so no score carries this comparison above "
+            "WORKABLE. This hold is not a cap and does not stop the run: what it "
+            "holds is the verdict, not the work. Nothing else here is capped, "
+            "and this read is the only thing being asked of you. A read of the "
+            "rows the run is graded on - each input beside its expected answer, "
+            "up to 28 of them where the split is settled, or all of them if "
+            "there are fewer, and a small sample of what you brought where it is "
+            "not - is what lifts it."
+        ),
+        False: (
+            "No read of the expected answers this run is graded against has "
+            "reached this score, so no score carries this comparison above "
+            "WORKABLE. This hold is not a cap and does not stop the run: what it "
+            "holds is the verdict, not the work. A read of the rows the run is "
+            "graded on - each input beside its expected answer, up to 28 of them "
+            "where the split is settled, or all of them if there are fewer, and "
+            "a small sample of what you brought where it is not - is what lifts "
+            "it."
+        ),
+    }
+
+    def _score(self, method, kind, review, **extra):
+        return AWrongKindOfCheckHoldsTheBandTests()._score(
+            method, kind, review, **extra
+        )
+
+    def _texts(self, score) -> tuple[str, str]:
+        return (
+            MODULE.render_card(score, palette=MODULE.Palette(), unicode_ok=False),
+            MODULE.render_markdown(score),
+        )
+
+    def _lines_with(self, text: str, needle: str) -> list[str]:
+        return [line for line in text.splitlines() if needle in line]
+
+    def test_the_combined_state_carries_the_clause_once_on_each_surface(
+        self,
+    ) -> None:
+        for method in ("normalized-exact", "exact"):
+            with self.subTest(method=method):
+                score = self._score(method, "code-sql", None)
+                self.assertTrue(score.band_limited_by_unread_answers)
+                self.assertTrue(MODULE.fit_ask_open_on(score))
+                for text in self._texts(score):
+                    lines = self._lines_with(text, self.CLAUSE)
+                    self.assertEqual(len(lines), 1)
+                    # On the answer-key line itself, after what it says lifts it.
+                    self.assertIn("is what lifts it.", lines[0])
+                    self.assertLess(
+                        lines[0].index("is what lifts it."),
+                        lines[0].index(self.CLAUSE),
+                    )
+                # The payload carries no card text, so the clause cannot move it.
+                with mock.patch.object(MODULE, "fit_ask_open_on", return_value=False):
+                    without = self._score(method, "code-sql", None)
+                self.assertEqual(
+                    json.dumps(asdict(score), sort_keys=True),
+                    json.dumps(asdict(without), sort_keys=True),
+                )
+
+    def test_every_state_without_the_fit_ask_prints_the_line_it_printed(
+        self,
+    ) -> None:
+        for pending in (True, False):
+            with self.subTest(pending=pending):
+                self.assertEqual(
+                    MODULE.answer_key_hold_paragraph("WORKABLE", pending),
+                    self.BEFORE[pending],
+                )
+                self.assertEqual(
+                    MODULE.answer_key_hold_paragraph(
+                        "WORKABLE", pending, fit_ask_open=False
+                    ),
+                    self.BEFORE[pending],
+                )
+        # A held card with a method that fits: the line is byte-for-byte the
+        # old one, and the clause is nowhere on either surface.
+        held = self._score(
+            "sql-structure", "code-sql", None, comparison_shape="sql-structure"
+        )
+        self.assertTrue(held.band_limited_by_unread_answers)
+        self.assertFalse(MODULE.fit_ask_open_on(held))
+        expected = self.BEFORE[
+            MODULE.nothing_pending_beyond(held, MODULE.ANSWER_KEY_UNREAD)
+        ]
+        card, report = self._texts(held)
+        self.assertIn(f"  {expected}", card.splitlines())
+        self.assertIn(f"**The band is held here.** {expected}", report.splitlines())
+        # And where the key was read, the fit hold's own line speaks instead.
+        read = self._score("normalized-exact", "code-sql", _review(reviewed=120))
+        for other in (held, read):
+            for text in self._texts(other):
+                self.assertEqual(self._lines_with(text, self.CLAUSE), [])
+
+
 class ADeferredCalibrationSaysSoInTheFieldConsumersReadTests(unittest.TestCase):
     """A run that never asked the behavioural question is not one that passed it.
 

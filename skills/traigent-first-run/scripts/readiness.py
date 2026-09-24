@@ -425,7 +425,9 @@ EVALUATOR_FIT_BAND_CEILING = ANSWER_KEY_BAND_CEILING
 ANSWER_KEY_SAMPLE_ROWS = 5
 
 
-def answer_key_hold_paragraph(band: str, nothing_else_pending: bool) -> str:
+def answer_key_hold_paragraph(
+    band: str, nothing_else_pending: bool, *, fit_ask_open: bool = False
+) -> str:
     """The whole held-band paragraph, in one home, for both renderers.
 
     The card and the durable report each carried their own hand-written copy of
@@ -448,6 +450,13 @@ def answer_key_hold_paragraph(band: str, nothing_else_pending: bool) -> str:
     part, and the trailing all-clear is per-card. Neither renderer decides
     either, so neither can quietly answer it differently - which is how this
     paragraph came to say two things in the first place.
+
+    `fit_ask_open` adds one clause and changes nothing else
+    (traigent-first-run#572). With `evaluator-task-mismatch` also open, the
+    read lifts this hold and the fit hold then holds the same band, so "is
+    what lifts it" alone would promise a band the read cannot move. Keyword and
+    defaulted, so every card without that ask prints exactly what it printed
+    before. `fit_ask_open_on` is the one reading of it both renderers use.
     """
     return (
         "No read of the expected answers this run is graded against has "
@@ -464,7 +473,19 @@ def answer_key_hold_paragraph(band: str, nothing_else_pending: bool) -> str:
         f"expected answer, up to {ANSWER_KEY_DRAWN_ROWS} of them where the "
         "split is settled, or all of them if there are fewer, and a small "
         "sample of what you brought where it is not - is what lifts it."
+        + (
+            " While the evaluation method is also the wrong kind of check for "
+            "this output, that read alone will not lift the band: a method "
+            "that fits the output has to be declared as well."
+            if fit_ask_open
+            else ""
+        )
     )
+
+
+def fit_ask_open_on(score: "ReadinessScore") -> bool:
+    """Whether `evaluator-task-mismatch` is open on this score, for both renderers."""
+    return any(ask.condition == EVALUATOR_TASK_MISMATCH for ask in score.open_asks)
 
 
 def evaluator_fit_hold_paragraph(band: str) -> str:
@@ -10882,7 +10903,9 @@ def render_card(
         # here is what is missing and what would supply it.
         lines.append(
             f"  {palette.dim}"
-            + answer_key_hold_paragraph(score.band, nothing_else_pending)
+            + answer_key_hold_paragraph(
+                score.band, nothing_else_pending, fit_ask_open=fit_ask_open_on(score)
+            )
             + f"{palette.reset}"
         )
     if score.band_limited_by_evaluator_fit:
@@ -10959,6 +10982,7 @@ def render_markdown(
                         score.band,
                         # The card's own argument, not a second reading of it.
                         nothing_pending_beyond(score, ANSWER_KEY_UNREAD),
+                        fit_ask_open=fit_ask_open_on(score),
                     ),
                     "",
                 ]
