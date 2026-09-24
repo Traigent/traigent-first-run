@@ -194,11 +194,12 @@ card names which pillar is thin - `EVALUATION 69/100 (2 of 4 checks measured)` -
 `--evaluator-method` is what fills that one in: without it neither the reproducibility check nor
 the task-fit check can run, and there the pillar's confidence of 0.55 is what holds 89 at Workable.
 
-Thin measurement is one of two things that hold a band, and the second is a different statement. The
-top two bands say the run stands behind the comparison, so they are also held while nobody has read
-the expected answers the run is graded against - which no count taken off the file can establish.
-Neither hold is a cap: neither lowers the number and neither stops the run. The card names which one
-is in force.
+Thin measurement is one of three things that hold a band, and the other two are different
+statements. The top two bands say the run stands behind the comparison, so they are also held while
+nobody has read the expected answers the run is graded against - which no count taken off the file
+can establish - and while the evaluation method is the wrong kind of check for the agent's output.
+No hold is a cap: none lowers the number and none stops the run. The card names which one is in
+force.
 
 No settings document exists before the search, so the agent pillar is read from the selected
 agent's own code instead - which parameters it may already vary, each against a checked relative

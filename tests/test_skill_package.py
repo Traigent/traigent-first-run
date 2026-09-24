@@ -14058,11 +14058,11 @@ class SkillPackageTests(unittest.TestCase):
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, safety)
-        # Each bullet states the condition it fires under. The card has two
-        # unlike triggers - this run wrote something, or a cap asks - and the
-        # bullets were written for the first one only, so the asking-cap path
-        # told the assistant to name a gap that did not exist and to print a
-        # path for a file the run never created.
+        # Each bullet states the condition it fires under. The card has unlike
+        # triggers - this run wrote something, a cap asks, or the fit ask is
+        # open (#572) - and the bullets were written for the first one only,
+        # so the asking-cap path told the assistant to name a gap that did not
+        # exist and to print a path for a file the run never created.
         # The first trigger names both routes to a `generated` component: one
         # this run wrote, and one it relies on in the customer's place, which a
         # customer's disclaimer of their own file makes it (#563). The gap
@@ -14076,7 +14076,7 @@ class SkillPackageTests(unittest.TestCase):
             "no grading method of theirs existed - and then what stands in for it",
             # By the trigger, because a cap can ask on a card the first
             # trigger also raised, and that card still owes the bullet.
-            "on the second trigger alone, drop the bullet",
+            "on the last two triggers alone, drop the bullet",
             "one for each file this run actually wrote",
             "a run that wrote neither lists neither",
         ):
@@ -14129,12 +14129,12 @@ class SkillPackageTests(unittest.TestCase):
             .casefold()
             .split()
         )
-        # SKILL.md says when it fires and points at the owner; it does not
-        # restate the card.
+        # The rendering rule says when it fires by pointing at the card's own
+        # triggers (#572), so the trigger list has one home and is not
+        # restated here.
         for phrase in (
-            "when this run filled a gap for the walkthrough, or an active cap "
-            "asks rather than blocks, that same approval also carries the "
-            "pre-spend card in this reference",
+            "when a trigger under the pre-spend approval card below holds, that "
+            "same approval also carries the pre-spend card in this reference",
             "it is content on the approval that already stops, never a second pause",
         ):
             with self.subTest(document="SKILL.md", phrase=phrase):
@@ -14154,6 +14154,48 @@ class SkillPackageTests(unittest.TestCase):
             "the material approval has to reach the user before the run card "
             "that precedes the paid calls; asked afterwards it is a report",
         )
+
+    def test_the_pre_spend_card_carries_an_open_fit_ask(self) -> None:
+        """traigent-first-run#572: the spend is measured with that evaluator.
+
+        #568 made `evaluator-task-mismatch` an ask that caps nothing, and the
+        card kept every such ask off itself for a reason written about the
+        unread answer key. So a paid baseline could be approved with an
+        evaluator of the wrong kind for the output never mentioned. The ask is
+        now a trigger; the card restates it rather than asking again; keeping
+        their evaluator keeps the proceed mark; and the answer key's own
+        exclusion keeps its reason.
+        """
+        card = " ".join(
+            section_text(RUN_SAFETY, "The pre-spend approval card").casefold().split()
+        )
+        for phrase in (
+            # The trigger, where the triggers are listed.
+            "or an active cap asks rather than blocks, or "
+            "`evaluator-task-mismatch` is open, the baseline approval above "
+            "carries this card too",
+            # Restated, never asked a second time.
+            "an open `evaluator-task-mismatch` is restated the same way: its "
+            "question was put on the one ask, so say what was found and what "
+            "the customer answered, and do not ask it again",
+            # The mark stays on proceed when they kept their evaluator, and
+            # says why in the parent rule's own criterion (component-creation.md):
+            # mark the route that can produce the result being paid for, and
+            # their answer is what set that result.
+            "a customer who kept their evaluator over an open "
+            "`evaluator-task-mismatch` does not move it: their answer sets the "
+            "result this run is paid for, a comparison graded by the evaluator "
+            "they chose, and proceeding is the route that produces it, so `a.` "
+            "keeps the mark",
+            # The exception, with a reason of its own ...
+            "the exception is an open `evaluator-task-mismatch`, for a reason "
+            "of its own: it says optimization will rank every configuration on "
+            "the wrong thing",
+            # ... beside the answer key's reason, which still stands.
+            "an unread answer key bounds nothing",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, card)
 
     def test_close_recaps_readiness_and_offers_the_skills_package(self) -> None:
         require_stage_reference(8, RUN_SAFETY, "post-run-verification")
@@ -25391,6 +25433,47 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
                 "output are two this run raises",
             ),
         ),
+        (
+            # #568 kept `evaluator-task-mismatch` off the pre-spend card with
+            # every other ask that caps nothing, on a reason written about the
+            # unread answer key. #572 revised it: the answer key stays off for
+            # that reason, and this ask is carried, because the spend being
+            # approved is measured with that evaluator. The forbidden wordings
+            # are the old exclusion with no exception and the two-trigger count
+            # that left this ask out. The proceed mark on that card, and its
+            # reason, are pinned by `test_the_pre_spend_card_carries_an_open_fit_ask`.
+            "whether the pre-spend card carries an open evaluator-task-mismatch",
+            (
+                "the exception is an open `evaluator-task-mismatch`, for a reason "
+                "of its own",
+            ),
+            (
+                "an ask that caps nothing is deliberately not carried here, and the "
+                "difference",
+                "because the two triggers do not produce the same card",
+                "on the second trigger alone, drop the bullet",
+            ),
+        ),
+        (
+            # #455 wrote the band holds twice, in the glossary and in the public
+            # README, and #572 added a third hold to the glossary only; the
+            # README still said "one of two" and "neither hold". Both now name
+            # three, pinned per document by
+            # `test_the_readme_and_glossary_name_every_band_hold`. This entry
+            # adds the one thing those pins cannot: the old sentences, word for
+            # word, refused in every document, so a stale copy pasted into a
+            # third one is caught too.
+            "how many things hold the top two bands",
+            (
+                "thin measurement is one of three things that hold a band",
+                "three things hold them: too little of the score was measured",
+            ),
+            (
+                "thin measurement is one of two things that hold a band",
+                "neither hold is a cap",
+                "two things hold them",
+            ),
+        ),
     )
 
     # Our own release history, in the words a customer reads. Every one of
@@ -25621,6 +25704,49 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
                         "wording was settled and reintroducing it puts the "
                         "guidance back in conflict",
                     )
+
+    #: The three band holds, each in the words its document uses for it: the
+    #: README speaks about "the agent", the glossary to "your agent".
+    BAND_HOLD_PINS = {
+        "README.md": (
+            "thin measurement is one of three things that hold a band",
+            "nobody has read the expected answers the run is graded against",
+            "the evaluation method is the wrong kind of check for the agent's output",
+        ),
+        "glossary.md": (
+            "three things hold them: too little of the score was measured at all",
+            "nobody has read the expected answers the run is graded against",
+            "the evaluation method is the wrong kind of check for your agent's output",
+        ),
+    }
+
+    def test_the_readme_and_glossary_name_every_band_hold(self) -> None:
+        """traigent-first-run#572: the two places that count the band holds.
+
+        #455 wrote the holds into the glossary and into its public twin in
+        README.md. #572 added a third hold to the glossary, and the README
+        still said "one of two things that hold a band": the registry entry
+        above could not see it, because its agreed phrase was satisfied by the
+        glossary alone.
+
+        What this catches: either document stops saying three, or stops naming
+        any one of the three holds - by reverting, by rewording the count ("one
+        of the two things", "held for two reasons"), or by dropping a hold
+        while keeping "three". Each document is read on its own, so one cannot
+        satisfy the other's pins.
+
+        What it misses: a count of two restated in any OTHER document, in
+        words the registry's literal list does not carry. A keyword predicate
+        for that was tried and refused - measured, it refused four of seven
+        legitimate sentences ("while both conditions hold") and passed five of
+        nine paraphrases ("one of two reasons a band is held"). That case is
+        left to the whole-document read that CLAUDE.md makes the review rule.
+        """
+        for path in (ROOT / "README.md", SKILL_ROOT / "references" / "glossary.md"):
+            text = " ".join(path.read_text().casefold().split())
+            for phrase in self.BAND_HOLD_PINS[path.name]:
+                with self.subTest(document=path.name, phrase=phrase):
+                    self.assertIn(phrase, text)
 
     def test_no_document_presents_a_later_readiness_score_beside_the_opening_one(
         self,
