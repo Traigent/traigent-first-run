@@ -20673,7 +20673,8 @@ class SkillPackageTests(unittest.TestCase):
             "once an operation has used primary-only objectives, keep that mode for the rest of this comparison",
             "recovered trustworthy cost can be reported with its source",
             "adding a cost objective belongs to a separate future run",
-            "`a.` **continue the bounded run on the primary criterion**, marked recommended",
+            "`a.` **continue the bounded run on the primary criterion** *(recommended "
+            "- it can still show a meaningful quality comparison)*",
             "`b.` **repair telemetry first**, an optional route",
             "do not ask again when the existing explicit approval already covers these conditions and bounds",
             "every unpriced call deducts the approved estimate, including manual calls outside the wrapper",
@@ -29175,15 +29176,22 @@ def places_an_ask_above_its_evidence(sentence: str) -> bool:
     return False
 
 
-#: A line that RENDERS a lettered route: `A.`, `A)`, `A (`, `**A**`, with the
+#: A line that RENDERS a lettered route: `A.`, `A)`, `A (`, `**A**`, or the
+#: letter in its own code span, `` `A.` ``, with the
 #: container prefixes an author may have typed in front of it. One pattern,
 #: used twice on purpose - the parser below matches it against text whose
 #: container prefixes have already been stripped, and `unaccounted_route_lines`
 #: matches it against raw file lines. A second pattern for the second job could
 #: drift, and the whole value of the floor is that the two cannot disagree
 #: about what even looks like a route.
+#:
+#: The code-span form is admitted only when the span closes on the letter's
+#: own punctuation. Without it, the missing-telemetry routes in
+#: `references/run-safety.md` were read by no guard, so a prose "marked
+#: recommended" there shipped an unmarked pair (traigent-first-run#560). A
+#: span that runs on - a whole inline template - is prose in a paragraph.
 ROUTE_LINE = re.compile(
-    r"^\s*(?:>\s?)?(?:[-*+]\s+)?\*{0,2}([A-Z])(?:\.|\)|\s*\(|\*{2})"
+    r"^\s*(?:>\s?)?(?:[-*+]\s+)?\*{0,2}(?:`(?=[A-Z][.)]`))?([A-Z])(?:\.|\)|\s*\(|\*{2})"
 )
 
 MARKDOWN_FENCE = re.compile(r"^(\s{0,3})(`{3,}|~{3,})\s*(\S*)\s*$")
@@ -29632,6 +29640,20 @@ NOT_A_ROUTE = {
         "document-level paragraph with no sibling route in it, so it is read "
         "as the sentence it is - traigent-first-run#372 named this line as the "
         "shape a reflow turns into a false route block."
+    ),
+    "`A.` and `B.`, then the unnumbered `I have it` line last. Do **not** "
+    "compress them into a": (
+        "component-creation.md. The sentence stating the order an ask's routes "
+        "are rendered in names the letters in code spans and wraps onto them. It "
+        "is one lettered line in a paragraph with no sibling route, read once "
+        "`ROUTE_LINE` admitted a code-span letter for traigent-first-run#560."
+    ),
+    "`B.` carries the mark, `A.` proceed stays offered unmarked, and the "
+    "sentence beside it names the": (
+        "run-safety.md. The pre-spend card's rule for moving the mark to fix "
+        "wraps onto this sentence. It names a `B.` with no `A.` candidate before "
+        "it in the document, so it opens no block; it became route-shaped when "
+        "`ROUTE_LINE` admitted a code-span letter for traigent-first-run#560."
     ),
 }
 
@@ -31915,6 +31937,29 @@ class RouteBlocksAreParsedFromContainersNotFromArrangementTests(unittest.TestCas
             for block in rendered_route_blocks(markdown)
         ]
 
+    def test_a_letter_in_its_own_code_span_opens_a_route(self) -> None:
+        """traigent-first-run#560. The block was invisible, so its mark went uncounted.
+
+        `references/run-safety.md` wrote the missing-telemetry routes as
+        `` - `A.` **...** `` and put the mark in prose, "marked recommended
+        because". `ROUTE_LINE` did not admit a backtick before the letter, so
+        the parser returned no block for it and the mark count never ran. The
+        parser this replaces answered `[]` for both strings below.
+        """
+        prose = (
+            "- `A.` **continue**, marked recommended because it helps. "
+            "Reply `continue`.\n"
+            "- `B.` **repair first**. Reply `repair`.\n"
+        )
+        marked = (
+            "- `A.` **continue (recommended)** - it helps. Reply `continue`.\n"
+            "- `B.` **repair first**. Reply `repair`.\n"
+        )
+        self.assertEqual(self.shape(prose), [("AB", 0)])
+        self.assertEqual(self.shape(marked), [("AB", 1)])
+        # A span that runs on past the letter is an inline template in prose.
+        self.assertEqual(self.shape("`A. use it (recommended). B. skip`\n"), [])
+
     def test_an_unquoted_block_that_does_not_open_a_paragraph_is_found(
         self,
     ) -> None:
@@ -32215,7 +32260,8 @@ class RouteBlocksAreParsedFromContainersNotFromArrangementTests(unittest.TestCas
 
         `NOT_A_ROUTE` is where the parser's "this is not a route" answer gets
         written down. An entry that no longer describes any line in the corpus,
-        or that describes a line the parser now reads as a route, is an
+        that `ROUTE_LINE` no longer matches, or that describes a line the
+        parser now reads as a route, is an
         exemption standing over nothing, and this file has been bitten before
         by a control that had stopped controlling anything.
 
@@ -32240,6 +32286,12 @@ class RouteBlocksAreParsedFromContainersNotFromArrangementTests(unittest.TestCas
                     lines,
                     "no document writes this line any more, so this entry "
                     "excuses nothing and hides the next line that needs it",
+                )
+                self.assertTrue(
+                    ROUTE_LINE.match(named),
+                    "ROUTE_LINE no longer reads this line as route-shaped, so "
+                    "the floor would never ask about it and this entry excuses "
+                    "nothing",
                 )
                 self.assertNotIn(
                     named,
