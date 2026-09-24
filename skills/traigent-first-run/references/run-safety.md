@@ -896,6 +896,9 @@ A Traigent mock run is a separate plumbing check:
   inspected agent integration; the two flags above do not mock model calls:
 
   ```python
+  import sys
+
+  sys.dont_write_bytecode = True  # nothing imported below writes __pycache__
   from traigent.testing import enable_mock_mode_for_quickstart
 
   enable_mock_mode_for_quickstart()

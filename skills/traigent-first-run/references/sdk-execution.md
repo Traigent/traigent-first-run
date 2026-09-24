@@ -313,6 +313,9 @@ process variables it reads.
   and held-out scoring, as described below.
 
 ```python
+import sys
+
+sys.dont_write_bytecode = True  # nothing imported below writes __pycache__
 import atexit
 import contextvars
 import json
