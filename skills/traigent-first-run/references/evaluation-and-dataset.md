@@ -1138,7 +1138,7 @@ run continues. An ask placed in the middle of the run, or one that lists the cus
 first, sends someone away to read a whole answer key to start a run that is small and nearly free -
 which is the outcome this ordering exists to prevent. While `evaluator-task-mismatch` is also open,
 the read alone does not lift the band: the fit hold takes it over until a method that fits the
-output is declared, so do not say the read will lift it.
+output replaces the one in use, so do not say the read will lift it.
 
 
 ### Choosing rows when difficulty is not labelled

@@ -475,8 +475,8 @@ def answer_key_hold_paragraph(
         "sample of what you brought where it is not - is what lifts it."
         + (
             " While the evaluation method is also the wrong kind of check for "
-            "this output, that read alone will not lift the band: a method "
-            "that fits the output has to be declared as well."
+            "this output, that read alone will not lift the band: it stays "
+            "held until a method that fits this output replaces this one."
             if fit_ask_open
             else ""
         )

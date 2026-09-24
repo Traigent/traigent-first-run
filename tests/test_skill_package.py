@@ -14179,13 +14179,14 @@ class SkillPackageTests(unittest.TestCase):
             "question was put on the one ask, so say what was found and what "
             "the customer answered, and do not ask it again",
             # The mark stays on proceed when they kept their evaluator, and
-            # says why in the parent rule's own terms: the route that clears
-            # the finding the card RAISED is marked, and this card raises
-            # none - it restates one already answered.
+            # says why in the parent rule's own criterion (component-creation.md):
+            # mark the route that can produce the result being paid for, and
+            # their answer is what set that result.
             "a customer who kept their evaluator over an open "
-            "`evaluator-task-mismatch` does not move it: the card restates a "
-            "finding they have answered rather than raising one, so `a.` keeps "
-            "the mark",
+            "`evaluator-task-mismatch` does not move it: their answer sets the "
+            "result this run is paid for, a comparison graded by the evaluator "
+            "they chose, and proceeding is the route that produces it, so `a.` "
+            "keeps the mark",
             # The exception, with a reason of its own ...
             "the exception is an open `evaluator-task-mismatch`, for a reason "
             "of its own: it says optimization will rank every configuration on "
@@ -25699,6 +25700,52 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
                         "wording was settled and reintroducing it puts the "
                         "guidance back in conflict",
                     )
+
+    #: A count of two put on the band holds: "two", "both" or "neither" within
+    #: two words of "hold"/"holds" or "things that (can) hold". Read per
+    #: paragraph, and only where the paragraph mentions a band, so "two gates
+    #: hold the approved total" is not a band hold.
+    TWO_BAND_HOLDS = re.compile(
+        r"\b(?:two|both|neither)\b(?:\W+\w+){0,2}?\W+(?:holds?|things that (?:can )?hold)\b"
+    )
+
+    def test_the_readme_names_every_band_hold(self) -> None:
+        """traigent-first-run#572: the public twin of the glossary's holds.
+
+        The README carried "one of two things that hold a band" after the
+        glossary said three, and the registry above could not see it: its
+        agreed phrase was satisfied by the glossary alone. So the README is
+        read on its own - it states three and names the fit hold - and no
+        paragraph anywhere may count the holds as two, however it is worded.
+        """
+        readme = " ".join((ROOT / "README.md").read_text().casefold().split())
+        for phrase in (
+            "thin measurement is one of three things that hold a band",
+            "nobody has read the expected answers the run is graded against",
+            "the evaluation method is the wrong kind of check for the agent's output",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, readme)
+        offenders = [
+            f"{path.name}: {' '.join(paragraph.split())[:120]}"
+            for path in conversation_contract_documents()
+            for paragraph in re.split(r"\n\s*\n", path.read_text())
+            if "band" in paragraph.casefold()
+            and self.TWO_BAND_HOLDS.search(" ".join(paragraph.casefold().split()))
+        ]
+        self.assertEqual(offenders, [], "a document counts the band holds as two")
+        # The predicate is the guard, so it is run against the wordings it has
+        # to refuse and the ones it has to leave alone.
+        for wording, refused in (
+            ("one of the two things that can hold a band", True),
+            ("one of two things that hold a band", True),
+            ("neither hold is a cap", True),
+            ("the band has two holds", True),
+            ("one of three things that hold a band, and the other two", False),
+            ("the top two bands say the run stands behind it, so they are held", False),
+        ):
+            with self.subTest(wording=wording):
+                self.assertEqual(bool(self.TWO_BAND_HOLDS.search(wording)), refused)
 
     def test_no_document_presents_a_later_readiness_score_beside_the_opening_one(
         self,

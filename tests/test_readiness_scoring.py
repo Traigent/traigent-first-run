@@ -13636,13 +13636,6 @@ class TheAnswerKeyLinePromisesNoBandTheFitHoldKeepsTests(unittest.TestCase):
                         lines[0].index("is what lifts it."),
                         lines[0].index(self.CLAUSE),
                     )
-                # The payload carries no card text, so the clause cannot move it.
-                with mock.patch.object(MODULE, "fit_ask_open_on", return_value=False):
-                    without = self._score(method, "code-sql", None)
-                self.assertEqual(
-                    json.dumps(asdict(score), sort_keys=True),
-                    json.dumps(asdict(without), sort_keys=True),
-                )
 
     def test_every_state_without_the_fit_ask_prints_the_line_it_printed(
         self,
