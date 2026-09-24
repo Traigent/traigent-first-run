@@ -17869,6 +17869,105 @@ class SkillPackageTests(unittest.TestCase):
             READINESS.UNSOUND_ANSWER_CEILING, READINESS.GENERATED_ANSWER_KEY_CEILING
         )
 
+    # The one sentence that takes back a top opening band, verbatim. Held
+    # whole rather than by substrings: substring pins passed three rewrites
+    # that reversed its meaning. The corpus-wide pairing check reads its hedge
+    # per clause and does refuse an arrow appended here; it does not look for
+    # an inverted condition, a changed audience, or a replacement band, which
+    # this pin refuses as a changed sentence.
+    OPENING_BAND_WITHDRAWAL = (
+        "Where the recorded opening band was `STRONG` or `EXCELLENT` and the "
+        "section-4 gate result carries `dataset-unsound-expected-outputs`, say in "
+        "the question above, in words and naming no band in its place, that the "
+        "opening band no longer holds for the rows this run uses."
+    )
+    # Its distinctive clause, used to find the sentence and count its homes.
+    OPENING_BAND_WITHDRAWAL_CLAUSE = (
+        "the opening band no longer holds for the rows this run uses"
+    )
+
+    def test_the_opening_band_is_withdrawn_on_exactly_two_recorded_facts(
+        self,
+    ) -> None:
+        """The full row read can take back a top band a five-row sample gave.
+
+        The opening card can read EXCELLENT off a five-row sample, and the
+        section-4 read of every selected row can then find the unsound rows the
+        sample missed - which it does 42-59% of the time at the cap's threshold
+        (the traigent-first-run#562 miss rates recorded in readiness.py).
+        The customer heard about the rows and never that the band no longer
+        held (traigent-first-run#571). One sentence in the row question says
+        so, on two conditions: the recorded opening band was one of the top
+        two, and the section-4 gate result carries the unsound-answers cap.
+        Everything that must stay silent falls outside one of those or outside
+        the question: a WORKABLE or lower opening, the below-share finding that
+        raises no cap, and findings wholly outside the run, which never reach
+        the question. It names no band in place of the one it withdraws, so
+        nothing pairs the opening band with a later one.
+
+        What this catches: any change to the sentence's wording, the same
+        clause copied into a second document or twice into one, and the
+        sentence moved out of the in-run question. What it does not catch: the
+        same rule restated in other words elsewhere. No keyword gate is used
+        for that, because one tried here was wrong in both directions -
+        refusing correct prose and missing real paraphrases - and finding a
+        paraphrase stays with the whole-document read CLAUDE.md requires.
+        """
+        clause = self.OPENING_BAND_WITHDRAWAL_CLAUSE
+        homes = [
+            (path.name, part)
+            for path in conversation_contract_documents()
+            for part in sentences(path.read_text())
+            if clause in part
+        ]
+        self.assertEqual(
+            [name for name, _ in homes],
+            ["evaluation-and-dataset.md"],
+            "the withdrawal's clause must appear exactly once, in "
+            "evaluation-and-dataset.md: none means it was reworded or removed, "
+            "and a second copy is a rule that can be changed in one place",
+        )
+        sentence = homes[0][1]
+        self.assertEqual(
+            sentence,
+            self.OPENING_BAND_WITHDRAWAL,
+            "the withdrawal is held to its two conditions and its wording "
+            "verbatim; a rewording can reverse what it fires on or what it says",
+        )
+
+        # Inside the branch that puts rows to the customer, so an outside-only
+        # finding - which continues "without another repair question" - never
+        # carries it.
+        row_check = " ".join(
+            section_text(
+                SKILL_ROOT / "references" / "evaluation-and-dataset.md",
+                "The row-level sanity check",
+            ).split()
+        )
+        outside_only = row_check.index(
+            "if every flagged row is explicitly outside this run"
+        )
+        asked = row_check.index("Otherwise put the findings to the user before the run")
+        answered = row_check.index("Then take the answer")
+        self.assertLess(outside_only, asked)
+        self.assertIn(
+            sentence,
+            row_check[asked:answered],
+            "the sentence belongs to the question that puts in-run rows to the "
+            "customer, not to the outside-only branch before it",
+        )
+
+        # The two conditions name facts the scorer really records: the top two
+        # bands, and a cap a below-share finding does not raise.
+        self.assertEqual(READINESS.BAND_ORDER[-2:], ["STRONG", "EXCELLENT"])
+        self.assertIsNone(
+            READINESS.unsound_answer_cap(
+                READINESS.RowReview(supplied=True, reviewed=28, unsound=2)
+            ),
+            "a below-share finding must raise no cap, or the sentence would "
+            "fire on the ask that is meant to leave the band alone",
+        )
+
     def test_the_row_level_check_is_ordered_at_the_opening_gate(self) -> None:
         """Where it runs is a decision, so it is written down where flow lives.
 

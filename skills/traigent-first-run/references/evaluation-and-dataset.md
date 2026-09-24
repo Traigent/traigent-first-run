@@ -1097,6 +1097,10 @@ drawn, so the readiness card says it too; leave it off every entry while they ar
 split. Set it only once the run's selection is settled; an existing split by itself does not settle
 that selection. Until then leave it off every entry and report the read as a sample.
 
+Where the recorded opening band was `STRONG` or `EXCELLENT` and the section-4 gate result carries
+`dataset-unsound-expected-outputs`, say in the question above, in words and naming no band in its
+place, that the opening band no longer holds for the rows this run uses.
+
 Then take the answer, because tuning the agent over a correct dataset is what the run is for:
 
 - **Agree** - repair the rows in the working copy within that scope, re-run the check, and re-score.
