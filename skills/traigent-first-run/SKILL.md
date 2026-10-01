@@ -41,10 +41,9 @@ Load each reference when its stage begins:
    evaluator execution, mock checks, or any paid execution.
 4. [`references/sdk-execution.md`](references/sdk-execution.md) - only before writing the wrapper
    or running the baseline and optimization.
-5. [`references/glossary.md`](references/glossary.md) - not a stage: consult it whenever
-   explaining a concept to the user or phrasing a confirmation question, so terms stay
-   consistent across the run and depth is calibrated from evidence, never by asking the user
-   how experienced they are.
+5. [`references/glossary.md`](references/glossary.md) - not a stage: consult it when
+   explaining a concept or phrasing a confirmation question; calibrate depth from evidence,
+   never by asking how experienced the user is.
 
 A stage carrying a **Read next.** dispatch has already chosen for that stage, and the dispatch
 governs: open its required section, plus any optional section whose stated condition holds, and
@@ -65,9 +64,9 @@ anchored, copy
 [`assets/run-plan.md`](assets/run-plan.md) into `traigent-runs/run-plan.md` and fill it from
 discovered evidence. Record the opening result there - overall score, band, and binding caps - and
 never overwrite the recorded opening score. Record each later run as that template's gate result.
-Keep the record concise and internal. Load The run log before appending its first required event
+Load The run log before appending its first required event
 beside the record, and retire the two together. Keep stage status current at each boundary and
-before every wait. A matching unfinished record starts Recovery's resume validation before free
+wait. A matching unfinished record starts Recovery's resume validation before free
 work continues. The record grants no approval: revalidate comparison invariants and current
 conversation authority before external calls; never restart a live process or finished run from it.
 Apply the missing-telemetry rule to any recorded cost-only objective transition; retain the
@@ -78,7 +77,7 @@ per run and reused; the run supplies it because no bundled script reads a clock.
 
 ## Operating contract
 
-- Treat this as the user's **first Traigent run**, not as evidence about their expertise.
+- Treat this as the user's **first Traigent run**; never classify or announce their expertise.
 - The walkthrough runs on a deliberately small set so it finishes in one sitting under the
   approved ceiling, proves the cloud connection, and shows the workflow; it is not a search for
   the best number. Without a newly scoped approval, never re-run a paid phase - baseline or
@@ -86,7 +85,6 @@ per run and reused; the run supplies it because no bundled script reads a clock.
   the space, and never raise the trial cap. More or harder rows is the post-run handoff to
   `traigent-dataset-curate`, never a route inside this run; a search that timed out follows
   Recovery in `references/run-safety.md`.
-- Never classify or announce the user's expertise level.
 - Name the actor truthfully: "I will prepare the walkthrough dataset" for assistant-created
   artifacts, and "Traigent will run the managed search" only for work the service performs.
 - The loaded guide source is not automatically the target project. Resolve the user-selected agent's
@@ -101,8 +99,8 @@ per run and reused; the run supplies it because no bundled script reads a clock.
 - After task intent is anchored, put generated artifacts under `traigent-runs/`. If
   `git -C "<project-root>" rev-parse --is-inside-work-tree` succeeds, add `/traigent-runs/` to the
   project-root `.gitignore`; otherwise do not create `.gitignore`. Never overwrite source material.
-- Do not put educational or advanced-skill links in the active run. Offer links after the result.
-- Use the glossary's plain wording for progress; keep implementation details in the run record.
+- Offer educational or advanced-skill links after the result.
+- Use the glossary's plain wording for progress; details stay in the run record.
 - Named routes are lettered from `A`, exactly one marked recommended, and answerable by reply.
   No route carries a decision of its own. Keep the question last; a route list is never compressed into yes/no. `I have it` is unnumbered,
   last, and only on material questions. A single action without alternatives is not a route list.
@@ -139,18 +137,10 @@ approval.
 
 ## Offline audit
 
-For an offline audit, or a request to stay disconnected from Traigent, work sections 1 to 6
-through the local baseline checkpoint with no Traigent account, key, or connection:
-
-- Run every command with `env -u TRAIGENT_API_KEY -u TRAIGENT_BACKEND_URL -u TRAIGENT_API_URL`
-  and pass `--offline` to `scripts/preflight.py`. Never ask for or create a Traigent key.
-- Paid provider calls keep their approval and budget.
-- Stop at the `Stage 4/5` approval with no card and no account ask. Save
-  `traigent-audit-report.md` in the project root from this run's measured output, with the headings
-  `Readiness board`, `Quality advisories`, `Local baseline checkpoint` (results, cost, latency,
-  limits), `Recommended next step`.
-- Read this file, `references/run-safety.md` and, to write the wrapper, `references/sdk-execution.md`;
-  open the other references only when a component is missing or limited.
+For an offline audit, work sections 1 to 6, running every
+command as `env -u TRAIGENT_API_KEY -u TRAIGENT_BACKEND_URL -u TRAIGENT_API_URL -u
+TRAIGENT_FIRST_RUN_PHASE ...` with `--offline` on `scripts/preflight.py`. Stop at `Stage 4/5`, with no card; save `traigent-audit-report.md` in the project root with
+`Readiness board`, `Quality advisories`, `Local baseline checkpoint`, `Recommended next step`.
 
 ## Status language
 
@@ -160,7 +150,7 @@ Track two different facts:
 2. **Walkthrough setup** - whether the assistant prepared a temporary substitute to demonstrate the
    workflow.
 
-Use exactly these meanings:
+Meanings:
 
 - `✅` - real component found and validated.
 - `❗` - real component is missing, failed validation, or exists with evidence too limited for a
@@ -173,8 +163,7 @@ answer to that. List it under walkthrough setup, named in words.
 Never mark synthetic material `✅`, never count it as real-world-ready, and never say "3/3 ready"
 when any component is synthetic.
 
-After creation, retain unresolved `❗` lines; list substitutes unmarked under walkthrough setup.
-Mixed boards mark only validated real components `✅`. The zero-anchor procedure supplies the
+After creation, retain unresolved `❗` lines. The zero-anchor procedure supplies the
 three-gap wording; do not render an additional board merely to explain this convention.
 
 ## Guided flow
@@ -234,7 +223,7 @@ Before any component creation or repair, run the opening readiness procedure bel
 current inventory. It selects a no-install interpreter, runs static preflight, reviews available
 rows, calibrates an eligible local evaluator, and scores all three pillars from current-run
 evidence. Preserve the opening score before creating substitutes. An existing but unmeasured
-component is not absent, and historical readings or config spaces earn no current-run credit.
+component is not absent.
 On a zero-anchor run, keep evidence on stdout and the card in the conversation until the task
 answer permits writes. Otherwise name the fresh project-relative readiness directory before
 showing the card. Render the card verbatim once, then use the glossary's presentation rules

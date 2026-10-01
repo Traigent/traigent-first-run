@@ -154,11 +154,13 @@ Only after the standard-library-only component checks:
 
 ### Finding a supported interpreter
 
-Use only locally installed Python 3.11-3.13 whose host installation is trusted. On POSIX, locate
-`python3`, then `python3.13`, `python3.12`, and `python3.11` with `command -v`; inspect the returned
-absolute paths before launching anything. Skip project-contained executables and unknown wrappers;
-a command name is not provenance. Probe the first known host installation, continuing through that
-list if its version is unsupported. This probe prints its absolute path and version:
+Use only locally installed Python 3.11-3.13 whose host installation is trusted. Skip
+project-contained executables and unknown wrappers; a command name is not provenance. On POSIX, run
+`"<any-python3>" -I -S -B ".../scripts/find_python.py" --project-root "<project-root>"`: it tries
+`python3`, `python3.13`, `python3.12`, `python3.11` on PATH, then an installed `uv` outside the
+project (`uv python find --offline --no-python-downloads`), with a credential-free environment,
+and prints JSON: `python`, the path, symlinks resolved (an environment made through a symlink
+is rejected by `environment_install.py`), or an `error`, with the remedy below. Manual probe:
 
 ```sh
 "<trusted-host-python>" -I -S -B -c 'import sys; ok = (3, 11) <= sys.version_info[:2] < (3, 14); print(sys.executable, sys.version.split()[0]) if ok else None; sys.exit(0 if ok else 1)'
@@ -166,13 +168,7 @@ list if its version is unsupported. This probe prints its absolute path and vers
 
 On Windows, list already installed paths with `py -0p`, then probe those executables directly in
 3.13, 3.12, 3.11 order with the same `-I -S -B -c` check. Never use a launcher mode that auto-installs.
-If the PATH/launcher search fails and `uv` is already present, use
-`uv python find --offline --no-python-downloads '>=3.11,<3.14'` and inspect then probe its returned
-host path too. The same known-host requirement applies to launcher and manager results.
-On POSIX, `"<any-python3>" -I -S -B ".../scripts/find_python.py" --project-root "<project-root>"`
-runs this whole search and prints JSON: `python`, the supported interpreter's path with every
-symlink resolved, or an `error` carrying the remedy below. Create environments from that resolved
-path; one made through a symlinked interpreter is refused by `environment_install.py`.
+The same known-host requirement applies to launcher and manager results.
 Do not install a manager or download a runtime during this lookup. If none works, report readiness
 as not yet measured and give one remedy: install Python 3.13 locally, then provide its executable
 path to resume. An unsupported project environment remains untouched and is named as such.
