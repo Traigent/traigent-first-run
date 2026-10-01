@@ -9,10 +9,15 @@ Order: `python3`, `python3.13`, `python3.12`, `python3.11` on PATH first. Only w
 none qualifies is `uv python find --offline --no-python-downloads` tried, and only
 a `uv` found outside the project. Nothing is installed or downloaded.
 
-Trust rules. A candidate (interpreter or uv) is skipped when it lies inside
-`--project-root` either by its own path or after every symlink is resolved, or when it
-is a version-manager shim (pyenv and similar), whose answer depends on the project's
-own version file. Every launch runs from a neutral directory with a minimal
+Trust rules. Before anything is launched, every candidate (interpreter or uv) is
+resolved through every symlink and its RESOLVED path is inspected. It is skipped when it
+lies inside `--project-root`, or when it is a version-manager shim (pyenv, asdf, mise,
+rtx), whose answer depends on the project's own version file. It is launched only when
+the resolved path is in a standard install location (system directories, Homebrew,
+python.org framework, uv-managed and pyenv-version interpreters). Anything else is
+listed as "found but not launched: <path> (untrusted location)", under `not_launched`
+in the error, for the assistant to show the user; the user may approve it by giving
+that exact path back. Every launch runs from a neutral directory with a minimal
 environment, so no `TRAIGENT_*` value or provider key reaches it. Each interpreter is
 probed with `-I -S -B -c`; its answer must be well formed and name a supported
 version. The printed path is the interpreter's own base executable with every symlink
@@ -26,6 +31,8 @@ Exit 1 prints {"error": <one remedy>, "tried": [...]}.
 from __future__ import annotations
 
 import argparse
+import fnmatch
+import glob
 import json
 import os
 import re
@@ -67,6 +74,24 @@ WINDOWS_REMEDY = (
     "executables as references/run-safety.md describes."
 )
 SHIM_DIRECTORIES = ("shims",)
+SHIM_MANAGERS = (".pyenv", ".asdf", ".mise", ".rtx")
+TRUSTED_LOCATIONS = (
+    "/usr/bin",
+    "/bin",
+    "/usr/local/bin",
+    "/usr/local/Cellar",
+    "/opt/homebrew/bin",
+    "/opt/homebrew/Cellar",
+    "/home/linuxbrew/.linuxbrew/Cellar",
+    "/Library/Frameworks/Python.framework",
+    "/usr/lib/python3*",
+    "/Applications/Xcode.app/Contents/Developer/usr/bin",
+    "/Library/Developer/CommandLineTools/usr/bin",
+    "~/.local/share/uv/python",
+    "~/Library/Application Support/uv/python",
+    "~/.pyenv/versions/*/bin",
+)
+UV_LOCATIONS = ("~/.local/bin", "~/.cargo/bin")
 VERSION = re.compile(r"\d+\.\d+\.\d+")
 
 
@@ -113,8 +138,36 @@ def inside(path: str, root: Path | None) -> bool:
 
 
 def is_shim(path: str) -> bool:
-    parts = Path(os.path.abspath(path)).parts
-    return any(part in SHIM_DIRECTORIES for part in parts[:-1])
+    """True when the lexical OR the fully resolved path runs through a shim directory."""
+    for candidate in (os.path.abspath(path), os.path.realpath(path)):
+        parts = Path(candidate).parts
+        if any(part in SHIM_DIRECTORIES for part in parts[:-1]):
+            return True
+        if any(part in SHIM_MANAGERS for part in parts) and "shims" in parts:
+            return True
+    return False
+
+
+def _pattern(location: str) -> str:
+    home = os.path.expanduser("~") if location.startswith("~") else ""
+    location = (home + location[1:]) if home else location
+    return "*".join(glob.escape(piece) for piece in location.split("*")) + "/*"
+
+
+def trusted_roots(extra: tuple[str, ...] = ()) -> list[str]:
+    return [_pattern(location) for location in TRUSTED_LOCATIONS + extra]
+
+
+def trusted_location(path: str, roots: list[str] | None = None) -> bool:
+    """True when the fully resolved path lies in an inspected standard install location."""
+    try:
+        real = os.path.realpath(path, strict=True)
+    except (OSError, RuntimeError, ValueError):
+        return False
+    return any(
+        fnmatch.fnmatchcase(real, pattern)
+        for pattern in (trusted_roots() if roots is None else roots)
+    )
 
 
 def on_path(which=shutil.which) -> list[tuple[str, str]]:
@@ -129,7 +182,11 @@ def on_path(which=shutil.which) -> list[tuple[str, str]]:
 
 
 def uv_candidate(
-    project_root: Path | None, which=shutil.which, run=subprocess.run
+    project_root: Path | None,
+    which=shutil.which,
+    run=subprocess.run,
+    roots: list[str] | None = None,
+    not_launched: list[str] | None = None,
 ) -> tuple[str | None, str | None]:
     """(candidate, why-not): the interpreter a trusted `uv` reports, if any."""
     uv = which("uv")
@@ -137,6 +194,12 @@ def uv_candidate(
         return None, None
     if inside(uv, project_root) or is_shim(uv):
         return None, f"{uv} (uv inside the project or a shim, not launched)"
+    if not trusted_location(
+        uv, trusted_roots(UV_LOCATIONS) if roots is None else roots
+    ):
+        if not_launched is not None:
+            not_launched.append(uv)
+        return None, f"found but not launched: {uv} (untrusted location)"
     completed = _launch(
         [uv, "python", "find", "--offline", "--no-python-downloads", UV_SPEC], run
     )
@@ -176,13 +239,24 @@ def probe(path: str, run=subprocess.run) -> dict | None:
 
 
 def accept(
-    path: str, how: str, project_root: Path | None, tried: list[str], run
+    path: str,
+    how: str,
+    project_root: Path | None,
+    tried: list[str],
+    run,
+    roots: list[str] | None = None,
+    not_launched: list[str] | None = None,
 ) -> dict | None:
     if inside(path, project_root):
         tried.append(f"{path} (inside the project, skipped)")
         return None
     if is_shim(path):
         tried.append(f"{path} (version-manager shim, skipped)")
+        return None
+    if not trusted_location(path, roots):
+        tried.append(f"found but not launched: {path} (untrusted location)")
+        if not_launched is not None:
+            not_launched.append(path)
         return None
     answer = probe(path, run)
     if answer is None:
@@ -196,6 +270,7 @@ def accept(
         not os.path.isfile(real)
         or not os.access(real, os.X_OK)
         or inside(real, project_root)
+        or not trusted_location(real, roots)
     ):
         tried.append(f"{path} (no usable real executable outside the project)")
         return None
@@ -207,22 +282,34 @@ def find_python(
     which=shutil.which,
     run=subprocess.run,
     posix: bool | None = None,
+    roots: list[str] | None = None,
 ) -> dict:
     if not (os.name == "posix" if posix is None else posix):
         return {"error": WINDOWS_REMEDY, "tried": []}
     tried: list[str] = []
+    not_launched: list[str] = []
     for path, how in on_path(which):
-        found = accept(path, how, project_root, tried, run)
+        found = accept(path, how, project_root, tried, run, roots, not_launched)
         if found:
             return found
-    candidate, why_not = uv_candidate(project_root, which, run)
+    candidate, why_not = uv_candidate(project_root, which, run, roots, not_launched)
     if why_not:
         tried.append(why_not)
     if candidate:
-        found = accept(candidate, "uv python find", project_root, tried, run)
+        found = accept(
+            candidate, "uv python find", project_root, tried, run, roots, not_launched
+        )
         if found:
             return found
-    return {"error": REMEDY, "tried": tried}
+    result: dict = {"error": REMEDY, "tried": tried}
+    if not_launched:
+        result["not_launched"] = not_launched
+        result["error"] += (
+            " Found but not launched (untrusted location): "
+            + ", ".join(not_launched)
+            + ". Show these to the user; launch one only on their approval of that exact path."
+        )
+    return result
 
 
 def main(argv: list[str] | None = None) -> int:

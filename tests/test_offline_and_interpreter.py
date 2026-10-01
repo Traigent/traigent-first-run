@@ -270,6 +270,17 @@ class OfflineBoundaryTests(unittest.TestCase):
 
 
 class FindPythonTests(unittest.TestCase):
+    def setUp(self) -> None:
+        # Temp directories stand in for a standard install location; the real list is
+        # exercised by TrustedLocationTests below.
+        patcher = mock.patch.object(
+            MODULE,
+            "trusted_roots",
+            lambda extra=(): [os.path.realpath(tempfile.gettempdir()) + "/*"],
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def fake_run(self, versions: dict[str, dict]):
         def run(command, **kwargs):
             if command[1:3] == ["python", "find"]:
@@ -535,6 +546,106 @@ class FindPythonTests(unittest.TestCase):
             self.assertEqual(answer["python"], os.path.realpath(answer["python"]))
         else:
             self.assertIn("error", answer)
+
+
+class TrustedLocationTests(unittest.TestCase):
+    """Only candidates whose RESOLVED path is a standard install location are launched."""
+
+    def recording(self):
+        launched: list[list[str]] = []
+
+        def run(command, **kwargs):
+            launched.append(command)
+            raise AssertionError("nothing may be launched")
+
+        return run, launched
+
+    def make(self, directory: str, *parts: str) -> Path:
+        path = Path(directory, *parts)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("#!/bin/sh\n")
+        path.chmod(0o755)
+        return path
+
+    def test_the_standard_locations_are_trusted_by_resolved_path(self) -> None:
+        roots = MODULE.trusted_roots()
+        for real in (
+            "/usr/bin/python3.12",
+            "/opt/homebrew/Cellar/python@3.13/3.13.1/bin/python3.13",
+            "/Library/Frameworks/Python.framework/Versions/3.13/bin/python3.13",
+            os.path.expanduser("~/.local/share/uv/python/cpython-3.13/bin/python3.13"),
+            os.path.expanduser("~/.pyenv/versions/3.12.4/bin/python3.12"),
+        ):
+            with self.subTest(real):
+                with mock.patch("os.path.realpath", return_value=real):
+                    self.assertTrue(MODULE.trusted_location(real, roots))
+
+    def test_an_unlisted_directory_is_not_trusted(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            py = self.make(directory, "downloads", "python3")
+            self.assertFalse(MODULE.trusted_location(str(py), MODULE.trusted_roots()))
+
+    def test_an_untrusted_candidate_is_reported_and_never_launched(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            py = self.make(directory, "downloads", "python3")
+            run, launched = self.recording()
+            found = MODULE.find_python(
+                Path(directory, "project"),
+                which={"python3": str(py)}.get,
+                run=run,
+                roots=["/nowhere/*"],
+            )
+        self.assertEqual(launched, [])
+        self.assertEqual(found["not_launched"], [str(py)])
+        self.assertIn(
+            f"found but not launched: {py} (untrusted location)", found["tried"]
+        )
+        self.assertIn("approval", found["error"])
+
+    def test_a_symlink_into_an_external_shim_directory_is_not_launched(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            shim = self.make(directory, "elsewhere", ".pyenv", "shims", "python3")
+            link = Path(directory, "usr", "bin", "python3")
+            link.parent.mkdir(parents=True)
+            link.symlink_to(shim)
+            run, launched = self.recording()
+            found = MODULE.find_python(
+                which={"python3": str(link)}.get,
+                run=run,
+                roots=[os.path.realpath(directory) + "/*"],
+            )
+        self.assertEqual(launched, [])
+        self.assertTrue(any("shim" in line for line in found["tried"]))
+        self.assertNotIn("not_launched", found)
+
+    def test_an_untrusted_uv_is_reported_and_never_launched(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            uv = self.make(directory, "downloads", "uv")
+            run, launched = self.recording()
+            with mock.patch.object(MODULE, "trusted_roots", lambda extra=(): ["/x/*"]):
+                found = MODULE.find_python(which={"uv": str(uv)}.get, run=run)
+        self.assertEqual(launched, [])
+        self.assertEqual(found["not_launched"], [str(uv)])
+
+    def test_a_trusted_candidate_is_launched(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            py = self.make(directory, "usr", "bin", "python3")
+            launched: list[list[str]] = []
+
+            def run(command, **kwargs):
+                launched.append(command)
+                answer = {"ok": True, "executable": str(py), "version": "3.13.1"}
+                return SimpleNamespace(
+                    returncode=0, stdout=json.dumps(answer), stderr=""
+                )
+
+            found = MODULE.find_python(
+                which={"python3": str(py)}.get,
+                run=run,
+                roots=[os.path.realpath(directory) + "/*"],
+            )
+        self.assertEqual(launched[0][0], str(py))
+        self.assertEqual(found["python"], os.path.realpath(py))
 
 
 if __name__ == "__main__":
