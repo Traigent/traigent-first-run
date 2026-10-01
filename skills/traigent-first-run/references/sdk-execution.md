@@ -291,6 +291,14 @@ selected route lists at run time, then verify each id is live before scaling. Mi
 
 ## Decorator contract
 
+**Default: generate the bridge.** Write `traigent-runs/adapter.json` (`assets/adapter.schema.json`)
+from mappings the user approved; `scripts/generate_adapter.py suggest` only proposes them. Then
+`generate_adapter.py generate --config ... --project-root ...` imports their agent and evaluator
+unchanged, and `python traigent-runs/adapter_bridge.py probe` (wiring, no keys) and the baseline
+command run under the shared runtime's ledger and offline boundary. Calibrate the evaluator with `--scorer
+traigent-runs/adapter_bridge.py:score`. Edit the fence below only when generation refuses, with every reason printed (another
+transport than OpenAI or litellm, an engine-reaching evaluator) or for the connected phase.
+
 Use one production-compatible function for baseline and optimization. Adapt only these sites in
 the fence below, each tagged `# ADAPT:` where it sits; every other line is verbatim. Model ids, the
 provider route and the run bounds are not edits to the fence at all: they arrive through the
@@ -1856,8 +1864,7 @@ reports `stop_reason`. Outside it, held-out scoring and an LLM judge call `litel
 directly, where no permit exists - so the second gate is on `litellm.completion` itself, wrapped
 once at setup, and it refuses a call whose worst case the remaining cannot cover. Neither gate is
 arithmetic the assistant performs between phases: the first is the SDK's per-trial admission check,
-and the second reads a ledger that same wrapper reserves against before each call and settles after
-it.
+the second a ledger reserved against before each call and settled after it.
 
 **The second gate is a place, not a rule.** The install comment above owns its reach - every caller
 that resolves the wrapped attribute when it calls - and that clause is the whole test, so apply it
@@ -1871,41 +1878,36 @@ the spend-capable names that are not chat completions at all - `embedding`, `res
 `from litellm import completion` before setup, and so does a client that is not litellm at all - a
 raw provider SDK, an HTTP call, a subprocess. Settle a name by patching a sentinel over
 `litellm.completion` and calling it, not by trusting a list. Keep generated calls on the two wrapped
-names, and where a preserved caller cannot be brought through the door, declare what the scorer
-spends: `check_scorer_calls` compares that declaration against the ledger on every row, which is
-what still notices a call the door cannot see.
+names; where a preserved caller cannot come through the door, declare what the scorer spends:
+`check_scorer_calls` compares it against the ledger on every row, so a call the door cannot see
+is still noticed.
 
-Resolving the attribute is what brings a call to the door; it is not on its own what makes the
-money right, and treating the two as one sentence cost a run. litellm's own `fallbacks` handling
-re-enters `litellm.completion` once per attempt, so every attempt resolved the wrapped name and the
-invocation above them did too - measured at three ledger entries against two provider requests with
-one fallback, and four against three with two. On a scorer declaring what it places, that surplus
-entry is a stop on a caller that complied. So the door counts an INVOCATION once: a re-entry taken
-while another invocation is in flight is part of it, covered by the reservation that invocation
-already took, and the two rules together are what "the money is seen" means here.
+Resolving the attribute brings a call to the door; it does not by itself make the money right.
+litellm's `fallbacks` handling re-enters `litellm.completion` once per attempt - measured at three
+ledger entries against two provider requests with one fallback, and four against three with two -
+and on a scorer declaring what it places, that surplus entry stops a caller that complied. So the
+door counts an INVOCATION once: a re-entry taken while another invocation is in flight is covered
+by the reservation that invocation already took, and the two rules together are what "the money
+is seen" means here.
 
-A judge is the caller that made this necessary rather than merely tidy. It runs inside `task_score`,
-whose `metric_functions` contract passes a prediction, an expectation and an input and returns a
-number - no ledger, nothing to debit through. The SDK cannot close that from its side either: it
-settles a trial's cost before it applies the metric functions, so a call made inside one is already
-past that trial's accounting. The rule for generating a scorer is with the rest of `task_score`
-below.
+A judge is the caller that made this necessary. It runs inside `task_score`, whose
+`metric_functions` contract returns a number with no ledger to debit through, and the SDK settles a
+trial's cost before applying the metric functions, so a call made inside one is already past that
+trial's accounting. The rule for generating a scorer is with `task_score` below.
 
-That is why the ledger counts search trials as well as direct calls. Held-out scoring runs last, in
-the same process as the connected search, on the run's recommended and often priciest
-configuration; if it read the remaining as it stood when the process started, it would believe the
-whole of it was still there after the search had spent most of it. The SDK's `ExecutionBudget` is
-the SDK's own way to share one cap across calls, and it is not used here: it holds its state in one
-Python object, so it cannot reach from the baseline process into the connected one, and a second
-cap that has to agree with `TRAIGENT_RUN_COST_LIMIT` is one more place for them to disagree.
+That is why the ledger counts search trials as well as direct calls: held-out scoring runs last, in
+the same process as the connected search, and reading the remaining as it stood at process start
+would believe the whole of it still there. The SDK's `ExecutionBudget` is not used: it holds its
+state in one Python object, so it cannot reach from the baseline process into the connected one,
+and a second cap that must agree with `TRAIGENT_RUN_COST_LIMIT` is one more place to disagree.
 
-The process-only values above are selected by the coding assistant from the inspected project and
+The coding assistant selects the process-only values above from the inspected project and
 live-probe observation; they are not questions for the user. The generated walkthrough defaults
 to twelve baseline configurations and a 12-trial enhanced cap. Preserve those counts when they fit
 the approved time, cost, and plan quota; prefer a smaller representative tuning slice over collapsing
 the comparison back to one-versus-two configurations. The assistant derives the current provider route from the
 existing vendor setup, the current agent call, and the route inventory, then populates the process
-variables used below; the user does not type route metadata into the run. Call
+variables used below; the user types no route metadata. Call
 `require_current_route_credential()` immediately before the approved live probe. A route literal it
 does not recognise prints as unverified and does not stop the run: it withholds this one check
 rather than refusing the credential, and the route's own first call settles what the table could
@@ -1913,8 +1915,8 @@ not. Report it to the user in those terms, and do not present it as a missing or
 the discovered route cannot be populated from the existing vendor and there is no usable fallback
 ladder, stop and ask the user to add a vendor or choose a different one. Keep the real current
 model and parameter values in `BASELINE_CONFIG`, `BASELINE_SPACE`, and every corresponding
-enhanced dimension. Select the alternative and strong models from the same approved provider route
-when generating the walkthrough, following the walkthrough model ladder above; set
+enhanced dimension. Select the alternative and strong models from the same approved provider route,
+following the walkthrough model ladder above; set
 `TRAIGENT_FIRST_RUN_STRONG_REASONING_EFFORT` only when the selected strong tier actually supports
 a reasoning-effort control, and pin the same value for both runs. A new route or recipient
 requires revised data-egress approval. In the generated default, every search
@@ -1925,7 +1927,7 @@ reasoning model, temperature is inert for it - which costs the comparison nothin
 temperature is fixed in both spaces and every swept knob is uniform across the ladder.
 
 The concrete spaces above are the generated classification/extraction walkthrough default, not a
-template to force onto every real agent. Its baseline is a credible twelve-point sweep: the three
+template for every real agent. Its baseline is a credible twelve-point sweep: the three
 ladder models by two prompt styles by two thinking shapes, with the remaining controls pinned to
 the current behavior. The enhanced space keeps every one of those values, the same three models,
 and adds one more real one-call control: reflect. That is exactly 24 configurations, so a 12-trial
@@ -1937,7 +1939,7 @@ and its configuration count exactly; do not expand it to twelve. Replace this ex
 request parameters such as context format or few-shot count for observed failures. Retrieval, tools,
 repair, and multi-call controls require separately contained tracing outside this first-run paid
 space. Do not add no-op fields, recode a customer boolean, or add multi-call composite behavior
-merely to raise the trial count the portal shows.
+merely to raise the portal's trial count.
 
 Missing usage does not invalidate an otherwise usable response. Use public response cost when
 present, including a genuine reported `0`; cost and token counts can arrive independently. The
@@ -1956,13 +1958,12 @@ the SDK then optimizes the customer's primary criterion alone. Set it true only 
 costs have the expected response provenance and coverage. This is an agent-derived fact, not a
 user-facing knob. Once a started comparison is primary-only, keep that mode for its remaining
 planned phases; restored costs may be reported, while cost optimization belongs to a future run.
-Record the actual objectives for each phase in the run plan. Preserve the normal
+Record each phase's actual objectives in the run plan. Preserve the normal
 quality-and-cost path when its cost evidence is sound. The SDK's automatic missing-price approval
 remains separate: omitting the cost objective does not waive a native SDK preflight requirement.
 
 The pinned SDK can emit `cost=0.0` and estimated positive token counts when the provider reported
-neither. Those fields do not establish vendor telemetry or a free run. Keep any known call-cost
-subtotal separate from unknown calls and the allowance debit. A known provider cost without token
+neither. Those fields do not establish vendor telemetry or a free run. Keep any known call-cost subtotal separate from unknown calls and the debit. A known provider cost without token
 counts is still useful evidence; enable a cost objective only if the installed public SDK adapter
 actually carries that cost into the result. The SDK's public `with_usage` supports cost without
 token counts, but validate its output shape with the preserved scorer before adapting a caller;
@@ -1975,16 +1976,16 @@ comparison unavailable, and use primary-only objectives for the next already pla
 Never repeat a paid baseline merely to restore telemetry or describe the earlier cost-aware search
 as a quality-only search. The approval and next-step wording stays in `run-safety.md`.
 
-Do not include `expected` in the agent signature. Dataset inputs call the agent; expected output
-belongs only to evaluation.
+Do not include `expected` in the agent signature: dataset inputs call the agent, and expected
+output belongs only to evaluation.
 
 Keep every dataset path absolute, as `TUNING_DATASET` and `HOLDOUT_DATASET` above already are
 (`str(RUN_DIR / "...")`). Never shorten these to a relative path: the SDK resolves a relative one
 against the working directory of whichever process opens it, and this run's dataset lives under
 `RUN_DIR` while the assistant works from the project root. An absolute path is the same file from
 any directory, which is the property that matters when the run, a re-run, and `traigent sync` are
-three different processes. Nothing announces a breach of this rule: a relative path that resolves
-against the wrong directory reads one file or misses one, and neither is a crash.
+three different processes. Nothing announces a breach: a path resolved against the wrong
+directory reads one file or misses one, and neither is a crash.
 
 Generate `task_score` as an adapter around the preserved evaluator using the installed SDK's
 documented public `metric_functions` contract; the example reflects the inspected three-argument

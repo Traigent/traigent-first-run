@@ -309,7 +309,8 @@ If this run will create, top up, split, repair, or sample a dataset: [`reference
 If the matrix row directs creating an agent: [`references/component-creation.md` § Agent creation](references/component-creation.md#agent-creation).
 If the row directs building an evaluation method: [`references/evaluation-and-dataset.md` § Evaluation selection](references/evaluation-and-dataset.md#evaluation-selection).
 
-Create a minimal reversible integration under `traigent-runs/` or a thin wrapper around the
+Create a minimal reversible integration under `traigent-runs/` - by default via
+`scripts/generate_adapter.py` - or a thin wrapper around the
 existing function. Do not refactor production code just to demonstrate the workflow.
 
 When nothing exists, use this internal order: define the task and output contract, define what

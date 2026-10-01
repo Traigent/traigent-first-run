@@ -25568,6 +25568,7 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
                 "environment_install.py",
                 "find_environments.py",
                 "find_python.py",
+                "generate_adapter.py",
                 "preflight.py",
                 "readiness.py",
                 "validate_run_log.py",
