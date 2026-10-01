@@ -137,6 +137,21 @@ approval.
 | Make provider, private-data, connected Traigent, or external calls other than the narrow dependency fetch | Obtain stage-specific approval for recipients/data, scope, runtime, and ceiling: baseline first; connected optimization after its checkpoint. |
 | Perform destructive or production-affecting actions | Obtain separate explicit approval for the exact action. |
 
+## Offline audit
+
+For an offline audit, or a request to stay disconnected from Traigent, work sections 1 to 6
+through the local baseline checkpoint with no Traigent account, key, or connection:
+
+- Run every command with `env -u TRAIGENT_API_KEY -u TRAIGENT_BACKEND_URL -u TRAIGENT_API_URL`
+  and pass `--offline` to `scripts/preflight.py`. Never ask for or create a Traigent key.
+- Paid provider calls keep their approval and budget.
+- Stop at the `Stage 4/5` approval with no card and no account ask. Save
+  `traigent-audit-report.md` in the project root from this run's measured output, with the headings
+  `Readiness board`, `Quality advisories`, `Local baseline checkpoint` (results, cost, latency,
+  limits), `Recommended next step`.
+- Read this file, `references/run-safety.md` and, to write the wrapper, `references/sdk-execution.md`;
+  open the other references only when a component is missing or limited.
+
 ## Status language
 
 Track two different facts:

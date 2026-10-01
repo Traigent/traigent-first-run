@@ -169,6 +169,10 @@ On Windows, list already installed paths with `py -0p`, then probe those executa
 If the PATH/launcher search fails and `uv` is already present, use
 `uv python find --offline --no-python-downloads '>=3.11,<3.14'` and inspect then probe its returned
 host path too. The same known-host requirement applies to launcher and manager results.
+On POSIX, `"<any-python3>" -I -S -B ".../scripts/find_python.py" --project-root "<project-root>"`
+runs this whole search and prints JSON: `python`, the supported interpreter's path with every
+symlink resolved, or an `error` carrying the remedy below. Create environments from that resolved
+path; one made through a symlinked interpreter is refused by `environment_install.py`.
 Do not install a manager or download a runtime during this lookup. If none works, report readiness
 as not yet measured and give one remedy: install Python 3.13 locally, then provide its executable
 path to resume. An unsupported project environment remains untouched and is named as such.

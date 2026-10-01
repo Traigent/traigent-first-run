@@ -17,6 +17,8 @@ Start with the self-contained skill's
 The skill routes its bundled references at the stage where each is needed; do not front-load them
 before starting inspection.
 
+An offline audit follows the skill's "Offline audit" section.
+
 The same directory is what the Agent Skill installer copies. Resolve the **absolute directory
 containing the loaded `SKILL.md`** from the path the coding assistant actually loaded. Keep every
 tool's working directory at the user's project root and interpolate that literal absolute skill
