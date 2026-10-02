@@ -539,6 +539,16 @@ def halting_async(place):
     return placed
 
 
+def _clamp_timeout(kwargs: dict) -> None:
+    """Absent, None, zero, negative or above the configured limit all mean the limit."""
+    value = kwargs.get("timeout")
+    numeric = isinstance(value, (int, float)) and not isinstance(value, bool)
+    if not numeric and value is not None:
+        return  # a client timeout object: the provider client enforces it
+    if not numeric or not 0 < value <= MODEL_REQUEST_TIMEOUT_SECONDS:
+        kwargs["timeout"] = MODEL_REQUEST_TIMEOUT_SECONDS
+
+
 def _deadline(kwargs: dict) -> float | None:
     value = kwargs.get("timeout")
     ok = isinstance(value, (int, float)) and not isinstance(value, bool) and value > 0
@@ -550,7 +560,7 @@ def timed(place):
 
     @functools.wraps(place)
     def placed(*args, **kwargs):
-        kwargs.setdefault("timeout", MODEL_REQUEST_TIMEOUT_SECONDS)
+        _clamp_timeout(kwargs)
         return place(*args, **kwargs)
 
     return placed
@@ -561,7 +571,7 @@ def timed_async(place):
 
     @functools.wraps(place)
     async def placed(*args, **kwargs):
-        kwargs.setdefault("timeout", MODEL_REQUEST_TIMEOUT_SECONDS)
+        _clamp_timeout(kwargs)
         return await asyncio.wait_for(place(*args, **kwargs), _deadline(kwargs))
 
     return placed
@@ -632,7 +642,7 @@ def ledgered_openai(place):
                 "a streamed completion was not placed: the cost ledger settles on a whole "
                 "response, so stream=True is not a supported transport for a first run"
             )
-        kwargs.setdefault("timeout", MODEL_REQUEST_TIMEOUT_SECONDS)
+        _clamp_timeout(kwargs)
         slot = reserve_call_spend(args, _openai_sizing(self, kwargs))
         outside = INSIDE_THE_DOOR.set(True)
         try:
@@ -658,7 +668,7 @@ def ledgered_openai_async(place):
                 "a streamed completion was not placed: stream=True is not a supported "
                 "transport for a first run"
             )
-        kwargs.setdefault("timeout", MODEL_REQUEST_TIMEOUT_SECONDS)
+        _clamp_timeout(kwargs)
         slot = reserve_call_spend(args, _openai_sizing(self, kwargs))
         outside = INSIDE_THE_DOOR.set(True)
         try:
@@ -882,14 +892,28 @@ class Bridge:
             name: resolve(token, context) for name, token in entry["args"].items()
         }
         before = len(RUN_SPEND_USD)
-        score = normalized_score(self.call(self.function("evaluator"), arguments))
-        placed = len(RUN_SPEND_USD) - before
-        if self.started and placed != entry["calls_per_row"]:
-            raise SafetyRefusal(
-                f"scoring one row placed {placed} provider call(s) the ledger saw, and "
-                f"evaluator.calls_per_row declares {entry['calls_per_row']}; correct the "
-                "declaration before any more spend"
-            )
+
+        def accounted(failed: bool = False) -> None:
+            placed = len(RUN_SPEND_USD) - before
+            declared = entry["calls_per_row"]
+            # A failure may stop short of its declared calls; it may never exceed them.
+            if self.started and (
+                placed > declared or (placed != declared and not failed)
+            ):
+                raise SafetyRefusal(
+                    f"scoring one row placed {placed} provider call(s) the ledger saw, and "
+                    f"evaluator.calls_per_row declares {entry['calls_per_row']}; correct the "
+                    "declaration before any more spend"
+                )
+
+        try:
+            score = normalized_score(self.call(self.function("evaluator"), arguments))
+        except SafetyRefusal:
+            raise
+        except BaseException:
+            accounted(True)  # an undeclared call before a failure still stops the run
+            raise
+        accounted()
         return score
 
     # -- data ------------------------------------------------------------------------------

@@ -527,6 +527,24 @@ def load_runtime(name: str = "rt"):
     return module
 
 
+def isolate_openai(test: unittest.TestCase) -> None:
+    """install_interceptors wraps the real openai classes; put them back after the test."""
+    from unittest import mock
+
+    from openai.resources.chat.completions import AsyncCompletions, Completions
+
+    for cls in (Completions, AsyncCompletions):
+        patcher = mock.patch.object(cls, "create", cls.create)
+        patcher.start()
+        test.addCleanup(patcher.stop)
+
+    def forget() -> None:
+        if "_first_run_ledgered" in vars(Completions):
+            delattr(Completions, "_first_run_ledgered")
+
+    test.addCleanup(forget)
+
+
 ASYNC_AGENT = AGENT.replace("def answer", "async def answer").replace(
     "litellm.completion(", "await litellm.acompletion("
 )
@@ -714,6 +732,7 @@ class FirstRunAuditTests(unittest.TestCase):
         import asyncio
         import time
 
+        isolate_openai(self)
         module = load_runtime("rt_hang")
         module.MODEL_REQUEST_TIMEOUT_SECONDS = 0.2
         module.UNTRACKED_CALL_COST_USD = 0.001
@@ -853,6 +872,242 @@ class FirstRunAuditTests(unittest.TestCase):
         self.assertEqual(
             len(expected[0]), 4
         )  # the script really placed and refused calls
+
+
+class FirstRunAuditRoundFiveTests(unittest.TestCase):
+    def refused(self, project: Project) -> list[str]:
+        done = project.generate()
+        self.assertEqual(done.returncode, 1, done.stdout + done.stderr)
+        return json.loads(done.stdout)["refused"]
+
+    def test_metadata_or_id_that_is_or_contains_the_gold_field_is_refused(self) -> None:
+        for token, field, path in (
+            ("$metadata", "metadata", "gold.label"),
+            ("$metadata", "metadata", "gold"),
+            ("$id", "id", "gold.label"),
+        ):
+            with self.subTest(token, path=path):
+                project = Project(self)
+                project.config["dataset"][field] = path
+                project.config["agent"]["args"]["suffix"] = token
+                self.assertTrue(any("gold answer" in r for r in self.refused(project)))
+        project = Project(self)  # a harmless metadata field is still allowed
+        project.config["dataset"]["metadata"] = "id"
+        project.config["agent"]["args"]["suffix"] = "$metadata"
+        self.assertEqual(project.generate().returncode, 0)
+
+    def test_an_undeclared_judge_call_followed_by_an_error_stops_the_run(self) -> None:
+        evaluator = (
+            "import litellm\n\n\ndef exact(output, expected):\n"
+            "    litellm.completion(model='openai/j', mock_response='x',"
+            " messages=[{'role': 'user', 'content': 'q'}])\n"
+            "    raise ValueError('after the call')\n"
+        )
+        project = Project(self, evaluator=evaluator)  # declares no evaluator calls
+        self.assertEqual(project.generate().returncode, 0)
+        done = project.bridge("baseline")
+        self.assertNotEqual(done.returncode, 0)
+        self.assertIn("stopped before any further spend", done.stdout + done.stderr)
+        self.assertIn("this process placed 2 provider call(s)", done.stdout)
+
+    def test_a_hazardous_package_initializer_is_a_refusal(self) -> None:
+        project = Project(self)
+        package = project.root / "pkg"
+        package.mkdir()
+        (package / "__init__.py").write_text(
+            "import subprocess\nsubprocess.run(['true'])\n", encoding="utf-8"
+        )
+        (package / "evaluator.py").write_text(EVALUATOR, encoding="utf-8")
+        project.config["evaluator"]["callable"] = "pkg.evaluator:exact"
+        done = project.generate()
+        self.assertEqual(done.returncode, 1, done.stdout + done.stderr)
+        self.assertTrue(
+            any("__init__.py" in r for r in json.loads(done.stdout)["refused"])
+        )
+
+    def test_an_explicit_no_timeout_cannot_disable_the_deadline(self) -> None:
+        import asyncio
+        import time
+
+        isolate_openai(self)
+        module = load_runtime("rt_clamp")
+        module.MODEL_REQUEST_TIMEOUT_SECONDS = 0.2
+        module.UNTRACKED_CALL_COST_USD = 0.001
+        module.RUN_COST_CEILING_USD = module.RUN_COST_REMAINING_USD = 1.0
+        seen = []
+
+        async def hung(*a, **k):
+            seen.append(k["timeout"])
+            await asyncio.sleep(30)
+
+        def sync(*a, **k):
+            seen.append(k["timeout"])
+            return type("R", (), {})()
+
+        fake = type(
+            "L", (), {"completion": sync, "acompletion": hung, "num_retries": 0}
+        )
+        module.litellm = fake
+        module.install_interceptors()
+        for value in (None, 0, -1, 99999):
+            began = time.monotonic()
+            with self.assertRaises(asyncio.TimeoutError):
+                asyncio.run(fake.acompletion(model="m", timeout=value))
+            self.assertLess(time.monotonic() - began, 10, value)
+            fake.completion(model="m", timeout=value)
+        self.assertEqual(set(seen), {0.2})
+
+    def test_async_openai_timeout_and_refusal_account_like_the_guide(self) -> None:
+        """Async parity: runtime stacks vs the guide's ledgered_async on one mocked script."""
+        import asyncio
+        import contextvars
+        import threading
+
+        fence = max(
+            re.findall(
+                r"```python\n(.*?)\n```",
+                SDK_EXECUTION.read_text(encoding="utf-8"),
+                re.S,
+            ),
+            key=len,
+        )
+        wanted = {
+            "provider_reported_cost",
+            "require_untruncated_completion",
+            "run_remaining_usd",
+            "worst_case_requests",
+            "tracking_stopped",
+            "reserve_call_spend",
+            "settle_call_spend",
+            "release_call_spend",
+            "ledgered_async",
+        }
+        keep = {
+            "PRICED_REQUEST_KNOBS",
+            "UNPRICED_KNOB_MARKERS",
+            "REJECTED_BEFORE_BILLING",
+        }
+        nodes = [
+            n
+            for n in ast.parse(fence).body
+            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and n.name in wanted
+            or isinstance(n, (ast.Assign, ast.AnnAssign))
+            and any(
+                isinstance(t, ast.Name) and t.id in keep
+                for t in (n.targets if isinstance(n, ast.Assign) else [n.target])
+            )
+        ]
+
+        def fresh(namespace, runtime=False):
+            values = {
+                "RUN_SPEND_USD": [],
+                "RUN_CALL_COSTS": [],
+                "REJECTED_CALLS": [],
+                "REFUSED_TRIAL_COSTS": [],
+                "TRACKED_RUN": None,
+                "LEDGER_LOCK": threading.Lock(),
+                "UNTRACKED_CALL_COST_USD": 0.01,
+                "RUN_COST_CEILING_USD": 0.2,
+                "RUN_COST_SPENT_USD": 0.0,
+                "RUN_COST_REMAINING_USD": 0.2,
+                "MODEL_REQUEST_TIMEOUT_SECONDS": 0.2,
+                "litellm": type("L", (), {"num_retries": 0}),
+            }
+            if runtime:
+                namespace.__dict__.update(values)
+            else:
+                namespace.update(values)
+                namespace["INSIDE_THE_DOOR"] = contextvars.ContextVar(
+                    "g", default=False
+                )
+
+        guide = {
+            "__builtins__": __builtins__,
+            "math": __import__("math"),
+            "asyncio": asyncio,
+        }
+        exec(compile(ast.Module(body=nodes, type_ignores=[]), "guide", "exec"), guide)
+        fresh(guide)
+        runtime = load_runtime("rt_async_parity")
+        fresh(runtime, True)
+
+        class RateLimitError(Exception):
+            pass
+
+        def priced(cost):
+            return type("R", (), {"usage": {"cost": cost}, "_hidden_params": {}})()
+
+        async def ok(**k):
+            return priced(0.03)
+
+        async def limited(**k):
+            raise RateLimitError("429")
+
+        async def hung(**k):
+            await asyncio.sleep(30)
+
+        async def run(wrap, **extra):
+            for place, kw in (
+                (ok, {}),
+                (limited, {}),
+                (hung, {"timeout": 0.1}),
+                (ok, {"num_retries": 50}),
+            ):
+                try:
+                    await wrap(place)(model="m", **{**kw, **extra})
+                except BaseException as error:  # noqa: BLE001
+                    if isinstance(error, KeyboardInterrupt):
+                        raise
+
+        def view(ns):
+            return (
+                [round(x, 6) for x in ns["RUN_SPEND_USD"]],
+                ns["RUN_CALL_COSTS"][:],
+                ns["REJECTED_CALLS"][:],
+            )
+
+        async def guide_timeout(
+            place,
+        ):  # the guide's call sites wrap in wait_for themselves
+            return place
+
+        def guide_wrap(place):
+            led = guide["ledgered_async"](place)
+
+            async def placed(**k):
+                return await asyncio.wait_for(led(**k), k.get("timeout", 0.2))
+
+            return placed
+
+        asyncio.run(run(guide_wrap))
+        stacks = {
+            "litellm": lambda p: runtime.halting_async(
+                runtime.timed_async(runtime.ledgered_async(p))
+            ),
+            "openai": lambda p: (
+                lambda **k: runtime.ledgered_openai_async(lambda self, **kk: p(**kk))(
+                    object(), **k
+                )
+            ),
+        }
+        expected = view(guide)
+        self.assertEqual(
+            len(expected[0]), 3
+        )  # ok, limited(released), hung(held); refusal adds none
+        for name, stack in stacks.items():
+            with self.subTest(name):
+                for key in ("RUN_SPEND_USD", "RUN_CALL_COSTS", "REJECTED_CALLS"):
+                    getattr(runtime, key).clear()
+                asyncio.run(run(stack))
+                got = view(vars(runtime))
+                if (
+                    name == "openai"
+                ):  # no num_retries knob there: the refusal step places a call
+                    got = tuple(
+                        part[: len(expected[0])] if name else part for part in got
+                    )
+                self.assertEqual(got, expected)
 
 
 class CalibrationContractTests(unittest.TestCase):

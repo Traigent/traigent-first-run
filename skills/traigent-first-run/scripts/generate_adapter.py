@@ -272,6 +272,13 @@ def reachable_sources(
     """
     seen: dict[Path, ast.Module] = {}
     queue = [start.resolve()]
+    for (
+        parent
+    ) in start.resolve().parents:  # importing the callable runs its packages' __init__
+        if not inside(parent, root) or parent == root.resolve():
+            break
+        if (parent / "__init__.py").is_file():
+            queue.append(parent / "__init__.py")
     while queue:
         path = queue.pop(0)
         if path in seen:
@@ -457,6 +464,17 @@ def validate(config: object, root: Path) -> tuple[dict, dict, Path]:
             "dataset.input and dataset.expected overlap, so the agent would be handed the "
             "expected answer"
         )
+    for token in config["agent"]["args"].values():
+        if isinstance(token, str) and token in ("$metadata", "$id"):
+            field = dataset.get(token[1:])
+            if field and (
+                field.split(".")[: len(gold)] == gold
+                or gold[: len(field.split("."))] == field.split(".")
+            ):
+                problems.append(
+                    f"dataset.{token[1:]} is or contains the expected-answer field, so "
+                    f"mapping {token} to the agent would hand it the gold answer"
+                )
     if not (root / dataset["path"]).is_file():
         problems.append(f"dataset.path {dataset['path']} does not exist")
     resolved = {}
