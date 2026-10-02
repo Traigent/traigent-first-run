@@ -29,6 +29,7 @@ import ast
 import hashlib
 import importlib.util
 import json
+import os
 import re
 import shutil
 import sys
@@ -39,7 +40,10 @@ RUNTIME_SOURCE = SKILL / "assets" / "first_run_runtime.py"
 SCHEMA = SKILL / "assets" / "adapter.schema.json"
 BRIDGE_NAME = "adapter_bridge.py"
 RUNTIME_NAME = "first_run_runtime.py"
-AGENT_TOKENS = {"$input", "$expected", "$output", "$metadata", "$id", "$row"}
+# The agent never sees the gold answer: `$expected`, `$row` (it carries the whole raw row, gold
+# included) and `$output` (not yet produced) are not tokens an agent argument may use.
+AGENT_TOKENS = {"$input", "$metadata", "$id"}
+WITHHELD_FROM_AGENT = {"$expected", "$row", "$output"}
 EVALUATOR_TOKENS = {"$output", "$expected", "$input", "$metadata"}
 SUPPORTED_TRANSPORTS = {"openai", "litellm"}
 UNSUPPORTED_TRANSPORTS = {
@@ -202,6 +206,11 @@ def check_mapping(
             problems.append(
                 f'{role}.args.{name}: {token!r} is not a token (use "$input" or {{"value": ...}})'
             )
+        elif role == "agent" and token in WITHHELD_FROM_AGENT:
+            problems.append(
+                f"agent.args.{name}: {token} is refused. The agent must never receive the "
+                "expected answer or the raw row that holds it; map $input, $metadata or $id"
+            )
         elif token not in allowed and not (
             role == "agent" and token.startswith("$config.")
         ):
@@ -245,20 +254,42 @@ def local_imports(tree: ast.Module, here: Path, root: Path) -> list[Path]:
                 for candidate in (base / f"{parts}.py", base / parts / "__init__.py"):
                     if candidate.is_file() and inside(candidate, root):
                         found.append(candidate.resolve())
+                        # importing a.b runs a/__init__.py first
+                        for parent in candidate.resolve().parents:
+                            if not inside(parent, root) or parent == root.resolve():
+                                break
+                            init = parent / "__init__.py"
+                            if init.is_file():
+                                found.append(init)
     return found
 
 
-def reachable_sources(start: Path, root: Path) -> list[tuple[Path, ast.Module]]:
-    """The file and the project modules it imports, transitively, bounded."""
+def reachable_sources(
+    start: Path, root: Path, problems: list[str]
+) -> list[tuple[Path, ast.Module]]:
+    """The file and the project modules it imports, transitively. Fails closed: a file that
+    cannot be read or parsed, or a chain longer than the cap, is a refusal, never a pass.
+    """
     seen: dict[Path, ast.Module] = {}
     queue = [start.resolve()]
-    while queue and len(seen) < MAX_SCANNED_FILES:
+    while queue:
         path = queue.pop(0)
         if path in seen:
             continue
+        if len(seen) >= MAX_SCANNED_FILES:
+            problems.append(
+                f"the import chain from {start.name} reaches more than {MAX_SCANNED_FILES} "
+                f"project files, so {path.name} was not inspected; flatten it or use the "
+                "hand-adapted wrapper"
+            )
+            break
         try:
             tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-        except (SyntaxError, UnicodeDecodeError, ValueError, OSError):
+        except (SyntaxError, UnicodeDecodeError, ValueError, OSError) as error:
+            problems.append(
+                f"{path.name} (imported from {start.name}) cannot be read or parsed "
+                f"({type(error).__name__}), so it was not inspected and nothing is generated"
+            )
             continue
         seen[path] = tree
         queue.extend(local_imports(tree, path, root))
@@ -266,7 +297,7 @@ def reachable_sources(start: Path, root: Path) -> list[tuple[Path, ast.Module]]:
 
 
 def scan_transports(agent_path: Path, root: Path, problems: list[str]) -> None:
-    for path, tree in reachable_sources(agent_path, root):
+    for path, tree in reachable_sources(agent_path, root, problems):
         for node in ast.walk(tree):
             modules = []
             if isinstance(node, ast.Import):
@@ -286,7 +317,7 @@ def scan_transports(agent_path: Path, root: Path, problems: list[str]) -> None:
 
 def scan_hazards(evaluator_path: Path, root: Path, problems: list[str]) -> None:
     preflight = load_sibling("preflight")
-    for path, tree in reachable_sources(evaluator_path, root):
+    for path, tree in reachable_sources(evaluator_path, root, problems):
         witnesses = list(preflight.candidate_execution_witnesses(tree)) + list(
             preflight.process_execution_witnesses(tree)
         )
@@ -420,6 +451,12 @@ def validate(config: object, root: Path) -> tuple[dict, dict, Path]:
     for key in ("path", "holdout_path"):
         if key in dataset and not inside(root / dataset[key], root):
             problems.append(f"dataset.{key} is outside the project")
+    given, gold = dataset["input"].split("."), dataset["expected"].split(".")
+    if given[: len(gold)] == gold or gold[: len(given)] == given:
+        problems.append(
+            "dataset.input and dataset.expected overlap, so the agent would be handed the "
+            "expected answer"
+        )
     if not (root / dataset["path"]).is_file():
         problems.append(f"dataset.path {dataset['path']} does not exist")
     resolved = {}
@@ -461,6 +498,9 @@ def generate(config_path: Path, root: Path, run_dir: Path) -> dict:
     spec, document, root = validate(config, root)
     if not inside(run_dir, root):
         raise Refusal(["the run directory must be inside the project"])
+    spec["project_root"] = os.path.relpath(
+        root, run_dir
+    )  # run dir -> project, nesting-proof
     runtime_bytes = RUNTIME_SOURCE.read_bytes()
     config_hash = hashlib.sha256(
         json.dumps(config, sort_keys=True).encode("utf-8")

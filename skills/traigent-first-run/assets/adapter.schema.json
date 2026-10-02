@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Traigent first-run adapter configuration",
-  "description": "Names the customer's own dataset fields, agent, evaluator and search space. scripts/generate_adapter.py validates it and writes a thin bridge that imports the callables unchanged. Argument tokens: \"$input\", \"$expected\", \"$output\", \"$metadata\", \"$id\", \"$row\" (agent only), \"$config.<knob>\" (agent only), or {\"value\": <literal>}. Nothing in this file is inferred: detection only suggests.",
+  "description": "Names the customer's own dataset fields, agent, evaluator and search space. scripts/generate_adapter.py validates it and writes a thin bridge that imports the callables unchanged. Agent tokens: \"$input\", \"$metadata\", \"$id\", \"$config.<knob>\", {\"value\": <literal>}; never the expected answer or the raw row. Evaluator tokens: \"$output\", \"$expected\", \"$input\", \"$metadata\". Nothing in this file is inferred: detection only suggests.",
   "type": "object",
   "additionalProperties": false,
   "required": ["schema_version", "dataset", "agent", "evaluator", "baseline"],

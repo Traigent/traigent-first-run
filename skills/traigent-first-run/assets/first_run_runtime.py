@@ -499,6 +499,74 @@ def _record_request(kwargs: dict) -> None:
     raise _ProbeStop
 
 
+class SafetyRefusal(RuntimeError):
+    """An accounting or safety refusal: the run stops here. An ordinary per-row agent failure is
+    any other exception and only counts as a failed row."""
+
+
+def halting(place):
+    """A refusal raised before this call reserved anything (budget, retry knob, tracking) halts
+    the run. Nested re-entries and failures after a reservation stay ordinary errors."""
+
+    @functools.wraps(place)
+    def placed(*args, **kwargs):
+        outer, entered = INSIDE_THE_DOOR.get(), len(RUN_SPEND_USD)
+        try:
+            return place(*args, **kwargs)
+        except SafetyRefusal:
+            raise
+        except RuntimeError as error:
+            if not outer and len(RUN_SPEND_USD) == entered:
+                raise SafetyRefusal(str(error)) from error
+            raise
+
+    return placed
+
+
+def halting_async(place):
+    @functools.wraps(place)
+    async def placed(*args, **kwargs):
+        outer, entered = INSIDE_THE_DOOR.get(), len(RUN_SPEND_USD)
+        try:
+            return await place(*args, **kwargs)
+        except SafetyRefusal:
+            raise
+        except RuntimeError as error:
+            if not outer and len(RUN_SPEND_USD) == entered:
+                raise SafetyRefusal(str(error)) from error
+            raise
+
+    return placed
+
+
+def _deadline(kwargs: dict) -> float | None:
+    value = kwargs.get("timeout")
+    ok = isinstance(value, (int, float)) and not isinstance(value, bool) and value > 0
+    return float(value) if ok else None
+
+
+def timed(place):
+    """The guide's per-request timeout on every intercepted LiteLLM call (OpenAI's has its own)."""
+
+    @functools.wraps(place)
+    def placed(*args, **kwargs):
+        kwargs.setdefault("timeout", MODEL_REQUEST_TIMEOUT_SECONDS)
+        return place(*args, **kwargs)
+
+    return placed
+
+
+def timed_async(place):
+    """Same timeout, also enforced as a deadline, so a hung await is cancelled, not waited on."""
+
+    @functools.wraps(place)
+    async def placed(*args, **kwargs):
+        kwargs.setdefault("timeout", MODEL_REQUEST_TIMEOUT_SECONDS)
+        return await asyncio.wait_for(place(*args, **kwargs), _deadline(kwargs))
+
+    return placed
+
+
 def untruncated(place):
     """Refuse a cut-off completion instead of scoring it as an ordinary wrong answer."""
 
@@ -594,7 +662,9 @@ def ledgered_openai_async(place):
         slot = reserve_call_spend(args, _openai_sizing(self, kwargs))
         outside = INSIDE_THE_DOOR.set(True)
         try:
-            response = await place(self, *args, **kwargs)
+            response = await asyncio.wait_for(
+                place(self, *args, **kwargs), _deadline(kwargs)
+            )
             settle_call_spend(slot, reported_or_computed_cost(response))
         except BaseException as error:
             release_call_spend(slot, error)
@@ -617,26 +687,38 @@ def _openai_classes():
 def install_interceptors() -> None:
     """Wrap every transport this runtime supports, once per process."""
     if litellm is not None and not getattr(litellm, "_first_run_ledgered", False):
-        litellm.completion = untruncated(ledgered(litellm.completion))
-        litellm.acompletion = untruncated_async(ledgered_async(litellm.acompletion))
+        litellm.completion = untruncated(halting(timed(ledgered(litellm.completion))))
+        litellm.acompletion = untruncated_async(
+            halting_async(timed_async(ledgered_async(litellm.acompletion)))
+        )
         litellm._first_run_ledgered = True
     classes = _openai_classes()
     if classes and not getattr(classes[0], "_first_run_ledgered", False):
         sync, asynchronous = classes
-        sync.create = untruncated(ledgered_openai(sync.create))
+        sync.create = untruncated(halting(ledgered_openai(sync.create)))
         asynchronous.create = untruncated_async(
-            ledgered_openai_async(asynchronous.create)
+            halting_async(ledgered_openai_async(asynchronous.create))
         )
         sync._first_run_ledgered = True
 
 
 def install_recorders() -> None:
     """Probe mode: every supported call is recorded and stopped before any network use."""
+
+    async def record_async(*_args, **kwargs):
+        _record_request(kwargs)
+
     if litellm is not None:
         litellm.completion = lambda *a, **k: _record_request(k)
+        litellm.acompletion = record_async
     classes = _openai_classes()
     if classes:
         classes[0].create = lambda self, *a, **k: _record_request(k)
+
+        async def record_openai_async(self, *_args, **kwargs):
+            _record_request(kwargs)
+
+        classes[1].create = record_openai_async
 
 
 def dotted(value, path: str):
@@ -697,7 +779,7 @@ class Bridge:
     def __init__(self, spec: dict, run_dir: Path):
         self.spec = spec
         self.run_dir = Path(run_dir).resolve()
-        self.project_root = self.run_dir.parent
+        self.project_root = (self.run_dir / spec.get("project_root", "..")).resolve()
         self.started = False
         self.ledgered = False
         self.transport_checked = False
@@ -713,17 +795,40 @@ class Bridge:
                 raise SystemExit(
                     f"{role} file {entry['file']} is not inside the project"
                 )
-            for directory in (self.project_root, path.parent):
-                if str(directory) not in sys.path:
-                    sys.path.insert(0, str(directory))
-            spec = importlib.util.spec_from_file_location(f"_first_run_{role}", path)
-            module = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(module)
+            package_base = self.package_base(path)
+            if package_base is not None:
+                # Inside a package: import it by its package path so `from . import x` works.
+                if str(package_base) not in sys.path:
+                    sys.path.insert(0, str(package_base))
+                relative = path.relative_to(package_base).with_suffix("")
+                parts = (
+                    relative.parts[:-1]
+                    if relative.name == "__init__"
+                    else relative.parts
+                )
+                module = importlib.import_module(".".join(parts))
+            else:
+                for directory in (self.project_root, path.parent):
+                    if str(directory) not in sys.path:
+                        sys.path.insert(0, str(directory))
+                spec = importlib.util.spec_from_file_location(
+                    f"_first_run_{role}", path
+                )
+                module = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(module)
             function = getattr(module, entry["function"], None)
             if not callable(function):
                 raise SystemExit(f"{entry['file']} has no callable {entry['function']}")
             self._functions[role] = function
         return self._functions[role]
+
+    def package_base(self, path: Path) -> Path | None:
+        """The directory to put on sys.path so `path` imports as a package member, else None."""
+        top = None
+        directory = path.parent
+        while (directory / "__init__.py").is_file() and directory != self.project_root:
+            top, directory = directory, directory.parent
+        return top.parent if top is not None else None
 
     @staticmethod
     def call(function, kwargs: dict):
@@ -736,7 +841,13 @@ class Bridge:
 
     def agent_output(self, row: dict, config: dict):
         entry = self.spec["agent"]
-        context = {**row, "config": config}
+        # The gold answer (and the raw row that holds it) never enters the agent's context.
+        context = {
+            "input": row["input"],
+            "id": row["id"],
+            "metadata": row["metadata"],
+            "config": config,
+        }
         arguments = {
             name: resolve(token, context) for name, token in entry["args"].items()
         }
@@ -774,7 +885,7 @@ class Bridge:
         score = normalized_score(self.call(self.function("evaluator"), arguments))
         placed = len(RUN_SPEND_USD) - before
         if self.started and placed != entry["calls_per_row"]:
-            raise RuntimeError(
+            raise SafetyRefusal(
                 f"scoring one row placed {placed} provider call(s) the ledger saw, and "
                 f"evaluator.calls_per_row declares {entry['calls_per_row']}; correct the "
                 "declaration before any more spend"
@@ -950,6 +1061,8 @@ class Bridge:
                             ),
                         }
                     )
+                except SafetyRefusal as refusal:
+                    raise SystemExit(f"stopped before any further spend: {refusal}")
                 except Exception as error:  # class name only: provider text is not kept
                     failures[type(error).__name__] = (
                         failures.get(type(error).__name__, 0) + 1

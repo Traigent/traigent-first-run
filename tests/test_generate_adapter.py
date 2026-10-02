@@ -110,9 +110,11 @@ class Project:
         self.config = base_config()
         self.runs = self.root / "traigent-runs"
 
-    def generate(self) -> subprocess.CompletedProcess:
+    def generate(self, run_dir: Path | None = None) -> subprocess.CompletedProcess:
         config = self.root.parent / "adapter.json"
         config.write_text(json.dumps(self.config), encoding="utf-8")
+        if run_dir is not None:
+            self.runs = run_dir
         return subprocess.run(
             [
                 sys.executable,
@@ -123,6 +125,7 @@ class Project:
                 str(config),
                 "--project-root",
                 str(self.root),
+                *(["--run-dir", str(run_dir)] if run_dir else []),
             ],
             capture_output=True,
             text=True,
@@ -515,6 +518,341 @@ class SharedRuntimeTests(unittest.TestCase):
         done = project.bridge("baseline", env={"TRAIGENT_FIRST_RUN_PHASE": "connected"})
         self.assertNotEqual(done.returncode, 0)
         self.assertIn("local baseline", done.stdout + done.stderr)
+
+
+def load_runtime(name: str = "rt"):
+    spec = importlib.util.spec_from_file_location(name, RUNTIME)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+ASYNC_AGENT = AGENT.replace("def answer", "async def answer").replace(
+    "litellm.completion(", "await litellm.acompletion("
+)
+
+
+class FirstRunAuditTests(unittest.TestCase):
+    """Regressions for the third external review: each fails on the code it was written against."""
+
+    def refused(self, project: Project) -> list[str]:
+        done = project.generate()
+        self.assertEqual(done.returncode, 1, done.stdout + done.stderr)
+        self.assertFalse(project.runs.exists(), "a refusal must write nothing")
+        return json.loads(done.stdout)["refused"]
+
+    # P1a - async transports are intercepted
+    def test_an_async_agent_is_recorded_by_the_probe_and_ledgered_by_the_baseline(
+        self,
+    ) -> None:
+        project = Project(self, agent=ASYNC_AGENT)
+        self.assertEqual(project.generate().returncode, 0)
+        probe = project.bridge("probe")
+        self.assertEqual(probe.returncode, 0, probe.stdout + probe.stderr)
+        self.assertEqual(json.loads(probe.stdout)["wiring"]["model"], "visible")
+        done = project.bridge("baseline")
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertIn("this process placed 4 provider call(s)", done.stdout)
+
+    def test_the_probe_places_no_call_on_any_sync_or_async_transport(self) -> None:
+        from unittest import mock
+        import asyncio
+
+        module = load_runtime("rt_probe")
+        placed: list[str] = []
+
+        def sync_call(*a, **k):
+            placed.append("sync")
+
+        async def async_call(*a, **k):
+            placed.append("async")
+
+        fake = type("L", (), {"completion": sync_call, "acompletion": async_call})
+        from openai.resources.chat.completions import AsyncCompletions, Completions
+
+        with mock.patch.object(Completions, "create", sync_call), mock.patch.object(
+            AsyncCompletions, "create", async_call
+        ):
+            module.litellm = fake
+            module.install_recorders()
+            calls = [
+                lambda: fake.completion(model="m"),
+                lambda: asyncio.run(fake.acompletion(model="m")),
+                lambda: Completions.create(object(), model="m"),
+                lambda: asyncio.run(AsyncCompletions.create(object(), model="m")),
+            ]
+            for call in calls:
+                with self.assertRaises(module._ProbeStop):
+                    call()
+        self.assertEqual(placed, [])
+        self.assertEqual(len(module.PROBED_REQUESTS), 4)
+
+    # P1b - the gold answer never reaches the agent
+    def test_a_mapping_that_hands_the_agent_the_gold_answer_is_refused(self) -> None:
+        for token in ("$expected", "$row", "$output"):
+            with self.subTest(token):
+                project = Project(self)
+                project.config["agent"]["args"]["suffix"] = token
+                self.assertTrue(
+                    any(
+                        "agent.args.suffix" in r and "refused" in r
+                        for r in self.refused(project)
+                    )
+                )
+        project = Project(self)
+        project.config["dataset"][
+            "input"
+        ] = "gold"  # the input field contains the answer
+        self.assertTrue(any("overlap" in r for r in self.refused(project)))
+
+    def test_the_runtime_gives_the_agent_no_expected_answer_even_from_a_hand_made_spec(
+        self,
+    ) -> None:
+        module = load_runtime("rt_gold")
+        project = Project(self)
+        self.assertEqual(project.generate().returncode, 0)
+        spec = {
+            "dataset": {},
+            "agent": {
+                "file": "agent.py",
+                "function": "answer",
+                "calls_per_row": 0,
+                "args": {"text": "$expected"},
+            },
+            "evaluator": {},
+        }
+        bridge = module.Bridge(spec, project.runs)
+        row = {"input": "i", "expected": "GOLD", "id": 0, "metadata": {}}
+        with self.assertRaises(KeyError):
+            bridge.agent_output(row, {})
+
+    # P1c - a safety refusal halts the run
+    def test_an_accounting_refusal_on_the_first_row_places_no_further_call(
+        self,
+    ) -> None:
+        project = Project(self)
+        project.config["evaluator"][
+            "calls_per_row"
+        ] = 1  # but the evaluator places none
+        self.assertEqual(project.generate().returncode, 0)
+        done = project.bridge("baseline")
+        self.assertNotEqual(done.returncode, 0)
+        self.assertIn("stopped before any further spend", done.stdout + done.stderr)
+        self.assertIn("this process placed 1 provider call(s)", done.stdout)
+        self.assertFalse((project.runs / "baseline-results.json").exists())
+
+    def test_an_ordinary_agent_failure_still_counts_as_one_failed_row(self) -> None:
+        agent = AGENT.replace(
+            "reply = litellm",
+            "if text.startswith('technical'):\n        raise ValueError('x')\n    reply = litellm",
+        )
+        project = Project(self, agent=agent)
+        self.assertEqual(project.generate().returncode, 0)
+        done = project.bridge("baseline")
+        results = json.loads(
+            (project.runs / "baseline-results.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(
+            [r["n_failed"] for r in results["results"]], [1, 1], done.stdout
+        )
+        self.assertEqual([r["n_scored"] for r in results["results"]], [1, 1])
+
+    # P1d - the scan fails closed
+    def test_a_hazard_beyond_the_scan_cap_is_a_refusal(self) -> None:
+        project = Project(self, evaluator="import m1\n" + EVALUATOR)
+        for index in range(1, 27):
+            body = (
+                f"import m{index + 1}\n"
+                if index < 26
+                else "import subprocess\nsubprocess.run(['true'])\n"
+            )
+            (project.root / f"m{index}.py").write_text(body, encoding="utf-8")
+        self.assertTrue(any("was not inspected" in r for r in self.refused(project)))
+
+    def test_an_unparseable_imported_module_is_a_refusal_naming_it(self) -> None:
+        for role, key in (("evaluator", EVALUATOR), ("agent", AGENT)):
+            with self.subTest(role):
+                project = Project(
+                    self,
+                    **{role: "import helper\n" + key},
+                )
+                (project.root / "helper.py").write_text(
+                    "def broken(:\n", encoding="utf-8"
+                )
+                self.assertTrue(
+                    any(
+                        "helper.py" in r and "not inspected" in r
+                        for r in self.refused(project)
+                    )
+                )
+
+    # P2
+    def test_a_nested_run_directory_finds_the_project(self) -> None:
+        project = Project(self)
+        self.assertEqual(project.generate(project.root / "out" / "deep").returncode, 0)
+        done = project.bridge("baseline")
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+
+    def test_a_callable_in_a_package_keeps_its_relative_imports(self) -> None:
+        project = Project(self)
+        package = project.root / "pkg"
+        package.mkdir()
+        (package / "__init__.py").write_text("", encoding="utf-8")
+        (package / "prompts.py").write_text("SUFFIX = '?'\n", encoding="utf-8")
+        (package / "agent.py").write_text(
+            AGENT.replace("import litellm", "import litellm\nfrom . import prompts")
+            .replace('suffix=""', 'suffix=""')
+            .replace("text + suffix", "text + suffix + prompts.SUFFIX"),
+            encoding="utf-8",
+        )
+        project.config["agent"]["callable"] = "pkg.agent:answer"
+        self.assertEqual(project.generate().returncode, 0)
+        done = project.bridge("baseline")
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+
+    def test_a_hung_async_request_is_interrupted_and_stays_on_the_ledger(self) -> None:
+        import asyncio
+        import time
+
+        module = load_runtime("rt_hang")
+        module.MODEL_REQUEST_TIMEOUT_SECONDS = 0.2
+        module.UNTRACKED_CALL_COST_USD = 0.001
+        module.RUN_COST_CEILING_USD = 1.0
+        module.RUN_COST_REMAINING_USD = 1.0
+        seen = {}
+
+        async def hung(*a, **k):
+            seen["timeout"] = k.get("timeout")
+            await asyncio.sleep(30)
+
+        def sync(*a, **k):
+            seen["sync_timeout"] = k.get("timeout")
+            return type("R", (), {})()
+
+        fake = type(
+            "L", (), {"completion": sync, "acompletion": hung, "num_retries": 0}
+        )
+        module.litellm = fake
+        module.install_interceptors()
+        began = time.monotonic()
+        with self.assertRaises(asyncio.TimeoutError):
+            asyncio.run(fake.acompletion(model="m"))
+        self.assertLess(time.monotonic() - began, 10)
+        self.assertEqual(seen["timeout"], 0.2)
+        self.assertEqual(
+            len(module.RUN_SPEND_USD), 1
+        )  # billable until proven otherwise
+        fake.completion(model="m")
+        self.assertEqual(seen["sync_timeout"], 0.2)
+
+    def test_the_runtime_and_the_guide_account_for_the_same_calls_the_same_way(
+        self,
+    ) -> None:
+        """Behavioural parity: the guide's wrappers and the runtime's, run on one mocked script."""
+        import asyncio
+        import contextvars
+        import threading
+
+        fence = max(
+            re.findall(
+                r"```python\n(.*?)\n```",
+                SDK_EXECUTION.read_text(encoding="utf-8"),
+                re.S,
+            ),
+            key=len,
+        )
+        wanted = {
+            "provider_reported_cost",
+            "require_untruncated_completion",
+            "run_remaining_usd",
+            "worst_case_requests",
+            "tracking_stopped",
+            "reserve_call_spend",
+            "settle_call_spend",
+            "release_call_spend",
+            "ledgered",
+            "ledgered_async",
+            "record_call_spend",
+            "report_run_spend",
+        }
+        nodes = [
+            n
+            for n in ast.parse(fence).body
+            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and n.name in wanted
+            or isinstance(n, (ast.Assign, ast.AnnAssign))
+            and any(
+                isinstance(t, ast.Name)
+                and t.id
+                in {
+                    "PRICED_REQUEST_KNOBS",
+                    "UNPRICED_KNOB_MARKERS",
+                    "REJECTED_BEFORE_BILLING",
+                }
+                for t in (n.targets if isinstance(n, ast.Assign) else [n.target])
+            )
+        ]
+        guide = {
+            "__builtins__": __builtins__,
+            "math": __import__("math"),
+            "asyncio": asyncio,
+            "RUN_SPEND_USD": [],
+            "RUN_CALL_COSTS": [],
+            "REJECTED_CALLS": [],
+            "REFUSED_TRIAL_COSTS": [],
+            "TRACKED_RUN": None,
+            "LEDGER_LOCK": threading.Lock(),
+            "INSIDE_THE_DOOR": contextvars.ContextVar("g", default=False),
+            "UNTRACKED_CALL_COST_USD": 0.01,
+            "RUN_COST_CEILING_USD": 1.0,
+            "RUN_COST_SPENT_USD": 0.0,
+            "RUN_COST_REMAINING_USD": 1.0,
+            "litellm": type("L", (), {"num_retries": 0}),
+            "annotations": None,
+        }
+        exec(compile(ast.Module(body=nodes, type_ignores=[]), "guide", "exec"), guide)
+        runtime = load_runtime("rt_parity")
+        runtime.UNTRACKED_CALL_COST_USD = 0.01
+        runtime.RUN_COST_CEILING_USD = 1.0
+        runtime.RUN_COST_SPENT_USD = 0.0
+        runtime.RUN_COST_REMAINING_USD = 1.0
+        runtime.litellm = guide["litellm"]
+
+        class RateLimitError(Exception):
+            pass
+
+        def priced(cost):
+            return type("R", (), {"usage": {"cost": cost}, "_hidden_params": {}})()
+
+        def script(namespace):
+            wrapped = namespace["ledgered"]
+            outcomes = [
+                lambda **k: priced(0.03),
+                lambda **k: (_ for _ in ()).throw(RateLimitError("429")),
+                lambda **k: (_ for _ in ()).throw(RuntimeError("boom")),
+                lambda **k: type("R", (), {"usage": None, "_hidden_params": {}})(),
+            ]
+            for outcome in outcomes:
+                try:
+                    wrapped(outcome)(model="m", num_retries=2)
+                except Exception:
+                    pass
+            try:
+                wrapped(lambda **k: priced(0.01))(model="m", retry_policy={})
+            except RuntimeError:
+                pass
+            return (
+                [round(x, 6) for x in namespace["RUN_SPEND_USD"]],
+                namespace["RUN_CALL_COSTS"][:],
+                namespace["REJECTED_CALLS"][:],
+            )
+
+        expected = script(guide)
+        actual = script(vars(runtime))
+        self.assertEqual(actual, expected)
+        self.assertEqual(
+            len(expected[0]), 4
+        )  # the script really placed and refused calls
 
 
 class CalibrationContractTests(unittest.TestCase):
