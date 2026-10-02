@@ -596,7 +596,8 @@ def census() -> dict[str, object]:
 
 def _table(result: dict[str, object]) -> str:
     per_file = result["per_file"]
-    assert isinstance(per_file, dict)
+    if not isinstance(per_file, dict):
+        raise TypeError("per_file must be a dict")
     header = "| file | " + " | ".join(CLASSES) + " |"
     rule = "|---|" + "---:|" * len(CLASSES)
     lines = [header, rule]
@@ -604,7 +605,8 @@ def _table(result: dict[str, object]) -> str:
         cells = " | ".join(str(counts.get(label, 0)) for label in CLASSES)
         lines.append(f"| `{name}` | {cells} |")
     total = result["total"]
-    assert isinstance(total, dict)
+    if not isinstance(total, dict):
+        raise TypeError("total must be a dict")
     cells = " | ".join(f"**{total.get(label, 0)}**" for label in CLASSES)
     lines.append(f"| **TOTAL** | {cells} |")
     lines.append("")
@@ -625,7 +627,8 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if arguments.list:
         per_test = result["per_test"]
-        assert isinstance(per_test, dict)
+        if not isinstance(per_test, dict):
+            raise TypeError("per_test must be a dict")
         for key, label in sorted(per_test.items()):
             if label == arguments.list:
                 print(key)
@@ -633,7 +636,8 @@ def main(argv: list[str] | None = None) -> int:
     print(_table(result))
     if arguments.signals:
         signals = result["signals"]
-        assert isinstance(signals, dict)
+        if not isinstance(signals, dict):
+            raise TypeError("signals must be a dict")
         print()
         print("Signals are multi-label - most tests show more than one, and")
         print("the table above reports only the first that precedence reaches.")
