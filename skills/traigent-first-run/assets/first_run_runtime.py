@@ -540,19 +540,19 @@ def halting_async(place):
 
 
 def _clamp_timeout(kwargs: dict) -> None:
-    """Absent, None, zero, negative or above the configured limit all mean the limit."""
+    """Whatever the caller passed - absent, None, zero, negative, above the limit, or a client
+    timeout object such as httpx.Timeout(None) - becomes a number no larger than the limit.
+    """
     value = kwargs.get("timeout")
     numeric = isinstance(value, (int, float)) and not isinstance(value, bool)
-    if not numeric and value is not None:
-        return  # a client timeout object: the provider client enforces it
     if not numeric or not 0 < value <= MODEL_REQUEST_TIMEOUT_SECONDS:
         kwargs["timeout"] = MODEL_REQUEST_TIMEOUT_SECONDS
 
 
-def _deadline(kwargs: dict) -> float | None:
-    value = kwargs.get("timeout")
-    ok = isinstance(value, (int, float)) and not isinstance(value, bool) and value > 0
-    return float(value) if ok else None
+def _deadline(kwargs: dict) -> float:
+    """The overall wall-clock bound of one awaited call: the clamped timeout, never absent."""
+    _clamp_timeout(kwargs)
+    return float(kwargs["timeout"])
 
 
 def timed(place):

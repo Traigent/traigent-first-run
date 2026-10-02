@@ -1047,18 +1047,27 @@ class FirstRunAuditRoundFiveTests(unittest.TestCase):
         async def hung(**k):
             await asyncio.sleep(30)
 
-        async def run(wrap, **extra):
-            for place, kw in (
-                (ok, {}),
-                (limited, {}),
-                (hung, {"timeout": 0.1}),
-                (ok, {"num_retries": 50}),
+        async def run(wrap, ns):
+            """Four phases; each outcome is (kind, message), the last one a budget refusal."""
+            outcomes = []
+            for phase, (place, kw) in enumerate(
+                ((ok, {}), (limited, {}), (hung, {"timeout": 0.1}), (ok, {}))
             ):
+                if (
+                    phase == 3
+                ):  # less left than one conservative call: refuse before placing
+                    ns["RUN_COST_REMAINING_USD"] = sum(ns["RUN_SPEND_USD"]) + 0.005
                 try:
-                    await wrap(place)(model="m", **{**kw, **extra})
+                    await wrap(place)(model="m", **kw)
+                    outcomes.append(("returned", ""))
                 except BaseException as error:  # noqa: BLE001
-                    if isinstance(error, KeyboardInterrupt):
-                        raise
+                    kind = (
+                        "RuntimeError"
+                        if isinstance(error, RuntimeError)
+                        else type(error).__name__
+                    )
+                    outcomes.append((kind, str(error)))
+            return outcomes
 
         def view(ns):
             return (
@@ -1066,11 +1075,6 @@ class FirstRunAuditRoundFiveTests(unittest.TestCase):
                 ns["RUN_CALL_COSTS"][:],
                 ns["REJECTED_CALLS"][:],
             )
-
-        async def guide_timeout(
-            place,
-        ):  # the guide's call sites wrap in wait_for themselves
-            return place
 
         def guide_wrap(place):
             led = guide["ledgered_async"](place)
@@ -1080,34 +1084,69 @@ class FirstRunAuditRoundFiveTests(unittest.TestCase):
 
             return placed
 
-        asyncio.run(run(guide_wrap))
+        expected_outcomes = asyncio.run(run(guide_wrap, guide))
+        expected = view(guide)
+        self.assertEqual(
+            [kind for kind, _ in expected_outcomes],
+            ["returned", "RateLimitError", "TimeoutError", "RuntimeError"],
+        )
+        self.assertIn("was not placed", expected_outcomes[3][1])
+        self.assertEqual(len(expected[0]), 3)  # the refusal reserved nothing
         stacks = {
             "litellm": lambda p: runtime.halting_async(
                 runtime.timed_async(runtime.ledgered_async(p))
             ),
-            "openai": lambda p: (
+            "openai": lambda p: runtime.halting_async(
                 lambda **k: runtime.ledgered_openai_async(lambda self, **kk: p(**kk))(
                     object(), **k
                 )
             ),
         }
-        expected = view(guide)
-        self.assertEqual(
-            len(expected[0]), 3
-        )  # ok, limited(released), hung(held); refusal adds none
         for name, stack in stacks.items():
             with self.subTest(name):
                 for key in ("RUN_SPEND_USD", "RUN_CALL_COSTS", "REJECTED_CALLS"):
                     getattr(runtime, key).clear()
-                asyncio.run(run(stack))
-                got = view(vars(runtime))
-                if (
-                    name == "openai"
-                ):  # no num_retries knob there: the refusal step places a call
-                    got = tuple(
-                        part[: len(expected[0])] if name else part for part in got
-                    )
-                self.assertEqual(got, expected)
+                runtime.RUN_COST_REMAINING_USD = 0.2
+                outcomes = asyncio.run(run(stack, vars(runtime)))
+                self.assertEqual(outcomes, expected_outcomes)
+                self.assertEqual(view(vars(runtime)), expected)
+
+    def test_a_structured_timeout_object_cannot_disable_the_deadline(self) -> None:
+        import asyncio
+        import time
+
+        import httpx
+
+        isolate_openai(self)
+        module = load_runtime("rt_structured")
+        module.MODEL_REQUEST_TIMEOUT_SECONDS = 0.2
+        module.UNTRACKED_CALL_COST_USD = 0.001
+        module.RUN_COST_CEILING_USD = module.RUN_COST_REMAINING_USD = 1.0
+        seen = []
+
+        async def hung(*a, **k):
+            seen.append(k["timeout"])
+            await asyncio.sleep(30)
+
+        def sync(*a, **k):
+            seen.append(k["timeout"])
+            return type("R", (), {})()
+
+        fake = type(
+            "L", (), {"completion": sync, "acompletion": hung, "num_retries": 0}
+        )
+        module.litellm = fake
+        module.install_interceptors()
+        for value in (httpx.Timeout(None), httpx.Timeout(999.0, connect=5.0)):
+            began = time.monotonic()
+            with self.assertRaises(asyncio.TimeoutError):
+                asyncio.run(fake.acompletion(model="m", timeout=value))
+            self.assertLess(time.monotonic() - began, 10)
+            fake.completion(model="m", timeout=value)
+        self.assertEqual(set(seen), {0.2})
+        self.assertEqual(
+            len(module.RUN_SPEND_USD), 4
+        )  # every interrupted call is still ledgered
 
 
 class CalibrationContractTests(unittest.TestCase):
