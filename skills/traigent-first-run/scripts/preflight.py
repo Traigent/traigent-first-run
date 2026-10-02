@@ -1231,7 +1231,12 @@ def check_keys(
     file_values: dict[str, str | None],
     process_values: dict[str, str | None],
     env_path: Path,
+    *,
+    offline_inherited_key: bool | None = None,
 ) -> None:
+    # `offline_inherited_key` is None on a connected run. On an offline audit
+    # `run` has already removed the Traigent key and backend routes from all
+    # three views, so this check only reports whether one was inherited.
     # The two source views are required rather than defaulted, on the same
     # rule `_row_count` states in readiness.py: a default here would let a
     # caller that forgot to thread them through report "nothing is shadowed"
@@ -1277,7 +1282,20 @@ def check_keys(
         )
 
     traigent_key = env.get("TRAIGENT_API_KEY")
-    if not key_present(traigent_key):
+    if offline_inherited_key is not None:
+        emit(
+            "traigent-key",
+            PASS,
+            (
+                "offline audit: a TRAIGENT_API_KEY is inherited from the shell; this run "
+                "blanked it in its own process before any import, so preflight neither "
+                "uses nor sends it. Unset it for every later command too "
+                "(env -u TRAIGENT_API_KEY ...)"
+                if offline_inherited_key
+                else "offline audit: no Traigent key is used or needed"
+            ),
+        )
+    elif not key_present(traigent_key):
         emit(
             "traigent-key",
             PASS,
@@ -1462,10 +1480,38 @@ def check_cost_settings(
         )
 
 
-def check_models(models: list[str]) -> None:
+OFFLINE_BLOCKED_NAMES = ("TRAIGENT_API_KEY", *BACKEND_URL_NAMES)
+
+
+def enforce_offline_boundary() -> None:
+    """Make `--offline` a property of this process, not of what it prints.
+
+    Removing a name from the report views leaves it in `os.environ`, where the
+    optional imports below read it. LiteLLM also calls `load_dotenv()` at
+    import, which would restore any name a `.env` file holds. So each blocked
+    name is set to an empty string, which python-dotenv treats as occupied and
+    never overwrites, the backend-offline and local-pricing flags are forced
+    (not defaulted), and the baseline phase is pinned.
+    """
+    for name in OFFLINE_BLOCKED_NAMES:
+        os.environ[name] = ""
+    os.environ["TRAIGENT_OFFLINE_MODE"] = "true"
+    os.environ["LITELLM_LOCAL_MODEL_COST_MAP"] = "true"
+    os.environ["TRAIGENT_FIRST_RUN_PHASE"] = "baseline"
+
+
+def release_offline_names() -> None:
+    for name in OFFLINE_BLOCKED_NAMES:
+        os.environ.pop(name, None)
+
+
+def check_models(models: list[str], *, offline: bool = False) -> None:
     if not models:
         return
-    os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "true")
+    if offline:
+        enforce_offline_boundary()
+    else:
+        os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "true")
     try:
         import litellm
     except ImportError:
@@ -5476,6 +5522,14 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="report an absent SDK as deferred during the mandatory pre-install component pass",
     )
+    parser.add_argument(
+        "--offline",
+        action="store_true",
+        help=(
+            "offline audit: ignore any inherited TRAIGENT_API_KEY and Traigent "
+            "backend URL for this run, so nothing is reported as 'to be sent'"
+        ),
+    )
     parser.add_argument("--strict", action="store_true", help="exit 1 on warnings")
     return parser.parse_args()
 
@@ -5543,15 +5597,33 @@ def run() -> int:
     args = parse_args()
     env_path = Path(args.env)
     env, file_values, process_values = read_env(env_path)
+    offline_inherited_key: bool | None = None
+    if args.offline:
+        enforce_offline_boundary()
+        offline_inherited_key = any(
+            key_present(view.get("TRAIGENT_API_KEY"))
+            for view in (env, file_values, process_values)
+        )
+        for view in (env, file_values, process_values):
+            for name in ("TRAIGENT_API_KEY", *BACKEND_URL_NAMES):
+                view.pop(name, None)
     check_env_permissions(env_path)
     check_python()
     check_sdk(defer_missing=args.defer_missing_sdk)
     check_existing_traigent_use(Path(args.project_root))
-    check_keys(env, file_values, process_values, env_path)
+    check_keys(
+        env,
+        file_values,
+        process_values,
+        env_path,
+        offline_inherited_key=offline_inherited_key,
+    )
     check_cost_settings(env, file_values, process_values, env_path)
 
     models = [model.strip() for model in args.models.split(",") if model.strip()]
-    check_models(models)
+    check_models(models, offline=args.offline)
+    if args.offline:
+        release_offline_names()
 
     if args.dataset:
         check_dataset(

@@ -154,27 +154,28 @@ Only after the standard-library-only component checks:
 
 ### Finding a supported interpreter
 
-Use only locally installed Python 3.11-3.13 whose host installation is trusted. On POSIX, locate
-`python3`, then `python3.13`, `python3.12`, and `python3.11` with `command -v`; inspect the returned
-absolute paths before launching anything. Skip project-contained executables and unknown wrappers;
-a command name is not provenance. Probe the first known host installation, continuing through that
-list if its version is unsupported. This probe prints its absolute path and version:
+Use only locally installed Python 3.11-3.13 whose host installation is trusted. Inspect each
+candidate's fully resolved path before launching it. Skip project-contained executables and unknown
+wrappers, shims included (a command name is not provenance). On POSIX, run
+`python3 -I -S -B ".../scripts/find_python.py" --project-root "<project-root>"`. It launches only
+resolved paths in standard install locations, trying `python3`, `python3.13`, `python3.12`,
+`python3.11` on PATH, then an installed `uv` (`uv python find --offline --no-python-downloads`),
+credential-free (no keys). Anything else is listed under `not_launched`: show the path
+and launch it only on the user's approval. It prints JSON: `python`, the path, symlinks
+resolved (`environment_install.py` rejects symlinked ones), or an `error`.
+Manual probe:
 
 ```sh
 "<trusted-host-python>" -I -S -B -c 'import sys; ok = (3, 11) <= sys.version_info[:2] < (3, 14); print(sys.executable, sys.version.split()[0]) if ok else None; sys.exit(0 if ok else 1)'
 ```
 
-On Windows, list already installed paths with `py -0p`, then probe those executables directly in
-3.13, 3.12, 3.11 order with the same `-I -S -B -c` check. Never use a launcher mode that auto-installs.
-If the PATH/launcher search fails and `uv` is already present, use
-`uv python find --offline --no-python-downloads '>=3.11,<3.14'` and inspect then probe its returned
-host path too. The same known-host requirement applies to launcher and manager results.
-Do not install a manager or download a runtime during this lookup. If none works, report readiness
-as not yet measured and give one remedy: install Python 3.13 locally, then provide its executable
-path to resume. An unsupported project environment remains untouched and is named as such.
-Use the chosen executable's literal absolute path for later commands; do not depend on a shell
-variable surviving the next tool call. This chooses a runtime for creating a new project or
-throwaway environment, never an existing environment to install into.
+On Windows, list installed paths with `py -0p` and probe them directly, 3.13 then 3.12, 3.11, with the
+same `-I -S -B -c` check. Never use a launcher mode that auto-installs.
+Launcher and manager results need the same check. Install no manager, download no runtime.
+If none works, report readiness as not yet measured with one remedy: install Python 3.13 locally,
+then provide its path to resume. An unsupported project environment stays untouched and is named
+as such. Use the chosen executable's literal, absolute path in later commands, not a shell
+variable that changes. This picks a runtime for a new project or throwaway environment, never an existing one.
 
 ### Choosing the environment
 

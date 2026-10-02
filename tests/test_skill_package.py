@@ -3575,6 +3575,10 @@ class SkillPackageTests(unittest.TestCase):
                 # files while the instruction naming them was correct.
                 if target == "traigent-runs" or "traigent-runs/" in target:
                     continue
+                # The offline audit's report: written into the user's project
+                # root, so it exists only after a run makes it.
+                if target == "traigent-audit-report.md":
+                    continue
                 if any(
                     self._resolves(document, target, base, files)
                     for base, files in roots
@@ -25563,6 +25567,8 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
                 "calibrate_evaluator.py",
                 "environment_install.py",
                 "find_environments.py",
+                "find_python.py",
+                "generate_adapter.py",
                 "preflight.py",
                 "readiness.py",
                 "validate_run_log.py",

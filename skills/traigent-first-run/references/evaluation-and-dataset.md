@@ -74,8 +74,9 @@ passes the flag to one script and not to the other, and both are correct.
 
 When building an evaluator:
 
-- Preserve an existing evaluator unchanged. Expose its grading logic through a thin generated
-  calibration adapter under `traigent-runs/` with the skill-owned keyword contract
+- Preserve an existing evaluator unchanged. Expose its grading logic through a generated
+  `adapter_bridge.py:score` under `traigent-runs/` (`scripts/generate_adapter.py`; hand-write one
+  only if generation refuses) with the skill-owned keyword contract
   `(output, expected, input_data, metadata)`. The adapter does not replace the evaluator or change
   its provenance.
 - Keep calibration and SDK registration as separate boundaries. The calibration adapter above is
@@ -362,10 +363,9 @@ other than `code` or `code-sql`, carries fewer of them - the destination rule ab
 section below says why, and the script says on stderr when it expected a probe and ran none.
 
 The calibration adapter must accept the keyword arguments `output`, `expected`, `input_data`, and
-`metadata`. It may translate them into an existing evaluator's unchanged local convention. The
-adapter can import project modules because the import root defaults to the directory where the
-command is launched. When launching elsewhere, pass `--import-root /path/to/project` explicitly;
-the adapter's own directory remains available for sibling imports.
+`metadata`, and may translate them into an existing evaluator's unchanged local convention. The
+import root defaults to the launch directory; elsewhere pass `--import-root /path/to/project`. The
+adapter's own directory stays available for sibling imports.
 
 The exact thresholds depend on the metric, but reject all of these:
 
@@ -424,11 +424,10 @@ So the answers that already exist are put through the step that already exists, 
 there is evidence a model sends. `--reply-transform FILE.py:FUNCTION` names that step - one
 positional argument, the model's reply, returning what the evaluator is handed - and `--task-kind`
 arms the probes, which send the case's own `good` and `equivalent_good` answers wrapped in a
-markdown code fence. SKILL section 4 owns when each is passed. Neither buys a provider call, and
-neither probe is an invented fixture: the content is the author's own answer, already scored, so the
-only thing that changed is the wrapper. Reaching the function imports its whole module, which is why
-that module falls under the same inspection the scorer does, and why a module needing an uninstalled
-dependency waits for the environment rather than hurrying it.
+markdown code fence. SKILL section 4 owns when each is passed. Neither buys a provider call or invents a
+fixture: the content is the author's own answer, already scored; only the wrapper changed. Reaching
+the function imports its whole module, so that module falls under the same inspection the scorer
+does, and one needing an uninstalled dependency waits for the environment.
 
 **Send only the shape the run has evidence for.** A bare answer is not that shape. A fence-bound
 agent - one whose prompt tells the model to answer inside a ```sql block - correctly returns nothing

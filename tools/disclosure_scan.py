@@ -203,6 +203,7 @@ max_escape_normalization_passes = 8
 # different claims. The corpus assertion below rejects stale entries.
 non_repository_hyphenated_terms = {
     "traigent-runs",
+    "traigent-audit-report.md",
     "traigent-offline-evidence",
     "traigent-contract",
     "traigent-key",

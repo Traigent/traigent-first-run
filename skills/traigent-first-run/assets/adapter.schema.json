@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Traigent first-run adapter configuration",
+  "description": "Names the customer's own dataset fields, agent, evaluator and search space. scripts/generate_adapter.py validates it and writes a thin bridge that imports the callables unchanged. Agent tokens: \"$input\", \"$metadata\", \"$id\", \"$config.<knob>\", {\"value\": <literal>}; never the expected answer or the raw row. Evaluator tokens: \"$output\", \"$expected\", \"$input\", \"$metadata\". Nothing in this file is inferred: detection only suggests.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "dataset", "agent", "evaluator", "baseline"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "dataset": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "input", "expected"],
+      "properties": {
+        "path": {"type": "string", "description": "Tuning rows, .jsonl or .json, inside the project."},
+        "holdout_path": {"type": "string", "description": "Held-out rows. Recorded only; the baseline never opens it."},
+        "input": {"type": "string", "description": "Dotted field path of the agent input, e.g. input.text."},
+        "expected": {"type": "string", "description": "Dotted field path of the expected answer."},
+        "id": {"type": "string"},
+        "metadata": {"type": "string"},
+        "split": {"type": "string", "description": "Dotted field path of a split name; holdout-named rows are excluded from the baseline."}
+      }
+    },
+    "agent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["callable", "args"],
+      "properties": {
+        "callable": {"type": "string", "description": "module:function or path/file.py:function, a top-level function."},
+        "args": {"type": "object", "description": "Keyword argument name -> token."},
+        "output_path": {"type": "string", "description": "Dotted path into the returned dict or object, when the answer is nested."},
+        "calls_per_row": {"type": "integer", "minimum": 0, "default": 1}
+      }
+    },
+    "evaluator": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["callable", "args"],
+      "properties": {
+        "callable": {"type": "string"},
+        "args": {"type": "object", "description": "Keyword argument name -> $output | $expected | $input | $metadata | {\"value\": literal}."},
+        "calls_per_row": {"type": "integer", "minimum": 0, "default": 0, "description": "Provider calls the evaluator places per row (an LLM judge declares 1)."}
+      }
+    },
+    "baseline": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["config", "space"],
+      "properties": {
+        "config": {"type": "object", "description": "The agent's current configuration; every value must be in the space."},
+        "space": {"type": "object", "description": "Knob -> list of distinct candidate values."},
+        "enhanced_space": {"type": "object", "description": "Optional wider space for the later search; must contain every baseline value."},
+        "wired": {"type": "array", "items": {"type": "string"}, "description": "Knobs the agent consumes. Default: every knob mapped as $config.<knob>."},
+        "max_trials": {"type": "integer", "minimum": 1}
+      }
+    }
+  }
+}
