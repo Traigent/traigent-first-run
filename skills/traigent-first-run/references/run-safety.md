@@ -117,7 +117,7 @@ Only after the standard-library-only component checks:
    below. Into the throwaway environment: the exact pins in
    `assets/requirements-first-run.txt`, never the project's own declarations, which the run never
    edits. Never use an unversioned `pip install traigent`. On the throwaway route,
-   say first: `Installing traigent==0.27.0, litellm==1.93.0 and python-dotenv==1.2.2 into
+   say first: `Installing traigent==0.27.0, litellm==1.93.2 and python-dotenv==1.2.2 into
    <absolute path>/.venv-traigent - a package fetch only: no provider or Traigent calls, and none
    of your project's code runs.` Then proceed: the notice is not a question, and the
    install-approval policy clause in the authorization table still governs. Keep this unattended

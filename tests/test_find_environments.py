@@ -223,7 +223,7 @@ class CommandLineTests(unittest.TestCase):
                 self.assertEqual(records["litellm"]["action"], "change")
                 self.assertEqual(
                     records["litellm"]["line"],
-                    "this will change litellm 1.80.0 to 1.93.0",
+                    "this will change litellm 1.80.0 to 1.93.2",
                 )
                 self.assertEqual(records["traigent"]["action"], "keep-newer")
                 self.assertEqual(
