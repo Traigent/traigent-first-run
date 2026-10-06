@@ -342,7 +342,7 @@ this repository do not relicense the SDK; evaluate the SDK under the terms below
 
 ## SDK licensing
 
-The pinned requirements install `traigent==0.27.0` beside `litellm==1.93.0` and
+The pinned requirements install `traigent==0.27.0` beside `litellm==1.93.2` and
 `python-dotenv==1.2.2`. The Traigent SDK is offered under the
 [GNU Affero General Public License v3.0 only](https://github.com/Traigent/Traigent/blob/v0.27.0/LICENSE)
 (`AGPL-3.0-only`) or, under a separate written agreement, a
