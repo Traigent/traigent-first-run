@@ -126,18 +126,31 @@ class OpeningBootstrapTests(unittest.TestCase):
     def test_isolated_bootstrap_excludes_user_site_and_site_startup(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
+            # A normal venv disables user-site even without -I/-S. Use a
+            # controlled interpreter that enables it so the positive control
+            # still proves what isolation excludes when this suite runs in CI.
+            environment = root / "user-site-enabled"
+            venv.EnvBuilder(with_pip=False, system_site_packages=True).create(
+                environment
+            )
+            interpreter = environment / (
+                "Scripts/python.exe" if os.name == "nt" else "bin/python"
+            )
             probe = subprocess.run(
                 [
-                    sys.executable,
+                    str(interpreter),
                     "-c",
-                    "import site; print(site.getusersitepackages())",
+                    "import json, site; print(json.dumps([site.ENABLE_USER_SITE, site.getusersitepackages()]))",
                 ],
                 env={"PYTHONUSERBASE": str(root)},
                 text=True,
                 capture_output=True,
                 check=True,
+                timeout=15,
             )
-            site = Path(probe.stdout.strip())
+            enabled, user_site = json.loads(probe.stdout)
+            self.assertTrue(enabled, "the positive control must enable user-site")
+            site = Path(user_site)
             installed_sdk_fixture(site)
             marker = root / "startup-ran"
             (site / "usercustomize.py").write_text(
@@ -155,7 +168,7 @@ class OpeningBootstrapTests(unittest.TestCase):
             env = {"PYTHONUSERBASE": str(root)}
             # Positive control: the fixture reaches the ordinary interpreter.
             ordinary = subprocess.run(
-                [sys.executable, *command],
+                [str(interpreter), *command],
                 env=env,
                 text=True,
                 capture_output=True,
@@ -173,7 +186,7 @@ class OpeningBootstrapTests(unittest.TestCase):
             )
             marker.unlink()
             isolated = subprocess.run(
-                [sys.executable, "-I", "-S", *command],
+                [str(interpreter), "-I", "-S", *command],
                 env=env,
                 text=True,
                 capture_output=True,

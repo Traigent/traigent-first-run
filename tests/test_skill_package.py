@@ -2865,46 +2865,63 @@ def litellm_predispatch_resolvers(literal: str) -> set[tuple[str, str]]:
 
 
 def litellm_dispatch_literals(route: str) -> set[str]:
-    """Every `custom_llm_provider` the client resolves a route's models to.
+    """Every real dispatch literal for the installed client's bundled models.
 
-    Asked of the client rather than compared between two literals typed here.
-    `get_llm_provider` is the function that decides `custom_llm_provider`, and
-    `models_by_provider` is the client's own list of what it files under each
-    route, so every model on a route goes back through the resolver and the
-    answers are the literals a call on that route can arrive as. No model name
-    is written down: an inventory that named its own models would be the same
-    author agreeing with himself one file further along.
-
-    A model already carrying its route as a prefix keeps it rather than
-    gaining a second one, because `mistral/mistral/codestral-2405` is not a
-    model the client can route and its refusal would say nothing about names.
+    The client's default model inventory follows a mutable remote cost map.
+    A fresh child forces the versioned bundled catalog before importing the
+    client, avoiding both network dependence and already-cached imports.
+    Its own models_by_provider and get_llm_provider cover every model, including
+    model-dependent aliases; no model name or family union is restated here.
+    The inventory is cached once per test process and returned as a fresh set.
     """
-    # A proxy setting makes the client answer `litellm_proxy` for every model,
-    # which would fail this for all eight routes with advice that is wrong -
-    # the answer is not an alias, it is the proxy speaking instead of the
-    # resolver. Cleared here so the sweep asks the resolver.
-    import os as _os
+    inventory = getattr(litellm_dispatch_literals, "_bundled_literals", None)
+    if inventory is None:
+        script = """
+import json, socket, sys
 
-    _saved = _os.environ.pop("USE_LITELLM_PROXY", None)
-    try:
-        import litellm
+def deny_network(*args, **kwargs):
+    raise AssertionError("bundled dispatch inventory attempted network access")
 
-        _saved_flag = getattr(litellm, "use_litellm_proxy", None)
-        litellm.use_litellm_proxy = False
-        try:
-            literals: set[str] = set()
-            for model in litellm.models_by_provider.get(route, ()):
-                bare = (
-                    model.split("/", 1)[1] if model.startswith(f"{route}/") else model
-                )
-                literals.add(litellm.get_llm_provider(model=f"{route}/{bare}")[1])
-            return literals
-        finally:
-            if _saved_flag is not None:
-                litellm.use_litellm_proxy = _saved_flag
-    finally:
-        if _saved is not None:
-            _os.environ["USE_LITELLM_PROXY"] = _saved
+socket.socket.connect = deny_network
+socket.socket.connect_ex = deny_network
+socket.create_connection = deny_network
+socket.getaddrinfo = deny_network
+import litellm
+litellm.use_litellm_proxy = False
+inventory = {}
+for route in json.loads(sys.argv[1]):
+    literals = set()
+    for model in litellm.models_by_provider.get(route, ()):
+        bare = model.split("/", 1)[1] if model.startswith(f"{route}/") else model
+        literals.add(litellm.get_llm_provider(model=f"{route}/{bare}")[1])
+    inventory[route] = sorted(literals)
+print(json.dumps(inventory, sort_keys=True))
+"""
+        # Pass only process/temporary-directory settings, never credentials or
+        # a proxy override. The guard makes catalog or resolver egress fail.
+        environment = {
+            key: value
+            for key, value in os.environ.items()
+            if key in {"PATH", "SYSTEMROOT", "WINDIR", "TEMP", "TMP", "TMPDIR"}
+        }
+        environment["LITELLM_LOCAL_MODEL_COST_MAP"] = "true"
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-I",
+                "-c",
+                script,
+                json.dumps(sorted(LITELLM_CREDENTIAL_SOURCES)),
+            ],
+            env=environment,
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=60,
+        )
+        inventory = json.loads(completed.stdout)
+        litellm_dispatch_literals._bundled_literals = inventory
+    return set(inventory[route])
 
 
 # Where the installed litellm resolves each route's credential.
@@ -3494,11 +3511,11 @@ class SkillPackageTests(unittest.TestCase):
             .split()
         )
         for phrase in (
-            "canonical form reaches surface",
-            "aliases resolved back to the columns they stand for",
+            "canonical form resolves a markdown code fence",
+            "aliases back to their columns",
             "does not reach a different join or subquery shape",
-            "record a differently-shaped equivalent as a known coverage gap "
-            "rather than widening the scorer until it passes",
+            "record differently-shaped equivalents as coverage gaps rather than "
+            "widening the scorer until it passes",
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(
@@ -10659,14 +10676,11 @@ class SkillPackageTests(unittest.TestCase):
         )
         for phrase in (
             "the authored probes are the verdict",
-            "the only thing `passed`, the exit code, and the readiness score are "
-            "built from",
-            "they only ever raise a question, never a verdict",
-            "only the author knows which this task is",
-            "a probe an author can revise until it passes is weak evidence about a "
-            "repair the author just wrote",
-            "the half of the evidence not confirming its own fix",
-            "read the first as the verdict and the second as the questions",
+            "declared thresholds determine `passed`, the exit code, and readiness",
+            "a pass covers those cases, not unseen task behavior",
+            "raise questions, never a verdict",
+            "task evidence settles whether order or refusal matters",
+            "probes come from the expected answer and cannot be rewritten to pass a repair",
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, text)
@@ -24686,6 +24700,24 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
 
     # (decision, phrases asserting one answer, phrases asserting the opposite)
     CONTRADICTIONS = (
+        (
+            "whether preserving reference rows establishes any-of grading",
+            ("keeping reference rows does not provide any-of scoring",),
+            (
+                "dropping one narrows what counts as correct",
+                "keeping reference rows provides any-of scoring",
+            ),
+        ),
+        (
+            "whether SQL structural match establishes execution correctness",
+            (
+                "sorting each select set can accept wrong column alignment across compound arms",
+            ),
+            (
+                "a structural match proves execution correctness",
+                "structural agreement guarantees equivalent query results",
+            ),
+        ),
         (
             "whether source-read build observations enter the score denominator",
             (
