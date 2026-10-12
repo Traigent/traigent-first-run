@@ -543,6 +543,11 @@ except OSError:
 os.environ["TRAIGENT_EXPERIMENT_NAME"] = "first-run standard sweep"
 require_current_route_credential()
 assert_wiring_still_proven()
+baseline_tuning_fingerprint = TUNING_DATASET_INITIAL_FINGERPRINT
+if tuning_dataset_fingerprint(TUNING_DATASET) != baseline_tuning_fingerprint:
+    raise SystemExit(
+        "Tuning data changed after the proof; rerun the proof before the baseline."
+    )
 baseline_results = agent.optimize_sync(
     algorithm="grid",
     configuration_space=BASELINE_SPACE,
@@ -552,11 +557,16 @@ baseline_results = agent.optimize_sync(
 )
 assert baseline_results.trials, "baseline did not execute"
 assert baseline_results.best_config is not None, "no baseline winner selected"
+if tuning_dataset_fingerprint(TUNING_DATASET) != baseline_tuning_fingerprint:
+    raise SystemExit(
+        "Tuning data changed during the baseline; no connected comparison can use it."
+    )
 baseline_transfer = baseline_transfer_payload(
     baseline_results,
     BASELINE_CONFIG,
     config_space_document(BASELINE_SPACE),
     len(PROBE_INPUTS),
+    baseline_tuning_fingerprint,
     PRIMARY_OBJECTIVE.name,
     OBJECTIVE_SIGNATURE,
 )
@@ -565,6 +575,12 @@ transfer_path.write_text(
     encoding="utf-8",
 )
 ```
+
+The local transfer records trial configurations, finite numeric per-row measures, and a SHA-256
+fingerprint of the tuning file so the connected process can reject changed evaluation material.
+It omits row inputs, expected answers, outputs, and arbitrary SDK metadata. Config values and the
+fingerprint can still be sensitive: keep this artifact under the ignored `traigent-runs/` directory
+and do not commit or share it. The wrapper does not send the transfer to Traigent.
 
 Pass `algorithm="grid"` explicitly for this baseline sweep. **This applies to the local baseline
 only; the connected search under "Broader optimization" must stay on `auto`.** The two runs are
@@ -709,11 +725,16 @@ connected search with the same function, tuning dataset, and evaluator:
 if FIRST_RUN_PHASE != "connected":
     raise SystemExit("connected phase file requires TRAIGENT_FIRST_RUN_PHASE=connected")
 # Reject an absent or stale baseline record before this process starts a paid search.
+if tuning_dataset_fingerprint(TUNING_DATASET) != TUNING_DATASET_INITIAL_FINGERPRINT:
+    raise SystemExit(
+        "Tuning data changed after the proof; do not compare it with the baseline."
+    )
 baseline_trials, baseline_incumbent = load_baseline_transfer(
     BASELINE_TRANSFER_FILE,
     BASELINE_CONFIG,
     config_space_document(BASELINE_SPACE),
     len(PROBE_INPUTS),
+    TUNING_DATASET_INITIAL_FINGERPRINT,
     PRIMARY_OBJECTIVE.name,
     OBJECTIVE_SIGNATURE,
 )
@@ -735,6 +756,10 @@ except OSError:
     raise SystemExit(
         "Managed optimization did not start: the stale sanitized error artifact could not be removed."
     ) from None
+if tuning_dataset_fingerprint(TUNING_DATASET) != TUNING_DATASET_INITIAL_FINGERPRINT:
+    raise SystemExit(
+        "Tuning data changed before the connected search; do not compare it with the baseline."
+    )
 try:
     assert_wiring_still_proven()
     optimized_results = agent.optimize_sync(
@@ -789,6 +814,11 @@ if tracking_loss:
         "spend this process printed, and the baseline still standing."
     )
 Path(CONFIG_SPACE_DOCUMENT).write_text(config_space_evidence)
+if tuning_dataset_fingerprint(TUNING_DATASET) != TUNING_DATASET_INITIAL_FINGERPRINT:
+    raise SystemExit(
+        "The connected search completed, but tuning data changed during it. "
+        f"Its results remain in {OPTIMIZED_RESULTS}; do not compare them with the baseline."
+    )
 frontier_trials = frontier_at_or_above(
     [*baseline_trials, *optimized_results.trials],
     PRIMARY_OBJECTIVE.name,

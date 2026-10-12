@@ -608,8 +608,10 @@ class FirstRunAuditTests(unittest.TestCase):
             calls = [
                 lambda: fake.completion(model="m"),
                 lambda: asyncio.run(fake.acompletion(model="m")),
-                lambda: Completions.create(object(), model="m"),
-                lambda: asyncio.run(AsyncCompletions.create(object(), model="m")),
+                lambda: chat_completions.Completions.create(object(), model="m"),
+                lambda: asyncio.run(
+                    chat_completions.AsyncCompletions.create(object(), model="m")
+                ),
             ]
             for call in calls:
                 with self.assertRaises(module._ProbeStop):

@@ -5,6 +5,7 @@ import sys
 sys.dont_write_bytecode = True  # nothing imported below writes __pycache__
 import atexit
 import contextvars
+import hashlib
 import json
 import math
 import os
@@ -439,12 +440,21 @@ def holdout_agent_input(input_data):
     )
 
 
+def tuning_dataset_fingerprint(path: str) -> str:
+    """Fingerprint the exact tuning file without copying its rows into the transfer."""
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
 # Before approval, locally prove the exact tuning inputs both paid phases use.
-# Keep them only in memory; do not write, print, hash, or log their contents.
+# Keep row contents in memory; only the file fingerprint crosses the phase boundary.
+_tuning_fingerprint_before_load = tuning_dataset_fingerprint(TUNING_DATASET)
 _tuning_for_probe = traigent.Dataset.from_jsonl(TUNING_DATASET)
 PROBE_INPUTS = tuple(
     holdout_agent_input(example.input_data) for example in _tuning_for_probe.examples
 )
+TUNING_DATASET_INITIAL_FINGERPRINT = tuning_dataset_fingerprint(TUNING_DATASET)
+if TUNING_DATASET_INITIAL_FINGERPRINT != _tuning_fingerprint_before_load:
+    raise RuntimeError("The tuning dataset changed while it was being inspected")
 
 
 def configuration_count(space: dict[str, list]) -> int:
@@ -465,11 +475,28 @@ def _canonical_json(value: object) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False)
 
 
+def trial_example_results(metadata: object) -> object:
+    """Read either observed SDK metadata shape, refusing conflicting copies."""
+    if not isinstance(metadata, dict):
+        return None
+    direct = metadata.get("example_results")
+    nested_metadata = metadata.get("metadata")
+    nested = (
+        nested_metadata.get("example_results")
+        if isinstance(nested_metadata, dict)
+        else None
+    )
+    if direct is not None and nested is not None and direct != nested:
+        raise ValueError("trial contains conflicting example-result metadata")
+    return direct if direct is not None else nested
+
+
 def baseline_transfer_payload(
     results,
     baseline_config: dict,
     baseline_space: dict,
     expected_rows: int,
+    tuning_fingerprint: str,
     metric_name: str,
     objective_signature: list[dict[str, object]],
 ) -> dict:
@@ -505,7 +532,7 @@ def baseline_transfer_payload(
             getattr(trial, "status", None), "value", getattr(trial, "status", None)
         )
         metadata = getattr(trial, "metadata", None)
-        rows = metadata.get("example_results") if isinstance(metadata, dict) else None
+        rows = trial_example_results(metadata)
         safe_rows = []
         if isinstance(rows, list):
             for row in rows:
@@ -551,11 +578,12 @@ def baseline_transfer_payload(
             "baseline transfer incumbent has no complete tuning measurement"
         )
     payload = {
-        "format_version": 1,
+        "format_version": 2,
         "baseline_config": dict(baseline_config),
         "baseline_space": baseline_space,
         "incumbent_config": dict(selected),
         "tuning_rows": expected_rows,
+        "tuning_fingerprint": tuning_fingerprint,
         "metric_name": metric_name,
         "objective_signature": objective_signature,
         "incumbent_index": incumbent_index,
@@ -570,10 +598,11 @@ def load_baseline_transfer(
     baseline_config: dict,
     baseline_space: dict,
     expected_rows: int,
+    tuning_fingerprint: str,
     metric_name: str,
     objective_signature: list[dict[str, object]],
 ) -> tuple[list, object]:
-    """Validate and restore the content-free baseline record before paid search."""
+    """Validate and restore the local baseline record before paid search."""
     from types import SimpleNamespace
 
     remedy = (
@@ -584,12 +613,13 @@ def load_baseline_transfer(
         if not isinstance(payload, dict):
             raise ValueError("baseline transfer must contain a JSON object")
         if (
-            payload.get("format_version") != 1
+            payload.get("format_version") != 2
             or _canonical_json(payload.get("baseline_config"))
             != _canonical_json(baseline_config)
             or _canonical_json(payload.get("baseline_space"))
             != _canonical_json(baseline_space)
             or payload.get("tuning_rows") != expected_rows
+            or payload.get("tuning_fingerprint") != tuning_fingerprint
             or payload.get("metric_name") != metric_name
             or _canonical_json(payload.get("objective_signature"))
             != _canonical_json(objective_signature)

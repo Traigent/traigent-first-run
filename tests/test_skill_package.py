@@ -17096,14 +17096,16 @@ class SkillPackageTests(unittest.TestCase):
             )
             self.assertRegex(result.stdout, r"(?m)^PROBE_VERDICTS=\{")
 
-    def test_baseline_transfer_is_content_free_and_refuses_mismatched_evidence(
+    def test_baseline_transfer_omits_rows_and_refuses_mismatched_evidence(
         self,
     ) -> None:
-        """Only numeric per-row evidence crosses phases; stale records stop before search."""
+        """Transfer evidence omits dataset rows and rejects stale phase records."""
         wrapper_path = SKILL_ROOT / "assets" / "run_wrapper.py"
         tree = ast.parse(wrapper_path.read_text())
         wanted = {
             "_canonical_json",
+            "tuning_dataset_fingerprint",
+            "trial_example_results",
             "baseline_transfer_payload",
             "load_baseline_transfer",
         }
@@ -17112,7 +17114,12 @@ class SkillPackageTests(unittest.TestCase):
             for node in tree.body
             if isinstance(node, ast.FunctionDef) and node.name in wanted
         ]
-        namespace: dict[str, Any] = {"json": json, "math": math, "Path": Path}
+        namespace: dict[str, Any] = {
+            "hashlib": hashlib,
+            "json": json,
+            "math": math,
+            "Path": Path,
+        }
         exec(  # noqa: S102
             compile(
                 ast.fix_missing_locations(ast.Module(body=functions, type_ignores=[])),
@@ -17141,15 +17148,26 @@ class SkillPackageTests(unittest.TestCase):
         )
         result = SimpleNamespace(best_config=config, trials=[trial])
         space = {"knobs": {"model": ["provider/model-a"]}}
+        with tempfile.TemporaryDirectory() as directory:
+            tuning_data = Path(directory) / "tuning.jsonl"
+            tuning_data.write_text('{"input":"one","expected":"yes"}\n')
+            fingerprint = namespace["tuning_dataset_fingerprint"](str(tuning_data))
+            tuning_data.write_text('{"input":"two","expected":"yes"}\n')
+            changed_fingerprint = namespace["tuning_dataset_fingerprint"](
+                str(tuning_data)
+            )
+            self.assertNotEqual(fingerprint, changed_fingerprint)
         payload = namespace["baseline_transfer_payload"](
             result,
             config,
             space,
             2,
+            fingerprint,
             "accuracy",
             [{"name": "accuracy", "orientation": "maximize", "weight": 1.0}],
         )
         encoded = json.dumps(payload, sort_keys=True)
+        self.assertEqual(payload["format_version"], 2)
         for secret in (
             "PRIVATE_INPUT_SENTINEL",
             "PRIVATE_EXPECTED_SENTINEL",
@@ -17157,6 +17175,36 @@ class SkillPackageTests(unittest.TestCase):
             "PRIVATE_METADATA_SENTINEL",
         ):
             self.assertNotIn(secret, encoded)
+        self.assertEqual(payload["tuning_fingerprint"], fingerprint)
+        nested_trial = SimpleNamespace(
+            config=config,
+            status=SimpleNamespace(value="completed"),
+            metrics={"accuracy": 0.75, "cost": 0.02},
+            metadata={"metadata": {"example_results": rows}},
+        )
+        nested_payload = namespace["baseline_transfer_payload"](
+            SimpleNamespace(best_config=config, trials=[nested_trial]),
+            config,
+            space,
+            2,
+            fingerprint,
+            "accuracy",
+            [{"name": "accuracy", "orientation": "maximize", "weight": 1.0}],
+        )
+        self.assertEqual(
+            nested_payload["trials"][0]["example_results"][0]["metrics"]["accuracy"],
+            row_metrics[0],
+        )
+        self.assertEqual(
+            namespace["trial_example_results"](
+                {"example_results": rows, "metadata": {"example_results": rows}}
+            ),
+            rows,
+        )
+        with self.assertRaisesRegex(ValueError, "conflicting example-result metadata"):
+            namespace["trial_example_results"](
+                {"example_results": rows, "metadata": {"example_results": []}}
+            )
         with tempfile.TemporaryDirectory() as directory:
             transfer = Path(directory) / "baseline-transfer.json"
             transfer.write_text(json.dumps(payload))
@@ -17165,6 +17213,7 @@ class SkillPackageTests(unittest.TestCase):
                 config,
                 space,
                 2,
+                fingerprint,
                 "accuracy",
                 [{"name": "accuracy", "orientation": "maximize", "weight": 1.0}],
             )
@@ -17178,9 +17227,15 @@ class SkillPackageTests(unittest.TestCase):
                 row_metrics,
             )
             for bad_args in (
-                ({"model": "provider/model-b", "temperature": 0.0}, space, 2),
-                (config, {"knobs": {"model": ["provider/model-b"]}}, 2),
-                (config, space, 3),
+                (
+                    {"model": "provider/model-b", "temperature": 0.0},
+                    space,
+                    2,
+                    fingerprint,
+                ),
+                (config, {"knobs": {"model": ["provider/model-b"]}}, 2, fingerprint),
+                (config, space, 3, fingerprint),
+                (config, space, 2, changed_fingerprint),
             ):
                 with self.subTest(mismatch=bad_args):
                     with self.assertRaises(SystemExit):
@@ -17202,6 +17257,7 @@ class SkillPackageTests(unittest.TestCase):
                     config,
                     space,
                     2,
+                    fingerprint,
                     "accuracy",
                     [{"name": "accuracy", "orientation": "minimize", "weight": 1.0}],
                 )
@@ -17212,6 +17268,7 @@ class SkillPackageTests(unittest.TestCase):
                     config,
                     space,
                     2,
+                    fingerprint,
                     "accuracy",
                     [{"name": "accuracy", "orientation": "maximize", "weight": 1.0}],
                 )
@@ -19949,7 +20006,9 @@ class SkillPackageTests(unittest.TestCase):
         baseline_incumbent = SimpleNamespace(config=producer["BASELINE_CONFIG"])
         frontier_calls: list[tuple[tuple, dict]] = []
 
-        def run(document: Path, outcome) -> None:
+        def run(document: Path, outcome, fingerprint_values=None) -> None:
+            fingerprints = iter(fingerprint_values or ["a" * 64])
+
             def optimize_sync(**kwargs):
                 order.append("search")
                 searched.append(kwargs)
@@ -19981,6 +20040,11 @@ class SkillPackageTests(unittest.TestCase):
                     "RUN_DIR": document.parent,
                     "BASELINE_TRANSFER_FILE": str(
                         document.parent / "baseline-transfer.json"
+                    ),
+                    "TUNING_DATASET": str(document.parent / "tuning.jsonl"),
+                    "TUNING_DATASET_INITIAL_FINGERPRINT": "a" * 64,
+                    "tuning_dataset_fingerprint": lambda _path: next(
+                        fingerprints, "a" * 64
                     ),
                     "PROBE_INPUTS": ("first tuning input",),
                     "load_baseline_transfer": read_transfer,
@@ -20045,6 +20109,20 @@ class SkillPackageTests(unittest.TestCase):
                 frontier_calls[-1][0][0],
                 returned_trials[-1],
             )
+
+            # A dataset edit during the connected search leaves its paid
+            # result available but prevents a cross-phase frontier claim.
+            prior_frontier_count = len(frontier_calls)
+            with self.assertRaises(SystemExit) as changed_during_search:
+                run(
+                    document,
+                    lambda: SimpleNamespace(trials=[{"trial": 4}], cloud_url=LINK),
+                    ["a" * 64, "a" * 64, "b" * 64],
+                )
+            self.assertIn("results remain in", str(changed_during_search.exception))
+            self.assertIn("do not compare", str(changed_during_search.exception))
+            self.assertEqual(len(frontier_calls), prior_frontier_count)
+            self.assertTrue(document.exists())
 
             # A retry: an earlier run's document is already on disk and this
             # search raises. Write-after-return alone leaves the stale file as
@@ -20418,7 +20496,7 @@ class SkillPackageTests(unittest.TestCase):
             len(selected), 19, "the template no longer defines the knobs it wires"
         )
         self.assertIn(
-            "assert_wiring_still_proven()\nbaseline_results",
+            "assert_wiring_still_proven()\nbaseline_tuning_fingerprint",
             sdk_execution_reference_text(),
         )
         self.assertIn(
