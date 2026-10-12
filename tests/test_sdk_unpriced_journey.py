@@ -16,6 +16,7 @@ from test_offline_socket_contract import _credential_stripped_environment
 ROOT = Path(__file__).resolve().parents[1]
 PROBE = ROOT / "tests" / "fixtures" / "sdk_unpriced_journey_probe.py"
 GUIDE = ROOT / "skills" / "traigent-first-run" / "references" / "sdk-execution.md"
+WRAPPER = ROOT / "skills" / "traigent-first-run" / "assets" / "run_wrapper.py"
 
 
 def run_probe(guide_source: str | None = None) -> subprocess.CompletedProcess[str]:
@@ -43,7 +44,7 @@ def run_probe(guide_source: str | None = None) -> subprocess.CompletedProcess[st
         return subprocess.run(
             [sys.executable, str(PROBE)],
             input=(
-                GUIDE.read_text(encoding="utf-8")
+                WRAPPER.read_text(encoding="utf-8")
                 if guide_source is None
                 else guide_source
             ),

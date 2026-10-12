@@ -32,24 +32,24 @@ Do not use exact-string comparison where multiple semantically correct answers a
 not use an LLM judge when deterministic product logic can express correctness. Do not optimize a
 metric merely because it is easy to implement.
 
-Canonical form reaches surface: a markdown code fence, case, whitespace, a trailing semicolon,
-paren padding, and aliases resolved back to the columns they stand for. The fence is named first
-because it is the one an author does not picture: a chat model wraps code in one unless it is told
-otherwise, and sometimes when it is. It does not reach a different join or subquery shape
-that returns the same rows. Write `equivalent_good` as a surface variant the canonical form
-resolves, and record a differently-shaped equivalent as a known coverage gap rather than widening
-the scorer until it passes.
+Canonical form resolves a markdown code fence, case, whitespace, a trailing semicolon,
+paren padding, and aliases back to their columns. It does not reach a different join or subquery shape
+that returns the same rows. Write `equivalent_good` as a surface variant it resolves;
+record differently-shaped equivalents as coverage gaps rather than widening the scorer until it passes.
 
-Structural comparison is bounded differently, and it is the row to take when the answer is one
-`SELECT`. It compares the select set, predicates, grouping, ordering, aggregates and nesting of
-two parses, so reordered conjuncts and renamed aliases match while a differently shaped subquery
-does not. Take the row above instead for code that is not a single `SELECT`: this comparator reads
-that as nothing and scores it 0 on both sides. It resolves no identifiers against a schema,
-because it opens no catalog: `amount` and `orders.amount` are two names to it, `SELECT *` is no
-column list, and `USING (id)` is not the `ON` it stands for. Write `equivalent_good` as a surface,
-conjunct-order or alias variant, never as a reordered `ORDER BY`, whose order it reads as meaning;
-record a schema-dependent equivalent as a coverage gap. It imports only the standard library and
-reaches no engine, so it calibrates at the opening gate.
+Structural comparison reads a single `SELECT`, including compound queries, comparing select sets,
+predicates, grouping, ordering, aggregates and nesting. Reordered conjuncts and renamed aliases match;
+non-SELECT code scores 0, so use the composite row instead. Without a catalog, `amount` and
+`orders.amount` differ, `SELECT *` is no column list, and `USING (id)` is not `ON`. Use a surface,
+conjunct-order or alias `equivalent_good`, never a reordered `ORDER BY`; record schema-dependent
+equivalents as coverage gaps. It imports only the standard library and reaches no engine,
+so it calibrates at the opening gate.
+
+Report a **structural-match score**, not execution correctness. Sorting each select set can accept
+wrong column alignment across compound arms: `SELECT 1, 2 UNION SELECT 3, 4` matches
+`SELECT 1, 2 UNION SELECT 4, 3` although result rows differ. When compounds occur in the task,
+include this kind of semantic negative in calibration. If it accepts a wrong answer for the criterion,
+use "Quality diagnosis and repair choice"; structural agreement can itself be the criterion.
 
 Its task fit is read from the evaluator file rather than from the declared word, so the form is
 the contract. The score settles it only for an evaluator whose body is the `del input_data,
@@ -111,8 +111,9 @@ When building an evaluator:
 - Where the customer named nothing and the evaluator settles nothing, state the default: accuracy,
   with cost when measurable. Say explicitly when the operation measures only the primary criterion;
   the customer must be able to distinguish a default from a discovered objective.
-- When the scorer reads row metadata, prove the SDK delivers it: the 0.27.0 loader nests an
-  explicit `metadata` object one level down, so `metadata["db_id"]` reads `None`. Read both shapes.
+- When the scorer reads row metadata, support both dataset shapes: older SDK releases nested the
+  explicit `metadata` object one level down, while the pinned release exposes it directly. Read
+  both shapes so customers already on a supported release get the same row fields.
 
 ## Mandatory calibration
 
@@ -380,17 +381,16 @@ The exact thresholds depend on the metric, but reject all of these:
 - Parse/evaluator exceptions converted silently to an ordinary zero. Nothing enforces this one:
   `exception_probe_advisory` reports it and leaves PASS alone - reject it yourself.
 
-Calibration runs two sets of probes, and they answer different questions. The authored probes are
-the verdict: the answers the author wrote, scored against the thresholds above, and the only thing
-`passed`, the exit code, and the readiness score are built from. The supplemental probes ask what
-those four cannot - a wrong answer built by reordering the expected one, and malformed or
-exception-raising outputs - and they only ever raise a question, never a verdict, because a
-permutation scoring full marks is correct for a genuinely order-free task and only the author knows
-which this task is. That difference is also why they stay separate. A probe an author can revise
-until it passes is weak evidence about a repair the author just wrote; these are generated from the
-expected answer and cannot be revised, so in the re-calibration a repair requires they are the half
-of the evidence not confirming its own fix. Read the first as the verdict and the second as the
-questions.
+Calibration runs two sets of probes. The authored probes are the verdict: their scores against
+declared thresholds determine `passed`, the exit code, and readiness. A pass covers those cases,
+not unseen task behavior. Supplemental permutations and malformed or exception-raising outputs
+raise questions, never a verdict: task evidence settles whether order or refusal matters. These
+probes come from the expected answer and cannot be rewritten to pass a repair.
+
+Readiness's probe-spread is the widest observed gap, not consistent separation or reliability.
+Reproducibility profiles are conservative method defaults, not measured repeatability; a local
+deterministic composite need not vary or make paid calls. Record those limits, explaining them
+only if they affect the next action.
 
 For deterministic calibration, the helper runs authored probes in a credential-stripped child.
 Each deterministic supplemental attempt gets a fresh child, also stripped of credentials, isolating
@@ -1214,36 +1214,45 @@ Six rules make the subset honest:
 5. **Name the bound to the user.** Report the actual selected counts beside the full count:
    "9 tuning questions in 18 rows, and 10 held-out rows, of your 4,812 for this first run".
    Price those actual rows and never let a bounded run read as though the whole dataset was evaluated.
-6. **Draw different questions without cutting accepted answers.** Where equal inputs also carry
-   the same expected answer, the second is a provider call in every trial and no comparison at all,
-   and it is the one thing this draw may drop. Where expected answers differ, retain the complete
-   accepted-answer group when selecting that question: every one of its rows is drawn and paid for.
-   Dropping one narrows what counts as correct, so a configuration that answered acceptably then
-   scores exactly like one that answered wrongly. Choose fewer questions when their complete groups
-   would exceed the row limit; never truncate a group. For example, two rows per question permit
-   at most nine tuning questions. If no group fits, remove exact duplicates in the working copy and
-   recheck; if none still fits, report that this material cannot support the bounded comparison.
+6. **Draw different questions without cutting accepted answers.** Equal inputs with different
+   expected answers may mean valid alternatives, conflicting labels, or different scoring metadata.
+   Use task evidence in the semantic-coverage review to settle the policy. For genuine alternatives,
+   verify in task calibration that each supplied valid alternative passes against the reference and
+   metadata contexts used in the run, not just against itself.
+   Keeping reference rows does not provide any-of scoring; a single-reference check can reject one.
+   Reference answers in metadata follow sdk-execution.md's input/evaluation boundary. Use "Quality
+   diagnosis and repair choice" for that mismatch before
+   spending, or the existing product-grading question for unresolved policy; those routes preserve
+   the real scorer and labels until authorized.
+
+   Where equal inputs also carry the same expected answer and scoring metadata, the second is a
+   provider call in every trial and no comparison at all,
+   and it is the one thing this draw may drop. For genuine alternatives, retain the complete
+   accepted-answer group when selecting that question:
+   Each row adds calls and per-row weight; preservation is a sampling rule, not group aggregation.
+   Choose fewer questions when their complete groups would exceed the row limit; never truncate a group.
+   Two rows per question permit at most nine tuning questions. If no group fits, remove exact
+   duplicates in the working copy and recheck; if none fits, report that this material cannot
+   support the bounded comparison.
 
    Two inputs are the same question only when they are **equal**, and this rule is never applied to
-   a looser measure. `normalized_identity` in `scripts/preflight.py` discards operators, so `x > 5`
-   and `x < 5` can collide: it is useful for a possible-leak warning, not for cutting paid examples.
-   Count only **among the rows this run can score**: labelled rows, or present rows under a method
-   that needs no reference. The `dataset-first-run-rows` check reports the eligible tuning input
-   count in `first_run_distinct_rows` and its population in `first_run_distinct_scope`.
-   `first_run_questions` and `first_run_rows_fewest` / `first_run_rows_most` bound possible draws;
-   they do not select IDs or replace counting the actual files.
+   a looser measure. `normalized_identity` discards operators: `x > 5` and `x < 5` can collide.
+   It warns of possible leakage, never selects paid rows. Count only **among the rows this run can
+   score**:
+   labelled rows, or present rows for a reference-free method. `dataset-first-run-rows` reports
+   `first_run_distinct_rows` and `first_run_distinct_scope`; `first_run_questions` and
+   `first_run_rows_fewest` / `first_run_rows_most` bound draws, never select IDs.
 
-   Keep questions distinct **across the whole draw**: choosing one under another band's tag adds
-   no coverage. For tuning, aim for **4 easy, 5 medium, 5 hard and 4 very-hard rows**; complete
-   groups may change that distribution but must fit the total tuning limit. Fill a missing band
-   from other eligible groups in the same source split, without inventing difficulty labels.
-   Report the actual spread and counts; the full-dataset readiness score still describes the full dataset.
-   These identity and complete-group rules also apply when selecting held-out rows; that section
-   owns their composition and the treatment of repeats.
+   Keep questions distinct **across the whole draw**, including across bands. For tuning, aim for
+   **4 easy, 5 medium, 5 hard and 4 very-hard rows**; complete groups must fit the total row limit.
+   Fill a missing band from other eligible groups in the same source split, without inventing
+   difficulty labels.
+   Report actual spread and counts; readiness still scores the full dataset. These identity and
+   complete-group rules apply to held-out selection too; that section owns composition and repeats.
 
-   Reworded inputs remain different to this rule: a serial number or `(variant N)` suffix defeats
-   exact matching. When `dataset-near-duplicates` flags them, disclose that the selected rows may
-   repeat each other in wording; do not treat an exact-match count as proof of varied scenarios.
+   Rewordings and `(variant N)` suffixes defeat exact matching. When `dataset-near-duplicates`
+   flags them, disclose possible repetition; exact-match counts do not prove varied scenarios.
+
 
 When difficulty tags are absent, use "Choosing rows when difficulty is not labelled" above.
 The customer's full dataset stays intact for their continuing work beyond this walkthrough.

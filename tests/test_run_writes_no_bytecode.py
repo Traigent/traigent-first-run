@@ -51,6 +51,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 REFERENCES = ROOT / "skills" / "traigent-first-run" / "references"
+ASSETS = ROOT / "skills" / "traigent-first-run" / "assets"
 REQUIREMENTS = (
     ROOT / "skills" / "traigent-first-run" / "assets" / "requirements-first-run.txt"
 )
@@ -132,13 +133,18 @@ FREE_MOCK_CHECK_BODY = textwrap.dedent("""\
 
 def fence_holding(document: Path, marker: str) -> str:
     """The one python fence in `document` that contains `marker`, dedented."""
-    fences = [
-        textwrap.dedent(block)
-        for block in re.findall(
-            r"```python\n(.*?)\n\s*```", document.read_text(encoding="utf-8"), re.DOTALL
-        )
-        if marker in block
-    ]
+    sources = [ASSETS / "run_wrapper.py"] if document.name == "sdk-execution.md" else []
+    fences = []
+    for block in [
+        *(source.read_text(encoding="utf-8") for source in sources),
+        *re.findall(
+            r"```python\n(.*?)\n\s*```",
+            document.read_text(encoding="utf-8"),
+            re.DOTALL,
+        ),
+    ]:
+        if marker in block:
+            fences.append(textwrap.dedent(block))
     if len(fences) != 1:
         raise AssertionError(
             f"{document.name} has {len(fences)} python fences containing "
