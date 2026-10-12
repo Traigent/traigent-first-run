@@ -21,6 +21,7 @@ from test_offline_socket_contract import _credential_stripped_environment
 
 ROOT = Path(__file__).resolve().parents[1]
 GUIDE = ROOT / "skills/traigent-first-run/references/sdk-execution.md"
+WRAPPER = ROOT / "skills/traigent-first-run/assets/run_wrapper.py"
 
 
 def probe() -> dict:
@@ -34,7 +35,10 @@ def probe() -> dict:
 
     functions = {
         node.name: node
-        for source in re.findall(r"```python\n(.*?)\n```", GUIDE.read_text(), re.S)
+        for source in [
+            WRAPPER.read_text(),
+            *re.findall(r"```python\n(.*?)\n```", GUIDE.read_text(), re.S),
+        ]
         for node in ast.parse(source).body
         if isinstance(node, ast.FunctionDef)
     }

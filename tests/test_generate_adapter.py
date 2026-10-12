@@ -27,7 +27,21 @@ SCRIPTS = SKILL / "scripts"
 GENERATOR = SCRIPTS / "generate_adapter.py"
 RUNTIME = SKILL / "assets" / "first_run_runtime.py"
 SDK_EXECUTION = SKILL / "references" / "sdk-execution.md"
+SDK_WRAPPER = SKILL / "assets" / "run_wrapper.py"
 CALIBRATE = SCRIPTS / "calibrate_evaluator.py"
+
+
+def sdk_python_sources() -> list[str]:
+    """Return the shipped wrapper followed by the reference's short examples."""
+    return [
+        SDK_WRAPPER.read_text(encoding="utf-8"),
+        *re.findall(
+            r"```python\n(.*?)\n```",
+            SDK_EXECUTION.read_text(encoding="utf-8"),
+            re.S,
+        ),
+    ]
+
 
 SPEC = importlib.util.spec_from_file_location("first_run_generate_adapter", GENERATOR)
 MODULE = importlib.util.module_from_spec(SPEC)
@@ -381,9 +395,7 @@ class SharedRuntimeTests(unittest.TestCase):
         return found
 
     def test_the_ledger_is_a_syntax_tree_copy_of_the_wrappers(self) -> None:
-        fence = re.findall(
-            r"```python\n(.*?)\n```", SDK_EXECUTION.read_text(encoding="utf-8"), re.S
-        )
+        fence = sdk_python_sources()
         template = self.bindings(ast.parse(max(fence, key=len)))
         runtime = self.bindings(ast.parse(RUNTIME.read_text(encoding="utf-8")))
         shared = [
@@ -573,8 +585,8 @@ class FirstRunAuditTests(unittest.TestCase):
         self.assertIn("this process placed 4 provider call(s)", done.stdout)
 
     def test_the_probe_places_no_call_on_any_sync_or_async_transport(self) -> None:
-        from unittest import mock
         import asyncio
+        from unittest import mock
 
         module = load_runtime("rt_probe")
         placed: list[str] = []
@@ -586,11 +598,11 @@ class FirstRunAuditTests(unittest.TestCase):
             placed.append("async")
 
         fake = type("L", (), {"completion": sync_call, "acompletion": async_call})
-        from openai.resources.chat.completions import AsyncCompletions, Completions
+        from openai.resources.chat import completions as chat_completions
 
-        with mock.patch.object(Completions, "create", sync_call), mock.patch.object(
-            AsyncCompletions, "create", async_call
-        ):
+        with mock.patch.object(
+            chat_completions.Completions, "create", sync_call
+        ), mock.patch.object(chat_completions.AsyncCompletions, "create", async_call):
             module.litellm = fake
             module.install_recorders()
             calls = [
@@ -773,11 +785,7 @@ class FirstRunAuditTests(unittest.TestCase):
         import threading
 
         fence = max(
-            re.findall(
-                r"```python\n(.*?)\n```",
-                SDK_EXECUTION.read_text(encoding="utf-8"),
-                re.S,
-            ),
+            sdk_python_sources(),
             key=len,
         )
         wanted = {
@@ -964,11 +972,7 @@ class FirstRunAuditRoundFiveTests(unittest.TestCase):
         import threading
 
         fence = max(
-            re.findall(
-                r"```python\n(.*?)\n```",
-                SDK_EXECUTION.read_text(encoding="utf-8"),
-                re.S,
-            ),
+            sdk_python_sources(),
             key=len,
         )
         wanted = {
