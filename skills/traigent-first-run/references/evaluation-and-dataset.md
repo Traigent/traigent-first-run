@@ -111,8 +111,9 @@ When building an evaluator:
 - Where the customer named nothing and the evaluator settles nothing, state the default: accuracy,
   with cost when measurable. Say explicitly when the operation measures only the primary criterion;
   the customer must be able to distinguish a default from a discovered objective.
-- When the scorer reads row metadata, prove the SDK delivers it: the 0.27.0 loader nests an
-  explicit `metadata` object one level down, so `metadata["db_id"]` reads `None`. Read both shapes.
+- When the scorer reads row metadata, support both dataset shapes: older SDK releases nested the
+  explicit `metadata` object one level down, while the pinned release exposes it directly. Read
+  both shapes so customers already on a supported release get the same row fields.
 
 ## Mandatory calibration
 

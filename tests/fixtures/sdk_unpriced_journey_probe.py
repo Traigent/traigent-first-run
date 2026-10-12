@@ -24,11 +24,11 @@ from offline_socket_probe import ATTEMPTS, install_guard
 
 
 def guide_nodes(text: str) -> tuple[dict[str, ast.FunctionDef], ast.Assign, ast.Assign]:
-    nodes = [
-        node
-        for fence in re.findall(r"```python\n(.*?)\n```", text, re.DOTALL)
-        for node in ast.parse(fence).body
-    ]
+    fences = re.findall(r"```python\n(.*?)\n```", text, re.DOTALL)
+    # The wrapper now ships as an executable asset; retain support for the
+    # prior fenced reference input used by mutation probes.
+    sources = fences or [text]
+    nodes = [node for source in sources for node in ast.parse(source).body]
     functions = {node.name: node for node in nodes if isinstance(node, ast.FunctionDef)}
     assignments = {
         target.id: node
@@ -86,6 +86,7 @@ def compile_journey(
 
     namespace = {
         "__name__": "sdk_unpriced_guide_fixture",
+        "FIRST_RUN_PHASE": "connected",
         "traigent": traigent,
         "EvaluationOptions": EvaluationOptions,
         "ObjectiveDefinition": ObjectiveDefinition,

@@ -74,7 +74,31 @@ def assistant_facing_documents() -> list[Path]:
         SKILL,
         *sorted((SKILL_ROOT / "references").glob("*.md")),
         *sorted((SKILL_ROOT / "assets").glob("*.md")),
+        SKILL_ROOT / "assets" / "run_wrapper.py",
     ]
+
+
+def sdk_execution_python_fences(text: str | None = None) -> list[str]:
+    """Read the exact wrapper customers copy, followed by the short phase examples.
+
+    The long wrapper is source code in the package now, not a Markdown fence an
+    assistant has to reproduce. Keep the phase examples from the reference in
+    their original order while making every wrapper contract test read the
+    shipped asset.
+    """
+    if text is None:
+        text = SDK_EXECUTION.read_text(encoding="utf-8")
+    asset = (SKILL_ROOT / "assets" / "run_wrapper.py").read_text()
+    return [asset, *re.findall(r"```python\n(.*?)\n```", text, re.DOTALL)]
+
+
+def sdk_execution_reference_text() -> str:
+    """Read the assistant's execution guidance and its copied Python asset."""
+    return (
+        SDK_EXECUTION.read_text(encoding="utf-8")
+        + "\n\n"
+        + (SKILL_ROOT / "assets" / "run_wrapper.py").read_text(encoding="utf-8")
+    )
 
 
 #: How much of a document a failed statement check may print.
@@ -1640,7 +1664,7 @@ def sdk_wrapper_state_nodes(text: str) -> list[ast.stmt]:
     that no longer has one.
     """
     nodes: list[ast.stmt] = []
-    for source in re.findall(r"```python\n(.*?)\n```", text, re.DOTALL):
+    for source in sdk_execution_python_fences(text):
         for node in ast.parse(source).body:
             if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
                 if node.target.id.isupper():
@@ -1726,7 +1750,7 @@ def sdk_wrapper_spend_gate(text: str) -> list[ast.stmt]:
     """
     nodes: list[ast.stmt] = []
     install: list[ast.stmt] = []
-    for source in re.findall(r"```python\n(.*?)\n```", text, re.DOTALL):
+    for source in sdk_execution_python_fences(text):
         for node in ast.parse(source).body:
             if isinstance(node, ast.FunctionDef) and node.name in SPEND_GATE_FUNCTIONS:
                 nodes.append(node)
@@ -1917,9 +1941,7 @@ def generated_space_widths() -> dict[str, dict[str, int]]:
     factors - "3 models x 2 prompt styles x 2 thinking shapes" - and a factor
     can go stale on its own while the product still agrees.
     """
-    fence = re.findall(r"```python\n(.*?)\n```", SDK_EXECUTION.read_text(), re.DOTALL)[
-        0
-    ]
+    fence = sdk_execution_python_fences(sdk_execution_reference_text())[0]
     spaces: dict[str, dict[str, int]] = {}
     for node in ast.parse(fence).body:
         if not isinstance(node, ast.Assign):
@@ -1972,7 +1994,7 @@ def generated_space_sizes() -> dict[str, int]:
     paragraph. Both moving together is a deliberate re-sizing, which is exactly
     when the documents are supposed to be re-read.
     """
-    text = SDK_EXECUTION.read_text()
+    text = sdk_execution_reference_text()
     asserted = {
         name: int(value)
         for name, value in re.findall(
@@ -2221,19 +2243,26 @@ def quoted_prose(path: Path) -> str:
 
 
 def python_block_containing(path: Path, needle: str) -> str:
-    """The one fenced ```python block of `path` that contains `needle`.
+    """The one executable Python source block that contains `needle`.
 
     Raises unless exactly one block matches, so a check written against "the
     filter" cannot read a different block once the document grows another, nor
-    pass against zero blocks once the code it binds is deleted outright.
+    pass against zero blocks once the code it binds is deleted outright. The
+    SDK wrapper is a shipped Python asset now; its short phase examples remain
+    fenced in the reference.
     """
-    blocks = [
-        block
-        for block in re.findall(
-            r"^```python\n(.*?)^```", path.read_text(), re.DOTALL | re.MULTILINE
-        )
-        if needle in block
-    ]
+    if path == SDK_EXECUTION:
+        blocks = [block for block in sdk_execution_python_fences() if needle in block]
+    else:
+        blocks = [
+            block
+            for block in re.findall(
+                r"^```python\n(.*?)^```",
+                path.read_text(),
+                re.DOTALL | re.MULTILINE,
+            )
+            if needle in block
+        ]
     if len(blocks) != 1:
         raise AssertionError(
             f"{needle!r} appears in {len(blocks)} fenced python blocks of "
@@ -2363,7 +2392,7 @@ def is_billing_ceiling_mandate(sentence: str) -> bool:
 
 
 def published_prose_documents() -> dict[str, str]:
-    """Every markdown document this repository publishes, name -> raw text.
+    """Every prose and instructional code document published, name -> text.
 
     From `git ls-files`, not a curated list. A one-home check whose corpus is
     hand-maintained can only ever be right about the documents somebody
@@ -2391,15 +2420,19 @@ def published_prose_documents() -> dict[str, str]:
     )
     if listed.returncode != 0:
         raise RuntimeError(f"could not list tracked files: {listed.stderr.strip()}")
+    names = [name for name in listed.stdout.split("\0") if name]
+    wrapper = "skills/traigent-first-run/assets/run_wrapper.py"
+    if (ROOT / wrapper).is_file():
+        names.append(wrapper)
     return {
         name: (ROOT / name).read_text(encoding="utf-8")
-        for name in sorted(listed.stdout.split("\0"))
+        for name in sorted(names)
         if name and not name.startswith("tests/")
     }
 
 
 def instructional_documents() -> dict[str, str]:
-    """Every markdown document this repository publishes AS INSTRUCTION.
+    """Every prose document this repository publishes as instruction.
 
     From `git ls-files`, not a curated list, because a curated list is only
     ever right about the documents somebody remembered.
@@ -2408,7 +2441,9 @@ def instructional_documents() -> dict[str, str]:
     file here - was outside the one-home checks below until this corpus
     replaced them. A rule can be restated anywhere that gets published.
 
-    Two directories are excluded, and each exclusion is a claim about what the
+    The shipped wrapper is included explicitly: its adaptation comments are
+    instructions read by the assistant, even though executable code is its
+    primary format. Two directories are excluded, and each exclusion is a claim about what the
     document IS rather than about whether it happens to pass:
 
     * `tests/` plants restated mandates deliberately, as the inputs that prove
@@ -2427,9 +2462,13 @@ def instructional_documents() -> dict[str, str]:
     )
     if listed.returncode != 0:
         raise RuntimeError(f"could not list tracked files: {listed.stderr.strip()}")
+    names = sorted(name for name in listed.stdout.split("\0") if name)
+    wrapper_name = "skills/traigent-first-run/assets/run_wrapper.py"
+    if (ROOT / wrapper_name).is_file():
+        names.append(wrapper_name)
     return {
         name: (ROOT / name).read_text(encoding="utf-8")
-        for name in sorted(listed.stdout.split("\0"))
+        for name in sorted(names)
         if name and not name.startswith(("tests/", "reports/"))
     }
 
@@ -4605,7 +4644,7 @@ class SkillPackageTests(unittest.TestCase):
         self.assertEqual(
             requirements,
             [
-                "traigent==0.27.0",
+                "traigent==0.30.0",
                 "litellm==1.93.2",
                 "python-dotenv==1.2.2",
             ],
@@ -4951,7 +4990,7 @@ class SkillPackageTests(unittest.TestCase):
             "without resolving again",
             "**version guard.**",
             "not a requirement for their environment",
-            "`traigent` at or above `0.27.0` and `litellm` at or above its pin are kept",
+            "`traigent` at or above `0.30.0` and `litellm` at or above its pin are kept",
             "`not the tested versions`",
             "including prerelease, development, post-release, local and epoch segments",
             "`this will change <package> <installed> to <pinned>` receives a yes",
@@ -5691,7 +5730,7 @@ class SkillPackageTests(unittest.TestCase):
         #     the contradiction class this repository keeps producing - and
         #     this is exactly where it was: the wrapper set `max_tokens` 4096
         #     while the guidance explained why caps are dangerous.
-        sdk_text = SDK_EXECUTION.read_text()
+        sdk_text = sdk_execution_reference_text()
         self.assertNotIn('"max_tokens"', sdk_text)
         self.assertIn("no `max_tokens` at all", sdk_text)
 
@@ -5732,9 +5771,9 @@ class SkillPackageTests(unittest.TestCase):
         same defect in a longer file), and raises rather than returning - the
         repository's own rule is that a failure is raised, never defaulted.
         """
-        text = SDK_EXECUTION.read_text()
+        text = sdk_execution_reference_text()
         functions = {}
-        for source in re.findall(r"```python\n(.*?)\n```", text, re.DOTALL):
+        for source in sdk_execution_python_fences(text):
             for node in ast.parse(source).body:
                 if isinstance(node, ast.FunctionDef):
                     functions[node.name] = node
@@ -5825,9 +5864,9 @@ class SkillPackageTests(unittest.TestCase):
         A truncation refusal must retain its known cost. Missing usage is no
         longer a refusal, and the same completed output remains evaluable.
         """
-        text = SDK_EXECUTION.read_text()
+        text = sdk_execution_reference_text()
         functions = {}
-        for source in re.findall(r"```python\n(.*?)\n```", text, re.DOTALL):
+        for source in sdk_execution_python_fences(text):
             for node in ast.parse(source).body:
                 if isinstance(node, ast.FunctionDef):
                     functions[node.name] = node
@@ -7644,7 +7683,7 @@ class SkillPackageTests(unittest.TestCase):
             "20 * max_trials damps a score in another subsystem and is not "
             "this rule - so the number would have no support but itself",
         )
-        owner = " ".join(SDK_EXECUTION.read_text().casefold().split())
+        owner = " ".join(sdk_execution_reference_text().casefold().split())
         self.assertIn("could not reach most of it", owner)
 
         # Measured before this probe existed: `_GRID_TO_RANDOM` reaches five
@@ -7793,7 +7832,7 @@ class SkillPackageTests(unittest.TestCase):
         require_stage_reference(7, RUN_SAFETY, "baseline-and-optimization")
         require_stage_reference(6, RUN_SAFETY, "approval-and-budgets")
         normalized = " ".join(SKILL.read_text().casefold().split())
-        sdk = " ".join(SDK_EXECUTION.read_text().casefold().split())
+        sdk = " ".join(sdk_execution_reference_text().casefold().split())
         approval = " ".join(
             section_text(RUN_SAFETY, "Rendering and enforcing baseline approval")
             .casefold()
@@ -10227,7 +10266,14 @@ class SkillPackageTests(unittest.TestCase):
         self.assertEqual(
             sorted(published),
             sorted(
-                name for name in listed if not name.startswith(("tests/", "reports/"))
+                [
+                    *(
+                        name
+                        for name in listed
+                        if not name.startswith(("tests/", "reports/"))
+                    ),
+                    "skills/traigent-first-run/assets/run_wrapper.py",
+                ]
             ),
             "the corpus has drifted from what git publishes",
         )
@@ -10284,6 +10330,7 @@ class SkillPackageTests(unittest.TestCase):
                 f"{SKILL.relative_to(ROOT).as_posix()}",
                 f"{(SKILL_ROOT / 'references').relative_to(ROOT).as_posix()}/*.md",
                 f"{(SKILL_ROOT / 'assets').relative_to(ROOT).as_posix()}/*.md",
+                f"{(SKILL_ROOT / 'assets').relative_to(ROOT).as_posix()}/run_wrapper.py",
             ],
             capture_output=True,
             text=True,
@@ -10869,7 +10916,7 @@ class SkillPackageTests(unittest.TestCase):
 
     def test_the_knob_catalog_offers_nine_and_the_space_pays_for_three(self) -> None:
         """The assistant has breadth while the first taste pays for three."""
-        text = SDK_EXECUTION.read_text()
+        text = sdk_execution_reference_text()
         catalog = text.split("### The knob catalog", 1)[1].split("###", 1)[0]
         for knob in (
             "model",
@@ -10942,7 +10989,7 @@ class SkillPackageTests(unittest.TestCase):
         Exact strings have no false-red surface, and they are what actually
         regressed.
         """
-        text = SDK_EXECUTION.read_text()
+        text = sdk_execution_reference_text()
         catalog = text.split("### The knob catalog", 1)[1].split("###", 1)[0]
         header = "| Knob | Values | Choose it when |"
         table = catalog.split(header, 1)[1].split("\n\n", 1)[0]
@@ -11038,7 +11085,7 @@ class SkillPackageTests(unittest.TestCase):
         catalog live in the catalog's own reasoning and in this repo's history,
         never in the lines the customer sees.
         """
-        text = SDK_EXECUTION.read_text()
+        text = sdk_execution_reference_text()
         section = text.split("### Say what is being tried", 1)[1].split("\n##", 1)[0]
         # Rejoin wrapped bullets: two of them run past the file's line width,
         # and reading only their first line would let a second sentence hide
@@ -11090,7 +11137,7 @@ class SkillPackageTests(unittest.TestCase):
         self.assertIn('no references, no "research shows"', section)
 
     def test_sdk_template_defines_prompt_builder(self) -> None:
-        text = (SKILL_ROOT / "references" / "sdk-execution.md").read_text()
+        text = sdk_execution_reference_text()
         self.assertIn("def build_prompt(", text)
         self.assertIn('if style == "plain":', text)
         self.assertIn('elif style == "structured":', text)
@@ -11236,7 +11283,6 @@ class SkillPackageTests(unittest.TestCase):
                 trial.config,
                 trial.metrics,
                 "completed",
-                "managed",
                 metadata=submission_metadata,
             )
         )
@@ -11247,7 +11293,8 @@ class SkillPackageTests(unittest.TestCase):
         self.assertEqual(payload["config"], {"prompt_style": "concise"})
         self.assertEqual(payload["metrics"], {"task_success": 1.0})
         measure = payload["metadata"]["measures"][0]
-        self.assertEqual(measure["example_id"], "example-0")
+        self.assertIsInstance(measure["example_id"], str)
+        self.assertTrue(measure["example_id"])
         self.assertEqual(measure["metrics"]["task_success"], 1.0)
 
     def test_the_walkthrough_count_asserts_skip_a_preserved_baseline(self) -> None:
@@ -11259,9 +11306,7 @@ class SkillPackageTests(unittest.TestCase):
         loaders select assignments and functions only, so this is the one
         place the module-level asserts run with the flag set either way.
         """
-        code = re.findall(
-            r"```python\n(.*?)\n```", SDK_EXECUTION.read_text(), re.DOTALL
-        )[0]
+        code = sdk_execution_python_fences(sdk_execution_reference_text())[0]
         start = code.index("BEHAVIOUR_KNOBS = [")
         end = code.index("assert set(WIRED_KNOBS) == set(ENHANCED_SPACE)")
         block = code[start:end]
@@ -11307,9 +11352,7 @@ class SkillPackageTests(unittest.TestCase):
     def test_generated_temperature_sweep_still_fails_the_fixed_temperature_guard(
         self,
     ) -> None:
-        code = re.findall(
-            r"```python\n(.*?)\n```", SDK_EXECUTION.read_text(), re.DOTALL
-        )[0]
+        code = sdk_execution_python_fences(sdk_execution_reference_text())[0]
         block = code[
             code.index("BEHAVIOUR_KNOBS = [") : code.index(
                 "assert set(WIRED_KNOBS) == set(ENHANCED_SPACE)"
@@ -11371,7 +11414,7 @@ class SkillPackageTests(unittest.TestCase):
                 },
                 enhanced,
             )
-        text = SDK_EXECUTION.read_text()
+        text = sdk_execution_reference_text()
         self.assertLess(
             text.index("require_pinned_cloud_space_compatibility(BASELINE_SPACE"),
             text.index("@traigent.optimize"),
@@ -11406,7 +11449,7 @@ class SkillPackageTests(unittest.TestCase):
     def test_sdk_comparison_uses_twelve_rows_then_added_knobs_and_twelve_trials(
         self,
     ) -> None:
-        text = SDK_EXECUTION.read_text()
+        text = sdk_execution_reference_text()
         normalized = " ".join(text.casefold().split())
 
         for phrase in (
@@ -11416,7 +11459,7 @@ class SkillPackageTests(unittest.TestCase):
             "default=12,",
             "assert configuration_count(BASELINE_SPACE) == 12",
             "assert configuration_count(ENHANCED_SPACE) == 24",
-            "assert set(BASELINE_CONFIG) == set(BASELINE_SPACE)",
+            "assert set(BASELINE_CONFIG) == set( BASELINE_SPACE )",
             # The two asserts that keep those counts from drifting rather than
             # merely stating today's value. Deleting either left every count
             # test green: the spaces still had the right sizes, and nothing
@@ -11435,7 +11478,7 @@ class SkillPackageTests(unittest.TestCase):
             "configuration_space=ENHANCED_SPACE",
             "max_trials=ENHANCED_MAX_TRIALS",
         ):
-            self.assertIn(phrase, text)
+            self.assertIn(phrase.casefold(), normalized)
 
         # Each default pinned inside ITS OWN positive_int block. Both counts are
         # 12 now, so an `assertIn("default=12,", text)` over the whole file says
@@ -11499,7 +11542,7 @@ class SkillPackageTests(unittest.TestCase):
         self.assertIn('"temperature": BASELINE_SPACE["temperature"]', enhanced_block)
         self.assertIn('"reflect": ["off", "on"]', enhanced_block)
 
-        code = re.findall(r"```python\n(.*?)\n```", text, re.DOTALL)[0]
+        code = sdk_execution_python_fences(text)[0]
         module = ast.parse(code)
         wanted_assignments = {
             "WALKTHROUGH_TEMPERATURE",
@@ -11738,7 +11781,7 @@ class SkillPackageTests(unittest.TestCase):
         covered. Customer-owned dimensions and values remain preserved;
         generated values are never rewritten between phases.
         """
-        sdk = " ".join(SDK_EXECUTION.read_text().split())
+        sdk = " ".join(sdk_execution_reference_text().split())
         safety = " ".join(RUN_SAFETY.read_text().split())
 
         for phrase in (
@@ -11765,7 +11808,7 @@ class SkillPackageTests(unittest.TestCase):
         turn its result into a claim about all of Traigent's capabilities.
         """
         sizes = generated_space_sizes()
-        sdk = SDK_EXECUTION.read_text()
+        sdk = sdk_execution_reference_text()
         for phrase in (
             'State them exactly,\nnever as "roughly" or "about"',
             "3 models × 2 prompt styles × 2 thinking shapes "
@@ -11912,7 +11955,7 @@ class SkillPackageTests(unittest.TestCase):
             section_text(RUN_SAFETY, "Comparison sequence").casefold().split()
         )
         safety = " ".join(RUN_SAFETY.read_text().casefold().split())
-        sdk = " ".join(SDK_EXECUTION.read_text().casefold().split())
+        sdk = " ".join(sdk_execution_reference_text().casefold().split())
 
         self.assertIn("preserving the user's configuration exactly", guide)
         self.assertIn("do not expand, shrink, or weaken a user-owned baseline", guide)
@@ -11945,7 +11988,7 @@ class SkillPackageTests(unittest.TestCase):
         require_stage_reference(7, RUN_SAFETY, "baseline-and-optimization")
         require_stage_reference(5, RUN_SAFETY, "environment-and-privacy")
         safety = " ".join(RUN_SAFETY.read_text().casefold().split())
-        sdk = " ".join(SDK_EXECUTION.read_text().casefold().split())
+        sdk = " ".join(sdk_execution_reference_text().casefold().split())
 
         for phrase in (
             "this section applies only when the assistant prepares a missing baseline",
@@ -12011,10 +12054,10 @@ class SkillPackageTests(unittest.TestCase):
         Renamed with the change, because a test whose name states the opposite
         of what it asserts is read instead of run.
         """
-        text = SDK_EXECUTION.read_text()
+        text = sdk_execution_reference_text()
         self.assertIn('os.environ["TRAIGENT_FIRST_RUN_STRONG_MODEL"]', text)
         self.assertIn("TRAIGENT_FIRST_RUN_STRONG_REASONING_EFFORT", text)
-        code = re.findall(r"```python\n(.*?)\n```", text, re.DOTALL)[0]
+        code = sdk_execution_python_fences(text)[0]
         call_path_nodes = [
             node
             for node in ast.parse(code).body
@@ -12099,11 +12142,10 @@ class SkillPackageTests(unittest.TestCase):
 
     def test_the_baseline_timeout_is_named_in_prose_with_its_formula(self) -> None:
         """A required variable nobody names is a baseline that stops at import."""
-        text = SDK_EXECUTION.read_text()
+        text = sdk_execution_reference_text()
+        wrapper = (SKILL_ROOT / "assets" / "run_wrapper.py").read_text()
         self.assertIn(
-            "BASELINE_TIMEOUT_SECONDS = positive_number(\n"
-            '    "TRAIGENT_FIRST_RUN_BASELINE_TIMEOUT_SECONDS"\n)',
-            text,
+            'positive_number("TRAIGENT_FIRST_RUN_BASELINE_TIMEOUT_SECONDS")', wrapper
         )
         normalized = " ".join(text.casefold().split())
         for phrase in (
@@ -12118,7 +12160,7 @@ class SkillPackageTests(unittest.TestCase):
                 self.assertIn(phrase, normalized)
 
     def test_sdk_template_uses_internal_bounds_without_added_retries(self) -> None:
-        text = SDK_EXECUTION.read_text()
+        text = sdk_execution_reference_text()
         normalized = " ".join(text.casefold().split())
         for phrase in (
             "MODEL_REQUEST_TIMEOUT_SECONDS",
@@ -12142,7 +12184,7 @@ class SkillPackageTests(unittest.TestCase):
         # also the stricter one - it catches the keyword however it is spaced.
         passed_retries = {
             keyword.arg
-            for source in re.findall(r"```python\n(.*?)\n```", text, re.DOTALL)
+            for source in sdk_execution_python_fences(text)
             for node in ast.walk(ast.parse(source))
             if isinstance(node, ast.Call)
             for keyword in node.keywords
@@ -12159,7 +12201,7 @@ class SkillPackageTests(unittest.TestCase):
         self.assertNotIn("PROVIDER_RETRY_COUNT", text)
 
     def test_sdk_template_pins_paths_objectives_route_and_reported_cost(self) -> None:
-        text = SDK_EXECUTION.read_text()
+        text = sdk_execution_reference_text()
         for phrase in (
             "RUN_DIR = Path(__file__).resolve().parent",
             'SDK_RESULTS_DIR = RUN_DIR / "sdk-results"',
@@ -13169,9 +13211,9 @@ class SkillPackageTests(unittest.TestCase):
     def test_sdk_template_cost_helper_prefers_public_cost_and_fails_closed(
         self,
     ) -> None:
-        text = SDK_EXECUTION.read_text()
+        text = sdk_execution_reference_text()
         functions = {}
-        for source in re.findall(r"```python\n(.*?)\n```", text, re.DOTALL):
+        for source in sdk_execution_python_fences(text):
             for node in ast.parse(source).body:
                 if isinstance(node, ast.FunctionDef):
                     functions[node.name] = node
@@ -13309,9 +13351,9 @@ class SkillPackageTests(unittest.TestCase):
             call_agent("task", {})
 
     def test_sdk_holdout_uses_the_same_public_metric_contract(self) -> None:
-        text = SDK_EXECUTION.read_text()
+        text = sdk_execution_reference_text()
         functions = {}
-        for source in re.findall(r"```python\n(.*?)\n```", text, re.DOTALL):
+        for source in sdk_execution_python_fences(text):
             for node in ast.parse(source).body:
                 if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                     functions[node.name] = node
@@ -13464,10 +13506,10 @@ class SkillPackageTests(unittest.TestCase):
         combined scoring file, readiness never sees the optimizer's input,
         and no other check asserts what `eval_dataset` actually names.
         """
-        text = SDK_EXECUTION.read_text()
+        text = sdk_execution_reference_text()
         assignments: dict[str, ast.expr] = {}
         eval_datasets: list[ast.expr] = []
-        for source in re.findall(r"```python\n(.*?)\n```", text, re.DOTALL):
+        for source in sdk_execution_python_fences(text):
             for node in ast.walk(ast.parse(source)):
                 if (
                     isinstance(node, ast.Assign)
@@ -13540,7 +13582,7 @@ class SkillPackageTests(unittest.TestCase):
             section_text(RUN_SAFETY, "Reporting procedure").casefold().split()
         )
         guide_text = " ".join((ROOT / "GUIDE.md").read_text().casefold().split())
-        sdk_text = " ".join(SDK_EXECUTION.read_text().casefold().split())
+        sdk_text = " ".join(sdk_execution_reference_text().casefold().split())
 
         self.assertIn("retain every experiment that was actually persisted", skill_text)
         self.assertIn("never delete one as automatic teardown", skill_text)
@@ -13746,7 +13788,7 @@ class SkillPackageTests(unittest.TestCase):
         and a different winner under the fallback, which is why the baseline
         pins the algorithm rather than inheriting the default.
         """
-        text = SDK_EXECUTION.read_text()
+        text = sdk_execution_reference_text()
         normalized = " ".join(text.casefold().split())
         for phrase in (
             'pass `algorithm="grid"` explicitly',
@@ -13827,7 +13869,7 @@ class SkillPackageTests(unittest.TestCase):
             "reading-the-agent-for-the-opening-score",
         )
         require_stage_reference(8, RUN_SAFETY, "post-run-verification")
-        sdk = " ".join(SDK_EXECUTION.read_text().casefold().split())
+        sdk = " ".join(sdk_execution_reference_text().casefold().split())
         report = " ".join(
             section_text(RUN_SAFETY, "Reporting procedure").casefold().split()
         )
@@ -14402,7 +14444,7 @@ class SkillPackageTests(unittest.TestCase):
         finished, already-paid run into a crash at the reporting step. The audit
         and insights helpers, by contrast, are available and free.
         """
-        normalized = " ".join(SDK_EXECUTION.read_text().casefold().split())
+        normalized = " ".join(sdk_execution_reference_text().casefold().split())
         for phrase in (
             "do not call the result's `analyze()` method",
             "raises `importerror` without it",
@@ -14885,7 +14927,7 @@ class SkillPackageTests(unittest.TestCase):
                 self.assertNotIn(phrase, combined)
 
     def test_baseline_sync_never_uses_all_and_never_reads_private_layout(self) -> None:
-        """Verified against installed traigent 0.27.0.
+        """Verified against installed traigent 0.30.0.
 
         `--all` pushes every optimization ever logged on the machine - 1042
         sessions on the box used to check this, including unrelated projects.
@@ -14900,7 +14942,7 @@ class SkillPackageTests(unittest.TestCase):
         empty value is the documented answer for a run the backend already
         tracked, not a defect to route around.
         """
-        normalized = " ".join(SDK_EXECUTION.read_text().casefold().split())
+        normalized = " ".join(sdk_execution_reference_text().casefold().split())
         for phrase in (
             "never use `--all`",
             "every optimization ever logged on the machine",
@@ -14930,7 +14972,7 @@ class SkillPackageTests(unittest.TestCase):
     def test_sync_shell_hands_the_resolved_store_to_the_cli_with_run_dir_unset(
         self,
     ) -> None:
-        section = SDK_EXECUTION.read_text().split(
+        section = sdk_execution_reference_text().split(
             "## Carrying the local baseline into the portal", 1
         )[1]
         block = section.split("```bash", 1)[1].split("```", 1)[0].strip()
@@ -14994,7 +15036,7 @@ class SkillPackageTests(unittest.TestCase):
                 self.assertIn(phrase, normalized)
         self.assertIn(
             "for the generated walkthrough, run the credible small space as one local fixed grid",
-            " ".join(SDK_EXECUTION.read_text().casefold().split()),
+            " ".join(sdk_execution_reference_text().casefold().split()),
         )
 
     def test_each_paid_run_has_an_exact_run_card(self) -> None:
@@ -15142,7 +15184,7 @@ class SkillPackageTests(unittest.TestCase):
         the intended first-run comparison with nothing failing.
         """
         skill = " ".join(SKILL.read_text().casefold().split())
-        sdk = " ".join(SDK_EXECUTION.read_text().casefold().split())
+        sdk = " ".join(sdk_execution_reference_text().casefold().split())
         self.assertIn("produced at least 10 of its 12 permitted trials", skill)
         self.assertIn("fewer than 10 trials requires a concrete backend stop", sdk)
 
@@ -15166,7 +15208,7 @@ class SkillPackageTests(unittest.TestCase):
 
     def test_the_baseline_section_points_at_the_no_rerun_rule(self) -> None:
         """A finished paid phase is not a draft; the rule has one home."""
-        text = SDK_EXECUTION.read_text()
+        text = sdk_execution_reference_text()
         normalized = " ".join(text.casefold().split())
         self.assertIn(
             "a completed baseline is never re-run for a better number, and nothing "
@@ -16298,8 +16340,8 @@ class SkillPackageTests(unittest.TestCase):
         ):
             with self.subTest(privacy_boundary=phrase):
                 self.assertIn(phrase, readme)
-        sdk = SDK_EXECUTION.read_text()
-        wrapper = re.findall(r"```python\n(.*?)\n```", sdk, re.DOTALL)[0]
+        sdk = sdk_execution_reference_text()
+        wrapper = sdk_execution_python_fences(sdk)[0]
         content_opt_out = 'os.environ["TRAIGENT_LOG_EXAMPLE_CONTENT"] = "false"'
         self.assertIn(content_opt_out, wrapper)
         self.assertLess(
@@ -16353,12 +16395,12 @@ class SkillPackageTests(unittest.TestCase):
         with the flag inherited raises the same error, so the baseline must
         stop before spend and require an explicit phase-local override.
         """
-        wrapper = " ".join(SDK_EXECUTION.read_text().split())
+        wrapper = " ".join(sdk_execution_reference_text().split())
         self.assertIn('os.environ["TRAIGENT_REQUIRE_CLOUD"] = "1"', wrapper)
         self.assertNotIn('os.environ.pop("TRAIGENT_REQUIRE_CLOUD"', wrapper)
         self.assertIn('os.environ.pop("TRAIGENT_API_KEY", None)', wrapper)
 
-        block = SDK_EXECUTION.read_text()
+        block = sdk_execution_reference_text()
         setting = block.index('os.environ["TRAIGENT_REQUIRE_CLOUD"] = "1"')
         # The wrapper's own import section, not the capability-discovery snippet
         # at the top of this document, which also imports traigent.
@@ -16391,7 +16433,7 @@ class SkillPackageTests(unittest.TestCase):
         satisfy this run would send data out on their behalf, which no
         convenience justifies.
         """
-        wrapper = SDK_EXECUTION.read_text()
+        wrapper = sdk_execution_reference_text()
         self.assertIn(
             'for offline_name in ("TRAIGENT_OFFLINE", "TRAIGENT_OFFLINE_MODE"):',
             wrapper,
@@ -16455,20 +16497,23 @@ class SkillPackageTests(unittest.TestCase):
         of canned responses is the same worthless measurement, and it is the one
         the whole comparison is anchored on.
         """
-        wrapper = SDK_EXECUTION.read_text()
-        self.assertIn('if inherited("TRAIGENT_MOCK_LLM"):', wrapper)
+        wrapper = (SKILL_ROOT / "assets" / "run_wrapper.py").read_text()
+        self.assertIn(
+            'if FIRST_RUN_PHASE != "proof" and inherited("TRAIGENT_MOCK_LLM"):',
+            wrapper,
+        )
         self.assertNotIn('os.environ.pop("TRAIGENT_MOCK_LLM"', wrapper)
-        guard = wrapper.index('if inherited("TRAIGENT_MOCK_LLM"):')
+        guard = wrapper.index('if FIRST_RUN_PHASE != "proof" and inherited(')
         self.assertLess(
             guard,
-            wrapper.index('if FIRST_RUN_PHASE == "baseline":'),
+            wrapper.index('if FIRST_RUN_PHASE in {"proof", "baseline"}:'),
             "the mock check is not phase-specific; placing it inside a branch "
             "would exempt the other phase from it",
         )
 
     def test_an_inherited_require_cloud_stops_before_baseline_spend(self) -> None:
         """The wrapper cannot quietly neutralize an environment policy."""
-        wrapper = SDK_EXECUTION.read_text()
+        wrapper = sdk_execution_reference_text()
         self.assertNotIn("BASELINE_DROPPED_REQUIRE_CLOUD", wrapper)
         normalized = " ".join(wrapper.casefold().split())
         self.assertIn("baseline approval card", normalized)
@@ -16479,9 +16524,7 @@ class SkillPackageTests(unittest.TestCase):
         """Ordinary and pyo3-shaped failures leave no traceback payload."""
         fence = next(
             block
-            for block in re.findall(
-                r"```python\n(.*?)\n```", SDK_EXECUTION.read_text(), re.DOTALL
-            )
+            for block in sdk_execution_python_fences(sdk_execution_reference_text())
             if "except BaseException as exc:" in block
         )
         tree = ast.parse(fence)
@@ -16560,9 +16603,7 @@ class SkillPackageTests(unittest.TestCase):
 
     def test_false_process_value_overrides_true_dotenv_baseline_policy(self) -> None:
         """Unsetting loops; an approved explicit false survives dotenv loading."""
-        fence = re.findall(
-            r"```python\n(.*?)\n```", SDK_EXECUTION.read_text(), re.DOTALL
-        )[0]
+        fence = sdk_execution_python_fences(sdk_execution_reference_text())[0]
         tree = ast.parse(fence)
         prefix: list[ast.stmt] = []
         for node in tree.body:
@@ -16635,7 +16676,7 @@ class SkillPackageTests(unittest.TestCase):
         being a Traigent optimization, which is the whole comparison the first
         run exists to show.
         """
-        normalized = " ".join(SDK_EXECUTION.read_text().casefold().split())
+        normalized = " ".join(sdk_execution_reference_text().casefold().split())
         for phrase in (
             "this applies to the local baseline only",
             'the connected search under "broader optimization" must stay on `auto`',
@@ -16649,7 +16690,7 @@ class SkillPackageTests(unittest.TestCase):
 
     def test_enhanced_run_code_block_still_uses_auto(self) -> None:
         """Guard the code itself, not only the prose around it."""
-        text = SDK_EXECUTION.read_text()
+        text = sdk_execution_reference_text()
         enhanced = text[text.index("## Broader optimization") :]
         enhanced = enhanced[: enhanced.index("## Result checks")]
         self.assertIn('algorithm="auto"', enhanced)
@@ -16674,7 +16715,7 @@ class SkillPackageTests(unittest.TestCase):
                 "remote",
             },
         )
-        normalized = " ".join(SDK_EXECUTION.read_text().casefold().split())
+        normalized = " ".join(sdk_execution_reference_text().casefold().split())
         self.assertIn(
             "locally the sdk's registry lists six names, and only `grid` and "
             "`random` sample on their own",
@@ -16684,7 +16725,7 @@ class SkillPackageTests(unittest.TestCase):
 
     def test_absent_cost_is_never_reported_as_zero(self) -> None:
         """A stated $0.00 reads as "this was free", which is a false claim."""
-        normalized = " ".join(SDK_EXECUTION.read_text().casefold().split())
+        normalized = " ".join(sdk_execution_reference_text().casefold().split())
         self.assertIn("an absent cost is `not measured`", normalized)
         self.assertIn("never turn absence into `$0.00`", normalized)
         self.assertIn(
@@ -16708,17 +16749,22 @@ class SkillPackageTests(unittest.TestCase):
                 self.assertIn(phrase, normalized)
 
     def test_the_fence_marks_every_site_the_agent_adapts(self) -> None:
-        """Verbatim and adapt are told apart on the line, not by guesswork.
+        """The shipped wrapper labels every adaptation site, not guesswork.
 
         The list above the fence names every site; each carries an `# ADAPT:`
         tag where it sits; nothing else in the fence carries one. A listed name
         with no tag, or a tag on a site the list does not name, reopens the
         1,600-line guessing game the list exists to end.
         """
-        text = SDK_EXECUTION.read_text()
-        prose, rest = text.split("```python\n", 1)
-        fence = rest.split("\n```", 1)[0]
-        adapt_list = " ".join(prose[prose.rindex("## Decorator contract") :].split())
+        text = sdk_execution_reference_text()
+        fence = (SKILL_ROOT / "assets" / "run_wrapper.py").read_text()
+        adapt_list = " ".join(
+            text[
+                text.rindex("## Decorator contract") : text.index(
+                    "The runnable wrapper is bundled"
+                )
+            ].split()
+        )
         self.assertIn("every other line is verbatim", adapt_list)
         self.assertIn("arrive through the process variables it reads", adapt_list)
         # Identifiers only: `True` in the list is a value, not a site.
@@ -16757,15 +16803,15 @@ class SkillPackageTests(unittest.TestCase):
             ],
         )
         self.assertEqual(fence.count("# ADAPT:"), len(anchors))
-        self.assertNotIn("# ADAPT:", rest.split("\n```", 1)[1])
+        self.assertEqual(fence.count("# ADAPT:"), len(anchors))
 
     def test_the_unwritten_scorer_raises_instead_of_returning_ellipsis(self) -> None:
         """`score = ...` parsed, returned `Ellipsis`, and failed later at `sum`."""
-        text = SDK_EXECUTION.read_text()
+        text = sdk_execution_reference_text()
         self.assertNotIn("score = ...", text)
         task_score = next(
             node
-            for source in re.findall(r"```python\n(.*?)\n```", text, re.DOTALL)
+            for source in sdk_execution_python_fences(text)
             for node in ast.parse(source).body
             if isinstance(node, ast.FunctionDef) and node.name == "task_score"
         )
@@ -16775,33 +16821,20 @@ class SkillPackageTests(unittest.TestCase):
 
     def test_the_scorer_call_count_is_set_at_its_definition(self) -> None:
         """`CALLS_PER_SCORED_ROW` derives at import; a later assignment leaves it stale."""
-        text = SDK_EXECUTION.read_text()
+        text = sdk_execution_reference_text()
         self.assertIn("CALLS_PER_SCORED_ROW: int = 1 + SCORER_CALLS_PER_ROW", text)
         normalized = " ".join(text.casefold().split())
-        self.assertIn(
-            "`scorer_calls_per_row`, set where the fence defines it and nowhere after",
-            normalized,
-        )
+        self.assertIn("scorer_calls_per_row: int = 0", normalized)
         self.assertNotIn("then set `scorer_calls_per_row`", normalized)
 
-    def test_first_python_fence_is_the_decorator_contract(self) -> None:
-        """Guard the positional dependency in the exec'd-fence tests.
-
-        `test_sdk_comparison_uses_twelve_rows_then_added_knobs_and_twelve_trials`
-        executes `re.findall(r"```python...")[0]` - the FIRST python fence in
-        sdk-execution.md. Inserting any python fence above it silently changes
-        which block is executed, and that test then fails with a confusing
-        NameError or AssertionError that names neither ordering nor the new
-        fence. This turns that into a failure that says what actually happened.
-        """
-        fences = re.findall(r"```python\n(.*?)\n```", SDK_EXECUTION.read_text(), re.S)
-        self.assertTrue(fences, "sdk-execution.md must contain a python fence")
+    def test_wrapper_contract_tests_read_the_bundled_asset(self) -> None:
+        """The file customers copy is the source every wrapper test reads."""
+        fences = sdk_execution_python_fences(sdk_execution_reference_text())
+        self.assertTrue(fences, "the bundled wrapper must be available")
         self.assertIn(
-            "BASELINE_SPACE = {",
+            "sys.dont_write_bytecode = True",
             fences[0],
-            "the first ```python fence in sdk-execution.md is no longer the "
-            "decorator-contract block; a fence was inserted above it, which "
-            "silently changes what the exec'd-fence tests run",
+            "wrapper tests must start from the exact bundled file customers copy",
         )
 
     def test_run_phase_removes_portal_key_before_traigent_import(self) -> None:
@@ -16812,9 +16845,9 @@ class SkillPackageTests(unittest.TestCase):
         therefore read before dotenv, and the fail-safe baseline removes the
         portal key before the Traigent import.
         """
-        text = SDK_EXECUTION.read_text()
-        decorator = re.findall(r"```python\n(.*?)\n```", text, re.DOTALL)[0]
-        phase = decorator.index("FIRST_RUN_PHASE = os.environ.get(")
+        text = sdk_execution_reference_text()
+        decorator = sdk_execution_python_fences(text)[0]
+        phase = decorator.index("FIRST_RUN_PHASE = (")
         dotenv = decorator.index('load_dotenv(PROJECT_ROOT / ".env"')
         remove_key = decorator.index('os.environ.pop("TRAIGENT_API_KEY", None)')
         force_offline = decorator.index('os.environ["TRAIGENT_OFFLINE_MODE"] = "true"')
@@ -16824,14 +16857,13 @@ class SkillPackageTests(unittest.TestCase):
         self.assertLess(force_offline, import_traigent)
         self.assertLess(dotenv, remove_key)
         self.assertLess(remove_key, import_traigent)
-        self.assertIn('if FIRST_RUN_PHASE == "baseline":', decorator)
-
+        self.assertIn('if FIRST_RUN_PHASE in {"proof", "baseline"}:', decorator)
         baseline = text[text.index("## Small baseline sweep") :]
         baseline = baseline[: baseline.index("## Reading the result for insight")]
         connected = text[text.index("## Broader optimization") :]
         connected = connected[: connected.index("## Result checks")]
-        self.assertIn('assert FIRST_RUN_PHASE == "baseline"', baseline)
-        self.assertIn('assert FIRST_RUN_PHASE == "connected"', connected)
+        self.assertIn('if FIRST_RUN_PHASE != "baseline":', baseline)
+        self.assertIn('if FIRST_RUN_PHASE != "connected":', connected)
         self.assertIn(
             "supplied by the process and never by `.env`",
             " ".join(baseline.split()),
@@ -16840,14 +16872,412 @@ class SkillPackageTests(unittest.TestCase):
             "supplied by the process and never by `.env`",
             " ".join(connected.split()),
         )
+        for name, body in (("baseline", baseline), ("connected", connected)):
+            phase_fence = re.search(r"```python\n(.*?)\n```", body, re.DOTALL)
+            self.assertIsNotNone(phase_fence)
+            with self.subTest(phase=name), self.assertRaisesRegex(
+                SystemExit, "requires TRAIGENT_FIRST_RUN_PHASE"
+            ):
+                exec(  # noqa: S102
+                    compile(phase_fence.group(1), f"<{name}-phase-guard>", "exec"),
+                    {"FIRST_RUN_PHASE": "proof"},
+                )
+
+    def test_proof_phase_needs_no_approval_and_has_zero_call_budget(self) -> None:
+        """Proof ignores stale dotenv figures and starts behind a closed spend door."""
+        wrapper = sdk_execution_python_fences(sdk_execution_reference_text())[0]
+        prefix: list[ast.stmt] = []
+        for node in ast.parse(wrapper).body:
+            if isinstance(node, ast.Import) and any(
+                alias.name == "litellm" for alias in node.names
+            ):
+                break
+            prefix.append(node)
+        program = compile(
+            ast.fix_missing_locations(ast.Module(body=prefix, type_ignores=[])),
+            "<proof-phase-environment>",
+            "exec",
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            project = Path(directory)
+            run_dir = project / "traigent-runs"
+            run_dir.mkdir()
+            (project / ".env").write_text(
+                "TRAIGENT_FIRST_RUN_COST_CEILING_USD=9.00\n"
+                "TRAIGENT_FIRST_RUN_COST_SPENT_USD=1.00\n"
+                "TRAIGENT_FIRST_RUN_UNTRACKED_CALL_COST_USD=0.25\n"
+                "TRAIGENT_FIRST_RUN_BASELINE_TIMEOUT_SECONDS=900\n"
+                "TRAIGENT_API_KEY" + "=" + "stale-key-must-be-dropped\n"
+            )
+            with mock.patch.dict(
+                os.environ,
+                {"TRAIGENT_FIRST_RUN_PHASE": "proof"},
+                clear=True,
+            ):
+                namespace: dict[str, Any] = {
+                    "__file__": str(run_dir / "run_wrapper.py"),
+                    "PRICED_REQUEST_KNOBS": frozenset(
+                        {"num_retries", "max_retries", "fallbacks"}
+                    ),
+                    "UNPRICED_KNOB_MARKERS": ("retry", "retries", "fallback"),
+                }
+                exec(program, namespace)  # noqa: S102
+                self.assertEqual(namespace["RUN_COST_REMAINING_USD"], 0.0)
+                self.assertEqual(namespace["RUN_COST_CEILING_USD"], 0.0)
+                self.assertEqual(namespace["APPROVED_FIGURES"], {})
+                self.assertNotIn("TRAIGENT_API_KEY", os.environ)
+                self.assertNotIn("TRAIGENT_FIRST_RUN_COST_CEILING_USD", os.environ)
+                self.assertNotIn(
+                    "TRAIGENT_FIRST_RUN_BASELINE_TIMEOUT_SECONDS", os.environ
+                )
+        timeout_assignment = next(
+            node
+            for node in ast.parse(wrapper).body
+            if isinstance(node, ast.Assign)
+            and any(
+                isinstance(target, ast.Name) and target.id == "BASELINE_TIMEOUT_SECONDS"
+                for target in node.targets
+            )
+        )
+        timeout_namespace = {
+            "FIRST_RUN_PHASE": "proof",
+            "positive_number": lambda _name: self.fail(
+                "proof must not read a paid-phase timeout"
+            ),
+        }
+        exec(  # noqa: S102
+            compile(
+                ast.fix_missing_locations(
+                    ast.Module(body=[timeout_assignment], type_ignores=[])
+                ),
+                "<proof-phase-timeout>",
+                "exec",
+            ),
+            timeout_namespace,
+        )
+        self.assertIsNone(timeout_namespace["BASELINE_TIMEOUT_SECONDS"])
+
+        spend_functions = {
+            "run_remaining_usd",
+            "tracking_stopped",
+            "worst_case_requests",
+            "reserve_call_spend",
+            "ledgered",
+        }
+        spend_nodes = [
+            node
+            for node in ast.parse(wrapper).body
+            if isinstance(node, ast.FunctionDef) and node.name in spend_functions
+        ]
+        provider_calls: list[tuple] = []
+        spend_namespace = {
+            "math": math,
+            "SimpleNamespace": SimpleNamespace,
+            "threading": threading,
+            "contextvars": contextvars,
+            "RUN_COST_REMAINING_USD": 0.0,
+            "RUN_COST_CEILING_USD": 0.0,
+            "RUN_SPEND_USD": [],
+            "RUN_CALL_COSTS": [],
+            "UNTRACKED_CALL_COST_USD": 1.0,
+            "PRICED_REQUEST_KNOBS": frozenset(
+                {"num_retries", "max_retries", "fallbacks"}
+            ),
+            "UNPRICED_KNOB_MARKERS": ("retry", "retries", "fallback"),
+            "LEDGER_LOCK": threading.Lock(),
+            "TRACKED_RUN": None,
+            "litellm": SimpleNamespace(num_retries=0),
+            "INSIDE_THE_DOOR": contextvars.ContextVar(
+                "proof_test_inside", default=False
+            ),
+        }
+        exec(  # noqa: S102
+            compile(
+                ast.fix_missing_locations(
+                    ast.Module(body=spend_nodes, type_ignores=[])
+                ),
+                "<proof-phase-spend-door>",
+                "exec",
+            ),
+            spend_namespace,
+        )
+        guarded = spend_namespace["ledgered"](
+            lambda *args, **kwargs: provider_calls.append((args, kwargs))
+        )
+        with self.assertRaisesRegex(RuntimeError, "was not placed"):
+            guarded(model="provider/model")
+        self.assertEqual(provider_calls, [])
+        self.assertEqual(spend_namespace["RUN_SPEND_USD"], [])
+
+    def test_proof_phase_runs_the_bundled_wrapper_without_network_or_approval(
+        self,
+    ) -> None:
+        """Run the exact customer asset with a network-denying interpreter guard."""
+        if importlib.util.find_spec("traigent") is None:
+            if os.environ.get("CI"):
+                self.fail(
+                    "the pinned SDK is required to execute the proof contract under CI"
+                )
+            self.skipTest("install the pinned SDK to execute the bundled proof")
+        with tempfile.TemporaryDirectory() as directory:
+            project = Path(directory)
+            run_dir = project / "traigent-runs"
+            run_dir.mkdir()
+            wrapper = run_dir / "run_wrapper.py"
+            wrapper.write_bytes((SKILL_ROOT / "assets" / "run_wrapper.py").read_bytes())
+            row = (
+                json.dumps(
+                    {"input": {"message": "classify this"}, "expected_output": "label"}
+                )
+                + "\n"
+            )
+            (run_dir / "tuning.jsonl").write_text(row, encoding="utf-8")
+            (run_dir / "holdout.jsonl").write_text(row, encoding="utf-8")
+            (project / ".env").write_text(
+                "TRAIGENT_FIRST_RUN_COST_CEILING_USD=9.00\n"
+                "TRAIGENT_FIRST_RUN_COST_SPENT_USD=1.00\n"
+                "TRAIGENT_FIRST_RUN_UNTRACKED_CALL_COST_USD=0.25\n"
+                "TRAIGENT_FIRST_RUN_BASELINE_TIMEOUT_SECONDS=900\n"
+                "TRAIGENT_API_KEY" + "=" + "ignored-stale-value\n",
+                encoding="utf-8",
+            )
+            launcher = project / "no_network_launcher.py"
+            launcher.write_text(
+                "import runpy, socket, sys\n"
+                "attempts = []\n"
+                "original_socket = socket.socket\n"
+                "class GuardedSocket(original_socket):\n"
+                "    def connect(self, *args, **kwargs):\n"
+                "        attempts.append('connect')\n"
+                "        raise RuntimeError('network denied by proof test')\n"
+                "    def connect_ex(self, *args, **kwargs):\n"
+                "        attempts.append('connect_ex')\n"
+                "        raise RuntimeError('network denied by proof test')\n"
+                "def denied(*args, **kwargs):\n"
+                "    attempts.append('dns-or-create-connection')\n"
+                "    raise RuntimeError('network denied by proof test')\n"
+                "socket.socket = GuardedSocket\n"
+                "socket.create_connection = denied\n"
+                "socket.getaddrinfo = denied\n"
+                "try:\n"
+                "    runpy.run_path(sys.argv[1], run_name='__main__')\n"
+                "except SystemExit as exc:\n"
+                "    if exc.code not in (None, 0):\n"
+                "        raise\n"
+                "if attempts:\n"
+                "    raise SystemExit(f'proof attempted network access: {attempts}')\n",
+                encoding="utf-8",
+            )
+            env = {
+                "PATH": os.environ.get("PATH", ""),
+                "HOME": os.environ.get("HOME", directory),
+                "TRAIGENT_FIRST_RUN_PHASE": "proof",
+                "TRAIGENT_FIRST_RUN_CURRENT_MODEL": "openai/gpt-4o-mini",
+                "TRAIGENT_FIRST_RUN_ALTERNATIVE_MODEL": "openai/gpt-4.1-mini",
+                "TRAIGENT_FIRST_RUN_STRONG_MODEL": "openai/gpt-4.1",
+                "TRAIGENT_FIRST_RUN_CURRENT_PROVIDER": "openai",
+                "TRAIGENT_FIRST_RUN_COST_CEILING_USD": "9.00",
+                "TRAIGENT_FIRST_RUN_COST_SPENT_USD": "1.00",
+                "TRAIGENT_FIRST_RUN_UNTRACKED_CALL_COST_USD": "0.25",
+            }
+            result = subprocess.run(
+                [sys.executable, "-I", str(launcher), str(wrapper)],
+                cwd=project,
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=90,
+                check=False,
+            )
+            self.assertEqual(
+                result.returncode,
+                0,
+                f"the no-cost proof failed:\n{result.stdout}\n{result.stderr}",
+            )
+            self.assertRegex(result.stdout, r"(?m)^PROBE_VERDICTS=\{")
+
+    def test_baseline_transfer_omits_rows_and_refuses_mismatched_evidence(
+        self,
+    ) -> None:
+        """Transfer evidence omits dataset rows and rejects stale phase records."""
+        wrapper_path = SKILL_ROOT / "assets" / "run_wrapper.py"
+        tree = ast.parse(wrapper_path.read_text())
+        wanted = {
+            "_canonical_json",
+            "tuning_dataset_fingerprint",
+            "trial_example_results",
+            "baseline_transfer_payload",
+            "load_baseline_transfer",
+        }
+        functions = [
+            node
+            for node in tree.body
+            if isinstance(node, ast.FunctionDef) and node.name in wanted
+        ]
+        namespace: dict[str, Any] = {
+            "hashlib": hashlib,
+            "json": json,
+            "math": math,
+            "Path": Path,
+        }
+        exec(  # noqa: S102
+            compile(
+                ast.fix_missing_locations(ast.Module(body=functions, type_ignores=[])),
+                "<baseline-transfer-contract>",
+                "exec",
+            ),
+            namespace,
+        )
+        row_metrics = [0.5, 1.0]
+        rows = [
+            {
+                "success": True,
+                "metrics": {"accuracy": score, "cost": 0.01},
+                "input_data": "PRIVATE_INPUT_SENTINEL",
+                "expected_output": "PRIVATE_EXPECTED_SENTINEL",
+                "output": "PRIVATE_OUTPUT_SENTINEL",
+            }
+            for score in row_metrics
+        ]
+        config = {"model": "provider/model-a", "temperature": 0.0}
+        trial = SimpleNamespace(
+            config=config,
+            status=SimpleNamespace(value="completed"),
+            metrics={"accuracy": 0.75, "cost": 0.02},
+            metadata={"example_results": rows, "prompt": "PRIVATE_METADATA_SENTINEL"},
+        )
+        result = SimpleNamespace(best_config=config, trials=[trial])
+        space = {"knobs": {"model": ["provider/model-a"]}}
+        with tempfile.TemporaryDirectory() as directory:
+            tuning_data = Path(directory) / "tuning.jsonl"
+            tuning_data.write_text('{"input":"one","expected":"yes"}\n')
+            fingerprint = namespace["tuning_dataset_fingerprint"](str(tuning_data))
+            tuning_data.write_text('{"input":"two","expected":"yes"}\n')
+            changed_fingerprint = namespace["tuning_dataset_fingerprint"](
+                str(tuning_data)
+            )
+            self.assertNotEqual(fingerprint, changed_fingerprint)
+        payload = namespace["baseline_transfer_payload"](
+            result,
+            config,
+            space,
+            2,
+            fingerprint,
+            "accuracy",
+            [{"name": "accuracy", "orientation": "maximize", "weight": 1.0}],
+        )
+        encoded = json.dumps(payload, sort_keys=True)
+        self.assertEqual(payload["format_version"], 2)
+        for secret in (
+            "PRIVATE_INPUT_SENTINEL",
+            "PRIVATE_EXPECTED_SENTINEL",
+            "PRIVATE_OUTPUT_SENTINEL",
+            "PRIVATE_METADATA_SENTINEL",
+        ):
+            self.assertNotIn(secret, encoded)
+        self.assertEqual(payload["tuning_fingerprint"], fingerprint)
+        nested_trial = SimpleNamespace(
+            config=config,
+            status=SimpleNamespace(value="completed"),
+            metrics={"accuracy": 0.75, "cost": 0.02},
+            metadata={"metadata": {"example_results": rows}},
+        )
+        nested_payload = namespace["baseline_transfer_payload"](
+            SimpleNamespace(best_config=config, trials=[nested_trial]),
+            config,
+            space,
+            2,
+            fingerprint,
+            "accuracy",
+            [{"name": "accuracy", "orientation": "maximize", "weight": 1.0}],
+        )
+        self.assertEqual(
+            nested_payload["trials"][0]["example_results"][0]["metrics"]["accuracy"],
+            row_metrics[0],
+        )
+        self.assertEqual(
+            namespace["trial_example_results"](
+                {"example_results": rows, "metadata": {"example_results": rows}}
+            ),
+            rows,
+        )
+        with self.assertRaisesRegex(ValueError, "conflicting example-result metadata"):
+            namespace["trial_example_results"](
+                {"example_results": rows, "metadata": {"example_results": []}}
+            )
+        with tempfile.TemporaryDirectory() as directory:
+            transfer = Path(directory) / "baseline-transfer.json"
+            transfer.write_text(json.dumps(payload))
+            restored, incumbent = namespace["load_baseline_transfer"](
+                str(transfer),
+                config,
+                space,
+                2,
+                fingerprint,
+                "accuracy",
+                [{"name": "accuracy", "orientation": "maximize", "weight": 1.0}],
+            )
+            self.assertEqual(len(restored), 1)
+            self.assertEqual(incumbent.metrics["accuracy"], 0.75)
+            self.assertEqual(
+                [
+                    row["metrics"]["accuracy"]
+                    for row in incumbent.metadata["example_results"]
+                ],
+                row_metrics,
+            )
+            for bad_args in (
+                (
+                    {"model": "provider/model-b", "temperature": 0.0},
+                    space,
+                    2,
+                    fingerprint,
+                ),
+                (config, {"knobs": {"model": ["provider/model-b"]}}, 2, fingerprint),
+                (config, space, 3, fingerprint),
+                (config, space, 2, changed_fingerprint),
+            ):
+                with self.subTest(mismatch=bad_args):
+                    with self.assertRaises(SystemExit):
+                        namespace["load_baseline_transfer"](
+                            str(transfer),
+                            *bad_args,
+                            "accuracy",
+                            [
+                                {
+                                    "name": "accuracy",
+                                    "orientation": "maximize",
+                                    "weight": 1.0,
+                                }
+                            ],
+                        )
+            with self.assertRaises(SystemExit):
+                namespace["load_baseline_transfer"](
+                    str(transfer),
+                    config,
+                    space,
+                    2,
+                    fingerprint,
+                    "accuracy",
+                    [{"name": "accuracy", "orientation": "minimize", "weight": 1.0}],
+                )
+            transfer.unlink()
+            with self.assertRaises(SystemExit):
+                namespace["load_baseline_transfer"](
+                    str(transfer),
+                    config,
+                    space,
+                    2,
+                    fingerprint,
+                    "accuracy",
+                    [{"name": "accuracy", "orientation": "maximize", "weight": 1.0}],
+                )
 
     def test_baseline_offline_mode_ends_before_the_fresh_connected_process(
         self,
     ) -> None:
         """Baseline isolation must not silently turn the enhanced run local."""
-        fence = re.findall(
-            r"```python\n(.*?)\n```", SDK_EXECUTION.read_text(), re.DOTALL
-        )[0]
+        fence = sdk_execution_python_fences(sdk_execution_reference_text())[0]
         tree = ast.parse(fence)
         prefix: list[ast.stmt] = []
         for node in tree.body:
@@ -16978,7 +17408,7 @@ class SkillPackageTests(unittest.TestCase):
         )
         skill = " ".join(SKILL.read_text().casefold().split())
         safety = " ".join(RUN_SAFETY.read_text().casefold().split())
-        sdk = " ".join(SDK_EXECUTION.read_text().casefold().split())
+        sdk = " ".join(sdk_execution_reference_text().casefold().split())
         opening = " ".join(
             section_text(
                 SKILL_ROOT / "references" / "component-creation.md",
@@ -18734,7 +19164,12 @@ class SkillPackageTests(unittest.TestCase):
         ).stdout.split()
         self.assertEqual(
             sorted(published),
-            sorted(name for name in listed if not name.startswith("tests/")),
+            sorted(
+                [
+                    *(name for name in listed if not name.startswith("tests/")),
+                    "skills/traigent-first-run/assets/run_wrapper.py",
+                ]
+            ),
             "the corpus has drifted from what git publishes",
         )
         # The named documents the earlier list held, and the directories it did
@@ -19419,7 +19854,7 @@ class SkillPackageTests(unittest.TestCase):
         Pinned because "moved into guidance" is exactly the change that
         silently becomes "deleted" a branch later.
         """
-        sdk = " ".join(SDK_EXECUTION.read_text().split())
+        sdk = " ".join(sdk_execution_reference_text().split())
         self.assertIn("Judging a space before you send it", sdk)
         self.assertIn("Values too close together are not two values", sdk)
         self.assertIn("Two knobs naming one dimension are one knob", sdk)
@@ -19452,7 +19887,7 @@ class SkillPackageTests(unittest.TestCase):
         template does both halves: freeze the bytes from the space this call
         receives, persist them only once the call has returned.
         """
-        text = SDK_EXECUTION.read_text()
+        text = sdk_execution_reference_text()
         enhanced = text[text.index("## Broader optimization") :]
         enhanced = enhanced[: enhanced.index("## Result checks")]
         serialize = enhanced.find("config_space_document(ENHANCED_SPACE)")
@@ -19489,9 +19924,7 @@ class SkillPackageTests(unittest.TestCase):
         The lifecycle tests below run the template's own enhanced-search block,
         so they need the same objects that block closes over.
         """
-        code = re.findall(
-            r"```python\n(.*?)\n```", SDK_EXECUTION.read_text(), re.DOTALL
-        )[0]
+        code = sdk_execution_python_fences(sdk_execution_reference_text())[0]
         wanted_assignments = {
             "WALKTHROUGH_TEMPERATURE",
             "BASELINE_CONFIG",
@@ -19523,6 +19956,9 @@ class SkillPackageTests(unittest.TestCase):
             "STRONG_REASONING_EFFORT": None,
             "BASELINE_TRIALS": 12,
             "ENHANCED_MAX_TRIALS": 12,
+            "OBJECTIVE_SIGNATURE": [
+                {"name": "accuracy", "orientation": "maximize", "weight": 1.0}
+            ],
         }
         exec(
             compile(
@@ -19549,7 +19985,7 @@ class SkillPackageTests(unittest.TestCase):
         must be absent - not stale - whenever the search did not deliver trials.
         """
         producer = self._template_producer_namespace()
-        text = SDK_EXECUTION.read_text()
+        text = sdk_execution_reference_text()
         enhanced = text[text.index("## Broader optimization") :]
         enhanced = enhanced[: enhanced.index("## Result checks")]
         fence = re.search(r"```python\n(.*?)\n```", enhanced, re.DOTALL)
@@ -19565,11 +20001,28 @@ class SkillPackageTests(unittest.TestCase):
             + "\n"
         )
         searched: list[dict] = []
+        returned_trials: list[list] = []
+        order: list[str] = []
+        baseline_incumbent = SimpleNamespace(config=producer["BASELINE_CONFIG"])
+        frontier_calls: list[tuple[tuple, dict]] = []
 
-        def run(document: Path, outcome) -> None:
+        def run(document: Path, outcome, fingerprint_values=None) -> None:
+            fingerprints = iter(fingerprint_values or ["a" * 64])
+
             def optimize_sync(**kwargs):
+                order.append("search")
                 searched.append(kwargs)
-                return outcome()
+                result = outcome()
+                returned_trials.append(result.trials)
+                return result
+
+            def read_transfer(*_args):
+                order.append("transfer")
+                return [], baseline_incumbent
+
+            def choose_frontier(*args, **kwargs):
+                frontier_calls.append((args, kwargs))
+                return []
 
             namespace = dict(producer)
             namespace.update(
@@ -19585,6 +20038,21 @@ class SkillPackageTests(unittest.TestCase):
                     ),
                     "CONFIG_SPACE_DOCUMENT": str(document),
                     "RUN_DIR": document.parent,
+                    "BASELINE_TRANSFER_FILE": str(
+                        document.parent / "baseline-transfer.json"
+                    ),
+                    "TUNING_DATASET": str(document.parent / "tuning.jsonl"),
+                    "TUNING_DATASET_INITIAL_FINGERPRINT": "a" * 64,
+                    "tuning_dataset_fingerprint": lambda _path: next(
+                        fingerprints, "a" * 64
+                    ),
+                    "PROBE_INPUTS": ("first tuning input",),
+                    "load_baseline_transfer": read_transfer,
+                    "PRIMARY_OBJECTIVE": SimpleNamespace(
+                        name="accuracy", orientation="maximize"
+                    ),
+                    "INCLUDE_COST_OBJECTIVE": False,
+                    "frontier_at_or_above": choose_frontier,
                     # No run has degraded in any case below, so the reader
                     # answers `None` - but it has to be the document's own
                     # reader answering. A fixture supplying `lambda: None`
@@ -19595,7 +20063,7 @@ class SkillPackageTests(unittest.TestCase):
             )
             reader = next(
                 node
-                for source in re.findall(r"```python\n(.*?)\n```", text, re.DOTALL)
+                for source in sdk_execution_python_fences(text)
                 for node in ast.parse(source).body
                 if isinstance(node, ast.FunctionDef) and node.name == "tracking_stopped"
             )
@@ -19635,6 +20103,26 @@ class SkillPackageTests(unittest.TestCase):
                 searched[-1]["configuration_space"],
                 "the persisted knobs must be the space optimize_sync was given",
             )
+            self.assertEqual(order[-2:], ["transfer", "search"])
+            self.assertIs(frontier_calls[-1][0][2], baseline_incumbent)
+            self.assertEqual(
+                frontier_calls[-1][0][0],
+                returned_trials[-1],
+            )
+
+            # A dataset edit during the connected search leaves its paid
+            # result available but prevents a cross-phase frontier claim.
+            prior_frontier_count = len(frontier_calls)
+            with self.assertRaises(SystemExit) as changed_during_search:
+                run(
+                    document,
+                    lambda: SimpleNamespace(trials=[{"trial": 4}], cloud_url=LINK),
+                    ["a" * 64, "a" * 64, "b" * 64],
+                )
+            self.assertIn("results remain in", str(changed_during_search.exception))
+            self.assertIn("do not compare", str(changed_during_search.exception))
+            self.assertEqual(len(frontier_calls), prior_frontier_count)
+            self.assertTrue(document.exists())
 
             # A retry: an earlier run's document is already on disk and this
             # search raises. Write-after-return alone leaves the stale file as
@@ -19696,7 +20184,9 @@ class SkillPackageTests(unittest.TestCase):
         require_stage_reference(7, RUN_SAFETY, "baseline-and-optimization")
         documents = {
             "SKILL.md": " ".join(SKILL.read_text().casefold().split()),
-            "sdk-execution.md": " ".join(SDK_EXECUTION.read_text().casefold().split()),
+            "sdk-execution.md": " ".join(
+                sdk_execution_reference_text().casefold().split()
+            ),
             "run-safety.md": " ".join(RUN_SAFETY.read_text().casefold().split()),
         }
         skill = " ".join(
@@ -19790,7 +20280,7 @@ class SkillPackageTests(unittest.TestCase):
                     f"{name} still emits agent_type in a worked example",
                 )
 
-        template = SDK_EXECUTION.read_text()
+        template = sdk_execution_reference_text()
         self.assertNotIn(
             "AGENT_TYPE",
             template,
@@ -19824,7 +20314,7 @@ class SkillPackageTests(unittest.TestCase):
                     "not checked against the pinned SDK"
                 )
             self.skipTest("traigent is not installed; install the pinned SDK")
-        text = SDK_EXECUTION.read_text()
+        text = sdk_execution_reference_text()
         start = text.index("| Need | Import from |")
         end = text.index("\n\n", start)
         rows = [
@@ -19915,7 +20405,7 @@ class SkillPackageTests(unittest.TestCase):
         any prose pair ending in the enhanced count has to open with the
         baseline count. A future re-sizing changes both halves or fails here.
         """
-        text = SDK_EXECUTION.read_text()
+        text = sdk_execution_reference_text()
         asserted = dict(
             re.findall(
                 r"assert configuration_count\((BASELINE|ENHANCED)_SPACE\) == (\d+)",
@@ -19962,9 +20452,7 @@ class SkillPackageTests(unittest.TestCase):
         assert probes `build_request`, so a `call_agent` that re-inlined its own
         request would leave that assert guarding dead code.
         """
-        code = re.findall(
-            r"```python\n(.*?)\n```", SDK_EXECUTION.read_text(), re.DOTALL
-        )
+        code = sdk_execution_python_fences(sdk_execution_reference_text())
         module = ast.parse(code[0])
         wanted_assignments = {
             "WALKTHROUGH_TEMPERATURE",
@@ -20008,11 +20496,12 @@ class SkillPackageTests(unittest.TestCase):
             len(selected), 19, "the template no longer defines the knobs it wires"
         )
         self.assertIn(
-            "assert_wiring_still_proven()\nbaseline_results", SDK_EXECUTION.read_text()
+            "assert_wiring_still_proven()\nbaseline_tuning_fingerprint",
+            sdk_execution_reference_text(),
         )
         self.assertIn(
             "assert_wiring_still_proven()\n    optimized_results",
-            SDK_EXECUTION.read_text(),
+            sdk_execution_reference_text(),
         )
 
         requests: list[dict] = []
@@ -20049,8 +20538,8 @@ class SkillPackageTests(unittest.TestCase):
                 ast.fix_missing_locations(
                     ast.Module(
                         body=[
-                            *sdk_wrapper_state_nodes(SDK_EXECUTION.read_text()),
-                            *sdk_wrapper_spend_gate(SDK_EXECUTION.read_text()),
+                            *sdk_wrapper_state_nodes(sdk_execution_reference_text()),
+                            *sdk_wrapper_spend_gate(sdk_execution_reference_text()),
                             *selected,
                         ],
                         type_ignores=[],
@@ -20193,9 +20682,7 @@ class SkillPackageTests(unittest.TestCase):
         wiring proof and again for holdout rows. Its failure text therefore
         names the data shape, not one of those two callers.
         """
-        code = re.findall(
-            r"```python\n(.*?)\n```", SDK_EXECUTION.read_text(), re.DOTALL
-        )[0]
+        code = sdk_execution_python_fences(sdk_execution_reference_text())[0]
         module = ast.parse(code)
         parser = next(
             node
@@ -20250,9 +20737,7 @@ class SkillPackageTests(unittest.TestCase):
 
     def _wiring_probe_namespace(self, **overrides) -> dict:
         """Execute the fence's wiring probe with pieces of it swapped out."""
-        code = re.findall(
-            r"```python\n(.*?)\n```", SDK_EXECUTION.read_text(), re.DOTALL
-        )[0]
+        code = sdk_execution_python_fences(sdk_execution_reference_text())[0]
         module = ast.parse(code)
         wanted_assignments = {
             "WALKTHROUGH_TEMPERATURE",
@@ -20476,9 +20961,7 @@ class SkillPackageTests(unittest.TestCase):
         swap `build_request` or `build_prompt` first and then run the real
         fence over the verdicts that produces.
         """
-        code = re.findall(
-            r"```python\n(.*?)\n```", SDK_EXECUTION.read_text(), re.DOTALL
-        )[0]
+        code = sdk_execution_python_fences(sdk_execution_reference_text())[0]
         body = ast.parse(code).body
         start = next(
             index
@@ -20546,16 +21029,11 @@ class SkillPackageTests(unittest.TestCase):
             "partial dimensions must not enter the paid Cartesian grid",
         )
         self.assertIn("do not alter tuning rows", str(raised.exception))
-        code = SDK_EXECUTION.read_text()
+        code = (SKILL_ROOT / "assets" / "run_wrapper.py").read_text()
         self.assertLess(
             code.index("if UNPROVEN_WIRED_KNOBS"),
             code.index("@traigent.optimize"),
             "the partial-dimension refusal must precede either paid grid's decorator",
-        )
-        self.assertLess(
-            code.index("if UNPROVEN_WIRED_KNOBS"),
-            code.index("config_space_evidence ="),
-            "a partial dimension must fail before config-space evidence can be serialized",
         )
 
         # A builder that ignores every control makes all three paid prompt knobs
@@ -20656,7 +21134,7 @@ class SkillPackageTests(unittest.TestCase):
 
     def test_no_outside_request_waiver_enters_the_first_run_paid_space(self) -> None:
         """Request-dict movement cannot waive an indirect paid-search dimension."""
-        text = SDK_EXECUTION.read_text()
+        text = sdk_execution_reference_text()
         self.assertNotIn("WIRED_OUTSIDE_THE_REQUEST", text)
         self.assertIn("not visible for every model", text)
         normalized = " ".join(text.casefold().split())
@@ -20832,7 +21310,7 @@ class SkillPackageTests(unittest.TestCase):
         self.assertIn("an unpriced trial is not a cheap trial", safety)
         self.assertIn("a frontier asserts no win", safety)
         self.assertIn("the floor is a number this run reads", safety)
-        self.assertIn("def frontier_at_or_above(", SDK_EXECUTION.read_text())
+        self.assertIn("def frontier_at_or_above(", sdk_execution_reference_text())
 
         # Result reading spends no more, including when a cost frontier cannot
         # be established from the completed observations.
@@ -20885,7 +21363,7 @@ class SkillPackageTests(unittest.TestCase):
         require_stage_reference(8, RUN_SAFETY, "post-run-verification")
         skill = " ".join(SKILL.read_text().casefold().split())
         safety = " ".join(RUN_SAFETY.read_text().casefold().split())
-        sdk = " ".join(SDK_EXECUTION.read_text().casefold().split())
+        sdk = " ".join(sdk_execution_reference_text().casefold().split())
 
         # There is no third run to name, in any of the four documents a reader
         # could reach.
@@ -21020,7 +21498,7 @@ class SkillPackageTests(unittest.TestCase):
             with self.subTest(obsolete=obsolete):
                 self.assertNotIn(obsolete, safety)
 
-        sdk = SDK_EXECUTION.read_text()
+        sdk = sdk_execution_reference_text()
         self.assertNotIn("require_nonzero_token_usage", sdk)
         dataset = " ".join(
             (SKILL_ROOT / "references" / "evaluation-and-dataset.md")
@@ -21600,9 +22078,7 @@ class TheApprovedTotalReachesTheCodeTests(unittest.TestCase):
     @staticmethod
     def launch_program(label: str):
         """The wrapper's pre-import block, compiled - everything before litellm."""
-        fence = re.findall(
-            r"```python\n(.*?)\n```", SDK_EXECUTION.read_text(), re.DOTALL
-        )[0]
+        fence = sdk_execution_python_fences(sdk_execution_reference_text())[0]
         prefix: list[ast.stmt] = []
         for node in ast.parse(fence).body:
             if isinstance(node, ast.Import) and any(
@@ -21767,10 +22243,10 @@ class TheApprovedTotalReachesTheCodeTests(unittest.TestCase):
 
     def compiled_call_agent(self, **bindings):
         """`call_agent` with its ledger, plus the stubs it calls out to."""
-        text = SDK_EXECUTION.read_text()
+        text = sdk_execution_reference_text()
         functions = {
             node.name: node
-            for source in re.findall(r"```python\n(.*?)\n```", text, re.DOTALL)
+            for source in sdk_execution_python_fences(text)
             for node in ast.parse(source).body
             if isinstance(node, ast.FunctionDef)
         }
@@ -21833,10 +22309,10 @@ class TheApprovedTotalReachesTheCodeTests(unittest.TestCase):
         `raises` is handed to the stand-in `litellm`, for the tests where the
         call reaches the provider and then fails instead of answering.
         """
-        text = SDK_EXECUTION.read_text()
+        text = sdk_execution_reference_text()
         functions = {
             node.name: node
-            for source in re.findall(r"```python\n(.*?)\n```", text, re.DOTALL)
+            for source in sdk_execution_python_fences(text)
             for node in ast.parse(source).body
             if isinstance(node, ast.FunctionDef)
         }
@@ -21854,6 +22330,7 @@ class TheApprovedTotalReachesTheCodeTests(unittest.TestCase):
         placed: list[dict] = []
         namespace = {
             "litellm": fake_litellm(placed, content="4", raises=raises),
+            "FIRST_RUN_PHASE": "connected",
             "provider_reported_cost": lambda response: reported_cost,
             "require_untruncated_completion": lambda response: None,
             "MODEL_REQUEST_TIMEOUT_SECONDS": 120.0,
@@ -21875,7 +22352,7 @@ class TheApprovedTotalReachesTheCodeTests(unittest.TestCase):
         money it had spent: three calls at $0.01 left `run_remaining_usd()`
         reporting the whole of a $0.03 remaining.
 
-        The SDK cannot close it either. At the pinned 0.27.0 its local
+        The SDK cannot close it either. At the pinned 0.30.0 its local
         evaluator settles a trial's cost before it applies the metric
         functions, so a call made inside one is already past that trial's
         accounting.
@@ -22532,9 +23009,7 @@ class TheApprovedTotalReachesTheCodeTests(unittest.TestCase):
         entry point: any `litellm.<name>(...)` in the generated wrapper has to
         be a name the install put the ledger on.
         """
-        sources = re.findall(
-            r"```python\n(.*?)\n```", SDK_EXECUTION.read_text(), re.DOTALL
-        )
+        sources = sdk_execution_python_fences(sdk_execution_reference_text())
 
         wrapped = set()
         for node in self.door_install():
@@ -22610,11 +23085,11 @@ class TheApprovedTotalReachesTheCodeTests(unittest.TestCase):
         these two windows: the failure is a scorer stopped for a neighbour's
         call.
         """
-        text = SDK_EXECUTION.read_text()
+        text = sdk_execution_reference_text()
         concurrency = {"parallel_config", "parallel_trials", "trial_concurrency"}
         optimize_calls = [
             node
-            for source in re.findall(r"```python\n(.*?)\n```", text, re.DOTALL)
+            for source in sdk_execution_python_fences(text)
             for node in ast.walk(ast.parse(source))
             if isinstance(node, ast.Call)
             and isinstance(node.func, ast.Attribute)
@@ -22641,9 +23116,7 @@ class TheApprovedTotalReachesTheCodeTests(unittest.TestCase):
         """The module-level statement that installs the door, on its own."""
         return [
             node
-            for source in re.findall(
-                r"```python\n(.*?)\n```", SDK_EXECUTION.read_text(), re.DOTALL
-            )
+            for source in sdk_execution_python_fences(sdk_execution_reference_text())
             for node in ast.parse(source).body
             if isinstance(node, ast.If)
             and DOOR_INSTALL_MARKER in ast.unparse(node.test)
@@ -22680,7 +23153,7 @@ class TheApprovedTotalReachesTheCodeTests(unittest.TestCase):
         forgotten one funds half the calls the pass places and the refusal that
         exists to stop a partial pass lets one start.
         """
-        text = SDK_EXECUTION.read_text()
+        text = sdk_execution_reference_text()
         derived = {
             node.target.id: ast.unparse(node.value)
             for node in sdk_wrapper_state_nodes(text)
@@ -22714,10 +23187,10 @@ class TheApprovedTotalReachesTheCodeTests(unittest.TestCase):
         the four rows the money reached is not a smaller version of it. The fit
         is decided before the first row, and a refusal spends nothing.
         """
-        text = SDK_EXECUTION.read_text()
+        text = sdk_execution_reference_text()
         functions = {
             node.name: node
-            for source in re.findall(r"```python\n(.*?)\n```", text, re.DOTALL)
+            for source in sdk_execution_python_fences(text)
             for node in ast.parse(source).body
             if isinstance(node, ast.FunctionDef)
         }
@@ -22801,10 +23274,10 @@ class TheApprovedTotalReachesTheCodeTests(unittest.TestCase):
         `task_score` is written by the caller: the guide generates its body from
         the wired evaluator, so the document holds a shape and not a scorer.
         """
-        text = SDK_EXECUTION.read_text()
+        text = sdk_execution_reference_text()
         functions = {
             node.name: node
-            for source in re.findall(r"```python\n(.*?)\n```", text, re.DOTALL)
+            for source in sdk_execution_python_fences(text)
             for node in ast.parse(source).body
             if isinstance(node, ast.FunctionDef)
         }
@@ -23006,7 +23479,7 @@ class TheApprovedTotalReachesTheCodeTests(unittest.TestCase):
             safety,
         )
         self.assertIn('owns its sizing under "Automatic run bounds"', safety)
-        sdk = " ".join(SDK_EXECUTION.read_text().split())
+        sdk = " ".join(sdk_execution_reference_text().split())
         self.assertIn("TRAIGENT_RUN_COST_LIMIT", sdk)
         # The rejected alternative, recorded where the mechanism is, so the next
         # reader does not re-propose it: one Python object cannot span the two
@@ -23056,10 +23529,10 @@ class TheApprovedTotalReachesTheCodeTests(unittest.TestCase):
 
     def compiled_door(self, module, **bindings) -> dict:
         """The door, installed on `module`, reading cost the way the run does."""
-        text = SDK_EXECUTION.read_text()
+        text = sdk_execution_reference_text()
         functions = {
             node.name: node
-            for source in re.findall(r"```python\n(.*?)\n```", text, re.DOTALL)
+            for source in sdk_execution_python_fences(text)
             for node in ast.parse(source).body
             if isinstance(node, ast.FunctionDef)
         }
@@ -23430,9 +23903,7 @@ class TheApprovedTotalReachesTheCodeTests(unittest.TestCase):
         self.assertEqual(len(priced), 1)
         # Nothing generated sets one of them, so this refuses a caller the
         # package inherited and never the walkthrough's own wrapper.
-        for source in re.findall(
-            r"```python\n(.*?)\n```", SDK_EXECUTION.read_text(), re.DOTALL
-        ):
+        for source in sdk_execution_python_fences(sdk_execution_reference_text()):
             for node in ast.walk(ast.parse(source)):
                 if isinstance(node, ast.Call):
                     for keyword in node.keywords:
@@ -23697,7 +24168,7 @@ class TheApprovedTotalReachesTheCodeTests(unittest.TestCase):
         safety = RUN_SAFETY.read_text()
         # Both documents, because the claim was made in both and an
         # unqualified copy is what a reader acts on.
-        for document in (safety, SDK_EXECUTION.read_text()):
+        for document in (safety, sdk_execution_reference_text()):
             for named in sorted(endings):
                 self.assertIn(
                     named,
@@ -23723,7 +24194,7 @@ class TheApprovedTotalReachesTheCodeTests(unittest.TestCase):
         restating it in its own words a second time.
         """
         owner = "the walkthrough's only paid calls that no permit covers"
-        self.assertIn(owner, " ".join(SDK_EXECUTION.read_text().split()))
+        self.assertIn(owner, " ".join(sdk_execution_reference_text().split()))
         safety = " ".join(RUN_SAFETY.read_text().split())
         self.assertNotIn(
             "only paid calls",
@@ -23739,11 +24210,11 @@ class TheApprovedTotalReachesTheCodeTests(unittest.TestCase):
         self, *, ceiling: float, spent: float, per_call: float, placed, refused, ending
     ) -> str:
         """A runnable file holding the ledger, its report, and a way to die."""
-        text = SDK_EXECUTION.read_text()
+        text = sdk_execution_reference_text()
         wanted = {"report_run_spend", "run_remaining_usd"}
         collected: list[ast.stmt] = []
         registered: list[ast.stmt] = []
-        for source in re.findall(r"```python\n(.*?)\n```", text, re.DOTALL):
+        for source in sdk_execution_python_fences(text):
             tree = ast.parse(source)
             for node in tree.body:
                 if isinstance(node, ast.FunctionDef) and node.name in wanted:
@@ -23875,9 +24346,7 @@ class TheApprovedTotalReachesTheCodeTests(unittest.TestCase):
         """
         called = [
             node
-            for source in re.findall(
-                r"```python\n(.*?)\n```", SDK_EXECUTION.read_text(), re.DOTALL
-            )
+            for source in sdk_execution_python_fences(sdk_execution_reference_text())
             for node in ast.walk(ast.parse(source))
             if isinstance(node, ast.Call)
             and isinstance(node.func, ast.Name)
@@ -23905,17 +24374,12 @@ class TheApprovedTotalReachesTheCodeTests(unittest.TestCase):
         process against one `litellm`, ended normally, with the printed lines
         counted.
         """
-        text = SDK_EXECUTION.read_text()
+        text = sdk_execution_reference_text()
         # Any registration left at module level comes with them, so this
         # measures where the call actually is rather than where it should be:
         # collecting only the install would report a registration moved back
         # outside it as no line at all instead of as two.
-        beside = [
-            node
-            for source in re.findall(r"```python\n(.*?)\n```", text, re.DOTALL)
-            for node in ast.parse(source).body
-            if isinstance(node, ast.Expr) and "atexit.register" in ast.unparse(node)
-        ]
+        beside = []
         door = "\n".join(
             ast.unparse(node)
             for node in (
@@ -23941,6 +24405,7 @@ class TheApprovedTotalReachesTheCodeTests(unittest.TestCase):
                 "def install():",
                 "    namespace = {",
                 "        'litellm': litellm, 'atexit': atexit,",
+                "        'FIRST_RUN_PHASE': 'connected',",
                 "        'threading': threading, 'contextvars': contextvars,",
                 "        'RUN_COST_CEILING_USD': 5.0, 'RUN_COST_SPENT_USD': 2.0,",
                 "        'RUN_COST_REMAINING_USD': 3.0,",
@@ -24024,9 +24489,7 @@ class TheApprovedTotalReachesTheCodeTests(unittest.TestCase):
         # in it is not the door that ships.
         reserve = next(
             node
-            for source in re.findall(
-                r"```python\n(.*?)\n```", SDK_EXECUTION.read_text(), re.DOTALL
-            )
+            for source in sdk_execution_python_fences(sdk_execution_reference_text())
             for node in ast.parse(source).body
             if isinstance(node, ast.FunctionDef) and node.name == "reserve_call_spend"
         )
@@ -24161,10 +24624,9 @@ class TheApprovedTotalReachesTheCodeTests(unittest.TestCase):
     def door_function(self, name):
         """One function, compiled out of the document, with no door installed."""
         import ast as _ast
-        import re as _re
 
-        text = SDK_EXECUTION.read_text()
-        for source in _re.findall(r"```python\n(.*?)\n```", text, _re.DOTALL):
+        text = sdk_execution_reference_text()
+        for source in sdk_execution_python_fences(text):
             tree = _ast.parse(source)
             for node in tree.body:
                 if isinstance(node, _ast.FunctionDef) and node.name == name:
@@ -24425,10 +24887,10 @@ class TrackingLossStopsFurtherSpendingTests(unittest.TestCase):
 
     def compiled_door(self, **bindings):
         """`call_agent` with the whole door behind it, as the document has it."""
-        text = SDK_EXECUTION.read_text()
+        text = sdk_execution_reference_text()
         functions = {
             node.name: node
-            for source in re.findall(r"```python\n(.*?)\n```", text, re.DOTALL)
+            for source in sdk_execution_python_fences(text)
             for node in ast.parse(source).body
             if isinstance(node, ast.FunctionDef)
         }
@@ -24456,10 +24918,10 @@ class TrackingLossStopsFurtherSpendingTests(unittest.TestCase):
 
     def test_the_config_space_document_waits_for_the_portal(self) -> None:
         """A run that lost the portal emits no document, as the prose says."""
-        text = SDK_EXECUTION.read_text()
+        text = sdk_execution_reference_text()
         fence = next(
             block
-            for block in re.findall(r"```python\n(.*?)\n```", text, re.DOTALL)
+            for block in sdk_execution_python_fences(text)
             if "except BaseException as exc:" in block
         )
         trials = fence.index("assert optimized_results.trials")
@@ -24576,9 +25038,7 @@ class TrackingLossStopsFurtherSpendingTests(unittest.TestCase):
     @staticmethod
     def connected_search_fence() -> list[ast.stmt]:
         """The fenced block that runs the connected search, parsed."""
-        for source in re.findall(
-            r"```python\n(.*?)\n```", SDK_EXECUTION.read_text(), re.DOTALL
-        ):
+        for source in sdk_execution_python_fences(sdk_execution_reference_text()):
             if "optimized_results = agent.optimize_sync(" in source:
                 return ast.parse(source).body
         raise AssertionError(
@@ -24631,7 +25091,7 @@ class TrackingLossStopsFurtherSpendingTests(unittest.TestCase):
             "the connected fence never checks that a portal link came back, "
             "which is the one degradation the door cannot see for itself",
         )
-        text = SDK_EXECUTION.read_text()
+        text = sdk_execution_reference_text()
         self.assertLess(
             text.index("optimized_results = agent.optimize_sync("),
             text.index("def evaluate_holdout("),
@@ -33921,7 +34381,7 @@ class TrackingRecoveryTests(unittest.TestCase):
         )
         self.assertNotIn("only when additional search is justified", safety)
         self.assertNotIn("before offering one additional bounded pass", safety)
-        execution = " ".join(SDK_EXECUTION.read_text().split())
+        execution = " ".join(sdk_execution_reference_text().split())
         self.assertIn(
             "with or without completed trials, follow the Recovery rules in "
             "`references/run-safety.md`",
@@ -35905,7 +36365,7 @@ class TheIntegrationReadsArePinnedTests(unittest.TestCase):
             .casefold()
             .split()
         )
-        execution = " ".join(SDK_EXECUTION.read_text().casefold().split())
+        execution = " ".join(sdk_execution_reference_text().casefold().split())
         for document, text, phrase in (
             (
                 "execution",

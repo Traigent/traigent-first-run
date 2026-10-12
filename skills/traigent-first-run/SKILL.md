@@ -449,7 +449,7 @@ Traigent key in that process, preserving keys on disk. It is provider-paid and u
 approved ceiling. Prepare the wrapper and fixed grid from the execution contract.
 
 **Read next.** Required: [`references/sdk-execution.md` § Small baseline sweep](references/sdk-execution.md#small-baseline-sweep).
-If the run wrapper is being written now: [`references/sdk-execution.md` § Decorator contract](references/sdk-execution.md#decorator-contract).
+If applying the decorator contract: [`references/sdk-execution.md` § Decorator contract](references/sdk-execution.md#decorator-contract).
 
 Immediately after it returns, show a **Local baseline checkpoint** with target/agent identity,
 substitute limits, measured tuning results, available cost/latency and trials/failures. Show a cost

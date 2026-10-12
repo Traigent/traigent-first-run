@@ -342,11 +342,11 @@ this repository do not relicense the SDK; evaluate the SDK under the terms below
 
 ## SDK licensing
 
-The pinned requirements install `traigent==0.27.0` beside `litellm==1.93.2` and
+The pinned requirements install `traigent==0.30.0` beside `litellm==1.93.2` and
 `python-dotenv==1.2.2`. The Traigent SDK is offered under the
-[GNU Affero General Public License v3.0 only](https://github.com/Traigent/Traigent/blob/v0.27.0/LICENSE)
+[GNU Affero General Public License v3.0 only](https://github.com/Traigent/Traigent/blob/v0.30.0/LICENSE)
 (`AGPL-3.0-only`) or, under a separate written agreement, a
-[Traigent commercial license](https://github.com/Traigent/Traigent/blob/v0.27.0/COMMERCIAL-LICENSE.md).
+[Traigent commercial license](https://github.com/Traigent/Traigent/blob/v0.30.0/COMMERCIAL-LICENSE.md).
 Installing the package does not itself grant commercial terms. Organizations that need terms other
 than the AGPL must obtain a separate written commercial agreement from Traigent; contact
 `legal@traigent.ai`. This notice describes the SDK dependency.
@@ -354,7 +354,7 @@ than the AGPL must obtain a separate written commercial agreement from Traigent;
 ## Privacy
 
 According to the
-[pinned SDK 0.27.0 telemetry contract](https://github.com/Traigent/Traigent/blob/v0.27.0/docs/api-reference/telemetry.md),
+[pinned SDK 0.30.0 telemetry contract](https://github.com/Traigent/Traigent/blob/v0.30.0/docs/api-reference/telemetry.md),
 connected runs can send tuned configuration keys and values, numeric metrics, trial/run state, and
 content-free metadata needed for optimization and portal history. Except for content deliberately
 placed in a tuned configuration value and any observability content the project explicitly opts
@@ -368,7 +368,7 @@ content-free labels inside the agent; raw prompt text is not used as a configura
 walkthrough does not independently audit network packets; it stops if observed runtime behavior
 contradicts that contract.
 
-That backend boundary is separate from local retention. SDK 0.27.0 writes each example's `query`,
+That backend boundary is separate from local retention. SDK 0.30.0 writes each example's `query`,
 `response`, and `expected` text to local optimization logs by default. The walkthrough sets
 `TRAIGENT_LOG_EXAMPLE_CONTENT=false` in its run process before importing Traigent, which retains
 example ids and metrics but writes those three content fields as `null`, and keeps

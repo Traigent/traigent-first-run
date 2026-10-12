@@ -4,7 +4,9 @@ Help the user run a professional first Traigent optimization from any starting p
 
 Read [`GUIDE.md`](GUIDE.md), then follow
 [`skills/traigent-first-run/SKILL.md`](skills/traigent-first-run/SKILL.md) and its bundled
-references. A run uses `GUIDE.md`, `skills/traigent-first-run/`, and the user's own project;
+references. Read [`assets/run_wrapper.py`](skills/traigent-first-run/assets/run_wrapper.py)
+together with `references/sdk-execution.md`'s Decorator contract. A run uses `GUIDE.md`,
+`skills/traigent-first-run/`, and the user's own project;
 `tests/` and `tools/` validate the guide itself and play no part in a run. Preserve every real
 agent, dataset, and evaluator; generate only what is missing and derive it from all existing
 components.
