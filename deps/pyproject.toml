@@ -12,3 +12,4 @@ dependencies = [
 
 [tool.uv]
 package = false
+override-dependencies = ["filelock>=4.0.9,<5"]
