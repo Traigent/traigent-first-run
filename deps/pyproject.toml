@@ -1,0 +1,14 @@
+# Exists so dependency scanners see a uv.lock; keep in sync with
+# skills/traigent-first-run/assets/requirements-first-run.txt.
+[project]
+name = "traigent-first-run-deps"
+version = "0.0.0"
+requires-python = ">=3.11"
+dependencies = [
+    "traigent==0.30.0",
+    "litellm==1.101.3",
+    "python-dotenv==1.2.2",
+]
+
+[tool.uv]
+package = false

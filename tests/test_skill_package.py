@@ -4645,7 +4645,7 @@ class SkillPackageTests(unittest.TestCase):
             requirements,
             [
                 "traigent==0.30.0",
-                "litellm==1.101.0",
+                "litellm==1.101.3",
                 "python-dotenv==1.2.2",
             ],
         )
