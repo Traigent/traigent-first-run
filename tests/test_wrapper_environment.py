@@ -22,7 +22,7 @@ class WrapperEnvironmentTests(unittest.TestCase):
             runs.mkdir()
             (project / "pyproject.toml").write_text("[project]\nname='fixture'\n")
             (project / ".env").write_text(
-                "TRAIGENT_API_KEY=fixture-stale-value\n"
+                "TRAIGENT_API_KEY=dummy_key_stale_backend\n"
                 "TRAIGENT_FIRST_RUN_PHASE=connected\n"
                 "TRAIGENT_FIRST_RUN_COST_CEILING_USD=99\n"
                 "TRAIGENT_FIRST_RUN_COST_SPENT_USD=88\n"

@@ -775,7 +775,7 @@ print(json.dumps({'figures':rt.APPROVED_FIGURES,'phase':os.environ.get('TRAIGENT
                     "TRAIGENT_FIRST_RUN_COST_CEILING_USD=99\n"
                     "TRAIGENT_FIRST_RUN_COST_SPENT_USD=88\n"
                     "TRAIGENT_FIRST_RUN_UNTRACKED_CALL_COST_USD=77\n"
-                    "OPENAI_API_KEY=fixture-provider-from-file\n"
+                    "OPENAI_API_KEY=dummy_key_from_project_file\n"
                     "FIRST_RUN_FIXTURE_FILE_VALUE=explicit-load\n"
                 )
                 environment = {
@@ -822,7 +822,7 @@ print(json.dumps({'figures':rt.APPROVED_FIGURES,'phase':os.environ.get('TRAIGENT
                     (
                         "sk-probe-never-sent"
                         if preference == "1"
-                        else "fixture-provider-from-file"
+                        else "dummy_key_from_project_file"
                     ),
                 )
                 self.assertEqual(
