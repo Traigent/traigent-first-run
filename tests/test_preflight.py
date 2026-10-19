@@ -72,6 +72,69 @@ def synthetic_rows() -> list[dict]:
     return rows
 
 
+class StructuralSqlGoldTests(unittest.TestCase):
+    def test_gold_self_check_covers_both_splits_and_selected_fields(self) -> None:
+        for split in ("tune", "holdout"):
+            for query, expected_status in (
+                ("SELECT EXTRACT(YEAR FROM d) FROM t", MODULE.FAIL),
+                ("SELECT d FROM t", MODULE.PASS),
+            ):
+                with self.subTest(
+                    split=split, query=query
+                ), tempfile.TemporaryDirectory() as directory:
+                    path = Path(directory) / f"{split}.jsonl"
+                    path.write_text(
+                        json.dumps(
+                            {
+                                "id": "sql-row",
+                                "payload": {"q": "question"},
+                                "gold": {"sql": query},
+                                "split": split,
+                            }
+                        )
+                        + "\n"
+                    )
+                    MODULE.RESULTS.clear()
+                    MODULE.check_dataset(
+                        path,
+                        input_field="payload.q",
+                        expected_field="gold.sql",
+                        evaluator_method="sql-structure",
+                    )
+                    result = next(
+                        (r for r in MODULE.RESULTS if r.check == "dataset-integrity"),
+                        None,
+                    )
+                    if expected_status == MODULE.FAIL:
+                        self.assertIsNotNone(result)
+                        self.assertEqual(result.status, MODULE.FAIL, result.detail)
+                        self.assertIn("sql-row", result.detail)
+                        self.assertIn("line 1", result.detail)
+                        self.assertIn("FROM", result.detail)
+                    else:
+                        self.assertIsNone(result)
+                        shape = next(
+                            r for r in MODULE.RESULTS if r.check == "dataset-shape"
+                        )
+                        self.assertEqual(shape.status, MODULE.PASS)
+                        self.assertEqual(shape.metrics["scoreable_rows"], 1)
+
+    def test_unrelated_evaluators_do_not_check_gold_as_sql(self) -> None:
+        for method in (None, "composite", "exact-match"):
+            with self.subTest(
+                method=method
+            ), tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / "rows.jsonl"
+                path.write_text(
+                    json.dumps({"input": "question", "output": "label"}) + "\n"
+                )
+                MODULE.RESULTS.clear()
+                MODULE.check_dataset(path, evaluator_method=method)
+                self.assertFalse(
+                    any(r.check == "dataset-integrity" for r in MODULE.RESULTS)
+                )
+
+
 class StaticPreflightTests(unittest.TestCase):
     def setUp(self) -> None:
         MODULE.RESULTS.clear()

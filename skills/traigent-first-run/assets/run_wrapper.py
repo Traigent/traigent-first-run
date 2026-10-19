@@ -26,24 +26,21 @@ APPROVED_FIGURE_NAMES = (
 FIRST_RUN_PHASE = (
     os.environ.get("TRAIGENT_FIRST_RUN_PHASE", "baseline").strip().casefold()
 )
-# The three approved figures, read here for the same reason and taken from this
-# dict below rather than from the environment again. `load_dotenv` fills an
-# ABSENT process variable from the file, so figures left in `.env` would have
-# supplied the ceiling, the running total and the per-call rate - and the
-# refusal below, which exists so a phase launched without an approval cannot
-# start, would have found them present and passed. Measured against an
-# otherwise empty environment and a `.env` naming all three: the block ran to
-# completion on the file's ceiling and wrote it into TRAIGENT_RUN_COST_LIMIT.
+# Capture launch approval before dotenv: absent variables would otherwise be filled
+# from a stale file. Later budget reads use this mapping, never the merged environment.
 APPROVED_FIGURES = (
     {}
     if FIRST_RUN_PHASE == "proof"
     else {name: os.environ.get(name) for name in APPROVED_FIGURE_NAMES}
 )
+LAUNCH_BOUNDS = {
+    "TRAIGENT_FIRST_RUN_BASELINE_TIMEOUT_SECONDS": os.environ.get(
+        "TRAIGENT_FIRST_RUN_BASELINE_TIMEOUT_SECONDS"
+    )
+}
 load_dotenv(PROJECT_ROOT / ".env", override=False)
 os.environ.pop("TRAIGENT_FIRST_RUN_PHASE", None)
-if FIRST_RUN_PHASE == "proof":
-    # A stale .env must not make this proof look like an approved phase.
-    os.environ.pop("TRAIGENT_FIRST_RUN_BASELINE_TIMEOUT_SECONDS", None)
+os.environ.pop("TRAIGENT_FIRST_RUN_BASELINE_TIMEOUT_SECONDS", None)
 for _approved_name in APPROVED_FIGURE_NAMES:
     # Popped like the phase flag, so a child process inherits neither an
     # approval nor a running total it was not launched with.
@@ -82,6 +79,8 @@ if FIRST_RUN_PHASE in {"proof", "baseline"}:
         )
     # Backend-offline is process-local: a stored CLI credential can survive
     # removing the environment key, so this is what keeps the baseline local.
+    # The wrapper loaded dotenv already; an SDK import must not restore removed values.
+    os.environ["TRAIGENT_SKIP_DOTENV"] = "1"
     os.environ["TRAIGENT_OFFLINE_MODE"] = "true"
     os.environ.pop("TRAIGENT_API_KEY", None)
 else:
@@ -254,8 +253,8 @@ ROUTE_ALIASES = {"cohere_chat": "cohere"}
 WALKTHROUGH_TEMPERATURE = 0.0
 
 
-def positive_number(name: str, *, default: float | None = None) -> float:
-    raw_value = os.environ.get(name)
+def positive_number(name: str, *, default: float | None = None, values=None) -> float:
+    raw_value = (os.environ if values is None else values).get(name)
     if raw_value is None:
         if default is None:
             raise ValueError(f"{name} is required")
@@ -296,10 +295,13 @@ MODEL_REQUEST_TIMEOUT_SECONDS = positive_number(
     "TRAIGENT_FIRST_RUN_MODEL_REQUEST_TIMEOUT_SECONDS",
     default=120.0,
 )
+
 BASELINE_TIMEOUT_SECONDS = (
     None
     if FIRST_RUN_PHASE == "proof"
-    else positive_number("TRAIGENT_FIRST_RUN_BASELINE_TIMEOUT_SECONDS")
+    else positive_number(
+        "TRAIGENT_FIRST_RUN_BASELINE_TIMEOUT_SECONDS", values=LAUNCH_BOUNDS
+    )
 )
 # No wall-clock cap on the enhanced optimization by default (None): the search
 # runs to its trial cap, bounded by the total cost ceiling and the per-model-

@@ -1107,7 +1107,11 @@ class Bridge:
         document = {
             "kind": "first-run-bridge-baseline",
             "phase": "baseline",
-            "complete": complete and len(results) == len(configs),
+            "complete": (
+                complete
+                and len(results) == len(configs)
+                and not any(result["n_failed"] for result in results)
+            ),
             "tuning_rows": len(rows),
             "baseline_config": self.spec["baseline"]["config"],
             "results": results,
@@ -1121,6 +1125,10 @@ class Bridge:
             json.dumps(document, indent=2, default=str) + "\n", encoding="utf-8"
         )
         print(f"wrote {out}")
+        if any(result["n_failed"] for result in results):
+            print(
+                "Partial evaluation: failed examples; means are diagnostic, not a complete comparison"
+            )
         unscored = [r for r in results if not r["n_scored"]]
         if unscored:
             print(f"{len(unscored)} configuration(s) scored no row; see failure_types")
@@ -1139,8 +1147,8 @@ class Bridge:
                 self.agent_output(row, config)
             except _ProbeStop:
                 pass
-            except Exception as error:
-                return f"error:{type(error).__name__}"
+            except Exception:
+                return None
             return PROBED_REQUESTS[0] if PROBED_REQUESTS else None
 
         reference = request_for(base)
@@ -1149,13 +1157,20 @@ class Bridge:
             if len(set(map(repr, values))) < 2:
                 verdicts[knob] = "not-searched"
                 continue
-            changed = [
-                request_for({**base, knob: value}) != reference
+            observations = [
+                request_for({**base, knob: value})
                 for value in values
                 if value != base[knob]
             ]
-            verdicts[knob] = "visible" if reference and any(changed) else "ignored"
-        if reference is None or str(reference).startswith("error:"):
+            if reference is None or any(item is None for item in observations):
+                verdicts[knob] = "unobserved"
+            else:
+                verdicts[knob] = (
+                    "visible"
+                    if any(item != reference for item in observations)
+                    else "ignored"
+                )
+        if reference is None:
             verdicts = {knob: "unobserved" for knob in space}
         print(json.dumps({"wiring": verdicts}, indent=2))
         return (

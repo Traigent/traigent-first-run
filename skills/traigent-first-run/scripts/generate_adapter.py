@@ -32,6 +32,7 @@ import json
 import os
 import re
 import shutil
+import shlex
 import sys
 from pathlib import Path
 
@@ -537,6 +538,9 @@ def generate(config_path: Path, root: Path, run_dir: Path) -> dict:
     (run_dir / "config-space.json").write_text(
         json.dumps(document, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
+    relative_bridge = (
+        (run_dir.resolve() / BRIDGE_NAME).relative_to(root.resolve()).as_posix()
+    )
     return {
         "bridge": str(run_dir / BRIDGE_NAME),
         "runtime": str(run_dir / RUNTIME_NAME),
@@ -546,8 +550,8 @@ def generate(config_path: Path, root: Path, run_dir: Path) -> dict:
         "agent": f"{spec['agent']['file']}:{spec['agent']['function']}",
         "evaluator": f"{spec['evaluator']['file']}:{spec['evaluator']['function']}",
         "next": [
-            "python traigent-runs/adapter_bridge.py probe",
-            "calibrate_evaluator.py --scorer traigent-runs/adapter_bridge.py:score",
+            f"python {shlex.quote(relative_bridge)} probe",
+            f"calibrate_evaluator.py --scorer {shlex.quote(relative_bridge + ':score')}",
         ],
     }
 

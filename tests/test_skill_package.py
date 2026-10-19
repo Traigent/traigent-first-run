@@ -12145,7 +12145,8 @@ class SkillPackageTests(unittest.TestCase):
         text = sdk_execution_reference_text()
         wrapper = (SKILL_ROOT / "assets" / "run_wrapper.py").read_text()
         self.assertIn(
-            'positive_number("TRAIGENT_FIRST_RUN_BASELINE_TIMEOUT_SECONDS")', wrapper
+            'positive_number( "TRAIGENT_FIRST_RUN_BASELINE_TIMEOUT_SECONDS", values=LAUNCH_BOUNDS )',
+            " ".join(wrapper.split()),
         )
         normalized = " ".join(text.casefold().split())
         for phrase in (

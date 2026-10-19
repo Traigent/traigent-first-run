@@ -15,6 +15,7 @@ import importlib.util
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -169,6 +170,132 @@ class Project:
 
 
 class GenerationTests(unittest.TestCase):
+    def test_next_commands_follow_the_selected_run_directory(self) -> None:
+        for relative in ("traigent-runs", "qa/runs", "qa/my runs"):
+            with self.subTest(relative=relative):
+                project = Project(self)
+                done = project.generate(project.root / relative)
+                self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+                commands = json.loads(done.stdout)["next"]
+                probe = shlex.split(commands[0])
+                scorer = shlex.split(commands[1])[-1]
+                self.assertEqual(probe[1], f"{relative}/adapter_bridge.py")
+                self.assertEqual(scorer, f"{relative}/adapter_bridge.py:score")
+                executed = subprocess.run(
+                    [sys.executable, "-B", *probe[1:]],
+                    cwd=project.root,
+                    env={"PATH": os.environ.get("PATH", ""), "HOME": str(project.root)},
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                self.assertEqual(
+                    executed.returncode, 0, executed.stdout + executed.stderr
+                )
+
+    def test_next_commands_resolve_a_noncanonical_project_root(self) -> None:
+        project = Project(self)
+        config = project.root.parent / "adapter.json"
+        config.write_text(json.dumps(project.config))
+        generated = MODULE.generate(
+            config, project.root / ".." / "project", project.root / "qa" / "runs"
+        )
+        self.assertEqual(generated["next"][0], "python qa/runs/adapter_bridge.py probe")
+
+    def test_partial_baselines_are_diagnostic_and_fail(self) -> None:
+        for different_rows in (False, True):
+            with self.subTest(different_rows=different_rows):
+                condition = (
+                    '(text.startswith("technical") == (model == "openai/m-small"))'
+                    if different_rows
+                    else 'text.startswith("technical")'
+                )
+                agent = AGENT.replace(
+                    "reply = litellm",
+                    f"if {condition}:\n        raise ValueError('fixture failure')\n    reply = litellm",
+                )
+                project = Project(self, agent=agent)
+                self.assertEqual(project.generate().returncode, 0)
+                done = project.bridge("baseline")
+                self.assertEqual(done.returncode, 3, done.stdout + done.stderr)
+                document = json.loads(
+                    (project.runs / "baseline-results.json").read_text()
+                )
+                self.assertFalse(document["complete"])
+                self.assertIn("diagnostic", done.stdout)
+                self.assertEqual(
+                    [
+                        (
+                            r["n_scored"],
+                            r["n_failed"],
+                            r["failure_types"],
+                            r["mean_score"],
+                        )
+                        for r in document["results"]
+                    ],
+                    [(1, 1, {"ValueError": 1}, 1.0)] * 2,
+                )
+                if different_rows:
+                    self.assertNotEqual(
+                        document["results"][0]["rows"], document["results"][1]["rows"]
+                    )
+
+    def test_an_unobserved_alternative_does_not_prove_wiring(self) -> None:
+        for action in (
+            "raise ValueError('fixture failure')",
+            "return {'result': {'label': 'x'}}",
+        ):
+            with self.subTest(action=action):
+                agent = AGENT.replace(
+                    "reply = litellm",
+                    f'if model == "openai/m-large":\n        {action}\n    reply = litellm',
+                )
+                project = Project(self, agent=agent)
+                self.assertEqual(project.generate().returncode, 0)
+                done = project.bridge("probe")
+                self.assertEqual(done.returncode, 3, done.stdout + done.stderr)
+                self.assertEqual(
+                    json.loads(done.stdout)["wiring"]["model"], "unobserved"
+                )
+
+    def test_an_alternative_error_after_capture_does_not_prove_wiring(self) -> None:
+        agent = """
+import litellm
+
+def answer(text, model, temperature):
+    try:
+        litellm.completion(model=model, messages=[{"role": "user", "content": text}])
+    finally:
+        if model == "openai/m-large":
+            raise ValueError("fixture failure after request capture")
+"""
+        project = Project(self, agent=agent)
+        self.assertEqual(project.generate().returncode, 0)
+        done = project.bridge("probe")
+        self.assertEqual(done.returncode, 3, done.stdout + done.stderr)
+        self.assertEqual(json.loads(done.stdout)["wiring"]["model"], "unobserved")
+
+    def test_an_all_failed_or_timed_out_baseline_stays_incomplete(self) -> None:
+        for agent, environment in (
+            (
+                AGENT.replace(
+                    "reply = litellm",
+                    "raise ValueError('fixture failure')\n    reply = litellm",
+                ),
+                {},
+            ),
+            (AGENT, {"TRAIGENT_FIRST_RUN_BASELINE_TIMEOUT_SECONDS": "0.000000001"}),
+        ):
+            with self.subTest(environment=environment):
+                project = Project(self, agent=agent)
+                self.assertEqual(project.generate().returncode, 0)
+                done = project.bridge("baseline", env=environment)
+                self.assertEqual(done.returncode, 3, done.stdout + done.stderr)
+                document = json.loads(
+                    (project.runs / "baseline-results.json").read_text()
+                )
+                self.assertFalse(document["complete"])
+
     def test_generation_is_deterministic(self) -> None:
         first = Project(self)
         self.assertEqual(first.generate().returncode, 0)

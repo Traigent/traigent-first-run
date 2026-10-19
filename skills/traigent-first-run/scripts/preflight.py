@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import ast
 import hashlib
+import importlib.util
 import json
 import os
 import re
@@ -4523,6 +4524,14 @@ def check_dataset(
         return None
 
     reference_free = evaluator_method in REFERENCE_FREE_METHODS
+    sql_comparator = None
+    if evaluator_method == STRUCTURAL_SQL_SHAPE:
+        # Only the trusted bundled asset is loaded, never the evaluator or its copy.
+        spec = importlib.util.spec_from_file_location(
+            "_first_run_sql_gold", STRUCTURAL_SQL_ASSET
+        )
+        sql_comparator = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(sql_comparator)
     rows: list[dict[str, Any]] = []
     present_rows: list[dict[str, Any]] = []
     present_row_records: list[tuple[int, dict[str, Any]]] = []
@@ -4562,6 +4571,23 @@ def check_dataset(
             continue
         if normalized_row is None:
             raise RuntimeError("dataset normalization returned no row without an error")
+        if sql_comparator is not None:
+            expected = normalized_row["output"]
+            reason = (
+                f"expected SQL is {type(expected).__name__}, not a string"
+                if not isinstance(expected, str)
+                else sql_comparator._unreadable_reason(expected)
+            )
+            if reason is not None:
+                row_id = row_metadata_value(row, "id")
+                invalid_rows.append(
+                    (
+                        line_number,
+                        f"id {row_id!r}: expected SQL cannot self-match ({reason}); "
+                        "repair the working copy or choose a suitable evaluator before paid work",
+                    )
+                )
+                continue
         rows.append(normalized_row)
         present_rows.append(row)
         present_row_records.append((line_number, row))

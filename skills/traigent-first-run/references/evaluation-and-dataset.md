@@ -45,6 +45,13 @@ conjunct-order or alias `equivalent_good`, never a reordered `ORDER BY`; record 
 equivalents as coverage gaps. It imports only the standard library and reaches no engine,
 so it calibrates at the opening gate.
 
+Before any paid phase on `sql-structure`, require every gold row in both splits to self-match.
+Preflight checks this under that declared method and the selected field paths, using the bundled
+comparator without importing user code. To inspect all parser reasons, run
+`python <copied-sql_structure.py> <combined-split-labelled.jsonl> --expected-field <dot-path>`.
+Exit 1 identifies unreadable gold by line and id. Apply this reference's existing degenerate-gold
+exclusion bounds and repair choices, then revalidate the working material before paid work.
+
 Report a **structural-match score**, not execution correctness. Sorting each select set can accept
 wrong column alignment across compound arms: `SELECT 1, 2 UNION SELECT 3, 4` matches
 `SELECT 1, 2 UNION SELECT 4, 3` although result rows differ. When compounds occur in the task,

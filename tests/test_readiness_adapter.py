@@ -93,6 +93,25 @@ def _provenance_metric(records: list[dict]) -> dict:
     )
 
 
+class SqlGoldReadinessTests(unittest.TestCase):
+    def test_an_unreadable_gold_blocks_the_paid_run_through_integrity(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            rows = [
+                {"id": "valid", "input": "first question", "output": "SELECT a FROM t"},
+                {
+                    "id": "invalid",
+                    "input": "second question",
+                    "output": "SELECT TOP 5 a FROM t",
+                },
+            ]
+            dataset = _write_jsonl(Path(directory), "rows.jsonl", rows)
+            score = _score(
+                dataset, preflight_extra=("--evaluator-method", "sql-structure")
+            )
+            cap = _cap(score, "dataset-integrity-fail")
+            self.assertEqual(cap["action_kind"], "repair-dataset")
+
+
 def _cap(score: dict, condition: str) -> dict:
     """The named cap, or an AssertionError that says which one was missing.
 
