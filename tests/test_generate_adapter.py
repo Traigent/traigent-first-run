@@ -689,6 +689,225 @@ ASYNC_AGENT = AGENT.replace("def answer", "async def answer").replace(
 )
 
 
+class CanonicalRuntimeOutcomeTests(unittest.TestCase):
+    """Exercise the shipped runtime, including its saved result and launch status."""
+
+    def runtime_bridge(self, agent=AGENT):
+        import contextlib
+        import types
+        from unittest import mock
+
+        @contextlib.contextmanager
+        def fixture():
+            project = Project(self, agent=agent)
+            spec, _, _ = MODULE.validate(project.config, project.root)
+            project.runs.mkdir()
+            placed = []
+
+            def completion(**request):
+                placed.append(request)
+                return types.SimpleNamespace(
+                    choices=[
+                        types.SimpleNamespace(
+                            finish_reason="stop",
+                            message=types.SimpleNamespace(
+                                content=request["mock_response"]
+                            ),
+                        )
+                    ],
+                    usage={"cost": 0.001},
+                )
+
+            async def acompletion(**request):
+                return completion(**request)
+
+            transport = types.ModuleType("litellm")
+            transport.completion = completion
+            transport.acompletion = acompletion
+            transport.num_retries = 0
+            environment = {
+                "TRAIGENT_FIRST_RUN_COST_CEILING_USD": "1",
+                "TRAIGENT_FIRST_RUN_COST_SPENT_USD": "0",
+                "TRAIGENT_FIRST_RUN_UNTRACKED_CALL_COST_USD": "0.001",
+                "TRAIGENT_FIRST_RUN_BASELINE_TIMEOUT_SECONDS": "1",
+            }
+            from openai.resources.chat.completions import (
+                AsyncCompletions,
+                Completions,
+            )
+
+            with (
+                mock.patch.dict(os.environ, environment, clear=True),
+                mock.patch.dict(sys.modules, {"litellm": transport}),
+                mock.patch.object(sys, "path", list(sys.path)),
+                mock.patch.object(sys, "dont_write_bytecode", True),
+                mock.patch.object(Completions, "create", Completions.create),
+                mock.patch.object(AsyncCompletions, "create", AsyncCompletions.create),
+                mock.patch.object(
+                    Completions, "_first_run_ledgered", False, create=True
+                ),
+            ):
+                runtime = load_runtime("rt_outcomes")
+                try:
+                    yield runtime, runtime.Bridge(spec, project.runs), placed
+                finally:
+                    runtime.atexit.unregister(runtime.report_run_spend)
+
+        return fixture()
+
+    def baseline_result(self, bridge):
+        import contextlib
+        import io
+
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            status = bridge.run_baseline()
+        document = json.loads((bridge.run_dir / "baseline-results.json").read_text())
+        return status, document, stdout.getvalue()
+
+    def test_a_complete_baseline_persists_every_selected_row(self) -> None:
+        with self.runtime_bridge() as (_, bridge, placed):
+            status, document, output = self.baseline_result(bridge)
+        self.assertEqual(status, 0)
+        self.assertTrue(document["complete"])
+        self.assertEqual(document["tuning_rows"], 2)
+        self.assertEqual(len(document["results"]), 2)
+        self.assertEqual(len(placed), 4)
+        for result in document["results"]:
+            self.assertEqual([row["id"] for row in result["rows"]], ["a", "b"])
+            self.assertEqual(result["mean_score"], 1.0)
+            self.assertEqual(result["n_failed"], 0)
+        self.assertNotIn("diagnostic", output)
+
+    def test_partial_baselines_persist_failures_without_claiming_completion(
+        self,
+    ) -> None:
+        for condition, selected_ids in (
+            ('text.startswith("technical")', [["a"], ["a"]]),
+            (
+                '(text.startswith("technical") == (model == "openai/m-small"))',
+                [["a"], ["b"]],
+            ),
+        ):
+            with self.subTest(condition=condition):
+                agent = AGENT.replace(
+                    "reply = litellm",
+                    f"if {condition}:\n        raise ValueError('fixture failure')\n    reply = litellm",
+                )
+                with self.runtime_bridge(agent) as (_, bridge, placed):
+                    status, document, output = self.baseline_result(bridge)
+                self.assertEqual(status, 3)
+                self.assertFalse(document["complete"])
+                self.assertIn("diagnostic", output)
+                self.assertEqual(len(placed), 2)
+                self.assertEqual(
+                    [
+                        [row["id"] for row in result["rows"]]
+                        for result in document["results"]
+                    ],
+                    selected_ids,
+                )
+                for result in document["results"]:
+                    self.assertEqual(result["n_scored"], 1)
+                    self.assertEqual(result["n_failed"], 1)
+                    self.assertEqual(result["failure_types"], {"ValueError": 1})
+                    self.assertEqual(result["mean_score"], 1.0)
+
+    def test_an_all_failed_baseline_keeps_the_failure_evidence(self) -> None:
+        agent = AGENT.replace(
+            "reply = litellm",
+            "raise ValueError('fixture failure')\n    reply = litellm",
+        )
+        with self.runtime_bridge(agent) as (_, bridge, placed):
+            status, document, output = self.baseline_result(bridge)
+        self.assertEqual(status, 3)
+        self.assertFalse(document["complete"])
+        self.assertEqual(placed, [])
+        self.assertIn("scored no row", output)
+        self.assertEqual(len(document["results"]), 2)
+        for result in document["results"]:
+            self.assertEqual(result["n_failed"], 2)
+            self.assertEqual(result["failure_types"], {"ValueError": 2})
+            self.assertIsNone(result["mean_score"])
+            self.assertEqual(result["rows"], [])
+
+    def test_a_timeout_saves_an_incomplete_result_without_placing_a_call(self) -> None:
+        from unittest import mock
+
+        with self.runtime_bridge() as (runtime, bridge, placed):
+            # Time advances beyond the approved second before the first row starts.
+            with mock.patch.object(runtime.time, "monotonic", side_effect=[0, 2, 2]):
+                status, document, output = self.baseline_result(bridge)
+        self.assertEqual(status, 3)
+        self.assertFalse(document["complete"])
+        self.assertEqual(placed, [])
+        self.assertEqual(len(document["results"]), 1)
+        self.assertEqual(document["results"][0]["rows"], [])
+        self.assertEqual(document["results"][0]["n_failed"], 0)
+        self.assertIn("scored no row", output)
+
+    def test_probe_status_requires_an_observed_request_difference(self) -> None:
+        import contextlib
+        import io
+
+        for label, agent, status, wiring in (
+            ("visible", AGENT, 0, {"model": "visible", "temperature": "not-searched"}),
+            (
+                "ignored",
+                AGENT.replace("model=model,", 'model="openai/m-small",'),
+                3,
+                {"model": "ignored", "temperature": "not-searched"},
+            ),
+            *(
+                (
+                    label,
+                    AGENT.replace(
+                        "reply = litellm",
+                        f'if model == "openai/m-large":\n        {action}\n    reply = litellm',
+                    ),
+                    3,
+                    {"model": "unobserved", "temperature": "not-searched"},
+                )
+                for label, action in (
+                    ("missing alternative", "return {'result': {'label': 'x'}}"),
+                    ("raising alternative", "raise ValueError('fixture failure')"),
+                )
+            ),
+            (
+                "missing reference",
+                AGENT.replace(
+                    "reply = litellm",
+                    'if model == "openai/m-small":\n        return {"result": {"label": "x"}}\n    reply = litellm',
+                ),
+                3,
+                {"model": "unobserved", "temperature": "unobserved"},
+            ),
+            (
+                "raising after capture",
+                """import litellm
+def answer(text, model, temperature):
+    try:
+        litellm.completion(model=model, messages=[{"role": "user", "content": text}])
+    finally:
+        if model == "openai/m-large":
+            raise ValueError("fixture failure after capture")
+""",
+                3,
+                {"model": "unobserved", "temperature": "not-searched"},
+            ),
+        ):
+            with self.subTest(label=label):
+                with self.runtime_bridge(agent) as (_, bridge, placed):
+                    stdout = io.StringIO()
+                    with contextlib.redirect_stdout(stdout):
+                        actual_status = bridge.run_probe()
+                    self.assertEqual(actual_status, status)
+                    self.assertEqual(json.loads(stdout.getvalue()), {"wiring": wiring})
+                    self.assertEqual(
+                        placed, [], "a wiring proof must place no transport call"
+                    )
+
+
 class FirstRunAuditTests(unittest.TestCase):
     """Regressions for the third external review: each fails on the code it was written against."""
 

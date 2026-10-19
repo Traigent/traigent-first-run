@@ -1,6 +1,5 @@
 """The actual SDK import must preserve the wrapper's launch-only approval state."""
 
-import ast
 import json
 import os
 import subprocess
@@ -28,17 +27,23 @@ class WrapperEnvironmentTests(unittest.TestCase):
                 "TRAIGENT_FIRST_RUN_UNTRACKED_CALL_COST_USD=77\n"
                 "TRAIGENT_FIRST_RUN_BASELINE_TIMEOUT_SECONDS=5\n"
             )
-            prefix = []
-            for node in ast.parse(WRAPPER.read_text()).body:
-                prefix.append(node)
-                if isinstance(node, ast.Assign) and any(
-                    isinstance(target, ast.Name)
-                    and target.id == "OPTIMIZATION_TIMEOUT_SECONDS"
-                    for target in node.targets
-                ):
-                    break
-            program = ast.unparse(ast.Module(body=prefix, type_ignores=[]))
-            program += '\nprint("STATE=" + json.dumps({"timeout": BASELINE_TIMEOUT_SECONDS, "env": {name: os.environ.get(name) for name in (*APPROVED_FIGURE_NAMES, "TRAIGENT_API_KEY", "TRAIGENT_FIRST_RUN_PHASE", "TRAIGENT_FIRST_RUN_BASELINE_TIMEOUT_SECONDS")}}))\n'
+            # Compile unchanged source nodes with their original offsets and filename.
+            # __file__ remains the customer's copied wrapper location for dotenv lookup.
+            program = """import ast
+import sys
+from pathlib import Path
+source = Path(sys.argv[1])
+prefix = []
+for node in ast.parse(source.read_text()).body:
+    prefix.append(node)
+    if isinstance(node, ast.Assign) and any(
+        isinstance(target, ast.Name) and target.id == "OPTIMIZATION_TIMEOUT_SECONDS"
+        for target in node.targets
+    ):
+        break
+exec(compile(ast.Module(body=prefix, type_ignores=[]), str(source), "exec"), globals())
+print("STATE=" + json.dumps({"timeout": BASELINE_TIMEOUT_SECONDS, "env": {name: os.environ.get(name) for name in (*APPROVED_FIGURE_NAMES, "TRAIGENT_API_KEY", "TRAIGENT_FIRST_RUN_PHASE", "TRAIGENT_FIRST_RUN_BASELINE_TIMEOUT_SECONDS")}}))
+"""
             script = runs / "wrapper_prefix.py"
             script.write_text(program)
             # Deny outbound sockets throughout the subprocess, including SDK imports.
@@ -63,10 +68,14 @@ class WrapperEnvironmentTests(unittest.TestCase):
                 "TRAIGENT_FIRST_RUN_STRONG_MODEL": "openai/z",
                 "TRAIGENT_FIRST_RUN_CURRENT_PROVIDER": "openai",
             }
+            # Preserve only the coverage runner's controls in this test subprocess.
+            for name in ("COVERAGE_PROCESS_START", "COVERAGE_FILE"):
+                if name in os.environ:
+                    environment[name] = os.environ[name]
             if timeout is not None:
                 environment["TRAIGENT_FIRST_RUN_BASELINE_TIMEOUT_SECONDS"] = timeout
             return subprocess.run(
-                [sys.executable, "-B", str(script)],
+                [sys.executable, "-B", str(script), str(WRAPPER)],
                 cwd=project,
                 env=environment,
                 capture_output=True,
