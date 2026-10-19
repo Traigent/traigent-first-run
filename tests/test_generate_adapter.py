@@ -750,6 +750,137 @@ ASYNC_AGENT = AGENT.replace("def answer", "async def answer").replace(
 )
 
 
+class RuntimeImportEnvironmentTests(unittest.TestCase):
+    def test_real_sdk_import_preserves_launch_state_and_provider_settings(self) -> None:
+        program = """import importlib.util,json,os,socket,sys
+from pathlib import Path
+def deny(*a, **k): raise RuntimeError('network denied')
+socket.socket.connect=deny
+socket.getaddrinfo=deny
+if sys.argv[3] == 'traced' and sys.gettrace() is None:
+    def trace(frame,event,arg): return trace
+    sys.settrace(trace)
+spec=importlib.util.spec_from_file_location('runtime_environment',sys.argv[1])
+rt=importlib.util.module_from_spec(spec)
+spec.loader.exec_module(rt)
+rt.Bridge({},Path(sys.argv[2])).start(probe=True)
+print(json.dumps({'figures':rt.APPROVED_FIGURES,'phase':os.environ.get('TRAIGENT_FIRST_RUN_PHASE'),'env_figures':[os.environ.get(n) for n in rt.APPROVED_FIGURE_NAMES],'provider':os.environ.get('OPENAI_API_KEY'),'launch_provider':os.environ.get('ANTHROPIC_API_KEY'),'file_value':os.environ.get('FIRST_RUN_FIXTURE_FILE_VALUE'),'disabled':os.environ.get('PYTHON_DOTENV_DISABLED'),'trace_active':sys.gettrace() is not None}))
+"""
+        for traced, preference in ((False, None), (True, None)):
+            with self.subTest(traced=traced, preference=preference):
+                project = Project(self)
+                project.runs.mkdir()
+                (project.root / ".env").write_text(
+                    "TRAIGENT_FIRST_RUN_PHASE=connected\n"
+                    "TRAIGENT_FIRST_RUN_COST_CEILING_USD=99\n"
+                    "TRAIGENT_FIRST_RUN_COST_SPENT_USD=88\n"
+                    "TRAIGENT_FIRST_RUN_UNTRACKED_CALL_COST_USD=77\n"
+                    "OPENAI_API_KEY=fixture-provider-from-file\n"
+                    "FIRST_RUN_FIXTURE_FILE_VALUE=explicit-load\n"
+                )
+                environment = {
+                    "PATH": os.environ.get("PATH", ""),
+                    "HOME": str(project.root),
+                    "LITELLM_LOCAL_MODEL_COST_MAP": "true",
+                    "TRAIGENT_FIRST_RUN_PHASE": "baseline",
+                    "TRAIGENT_FIRST_RUN_COST_CEILING_USD": "2",
+                    "TRAIGENT_FIRST_RUN_COST_SPENT_USD": "0",
+                    "TRAIGENT_FIRST_RUN_UNTRACKED_CALL_COST_USD": "0.01",
+                    "ANTHROPIC_API_KEY": "fixture-launch-provider",
+                }
+                for name in ("COVERAGE_PROCESS_START", "COVERAGE_FILE"):
+                    if name in os.environ:
+                        environment[name] = os.environ[name]
+                if preference is not None:
+                    environment["PYTHON_DOTENV_DISABLED"] = preference
+                script = project.runs / "runtime_import.py"
+                script.write_text(program)
+                done = subprocess.run(
+                    [
+                        sys.executable,
+                        "-B",
+                        str(script),
+                        str(RUNTIME),
+                        str(project.runs),
+                        "traced" if traced else "plain",
+                    ],
+                    cwd=project.root,
+                    env=environment,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+                state = json.loads(done.stdout)
+                self.assertIsNone(state["phase"], state)
+                self.assertEqual(state["env_figures"], [None, None, None], state)
+                self.assertEqual(list(state["figures"].values()), ["2", "0", "0.01"])
+                self.assertEqual(state["disabled"], preference)
+                self.assertEqual(state["launch_provider"], "fixture-launch-provider")
+                self.assertEqual(
+                    state["provider"],
+                    (
+                        "sk-probe-never-sent"
+                        if preference == "1"
+                        else "fixture-provider-from-file"
+                    ),
+                )
+                self.assertEqual(
+                    state["file_value"], None if preference == "1" else "explicit-load"
+                )
+                if traced:
+                    self.assertTrue(state["trace_active"])
+
+    def test_sdk_import_restores_preference_and_connected_is_refused(
+        self,
+    ) -> None:
+        import builtins
+        import types
+        from unittest import mock
+
+        real_import = builtins.__import__
+        for phase, fails in (
+            ("baseline", False),
+            ("baseline", True),
+            ("connected", True),
+        ):
+            for preference in (None, "", "0", "1", "custom"):
+                with self.subTest(phase=phase, preference=preference, fails=fails):
+                    project = Project(self)
+                    runtime = load_runtime("rt_import_failure")
+                    seen = []
+
+                    def import_litellm(name, *args, **kwargs):
+                        if name == "litellm":
+                            seen.append(os.environ.get("PYTHON_DOTENV_DISABLED"))
+                            if fails:
+                                raise ImportError("fixture SDK import failure")
+                            return types.ModuleType("litellm")
+                        return real_import(name, *args, **kwargs)
+
+                    environment = {"TRAIGENT_FIRST_RUN_PHASE": phase}
+                    if preference is not None:
+                        environment["PYTHON_DOTENV_DISABLED"] = preference
+                    with mock.patch.dict(os.environ, environment, clear=True):
+                        with mock.patch(
+                            "builtins.__import__", import_litellm
+                        ), mock.patch.object(runtime, "install_recorders"):
+                            error, message = (
+                                (ImportError, "fixture SDK")
+                                if phase == "baseline"
+                                else (SystemExit, "local baseline")
+                            )
+                            if fails:
+                                with self.assertRaisesRegex(error, message):
+                                    runtime.Bridge({}, project.runs).start(probe=True)
+                            else:
+                                runtime.Bridge({}, project.runs).start(probe=True)
+                        self.assertEqual(
+                            os.environ.get("PYTHON_DOTENV_DISABLED"), preference
+                        )
+                    self.assertEqual(seen, ["1"] if phase == "baseline" else [])
+
+
 class CanonicalRuntimeOutcomeTests(unittest.TestCase):
     """Exercise the shipped runtime, including its saved result and launch status."""
 

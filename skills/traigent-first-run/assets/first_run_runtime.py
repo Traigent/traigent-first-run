@@ -1,22 +1,14 @@
-"""Shared runtime for generated first-run bridges.
+"""Runtime for generated first-run bridges.
 
-`scripts/generate_adapter.py` writes a thin bridge that imports the customer's own agent and
-evaluator unchanged and hands every run to this module. Everything that spends money or touches
-the network is here, once, so a bridge cannot carry its own copy of a guarantee:
+The generator delegates unchanged customer callables here. Bridge.start pins phase and
+launch figures before loading .env, then enforces offline execution and the copied
+wrapper spend ledger. Tests compare ledger ASTs: reserve before calls, settle costs,
+enforce the approved total and request timeout.
 
-* the offline boundary and phase pin, read before `.env` exactly as the hand-adapted wrapper in
-  `references/sdk-execution.md` reads them;
-* the spend ledger, a verbatim copy of that wrapper's functions (a test compares the two syntax
-  trees, so they cannot drift apart): reserve before a call, settle after, refuse past the approved
-  total, per-request timeout;
-* provider interception on `litellm.completion` and the OpenAI client's `chat.completions.create`.
-  A call through any other transport is not seen, so the generator refuses such agents and the
-  first row's ledger delta double-checks it;
-* the dataset reader, which never opens the holdout file in the baseline phase.
-
-Importing this module has no side effect and needs no approval figure: `Bridge.start()` does the
-enforcing, and only the run commands call it. A bridge's `score` function therefore loads under
-the credential-stripped calibration child.
+Only LiteLLM completion and OpenAI chat completions are intercepted. The generator
+refuses unsupported transports; the first row also requires an observed ledger delta.
+Baseline dataset reads exclude holdout rows. Import starts no run and needs no approval figures:
+Bridge.start enforces them, so calibration can load score without starting a run.
 """
 
 from __future__ import annotations
@@ -1019,7 +1011,15 @@ class Bridge:
         MODEL_REQUEST_TIMEOUT_SECONDS = positive_number(
             "TRAIGENT_FIRST_RUN_MODEL_REQUEST_TIMEOUT_SECONDS", default=120.0
         )
-        import litellm as _litellm
+        dotenv_disabled = os.environ.get("PYTHON_DOTENV_DISABLED")
+        os.environ["PYTHON_DOTENV_DISABLED"] = "1"
+        try:
+            import litellm as _litellm
+        finally:
+            if dotenv_disabled is None:
+                os.environ.pop("PYTHON_DOTENV_DISABLED", None)
+            else:
+                os.environ["PYTHON_DOTENV_DISABLED"] = dotenv_disabled
 
         litellm = _litellm
         if probe:

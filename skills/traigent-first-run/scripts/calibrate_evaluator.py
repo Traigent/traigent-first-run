@@ -2536,6 +2536,12 @@ def run_calibration_worker(
     may contain normalized targets or DSN components, so substring replacement
     cannot make their diagnostics safe to forward. Withhold that text in full.
     """
+    if copied_actor:
+        environment = kwargs.get("env")
+        kwargs["env"] = {
+            **(os.environ if environment is None else environment),
+            "PYTHON_DOTENV_DISABLED": "1",
+        }
     process = subprocess.run(command, **kwargs)
     if not copied_actor:
         return process
