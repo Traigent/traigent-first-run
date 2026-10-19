@@ -163,6 +163,11 @@ jobs:
         # rendered text, so a reflowed or hand-edited lock is caught too.
         run: python tools/relock.py --check
 
+      - name: Shipped lock must resolve
+        # A lock that cannot be installed (e.g. an override the pinned SDK's
+        # metadata forbids) lets the scanner audit versions nobody runs.
+        run: python -m pip install --dry-run --require-hashes -r skills/traigent-first-run/assets/requirements-first-run.lock.txt
+
       - name: Install validation tools
         run: python -m pip install ruff==0.15.12 black==26.5.1
 
