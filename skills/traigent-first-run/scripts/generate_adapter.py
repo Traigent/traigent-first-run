@@ -517,6 +517,13 @@ def generate(config_path: Path, root: Path, run_dir: Path) -> dict:
     spec, document, root = validate(config, root)
     if not inside(run_dir, root):
         raise Refusal(["the run directory must be inside the project"])
+    bridge_path = run_dir.resolve() / BRIDGE_NAME
+    if ":" in str(bridge_path):
+        raise Refusal(
+            [
+                "calibration's FILE.py:FUNCTION format cannot represent a bridge path containing ':'; choose project and run directories without ':'"
+            ]
+        )
     spec["project_root"] = os.path.relpath(
         root, run_dir
     )  # run dir -> project, nesting-proof
@@ -538,9 +545,9 @@ def generate(config_path: Path, root: Path, run_dir: Path) -> dict:
     (run_dir / "config-space.json").write_text(
         json.dumps(document, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
-    relative_bridge = (
-        (run_dir.resolve() / BRIDGE_NAME).relative_to(root.resolve()).as_posix()
-    )
+    relative_bridge = bridge_path.relative_to(root.resolve()).as_posix()
+    if relative_bridge.startswith("-"):
+        relative_bridge = "./" + relative_bridge
     return {
         "bridge": str(run_dir / BRIDGE_NAME),
         "runtime": str(run_dir / RUNTIME_NAME),

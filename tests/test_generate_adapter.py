@@ -171,7 +171,12 @@ class Project:
 
 class GenerationTests(unittest.TestCase):
     def test_next_commands_follow_the_selected_run_directory(self) -> None:
-        for relative in ("traigent-runs", "qa/runs", "qa/my runs"):
+        for relative, command_path in (
+            ("traigent-runs", "traigent-runs/adapter_bridge.py"),
+            ("qa/runs", "qa/runs/adapter_bridge.py"),
+            ("qa/my runs", "qa/my runs/adapter_bridge.py"),
+            ("-runs", "./-runs/adapter_bridge.py"),
+        ):
             with self.subTest(relative=relative):
                 project = Project(self)
                 done = project.generate(project.root / relative)
@@ -179,8 +184,8 @@ class GenerationTests(unittest.TestCase):
                 commands = json.loads(done.stdout)["next"]
                 probe = shlex.split(commands[0])
                 scorer = shlex.split(commands[1])[-1]
-                self.assertEqual(probe[1], f"{relative}/adapter_bridge.py")
-                self.assertEqual(scorer, f"{relative}/adapter_bridge.py:score")
+                self.assertEqual(probe[1], command_path)
+                self.assertEqual(scorer, f"{command_path}:score")
                 executed = subprocess.run(
                     [sys.executable, "-B", *probe[1:]],
                     cwd=project.root,
@@ -192,6 +197,39 @@ class GenerationTests(unittest.TestCase):
                 self.assertEqual(
                     executed.returncode, 0, executed.stdout + executed.stderr
                 )
+                # Consume the emitted scorer option through the actual CLI. The
+                # fixture evaluator only compares strings and cannot place a call.
+                calibrated = subprocess.run(
+                    [
+                        sys.executable,
+                        "-B",
+                        str(CALIBRATE),
+                        *shlex.split(commands[1])[1:],
+                        "--expected",
+                        "billing",
+                        "--good",
+                        "billing",
+                        "--equivalent-good",
+                        "billing",
+                        "--partial",
+                        "x",
+                        "--bad",
+                        "y",
+                        "--score-mode",
+                        "binary",
+                        "--allow-execution",
+                        "--json",
+                    ],
+                    cwd=project.root,
+                    env={"PATH": os.environ.get("PATH", ""), "HOME": str(project.root)},
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                self.assertEqual(
+                    calibrated.returncode, 0, calibrated.stdout + calibrated.stderr
+                )
+                self.assertTrue(json.loads(calibrated.stdout)["passed"])
 
     def test_next_commands_resolve_a_noncanonical_project_root(self) -> None:
         project = Project(self)
@@ -369,6 +407,29 @@ def answer(text, model, temperature):
 
 
 class RefusalTests(unittest.TestCase):
+    def test_colon_in_a_bridge_path_is_refused_before_any_generated_write(self) -> None:
+        for location in ("run-directory", "project-root"):
+            with self.subTest(location=location):
+                project = Project(self)
+                if location == "project-root":
+                    renamed = project.root.with_name("project:colon")
+                    project.root.rename(renamed)
+                    project.root = renamed
+                run_dir = project.root / (
+                    "qa:run" if location == "run-directory" else "traigent-runs"
+                )
+                originals = {path.name: sha(path) for path in project.root.iterdir()}
+                done = project.generate(run_dir)
+                self.assertEqual(done.returncode, 1, done.stdout + done.stderr)
+                self.assertFalse(run_dir.exists(), "a refusal must write nothing")
+                self.assertEqual(
+                    {path.name: sha(path) for path in project.root.iterdir()},
+                    originals,
+                )
+                refusal = " ".join(json.loads(done.stdout)["refused"])
+                self.assertIn("FILE.py:FUNCTION", refusal)
+                self.assertIn("cannot represent", refusal)
+
     def refused(self, project: Project) -> list[str]:
         done = project.generate()
         self.assertEqual(done.returncode, 1, done.stdout + done.stderr)
