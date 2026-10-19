@@ -705,13 +705,18 @@ def read_target_from_env_file(path: Path, name: str) -> str:
     raise ValueError(f"{name} is not set in {path}")
 
 
-# What `--target-name` may be. An environment variable name in the shape every
-# shell and `os.environ` agree on, and never one the interpreter or the loader
-# reads itself: a target handed in as `PYTHONPATH` or `LD_PRELOAD` is code
-# injection into the child, not a connection string.
+# Target names must have shell-compatible spelling and must not configure the
+# interpreter or a loader, including the copied worker's dotenv control.
 TARGET_NAME_PATTERN = re.compile(r"^[A-Z][A-Z0-9_]*$")
 TARGET_NAME_DENYLIST: frozenset[str] = frozenset(
-    {"PATH", "PYTHONPATH", "LD_PRELOAD", "PYTHONHOME", "PYTHONSTARTUP"}
+    {
+        "PATH",
+        "PYTHONPATH",
+        "LD_PRELOAD",
+        "PYTHONHOME",
+        "PYTHONSTARTUP",
+        "PYTHON_DOTENV_DISABLED",
+    }
 )
 
 
@@ -723,7 +728,7 @@ def target_name_refusal(name: str) -> str | None:
             "(upper-case letters, digits and underscores, starting with a letter)"
         )
     if name in TARGET_NAME_DENYLIST:
-        return f"--target-name {name} is read by the interpreter itself and may not carry a target"
+        return f"--target-name {name} is read by the interpreter or loader and may not carry a target"
     return None
 
 

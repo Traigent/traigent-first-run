@@ -5777,6 +5777,98 @@ class CopiedActorSingleSiteTests(CopiedActorRouteTests):
                 module.read_target_from_env_file(env, "ABSENT")
 
 
+class CopiedActorLoaderTargetTests(unittest.TestCase):
+    def test_public_route_reserves_loader_control_without_redirecting_the_target(self):
+        for name in (
+            "DB_PASSWORD_TARGET",
+            "CALIBRATION_TARGET",
+            "PYTHON_DOTENV_DISABLED",
+        ):
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as directory:
+                fixture = CopiedActorRouteTests()
+                copy = fixture.COPY.replace(fixture.TARGET_NAME, name)
+                fixture.TARGET_NAME = name
+                root = Path(directory)
+                files = fixture.project(directory, copy_source=copy)
+                guard = root / "guard"
+                guard.mkdir()
+                (guard / "sitecustomize.py").write_text(
+                    "import socket\n"
+                    "def deny(*a,**k): raise RuntimeError('network denied')\n"
+                    "socket.socket.connect=deny\nsocket.getaddrinfo=deny\n"
+                )
+                environment = {
+                    "PATH": os.environ.get("PATH", ""),
+                    "HOME": str(root),
+                    "PYTHONPATH": str(guard),
+                }
+                with unittest.mock.patch.dict(os.environ, environment, clear=True):
+                    process = fixture.route(files, "--timeout", "10", cwd=root)
+                result = json.loads(process.stdout) if process.stdout else {}
+                state = {
+                    "returncode": process.returncode,
+                    "passed": result.get("passed"),
+                    "intended_duplicate": files["duplicate"].exists(),
+                    "wrong_target": (files["copy"].parent / "1").exists(),
+                }
+                if name == "PYTHON_DOTENV_DISABLED":
+                    self.assertEqual(process.returncode, 2, state)
+                    self.assertIn(name, process.stderr)
+                    self.assertIn("loader", process.stderr)
+                    self.assertEqual(process.stdout, "")
+                    self.assertFalse(state["intended_duplicate"], state)
+                else:
+                    self.assertEqual(process.returncode, 0, process.stderr)
+                    self.assertTrue(result["passed"], state)
+                    self.assertEqual(result["calibrated_copy"]["target_name"], name)
+                    self.assertTrue(state["intended_duplicate"], state)
+                self.assertFalse(state["wrong_target"], state)
+
+    def test_reserved_loader_name_is_refused_before_target_read_or_worker(self):
+        module = CopiedActorRouteTests._module()
+        fixture = CopiedActorRouteTests()
+        with tempfile.TemporaryDirectory() as directory:
+            files = fixture.project(directory)
+            arguments = [
+                str(SCRIPT),
+                "--scorer",
+                f"{files['copy']}:score",
+                "--allow-execution",
+                "--calibrated-copy-of",
+                str(files["original"]),
+                "--target-name",
+                "PYTHON_DOTENV_DISABLED",
+                "--target-env-file",
+                str(files["env"]),
+                "--expected",
+                "select 1",
+                "--good",
+                "select 1",
+                "--equivalent-good",
+                " select 1 ",
+                "--partial",
+                "select",
+                "--bad",
+                "not sql",
+            ]
+            diagnostics = io.StringIO()
+            with contextlib.ExitStack() as stack:
+                stack.enter_context(unittest.mock.patch.object(sys, "argv", arguments))
+                read = stack.enter_context(
+                    unittest.mock.patch.object(module, "read_target_from_env_file")
+                )
+                worker = stack.enter_context(
+                    unittest.mock.patch.object(module, "run_calibration_worker")
+                )
+                stack.enter_context(contextlib.redirect_stderr(diagnostics))
+                self.assertEqual(module.run(), 2)
+            read.assert_not_called()
+            worker.assert_not_called()
+            self.assertIn("loader", diagnostics.getvalue())
+            self.assertFalse(files["duplicate"].exists())
+            self.assertFalse((files["copy"].parent / "1").exists())
+
+
 class EngineTargetRefusalUnitTests(unittest.TestCase):
     """`engine_target_refusal` on its own: the finer messages the single-site
     rule now reaches only when the original already carries the shape."""
