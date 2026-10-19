@@ -92,6 +92,20 @@ def sdk_execution_python_fences(text: str | None = None) -> list[str]:
     return [asset, *re.findall(r"```python\n(.*?)\n```", text, re.DOTALL)]
 
 
+def sdk_pre_import_nodes(wrapper: str) -> list[ast.stmt]:
+    """Read launch state without executing a dependency import, including a guarded one."""
+    prefix = []
+    for node in ast.parse(wrapper).body:
+        if any(
+            isinstance(child, ast.Import)
+            and any(alias.name == "litellm" for alias in child.names)
+            for child in ast.walk(node)
+        ):
+            return prefix
+        prefix.append(node)
+    raise AssertionError("the wrapper has no LiteLLM import boundary")
+
+
 def sdk_execution_reference_text() -> str:
     """Read the assistant's execution guidance and its copied Python asset."""
     return (
@@ -16605,14 +16619,7 @@ class SkillPackageTests(unittest.TestCase):
     def test_false_process_value_overrides_true_dotenv_baseline_policy(self) -> None:
         """Unsetting loops; an approved explicit false survives dotenv loading."""
         fence = sdk_execution_python_fences(sdk_execution_reference_text())[0]
-        tree = ast.parse(fence)
-        prefix: list[ast.stmt] = []
-        for node in tree.body:
-            if isinstance(node, ast.Import) and any(
-                alias.name == "litellm" for alias in node.names
-            ):
-                break
-            prefix.append(node)
+        prefix = sdk_pre_import_nodes(fence)
         program = compile(
             ast.fix_missing_locations(ast.Module(body=prefix, type_ignores=[])),
             "<baseline-environment-policy>",
@@ -16828,6 +16835,39 @@ class SkillPackageTests(unittest.TestCase):
         self.assertIn("scorer_calls_per_row: int = 0", normalized)
         self.assertNotIn("then set `scorer_calls_per_row`", normalized)
 
+    def test_pre_import_reader_never_executes_an_import_guard(self) -> None:
+        import builtins
+
+        real_import = builtins.__import__
+
+        def reject_litellm(name, *args, **kwargs):
+            if name == "litellm":
+                raise AssertionError("the reader executed the SDK import")
+            return real_import(name, *args, **kwargs)
+
+        for imports in (
+            "import litellm",
+            "try:\n    import litellm\nfinally:\n    after_import = True",
+        ):
+            with self.subTest(imports=imports):
+                source = "before_import = True\n" + imports + "\nafter_import = True"
+                namespace = {}
+                with mock.patch("builtins.__import__", reject_litellm):
+                    exec(
+                        compile(
+                            ast.Module(
+                                body=sdk_pre_import_nodes(source), type_ignores=[]
+                            ),
+                            "<pre-import-reader>",
+                            "exec",
+                        ),
+                        namespace,
+                    )
+                self.assertTrue(namespace["before_import"])
+                self.assertNotIn("after_import", namespace)
+        with self.assertRaisesRegex(AssertionError, "no LiteLLM import boundary"):
+            sdk_pre_import_nodes("before_import = True")
+
     def test_wrapper_contract_tests_read_the_bundled_asset(self) -> None:
         """The file customers copy is the source every wrapper test reads."""
         fences = sdk_execution_python_fences(sdk_execution_reference_text())
@@ -16887,13 +16927,7 @@ class SkillPackageTests(unittest.TestCase):
     def test_proof_phase_needs_no_approval_and_has_zero_call_budget(self) -> None:
         """Proof ignores stale dotenv figures and starts behind a closed spend door."""
         wrapper = sdk_execution_python_fences(sdk_execution_reference_text())[0]
-        prefix: list[ast.stmt] = []
-        for node in ast.parse(wrapper).body:
-            if isinstance(node, ast.Import) and any(
-                alias.name == "litellm" for alias in node.names
-            ):
-                break
-            prefix.append(node)
+        prefix = sdk_pre_import_nodes(wrapper)
         program = compile(
             ast.fix_missing_locations(ast.Module(body=prefix, type_ignores=[])),
             "<proof-phase-environment>",
@@ -17279,14 +17313,7 @@ class SkillPackageTests(unittest.TestCase):
     ) -> None:
         """Baseline isolation must not silently turn the enhanced run local."""
         fence = sdk_execution_python_fences(sdk_execution_reference_text())[0]
-        tree = ast.parse(fence)
-        prefix: list[ast.stmt] = []
-        for node in tree.body:
-            if isinstance(node, ast.Import) and any(
-                alias.name == "litellm" for alias in node.names
-            ):
-                break
-            prefix.append(node)
+        prefix = sdk_pre_import_nodes(fence)
         program = compile(
             ast.fix_missing_locations(ast.Module(body=prefix, type_ignores=[])),
             "<phase-environment-policy>",
@@ -22080,13 +22107,7 @@ class TheApprovedTotalReachesTheCodeTests(unittest.TestCase):
     def launch_program(label: str):
         """The wrapper's pre-import block, compiled - everything before litellm."""
         fence = sdk_execution_python_fences(sdk_execution_reference_text())[0]
-        prefix: list[ast.stmt] = []
-        for node in ast.parse(fence).body:
-            if isinstance(node, ast.Import) and any(
-                alias.name == "litellm" for alias in node.names
-            ):
-                break
-            prefix.append(node)
+        prefix = sdk_pre_import_nodes(fence)
         return compile(
             ast.fix_missing_locations(ast.Module(body=prefix, type_ignores=[])),
             label,

@@ -184,12 +184,22 @@ if not os.environ.get("TRAIGENT_RESULTS_FOLDER", "").strip():
 # logs. The first-run record needs ids and metrics, not another copy of content.
 os.environ["TRAIGENT_LOG_EXAMPLE_CONTENT"] = "false"
 
-import litellm
+if FIRST_RUN_PHASE in {"proof", "baseline"}:
+    _dotenv_disabled = os.environ.get("PYTHON_DOTENV_DISABLED")
+    os.environ["PYTHON_DOTENV_DISABLED"] = "1"
+try:
+    import litellm
 
-litellm._first_run_proof_mode = FIRST_RUN_PHASE == "proof"
-import traigent
-from traigent.api.decorators import EvaluationOptions
-from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema
+    litellm._first_run_proof_mode = FIRST_RUN_PHASE == "proof"
+    import traigent
+    from traigent.api.decorators import EvaluationOptions
+    from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema
+finally:
+    if FIRST_RUN_PHASE in {"proof", "baseline"}:
+        if _dotenv_disabled is None:
+            os.environ.pop("PYTHON_DOTENV_DISABLED", None)
+        else:
+            os.environ["PYTHON_DOTENV_DISABLED"] = _dotenv_disabled
 
 TUNING_DATASET = str(RUN_DIR / "tuning.jsonl")
 # A separate file, not a column in the tuning one: only `eval_dataset=TUNING_DATASET`
