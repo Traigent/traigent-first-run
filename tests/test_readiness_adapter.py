@@ -6845,3 +6845,81 @@ class ARowReviewIsMatchedToTheRowsPreflightReadTests(unittest.TestCase):
         self.assertEqual(process.returncode, 2)
         self.assertIn("row_id_digests", process.stderr)
         self.assertIn("list of", process.stderr)
+
+
+class UnreadableGoldIsCappedOnItsOwnAccountTests(unittest.TestCase):
+    """The #378 defect, in the shape the sql-structure gold check creates.
+
+    A row whose expected answer the bundled comparator cannot read is unusable
+    and must cap. What it is NOT is malformed: it parses, and it carries both
+    the input and the expected-answer field. Routing it through
+    `malformed_rows` made the blocking cap say "malformed lines, or missing the
+    input or expected-answer field" over a file with neither - which is exactly
+    the sentence `dataset_integrity_reason` records being corrected once
+    already, and the reason that docstring gives for building the reason out of
+    the findings that fired.
+
+    Driven end to end through both real scripts, like the sibling class above,
+    because the finding is assembled from a preflight metric and a readiness
+    reason built out of it.
+    """
+
+    def _rows(self, *, readable: bool) -> list[dict]:
+        odd = "SELECT a FROM t" if readable else "SELECT TOP 5 a FROM t"
+        return [
+            {
+                "id": f"q-{index:03d}",
+                "input": f"question {index}",
+                "output": "SELECT a FROM t",
+            }
+            for index in range(1, 12)
+        ] + [{"id": "q-012", "input": "question 12", "output": odd}]
+
+    def _scored(self, *, readable: bool) -> dict:
+        with tempfile.TemporaryDirectory() as raw:
+            dataset = _write_jsonl(
+                Path(raw), "gold.jsonl", self._rows(readable=readable)
+            )
+            return _score(
+                dataset,
+                extra=("--evaluator-method", "sql-structure"),
+                preflight_extra=("--evaluator-method", "sql-structure"),
+            )
+
+    def test_the_cap_still_blocks_and_names_the_comparator_not_malformed_lines(
+        self,
+    ) -> None:
+        score = self._scored(readable=False)
+        cap = _cap(score, "dataset-integrity-fail")
+        self.assertTrue(cap["blocks"])
+        self.assertEqual(cap["ceiling"], 35)
+        self.assertIn("cannot be read by the declared comparator", cap["reason"])
+        self.assertIn("score zero", cap["reason"])
+        self.assertNotIn(
+            "malformed",
+            cap["reason"],
+            "this row parses and carries both fields; calling it malformed is #378",
+        )
+        self.assertNotIn("missing the input", cap["reason"])
+
+    def test_the_same_file_with_readable_gold_carries_no_integrity_cap(self) -> None:
+        """The must-allow side: the gold check must not cap a file that is fine."""
+        score = self._scored(readable=True)
+        self.assertNotIn(
+            "dataset-integrity-fail",
+            [cap["condition"] for cap in score["caps"]],
+        )
+
+    def test_a_payload_without_the_new_count_scores_as_it_did(self) -> None:
+        """Version skew: an older preflight published no `unreadable_gold_rows`.
+
+        It must not be refused and must not invent the clause - the count is
+        never the sole explanation of a FAIL written by a preflight that could
+        not measure it.
+        """
+        facts = MODULE.DatasetFacts(exists=True, integrity_failed=True)
+        self.assertEqual(facts.gold_rows_unreadable, 0)
+        reason = MODULE.dataset_integrity_reason(facts)
+        self.assertIsNotNone(reason)
+        self.assertIn("malformed lines", reason)
+        self.assertNotIn("declared comparator", reason)

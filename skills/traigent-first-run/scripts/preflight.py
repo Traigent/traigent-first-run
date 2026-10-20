@@ -4537,6 +4537,7 @@ def check_dataset(
     present_row_records: list[tuple[int, dict[str, Any]]] = []
     invalid_rows: list[tuple[int, str]] = []
     unlabelled_present = 0
+    unreadable_gold_present = 0
     candidate_count = 0
     for line_number, raw_line in enumerate(path.read_text().splitlines(), 1):
         if not raw_line.strip():
@@ -4580,6 +4581,14 @@ def check_dataset(
             )
             if reason is not None:
                 row_id = row_metadata_value(row, "id")
+                # Counted on its own account, NOT as a malformed row. The row
+                # parsed and carries both fields; what it cannot do is score.
+                # `malformed_rows` is "structural, and ONLY that" where
+                # readiness reads it, and folding a fourth finding into it is
+                # the defect #378 and #438 were each filed for - the card then
+                # tells a customer to look for malformed lines in a file that
+                # has none.
+                unreadable_gold_present += 1
                 invalid_rows.append(
                     (
                         line_number,
@@ -4592,7 +4601,7 @@ def check_dataset(
         present_rows.append(row)
         present_row_records.append((line_number, row))
 
-    malformed_rows = len(invalid_rows) - unlabelled_present
+    malformed_rows = len(invalid_rows) - unlabelled_present - unreadable_gold_present
     if invalid_rows:
         invalid_percentage = len(invalid_rows) / candidate_count * 100
         # One entry per unusable ROW made the message grow with the size of the
@@ -4627,6 +4636,7 @@ def check_dataset(
                 "invalid_rows": len(invalid_rows),
                 "malformed_rows": malformed_rows,
                 "unlabelled_rows": unlabelled_present,
+                "unreadable_gold_rows": unreadable_gold_present,
                 "candidate_rows": candidate_count,
             },
         )

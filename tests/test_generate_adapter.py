@@ -408,6 +408,12 @@ def answer(text, model, temperature):
 
 class RefusalTests(unittest.TestCase):
     def test_colon_in_a_bridge_path_is_refused_before_any_generated_write(self) -> None:
+        """Both placements, because calibration resolves before it splits.
+
+        `test_a_colon_above_the_project_root_breaks_calibration` below runs the
+        consumer and shows why `project-root` belongs here and not in a
+        must-allow list.
+        """
         for location in ("run-directory", "project-root"):
             with self.subTest(location=location):
                 project = Project(self)
@@ -429,6 +435,77 @@ class RefusalTests(unittest.TestCase):
                 refusal = " ".join(json.loads(done.stdout)["refused"])
                 self.assertIn("FILE.py:FUNCTION", refusal)
                 self.assertIn("cannot represent", refusal)
+
+    def test_a_colon_above_the_project_root_breaks_calibration(self) -> None:
+        """Why the refusal reads the ABSOLUTE path and not the printed one.
+
+        The guard looks broad: `next` prints a project-relative scorer, and both
+        `load_function` and `loadable_callable_spec` partition the text as given,
+        so reading those two alone says an ancestor colon is harmless. It is not.
+        `calibrate_evaluator` does not keep the relative string - it rebuilds the
+        option as `f"{Path(scorer_file).resolve()}:{scorer_name}"` and the worker
+        splits THAT on its first colon.
+
+        So this test runs the consumer instead of reading it. It generates with
+        the refusal lifted, into a project whose PARENT carries the colon, and
+        asserts calibration fails - which is what narrowing the guard to the
+        relative path would ship. If calibration ever stops round-tripping the
+        pair through one colon-joined string, this test goes red and the guard
+        can then be narrowed to the relative path, which would also let it work
+        on Windows, where every absolute path carries a drive-letter colon.
+        """
+        # Generate into a clean project, THEN introduce the colon above it, so
+        # this measures calibration's behaviour rather than the guard's.
+        project = Project(self)
+        self.assertEqual(project.generate().returncode, 0)
+        renamed = project.root.with_name("project:colon")
+        project.root.rename(renamed)
+        project.root = renamed
+        project.runs = project.root / "traigent-runs"
+        self.assertTrue((project.runs / "adapter_bridge.py").is_file())
+
+        scorer = f"{project.runs / 'adapter_bridge.py'}:score"
+        calibrated = subprocess.run(
+            [
+                sys.executable,
+                "-B",
+                str(CALIBRATE),
+                "--scorer",
+                scorer,
+                "--expected",
+                "billing",
+                "--good",
+                "billing",
+                "--equivalent-good",
+                "billing",
+                "--partial",
+                "x",
+                "--bad",
+                "y",
+                "--score-mode",
+                "binary",
+                "--allow-execution",
+                "--json",
+            ],
+            cwd=project.root,
+            env={"PATH": os.environ.get("PATH", ""), "HOME": str(project.root)},
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertNotEqual(
+            calibrated.returncode,
+            0,
+            "an ancestor colon must still break calibration, or this guard can narrow: "
+            + calibrated.stdout
+            + calibrated.stderr,
+        )
+        # Fails for the colon, not for some unrelated reason: the reported path
+        # is the ancestor truncated at the colon, not the scorer.
+        self.assertIn(
+            str(project.root).partition(":")[0],
+            calibrated.stdout + calibrated.stderr,
+        )
 
     def refused(self, project: Project) -> list[str]:
         done = project.generate()

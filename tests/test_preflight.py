@@ -119,6 +119,39 @@ class StructuralSqlGoldTests(unittest.TestCase):
                         self.assertEqual(shape.status, MODULE.PASS)
                         self.assertEqual(shape.metrics["scoreable_rows"], 1)
 
+    def test_unreadable_gold_is_counted_apart_from_malformed_rows(self) -> None:
+        """The count the card's sentence is built from, kept off the wrong one.
+
+        `malformed_rows` is what readiness calls "structural, and ONLY that",
+        and its clause says "malformed lines, or missing the input or
+        expected-answer field". This row has neither: it parses and carries
+        both fields, and the only thing wrong with it is that the comparator
+        cannot read its answer. Counting it as malformed is how #378 printed a
+        sentence that was false about the file under it, so the two counts stay
+        apart here and the reason is built from whichever fired.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "tune.jsonl"
+            path.write_text(
+                json.dumps({"input": "a", "output": "SELECT d FROM t", "id": "ok"})
+                + "\n"
+                + json.dumps(
+                    {"input": "b", "output": "SELECT TOP 5 a FROM t", "id": "bad"}
+                )
+                + "\n"
+            )
+            MODULE.RESULTS.clear()
+            MODULE.check_dataset(path, evaluator_method="sql-structure")
+            result = next(r for r in MODULE.RESULTS if r.check == "dataset-integrity")
+            self.assertEqual(result.status, MODULE.FAIL, result.detail)
+            self.assertEqual(result.metrics["unreadable_gold_rows"], 1)
+            self.assertEqual(
+                result.metrics["malformed_rows"],
+                0,
+                "a row that parses and carries both fields is not malformed",
+            )
+            self.assertEqual(result.metrics["invalid_rows"], 1)
+
     def test_unrelated_evaluators_do_not_check_gold_as_sql(self) -> None:
         for method in (None, "composite", "exact-match"):
             with self.subTest(

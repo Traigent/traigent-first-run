@@ -3827,6 +3827,20 @@ class DatasetFacts:
     # file, and the same file with its ids renumbered, are both scored. Source:
     # tests/test_readiness_adapter.py#RepeatedRowsAreCappedOnTheirOwnAccountTests.
     integrity_failed: bool = False
+    # Rows whose expected answer the declared comparator cannot read, so they
+    # would score 0.0 against every candidate including a perfect one. The
+    # FOURTH finding to reach this ceiling, and it is a count here rather than
+    # part of `integrity_failed` above for the reason that field's own comment
+    # gives: it is "structural, and ONLY that", and this row is not structural.
+    # It parsed, and it carries both fields. Folding it in would print
+    # "malformed lines, or missing the input or expected-answer field" over a
+    # file with neither - the same sentence #378 was filed for.
+    #
+    # Zero when preflight published no such count, which is an older payload:
+    # the clause simply does not fire and the score is what it was. No refusal,
+    # because unlike the id counts this one cannot be the sole explanation of a
+    # FAIL written by a preflight that did not measure it.
+    gold_rows_unreadable: int = 0
     # Id values used by more than one row, and generated rows carrying no
     # stable id: the two findings this check makes, as counts rather than as
     # one boolean.
@@ -7368,6 +7382,7 @@ def score_dataset(
         or facts.id_check_failed
         or facts.duplicate_ids
         or facts.generated_rows_without_id
+        or facts.gold_rows_unreadable
     ):
         reason = dataset_integrity_reason(facts)
         if reason is None:
@@ -7449,6 +7464,15 @@ def dataset_integrity_reason(facts: DatasetFacts) -> str | None:
         reasons.append(
             f"{facts.generated_rows_without_id} generated {rows} no stable id, "
             f"so there is nothing to name {them} by"
+        )
+    if facts.gold_rows_unreadable:
+        one = facts.gold_rows_unreadable == 1
+        rows = "row's expected answer" if one else "rows' expected answers"
+        they = "that row would" if one else "those rows would each"
+        reasons.append(
+            f"{facts.gold_rows_unreadable} {rows} cannot be read by the "
+            f"declared comparator, so {they} score zero against every "
+            "candidate including a correct one"
         )
     if not reasons:
         return None
@@ -12377,6 +12401,17 @@ def dataset_facts_from_preflight(records: Sequence[dict[str, Any]]) -> DatasetFa
             metrics.get("dataset-split-family", {}).get("holdout_forms")
         ),
         integrity_failed=structurally_failed,
+        # Read off the metric, not the status, for the reason the id counts
+        # below are: preflight measures and this module prices. `required=False`
+        # because a payload written before the count existed must keep scoring
+        # as it did rather than being refused over a number that cannot be the
+        # sole explanation of its FAIL.
+        gold_rows_unreadable=_row_count(
+            integrity.get("unreadable_gold_rows", 0),
+            "unreadable_gold_rows",
+            required=False,
+            check="dataset-integrity",
+        ),
         # Carried whether or not a count explains it - see `id_check_failed`.
         id_check_failed=_failed(statuses, "dataset-ids"),
         # READ FROM THE METRIC AND NOT FROM THE STATUS, the way

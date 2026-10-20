@@ -518,10 +518,27 @@ def generate(config_path: Path, root: Path, run_dir: Path) -> dict:
     if not inside(run_dir, root):
         raise Refusal(["the run directory must be inside the project"])
     bridge_path = run_dir.resolve() / BRIDGE_NAME
+    # The ABSOLUTE path, and the breadth is deliberate - measured, not assumed.
+    # `next` prints a project-relative scorer, but calibration does not keep it:
+    # `calibrate_evaluator.py` rebuilds the option as
+    # `f"{Path(scorer_file).resolve()}:{scorer_name}"` and its worker splits that
+    # on its FIRST colon, so a colon anywhere above the project root truncates the
+    # file part. Checking only the relative path was tried and the executed
+    # control refused it: generation succeeded and calibration then died with
+    # `cannot load /tmp/.../project` - see
+    # `test_a_colon_above_the_project_root_breaks_calibration`.
+    #
+    # Known limit, pre-existing and not introduced here: on Windows every
+    # absolute path carries a drive-letter colon, so this refuses there always -
+    # but calibration cannot load such a scorer either, for the same first-colon
+    # reason. The guard reports that earlier rather than causing it. Making
+    # Windows work needs `calibrate_evaluator` to stop round-tripping the pair
+    # through one colon-joined string, which is a change to that contract.
     if ":" in str(bridge_path):
         raise Refusal(
             [
-                "calibration's FILE.py:FUNCTION format cannot represent a bridge path containing ':'; choose project and run directories without ':'"
+                "calibration's FILE.py:FUNCTION format cannot represent a bridge path containing ':', and the resolved path "
+                f"{bridge_path} contains one; on POSIX choose a project directory without ':'"
             ]
         )
     spec["project_root"] = os.path.relpath(
