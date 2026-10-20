@@ -7412,12 +7412,16 @@ def dataset_integrity_reason(facts: DatasetFacts) -> str | None:
     `None` when nothing did, so the caller has one condition to test rather than
     a boolean beside a sentence that may describe something else.
 
-    THREE FINDINGS SHARE THIS CEILING and the reason used to name only the
+    FOUR FINDINGS SHARE THIS CEILING and the reason used to name only the
     first. Rows that could not be read as data is the structural one; ids that
     collide and generated rows carrying no stable id are the two `dataset-ids`
     makes, and both were folded into the same boolean. (Since #438 only the
     collision FAILs; both still reach this ceiling, because the caller tests
-    the counts and not the status.) Measured on a 90-row file whose
+    the counts and not the status.) The fourth is gold the declared comparator
+    cannot read, which arrived with the sql-structure self-check and is counted
+    apart from the structural one for the reason this docstring already gives:
+    those rows parse and carry both fields, so the first clause is false about
+    them. Measured on a 90-row file whose
     30 exact repeats copied their ids: every row parsed, every row carried an
     answer, `dataset-shape` PASSed "90 valid JSONL rows", the card printed
     "90/90 rows carry an expected output" - and the blocking cap two lines below
@@ -12146,8 +12150,11 @@ def dataset_facts_from_preflight(records: Sequence[dict[str, Any]]) -> DatasetFa
             exists=False,
             dataset_supplied=supplied,
             # `malformed_rows`, not `invalid_rows`: the latter is
-            # `malformed_rows + unlabelled_rows` (preflight.py), and an
-            # unlabelled row is a row that WAS read. The two agree on every
+            # `malformed_rows + unlabelled_rows + unreadable_gold_rows`
+            # (preflight.py), and each of those two addends is a row that WAS
+            # read - one carries no answer, the other an answer the declared
+            # comparator cannot parse. Neither is unreadable in the sense this
+            # field names. The counts agree on every
             # payload that reaches this return today, because a dataset with
             # unlabelled rows carries provenance and leaves through the branch
             # below - so reading the sum was correct only by way of a fact
