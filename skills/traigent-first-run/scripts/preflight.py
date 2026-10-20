@@ -4527,17 +4527,35 @@ def check_dataset(
     sql_comparator = None
     if evaluator_method == STRUCTURAL_SQL_SHAPE:
         # Only the trusted bundled asset is loaded, never the evaluator or its copy.
-        spec = importlib.util.spec_from_file_location(
-            "_first_run_sql_gold", STRUCTURAL_SQL_ASSET
-        )
-        sql_comparator = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(sql_comparator)
+        # Guarded like the equivalent load in `calibrate_evaluator.load_function`,
+        # and degrading the way `_tree_of` already does for this same asset: a
+        # missing or unparsable bundle must surface as a named finding, not as a
+        # traceback out of `main` that reports the whole run as "internal error,
+        # treat nothing as checked".
+        try:
+            spec = importlib.util.spec_from_file_location(
+                "_first_run_sql_gold", STRUCTURAL_SQL_ASSET
+            )
+            if spec is None or spec.loader is None:
+                raise ImportError(f"cannot load {STRUCTURAL_SQL_ASSET}")
+            sql_comparator = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(sql_comparator)
+        except (OSError, SyntaxError, ImportError) as error:
+            sql_comparator = None
+            emit(
+                "dataset-integrity",
+                FAIL,
+                "the bundled SQL comparator could not be loaded, so gold answers "
+                f"could not be checked before paid work: {error}",
+            )
+            return None
     rows: list[dict[str, Any]] = []
     present_rows: list[dict[str, Any]] = []
     present_row_records: list[tuple[int, dict[str, Any]]] = []
     invalid_rows: list[tuple[int, str]] = []
     unlabelled_present = 0
     unreadable_gold_present = 0
+    unreadable_gold_ids: list[Any] = []
     candidate_count = 0
     for line_number, raw_line in enumerate(path.read_text().splitlines(), 1):
         if not raw_line.strip():
@@ -4572,7 +4590,14 @@ def check_dataset(
             continue
         if normalized_row is None:
             raise RuntimeError("dataset normalization returned no row without an error")
-        if sql_comparator is not None:
+        # Only a LABELLED row can have unreadable gold. A blank or absent
+        # expected answer is the `dataset-outputs` finding, which names it
+        # exactly ("1/2 expected outputs are empty") and routes to a different
+        # remedy; reporting it here as SQL the comparator cannot read is a
+        # wrong diagnosis, and it also zeroed `unlabelled_rows` for a row that
+        # is unlabelled. Same class as the bucket confusion above, one bucket
+        # over.
+        if sql_comparator is not None and dataset_row_is_labelled(row, expected_field):
             expected = normalized_row["output"]
             reason = (
                 f"expected SQL is {type(expected).__name__}, not a string"
@@ -4580,19 +4605,19 @@ def check_dataset(
                 else sql_comparator._unreadable_reason(expected)
             )
             if reason is not None:
-                row_id = row_metadata_value(row, "id")
-                # Counted on its own account, NOT as a malformed row. The row
-                # parsed and carries both fields; what it cannot do is score.
-                # `malformed_rows` is "structural, and ONLY that" where
-                # readiness reads it, and folding a fourth finding into it is
-                # the defect #378 and #438 were each filed for - the card then
-                # tells a customer to look for malformed lines in a file that
-                # has none.
+                # The cause carries NO row id. The grouping below keys on this
+                # string to bound the message by DISTINCT causes rather than by
+                # rows, and an id in it makes every row its own cause - six
+                # identical findings then spent all five reported slots and
+                # pushed a malformed line and a missing input out of the
+                # message entirely. The ids travel in the metric instead, where
+                # they are also machine-readable for the exclusion record.
                 unreadable_gold_present += 1
+                unreadable_gold_ids.append(row_metadata_value(row, "id"))
                 invalid_rows.append(
                     (
                         line_number,
-                        f"id {row_id!r}: expected SQL cannot self-match ({reason}); "
+                        f"expected SQL cannot self-match ({reason}); "
                         "repair the working copy or choose a suitable evaluator before paid work",
                     )
                 )
@@ -4637,6 +4662,9 @@ def check_dataset(
                 "malformed_rows": malformed_rows,
                 "unlabelled_rows": unlabelled_present,
                 "unreadable_gold_rows": unreadable_gold_present,
+                "unreadable_gold_ids": unreadable_gold_ids[
+                    :MAX_REPORTED_DATASET_ERRORS
+                ],
                 "candidate_rows": candidate_count,
             },
         )
@@ -4647,14 +4675,26 @@ def check_dataset(
             # so the readiness adapter reaches the "no expected outputs" branch
             # (a partial score) instead of "no dataset at all", then stop - there
             # are no labelled rows to run the remaining quality checks against.
-            emit_dataset_provenance(present_rows, labelled=0)
+            emit_dataset_provenance(present_rows, labelled=unreadable_gold_present or 0)
             emit_dataset_id_findings(present_row_records)
-            emit(
-                "dataset-shape",
-                FAIL,
-                f"{len(present_rows)} rows carry inputs but none carry an "
-                "expected output",
-            )
+            # Say which of the two it is. These rows DO carry expected answers
+            # when the gold check is what emptied `rows`, and telling a customer
+            # none of them does is the same false sentence this check is being
+            # kept honest about one bucket over.
+            if unreadable_gold_present and not unlabelled_present:
+                emit(
+                    "dataset-shape",
+                    FAIL,
+                    f"{unreadable_gold_present} rows carry an expected answer "
+                    "the declared comparator cannot read, so none can be scored",
+                )
+            else:
+                emit(
+                    "dataset-shape",
+                    FAIL,
+                    f"{len(present_rows)} rows carry inputs but none carry an "
+                    "expected output",
+                )
             return None
         emit("dataset-shape", FAIL, "dataset has no usable rows")
         return None

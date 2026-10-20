@@ -16413,7 +16413,11 @@ class SkillPackageTests(unittest.TestCase):
         wrapper = " ".join(sdk_execution_reference_text().split())
         self.assertIn('os.environ["TRAIGENT_REQUIRE_CLOUD"] = "1"', wrapper)
         self.assertNotIn('os.environ.pop("TRAIGENT_REQUIRE_CLOUD"', wrapper)
-        self.assertIn('os.environ.pop("TRAIGENT_API_KEY", None)', wrapper)
+        # Blanked rather than popped - `load_dotenv` refills an absent name,
+        # so only a present empty string makes the removal stick. What this
+        # line pins is that the baseline neutralises the key at all.
+        self.assertIn('os.environ[_offline_blank] = ""', wrapper)
+        self.assertIn('"TRAIGENT_API_KEY",', wrapper)
 
         block = sdk_execution_reference_text()
         setting = block.index('os.environ["TRAIGENT_REQUIRE_CLOUD"] = "1"')
@@ -16890,7 +16894,10 @@ class SkillPackageTests(unittest.TestCase):
         decorator = sdk_execution_python_fences(text)[0]
         phase = decorator.index("FIRST_RUN_PHASE = (")
         dotenv = decorator.index('load_dotenv(PROJECT_ROOT / ".env"')
-        remove_key = decorator.index('os.environ.pop("TRAIGENT_API_KEY", None)')
+        # Blanked, not popped: `load_dotenv` fills an ABSENT name, so a popped
+        # key came back from `.env` the next time anything loaded it. The
+        # ordering this test pins is unchanged; only the verb is.
+        remove_key = decorator.index('"TRAIGENT_API_KEY",')
         force_offline = decorator.index('os.environ["TRAIGENT_OFFLINE_MODE"] = "true"')
         import_traigent = decorator.index("import traigent")
         self.assertLess(phase, dotenv)
@@ -16960,11 +16967,17 @@ class SkillPackageTests(unittest.TestCase):
                 self.assertEqual(namespace["RUN_COST_REMAINING_USD"], 0.0)
                 self.assertEqual(namespace["RUN_COST_CEILING_USD"], 0.0)
                 self.assertEqual(namespace["APPROVED_FIGURES"], {})
-                self.assertNotIn("TRAIGENT_API_KEY", os.environ)
-                self.assertNotIn("TRAIGENT_FIRST_RUN_COST_CEILING_USD", os.environ)
-                self.assertNotIn(
-                    "TRAIGENT_FIRST_RUN_BASELINE_TIMEOUT_SECONDS", os.environ
-                )
+                # Present and EMPTY, not absent. An absent name is the one
+                # thing `load_dotenv` refills, so blanking is what makes the
+                # removal survive a later load - in the SDK, or in the
+                # customer's own agent module. Empty is also what every reader
+                # here refuses, so the fail-closed direction is unchanged.
+                for cleared in (
+                    "TRAIGENT_API_KEY",
+                    "TRAIGENT_FIRST_RUN_COST_CEILING_USD",
+                    "TRAIGENT_FIRST_RUN_BASELINE_TIMEOUT_SECONDS",
+                ):
+                    self.assertEqual(os.environ.get(cleared), "", cleared)
         timeout_assignment = next(
             node
             for node in ast.parse(wrapper).body
@@ -17332,11 +17345,12 @@ class SkillPackageTests(unittest.TestCase):
             ):
                 exec(program, {"__file__": str(script)})  # noqa: S102
                 self.assertEqual(os.environ["TRAIGENT_OFFLINE_MODE"], "true")
-                self.assertNotIn(
-                    "TRAIGENT_API_KEY",
-                    os.environ,
-                    "the baseline must drop a key loaded from the preserved .env "
-                    "before the SDK import",
+                self.assertEqual(
+                    os.environ.get("TRAIGENT_API_KEY"),
+                    "",
+                    "the baseline must neutralise a key loaded from the "
+                    "preserved .env before the SDK import - blank rather than "
+                    "absent, or a later load puts it straight back",
                 )
 
             # A fresh process starts from its own launch environment; the
@@ -22211,8 +22225,12 @@ class TheApprovedTotalReachesTheCodeTests(unittest.TestCase):
         self.assertAlmostEqual(
             float(namespace["_environment"]["TRAIGENT_RUN_COST_LIMIT"]), 5.00, places=6
         )
+        # Cleared to empty, not removed. An absent name is what `load_dotenv`
+        # fills, so popping these left the file free to put them back; an empty
+        # string is left alone by every loader and is refused by every reader,
+        # so a child still inherits no approval it was not launched with.
         for name in sorted(APPROVED_LAUNCH_ENV):
-            self.assertNotIn(name, namespace["_environment"])
+            self.assertEqual(namespace["_environment"].get(name), "", name)
 
     def test_the_remaining_total_becomes_the_limit_the_sdk_enforces(self) -> None:
         """The approved figures, minus what is spent, in the SDK's own variable.

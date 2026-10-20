@@ -226,8 +226,8 @@ evidence. Preserve the opening score before creating substitutes. An existing bu
 component is not absent.
 On a zero-anchor run, keep evidence on stdout and the card in the conversation until the task
 answer permits writes. Otherwise name the fresh project-relative readiness directory before
-showing the card. Render the card verbatim once. Per glossary: free, keyless readiness;
-next paid step: priced baseline preview.
+showing the card. Render the card verbatim once. Readiness is free and needs no key; the
+next paid step is the priced baseline preview.
 
 **Read next.** Required: [`references/component-creation.md` § Reading the agent for the opening score](references/component-creation.md#reading-the-agent-for-the-opening-score).
 If a component has to be classified `real`, `limited`, or `invalid`: [`references/component-creation.md` § Evidence and provenance](references/component-creation.md#evidence-and-provenance).

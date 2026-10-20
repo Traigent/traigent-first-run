@@ -6906,7 +6906,9 @@ def score_dataset(
     if not facts.exists or not facts.rows:
         # Three different situations used to produce one sentence, and one
         # remedy. Say which, and route each to its own.
-        unreadable = facts.unreadable_rows or 0
+        # Both counts: a row the comparator cannot read WAS read, so it is a
+        # shape this score did not recognise, never an absent dataset.
+        unreadable = (facts.unreadable_rows or 0) + facts.gold_rows_unreadable
         detail = facts.unreadable_detail
         if facts.dataset_supplied and unreadable:
             # Rows were counted and none matched the shape the run read them
@@ -7438,7 +7440,7 @@ def dataset_integrity_reason(facts: DatasetFacts) -> str | None:
     that has to be true of three different states at once is a sentence that
     ends up specific about none of them.
 
-    The ceiling does not move. All three say the same thing about what the run
+    The ceiling does not move. All four say the same thing about what the run
     may do: some of this material cannot be used as it stands, and the rest can,
     which is exactly what 35 is for. What changes is only which of them the
     customer is told about.
@@ -12154,12 +12156,24 @@ def dataset_facts_from_preflight(records: Sequence[dict[str, Any]]) -> DatasetFa
             # (preflight.py), and each of those two addends is a row that WAS
             # read - one carries no answer, the other an answer the declared
             # comparator cannot parse. Neither is unreadable in the sense this
-            # field names. The counts agree on every
-            # payload that reaches this return today, because a dataset with
-            # unlabelled rows carries provenance and leaves through the branch
-            # below - so reading the sum was correct only by way of a fact
-            # asserted elsewhere. Read the count that means what this says.
+            # field names. Read the count that means what this says, and read
+            # the gold one beside it - because the three do NOT agree on every
+            # payload reaching this return. A file whose gold is ENTIRELY
+            # unreadable arrives here with `malformed_rows` 0 and no
+            # provenance, and on `malformed_rows` alone it scored as
+            # `dataset-absent`: ceiling 20, route `get-data`, a card reading
+            # "holds no rows at all ... nothing to repair" directly above
+            # "2/2 rows are unusable ... repair the working copy". The note
+            # beside ACTION_FOR_CONDITION already argues that - "the customer
+            # has data, so sending them to collect more is the wrong
+            # instruction" - and this is what keeps it true.
             unreadable_rows=integrity.get("malformed_rows"),
+            gold_rows_unreadable=_row_count(
+                integrity.get("unreadable_gold_rows"),
+                "unreadable_gold_rows",
+                required=False,
+                check="dataset-integrity",
+            ),
             unreadable_detail=_dataset_absence_detail(records),
         )
     structurally_failed = integrity_status == "FAIL" and integrity["malformed_rows"] > 0
@@ -12414,7 +12428,10 @@ def dataset_facts_from_preflight(records: Sequence[dict[str, Any]]) -> DatasetFa
         # as it did rather than being refused over a number that cannot be the
         # sole explanation of its FAIL.
         gold_rows_unreadable=_row_count(
-            integrity.get("unreadable_gold_rows", 0),
+            # No `.get` default: `required=False` already means "absent is a
+            # measured none", and substituting 0 made that parameter inert - a
+            # later tightening to `required=True` would have done nothing.
+            integrity.get("unreadable_gold_rows"),
             "unreadable_gold_rows",
             required=False,
             check="dataset-integrity",

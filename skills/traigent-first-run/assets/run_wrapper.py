@@ -39,12 +39,18 @@ LAUNCH_BOUNDS = {
     )
 }
 load_dotenv(PROJECT_ROOT / ".env", override=False)
-os.environ.pop("TRAIGENT_FIRST_RUN_PHASE", None)
-os.environ.pop("TRAIGENT_FIRST_RUN_BASELINE_TIMEOUT_SECONDS", None)
-for _approved_name in APPROVED_FIGURE_NAMES:
-    # Popped like the phase flag, so a child process inherits neither an
-    # approval nor a running total it was not launched with.
-    os.environ.pop(_approved_name, None)
+# Blanked, not popped. `load_dotenv` fills an ABSENT name and leaves a present
+# one alone, so popping these let any later load put the stale values back -
+# the SDK at import, or a `load_dotenv()` in the customer's own agent module,
+# which neither flag below reaches. Nothing here re-reads them: the phase came
+# from :27, the figures from APPROVED_FIGURES, the bound from LAUNCH_BOUNDS.
+# An inherited empty value is refused; an inherited stale approval is not.
+for _cleared_name in (
+    "TRAIGENT_FIRST_RUN_PHASE",
+    "TRAIGENT_FIRST_RUN_BASELINE_TIMEOUT_SECONDS",
+    *APPROVED_FIGURE_NAMES,
+):
+    os.environ[_cleared_name] = ""
 if FIRST_RUN_PHASE not in {"proof", "baseline", "connected"}:
     raise SystemExit(
         "TRAIGENT_FIRST_RUN_PHASE must be 'proof', 'baseline', or 'connected'"
@@ -82,7 +88,15 @@ if FIRST_RUN_PHASE in {"proof", "baseline"}:
     # The wrapper loaded dotenv already; an SDK import must not restore removed values.
     os.environ["TRAIGENT_SKIP_DOTENV"] = "1"
     os.environ["TRAIGENT_OFFLINE_MODE"] = "true"
-    os.environ.pop("TRAIGENT_API_KEY", None)
+    # Blank, and all three names, as the generated runtime already does
+    # ("blank rather than absent, so a dotenv file cannot bring a Traigent
+    # credential or URL back"). The wrapper popped the key and left the URLs.
+    for _offline_blank in (
+        "TRAIGENT_API_KEY",
+        "TRAIGENT_BACKEND_URL",
+        "TRAIGENT_API_URL",
+    ):
+        os.environ[_offline_blank] = ""
 else:
     # Both spellings: the SDK reads either as offline, and either resolves this
     # run to local-only BEFORE a session is attempted - so the flag below is

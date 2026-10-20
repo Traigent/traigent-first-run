@@ -464,7 +464,11 @@ class RefusalTests(unittest.TestCase):
         project.runs = project.root / "traigent-runs"
         self.assertTrue((project.runs / "adapter_bridge.py").is_file())
 
-        scorer = f"{project.runs / 'adapter_bridge.py'}:score"
+        # The PROJECT-RELATIVE scorer, which is what `next` prints and what the
+        # assistant runs. The absolute form was a dead tripwire: argparse's own
+        # `loadable_callable_spec` rejects it before the run ever reaches the
+        # round-trip at issue, so removing that round-trip left this test green.
+        scorer = "traigent-runs/adapter_bridge.py:score"
         calibrated = subprocess.run(
             [
                 sys.executable,
@@ -493,18 +497,20 @@ class RefusalTests(unittest.TestCase):
             text=True,
             check=False,
         )
+        output = calibrated.stdout + calibrated.stderr
         self.assertNotEqual(
             calibrated.returncode,
             0,
-            "an ancestor colon must still break calibration, or this guard can narrow: "
-            + calibrated.stdout
-            + calibrated.stderr,
+            "an ancestor colon must still break calibration, or this guard can "
+            "narrow to the relative path - which is also what Windows needs: " + output,
         )
-        # Fails for the colon, not for some unrelated reason: the reported path
-        # is the ancestor truncated at the colon, not the scorer.
+        # Red for the colon and for nothing else. `cannot load <ancestor>` is
+        # the load failing on a path truncated at the first colon; a bare
+        # prefix match would also accept any unrelated error that happened to
+        # echo the full project path.
         self.assertIn(
-            str(project.root).partition(":")[0],
-            calibrated.stdout + calibrated.stderr,
+            f"cannot load {str(project.root).partition(':')[0]}",
+            output,
         )
 
     def refused(self, project: Project) -> list[str]:

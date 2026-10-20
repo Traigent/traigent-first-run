@@ -14,7 +14,13 @@ WRAPPER = ROOT / "skills" / "traigent-first-run" / "assets" / "run_wrapper.py"
 
 class WrapperEnvironmentTests(unittest.TestCase):
     def run_prefix(
-        self, phase: str, timeout: str | None, *, traced=False, dotenv_disabled=None
+        self,
+        phase: str,
+        timeout: str | None,
+        *,
+        traced=False,
+        dotenv_disabled=None,
+        customer_dotenv=False,
     ):
         with tempfile.TemporaryDirectory() as directory:
             project = Path(directory)
@@ -47,6 +53,16 @@ for node in ast.parse(source.read_text()).body:
     ):
         break
 exec(compile(ast.Module(body=prefix, type_ignores=[]), str(source), "exec"), globals())
+if len(sys.argv) > 3 and sys.argv[3] == "customer-dotenv":
+    # The customer's own agent module, whose import loads their .env. No flag
+    # the wrapper sets reaches this call; only a present empty value survives it.
+    # cwd is the fixture project root - NOT `source`, which is the shipped
+    # wrapper asset and whose parent holds no .env, so resolving from it loaded
+    # nothing and the assertion below passed over a call that did not happen.
+    from dotenv import load_dotenv
+    customer_env = Path.cwd() / ".env"
+    assert customer_env.is_file(), customer_env
+    assert load_dotenv(customer_env), "the customer .env must actually load"
 print("STATE=" + json.dumps({"timeout": BASELINE_TIMEOUT_SECONDS, "env": {name: os.environ.get(name) for name in (*APPROVED_FIGURE_NAMES, "TRAIGENT_API_KEY", "TRAIGENT_FIRST_RUN_PHASE", "TRAIGENT_FIRST_RUN_BASELINE_TIMEOUT_SECONDS")}, "file_value": os.environ.get("FIRST_RUN_FIXTURE_FILE_VALUE"), "dotenv_disabled": os.environ.get("PYTHON_DOTENV_DISABLED"), "trace_active": sys.gettrace() is not None}))
 """
             script = runs / "wrapper_prefix.py"
@@ -88,6 +104,7 @@ print("STATE=" + json.dumps({"timeout": BASELINE_TIMEOUT_SECONDS, "env": {name: 
                     str(script),
                     str(WRAPPER),
                     "traced" if traced else "plain",
+                    *(["customer-dotenv"] if customer_dotenv else []),
                 ],
                 cwd=project,
                 env=environment,
@@ -120,13 +137,49 @@ print("STATE=" + json.dumps({"timeout": BASELINE_TIMEOUT_SECONDS, "env": {name: 
                 )
                 state = json.loads(line.removeprefix("STATE="))
                 self.assertEqual(state["timeout"], None if phase == "proof" else 600.0)
+                # EMPTY, not absent, and that distinction is the fix. An
+                # absent name is the one thing `load_dotenv` fills, so every
+                # popped value came back the next time anything loaded `.env`
+                # - the SDK at import, or a `load_dotenv()` in the customer's
+                # own agent module, which no flag of ours reaches. A present
+                # empty string survives both.
                 self.assertTrue(
-                    all(value is None for value in state["env"].values()), state
+                    all(value == "" for value in state["env"].values()), state
                 )
                 self.assertEqual(state["file_value"], "loaded-before-imports")
                 self.assertIsNone(state["dotenv_disabled"])
                 if traced:
                     self.assertTrue(state["trace_active"])
+
+    def test_a_customer_module_loading_dotenv_cannot_restore_the_removed_state(
+        self,
+    ) -> None:
+        """#592's residual case, and the reason these names are blanked.
+
+        `TRAIGENT_SKIP_DOTENV` disarms the SDK's own loader and the
+        `PYTHON_DOTENV_DISABLED` window spans only the wrapper's own imports.
+        Neither reaches a `load_dotenv()` inside the customer's agent module,
+        which is ordinary in exactly these projects and is the case the issue
+        names. While the wrapper POPPED these names that call put every one of
+        them back, stale `.env` values and all - measured, not assumed. Blank
+        is what survives it, because `load_dotenv` fills an absent name and
+        leaves a present one alone.
+        """
+        done = self.run_prefix("baseline", "600", customer_dotenv=True)
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        line = next(
+            line for line in done.stdout.splitlines() if line.startswith("STATE=")
+        )
+        state = json.loads(line.removeprefix("STATE="))
+        self.assertTrue(
+            all(value == "" for value in state["env"].values()),
+            "a customer load_dotenv() must not refill any of these: " + repr(state),
+        )
+        # Non-vacuity is asserted inside the subprocess: the fixture `.env`
+        # must exist and `load_dotenv` must report that it read it, or the
+        # run fails before reaching the assertion above. `file_value` is NOT
+        # that control - the wrapper's own load at :42 already set it.
+        self.assertEqual(state["file_value"], "loaded-before-imports")
 
     def test_existing_dotenv_preference_survives_real_traced_imports(self) -> None:
         for value in ("0", "1"):

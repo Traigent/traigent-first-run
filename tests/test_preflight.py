@@ -108,9 +108,17 @@ class StructuralSqlGoldTests(unittest.TestCase):
                     if expected_status == MODULE.FAIL:
                         self.assertIsNotNone(result)
                         self.assertEqual(result.status, MODULE.FAIL, result.detail)
-                        self.assertIn("sql-row", result.detail)
                         self.assertIn("line 1", result.detail)
                         self.assertIn("FROM", result.detail)
+                        # The id is in the METRIC, not in the cause string. Put
+                        # it back in the cause and the grouping below it keys on
+                        # a string that varies per row, so one repeated cause
+                        # fills every reported slot and pushes the other
+                        # findings out of the message entirely.
+                        self.assertNotIn("sql-row", result.detail)
+                        self.assertEqual(
+                            result.metrics["unreadable_gold_ids"], ["sql-row"]
+                        )
                     else:
                         self.assertIsNone(result)
                         shape = next(
@@ -151,6 +159,87 @@ class StructuralSqlGoldTests(unittest.TestCase):
                 "a row that parses and carries both fields is not malformed",
             )
             self.assertEqual(result.metrics["invalid_rows"], 1)
+
+    def test_one_repeated_cause_does_not_crowd_out_the_other_findings(self) -> None:
+        """The grouping bound, which an id inside the cause string defeats.
+
+        `check_dataset` bounds its message by DISTINCT causes, not by rows, and
+        caps the list at `MAX_REPORTED_DATASET_ERRORS`. Six rows failing for one
+        reason are one cause; with the id interpolated into that string they
+        were six, and they spent all five slots - so a malformed line and a row
+        missing its input, both in the same file, were never reported at all.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "tune.jsonl"
+            lines = [
+                json.dumps(
+                    {
+                        "id": f"r{index}",
+                        "input": f"q{index}",
+                        "output": "SELECT EXTRACT(YEAR FROM d) FROM t",
+                    }
+                )
+                for index in range(6)
+            ]
+            lines.append("{not json")
+            lines.append(json.dumps({"id": "noinput", "output": "SELECT a FROM t"}))
+            path.write_text("\n".join(lines) + "\n")
+            MODULE.RESULTS.clear()
+            MODULE.check_dataset(path, evaluator_method="sql-structure")
+            result = next(r for r in MODULE.RESULTS if r.check == "dataset-integrity")
+            self.assertIn("(+5 more)", result.detail)
+            self.assertIn("invalid JSON", result.detail)
+            self.assertIn("input", result.detail)
+            self.assertEqual(result.metrics["unreadable_gold_rows"], 6)
+            self.assertEqual(result.metrics["malformed_rows"], 2)
+
+    def test_a_malformed_row_beside_unreadable_gold_keeps_both_counts(self) -> None:
+        """The must-allow side of the split: the structural count stays real.
+
+        Separating the two buckets must not empty the first one. A file holding
+        both reports both, with both clauses on the card.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "tune.jsonl"
+            path.write_text(
+                json.dumps({"input": "a", "output": "SELECT a FROM t", "id": "ok"})
+                + "\n{not json\n"
+                + json.dumps(
+                    {"input": "c", "output": "SELECT TOP 5 a FROM t", "id": "bad"}
+                )
+                + "\n"
+            )
+            MODULE.RESULTS.clear()
+            MODULE.check_dataset(path, evaluator_method="sql-structure")
+            result = next(r for r in MODULE.RESULTS if r.check == "dataset-integrity")
+            self.assertEqual(result.metrics["malformed_rows"], 1)
+            self.assertEqual(result.metrics["unreadable_gold_rows"], 1)
+            self.assertEqual(result.metrics["invalid_rows"], 2)
+
+    def test_a_blank_expected_answer_stays_an_outputs_finding(self) -> None:
+        """A row with no answer is unlabelled, not gold the comparator refused.
+
+        Both findings are real and they have different remedies. Reporting the
+        empty one as unreadable SQL names the wrong repair and zeroes
+        `unlabelled_rows` for a row that is exactly that.
+        """
+        for empty in ("", None):
+            with self.subTest(empty=empty), tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / "tune.jsonl"
+                path.write_text(
+                    json.dumps(
+                        {"id": "good", "input": "a", "output": "SELECT a FROM t"}
+                    )
+                    + "\n"
+                    + json.dumps({"id": "blank", "input": "b", "output": empty})
+                    + "\n"
+                )
+                MODULE.RESULTS.clear()
+                MODULE.check_dataset(path, evaluator_method="sql-structure")
+                checks = {r.check: r for r in MODULE.RESULTS}
+                self.assertNotIn("dataset-integrity", checks)
+                self.assertEqual(checks["dataset-outputs"].status, MODULE.FAIL)
+                self.assertIn("empty", checks["dataset-outputs"].detail)
 
     def test_unrelated_evaluators_do_not_check_gold_as_sql(self) -> None:
         for method in (None, "composite", "exact-match"):

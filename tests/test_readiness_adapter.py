@@ -6913,13 +6913,86 @@ class UnreadableGoldIsCappedOnItsOwnAccountTests(unittest.TestCase):
     def test_a_payload_without_the_new_count_scores_as_it_did(self) -> None:
         """Version skew: an older preflight published no `unreadable_gold_rows`.
 
-        It must not be refused and must not invent the clause - the count is
-        never the sole explanation of a FAIL written by a preflight that could
-        not measure it.
+        Driven through `dataset_facts_from_preflight` rather than by building
+        `DatasetFacts` by hand, because the hand-built version asserts the
+        dataclass default and not the thing this is about - whether the ADAPTER
+        accepts a payload that predates the key. The old shape carried those
+        rows inside `malformed_rows`, so the structural clause is the right one
+        and the new clause must not appear.
         """
-        facts = MODULE.DatasetFacts(exists=True, integrity_failed=True)
+        records = [
+            {
+                "check": "dataset-integrity",
+                "status": "FAIL",
+                "detail": "2/4 rows (50.0%) are unusable",
+                "metrics": {
+                    "invalid_rows": 2,
+                    "malformed_rows": 2,
+                    "unlabelled_rows": 0,
+                    "candidate_rows": 4,
+                },
+            },
+            {
+                "check": "dataset-provenance",
+                "status": "WARN",
+                "detail": "declared sources: none",
+                "metrics": {
+                    "rows": 4,
+                    "labelled_rows": 2,
+                    "synthetic": False,
+                    "generated_outputs": False,
+                    "collected_rows": 0,
+                    "synthesised_rows": 0,
+                    "undeclared_rows": 4,
+                    "generated_answer_rows": 0,
+                    "answerable_rows": 2,
+                    "sources": [],
+                    "unrecognised_sources": [],
+                },
+            },
+        ]
+        facts = MODULE.dataset_facts_from_preflight(records)
         self.assertEqual(facts.gold_rows_unreadable, 0)
+        self.assertTrue(facts.integrity_failed)
         reason = MODULE.dataset_integrity_reason(facts)
         self.assertIsNotNone(reason)
         self.assertIn("malformed lines", reason)
         self.assertNotIn("declared comparator", reason)
+
+    def test_a_file_whose_gold_is_entirely_unreadable_is_not_called_absent(
+        self,
+    ) -> None:
+        """The `exists=False` branch, which the first version of this fix lost.
+
+        When every gold row is unreadable there are no scoreable rows, so
+        preflight emits no provenance and readiness takes its absent-dataset
+        return. Read from `malformed_rows` alone that count is now zero, and
+        the file scored as `dataset-absent`: ceiling 20, route `get-data`, a
+        card saying "holds no rows at all ... nothing to repair" above
+        "2/2 rows are unusable ... repair the working copy". The customer HAS
+        data, which is the case the note beside `ACTION_FOR_CONDITION` says
+        must not be sent to collect more.
+        """
+        with tempfile.TemporaryDirectory() as raw:
+            dataset = _write_jsonl(
+                Path(raw),
+                "gold.jsonl",
+                [
+                    {
+                        "id": f"q-{i}",
+                        "input": f"q{i}",
+                        "output": "SELECT TOP 5 a FROM t",
+                    }
+                    for i in range(1, 3)
+                ],
+            )
+            score = _score(
+                dataset,
+                extra=("--evaluator-method", "sql-structure"),
+                preflight_extra=("--evaluator-method", "sql-structure"),
+            )
+        conditions = [cap["condition"] for cap in score["caps"]]
+        self.assertNotIn("dataset-absent", conditions)
+        cap = _cap(score, "dataset-shape-unrecognised")
+        self.assertEqual(cap["ceiling"], 25)
+        self.assertNotIn("nothing to repair", cap["reason"])

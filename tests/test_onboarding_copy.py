@@ -30,8 +30,12 @@ class OnboardingCopyTests(unittest.TestCase):
         opening = skill.split("#### Opening readiness gate", 1)[1].split(
             "**Read next.**", 1
         )[0]
-        self.assertIn("free, keyless readiness", opening)
-        self.assertIn("next paid step: priced baseline preview", opening)
+        self.assertIn("free and needs no key", opening)
+        self.assertIn("next paid step is the priced baseline preview", opening)
+        # Stated in the assistant's own voice. It used to read "Per glossary:",
+        # and the glossary carries only the "free" half - a citation a reader
+        # following it does not find is worse than no citation.
+        self.assertNotIn("Per glossary", opening)
 
 
 if __name__ == "__main__":
