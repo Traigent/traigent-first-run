@@ -210,6 +210,32 @@ SECRET_MARKERS = (
     "PG",
     "CONN",
 )
+# The two halves of the tuple above, because `subprocess_environment` treats
+# them oppositely: a credential is BLANKED so a later dotenv load cannot refill
+# it, a connection target is DROPPED so no library default can pick it up.
+# Split here and derived by exclusion, so a marker added above must be
+# classified deliberately rather than inherit whichever behaviour it lands next
+# to. A name matching both halves is a connection target first.
+CONNECTION_TARGET_MARKERS = ("URL", "DSN", "DATABASE", "PG", "CONN")
+if not set(CONNECTION_TARGET_MARKERS) <= set(SECRET_MARKERS):
+    # Not an `assert`: this file runs under `python -O` like any other, and a
+    # silently inert split would restore the defect it exists to prevent.
+    raise RuntimeError(
+        "CONNECTION_TARGET_MARKERS names a marker SECRET_MARKERS does not carry"
+    )
+CREDENTIAL_MARKERS = tuple(
+    marker for marker in SECRET_MARKERS if marker not in CONNECTION_TARGET_MARKERS
+)
+
+
+def _is_connection_target_name(name: str) -> bool:
+    return any(marker in name.upper() for marker in CONNECTION_TARGET_MARKERS)
+
+
+def _is_credential_name(name: str) -> bool:
+    return any(marker in name.upper() for marker in CREDENTIAL_MARKERS)
+
+
 MATRIX_COVERAGE_NOTE = (
     "Distinct names and payloads are structural checks only; calibration relies on "
     "the coding assistant's recorded evidence-backed semantic-coverage review of "
@@ -1664,10 +1690,40 @@ def subprocess_environment(allow_provider_access: bool) -> dict[str, str]:
     if allow_provider_access:
         environment = dict(os.environ)
     else:
+        # Credentials are BLANKED; connection targets are still DROPPED. The
+        # two halves of SECRET_MARKERS want opposite things and the difference
+        # is load-bearing both ways.
+        #
+        # A credential must be blanked, because an absent name is the one thing
+        # a `load_dotenv()` refills - the defect `run_wrapper.py` closes the
+        # same way - and the code being calibrated is the customer's own
+        # scorer, free to call it at import. Dropping them made
+        # "credential-stripped child" true only until the first dotenv load: a
+        # repro under this function recovered a provider key and a Traigent key
+        # from the project `.env` inside the worker. Every provider client
+        # treats an empty key as no key rather than as a stale one.
+        #
+        # A connection target must stay absent, for the reason recorded beside
+        # those markers: a copy repointed at a safe target must not find the
+        # production one "where a surviving read or a library default would
+        # pick it up". An empty `PGHOST` or `DATABASE_URL` IS such a surviving
+        # read - libpq reads an empty host as "use the default" - so blanking
+        # them would defeat the guarantee instead of tightening it.
+        # `test_connection_target_names_are_stripped_from_the_child` pins that,
+        # and it caught this function being changed the other way.
+        #
+        # A name matching both halves (`DATABASE_PASSWORD`) is dropped, which
+        # is what it already was: the target rule is the stricter of the two
+        # and this function is not the place to reopen it.
+        #
+        # Non-secret settings are untouched either way, because an authored
+        # evaluator may legitimately read its configuration from the project
+        # `.env` - which is why the dotenv control below is not simply switched
+        # off for every worker.
         environment = {
-            key: value
+            key: ("" if _is_credential_name(key) else value)
             for key, value in os.environ.items()
-            if not any(marker in key.upper() for marker in SECRET_MARKERS)
+            if not _is_connection_target_name(key)
         }
         environment.update(
             {

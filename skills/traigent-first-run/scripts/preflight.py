@@ -4540,6 +4540,18 @@ def check_dataset(
                 raise ImportError(f"cannot load {STRUCTURAL_SQL_ASSET}")
             sql_comparator = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(sql_comparator)
+            # The name is checked HERE, not left to the call site in the row
+            # loop. Only the names read off this module are the contract with
+            # it, and a stale or hand-edited bundle that no longer carries the
+            # content-free summary would otherwise raise `AttributeError` deep
+            # in the loop and reach `main` as "internal error, treat nothing as
+            # checked" - the exact degradation the comment above promises not to
+            # do. Raised as `ImportError` so it lands in the same finding.
+            if not callable(getattr(sql_comparator, "_unreadable_reason", None)):
+                raise ImportError(
+                    f"{STRUCTURAL_SQL_ASSET} carries no _unreadable_reason; "
+                    "the gold check cannot say why a row failed"
+                )
         except (OSError, SyntaxError, ImportError) as error:
             sql_comparator = None
             emit(
@@ -4599,6 +4611,12 @@ def check_dataset(
         # over.
         if sql_comparator is not None and dataset_row_is_labelled(row, expected_field):
             expected = normalized_row["output"]
+            # This detail is PUBLISHED - card, written report, and the
+            # assistant's own context - so it may not carry a slice of the
+            # customer's answer. What makes that safe is in the comparator:
+            # `_Parser._where` names a token's KIND and never its text, and
+            # `tests/test_sql_structure.py` holds that property over the
+            # shapes that broke the first attempt. Nothing here re-adds it.
             reason = (
                 f"expected SQL is {type(expected).__name__}, not a string"
                 if not isinstance(expected, str)

@@ -538,7 +538,12 @@ def generate(config_path: Path, root: Path, run_dir: Path) -> dict:
         raise Refusal(
             [
                 "calibration's FILE.py:FUNCTION format cannot represent a bridge path containing ':', and the resolved path "
-                f"{bridge_path} contains one; on POSIX choose a project directory without ':'"
+                f"{bridge_path} contains one. On POSIX, choose a project "
+                "directory without ':'. On Windows there is no such choice - "
+                "every absolute path carries a drive-letter colon - and the "
+                "hand-adapted route is calibrated through the same "
+                "colon-joined pair, so it is no way around this: use a POSIX "
+                "environment, WSL included"
             ]
         )
     spec["project_root"] = os.path.relpath(

@@ -77,11 +77,17 @@ REQUIREMENTS = (
     ROOT / "skills" / "traigent-first-run" / "assets" / "requirements-first-run.txt"
 )
 
-# Mirrors skills/traigent-first-run/scripts/calibrate_evaluator.py's
-# SECRET_MARKERS: a class-based scan (any key containing one of these
-# substrings) plus explicit provider-key names as defense in depth, so the
-# child process never receives a credential regardless of what happens to be
-# exported in the environment running this test.
+# The CREDENTIAL half of calibrate_evaluator.py's SECRET_MARKERS (its
+# `CREDENTIAL_MARKERS`), not the whole tuple: a class-based scan (any key
+# containing one of these substrings) plus explicit provider-key names as
+# defense in depth, so the child process never receives a credential whatever
+# happens to be exported in the environment running this test.
+#
+# Deliberately DROPS what the module BLANKS, and that is not drift to sync.
+# There, a present empty value is what survives a `load_dotenv()` in the
+# customer's own scorer; here nothing loads a dotenv file, and absence is the
+# stricter statement for a test whose whole claim is that no credential reaches
+# the child.
 SECRET_MARKERS = (
     "API_KEY",
     "TOKEN",

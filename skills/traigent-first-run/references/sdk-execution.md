@@ -294,9 +294,23 @@ selected route lists at run time, then verify each id is live before scaling. Mi
 **Default: generate the bridge.** Write `traigent-runs/adapter.json` (`assets/adapter.schema.json`)
 from mappings the user approved; `scripts/generate_adapter.py suggest` only proposes them. Then
 `generate_adapter.py generate --config ... --project-root ...` imports their agent and evaluator
-unchanged, and `python traigent-runs/adapter_bridge.py probe` (wiring, no keys) and the baseline
-command run under the shared runtime's ledger and offline boundary. Calibrate the evaluator with `--scorer
-traigent-runs/adapter_bridge.py:score`. Edit the bundled wrapper only when generation refuses, with every reason printed (another
+unchanged, and the probe (wiring, no keys) and the baseline command run under the shared runtime's
+ledger and offline boundary. Run the commands the generator prints under "next" and calibrate with
+the scorer it prints there, rather than typing either path: both follow the run directory actually
+selected, and are already shell-quoted.
+
+A generated-bridge baseline that ends **exit 3** has not produced a complete comparison, and the
+printed means are diagnostic only. Three states reach it: a configuration scored no row, some
+examples failed, or the phase hit its wall-clock bound. **A timeout is not this paragraph's** - with
+or without completed trials it follows `run-safety.md`'s Recovery rules, which own it. For the other
+two: do not read a **winner** from the run and do not re-run it blind, because the spend already
+happened. The cumulative debit is still carried forward exactly as below - that is a budget figure,
+not a result, and dropping it would launch the next phase against the full ceiling again. Say plainly
+that the comparison is incomplete and what it cost, report the per-configuration failure types and
+counts the record carries, and fix the cause before any further paid phase. Approving more spend on
+an unexplained exit 3 is buying the same result twice.
+
+Edit the bundled wrapper only when generation refuses, with every reason printed (another
 transport than OpenAI or litellm, an engine-reaching evaluator) or for the connected phase.
 
 Use one production-compatible function for baseline and optimization. Adapt only these sites in

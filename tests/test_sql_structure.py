@@ -1900,21 +1900,61 @@ class CommandLine(unittest.TestCase):
         ):
             self.assertIn(line, out)
 
-    def test_reasons_name_the_token_that_stopped_the_reader(self) -> None:
+    def test_reasons_name_the_kind_of_token_that_stopped_the_reader(self) -> None:
+        """The KIND, never the token's text.
+
+        These three pinned the token's text until a review found that every
+        consumer of a reason publishes it: the command-line self-check prints
+        to a terminal a coding assistant reads, and `preflight.py` puts it in a
+        finding that reaches the readiness card and the written report. The
+        token is a slice of the caller's data, so `'bar'` here stood for a
+        whole string literal there. The position is kept, which is what makes
+        the reason actionable, and the kind replaces the text - more useful as
+        well as publishable.
+        """
         reason = _MODULE._unreadable_reason
         self.assertIsNone(reason("SELECT a FROM t"))
         self.assertEqual(
             reason("SELECT a FROM t foo bar"),
-            "trailing tokens after the statement at token 6 ('bar')",
+            "trailing tokens after the statement at token 6 (an identifier)",
         )
         self.assertEqual(
-            reason("INSERT INTO t VALUES (1)"), "expected SELECT at token 1 ('insert')"
+            reason("INSERT INTO t VALUES (1)"),
+            "expected SELECT at token 1 (an identifier)",
         )
         self.assertEqual(reason(""), "no statement")
         self.assertEqual(
             reason("SELECT " + "(" * 500 + "1" + ")" * 500 + " FROM t"),
-            "statement nests too deeply at token 41 ('(')",
+            "statement nests too deeply at token 41 (punctuation)",
         )
+
+    def test_no_reason_carries_the_callers_own_text(self) -> None:
+        """The property the kind-naming exists for, over shapes it must cover.
+
+        A scanner over the finished string was tried first and failed exactly
+        here: the text is built by `repr`, which switches to double quotes for
+        a value containing an apostrophe, and SQL's `''` escape makes an
+        apostrophe ordinary rather than exotic. So the cases below are the ones
+        that broke the previous mechanism, plus the plain ones.
+        """
+        summary = _MODULE._unreadable_reason
+        gold_literal = "Qx7WidgetCo O''Brien 4821 serial"
+        unescaped = gold_literal.replace("''", "'")
+        for statement in (
+            f"SELECT * FROM t WHERE a = N'{gold_literal}'",
+            f"SELECT a FROM t '{gold_literal}'",
+            f'SELECT a FROM t "{unescaped}" extra',
+            f"SELECT a FROM t TABLESAMPLE '{gold_literal}'",
+            f"SELECT {unescaped.split()[0]}x FROM t WHERE",
+            f"SELECT a FROM t WHERE x = '{gold_literal}' AND",
+        ):
+            with self.subTest(statement=statement):
+                text = summary(statement)
+                self.assertIsNotNone(text)
+                for fragment in [unescaped] + [
+                    word for word in unescaped.split() if len(word) > 3
+                ]:
+                    self.assertNotIn(fragment, text)
 
 
 if __name__ == "__main__":

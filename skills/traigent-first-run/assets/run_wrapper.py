@@ -70,6 +70,13 @@ if FIRST_RUN_PHASE != "proof" and inherited("TRAIGENT_MOCK_LLM"):
         "responses, so every score would describe the mock and not the agent. "
         "Unset it before a paid phase; this run will not unset it for you."
     )
+if FIRST_RUN_PHASE != "proof":
+    # Blanked AFTER the refusal, never before - blanking first would delete the
+    # value the refusal exists to see. Refusing alone left the name ABSENT,
+    # which a later dotenv load refills, and `is_mock_llm()` re-reads
+    # `os.environ` on every call - so a value arriving after this point would
+    # run the paid phase on canned responses with the refusal already passed.
+    os.environ["TRAIGENT_MOCK_LLM"] = ""
 if FIRST_RUN_PHASE in {"proof", "baseline"}:
     if FIRST_RUN_PHASE == "proof":
         # LiteLLM otherwise refreshes its model-price catalog at import time.
@@ -111,6 +118,10 @@ else:
                 "to run connected, or stop at the local baseline. This run will "
                 "not unset it for you - where data may go is a choice to make."
             )
+        # Refused, never cleared - and NOT blanked like TRAIGENT_MOCK_LLM
+        # above. `references/sdk-execution.md` owns that decision: the contract
+        # "refuses the connected phase under either instead of clearing it -
+        # where the user's data may go is their choice, not this run's."
     # Managed search or nothing. Without this the SDK degrades a connected run
     # whose backend session cannot be created - absent, wrong, or unscoped key,
     # backend unreachable - to a local sweep, and returns a result that reads

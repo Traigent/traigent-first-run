@@ -299,6 +299,20 @@ class _SqlSyntaxError(Exception):
     """Internal signal that a string cannot be read as a SELECT statement."""
 
 
+# What a reason may say about the token it stopped on. The KIND is publishable;
+# the token's text is a slice of the caller's data and is not - see
+# ``_Parser._where``, which is the only reader of this map, and
+# ``_parse_primary``'s refusal beside it.
+_KIND_NAMES = {
+    "id": "an identifier",
+    "kw": "a keyword",
+    "num": "a number",
+    "str": "a string literal",
+    "punc": "punctuation",
+    "op": "an operator",
+}
+
+
 # ---------------------------------------------------------------------------
 # Canonical ordering helpers
 # ---------------------------------------------------------------------------
@@ -554,11 +568,29 @@ class _Parser:
         return token is not None and token[0] == "id" and token[1] in words
 
     def _where(self) -> str:
-        """The current position, for the reason a statement could not be read."""
+        """The current position, for the reason a statement could not be read.
+
+        Names the token's KIND and never its text. Every consumer of a reason
+        publishes it - the command-line self-check prints to a terminal a
+        coding assistant reads, and ``preflight.py`` puts it in a finding that
+        reaches the readiness card and the written report - while the token
+        itself is a slice of the caller's data, as long as the literal it came
+        from. ``references/run-safety.md`` keeps per-example expected text out
+        of even the local run logs without an informed opt-in, and a finding is
+        not that opt-in.
+
+        This is the only place that can hold the line. Redacting the finished
+        string was tried and does not work: the text is built by ``repr``,
+        which switches to double quotes for a value containing an apostrophe,
+        so a scanner looking for ``'`` walks straight past ``"O'Brien ..."`` -
+        and SQL's own ``''`` escape makes an apostrophe the common case rather
+        than the exotic one. The kind is also the more useful half: a reader
+        wanting the token has the row id beside it and can open the row.
+        """
         token = self._peek()
         if token is None:
             return "at the end of the statement"
-        return f"at token {self._pos + 1} ({token[1]!r})"
+        return f"at token {self._pos + 1} ({_KIND_NAMES.get(token[0], 'a token')})"
 
     def _accept_kw(self, *words: str) -> str | None:
         if self._at_kw(*words):
@@ -995,7 +1027,9 @@ class _Parser:
             return ("row", tuple(values))
         if kind == "id":
             return self._parse_name_primary()
-        raise _SqlSyntaxError(f"unexpected token {value!r}")
+        # The kind, not the value: this is the second of the two places a
+        # reason could carry the caller's own text. See `_Parser._where`.
+        raise _SqlSyntaxError(f"unexpected {_KIND_NAMES.get(kind, 'token')}")
 
     def _parse_keyword_primary(self, value: str) -> _Node:
         if value in ("NULL", "TRUE", "FALSE"):

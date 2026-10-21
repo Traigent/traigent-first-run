@@ -109,7 +109,15 @@ class StructuralSqlGoldTests(unittest.TestCase):
                         self.assertIsNotNone(result)
                         self.assertEqual(result.status, MODULE.FAIL, result.detail)
                         self.assertIn("line 1", result.detail)
-                        self.assertIn("FROM", result.detail)
+                        # The RULE and the POSITION travel; the row's own text
+                        # does not. This line asserted `FROM` - a slice of the
+                        # gold answer - was present, which pinned the leak in
+                        # place rather than catching it. The parser quotes the
+                        # token it stopped on, and that token is as long as the
+                        # literal it came from.
+                        self.assertIn("expected ')'", result.detail)
+                        self.assertIn("at token 5", result.detail)
+                        self.assertNotIn("FROM", result.detail)
                         # The id is in the METRIC, not in the cause string. Put
                         # it back in the cause and the grouping below it keys on
                         # a string that varies per row, so one repeated cause
@@ -126,6 +134,72 @@ class StructuralSqlGoldTests(unittest.TestCase):
                         )
                         self.assertEqual(shape.status, MODULE.PASS)
                         self.assertEqual(shape.metrics["scoreable_rows"], 1)
+
+    def test_a_gold_answer_never_reaches_the_finding(self) -> None:
+        """No cell of the customer's dataset travels in a check's output.
+
+        `references/run-safety.md` keeps per-example `expected` text out of even
+        the LOCAL optimization logs unless the user asks for it after being told
+        what is retained - `TRAIGENT_LOG_EXAMPLE_CONTENT=false` is set in the
+        wrapper for exactly that. A finding is not that opt-in, and it travels
+        further than the logs do: preflight's output is read by the coding
+        assistant, so it leaves the machine, and readiness forwards this detail
+        verbatim onto the card and into the written report.
+
+        The parser quotes the token it stopped on, so a gold answer ending in a
+        string literal put that literal in the message in full. The row stays
+        identifiable by id; its content does not travel.
+        """
+        # A neutral synthetic token, and it carries an APOSTROPHE on purpose.
+        # The first version of this fixture held a health-PII-shaped string,
+        # which proved nothing the property does not and trips third-party
+        # scanners in a public repository. More importantly it had no
+        # apostrophe, so it could not see the case that actually broke the
+        # first implementation: `repr` switches to double quotes for a value
+        # containing `'`, and SQL's `''` escape makes that the common case.
+        gold_literal = "Qx7WidgetCo O''Brien 4821 serial"
+        unescaped = gold_literal.replace("''", "'")
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "gold.jsonl"
+            path.write_text(
+                json.dumps(
+                    {
+                        "id": "unreadable-row",
+                        "input": "question",
+                        "output": f"SELECT a FROM t '{gold_literal}'",
+                    }
+                )
+                + "\n"
+            )
+            MODULE.RESULTS.clear()
+            MODULE.check_dataset(path, evaluator_method="sql-structure")
+            published = json.dumps(
+                [
+                    {
+                        "check": r.check,
+                        "detail": r.detail,
+                        "metrics": r.metrics,
+                    }
+                    for r in MODULE.RESULTS
+                ],
+                default=str,
+            )
+            # Every word of it, not just the whole string: a redaction that
+            # kept one token because it split the literal on spaces would pass
+            # an assertion against the joined form. Checked against the
+            # un-escaped spelling too, since that is what the lexer produces.
+            for word in set(
+                gold_literal.split() + unescaped.split() + [gold_literal, unescaped]
+            ):
+                if len(word) > 3:
+                    self.assertNotIn(word, published)
+            integrity = next(
+                r for r in MODULE.RESULTS if r.check == "dataset-integrity"
+            )
+            self.assertIn("cannot self-match", integrity.detail)
+            self.assertEqual(
+                integrity.metrics["unreadable_gold_ids"], ["unreadable-row"]
+            )
 
     def test_unreadable_gold_is_counted_apart_from_malformed_rows(self) -> None:
         """The count the card's sentence is built from, kept off the wrong one.
