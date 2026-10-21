@@ -12069,7 +12069,7 @@ class SkillPackageTests(unittest.TestCase):
         of what it asserts is read instead of run.
         """
         text = sdk_execution_reference_text()
-        self.assertIn('os.environ["TRAIGENT_FIRST_RUN_STRONG_MODEL"]', text)
+        self.assertIn('LAUNCH_ENVIRONMENT["TRAIGENT_FIRST_RUN_STRONG_MODEL"]', text)
         self.assertIn("TRAIGENT_FIRST_RUN_STRONG_REASONING_EFFORT", text)
         code = sdk_execution_python_fences(text)[0]
         call_path_nodes = [
@@ -12158,10 +12158,17 @@ class SkillPackageTests(unittest.TestCase):
         """A required variable nobody names is a baseline that stops at import."""
         text = sdk_execution_reference_text()
         wrapper = (SKILL_ROOT / "assets" / "run_wrapper.py").read_text()
+        # Plain again, and that is the point: `values=LAUNCH_BOUNDS` existed
+        # because this ONE read had to dodge the merged environment. Every
+        # launch read now goes through `LAUNCH_ENVIRONMENT` inside the three
+        # readers, so the parameter and its single caller are gone and the
+        # guarantee covers nine more names instead of one.
         self.assertIn(
-            'positive_number( "TRAIGENT_FIRST_RUN_BASELINE_TIMEOUT_SECONDS", values=LAUNCH_BOUNDS )',
+            'positive_number("TRAIGENT_FIRST_RUN_BASELINE_TIMEOUT_SECONDS")',
             " ".join(wrapper.split()),
         )
+        self.assertIn("LAUNCH_ENVIRONMENT = dict(os.environ)", wrapper)
+        self.assertNotIn("LAUNCH_BOUNDS", wrapper)
         normalized = " ".join(text.casefold().split())
         for phrase in (
             "`traigent_first_run_baseline_timeout_seconds`, the fourth process "
@@ -12220,7 +12227,10 @@ class SkillPackageTests(unittest.TestCase):
         for phrase in (
             "RUN_DIR = Path(__file__).resolve().parent",
             'SDK_RESULTS_DIR = RUN_DIR / "sdk-results"',
-            'if not os.environ.get("TRAIGENT_RESULTS_FOLDER", "").strip()',
+            # Read from the snapshot, written to the live environment: the
+            # SDK reads it from there, and `run-safety.md` calls this the
+            # process-only results folder, so a `.env` may not decide it.
+            'if not LAUNCH_ENVIRONMENT.get("TRAIGENT_RESULTS_FOLDER", "").strip()',
             'os.environ["TRAIGENT_RESULTS_FOLDER"] = str(SDK_RESULTS_DIR)',
             'TUNING_DATASET = str(RUN_DIR / "tuning.jsonl")',
             'HOLDOUT_DATASET = str(RUN_DIR / "holdout.jsonl")',
@@ -12535,10 +12545,11 @@ class SkillPackageTests(unittest.TestCase):
         )
         for raw in (" openai", "openai ", "OpenAI\n", "\tOPENAI "):
             with self.subTest(raw=raw):
+                # `LAUNCH_ENVIRONMENT`, not `os.environ`: the assignment
+                # reads the pre-dotenv snapshot now. What this subTest pins is
+                # the NORMALISATION either way - strip then casefold.
                 namespace = {
-                    "os": SimpleNamespace(
-                        environ={"TRAIGENT_FIRST_RUN_CURRENT_PROVIDER": raw}
-                    )
+                    "LAUNCH_ENVIRONMENT": {"TRAIGENT_FIRST_RUN_CURRENT_PROVIDER": raw}
                 }
                 exec(ast.unparse(literal_assignment), namespace)  # noqa: S102
                 self.assertEqual(namespace["SELECTED_CURRENT_PROVIDER"], "openai")

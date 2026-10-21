@@ -463,8 +463,15 @@ def inherited(name: str) -> bool:
     return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
 
 
+# The launch environment for this route, filled by `Bridge.start` before it
+# loads the project `.env` - the same guarantee `run_wrapper.py` takes with its
+# own snapshot. Empty until then, so a reader that runs before the capture
+# falls back to `os.environ` and behaves as it always did.
+LAUNCH_ENVIRONMENT: dict[str, str] = {}
+
+
 def positive_number(name: str, *, default: float | None = None) -> float:
-    raw = os.environ.get(name)
+    raw = (LAUNCH_ENVIRONMENT or os.environ).get(name)
     if raw is None or not raw.strip():
         if default is None:
             raise SystemExit(f"{name} is required (a positive number of seconds)")
@@ -977,15 +984,34 @@ class Bridge:
         APPROVED_FIGURES = {
             name: os.environ.get(name) for name in APPROVED_FIGURE_NAMES
         }
+        # Before the load, and for the reason the wrapper states: every value
+        # that decides what this process DOES is read from here afterwards, so
+        # a stale `.env` cannot supply one the launcher left out. Measured on
+        # this route before the snapshot: a project `.env` set the per-request
+        # timeout to an hour, where the code's own default is two minutes.
+        LAUNCH_ENVIRONMENT.clear()
+        LAUNCH_ENVIRONMENT.update(os.environ)
         try:
             from dotenv import load_dotenv
 
             load_dotenv(self.project_root / ".env", override=False)
         except ImportError:
             pass
-        os.environ.pop("TRAIGENT_FIRST_RUN_PHASE", None)
+        # Blanked, not popped, for the reason `run_wrapper.py` states where it
+        # does the same: `load_dotenv` fills an ABSENT name and leaves a
+        # present one alone, so popping leaves exactly the state a later load
+        # refills - and on this route the customer's own agent is imported and
+        # run after this point, free to call `load_dotenv()` itself. Nothing
+        # here re-reads them (the phase is captured above, the figures into
+        # `APPROVED_FIGURES`), so this is about what a child process and any
+        # later reader see.
+        os.environ["TRAIGENT_FIRST_RUN_PHASE"] = ""
         for name in APPROVED_FIGURE_NAMES:
-            os.environ.pop(name, None)
+            os.environ[name] = ""
+        # The SDK's own dotenv opt-out, which the wrapper sets and this route
+        # did not: an `import traigent` here would otherwise load the project
+        # `.env` again, after the blanking above.
+        os.environ["TRAIGENT_SKIP_DOTENV"] = "1"
         if phase != "baseline":
             raise SystemExit(
                 "a generated bridge runs the local baseline; the connected phase is not "

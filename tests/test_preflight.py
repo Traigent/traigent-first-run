@@ -126,7 +126,10 @@ class StructuralSqlGoldTests(unittest.TestCase):
                         # findings out of the message entirely.
                         self.assertNotIn("sql-row", result.detail)
                         self.assertEqual(
-                            result.metrics["unreadable_gold_ids"], ["sql-row"]
+                            result.metrics["unreadable_gold_ids"],
+                            # DIGESTS, matching `dataset-ids` beside it: a row
+                            # id is free text and this payload is published.
+                            [MODULE.row_id_digest("sql-row")],
                         )
                     else:
                         self.assertIsNone(result)
@@ -198,9 +201,10 @@ class StructuralSqlGoldTests(unittest.TestCase):
                 r for r in MODULE.RESULTS if r.check == "dataset-integrity"
             )
             self.assertIn("cannot self-match", integrity.detail)
-            self.assertEqual(
-                integrity.metrics["unreadable_gold_ids"], ["unreadable-row"]
-            )
+        self.assertEqual(
+            integrity.metrics["unreadable_gold_ids"],
+            [MODULE.row_id_digest("unreadable-row")],
+        )
 
     def test_unreadable_gold_is_counted_apart_from_malformed_rows(self) -> None:
         """The count the card's sentence is built from, kept off the wrong one.

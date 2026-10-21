@@ -303,6 +303,10 @@ class _SqlSyntaxError(Exception):
 # the token's text is a slice of the caller's data and is not - see
 # ``_Parser._where``, which is the only reader of this map, and
 # ``_parse_primary``'s refusal beside it.
+# CPython refuses `int()` on a literal longer than this, with a ValueError that
+# is not a parse error. Nothing legitimate indexes a select list with a number
+# this long, so the parser bounds the run before converting it.
+_MAX_ORDINAL_DIGITS = 4300
 _KIND_NAMES = {
     "id": "an identifier",
     "kw": "a keyword",
@@ -507,7 +511,16 @@ def _tokens(text: str) -> list[_Token]:
                 index += len(symbol)
                 break
         else:
-            raise _SqlSyntaxError(f"unexpected character {char!r}")
+            # The OFFSET, not the character. A single character looks
+            # harmless and is still a slice of the caller's statement, and
+            # this reason is published like every other one - a universal
+            # property with a one-character exemption is not a property. The
+            # offset is what makes it actionable: the reader opens the row and
+            # looks there.
+            raise _SqlSyntaxError(
+                f"unexpected character at offset {index} "
+                "(not valid in a SELECT statement)"
+            )
     return out
 
 
@@ -1280,12 +1293,21 @@ def _select_item_for_ordinal(
         return None
     if any(item[0] == "star" for item, _alias in items):
         return None
-    position = int(term[1])
-    if not 1 <= position <= len(items):
+    # Length first, and `int()` only on a run short enough to convert. CPython
+    # refuses an integer literal over 4300 digits with a ValueError, which is
+    # not a `_SqlSyntaxError` - so a gold answer ending `ORDER BY <5000 nines>`
+    # escaped every reader of this module and took the whole preflight down as
+    # "internal error, treat nothing as checked". A digit run that long names
+    # no select item either, so it refuses here as the unreadable input it is.
+    if len(term[1]) > _MAX_ORDINAL_DIGITS or not 1 <= int(term[1]) <= len(items):
+        # The POSITION is not echoed. It is a bare integer out of the caller's
+        # own statement - a card number, an account number or a record id is
+        # exactly the shape that reaches here - and this reason is published
+        # like every other (see `_Parser._where`).
         raise _SqlSyntaxError(
-            f"{clause} {term[1]} names no select item (the list has {len(items)})"
+            f"{clause} names no select item by position (the list has " f"{len(items)})"
         )
-    return items[position - 1][0]
+    return items[int(term[1]) - 1][0]
 
 
 def _norm_positional(

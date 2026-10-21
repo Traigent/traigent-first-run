@@ -2597,6 +2597,28 @@ def run_calibration_worker(
     may contain normalized targets or DSN components, so substring replacement
     cannot make their diagnostics safe to forward. Withhold that text in full.
     """
+    # The copied-actor route only, and the scope is the decision.
+    #
+    # A red team showed the blanking in `subprocess_environment` is defeated by
+    # `load_dotenv(override=True)`, which overwrites a blank where it would
+    # leave a present value alone - a two-line scorer recovered the provider
+    # key, the Traigent key and the dropped connection target. Setting this
+    # flag for EVERY worker closes that, and was tried: it breaks
+    # `test_ordinary_authored_worker_can_still_load_project_settings`, which
+    # pins a deliberate feature - an authored evaluator may read its own
+    # configuration from the project `.env`, and often must.
+    #
+    # The trade resolves on WHOSE code and WHOSE file. On the ordinary route
+    # both are the customer's: their evaluator reading their own `.env` and
+    # getting their own key back is not a breach, and what must hold there -
+    # that calibration places no paid call - is held by the proxy blackhole
+    # below and the socket contract, not by the name being absent. The copied
+    # actor is the case where they differ: a copy repointed at a safe target
+    # must not reach the real one, so the loader stays off there.
+    #
+    # Residual, recorded rather than implied: `dotenv_values()` has no such
+    # gate at all, so even here the flag narrows the path rather than closing
+    # the class.
     if copied_actor:
         environment = kwargs.get("env")
         kwargs["env"] = {

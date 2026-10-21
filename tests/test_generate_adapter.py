@@ -895,8 +895,14 @@ print(json.dumps({'figures':rt.APPROVED_FIGURES,'phase':os.environ.get('TRAIGENT
                 )
                 self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
                 state = json.loads(done.stdout)
-                self.assertIsNone(state["phase"], state)
-                self.assertEqual(state["env_figures"], [None, None, None], state)
+                # BLANK, not absent, and that is the fix rather than a
+                # regression: popping leaves the one state `load_dotenv`
+                # refills, and on this route the customer's own agent is
+                # imported and run after the clearing, free to load their
+                # `.env` itself. The wrapper already blanked these; this pin
+                # was written while the bridge still popped them.
+                self.assertEqual(state["phase"], "", state)
+                self.assertEqual(state["env_figures"], ["", "", ""], state)
                 self.assertEqual(list(state["figures"].values()), ["2", "0", "0.01"])
                 self.assertEqual(state["disabled"], preference)
                 self.assertEqual(state["launch_provider"], "fixture-launch-provider")

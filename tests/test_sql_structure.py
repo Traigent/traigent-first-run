@@ -1740,8 +1740,11 @@ class CommandLine(unittest.TestCase):
                 "  line 2, id 'q2': scores 0.0 against itself: unexpected end "
                 "of expression at the end of the statement",
                 SELF_MATCH_FIX,
-                "  line 4: scores 0.0 against itself: ORDER BY 3 names no "
-                "select item (the list has 2)",
+                # The ordinal itself is no longer echoed: a bare integer out
+                # of the caller's statement is a card or account number as
+                # easily as a column position, and this line is published.
+                "  line 4: scores 0.0 against itself: ORDER BY names no "
+                "select item by position (the list has 2)",
                 SELF_MATCH_FIX,
             ],
         )
@@ -1940,7 +1943,18 @@ class CommandLine(unittest.TestCase):
         summary = _MODULE._unreadable_reason
         gold_literal = "Qx7WidgetCo O''Brien 4821 serial"
         unescaped = gold_literal.replace("''", "'")
+        # A red team defeated the first version of this test three ways: its
+        # fragments were words of 4+ characters, so it could not see a single
+        # unlexable character echoed back (`unexpected character '§'`) nor a
+        # bare digit run echoed by the positional-ordinal refusal. A test named
+        # for a universal property, passing while the property is false, is
+        # what lets the next regression through - so the cases below now carry
+        # a one-character marker and a card-shaped ordinal, and every fragment
+        # is checked regardless of length.
         for statement in (
+            "SELECT a FROM t WHERE x = 1 §",
+            "SELECT a FROM t ORDER BY 4111111111111111",
+            "SELECT a FROM t ORDER BY " + "9" * 5000,
             f"SELECT * FROM t WHERE a = N'{gold_literal}'",
             f"SELECT a FROM t '{gold_literal}'",
             f'SELECT a FROM t "{unescaped}" extra',
@@ -1951,10 +1965,15 @@ class CommandLine(unittest.TestCase):
             with self.subTest(statement=statement):
                 text = summary(statement)
                 self.assertIsNotNone(text)
-                for fragment in [unescaped] + [
-                    word for word in unescaped.split() if len(word) > 3
-                ]:
-                    self.assertNotIn(fragment, text)
+                for fragment in {
+                    unescaped,
+                    gold_literal,
+                    "§",
+                    "4111111111111111",
+                    "9" * 20,
+                    *unescaped.split(),
+                }:
+                    self.assertNotIn(fragment, text, statement[:60])
 
 
 if __name__ == "__main__":

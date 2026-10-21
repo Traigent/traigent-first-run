@@ -13,14 +13,15 @@ WRAPPER = ROOT / "skills" / "traigent-first-run" / "assets" / "run_wrapper.py"
 
 
 class WrapperEnvironmentTests(unittest.TestCase):
+    @staticmethod
     def run_prefix(
-        self,
         phase: str,
         timeout: str | None,
         *,
         traced=False,
         dotenv_disabled=None,
         customer_dotenv=False,
+        stop_at="OPTIMIZATION_TIMEOUT_SECONDS",
     ):
         with tempfile.TemporaryDirectory() as directory:
             project = Path(directory)
@@ -34,6 +35,14 @@ class WrapperEnvironmentTests(unittest.TestCase):
                 "TRAIGENT_FIRST_RUN_COST_SPENT_USD=88\n"
                 "TRAIGENT_FIRST_RUN_UNTRACKED_CALL_COST_USD=77\n"
                 "TRAIGENT_FIRST_RUN_BASELINE_TIMEOUT_SECONDS=5\n"
+                # Launch inputs a stale file must not decide, measured live
+                # before the snapshot existed: 23 against a comment forbidding
+                # a raise without a newly scoped approval, and a model the
+                # launching process never chose.
+                "TRAIGENT_FIRST_RUN_ENHANCED_MAX_TRIALS=23\n"
+                "TRAIGENT_FIRST_RUN_BASELINE_TRIALS=5\n"
+                "TRAIGENT_FIRST_RUN_CURRENT_MODEL=openai/stale-from-dotenv\n"
+                "TRAIGENT_FIRST_RUN_MODEL_REQUEST_TIMEOUT_SECONDS=7\n"
                 "FIRST_RUN_FIXTURE_FILE_VALUE=loaded-before-imports\n"
             )
             # Compile unchanged source nodes with their original offsets and filename.
@@ -48,12 +57,12 @@ prefix = []
 for node in ast.parse(source.read_text()).body:
     prefix.append(node)
     if isinstance(node, ast.Assign) and any(
-        isinstance(target, ast.Name) and target.id == "OPTIMIZATION_TIMEOUT_SECONDS"
+        isinstance(target, ast.Name) and target.id == sys.argv[4]
         for target in node.targets
     ):
         break
 exec(compile(ast.Module(body=prefix, type_ignores=[]), str(source), "exec"), globals())
-if len(sys.argv) > 3 and sys.argv[3] == "customer-dotenv":
+if sys.argv[3] == "customer-dotenv":
     # The customer's own agent module, whose import loads their .env. No flag
     # the wrapper sets reaches this call; only a present empty value survives it.
     # cwd is the fixture project root - NOT `source`, which is the shipped
@@ -63,7 +72,10 @@ if len(sys.argv) > 3 and sys.argv[3] == "customer-dotenv":
     customer_env = Path.cwd() / ".env"
     assert customer_env.is_file(), customer_env
     assert load_dotenv(customer_env), "the customer .env must actually load"
-print("STATE=" + json.dumps({"timeout": BASELINE_TIMEOUT_SECONDS, "env": {name: os.environ.get(name) for name in (*APPROVED_FIGURE_NAMES, "TRAIGENT_API_KEY", "TRAIGENT_FIRST_RUN_PHASE", "TRAIGENT_FIRST_RUN_BASELINE_TIMEOUT_SECONDS")}, "file_value": os.environ.get("FIRST_RUN_FIXTURE_FILE_VALUE"), "dotenv_disabled": os.environ.get("PYTHON_DOTENV_DISABLED"), "trace_active": sys.gettrace() is not None}))
+launch = {name: globals().get(name) for name in (
+    "ENHANCED_MAX_TRIALS", "BASELINE_TRIALS", "SELECTED_CURRENT_MODEL",
+    "MODEL_REQUEST_TIMEOUT_SECONDS")}
+print("STATE=" + json.dumps({"launch": launch, "timeout": BASELINE_TIMEOUT_SECONDS, "env": {name: os.environ.get(name) for name in (*APPROVED_FIGURE_NAMES, "TRAIGENT_API_KEY", "TRAIGENT_FIRST_RUN_PHASE", "TRAIGENT_FIRST_RUN_BASELINE_TIMEOUT_SECONDS")}, "file_value": os.environ.get("FIRST_RUN_FIXTURE_FILE_VALUE"), "dotenv_disabled": os.environ.get("PYTHON_DOTENV_DISABLED"), "trace_active": sys.gettrace() is not None}))
 """
             script = runs / "wrapper_prefix.py"
             script.write_text(program)
@@ -104,7 +116,8 @@ print("STATE=" + json.dumps({"timeout": BASELINE_TIMEOUT_SECONDS, "env": {name: 
                     str(script),
                     str(WRAPPER),
                     "traced" if traced else "plain",
-                    *(["customer-dotenv"] if customer_dotenv else []),
+                    "customer-dotenv" if customer_dotenv else "plain",
+                    stop_at,
                 ],
                 cwd=project,
                 env=environment,
@@ -264,3 +277,42 @@ print("STATE=" + json.dumps({"timeout": BASELINE_TIMEOUT_SECONDS, "env": {name: 
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class StaleDotenvCannotDecideWhatTheRunDoesTests(unittest.TestCase):
+    """Every launch input comes from the launching process, not the project file.
+
+    The three approved cost figures and the baseline timeout were captured
+    before `load_dotenv` already. The rest were not: the trial caps, the
+    per-request and optimization timeouts, the three model selections, the
+    provider and the reasoning effort all read the MERGED environment, so a
+    stale or attacker-writable `.env` supplied any the launching process left
+    out. Measured on the fixture below before the snapshot existed, the file's
+    `ENHANCED_MAX_TRIALS=23` won - against the comment beside that read saying
+    raising it without a newly scoped approval is forbidden.
+
+    Asserted through the real wrapper source in a subprocess with a real `.env`
+    on disk, because the defect is in the ORDER of two reads and a unit test
+    over either one alone cannot see it.
+    """
+
+    def test_the_file_decides_none_of_them(self) -> None:
+        done = WrapperEnvironmentTests.run_prefix(
+            "baseline", "600", stop_at="ENHANCED_MAX_TRIALS"
+        )
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        state = json.loads(
+            next(
+                line for line in done.stdout.splitlines() if line.startswith("STATE=")
+            )[len("STATE=") :]
+        )
+        launch = state["launch"]
+        # The file says 23, 5, openai/stale-from-dotenv and 7. The process said
+        # none of them, so each must be the code's own default or its value.
+        self.assertEqual(launch["ENHANCED_MAX_TRIALS"], 12)
+        self.assertEqual(launch["BASELINE_TRIALS"], 12)
+        self.assertEqual(launch["SELECTED_CURRENT_MODEL"], "openai/x")
+        self.assertEqual(launch["MODEL_REQUEST_TIMEOUT_SECONDS"], 120.0)
+        # And the file still loaded - otherwise this proves nothing about
+        # precedence, only that the file was unreadable.
+        self.assertEqual(state["file_value"], "loaded-before-imports")

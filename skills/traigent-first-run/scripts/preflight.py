@@ -4687,7 +4687,17 @@ def check_dataset(
                 # message entirely. The ids travel in the metric instead, where
                 # they are also machine-readable for the exclusion record.
                 unreadable_gold_present += 1
-                unreadable_gold_ids.append(row_metadata_value(row, "id"))
+                # DIGESTS, not the ids. `row_id_digest` exists one screen
+                # above for exactly this - "so the payload does not carry the
+                # customer's own strings out of their file a second time" -
+                # and the `dataset-ids` check beside it already publishes
+                # digests only. A row id is free text: a dataset in the wild
+                # carries `patient <name>, MRN <n>` there, and it would have
+                # travelled verbatim beside a finding whose whole purpose is
+                # that the row's content does not.
+                unreadable_gold_ids.append(
+                    row_id_digest(str(row_metadata_value(row, "id")))
+                )
                 invalid_rows.append(
                     (
                         line_number,
@@ -4736,6 +4746,10 @@ def check_dataset(
                 "malformed_rows": malformed_rows,
                 "unlabelled_rows": unlabelled_present,
                 "unreadable_gold_rows": unreadable_gold_present,
+                # Truncated like every other reported list, and the FULL
+                # count travels beside it in `unreadable_gold_rows`, so a
+                # reader of five digests is not misled about how many rows
+                # there are.
                 "unreadable_gold_ids": unreadable_gold_ids[
                     :MAX_REPORTED_DATASET_ERRORS
                 ],

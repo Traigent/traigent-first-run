@@ -33,17 +33,28 @@ APPROVED_FIGURES = (
     if FIRST_RUN_PHASE == "proof"
     else {name: os.environ.get(name) for name in APPROVED_FIGURE_NAMES}
 )
-LAUNCH_BOUNDS = {
-    "TRAIGENT_FIRST_RUN_BASELINE_TIMEOUT_SECONDS": os.environ.get(
-        "TRAIGENT_FIRST_RUN_BASELINE_TIMEOUT_SECONDS"
-    )
-}
+# THE LAUNCH ENVIRONMENT, captured whole and before `load_dotenv`.
+#
+# Every value that decides what this process DOES - which models, which
+# provider, how many trials, how long - is read from here and never from
+# `os.environ` again. `load_dotenv` fills an ABSENT name from the file, so any
+# of them left out of this snapshot is one a stale `.env` can supply: measured
+# live, a file naming `TRAIGENT_FIRST_RUN_ENHANCED_MAX_TRIALS=23` set the
+# enhanced cap to 23, against the comment beside that read saying raising it
+# without a newly scoped approval is forbidden.
+#
+# A SNAPSHOT rather than a list of names, because a list is only as complete as
+# whoever wrote it: a launch input added later and read from `os.environ` would
+# silently rejoin the file's reach, and nothing would fail. Reading them all
+# from one mapping makes the safe spelling the obvious one.
+LAUNCH_ENVIRONMENT = dict(os.environ)
 load_dotenv(PROJECT_ROOT / ".env", override=False)
 # Blanked, not popped. `load_dotenv` fills an ABSENT name and leaves a present
 # one alone, so popping these let any later load put the stale values back -
 # the SDK at import, or a `load_dotenv()` in the customer's own agent module,
 # which neither flag below reaches. Nothing here re-reads them: the phase came
-# from :27, the figures from APPROVED_FIGURES, the bound from LAUNCH_BOUNDS.
+# from :27, the figures from APPROVED_FIGURES, every launch input from
+# LAUNCH_ENVIRONMENT.
 # An inherited empty value is refused; an inherited stale approval is not.
 for _cleared_name in (
     "TRAIGENT_FIRST_RUN_PHASE",
@@ -203,7 +214,11 @@ if FIRST_RUN_PHASE != "proof":
 # unpriced model or an oversize phase become warnings; admission per trial holds.
 os.environ["TRAIGENT_COST_APPROVED"] = "true"
 SDK_RESULTS_DIR = RUN_DIR / "sdk-results"
-if not os.environ.get("TRAIGENT_RESULTS_FOLDER", "").strip():
+# Read from the snapshot, written to the live environment: `run-safety.md`
+# calls this "the process-only SDK results folder", so a `.env` naming it is
+# not the project speaking - it is the one file that must not decide where
+# this run's logs land. The write below is what the SDK then reads.
+if not LAUNCH_ENVIRONMENT.get("TRAIGENT_RESULTS_FOLDER", "").strip():
     os.environ["TRAIGENT_RESULTS_FOLDER"] = str(SDK_RESULTS_DIR)
 # SDK 0.30.0 otherwise stores query/response/expected text in local per-example
 # logs. The first-run record needs ids and metrics, not another copy of content.
@@ -234,12 +249,13 @@ BASELINE_RESULTS = str(RUN_DIR / "baseline-results.json")
 BASELINE_TRANSFER_FILE = str(RUN_DIR / "baseline-transfer.json")
 OPTIMIZED_RESULTS = str(RUN_DIR / "optimized-results.json")
 CONFIG_SPACE_DOCUMENT = str(RUN_DIR / "config-space.json")
-SELECTED_CURRENT_MODEL = os.environ["TRAIGENT_FIRST_RUN_CURRENT_MODEL"]
-SELECTED_ALTERNATIVE_MODEL = os.environ["TRAIGENT_FIRST_RUN_ALTERNATIVE_MODEL"]
-SELECTED_STRONG_MODEL = os.environ["TRAIGENT_FIRST_RUN_STRONG_MODEL"]
+SELECTED_CURRENT_MODEL = LAUNCH_ENVIRONMENT["TRAIGENT_FIRST_RUN_CURRENT_MODEL"]
+SELECTED_ALTERNATIVE_MODEL = LAUNCH_ENVIRONMENT["TRAIGENT_FIRST_RUN_ALTERNATIVE_MODEL"]
+SELECTED_STRONG_MODEL = LAUNCH_ENVIRONMENT["TRAIGENT_FIRST_RUN_STRONG_MODEL"]
 # Set only when the strong tier is a reasoning model; blank means no reasoning kwargs.
 STRONG_REASONING_EFFORT = (
-    os.environ.get("TRAIGENT_FIRST_RUN_STRONG_REASONING_EFFORT", "").strip() or None
+    LAUNCH_ENVIRONMENT.get("TRAIGENT_FIRST_RUN_STRONG_REASONING_EFFORT", "").strip()
+    or None
 )
 # `.strip()` before `.casefold()`, because the branch below no longer refuses a
 # spelling it does not know: `"openai "` would take the unverified path and skip
@@ -247,7 +263,7 @@ STRONG_REASONING_EFFORT = (
 # way a mapped route reaches that branch, and it is not a route the guide cannot
 # check - it is the one it can.
 SELECTED_CURRENT_PROVIDER = (
-    os.environ["TRAIGENT_FIRST_RUN_CURRENT_PROVIDER"].strip().casefold()
+    LAUNCH_ENVIRONMENT["TRAIGENT_FIRST_RUN_CURRENT_PROVIDER"].strip().casefold()
 )
 # Every name litellm will authenticate a route on, any one of which is enough.
 # The same inventory `preflight.py` opens the run with, name for name on every
@@ -288,8 +304,12 @@ ROUTE_ALIASES = {"cohere_chat": "cohere"}
 WALKTHROUGH_TEMPERATURE = 0.0
 
 
-def positive_number(name: str, *, default: float | None = None, values=None) -> float:
-    raw_value = (os.environ if values is None else values).get(name)
+def positive_number(name: str, *, default: float | None = None) -> float:
+    # `LAUNCH_ENVIRONMENT`, never `os.environ`: see the snapshot's own comment.
+    # These three readers are the whole of how this file reads a launch input,
+    # so pointing them at the snapshot is what makes "a stale .env cannot
+    # decide what this run does" true by construction rather than per name.
+    raw_value = LAUNCH_ENVIRONMENT.get(name)
     if raw_value is None:
         if default is None:
             raise ValueError(f"{name} is required")
@@ -302,7 +322,7 @@ def positive_number(name: str, *, default: float | None = None, values=None) -> 
 
 
 def positive_int(name: str, *, default: int | None = None) -> int:
-    raw_value = os.environ.get(name)
+    raw_value = LAUNCH_ENVIRONMENT.get(name)
     if raw_value is None:
         if default is None:
             raise ValueError(f"{name} is required")
@@ -315,9 +335,9 @@ def positive_int(name: str, *, default: int | None = None) -> int:
 
 
 def optional_positive_number(name: str) -> float | None:
-    """Return a positive float from the environment, or None when unset - used
-    for bounds that are intentionally uncapped by default."""
-    raw_value = os.environ.get(name)
+    """Return a positive float from the launch environment, or None when unset -
+    used for bounds that are intentionally uncapped by default."""
+    raw_value = LAUNCH_ENVIRONMENT.get(name)
     if raw_value is None or not raw_value.strip():
         return None
     value = float(raw_value)
@@ -334,9 +354,7 @@ MODEL_REQUEST_TIMEOUT_SECONDS = positive_number(
 BASELINE_TIMEOUT_SECONDS = (
     None
     if FIRST_RUN_PHASE == "proof"
-    else positive_number(
-        "TRAIGENT_FIRST_RUN_BASELINE_TIMEOUT_SECONDS", values=LAUNCH_BOUNDS
-    )
+    else positive_number("TRAIGENT_FIRST_RUN_BASELINE_TIMEOUT_SECONDS")
 )
 # No wall-clock cap on the enhanced optimization by default (None): the search
 # runs to its trial cap, bounded by the total cost ceiling and the per-model-
