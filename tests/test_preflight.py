@@ -8,6 +8,7 @@ import itertools
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -329,6 +330,62 @@ class StructuralSqlGoldTests(unittest.TestCase):
                 self.assertFalse(
                     any(r.check == "dataset-integrity" for r in MODULE.RESULTS)
                 )
+
+    def test_a_verbatim_comparator_declared_composite_is_still_checked(self) -> None:
+        """#603: the FORM is the contract, not the declared word.
+
+        `references/evaluation-and-dataset.md` tells a customer with their own
+        comparator to declare `composite`, so a verbatim copy declared that way
+        is the case the declared word misses - and it fails on exactly the same
+        rows, because it IS this comparator.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            shutil.copyfile(MODULE.STRUCTURAL_SQL_ASSET, root / "sql_structure.py")
+            evaluator = root / "evaluator.py"
+            evaluator.write_text(
+                "from sql_structure import structural_match\n\n\n"
+                "def task_score(*, output, expected, input_data, metadata):\n"
+                "    del input_data, metadata\n"
+                "    return structural_match(output, expected)\n"
+            )
+            path = root / "rows.jsonl"
+            path.write_text(
+                json.dumps({"input": "q", "output": "SELECT TOP 5 a FROM t"}) + "\n"
+            )
+            MODULE.RESULTS.clear()
+            MODULE.check_dataset(
+                path, evaluator_method="composite", evaluator=evaluator
+            )
+            integrity = next(
+                (r for r in MODULE.RESULTS if r.check == "dataset-integrity"), None
+            )
+            self.assertIsNotNone(
+                integrity, "a verbatim copy declared composite went unchecked"
+            )
+            self.assertEqual(integrity.metrics["unreadable_gold_rows"], 1)
+
+    def test_an_unrelated_evaluator_file_does_not_turn_the_check_on(self) -> None:
+        """The must-allow side of #603: a real composite evaluator is left alone."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            evaluator = root / "evaluator.py"
+            evaluator.write_text(
+                "def task_score(*, output, expected, input_data, metadata):\n"
+                "    del input_data, metadata\n"
+                "    return 1.0 if output.strip() == expected.strip() else 0.0\n"
+            )
+            path = root / "rows.jsonl"
+            path.write_text(
+                json.dumps({"input": "q", "output": "SELECT TOP 5 a FROM t"}) + "\n"
+            )
+            MODULE.RESULTS.clear()
+            MODULE.check_dataset(
+                path, evaluator_method="composite", evaluator=evaluator
+            )
+            self.assertFalse(
+                any(r.check == "dataset-integrity" for r in MODULE.RESULTS)
+            )
 
 
 class StaticPreflightTests(unittest.TestCase):

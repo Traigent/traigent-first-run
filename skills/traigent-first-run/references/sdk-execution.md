@@ -336,6 +336,29 @@ process variables it reads.
 
 The runnable wrapper is bundled at `assets/run_wrapper.py`. Copy it to `traigent-runs/run_wrapper.py` and adapt only the tagged sites listed above; every other line stays verbatim. Do not retype the wrapper. The five short phase fences below run from separate files beside that copy.
 
+The GENERATED BRIDGE's probe - not the bundled wrapper's `probe_wiring`, which has its own four
+verdicts and raises rather than exiting - prints one verdict per searched knob and exits 0 only when
+every one is visible or not-searched. **visible** - at least one declared value produced a request
+differing from the baseline's, which is the only verdict that demonstrates a dimension at all. It is
+not proof that every value differs: each alternative is compared with the baseline and never with
+the others, so two alternatives that build the same request still read visible and a Cartesian grid
+would pay for the duplicate. **not-searched** - fewer than two distinct values, so the knob
+claims no dimension and nothing is owed. **ignored** - requests were captured and did not differ, so
+the agent does not act on that knob; the dimension is a no-op and the space should lose it.
+**unobserved** - some configuration placed no request at all, so nothing was demonstrated either
+way; this is not evidence the knob is ignored. A `raised` object appears beside the verdicts when a
+configuration failed, naming the exception class only - never its message, which can carry a key or
+a prompt. An unobserved knob whose configuration raised is a defect in the agent under that value; an
+unobserved knob that raised nothing returned without calling the provider, which is usually a
+short-circuit or a cache. Fix the cause and re-probe; the probe is free, so there is never a reason
+to carry an unobserved knob into a paid phase.
+
+The bundled wrapper's `probe_wiring` answers a stricter question over the same knobs and so has two
+verdicts of its own, which `run-safety.md` sends readers here for: **partial** - the values are
+distinct for some models or tuning inputs and not others, so a Cartesian grid would pay duplicates;
+**invisible** - no model and no input ever changes the request. Both fail, and that probe raises
+instead of exiting.
+
 After adapting the wrapper and before asking for paid approval, run the local proof with no approved figures or timeout:
 
 ```bash

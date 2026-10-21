@@ -1177,7 +1177,21 @@ def answer(text, model, temperature):
                     with contextlib.redirect_stdout(stdout):
                         actual_status = bridge.run_probe()
                     self.assertEqual(actual_status, status)
-                    self.assertEqual(json.loads(stdout.getvalue()), {"wiring": wiring})
+                    report = json.loads(stdout.getvalue())
+                    self.assertEqual(report["wiring"], wiring)
+                    # #601: `unobserved` alone cannot say whether the agent
+                    # raised or returned quietly, and those have different
+                    # fixes. The class name is the diagnostic; the message is
+                    # never recorded, because provider exception text can
+                    # carry a key or a prompt. A clean probe prints no
+                    # `raised` key at all.
+                    if "raising" in label:
+                        self.assertEqual(
+                            list(report["raised"].values()), ["ValueError"]
+                        )
+                        self.assertNotIn("fixture failure", stdout.getvalue())
+                    else:
+                        self.assertNotIn("raised", report)
                     self.assertEqual(
                         placed, [], "a wiring proof must place no transport call"
                     )

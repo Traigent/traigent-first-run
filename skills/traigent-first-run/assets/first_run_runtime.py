@@ -1141,24 +1141,41 @@ class Bridge:
         base = self.spec["baseline"]["config"]
         row = self.tuning_rows()[0]
 
-        def request_for(config: dict):
+        def _probe_label(knob: str, value: object) -> str:
+            # The knob's name always, and the value only when it is short and
+            # plain. A user-owned baseline's space is the customer's material,
+            # and a published string built out of `repr` is exactly what
+            # ledger 0156 records leaking a row's text.
+            shown = repr(value)
+            return f"{knob}={shown}" if len(shown) <= 40 else knob
+
+        # Why a configuration produced no request, by exception TYPE only.
+        # `unobserved` says a knob was not demonstrated; it cannot say whether
+        # the agent raised or returned quietly, and those have different fixes
+        # (#601). The class NAME is a diagnostic; `str(exc)` is not recorded
+        # anywhere, because provider exception text can carry a key or a prompt
+        # - the same rule `references/sdk-execution.md` states for the run log.
+        raised: dict[str, str] = {}
+
+        def request_for(config: dict, label: str):
             PROBED_REQUESTS.clear()
             try:
                 self.agent_output(row, config)
             except _ProbeStop:
                 pass
-            except Exception:
+            except Exception as error:
+                raised[label] = type(error).__name__
                 return None
             return PROBED_REQUESTS[0] if PROBED_REQUESTS else None
 
-        reference = request_for(base)
+        reference = request_for(base, "baseline")
         verdicts = {}
         for knob, values in space.items():
             if len(set(map(repr, values))) < 2:
                 verdicts[knob] = "not-searched"
                 continue
             observations = [
-                request_for({**base, knob: value})
+                request_for({**base, knob: value}, _probe_label(knob, value))
                 for value in values
                 if value != base[knob]
             ]
@@ -1172,7 +1189,12 @@ class Bridge:
                 )
         if reference is None:
             verdicts = {knob: "unobserved" for knob in space}
-        print(json.dumps({"wiring": verdicts}, indent=2))
+        report = {"wiring": verdicts}
+        if raised:
+            # Only when something raised, so a clean probe's output is
+            # byte-identical to what it printed before.
+            report["raised"] = raised
+        print(json.dumps(report, indent=2))
         return (
             0 if all(v in {"visible", "not-searched"} for v in verdicts.values()) else 3
         )

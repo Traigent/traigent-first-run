@@ -37,6 +37,20 @@ from typing import Any, Iterable, Sequence
 # two surfaces the standing to contradict each other over one file, which is
 # what #410 was.
 PASS, FAIL, WARN, SKIP = "PASS", "FAIL", "WARN", "SKIP"
+# The version of the --json payload this script writes, bumped whenever a
+# consumer could read the new shape WRONG rather than merely miss something.
+#
+# #602: every other skew on this boundary refuses by name, and this direction
+# could not. An OLDER preflight read by a newer readiness is handled by reading
+# each count with `required=False` - absence is a measured none. The reverse -
+# a NEWER preflight read by an older readiness - was undetectable by
+# construction, because a key the consumer has never heard of is
+# indistinguishable from one an older writer never wrote, so the finding it
+# carries was silently dropped and the run proceeded with a weaker score.
+# #401, #409 and #69 each hit this same boundary; a stamp answers all three
+# shapes once instead of per metric.
+PAYLOAD_VERSION = 1
+PAYLOAD_CHECK = "preflight-payload"
 SUPPORTED_PYTHON_MIN = (3, 11)
 SUPPORTED_PYTHON_MAX = (3, 14)
 # The release this walkthrough was measured on, and the one its own
@@ -4512,12 +4526,54 @@ def check_evaluator(path: Path) -> None:
     )
 
 
+def structural_sql_gold_is_checkable(
+    evaluator_method: str | None, evaluator: Path | None
+) -> bool:
+    """Whether this run's comparison IS the bundled structural one.
+
+    Two ways to be, and #603 is the second. The declared method is the obvious
+    one. The other is an evaluator whose own form proves it: a single scorer
+    that returns the bundled comparator's call, with a byte-identical copy of
+    that module beside it. `references/evaluation-and-dataset.md` tells a
+    customer with their own comparator to declare `composite`, so a verbatim
+    copy declared that way is exactly the case the declared word misses - and
+    it fails on precisely the same rows.
+
+    Keyed on the form rather than the word for the reason that reference
+    already gives about task fit: "the form is the contract". The derived half
+    needs no ordering change, because `derived_structural_sql_shape` is a pure
+    function of the evaluator's syntax tree and the copy beside it; this does
+    not read anything `check_evaluator` publishes.
+    """
+    if evaluator_method == STRUCTURAL_SQL_SHAPE:
+        return True
+    if evaluator is None or not evaluator.exists():
+        return False
+    try:
+        tree = ast.parse(evaluator.read_text(), filename=str(evaluator))
+    except (
+        OSError,
+        UnicodeDecodeError,
+        SyntaxError,
+        MemoryError,
+        RecursionError,
+        ValueError,
+    ):
+        # Every refusal is "not established", never a traceback out of `main`:
+        # the same tuple and the same reading `check_evaluator` already uses
+        # for this file, and an unparsable evaluator is its finding to make,
+        # not this one's.
+        return False
+    return derived_structural_sql_shape(tree, evaluator) is not None
+
+
 def check_dataset(
     path: Path,
     outcome_field: str | None = None,
     input_field: str = "input",
     expected_field: str = "output",
     evaluator_method: str | None = None,
+    evaluator: Path | None = None,
 ) -> list[dict[str, Any]] | None:
     if not path.exists():
         emit("dataset-shape", FAIL, f"{path} does not exist")
@@ -4525,7 +4581,7 @@ def check_dataset(
 
     reference_free = evaluator_method in REFERENCE_FREE_METHODS
     sql_comparator = None
-    if evaluator_method == STRUCTURAL_SQL_SHAPE:
+    if structural_sql_gold_is_checkable(evaluator_method, evaluator):
         # Only the trusted bundled asset is loaded, never the evaluator or its copy.
         # Guarded like the equivalent load in `calibrate_evaluator.load_function`,
         # and degrading the way `_tree_of` already does for this same asset: a
@@ -5688,6 +5744,15 @@ def run() -> int:
     # are added (traigent-first-run#458).
     RESULTS.clear()
     EMISSION_FAULTS.clear()
+    # First record, before any check can fail or exit: a consumer that refuses
+    # this payload must be able to do so from the payload, and a stamp that
+    # only appears on a clean run is a stamp the skewed cases never carry.
+    emit(
+        PAYLOAD_CHECK,
+        PASS,
+        f"preflight --json payload version {PAYLOAD_VERSION}",
+        {"payload_version": PAYLOAD_VERSION},
+    )
     args = parse_args()
     env_path = Path(args.env)
     env, file_values, process_values = read_env(env_path)
@@ -5726,6 +5791,10 @@ def run() -> int:
             input_field=args.input_field,
             expected_field=args.expected_field,
             evaluator_method=args.evaluator_method,
+            # So the gold check can key on the evaluator's FORM as well as the
+            # declared word (#603). Read-only here; `check_evaluator` below
+            # still owns every finding about this file.
+            evaluator=Path(args.evaluator) if args.evaluator else None,
         )
 
     if args.evaluator:
@@ -5739,11 +5808,15 @@ def run() -> int:
     if args.json:
         print(json.dumps([asdict(result) for result in RESULTS], indent=2))
     else:
-        width = max(len(result.check) for result in RESULTS)
-        for result in RESULTS:
+        # The payload stamp is for the machine that reads `--json`, not for a
+        # customer reading their checks: it names a flag they did not pass and
+        # it moved the pass count. It stays in the payload and out of here.
+        printable = [result for result in RESULTS if result.check != PAYLOAD_CHECK]
+        width = max(len(result.check) for result in printable)
+        for result in printable:
             print(f"{result.check:<{width}}  {result.status:<4}  {result.detail}")
         counts = {
-            status: sum(result.status == status for result in RESULTS)
+            status: sum(result.status == status for result in printable)
             for status in (PASS, WARN, FAIL, SKIP)
         }
         print(

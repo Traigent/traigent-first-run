@@ -17573,6 +17573,15 @@ class SkillPackageTests(unittest.TestCase):
             "approval-gated question",
             '"A `no` is never a silent edit" below owns whether a question is needed '
             "and how to settle it",
+            # #599's rung. The four above phrase the ask as reviewing answers
+            # somebody suspects are WRONG; this one's rows are not suspect -
+            # they are valid answers our comparator cannot parse - so its
+            # passage names the two ways out instead of asking for a verdict
+            # on the answers. The shared remedy still fits, because
+            # `CAP_ACTION_SENTENCES` says "Review the expected answers that
+            # support this comparison", which is an instruction to look at
+            # them and not a claim that they are wrong.
+            "repair or replace those rows, or declare a method that reads them",
         ),
         "add-examples": (
             "more comparable examples is what lifts this",
@@ -18830,7 +18839,16 @@ class SkillPackageTests(unittest.TestCase):
         # #378 added `dataset-repeated-rows` as the seventeenth: rows that
         # repeat another row's input, which used to reach a ceiling only when
         # their ids happened to collide and then under the integrity reason.
-        self.assertEqual(len(conditions), 17)
+        # #599 added `dataset-gold-unreadable` as the eighteenth: gold the
+        # declared comparator cannot parse, which arrived inside the integrity
+        # cap and was moved out because that one blocks and this finding is
+        # this guide's grammar rather than the customer's data. It needs no new
+        # routing bullet of its own in `evaluation-and-dataset.md`, because
+        # every condition the scorer can raise needs one, and it carries the
+        # half that is easy to get wrong: the limit is this guide's grammar,
+        # so the data is not defective. It needed no new REMEDY, though - it
+        # shares `review-answer-key` with the answer-key rungs.
+        self.assertEqual(len(conditions), 18)
         normalized = " ".join(
             section_text(
                 SKILL_ROOT / "references" / "evaluation-and-dataset.md",
@@ -18902,6 +18920,13 @@ class SkillPackageTests(unittest.TestCase):
         scoping = {
             "dataset-fully-synthetic",
             "dataset-mostly-synthetic",
+            # #599's rung, and the same argument the provenance pair below
+            # makes: a repair asserts the file is defective, and these rows
+            # are not. They parse, they carry both fields, and the expected
+            # answers are valid SQL - what cannot read them is the comparator
+            # this guide ships. It arrived in `blocking` inside the integrity
+            # cap, which is exactly the misplacement that comment describes.
+            "dataset-gold-unreadable",
             # #165's two rungs, moved here by #211. They were `blocking`,
             # because `declare-data-provenance` asks the user to change the
             # file and #149's two-way rule read any change as a repair. Measured

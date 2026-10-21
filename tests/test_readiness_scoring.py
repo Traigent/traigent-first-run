@@ -6665,6 +6665,19 @@ class TheCapOrderingIsWrittenDownAndCheckedTests(unittest.TestCase):
                     # beside it for the same reason the 65 pair is.
                     "dataset-mostly-undeclared",
                     "dataset-unsound-expected-outputs",
+                    # #599's cap, ranked last of the four and NOT by the
+                    # counted-before-inferred rule, which would put it first:
+                    # it is the only one of them that is a measurement. It is
+                    # ranked last because the rule is about how much of the
+                    # claim a finding bounds, and the three before it are
+                    # statements about the answer key or the corpus AS A WHOLE
+                    # - mostly-synthetic and mostly-undeclared about its
+                    # provenance, unsound about every row the assistant read.
+                    # This one bounds a named handful of rows, which is the
+                    # narrowest claim of the four, and it shares the number
+                    # with its nearest sibling deliberately rather than by
+                    # coincidence - see the comment beside it in the module.
+                    "dataset-gold-unreadable",
                 ],
                 # Three conditions meeting at the same band edge rather than
                 # at a shared cause: 74 is one below STRONG, and each of these
@@ -7244,6 +7257,15 @@ def _unlabelled_dataset(dataset, evaluation, agent) -> None:
 @_fragment("rows that could not be read as data")
 def _broken_rows(dataset, evaluation, agent) -> None:
     dataset.update(integrity_failed=True)
+
+
+@_fragment("gold the declared comparator cannot read")
+def _unreadable_gold(dataset, evaluation, agent) -> None:
+    # A MINORITY, deliberately: two of whatever row count is in the dict. The
+    # whole point of #599's cap is that it bounds a claim rather than stopping
+    # a run, and a fragment that made every row unreadable would reach the
+    # absent-dataset branch instead and never raise this condition at all.
+    dataset.update(gold_rows_unreadable=2)
 
 
 @_fragment("the same rows on both sides of the split")
@@ -11665,6 +11687,25 @@ class TheUnsoundAnswerCapBoundsRatherThanBlocksTests(unittest.TestCase):
             if MODULE.ACTION_FOR_CONDITION[cap.condition] == "review-answer-key"
         ]
 
+    def _gold_unreadable_caps(self) -> list["MODULE.Cap"]:
+        """The fourth condition on this remedy, which #599 added.
+
+        A MINORITY of rows, because that is the case the cap exists for: make
+        every row unreadable and the score reaches the absent-dataset branch
+        instead, which raises a different condition entirely.
+        """
+        facts = replace(
+            _brought(28, tuning_rows=18, holdout_rows=10), gold_rows_unreadable=2
+        )
+        _, caps = MODULE.score_dataset(
+            facts, "sql-structure", _review(reviewed=28, unsound=0)
+        )
+        return [
+            cap
+            for cap in caps
+            if MODULE.ACTION_FOR_CONDITION[cap.condition] == "review-answer-key"
+        ]
+
     def test_the_run_is_not_stopped_and_the_ceiling_still_binds(self) -> None:
         """Bounding is not silence: the number moves, the run does not stop."""
         cap = self._cap(reviewed=28, unsound=3)
@@ -11704,6 +11745,10 @@ class TheUnsoundAnswerCapBoundsRatherThanBlocksTests(unittest.TestCase):
             siblings,
             [
                 "dataset-generated-answer-key",
+                # #599's cap joined this family rather than minting a slug, and
+                # it had to take the family's verdict with it: it declares
+                # `asks=True` for the reason stated beside every sibling here.
+                "dataset-gold-unreadable",
                 # The ladder's middle rung, which shares this remedy and did
                 # not exist on the base this test was written against.
                 "dataset-mostly-generated-answer-key",
@@ -11714,6 +11759,7 @@ class TheUnsoundAnswerCapBoundsRatherThanBlocksTests(unittest.TestCase):
             cap.condition: cap.blocks
             for cap in self._both_answer_key_caps()
             + self._middle_rung_answer_key_caps()
+            + self._gold_unreadable_caps()
         }
         self.assertEqual(
             sorted(verdicts), siblings, "every sibling cap must be observed"
