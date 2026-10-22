@@ -2616,9 +2616,17 @@ def run_calibration_worker(
     # actor is the case where they differ: a copy repointed at a safe target
     # must not reach the real one, so the loader stays off there.
     #
-    # Residual, recorded rather than implied: `dotenv_values()` has no such
-    # gate at all, so even here the flag narrows the path rather than closing
-    # the class.
+    # The residual, recorded rather than implied, is in two places, and
+    # neither is `dotenv_values()` in the copy: admission refuses that import
+    # by name, and every indirect spelling is a witness of its own -
+    # `importlib.import_module` and `__import__` as processes, `open()` and
+    # `.read_text()` as reflection. What is left is an installed package the
+    # child imports calling `dotenv_values()` where `load_dotenv` would have
+    # been stopped (`pydantic_settings` does; LiteLLM's is the gated
+    # spelling), and a read of the file itself through a stdlib reader that
+    # opens it internally - `linecache`, `configparser.read`,
+    # `shutil.copyfile` - which `copied_actor_refusal` admits because it is
+    # the original's own code, outside this route's threat model.
     if copied_actor:
         environment = kwargs.get("env")
         kwargs["env"] = {
